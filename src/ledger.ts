@@ -1,4 +1,4 @@
-import { mkdir, readFile, open, rm, link } from 'node:fs/promises';
+import { mkdir, readFile, open, rm, link, rename, writeFile, stat } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -27,6 +27,12 @@ export function verifyChain(entries: Entry[]): { ok: true } | { ok: false; seq: 
   return { ok: true };
 }
 function isCode(e: unknown, code: string): boolean { return (e as NodeJS.ErrnoException).code === code; }
+/** Remove a lock directory atomically: rename it away first, then delete the renamed copy. */
+async function discard(path: string): Promise<void> {
+  const trash = `${path}.trash-${randomUUID()}`;
+  try { await rename(path, trash); } catch (e) { if (isCode(e, 'ENOENT')) return; throw e; }
+  await rm(trash, { recursive: true, force: true });
+}
 export class Ledger {
   readonly dir: string;
   private held = new AsyncLocalStorage<Set<string>>();
@@ -48,19 +54,32 @@ export class Ledger {
     if (this.held.getStore()?.has(lockName)) throw new OwedError(`nested lock ${lockName}`, 'internal');
     const path = join(this.dir, lockName), deadline = Date.now() + 60_000;
     let delay = 10;
+    const token = randomUUID();
     for (;;) {
-      try { await mkdir(path); break; } catch (e) { if (!isCode(e, 'EEXIST')) throw e; }
+      // Acquire by renaming a fully prepared directory into place: the owner
+      // file is complete whenever the lock path exists.
+      const staged = join(this.dir, `.${lockName}-${token}`);
+      await mkdir(staged, { recursive: true });
+      await writeFile(join(staged, 'owner.json'), JSON.stringify({ pid: process.pid, host: hostname(), token, ts: new Date().toISOString() }));
+      try { await rename(staged, path); break; } catch (e) {
+        await rm(staged, { recursive: true, force: true });
+        if (!isCode(e, 'EEXIST') && !isCode(e, 'ENOTEMPTY')) throw e;
+      }
       // A second, short-lived mkdir serializes stale reaping. Recheck the owner
       // after acquiring it so a waiter can never remove a replacement live lock.
       const reaper = join(this.dir, `${lockName}-reaper`);
       let reap = false;
-      try { await mkdir(reaper); reap = true; } catch (e) { if (!isCode(e, 'EEXIST')) throw e; }
+      try { await mkdir(reaper); reap = true; } catch (e) {
+        if (!isCode(e, 'EEXIST')) throw e;
+        // A reaper that crashed leaves its directory behind; reaping takes milliseconds.
+        try { if (Date.now() - (await stat(reaper)).mtimeMs > 10_000) await rm(reaper, { recursive: true, force: true }); } catch (err) { if (!isCode(err, 'ENOENT')) throw err; }
+      }
       if (reap) {
         try {
           try {
             const owner = JSON.parse(await readFile(join(path, 'owner.json'), 'utf8')) as { pid: number; host: string };
             if (owner.host === hostname() && Number.isInteger(owner.pid) && owner.pid > 0) {
-              try { process.kill(owner.pid, 0); } catch (e) { if (isCode(e, 'ESRCH')) await rm(path, { recursive: true, force: true }); }
+              try { process.kill(owner.pid, 0); } catch (e) { if (isCode(e, 'ESRCH')) await discard(path); }
             }
           } catch (e) { if (!isCode(e, 'ENOENT')) throw e; }
         } finally { await rm(reaper, { recursive: true, force: true }); }
@@ -70,10 +89,8 @@ export class Ledger {
     }
     const owned = new Set(this.held.getStore()); owned.add(lockName);
     try {
-      const f = await open(join(path, 'owner.json'), 'wx');
-      try { await f.writeFile(JSON.stringify({ pid: process.pid, host: hostname(), ts: new Date().toISOString() })); await f.sync(); } finally { await f.close(); }
       return await this.held.run(owned, fn);
-    } finally { owned.delete(lockName); await rm(path, { recursive: true, force: true }); }
+    } finally { owned.delete(lockName); await discard(path); }
   }
   async append(drafts: Draft[]): Promise<Entry[]> {
     if (!this.held.getStore()?.has('lock')) throw new OwedError('append requires withLock()', 'internal');
