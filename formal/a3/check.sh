@@ -30,9 +30,10 @@ for mode in $modes; do
       -noGenerateSpecTE -workers ${WORKERS:-4} $dl $sim \
       -metadir $base.states -config $base.cfg $mod.tla >> $base.log 2>&1
     rc=$?; rm -rf $base.states
-    if grep -q "No error has been found" $base.log; then r=HOLDS
+    if [ $rc -eq 124 ]; then r=TIMEOUT; errs=$((errs+1))
+    elif grep -q "No error has been found" $base.log; then r=HOLDS
     elif grep -qE "is violated|was violated|Deadlock reached|Temporal properties were violated" $base.log; then r=VIOLATED
-    elif [ -n "$sim" ] && grep -qE "^Finished|The number of states generated" $base.log && ! grep -q "^Error" $base.log; then r=HOLDS-SIM
+    elif [ -n "$sim" ] && [ $rc -eq 0 ] && grep -qE "^Finished in " $base.log && ! grep -q "^Error" $base.log; then r=HOLDS-SIM
     else r="ERROR(rc=$rc)"; errs=$((errs+1)); fi
     printf '%-16s %-6s %-22s %-9s %s\n' $mod $mode $name "$r" "$(grep -oE '[0-9,]+ distinct states found' $base.log | tail -1)"
   done

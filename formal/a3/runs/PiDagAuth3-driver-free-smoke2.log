@@ -1,0 +1,45 @@
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3
++ props=AllSafety
++ consts='Scope = "free"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-free-smoke2
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AllSafety
++ case $p in
++ base=runs/PiDagAuth3-a3-AllSafety-free-smoke2
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "free"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AllSafety'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-AllSafety-free-smoke2.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 f80d84d16df19c49228fe67542172d60182b3fe66232aeb5d954ab26a657fca0'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:36:22+08:00'
++ timeout 600 java -Xmx3g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-AllSafety-free-smoke2.states -config runs/PiDagAuth3-a3-AllSafety-free-smoke2.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-AllSafety-free-smoke2.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-AllSafety-free-smoke2.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-AllSafety-free-smoke2.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 AllSafety HOLDS '44311 distinct states found'
+PiDagAuth3       a3     AllSafety              HOLDS     44311 distinct states found
++ exit 0
