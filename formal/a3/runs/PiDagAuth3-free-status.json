@@ -1,0 +1,145 @@
+{
+  "running": null,
+  "results": [
+    {
+      "mode": "a3",
+      "property": "AllSafety",
+      "depth": 2,
+      "tag": "-free-smoke2",
+      "simulation": false,
+      "command": [
+        "bash",
+        "-x",
+        "formal/a3/check.sh",
+        "PiDagAuth3",
+        "a3",
+        "AllSafety",
+        "Scope = \"free\"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+        "-free-smoke2"
+      ],
+      "start": 1791466582.0367434,
+      "exit": 0,
+      "elapsed": 11.00999927520752
+    },
+    {
+      "mode": "a3",
+      "property": "AllSafety",
+      "depth": 4,
+      "tag": "-free-ex4",
+      "simulation": false,
+      "command": [
+        "bash",
+        "-x",
+        "formal/a3/check.sh",
+        "PiDagAuth3",
+        "a3",
+        "AllSafety",
+        "Scope = \"free\"; MaxLog = 4; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+        "-free-ex4"
+      ],
+      "start": 1791466593.0481586,
+      "exit": 1,
+      "elapsed": 600.4601035118103
+    },
+    {
+      "mode": "a3",
+      "property": "AllSafety",
+      "depth": 3,
+      "tag": "-free-ex3",
+      "simulation": false,
+      "command": [
+        "bash",
+        "-x",
+        "formal/a3/check.sh",
+        "PiDagAuth3",
+        "a3",
+        "AllSafety",
+        "Scope = \"free\"; MaxLog = 3; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+        "-free-ex3"
+      ],
+      "start": 1791467193.5092514,
+      "exit": 1,
+      "elapsed": 600.7359673976898
+    },
+    {
+      "mode": "a22",
+      "property": "AuthoritySound",
+      "depth": 4,
+      "tag": "-free-sanity4",
+      "simulation": false,
+      "command": [
+        "bash",
+        "-x",
+        "formal/a3/check.sh",
+        "PiDagAuth3",
+        "a22",
+        "AuthoritySound",
+        "Scope = \"free\"; MaxLog = 4; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+        "-free-sanity4"
+      ],
+      "start": 1791467794.2463436,
+      "exit": 0,
+      "elapsed": 7.513923645019531
+    },
+    {
+      "mode": "a22",
+      "property": "DecisionAuthority",
+      "depth": 4,
+      "tag": "-free-sanity4",
+      "simulation": false,
+      "command": [
+        "bash",
+        "-x",
+        "formal/a3/check.sh",
+        "PiDagAuth3",
+        "a22",
+        "DecisionAuthority",
+        "Scope = \"free\"; MaxLog = 4; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+        "-free-sanity4"
+      ],
+      "start": 1791467801.7612371,
+      "exit": 0,
+      "elapsed": 2.674623489379883
+    },
+    {
+      "mode": "a22",
+      "property": "NoWriterJudge",
+      "depth": 4,
+      "tag": "-free-sanity4",
+      "simulation": false,
+      "command": [
+        "bash",
+        "-x",
+        "formal/a3/check.sh",
+        "PiDagAuth3",
+        "a22",
+        "NoWriterJudge",
+        "Scope = \"free\"; MaxLog = 4; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+        "-free-sanity4"
+      ],
+      "start": 1791467804.4367309,
+      "exit": 0,
+      "elapsed": 3.3344037532806396
+    },
+    {
+      "mode": "a3",
+      "property": "AllSafety",
+      "depth": 6,
+      "tag": "-free-sim6",
+      "simulation": true,
+      "command": [
+        "bash",
+        "-x",
+        "formal/a3/check.sh",
+        "PiDagAuth3",
+        "a3",
+        "AllSafety",
+        "Scope = \"free\"; MaxLog = 6; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+        "-free-sim6"
+      ],
+      "start": 1791467807.7722557,
+      "exit": 0,
+      "elapsed": 900.1672699451447
+    }
+  ]
+}

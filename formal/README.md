@@ -1,5 +1,23 @@
 # 形式化检查
 
+## a3（现行）
+
+a3 的模型、契约和报告都在 `a3/` 下：语义以 `a3/CONTRACT.md`（K1–K14）为准，结果以三份 `a3/REPORT-*.md` 为准。脚本是 `a3/check.sh`，它把每次运行的模块与 cfg 的 sha256 写进日志头。
+
+检查方法：真值性质独立于守卫定义；a22 模式必须违反，a3 必须成立；每条修补单独消融，必须至少翻转一项性质；另设非空见证（预期违反）。脚本化场景只能确认已知漏洞已关上，发现不了未知漏洞，所以 merge 和 auth 另加了"自由交错"模式。
+
+| 模型 | 场景检查 | 自由交错 | a3 剩余反例 |
+|---|---|---|---|
+| `PiDagMerge.tla` | 61 项，均为当前模块；7 种消融全部翻转 | 2 节点，随机模拟 4 万条轨迹、12,760,539 次状态检查，全部成立（HOLDS-SIM，抽样，不是证明）；穷举超时，未完成 | 无。三条性质原先写得比 a3 承诺更宽，已按契约改写 |
+| `PiDagEvidence.tla` | 140 项；N3/N5/N6 的 8 项性质 a22 ✘、a3 ✔；16 种消融全部翻转 | 未做 | `ReviewerAccurate`、`NoWeakEscape`：观察者误判与弱测试，属保证边界之外 |
+| `PiDagAuth3.tla` | 11 安全 + 2 活性，1,019 状态；13 种消融全部翻转 | 每步 210 种事件任选：MaxLog=2 穷举 44,311 状态；**MaxLog=3 穷举 9,305,311 状态（父级补跑，16 workers，10 分 41 秒）**，11 项安全性质全部成立；MaxLog=6 随机模拟在 900 秒时限内跑了 1,043,507 条轨迹，没有反例，但整批未完成；a22 三项 sanity 均被自由模式找到反例 | 无 |
+
+runner 修正（2026-10-08）：`a3/check.sh` 原先用 `^Finished` 判断模拟是否完成，会误匹配 "Finished computing initial states"，把超时（rc=124）记成 HOLDS-SIM。现改为先判 rc=124 → TIMEOUT，HOLDS-SIM 要求 rc=0 且日志有 "Finished in"。merge 的两条 HOLDS-SIM 日志都含 "Finished in" 且在时限内结束，不受影响。
+
+## a1–a2.2（已被取代）
+
+以下是 a1/a2/a2.2 的模型。审查（`../research/arch-a22-model-fidelity.md`）指出：其中 a3/a21/fix 模式的 ✔ 多为同义反复；`PiDagAuth.tla` 的 fix 模式漏掉了"言授权"。只作历史对照。
+
 工具：TLC 2026.10.06（`tla2tools.jar` v1.8.0），Java 11。日志在 `runs/`；每个反例的完整路径见对应 `.log` 文件中 "is violated" 之后的部分。
 
 | 模型 | 检查对象 | 复现 |

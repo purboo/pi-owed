@@ -1,0 +1,60 @@
+PiDagMerge       a22    NoBypassedNegative     VIOLATED  33 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     71 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     71 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     33 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     33 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     33 distinct states found
+PiDagMerge       a22    NoBypassedNegative     VIOLATED  53 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     183 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     183 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     101 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     101 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     101 distinct states found
+PiDagMerge       a22    NoBypassedNegative     VIOLATED  39 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     113 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     113 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     72 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     72 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     72 distinct states found
+PiDagMerge       a22    NoBypassedNegative     HOLDS     15 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     15 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     15 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     5 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     5 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     5 distinct states found
+PiDagMerge       a22    NoBypassedNegative     HOLDS     25 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     25 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     25 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     6 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     6 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     6 distinct states found
+PiDagMerge       a22    NoBypassedNegative     HOLDS     18 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     18 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     18 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     6 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     6 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     6 distinct states found
+PiDagMerge       a22    NoBypassedNegative     HOLDS     36 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     36 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     36 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     14 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     14 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     14 distinct states found
+PiDagMerge       a22    NoBypassedNegative     HOLDS     25 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     25 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     25 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     13 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     13 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     13 distinct states found
+PiDagMerge       a22    NoBypassedNegative     HOLDS     22 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     22 distinct states found
+PiDagMerge       a22    DeferredDebtVisible    HOLDS     22 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     10 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     10 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     10 distinct states found
+PiDagMerge       a22    NoBypassedNegative     VIOLATED  
+PiDagMerge       a22    EscapeAttributable     HOLDS-SIM 
+PiDagMerge       a22    NodeAcceptanceCovered  VIOLATED  
+PiDagMerge       a3     NothingMerged          VIOLATED  
+PiDagMerge       a3     NoDeferredMerge        VIOLATED  
+PiDagMerge       a3     FreeNoTwoMerges        VIOLATED  

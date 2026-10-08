@@ -1,0 +1,30 @@
+# module sha256 4d021af32c112529d5640d2c1260188fc5df78f8a835895f222bdbd52fddc911
+# cfg    sha256 7bc7eb548150bfcd4d45e7a5c4129430741d1455ae4d74d7276c84da0c0341af
+# flags  <deadlock checked> <exhaustive> 2026-10-08T21:23:53+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 66 and seed 7961205915345162290 with 4 workers on 20 cores with 2731MB heap and 64MB offheap memory [pid: 3434668] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-9119596476214904449/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-9119596476214904449/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-9119596476214904449/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-9119596476214904449/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-9119596476214904449/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth3
+Linting of module PiDagAuth3
+Starting... (2026-10-08 21:23:54)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 21:23:54.
+Progress(5) at 2026-10-08 21:23:57: 12,175 states generated (12,175 s/min), 12,174 distinct states found (12,174 ds/min), 12,117 states left on queue.
+Progress(5) at 2026-10-08 21:24:57: 529,411 states generated (517,236 s/min), 528,831 distinct states found (516,657 ds/min), 525,736 states left on queue.
+Progress(5) at 2026-10-08 21:25:57: 1,061,002 states generated (531,591 s/min), 1,059,335 distinct states found (530,504 ds/min), 1,052,624 states left on queue.
+Progress(5) at 2026-10-08 21:26:57: 1,556,844 states generated (495,842 s/min), 1,554,394 distinct states found (495,059 ds/min), 1,544,542 states left on queue.
+Progress(5) at 2026-10-08 21:27:57: 2,093,606 states generated (536,762 s/min), 2,090,455 distinct states found (536,061 ds/min), 2,077,350 states left on queue.
+Progress(5) at 2026-10-08 21:28:57: 2,633,206 states generated (539,600 s/min), 2,629,305 distinct states found (538,850 ds/min), 2,612,881 states left on queue.
+Progress(5) at 2026-10-08 21:29:57: 3,171,755 states generated (538,549 s/min), 3,167,066 distinct states found (537,761 ds/min), 3,147,297 states left on queue.
+Progress(5) at 2026-10-08 21:30:57: 3,708,825 states generated (537,070 s/min), 3,703,572 distinct states found (536,506 ds/min), 3,680,681 states left on queue.
+Progress(5) at 2026-10-08 21:31:57: 4,236,440 states generated (527,615 s/min), 4,230,352 distinct states found (526,780 ds/min), 4,204,117 states left on queue.

@@ -1,0 +1,41 @@
+# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0
+# cfg    sha256 172a3a37276593220457b415d355c4e8e3d084d1f779dd2f899210275fd91cbe
+# flags  <deadlock checked> <exhaustive> 2026-10-08T22:26:13+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 12 and seed -7248927018578226459 with 16 workers on 20 cores with 18204MB heap and 64MB offheap memory [pid: 3507879] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-5919020683623355507/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-5919020683623355507/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5919020683623355507/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5919020683623355507/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5919020683623355507/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth3
+Linting of module PiDagAuth3
+Starting... (2026-10-08 22:26:13)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 22:26:13.
+Progress(4) at 2026-10-08 22:26:16: 11,720 states generated (11,720 s/min), 11,637 distinct states found (11,637 ds/min), 11,493 states left on queue.
+Progress(4) at 2026-10-08 22:27:16: 1,141,982 states generated (1,130,262 s/min), 1,119,205 distinct states found (1,107,568 ds/min), 1,091,091 states left on queue.
+Progress(4) at 2026-10-08 22:28:16: 2,220,572 states generated (1,078,590 s/min), 2,173,567 distinct states found (1,054,362 ds/min), 2,116,202 states left on queue.
+Progress(4) at 2026-10-08 22:29:16: 3,344,803 states generated (1,124,231 s/min), 3,273,322 distinct states found (1,099,755 ds/min), 3,186,244 states left on queue.
+Progress(4) at 2026-10-08 22:30:16: 4,496,696 states generated (1,151,893 s/min), 4,398,083 distinct states found (1,124,761 ds/min), 4,278,514 states left on queue.
+Progress(4) at 2026-10-08 22:31:16: 5,655,955 states generated (1,159,259 s/min), 5,530,906 distinct states found (1,132,823 ds/min), 5,379,510 states left on queue.
+Progress(4) at 2026-10-08 22:32:16: 6,806,183 states generated (1,150,228 s/min), 6,656,178 distinct states found (1,125,272 ds/min), 6,474,471 states left on queue.
+Progress(4) at 2026-10-08 22:33:16: 7,966,963 states generated (1,160,780 s/min), 7,790,887 distinct states found (1,134,709 ds/min), 7,577,704 states left on queue.
+Progress(4) at 2026-10-08 22:34:16: 9,137,726 states generated (1,170,763 s/min), 8,931,341 distinct states found (1,140,454 ds/min), 8,682,417 states left on queue.
+Progress(4) at 2026-10-08 22:35:16: 12,155,601 states generated (3,017,875 s/min), 9,305,311 distinct states found (373,970 ds/min), 6,410,675 states left on queue.
+Progress(4) at 2026-10-08 22:36:16: 16,110,251 states generated (3,954,650 s/min), 9,305,311 distinct states found (0 ds/min), 2,456,029 states left on queue.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 4.7E-6
+  based on the actual fingerprints:  val = 3.5E-6
+18566311 states generated, 9305311 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 4.
+The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 31 and the 95th percentile is 0).
+Finished in 10min 41s at (2026-10-08 22:36:55)

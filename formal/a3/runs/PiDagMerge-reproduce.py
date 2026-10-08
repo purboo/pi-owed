@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Reproduce merge checks, exclusively through the parent-owned check.sh.
 Each TLC process: one worker, 512m, 90s. No parallel processes or global cleanup.
-The xtrace receipt preserves check.sh's actual per-TLC rc (its own exit is 0).
+The xtrace receipt preserves check.sh's actual per-TLC rc; check.sh now returns
+its count of ERROR runs, so nonzero means an incomplete/error check.
 """
 import os
 from pathlib import Path
@@ -23,11 +24,15 @@ JOBS = [
     ('a3', 'P:NoNewBreakage DeferredDebtVisible NoDeferredMerge', 'defer', 'defer'),
     ('a3', 'NoOwnerWaivedMerge', 'launderReview', 'owner'),
     ('a3', 'P:NoNewBreakage NoOldDebtMerge', 'oldDebt', 'oldDebt'),
+    *[('a22 a3', 'NoBypassedNegative EscapeAttributable', s, 'promise-' + s)
+      for s in ['launderReview', 'launderTest', 'rerun', 'flakyDebt', 'matrix', 'genesis', 'falsePass', 'oldDebt']],
+    ('a3', 'NewEscapeAttributable', 'oldDebt', 'promise-oldDebt'),
 ]
 
 def main():
     env = dict(os.environ, WORKERS='1', TLC_HEAP='512m', TLC_TIMEOUT='90')
-    env.pop('NODEADLOCK', None)
+    for name in ['NODEADLOCK', 'SIMULATE', 'DEPTH']:
+        env.pop(name, None)
     receipt_path = ROOT / 'formal/a3/runs/PiDagMerge-checks.log'
     with receipt_path.open('w') as receipt:
         receipt.write('WORKERS=1 TLC_HEAP=512m TLC_TIMEOUT=90 NODEADLOCK unset\n')

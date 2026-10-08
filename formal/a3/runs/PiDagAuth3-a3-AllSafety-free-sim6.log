@@ -1,0 +1,35 @@
+# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0
+# cfg    sha256 fa2533aa3323edf824c3186606b2cbdb5224ffae6160b465e25fbc66fe2f4093
+# flags  <deadlock checked> -simulate num=500000 -depth 8 2026-10-08T21:56:47+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running Random Simulation with seed -1486953895082499616 with 4 workers on 20 cores with 2731MB heap and 64MB offheap memory [pid: 3463854] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-11140764544235729739/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-11140764544235729739/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-11140764544235729739/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-11140764544235729739/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-11140764544235729739/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth3
+Linting of module PiDagAuth3
+Starting... (2026-10-08 21:56:48)
+Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 21:56:48.
+Progress: 569520 states checked, 71192 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 1179629 states checked, 147455 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 1743244 states checked, 217907 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 2333849 states checked, 291734 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 2938643 states checked, 367333 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 3543680 states checked, 442962 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 4140677 states checked, 517586 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 4739222 states checked, 592405 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 5365265 states checked, 670660 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 5989230 states checked, 748655 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 6606655 states checked, 825834 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 7183530 states checked, 897944 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 7810711 states checked, 976341 traces generated (trace length: mean=3, var(x)=25, sd=5)
+Progress: 8348032 states checked, 1043507 traces generated (trace length: mean=3, var(x)=25, sd=5)

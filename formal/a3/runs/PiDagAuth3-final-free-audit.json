@@ -1,0 +1,127 @@
+{
+  "module_sha256": "4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0",
+  "runs": [
+    {
+      "run": "PiDagAuth3-a22-AuthoritySound-free-min2",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "c3ccba631cc34dcfe2fbc01655f2e5138ed9776035800d0d81e0558c04486d38"
+    },
+    {
+      "run": "PiDagAuth3-a22-AuthoritySound-free-sanity4",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "62d6f91331b4a6e429366364760e412c6c4fb0769e2c3e215f02e3e1ed020d4f"
+    },
+    {
+      "run": "PiDagAuth3-a22-DecisionAuthority-free-min2",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "060941ab09510776826e4547645e9d8be8c0861d6b099c85c871ac61b0a121c5"
+    },
+    {
+      "run": "PiDagAuth3-a22-DecisionAuthority-free-sanity4",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "6efc43cb5ada8b34c386aef83edb6b0e17bcdfbdc5d7752e76ed79bfc0171edf"
+    },
+    {
+      "run": "PiDagAuth3-a22-NoWriterJudge-free-min2",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "5445d5a2b1824056d0a0d117f570cca109a695471e65a2297696910fd6fc3694"
+    },
+    {
+      "run": "PiDagAuth3-a22-NoWriterJudge-free-sanity4",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "9ab5fa90c189444f80c782bb79c65024ec911d52d7319d34801ca56e43a042bd"
+    },
+    {
+      "run": "PiDagAuth3-a3-AllSafety-free-ex3",
+      "tlc_exit": 124,
+      "result": "TIMEOUT",
+      "cfg_sha256": "172a3a37276593220457b415d355c4e8e3d084d1f779dd2f899210275fd91cbe"
+    },
+    {
+      "run": "PiDagAuth3-a3-AllSafety-free-ex4",
+      "tlc_exit": 124,
+      "result": "TIMEOUT",
+      "cfg_sha256": "7bc7eb548150bfcd4d45e7a5c4129430741d1455ae4d74d7276c84da0c0341af"
+    },
+    {
+      "run": "PiDagAuth3-a3-AllSafety-free-sim-smoke",
+      "tlc_exit": 0,
+      "result": "HOLDS-SIM",
+      "cfg_sha256": "fa2533aa3323edf824c3186606b2cbdb5224ffae6160b465e25fbc66fe2f4093"
+    },
+    {
+      "run": "PiDagAuth3-a3-AllSafety-free-sim6",
+      "tlc_exit": 124,
+      "result": "TIMEOUT",
+      "cfg_sha256": "fa2533aa3323edf824c3186606b2cbdb5224ffae6160b465e25fbc66fe2f4093"
+    },
+    {
+      "run": "PiDagAuth3-a3-AllSafety-free-sim8-smoke",
+      "tlc_exit": 0,
+      "result": "HOLDS-SIM",
+      "cfg_sha256": "54f1550a86515ceb9cd99d169be898547dbafc3f991a912fe300f9fdf292cb2a"
+    },
+    {
+      "run": "PiDagAuth3-a3-AllSafety-free-smoke2",
+      "tlc_exit": 0,
+      "result": "HOLDS",
+      "cfg_sha256": "f80d84d16df19c49228fe67542172d60182b3fe66232aeb5d954ab26a657fca0"
+    },
+    {
+      "run": "PiDagAuth3-a3-AllSafety-scenario-regression",
+      "tlc_exit": 0,
+      "result": "HOLDS",
+      "cfg_sha256": "df8345c7226cca403d4d97d9fea8cda309bff8fdea5c2460e48b2500c6b55209"
+    },
+    {
+      "run": "PiDagAuth3-a3-Finished-scenario-regression",
+      "tlc_exit": 0,
+      "result": "HOLDS",
+      "cfg_sha256": "6e4a89a68bfbfd9924de38a33a85d96c58c2efa48b5c78a956ece4e725171bb9"
+    },
+    {
+      "run": "PiDagAuth3-a3-GoodProgress-scenario-regression",
+      "tlc_exit": 0,
+      "result": "HOLDS",
+      "cfg_sha256": "e920e7cf835b0bda83b9cad9285961f4bcda7c40601f6a322ff95adb99d60603"
+    },
+    {
+      "run": "PiDagAuth3-a3-NothingDeferredMerged-scenario-regression",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "c0bfb14378629e828e288541c237d3ad2651bf57d94d89fd548c438278bf49da"
+    },
+    {
+      "run": "PiDagAuth3-a3-NothingMerged-free-witness2",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "2f444d7ede8e23c94fd6235fae854a7121fcd2d900a47c1223d489d5dfe23567"
+    },
+    {
+      "run": "PiDagAuth3-a3-NothingMerged-scenario-regression",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "7ee75847b86290abc558fa819ed5459f0e8ac21e6318d6d196ff3aef1ce4a42b"
+    },
+    {
+      "run": "PiDagAuth3-a3-NothingParentWaived-scenario-regression",
+      "tlc_exit": 12,
+      "result": "VIOLATED",
+      "cfg_sha256": "56636c227d104f4d4f77216b1c05b503433ae3ce0e1b59025054e7da17297bbd"
+    }
+  ],
+  "counts": {
+    "HOLDS": 4,
+    "HOLDS-SIM": 2,
+    "TIMEOUT": 3,
+    "VIOLATED": 10
+  },
+  "live_owned_tlc": [],
+  "remaining_state_directories": []
+}

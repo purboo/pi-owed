@@ -1,0 +1,224 @@
+# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310
+# cfg    sha256 9462ffbe346a18aa3a076fe3093d7c357cf468b70f2675ba906be12f24b181e7
+# flags  <deadlock checked> <exhaustive> 2026-10-08T21:50:05+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 69 and seed -2212870501694646499 with 4 workers on 20 cores with 910MB heap and 64MB offheap memory [pid: 3458694] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagMerge.tla
+Parsing file /tmp/tlc-13264883942288845000/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-13264883942288845000/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-13264883942288845000/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-13264883942288845000/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagMerge
+Linting of module PiDagMerge
+Starting... (2026-10-08 21:50:05)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Finished computing initial states: 16 distinct states generated at 2026-10-08 21:50:06.
+Error: Invariant EscapeAttributable is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ f = [ kind |-> (k0 :> "judgment" @@ k1 :> "judgment"),
+  truth |->
+      ( k0 :> (0 :> FALSE @@ 1 :> TRUE @@ 2 :> TRUE) @@
+        k1 :> (0 :> TRUE @@ 1 :> TRUE @@ 2 :> TRUE) ),
+  obs |->
+      ( k0 :> (0 :> {} @@ 1 :> {} @@ 2 :> {}) @@
+        k1 :> (0 :> {} @@ 1 :> {} @@ 2 :> {}) ),
+  genesis |-> FALSE,
+  conflict |-> {},
+  lease |-> "none",
+  hist |-> <<>>,
+  ver |-> (k0 :> 0 @@ k1 :> 0),
+  trunk |-> (k0 :> 0 @@ k1 :> 0),
+  epoch |-> 0,
+  inputs |-> 0,
+  blocks |-> {},
+  reproduced |-> {},
+  waivers |-> {},
+  deferrals |-> {},
+  stateW |-> {},
+  queue |-> <<>>,
+  done |-> {},
+  eval |->
+      ( k0 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] @@
+        k1 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] ),
+  receipts |-> <<>> ]
+/\ x = [unused |-> TRUE]
+
+State 2: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [ kind |-> (k0 :> "judgment" @@ k1 :> "judgment"),
+  truth |->
+      ( k0 :> (0 :> FALSE @@ 1 :> TRUE @@ 2 :> TRUE) @@
+        k1 :> (0 :> TRUE @@ 1 :> TRUE @@ 2 :> TRUE) ),
+  obs |->
+      ( k0 :> (0 :> {"fail"} @@ 1 :> {} @@ 2 :> {}) @@
+        k1 :> (0 :> {"pass"} @@ 1 :> {} @@ 2 :> {}) ),
+  genesis |-> TRUE,
+  conflict |-> {},
+  lease |-> "none",
+  hist |->
+      << [ op |-> "genesis",
+           key |-> <<k0, 0>>,
+           result |-> "none",
+           rank |-> 2,
+           accurate |-> TRUE,
+           n |-> k0,
+           kind |-> "judgment",
+           truth |-> TRUE ] >>,
+  ver |-> (k0 :> 0 @@ k1 :> 0),
+  trunk |-> (k0 :> 0 @@ k1 :> 0),
+  epoch |-> 0,
+  inputs |-> 0,
+  blocks |-> {},
+  reproduced |-> {},
+  waivers |-> {},
+  deferrals |-> {},
+  stateW |-> {},
+  queue |-> <<>>,
+  done |-> {},
+  eval |->
+      ( k0 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] @@
+        k1 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] ),
+  receipts |-> <<>> ]
+/\ x = [unused |-> TRUE]
+
+State 3: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [ kind |-> (k0 :> "judgment" @@ k1 :> "judgment"),
+  truth |->
+      ( k0 :> (0 :> FALSE @@ 1 :> TRUE @@ 2 :> TRUE) @@
+        k1 :> (0 :> TRUE @@ 1 :> TRUE @@ 2 :> TRUE) ),
+  obs |->
+      ( k0 :> (0 :> {"fail"} @@ 1 :> {} @@ 2 :> {}) @@
+        k1 :> (0 :> {"pass"} @@ 1 :> {} @@ 2 :> {}) ),
+  genesis |-> TRUE,
+  conflict |-> {},
+  lease |-> "none",
+  hist |->
+      << [ op |-> "genesis",
+           key |-> <<k0, 0>>,
+           result |-> "none",
+           rank |-> 2,
+           accurate |-> TRUE,
+           n |-> k0,
+           kind |-> "judgment",
+           truth |-> TRUE ] >>,
+  ver |-> (k0 :> 0 @@ k1 :> 0),
+  trunk |-> (k0 :> 0 @@ k1 :> 0),
+  epoch |-> 0,
+  inputs |-> 0,
+  blocks |-> {},
+  reproduced |-> {},
+  waivers |-> {},
+  deferrals |-> {},
+  stateW |-> {},
+  queue |-> <<k0>>,
+  done |-> {},
+  eval |->
+      ( k0 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] @@
+        k1 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] ),
+  receipts |-> <<>> ]
+/\ x = [unused |-> TRUE]
+
+State 4: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [ kind |-> (k0 :> "judgment" @@ k1 :> "judgment"),
+  truth |->
+      ( k0 :> (0 :> FALSE @@ 1 :> TRUE @@ 2 :> TRUE) @@
+        k1 :> (0 :> TRUE @@ 1 :> TRUE @@ 2 :> TRUE) ),
+  obs |->
+      ( k0 :> (0 :> {"fail"} @@ 1 :> {} @@ 2 :> {}) @@
+        k1 :> (0 :> {"pass"} @@ 1 :> {} @@ 2 :> {}) ),
+  genesis |-> TRUE,
+  conflict |-> {},
+  lease |-> "none",
+  hist |->
+      << [ op |-> "genesis",
+           key |-> <<k0, 0>>,
+           result |-> "none",
+           rank |-> 2,
+           accurate |-> TRUE,
+           n |-> k0,
+           kind |-> "judgment",
+           truth |-> TRUE ] >>,
+  ver |-> (k0 :> 0 @@ k1 :> 0),
+  trunk |-> (k0 :> 0 @@ k1 :> 0),
+  epoch |-> 0,
+  inputs |-> 0,
+  blocks |-> {},
+  reproduced |-> {},
+  waivers |-> {},
+  deferrals |-> {},
+  stateW |-> {},
+  queue |-> <<k0>>,
+  done |-> {},
+  eval |->
+      ( k0 :> [ver |-> 0, epoch |-> 0, valid |-> TRUE, at |-> 1] @@
+        k1 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] ),
+  receipts |-> <<>> ]
+/\ x = [unused |-> TRUE]
+
+State 5: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [ kind |-> (k0 :> "judgment" @@ k1 :> "judgment"),
+  truth |->
+      ( k0 :> (0 :> FALSE @@ 1 :> TRUE @@ 2 :> TRUE) @@
+        k1 :> (0 :> TRUE @@ 1 :> TRUE @@ 2 :> TRUE) ),
+  obs |->
+      ( k0 :> (0 :> {"fail"} @@ 1 :> {} @@ 2 :> {}) @@
+        k1 :> (0 :> {"pass"} @@ 1 :> {} @@ 2 :> {}) ),
+  genesis |-> TRUE,
+  conflict |-> {},
+  lease |-> "none",
+  hist |->
+      << [ op |-> "genesis",
+           key |-> <<k0, 0>>,
+           result |-> "none",
+           rank |-> 2,
+           accurate |-> TRUE,
+           n |-> k0,
+           kind |-> "judgment",
+           truth |-> TRUE ],
+         [ op |-> "commit",
+           key |-> <<k0, 0>>,
+           result |-> "none",
+           rank |-> 0,
+           accurate |-> FALSE,
+           n |-> k0,
+           kind |-> "judgment",
+           truth |-> FALSE ] >>,
+  ver |-> (k0 :> 0 @@ k1 :> 0),
+  trunk |-> (k0 :> 0 @@ k1 :> 0),
+  epoch |-> 1,
+  inputs |-> 0,
+  blocks |-> {},
+  reproduced |-> {},
+  waivers |-> {},
+  deferrals |-> {},
+  stateW |-> {},
+  queue |-> <<>>,
+  done |-> {k0},
+  eval |->
+      ( k0 :> [ver |-> 0, epoch |-> 0, valid |-> TRUE, at |-> 1] @@
+        k1 :> [ver |-> 0, epoch |-> 0, valid |-> FALSE, at |-> 0] ),
+  receipts |->
+      << [ key |-> <<k0, 0>>,
+           n |-> k0,
+           truth |-> FALSE,
+           deferred |-> FALSE,
+           lease |-> "none",
+           stateW |-> FALSE,
+           at |-> 1,
+           prekey |-> <<k0, 0>>,
+           pretruth |-> FALSE,
+           evalAt |-> 1,
+           waived |-> FALSE,
+           debt |-> TRUE ] >> ]
+/\ x = [unused |-> TRUE]
+
+238263 states generated, 185207 distinct states found, 176387 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 03s at (2026-10-08 21:50:08)
