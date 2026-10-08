@@ -12,6 +12,8 @@ function context(state: State): History {
   return value;
 }
 const active = (b: Block): boolean => b.state !== 'cleared';
+/** Blocks that still bind the node: judgment blocks always; execution blocks only while their obligation exists (removing it is an owner-only, visible downgrade). */
+const binding = (b: Block, spec: NodeSpec | undefined): boolean => active(b) && (b.kind === 'judgment' || !spec || spec.checks.some(c => b.obligation === `check:${c.id}` || (c.red && b.obligation === `red:${c.id}`)) || b.obligation === 'writes');
 const role = (by: string): string => by.split(':')[0] ?? '';
 const blankPlan = (): Plan => ({ version: 1, trunk: '', closure: [], invariants: [], nodes: [] });
 const emptyNode = (id: string): NodeState => ({ id, phase: 'blocked', items: [], blocks: [], accepted: false, dependents: 0, writers: [] });
@@ -84,7 +86,7 @@ function refresh(s: State): void {
   for (const spec of s.plan.nodes) {
     const n = s.nodes[spec.id] ??= emptyNode(spec.id);
     n.items = n.candidate ? nodeItems(s, n.id, n.candidate) : [];
-    n.accepted = !!n.candidate && (!!n.slot?.open || !!n.merged) && n.items.every(i => i.status !== 'D') && !n.blocks.some(active);
+    n.accepted = !!n.candidate && (!!n.slot?.open || !!n.merged) && n.items.every(i => i.status !== 'D') && !n.blocks.some(b => binding(b, spec));
     n.phase = n.merged ? 'merged' : n.slot?.open ? n.candidate ? n.accepted ? 'accepted' : 'submitted' : 'dispatched' : spec.deps.every(d => s.nodes[d]?.merged) ? 'ready' : 'blocked';
     const seen = new Set<string>();
     const visit = (id: string): void => { for (const other of s.plan.nodes) if (other.deps.includes(id) && !seen.has(other.id)) { seen.add(other.id); visit(other.id); } };
@@ -93,7 +95,9 @@ function refresh(s: State): void {
   }
   s.invariants = s.plan.invariants.map(i => item(s, 'trunk', `inv:${i.id}`, s.trunk.invKeys[i.id] ?? ''));
   const g = context(s).genesis;
-  s.genesisDone = !!g && s.plan.invariants.every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
+  // Genesis covers the invariants of the genesis plan; invariants added later are
+  // judged by the no-new-debt rule on the first merge that carries their key.
+  s.genesisDone = !!g && context(s).plans(g.plan).invariants.every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
 }
 
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
@@ -336,7 +340,7 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
       nodeItemsOnMerge.push(v);
       if (v.status === 'D') reasons.push(`${id} 的 ${o} 未满足：${v.detail}`);
     }
-    if (n.blocks.some(active)) reasons.push(`${id} 仍有活动封：${n.blocks.filter(active).map(b => `${b.obligation} #${b.seq}`).join('、')}`);
+    if (n.blocks.some(b => binding(b, spec))) reasons.push(`${id} 仍有活动封：${n.blocks.filter(b => binding(b, spec)).map(b => `${b.obligation} #${b.seq}`).join('、')}`);
   }
   const invItems = s.plan.invariants.map(i => {
     const key = m.state.invKeys[i.id] ?? '';
