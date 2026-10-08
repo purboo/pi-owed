@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { H, EMPTY_SHA } from './canon.ts';
+import { H, EMPTY_SHA, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { matchesAny } from './plan.ts';
 import type { Plan, NodeSpec, CandidateFacts, StateFacts, CheckSpec } from './types.ts';
@@ -27,9 +27,10 @@ export async function isAncestor(cwd: string, a: string, b: string): Promise<boo
   if (r.code > 1) throw new OwedError(r.stderr, 'internal'); return r.code === 0;
 }
 export async function isClean(worktree: string): Promise<boolean> { return !(await git(worktree, ['status', '--porcelain', '--untracked-files=all'])).stdout; }
-async function files(cwd: string, commit: string): Promise<[string, string][]> {
+// [path, mode, oid]: the mode is content too (an executable bit or a symlink changes behavior).
+async function files(cwd: string, commit: string): Promise<[string, string, string][]> {
   return (await git(cwd, ['ls-tree', '-rz', '--full-tree', commit])).stdout.split('\0').filter(Boolean).map(line => {
-    const tab = line.indexOf('\t'); return [line.slice(tab + 1), line.slice(0, tab).split(' ')[2]!] as [string, string];
+    const tab = line.indexOf('\t'), [mode, , oid] = line.slice(0, tab).split(' '); return [line.slice(tab + 1), mode!, oid!] as [string, string, string];
   }).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
 }
 export async function readsDigest(cwd: string, commit: string, globs: string[]): Promise<string> { return H((await files(cwd, commit)).filter(([p]) => matchesAny(p, globs))); }
@@ -40,12 +41,14 @@ async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string
 export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, base: string, commit: string, attempt: number): Promise<CandidateFacts> {
   base = await revParse(cwd, base); commit = await revParse(cwd, commit);
   const changed = (await git(cwd, ['diff', '--no-renames', '--name-only', '-z', base, commit])).stdout.split('\0').filter(Boolean);
-  const diff = (await git(cwd, ['diff', '--no-ext-diff', '--binary', base, commit])).stdout;
-  const patch = diff ? (await git(cwd, ['patch-id', '--stable'], { input: diff })).stdout.trim().split(' ')[0] || EMPTY_SHA : EMPTY_SHA;
+  // Review identity = the exact bytes of the full-index binary diff (paths, modes, blob ids,
+  // whitespace). patch-id is not used: it ignores whitespace, which can change meaning.
+  const diff = (await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--binary', '--full-index', '--src-prefix=a/', '--dst-prefix=b/', base, commit])).stdout;
+  const patch = diff ? sha256(diff) : EMPTY_SHA;
   const closure = await readsDigest(cwd, base, plan.closure), keys: Record<string,string> = {};
   for (const c of node.checks) {
     keys[`check:${c.id}`] = await checkKey(cwd, plan, c, commit, closure, 'check');
-    if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
+    if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
   keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes });
   const closureTouched = changed.some(p => matchesAny(p, plan.closure));

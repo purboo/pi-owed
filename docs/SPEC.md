@@ -71,6 +71,10 @@ nodes:
       ...
 ```
 
+A plan change that alters a node's spec, `setup` or `closure` invalidates that
+node's submitted candidate: the writer must submit again so keys are recomputed.
+Invariants removed by the owner no longer need their genesis observation.
+
 Validation: unique ids; deps exist; acyclic; `red: true` requires `tests`;
 `writes` non-empty for nodes with checks. Plan changes are laws (§5) by owner or
 parent. Removing or weakening an obligation of a node relative to the previous
@@ -83,19 +87,22 @@ listed in reports as ΔO⁻.
 An item is `(subject, obligation, key)`; status is evaluated per item.
 All keys are sha256 hex over canonical JSON.
 
-- `readsDigest(commit, globs)` = sha256 of the sorted list of `[path, blobOid]`
-  for files of `commit` matching any glob (whole-tree `**` may use the tree OID).
+- `readsDigest(commit, globs)` = sha256 of the sorted list of `[path, mode, blobOid]`
+  for files of `commit` matching any glob (the mode is content: an executable bit
+  or symlink changes behavior).
 - `closureDigest(base)` = `readsDigest(base, plan.closure)`.
 - Check item key on tree-bearing commit C with base B:
   `H({o:"check", id, run, timeout_s, setup, min_tests, closure: closureDigest(B), reads: readsDigest(C, reads)})`.
   Because keys use content, a merge commit whose tree equals the candidate's
   tree reuses the candidate's observations automatically.
-- Red item key: `H({o:"red", id, run, red_expect, closure: closureDigest(B), base: treeOid(B), tests: readsDigest(C, tests)})`.
+- Red item key: `H({o:"red", id, run, red_expect, timeout_s, setup, min_tests, closure: closureDigest(B), base: treeOid(B), tests: readsDigest(C, tests)})`.
 - Writes item key: `H({o:"writes", base: B, cand: C, writes})`.
 - Closure-review item (exists iff diff(B,C) touches a closure glob):
-  `H({o:"closure-review", patch: patchId(B,C)})`.
-- Review item key: `H({o:"review", patch: patchId(B,C)})` where `patchId` is
-  `git patch-id --stable` of `git diff B C` (empty diff → sha256 of "").
+  `H({o:"closure-review", patch})`.
+- Review item key: `H({o:"review", patch})` where `patch` = sha256 of the exact
+  bytes of `git diff --binary --full-index --no-renames B C` (empty diff → sha256
+  of ""). Not `git patch-id`: it ignores whitespace, which can change meaning.
+- Check ids may contain `:`; an obligation name splits only at its first colon.
 - Rulings item: `H({o:"rulings", attempt})` (§5.6).
 - Invariant item on trunk state S: `H({o:"inv", id, run, timeout_s, setup, min_tests, closure: closureDigest(S), reads: readsDigest(S, reads)})`.
 
@@ -155,9 +162,11 @@ harness, materialization failure) is ⊥: no information, no block.
     failure is deterministic for the old content and the block clears. If it
     passes, key k is ⊤ and the block becomes **flaky**: only an owner `waive`
     with `accept_risk` citing it clears it.
-  - Judgment block (review block of rank r): cleared by a later `review ok` on
-    the **current key** of that item with rank ≥ r (the same reviewer may clear
-    it), or an owner `waive` with `accept_risk` citing it.
+  - Judgment block (review block of rank r by reviewer A): cleared by a later
+    `review ok` on the **current key** of that item either by A with rank ≥ r or
+    by anyone with rank > r (owner = 3), or by an owner `waive` with
+    `accept_risk` citing it. A same-rank ok by a different reviewer is a dissent:
+    the block stays and the item goes to the owner (a4.1 ruling 5).
   - A waiver or ok on another key never clears a block (a4.1 ruling 1).
 - W ⟺ item not in E, owner `waive` on the same key, and every active block on
   (n, o) is cited in its `accept_risk`. Invariant items are never in W.

@@ -243,3 +243,28 @@ test('pure replay and queries leave caller entries/plans unchanged and determini
   assert.deepEqual(a, b); assert.equal(JSON.stringify({ entries: r.entries, plans: r.plans }), before);
   a.plan.nodes[0]!.writes.push('bad/'); assert.equal(r.plans.p!.nodes[0]!.writes.length, 1);
 });
+test('review F6: a check id containing a colon runs that check, not its prefix', () => {
+  const p = plan(); p.nodes[0]!.checks = [{ id: 'unit', run: 'true', timeout_s: 10, reads: ['**'] }, { id: 'unit:security', run: 'exit 7', timeout_s: 10, reads: ['**'] }];
+  const r = rig(p); r.dispatch(); r.submit(facts('1', { keys: { 'check:unit': 'k1', 'check:unit:security': 'k2', writes: 'w', rulings: 'r', review: 'rv' } }));
+  const job = attestJobs(r.state(), 'a').find(j => j.obligation === 'check:unit:security');
+  assert.equal(job?.spec?.run, 'exit 7');
+});
+test('review F4: same-rank different reviewer cannot clear a judgment block; author or higher rank can', () => {
+  const p = plan(); p.nodes[0]!.review = { count: 1, min_rank: 1 };
+  const r = rig(p); r.dispatch(); r.submit(); r.pass(); r.genesis(); r.review('block', 2, 'review1', 'reviewer:A');
+  r.submit(facts('2')); r.pass(facts('2'));
+  r.review('ok', 2, 'review2', 'reviewer:B'); assert.equal(r.state().nodes.a!.accepted, false);
+  r.review('ok', 2, 'review2', 'reviewer:A'); assert.equal(r.state().nodes.a!.accepted, true);
+});
+test('review F3: a plan change to the node invalidates the candidate facts', () => {
+  const r = accepted(); assert.equal(r.state().nodes.a!.accepted, true);
+  const p2 = plan(); p2.nodes[0]!.checks[0]!.min_tests = 2; r.plans.p2 = p2;
+  r.add({ kind: 'plan', by: 'parent:main', prior: 'p', plan: 'p2', downgrades: [] });
+  const n = r.state().nodes.a!; assert.equal(n.accepted, false); assert.equal(n.candidate, undefined); assert.equal(n.phase, 'dispatched');
+});
+test('review F5: an invariant removed by the owner before its genesis observation does not block merges', () => {
+  const r = rig(); r.dispatch(); r.submit(); r.pass();
+  const p2 = plan(); p2.invariants = []; r.plans.p2 = p2;
+  r.add({ kind: 'plan', by: 'owner:human', channel: 'tty', prior: 'p', plan: 'p2', downgrades: [] });
+  assert.equal(r.state().genesisDone, true);
+});

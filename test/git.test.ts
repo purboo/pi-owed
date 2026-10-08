@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, access } from 'node:fs/promises';
+import { readFile, access, chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 import { repo } from './helpers/repo.ts';
 import { parsePlan } from '../src/plan.ts';
@@ -40,5 +40,26 @@ test('merge conflicts do not move refs', async () => {
     await r.put('a', 'base\n'); const base = await r.commit(); await r.put('a', 'left\n'); const left = await r.commit();
     await git(r.cwd, ['checkout', '-b', 'right', base]); await r.put('a', 'right\n'); const right = await r.commit();
     const m = await buildMerge(r.cwd, left, right, 'conflict'); assert.ok('conflicts' in m); assert.ok(m.conflicts.length); assert.equal(await revParse(r.cwd, 'main'), left);
+  } finally { await r.cleanup(); }
+});
+test('review F1/F2/F3: mode, whitespace and min_tests change keys', async () => {
+  const r = await repo(); try {
+    await r.put('run.sh', '#!/bin/sh\nexit 0\n'); await chmod(join(r.cwd, 'run.sh'), 0o755);
+    await r.put('cfg.json', '{"deny":"read only"}\n'); await r.put('src/a', 'x'); await r.put('test/a', 't'); const base = await r.commit();
+    const text = (min: number) => `version: 1\ntrunk: main\nclosure: [cfg.json]\ninvariants: [{id: inv, run: ./run.sh}]\nnodes:\n - id: a\n   writes: [src/, cfg.json, run.sh]\n   checks: [{id: 'unit:security', run: t, red: true, tests: ['test/**'], min_tests: ${min}}]`;
+    const plan = parsePlan(text(1));
+    const s0 = await stateFacts(r.cwd, plan, base);
+    await chmod(join(r.cwd, 'run.sh'), 0o644);
+    const s1 = await stateFacts(r.cwd, plan, await r.commit());
+    assert.notEqual(s1.invKeys.inv, s0.invKeys.inv, 'mode change must change the invariant key');
+    await r.put('cfg.json', '{"deny":"read only"}\n'); await r.put('src/a', 'y'); const c1 = await r.commit();
+    const f1 = await candidateFacts(r.cwd, plan, plan.nodes[0]!, base, c1, 1);
+    await git(r.cwd, ['reset', '-q', '--hard', base]);
+    await r.put('cfg.json', '{"deny":"readonly"}\n'); await r.put('src/a', 'y'); const c2 = await r.commit();
+    const f2 = await candidateFacts(r.cwd, plan, plan.nodes[0]!, base, c2, 1);
+    assert.notEqual(f1.keys.review, f2.keys.review, 'whitespace inside a string changes meaning');
+    assert.ok(f1.keys['check:unit:security'] && f1.keys['red:unit:security']);
+    const p2 = parsePlan(text(2)), f3 = await candidateFacts(r.cwd, p2, p2.nodes[0]!, base, c2, 1);
+    assert.notEqual(f3.keys['red:unit:security'], f2.keys['red:unit:security'], 'min_tests is part of the red item');
   } finally { await r.cleanup(); }
 });

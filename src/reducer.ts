@@ -97,7 +97,8 @@ function refresh(s: State): void {
   const g = context(s).genesis;
   // Genesis covers the invariants of the genesis plan; invariants added later are
   // judged by the no-new-debt rule on the first merge that carries their key.
-  s.genesisDone = !!g && context(s).plans(g.plan).invariants.every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
+  // Invariants removed later by the owner (a visible downgrade) are exempt.
+  s.genesisDone = !!g && context(s).plans(g.plan).invariants.filter(i => s.plan.invariants.some(c => c.id === i.id)).every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
 }
 
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
@@ -116,6 +117,9 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     } else if (e.kind === 'plan') {
       const next = structuredClone(plans(e.plan));
       const detected = downgradeDetails(s.plan, next);
+      // A candidate's facts were computed under the old plan; if its node's
+      // obligations, setup or closure changed, the writer must submit again.
+      for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(nodeSpec(s, n.id)) !== canonical(next.nodes.find(x => x.id === n.id)) || s.plan.setup !== next.setup || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
       s.plan = next; s.planSha = e.plan;
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items });
@@ -142,7 +146,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     } else if (e.kind === 'review') {
       const n = s.nodes[e.node]!;
       if (e.verdict === 'block') n.blocks.push({ seq: e.seq, node: e.node, obligation: e.obligation, kind: 'judgment', key: e.key, rank: e.rank, state: 'active' });
-      else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && e.rank >= (b.rank ?? 0)) { b.state = 'cleared'; b.clearedBy = e.seq; }
+      else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === h.entries.find(x => x.seq === b.seq)?.by))) { b.state = 'cleared'; b.clearedBy = e.seq; }
     } else if (e.kind === 'waive') {
       const n = s.nodes[e.node]!;
       for (const b of n.blocks) if (active(b) && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && e.accept_risk?.includes(b.seq)) { b.state = 'cleared'; b.clearedBy = e.seq; }
@@ -269,7 +273,7 @@ export function validateDraft(s: State, d: Draft): string[] {
 
 function job(spec: NodeSpec | undefined, subject: string, obligation: string, key: string, commit: string, base: string, plan: Plan): AttestJob | undefined {
   if (obligation === 'writes') return { kind: 'writes', subject, obligation, key, commit, base };
-  const [kind, id] = obligation.split(':');
+  const colon = obligation.indexOf(':'), kind = obligation.slice(0, colon), id = obligation.slice(colon + 1);
   if (kind !== 'check' && kind !== 'red' && kind !== 'inv') return undefined;
   const check = (kind === 'inv' ? plan.invariants : spec?.checks)?.find(c => c.id === id);
   return check ? { kind, subject, obligation, key, spec: structuredClone(check), commit, base } : undefined;
