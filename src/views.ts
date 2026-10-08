@@ -40,7 +40,7 @@ const phaseNames: Record<string,string> = { ready: '可派发', blocked: '依赖
 function itemText(i: ItemView & { observations?: Entry[] }): string {
   const label = i.status === 'W' ? '免' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? '评审' : i.obligation === 'rulings' ? '裁决已确认' : '实测') : ({ '✘': '拒收', '⊥': '待观察', '⊤': '冲突', '⏸': '缓判', '封': '被封' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' 弱确认' : ''})` : `#${e.seq}`).join('; ');
-  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
+  return `${i.mark}${i.mark === '封' ? '' : ` ${label}`} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
 export function renderReceipt(v: ReceiptCard): string {
   return [`${v.node}：${phaseNames[v.phase]}`, ...v.items.map(itemText), ...v.blocks.map(b => `封 #${b.seq} ${b.obligation}：${b.clear}`), `未测改动：${v.untested.join('、') || '无'}`, `未测义务 ΔO⁻：${JSON.stringify(v.downgrades)}`, `owner flag 弱确认：${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join('、') || '无'}`].join('\n');
@@ -48,6 +48,30 @@ export function renderReceipt(v: ReceiptCard): string {
 export function renderStatus(v: StatusView): string {
   return [`主干 ${v.trunk.name} ${v.trunk.commit}`, `可派发（按依赖者数）：${v.ready.join('、') || '无'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}：${ns.join('、')}`), ...Object.entries(v.pending).map(([k,is]) => `待办 ${k}：\n${is.map(itemText).join('\n') || '无'}`), '主干不变量：', ...v.invariants.map(itemText), `owner flag 弱确认：${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join('、') || '无'}`].join('\n');
 }
+const statusNames: Record<string,string> = { E: '已证', W: '已免', D: '欠' };
+function entryLine(e: Entry): string {
+  const head = `#${e.seq} ${e.by}${e.channel === 'flag' ? '（flag 弱确认）' : ''}`;
+  switch (e.kind) {
+    case 'merge': return `${head} 合并 ${e.node} → ${e.commit.slice(0, 12)}`;
+    case 'waive': return `${head} 免除 ${e.node}/${e.obligation}：${e.reason}${e.accept_risk?.length ? `（承担封 ${e.accept_risk.map(x => `#${x}`).join('、')}）` : ''}`;
+    case 'defer': return `${head} 缓判 ${e.node} 合并后不变量 ${e.items.map(i => i.id).join('、')}：${e.reason}`;
+    case 'genesis': return `${head} 初始化账本，主干 ${e.trunk} ${e.commit.slice(0, 12)}`;
+    case 'plan': return `${head} 更新计划${e.downgrades.length ? `，降级 ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('；')}` : ''}`;
+    case 'rule': return `${head} 裁决（${e.nodes === '*' ? '全部节点' : e.nodes.join('、')}）：${e.text}`;
+    case 'review': return `${head} 评审 ${e.node}/${e.obligation ?? 'review'} ${e.verdict} rank=${e.rank}${e.note ? `：${e.note}` : ''}`;
+    default: return `${head} ${e.kind}`;
+  }
+}
+export function renderEntry(e: Entry): string { return `已记录 ${entryLine(e)}`; }
 export function renderReport(v: Report): string {
-  return [`报告 since=${v.since}`, `合并：${v.merges.map(e => e.kind === 'merge' ? `${e.node} ${e.commit}` : '').join('、') || '无'}`, `E/W/D 变化：${JSON.stringify(v.changes)}`, `封：${JSON.stringify(v.blocks)}`, `免：${JSON.stringify(v.waivers)}`, `降级 ΔO⁻：${JSON.stringify(v.downgrades)}`, `裁决：${JSON.stringify(v.rulings)}`, `owner 决策：\n${v.decisions.map(itemText).join('\n') || '无'}`, `owner 操作（flag 为弱确认）：${JSON.stringify(v.ownerActions)}`].join('\n');
+  const list = (title: string, lines: string[]) => [`${title}${lines.length ? '' : '：无'}`, ...lines.map(l => `  ${l}`)];
+  return [`报告（since ${v.since === -1 ? '开始' : v.since}）`,
+    ...list('合并', v.merges.map(entryLine)),
+    ...list('状态变化', v.changes.map(c => `${c.subject}/${c.obligation}：${c.before ? statusNames[c.before] ?? c.before : '新'} → ${statusNames[c.after] ?? c.after}`)),
+    ...list('仍有效的封', v.blocks.map(b => `#${b.seq} ${b.node}/${b.obligation}（${b.kind === 'exec' ? '执行' : '评审'}，rank ${b.rank}）：${b.clear}`)),
+    ...list('免除', v.waivers.map(entryLine)),
+    ...list('降级 ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.by} ${i.node}: ${i.what}`))),
+    ...list('裁决', v.rulings.map(r => `#${r.seq} ${r.by}（${r.nodes === '*' ? '全部节点' : r.nodes.join('、')}）：${r.text}`)),
+    ...list('需要 owner 决定', v.decisions.map(itemText)),
+    ...list('owner 操作', v.ownerActions.map(entryLine))].join('\n');
 }

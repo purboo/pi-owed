@@ -28,7 +28,8 @@ async function load(ledger: Ledger, extra: string[] = []) {
   const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`缺少 plan ${sha}`, 'internal'); return p; };
   return { entries, lookup, state: reduce(entries,lookup) };
 }
-function node(s: State, id: string) { const n = s.nodes[id]; if (!n) throw new OwedError(`节点 ${id} 不存在`); return n; }
+function inited(s: State): State { if (s.seq < 0) throw new OwedError('尚未 init：先运行 owed init <plan.yaml>'); return s; }
+function node(s: State, id: string) { const n = inited(s).nodes[id]; if (!n) throw new OwedError(`节点 ${id} 不存在`); return n; }
 function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.open || !n.candidate) throw new OwedError(`节点 ${id} 没有开放候选`); return n; }
 function stable(before: State, after: State, id?: string): void {
   if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('计划、候选或 trunk 已改变，请重试');
@@ -145,10 +146,10 @@ export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
     });
   },'merge');
 }
-export async function status(o: Context): Promise<StatusView> { const {state,entries} = await load(await Ledger.open(o.cwd)); return statusView(state,entries); }
+export async function status(o: Context): Promise<StatusView> { const {state,entries} = await load(await Ledger.open(o.cwd)); return statusView(inited(state),entries); }
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> { const {state,entries} = await load(await Ledger.open(o.cwd)); node(state,o.node); return receipt(state,entries,o.node); }
 export async function report(o: Context & {since?:number|string}): Promise<Report> {
-  const {state,entries,lookup} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1;
+  const {state,entries,lookup} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since 必须为 seq 或 ISO 时间','usage');
   const included = (e: {seq:number;ts?:string}) => typeof since === 'number' ? e.seq > since : Date.parse(e.ts ?? entries[e.seq]?.ts ?? '') > Date.parse(since);
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];

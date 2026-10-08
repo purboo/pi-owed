@@ -112,4 +112,4 @@ node --test --test-concurrency=2 'test/**/*.test.ts'
 npm pack --dry-run
 ```
 
-The package ships compiled `dist/`, its entry point, CLI, skill, docs, and license. Source checkouts can load `index.js` with pi; it prefers the built extension when present. See `docs/SPEC.md` for the acceptance rules and `docs/MODULES.md` for module contracts.
+The package ships compiled `dist/`, its entry point, CLI, skill, docs, and license. Source checkouts can load `index.js` with pi; it prefers the built extension when present. Delete `dist/` after packing when you work from source, or the CLI and extension keep using the stale build. See `docs/SPEC.md` for the acceptance rules and `docs/MODULES.md` for module contracts.

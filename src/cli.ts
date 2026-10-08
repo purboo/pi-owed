@@ -6,7 +6,8 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan } from './plan.ts';
 import { OwedError } from './errors.ts';
-import { renderReceipt, renderStatus, renderReport } from './views.ts';
+import { renderReceipt, renderStatus, renderReport, renderEntry } from './views.ts';
+import type { Entry } from './types.ts';
 import type { Channel, Principal, Role } from './types.ts';
 const HELP = `owed — 多代理验收账本\n用法：owed <命令> [参数] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> | rule <text> --nodes a,b|*\ndispatch <node> | submit <node> [--commit X] | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--reason TEXT]\nmerge <node> | status | why <node> | report [--since seq|ISO] | verify\nowner 操作需要 TTY 确认或 --i-am-owner（flag 弱确认）。`;
 const values = new Set(['as','commit','nodes','rank','note','ack-rulings','obligation','reason','accept-risk','since']);
@@ -37,22 +38,23 @@ export async function main(argv: string[]): Promise<number> {
     const actor={cwd,as:principal,channel}, node=args[0]!;
     let result:unknown, text:string|undefined, exit=0;
     switch(cmd) {
-      case 'init': result=await ops.init({...actor,channel:channel!,plan:await readFile(resolve(cwd,node),'utf8')}); break;
+      case 'init': { const r=await ops.init({...actor,channel:channel!,plan:await readFile(resolve(cwd,node),'utf8')}); result=r; text=`${renderEntry(r.entry)}\n初始观察 ${r.observations.length} 条\n${renderStatus(r.status)}`; break; }
       case 'plan': result=await ops.planSet({...actor,plan:await readFile(resolve(cwd,node),'utf8')}); break;
       case 'rule': { const nodes=value('nodes',true)!; result=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(',')}); break; }
-      case 'dispatch': result=await ops.dispatch({...actor,node}); break;
+      case 'dispatch': { const r=await ops.dispatch({...actor,node}); result=r; text=`${r.packet}\n\n---\n已派发 ${r.node} attempt ${r.attempt}\nworktree：${r.worktree}\nbranch：${r.branch}\nwriter 在 worktree 内 commit 后运行 owed submit ${r.node}`; break; }
       case 'submit': result=await ops.submit({...actor,node,commit:value('commit')}); break;
       case 'attest': { const r=await ops.attest({cwd,node,rerun:opts.has('rerun')}); result=r; text=renderReceipt(r.receipt); exit=r.accepted ? 0 : 1; break; }
       case 'review': { if(opts.has('ok') === opts.has('block')) usage('review 需要 --ok 或 --block'); const obligation=value('obligation'); if(obligation && !['review','closure-review'].includes(obligation)) usage('无效 review obligation'); result=await ops.review({...actor,node,verdict:opts.has('ok')?'ok':'block',rank:integer('rank',true)!,note:value('note') ?? '',ack_rulings:integer('ack-rulings'),obligation:obligation as 'review'|'closure-review'|undefined}); break; }
       case 'waive': { const risk=value('accept-risk'); if(risk && !/^\d+(,\d+)*$/.test(risk)) usage('accept-risk 必须为 seq 列表'); result=await ops.waive({...actor,channel:channel!,node,obligation:args[1]!,reason:value('reason',true)!,accept_risk:risk?.split(',').map(Number)}); break; }
       case 'defer': { const s=await ops.status({cwd}), n=s.nodes[node]; if(!n?.candidate) throw new OwedError('defer 需要当前候选'); const ledger=await Ledger.open(cwd), entries=await ledger.read(), law=entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis'); if(!law || (law.kind !== 'plan' && law.kind !== 'genesis')) throw new OwedError('缺少计划'); const plan=parsePlan((await ledger.getBlob(law.plan)).toString()); const m=await git.buildMerge(cwd,s.trunk.commit,n.candidate.commit,`owed merge ${node}`); if('conflicts' in m) throw new OwedError('rebase needed'); const facts=await git.stateFacts(cwd,plan,m.commit); result=await ops.defer({...actor,channel:channel!,node,items:args.slice(1).map(id => ({id,key:facts.invKeys[id] ?? ''})),reason:value('reason',true)!}); break; }
       case 'abandon': result=await ops.abandon({...actor,node,reason:value('reason') ?? ''}); break;
-      case 'merge': result=await ops.merge({...actor,node}); break;
+      case 'merge': { const r=await ops.merge({...actor,node}); result=r; text=`${renderEntry(r.entry)}\n主干已推进到 ${r.commit}${r.deferred.length ? `\n缓判债务仍保留：${r.deferred.map(i => `${i.subject}/${i.obligation}`).join('、')}` : ''}`; break; }
       case 'status': { const r=await ops.status({cwd}); result=r; text=renderStatus(r); break; }
       case 'why': { const r=await ops.why({cwd,node}); result=r; text=renderReceipt(r); break; }
       case 'report': { const v=value('since'), r=await ops.report({cwd,since:v && /^\d+$/.test(v) ? Number(v) : v}); result=r; text=renderReport(r); break; }
       case 'verify': { const r=await ops.verify({cwd}); result=r; text=r.ok ? `账本验证通过：${r.entries} 条记录` : `账本验证失败：${r.error}`; exit=r.ok ? 0 : 3; break; }
     }
-    console.log(opts.has('json') ? JSON.stringify(result) : text ?? `完成 ${cmd}${channel === 'flag' ? '（owner flag 弱确认）' : ''}\n${JSON.stringify(result,null,2)}`); return exit;
+    if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }
+    console.log(opts.has('json') ? JSON.stringify(result) : text); return exit;
   } catch(e) { const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); console.error(`${error.code === 'usage' ? '用法错误' : error.code === 'refused' ? '拒绝' : '内部错误'}：${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3; }
 }
