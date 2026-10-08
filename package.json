@@ -1,0 +1,29 @@
+{
+  "name": "pi-owed",
+  "version": "0.1.0",
+  "description": "owed — the acceptance ledger for multi-agent task graphs. No receipt, not done.",
+  "type": "module",
+  "license": "MIT",
+  "author": "purboo",
+  "keywords": ["pi-package", "agents", "acceptance", "ledger", "merge-gate", "dag"],
+  "engines": { "node": ">=22.19" },
+  "bin": { "owed": "bin/owed.js" },
+  "pi": { "extensions": ["./index.js"], "skills": ["./skills"] },
+  "files": ["index.js", "bin", "dist", "skills", "docs", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --test-concurrency=2 'test/**/*.test.ts'",
+    "check": "npm run typecheck && npm test",
+    "prepack": "npm run build"
+  },
+  "dependencies": { "yaml": "^2.5.0" },
+  "peerDependencies": { "@earendil-works/pi-ai": "*", "@earendil-works/pi-coding-agent": "*" },
+  "peerDependenciesMeta": { "@earendil-works/pi-ai": { "optional": true }, "@earendil-works/pi-coding-agent": { "optional": true } },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "1.0.2",
+    "@earendil-works/pi-coding-agent": "1.0.2",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}
