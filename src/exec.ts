@@ -6,7 +6,7 @@ import { git, materialize, overlay } from './git.ts';
 export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; signal?: AbortSignal; onProgress?(msg: string): void }
 export function parseCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
-  for (const m of log.matchAll(/^\s*#\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
+  for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
     const key = m[1] === 'skipped' ? 'skip' : m[1] as 'tests' | 'pass' | 'fail' | 'skip'; tap[key] = Number(m[2]);
   }
   if (Object.keys(tap).length > 1) { tap.tests ??= (tap.pass ?? 0) + (tap.fail ?? 0) + (tap.skip ?? 0); return tap; }
@@ -49,7 +49,10 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string }> {
     return new Promise(resolve => {
       let output = Buffer.alloc(0), error: string | undefined;
-      const p = spawn('bash', ['-lc', run], { cwd, detached: true, env: { ...process.env, CI: '1', OWED: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      const env: NodeJS.ProcessEnv = { ...process.env, CI: '1', OWED: '1' };
+      // A nested Node test runner must not inherit the parent's IPC/reporting mode.
+      delete env.NODE_TEST_CONTEXT;
+      const p = spawn('bash', ['-lc', run], { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
       p.stdout.on('data', collect); p.stderr.on('data', collect);
       const kill = () => { if (p.pid) { try { process.kill(-p.pid, 'SIGKILL'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };

@@ -50,7 +50,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
   keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes });
   const closureTouched = changed.some(p => matchesAny(p, plan.closure));
   if (closureTouched) keys['closure-review'] = H({ o: 'closure-review', patch });
-  if (node.review.count) keys.review = H({ o: 'review', patch });
+  keys.review = H({ o: 'review', patch });
   keys.rulings = H({ o: 'rulings', attempt });
   return { commit, base, tree: await tree(cwd, commit), patch, changed, closureTouched, keys };
 }
