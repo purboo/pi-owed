@@ -1,0 +1,122 @@
+[
+  {
+    "scenario": "flakyDebt",
+    "property": "DeferredDebtVisible",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "5",
+    "new_distinct": "5"
+  },
+  {
+    "scenario": "launderReview",
+    "property": "DeferredDebtVisible",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "33",
+    "new_distinct": "33"
+  },
+  {
+    "scenario": "launderTest",
+    "property": "DeferredDebtVisible",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "101",
+    "new_distinct": "101"
+  },
+  {
+    "scenario": "matrix",
+    "property": "DeferredDebtVisible",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "6",
+    "new_distinct": "6"
+  },
+  {
+    "scenario": "rerun",
+    "property": "DeferredDebtVisible",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "72",
+    "new_distinct": "72"
+  },
+  {
+    "scenario": "flakyDebt",
+    "property": "EscapeAttributable",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "5",
+    "new_distinct": "5"
+  },
+  {
+    "scenario": "launderReview",
+    "property": "EscapeAttributable",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "33",
+    "new_distinct": "33"
+  },
+  {
+    "scenario": "launderTest",
+    "property": "EscapeAttributable",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "101",
+    "new_distinct": "101"
+  },
+  {
+    "scenario": "matrix",
+    "property": "EscapeAttributable",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "6",
+    "new_distinct": "6"
+  },
+  {
+    "scenario": "rerun",
+    "property": "EscapeAttributable",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "72",
+    "new_distinct": "72"
+  },
+  {
+    "scenario": "flakyDebt",
+    "property": "NoBypassedNegative",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "5",
+    "new_distinct": "5"
+  },
+  {
+    "scenario": "launderReview",
+    "property": "NoBypassedNegative",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "33",
+    "new_distinct": "33"
+  },
+  {
+    "scenario": "launderTest",
+    "property": "NoBypassedNegative",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "101",
+    "new_distinct": "101"
+  },
+  {
+    "scenario": "matrix",
+    "property": "NoBypassedNegative",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "6",
+    "new_distinct": "6"
+  },
+  {
+    "scenario": "rerun",
+    "property": "NoBypassedNegative",
+    "old": "HOLDS",
+    "new": "HOLDS",
+    "old_distinct": "72",
+    "new_distinct": "72"
+  }
+]

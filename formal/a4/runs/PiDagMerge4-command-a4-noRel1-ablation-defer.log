@@ -1,0 +1,200 @@
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/home/purboo/project/pi-things/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4-noRel1", "StateNeverWaived NoBypassedNegative NoFlakyRerunEscape JudgedAtCommit NothingMerged NoOwnerWaivedMerge", "Scenario = \"defer\"; O = o; K0 = k0; K1 = k1", "-ablation-defer"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /home/purboo/project/pi-things/pi-dag/formal/a4/check.sh
++ cd /home/purboo/project/pi-things/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4-noRel1
++ props='StateNeverWaived NoBypassedNegative NoFlakyRerunEscape JudgedAtCommit NothingMerged NoOwnerWaivedMerge'
++ consts='Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ tag=-ablation-defer
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-defer
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-defer.cfg
++ echo '# cfg    sha256 f383f4a9a3392d9e7907d667ccc0789c492e76045bd5c13337fbcf30002b9246'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:07:30+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-defer.states -config runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-defer.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-defer.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-defer.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-defer.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 StateNeverWaived HOLDS '10 distinct states found'
+PiDagMerge4      a4-noRel1 StateNeverWaived       HOLDS     10 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-defer
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-defer.cfg
++ echo '# cfg    sha256 0cb37c3cc3cd99fe257f8ff55a921acb425ad4c9b3ffaef6377562602aebc3f4'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:07:32+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-defer.states -config runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-defer.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-defer.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-defer.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-defer.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NoBypassedNegative HOLDS '10 distinct states found'
+PiDagMerge4      a4-noRel1 NoBypassedNegative     HOLDS     10 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-defer
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-defer.cfg
++ echo '# cfg    sha256 0b38c404f7dcc19648df6d390c928c1cbcf33e7b9ff1da7448d5e6730225b230'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:07:34+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-defer.states -config runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-defer.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-defer.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-defer.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-defer.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NoFlakyRerunEscape HOLDS '10 distinct states found'
+PiDagMerge4      a4-noRel1 NoFlakyRerunEscape     HOLDS     10 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-defer
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-defer.cfg
++ echo '# cfg    sha256 73770ed59dda1d309079d0d9c33cb6a6749076c70d10574910db894a341d74eb'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:07:36+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-defer.states -config runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-defer.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-defer.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-defer.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-defer.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 JudgedAtCommit HOLDS '10 distinct states found'
+PiDagMerge4      a4-noRel1 JudgedAtCommit         HOLDS     10 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer.cfg
++ echo '# cfg    sha256 3fbe66f1c8ada33711cde74aec08d802704ff9606ea3809ecdf6e81666abb211'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:07:37+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer.states -config runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-defer.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NothingMerged VIOLATED '9 distinct states found'
+PiDagMerge4      a4-noRel1 NothingMerged          VIOLATED  9 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-defer
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-defer.cfg
++ echo '# cfg    sha256 d51c3383e145169f6232a1d68cc18459573fca6a11985393b2442093a5d94874'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:07:39+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-defer.states -config runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-defer.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-defer.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-defer.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-defer.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NoOwnerWaivedMerge HOLDS '10 distinct states found'
+PiDagMerge4      a4-noRel1 NoOwnerWaivedMerge     HOLDS     10 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0

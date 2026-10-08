@@ -1,0 +1,202 @@
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/home/purboo/project/pi-things/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4-noRel1", "StateNeverWaived NoBypassedNegative NoFlakyRerunEscape JudgedAtCommit NothingMerged NoOwnerWaivedMerge", "Scenario = \"launderReview\"; O = o; K0 = k0; K1 = k1", "-ablation-launderReview"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /home/purboo/project/pi-things/pi-dag/formal/a4/check.sh
++ cd /home/purboo/project/pi-things/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4-noRel1
++ props='StateNeverWaived NoBypassedNegative NoFlakyRerunEscape JudgedAtCommit NothingMerged NoOwnerWaivedMerge'
++ consts='Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tag=-ablation-launderReview
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-launderReview.cfg
++ echo '# cfg    sha256 bdc5b504df1ce04220b4e6698894a52ce47c9cee3d807814c45da5861d01680c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:06:46+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-launderReview.states -config runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-launderReview.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-launderReview.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-launderReview.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-StateNeverWaived-ablation-launderReview.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 StateNeverWaived HOLDS '49 distinct states found'
+PiDagMerge4      a4-noRel1 StateNeverWaived       HOLDS     49 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview.cfg
++ echo '# cfg    sha256 42af5189a9c72b1d6c67533fa9c4a6156d1a7f10a4f93962823542c1c63700fc'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:06:48+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview.states -config runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NoBypassedNegative-ablation-launderReview.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NoBypassedNegative VIOLATED '23 distinct states found'
+PiDagMerge4      a4-noRel1 NoBypassedNegative     VIOLATED  23 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-launderReview.cfg
++ echo '# cfg    sha256 0599365aaaaa61a28201af5b5a2e78f113835683ff8407afa4bc68ad3c2e8b93'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:06:50+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-launderReview.states -config runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-launderReview.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-launderReview.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-launderReview.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NoFlakyRerunEscape-ablation-launderReview.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NoFlakyRerunEscape HOLDS '49 distinct states found'
+PiDagMerge4      a4-noRel1 NoFlakyRerunEscape     HOLDS     49 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-launderReview.cfg
++ echo '# cfg    sha256 fdec3c191aa178fb80dbc7203eb350c2581e4554c69d7e3f844cd1a2c59d7a7f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:06:51+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-launderReview.states -config runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-launderReview.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-launderReview.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-launderReview.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-JudgedAtCommit-ablation-launderReview.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 JudgedAtCommit HOLDS '49 distinct states found'
+PiDagMerge4      a4-noRel1 JudgedAtCommit         HOLDS     49 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview.cfg
++ echo '# cfg    sha256 de258446b4ed541f690100ae02354111b868dc7dcb43385c04d95059ab1d53d4'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:06:53+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview.states -config runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NothingMerged-ablation-launderReview.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NothingMerged VIOLATED '23 distinct states found'
+PiDagMerge4      a4-noRel1 NothingMerged          VIOLATED  23 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview.cfg
++ echo '# cfg    sha256 a295cffc5af119c8a7e806aac6decb678b1888cfa953ab421991b03a14604537'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:06:55+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview.states -config runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-NoOwnerWaivedMerge-ablation-launderReview.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 NoOwnerWaivedMerge VIOLATED '27 distinct states found'
+PiDagMerge4      a4-noRel1 NoOwnerWaivedMerge     VIOLATED  27 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0

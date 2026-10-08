@@ -1,0 +1,3268 @@
+[
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.319,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-AuthoritySound-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.27,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-DecisionAuthority-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.219,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NoWriterJudge-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.12,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NoAuthorJudge-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.069,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-RelevantInvalidates-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.119,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-UnrelatedPreserves-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.118,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-StateRemainsDebt-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.219,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-ConflictDebt-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.169,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-SamePrincipalSupersedes-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.069,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-RetroHonored-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.27,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-FuturePreserves-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "AllSafety",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.27,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-AllSafety-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.52,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-GoodProgress-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.469,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-Finished-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.12,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NothingMerged-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.172,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NothingDeferredMerged-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.32,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NothingParentWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NothingCrossWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.27,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NothingCrossWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NothingSpeechWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.224,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NothingSpeechWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a3",
+      "NothingRevivedWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 1.169,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a3-NothingRevivedWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.069,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-AuthoritySound-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.771,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-DecisionAuthority-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.323,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NoWriterJudge-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.372,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NoAuthorJudge-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.422,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-RelevantInvalidates-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.821,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-UnrelatedPreserves-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.323,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-StateRemainsDebt-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.822,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-ConflictDebt-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.227,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-SamePrincipalSupersedes-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.827,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-RetroHonored-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 3.834,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-FuturePreserves-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "AllSafety",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.324,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-AllSafety-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 5.237,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-GoodProgress-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 5.385,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-Finished-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.671,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NothingMerged-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.176,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NothingDeferredMerged-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.527,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NothingParentWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NothingCrossWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.646,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NothingCrossWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NothingSpeechWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.631,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NothingSpeechWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NothingRevivedWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-scenarios"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 3.584,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NothingRevivedWaived-scenarios.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.478,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-AuthoritySound-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.63,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-DecisionAuthority-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.575,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-NoWriterJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.731,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-NoAuthorJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.486,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-RelevantInvalidates-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.484,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-UnrelatedPreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.874,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-StateRemainsDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.174,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-ConflictDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.833,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-SamePrincipalSupersedes-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.128,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-RetroHonored-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.632,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-FuturePreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.531,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-GoodProgress-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.189,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-Finished-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.932,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-NothingMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.225,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-NothingDeferredMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noAuth",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.274,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noAuth-NothingParentWaived-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.746,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-AuthoritySound-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.231,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-DecisionAuthority-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.374,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-NoWriterJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.824,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-NoAuthorJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.522,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-RelevantInvalidates-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.223,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-UnrelatedPreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.935,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-StateRemainsDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 5.921,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-ConflictDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 5.756,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-SamePrincipalSupersedes-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.44,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-RetroHonored-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.78,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-FuturePreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.975,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-GoodProgress-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.23,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-Finished-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.279,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-NothingMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.739,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-NothingDeferredMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noInformed",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.525,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noInformed-NothingParentWaived-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.132,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-AuthoritySound-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 3.279,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-DecisionAuthority-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.027,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-NoWriterJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.355,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-NoAuthorJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.66,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-RelevantInvalidates-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 3.281,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-UnrelatedPreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.692,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-StateRemainsDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 7.413,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-ConflictDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 5.869,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-SamePrincipalSupersedes-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 7.968,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-RetroHonored-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 6.522,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-FuturePreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 7.112,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-GoodProgress-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.727,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-Finished-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.118,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-NothingMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.319,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-NothingDeferredMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRecused",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.519,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRecused-NothingParentWaived-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.169,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-AuthoritySound-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.621,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-DecisionAuthority-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.424,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-NoWriterJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.373,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-NoAuthorJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.524,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-RelevantInvalidates-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.721,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-UnrelatedPreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.473,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-StateRemainsDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.022,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-ConflictDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.52,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-SamePrincipalSupersedes-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.124,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-RetroHonored-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.132,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-FuturePreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.626,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-GoodProgress-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.582,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-Finished-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.475,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-NothingMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.678,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-NothingDeferredMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel1",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 3.23,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel1-NothingParentWaived-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 4.734,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-AuthoritySound-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.772,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-DecisionAuthority-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.574,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-NoWriterJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.323,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-NoAuthorJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.373,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-RelevantInvalidates-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.771,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-UnrelatedPreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.576,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-StateRemainsDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.972,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-ConflictDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.524,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-SamePrincipalSupersedes-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.674,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-RetroHonored-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.971,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-FuturePreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.526,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-GoodProgress-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.427,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-Finished-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.12,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-NothingMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.371,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-NothingDeferredMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel2",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.42,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel2-NothingParentWaived-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "AuthoritySound",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.371,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-AuthoritySound-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "DecisionAuthority",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.874,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-DecisionAuthority-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "NoWriterJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.323,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-NoWriterJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "NoAuthorJudge",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.523,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-NoAuthorJudge-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "RelevantInvalidates",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 2.976,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-RelevantInvalidates-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "UnrelatedPreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.431,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-UnrelatedPreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "StateRemainsDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 3.83,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-StateRemainsDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "ConflictDebt",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 3.227,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-ConflictDebt-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "SamePrincipalSupersedes",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.376,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-SamePrincipalSupersedes-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "RetroHonored",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.825,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-RetroHonored-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "FuturePreserves",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 3.08,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-FuturePreserves-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "P:GoodProgress",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 5.591,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-GoodProgress-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "P:Finished",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "0"
+    ],
+    "seconds": 5.341,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-Finished-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "NothingMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 1.923,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-NothingMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "NothingDeferredMerged",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.223,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-NothingDeferredMerged-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4-noRel3",
+      "NothingParentWaived",
+      "Scope = \"scenarios\"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-ablation"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.075,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-noRel3-NothingParentWaived-ablation.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "AllSafety",
+      "Scope = \"free\"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-free2"
+    ],
+    "env": {
+      "WORKERS": "4",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 5.335,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-AllSafety-free2.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a22",
+      "AuthoritySound",
+      "Scope = \"free\"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-sanity2"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 4.404,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a22-AuthoritySound-sanity2.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a22",
+      "DecisionAuthority",
+      "Scope = \"free\"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-sanity2"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.626,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a22-DecisionAuthority-sanity2.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a22",
+      "NoWriterJudge",
+      "Scope = \"free\"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-sanity2"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 2.631,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a22-NoWriterJudge-sanity2.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "NothingMerged",
+      "Scope = \"free\"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-witness2"
+    ],
+    "env": {
+      "WORKERS": "1",
+      "TLC_HEAP": "2g",
+      "TLC_TIMEOUT": "900"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 13.816,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-NothingMerged-witness2.log"
+  },
+  {
+    "cmd": [
+      "bash",
+      "-x",
+      "formal/a4/check.sh",
+      "PiDagAuth4",
+      "a4",
+      "AllSafety",
+      "Scope = \"free\"; MaxLog = 3; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2",
+      "-free3"
+    ],
+    "env": {
+      "WORKERS": "8",
+      "TLC_HEAP": "12g",
+      "TLC_TIMEOUT": "2400"
+    },
+    "outer_rc": 0,
+    "tlc_rc": [
+      "12"
+    ],
+    "seconds": 6.738,
+    "driver": "formal/a4/runs/PiDagAuth4-driver-a4-AllSafety-free3.log"
+  }
+]

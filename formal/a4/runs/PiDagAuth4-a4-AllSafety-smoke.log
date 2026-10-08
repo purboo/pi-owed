@@ -1,0 +1,184 @@
+# module sha256 4001f72e327e3d889b0643d27ff5c4c7b1e17cb88b49557c2a4a83e1192c80ea
+# cfg    sha256 acf89a69087fb2b9d70d1e59fcc1c01c261ceee2606e8f3f10db6fa76aab3ad0
+# flags  <deadlock checked> <exhaustive> 2026-10-08T23:11:01+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 30 and seed -4511415744809215150 with 1 worker on 20 cores with 910MB heap and 64MB offheap memory [pid: 3559625] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a4/PiDagAuth4.tla
+Parsing file /tmp/tlc-14690768447908377946/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-14690768447908377946/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-14690768447908377946/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-14690768447908377946/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-14690768447908377946/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth4
+Linting of module PiDagAuth4
+Starting... (2026-10-08 23:11:02)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 18 distinct states generated at 2026-10-08 23:11:02.
+Error: Invariant AllSafety is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ authors = [n1 |-> W1, n2 |-> W2]
+/\ log = <<>>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ counted = {}
+/\ pending = { [ type |-> "revoke",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {},
+    node |-> "n1",
+    value |-> "future" ],
+  [ type |-> "grant",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {"n1"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "grant",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "grant",
+    from |-> P1,
+    to |-> P2,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "waive",
+    from |-> P2,
+    to |-> Owner,
+    scope |-> {"n1"},
+    node |-> "n1",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {}
+/\ everSlots = {W1, W2}
+/\ resolver = "none"
+/\ family = "revival"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 2: <Advance line 359, col 16 to line 359, col 47 of module PiDagAuth4>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ authors = [n1 |-> W1, n2 |-> W2]
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0,
+     premises |-> {0} ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ counted = {1}
+/\ pending = { [ type |-> "revoke",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {},
+    node |-> "n1",
+    value |-> "future" ],
+  [ type |-> "grant",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "grant",
+    from |-> P1,
+    to |-> P2,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "waive",
+    from |-> P2,
+    to |-> Owner,
+    scope |-> {"n1"},
+    node |-> "n1",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {1}
+/\ everSlots = {W1, W2}
+/\ resolver = "none"
+/\ family = "revival"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 3: <Advance line 359, col 16 to line 359, col 47 of module PiDagAuth4>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ authors = [n1 |-> W1, n2 |-> W2]
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0,
+     premises |-> {0} ],
+   [ type |-> "revoke",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {},
+     node |-> "n1",
+     value |-> "future",
+     key |-> 0,
+     content |-> 0,
+     premises |-> {0} ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ counted = {1}
+/\ pending = { [ type |-> "grant",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "grant",
+    from |-> P1,
+    to |-> P2,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "waive",
+    from |-> P2,
+    to |-> Owner,
+    scope |-> {"n1"},
+    node |-> "n1",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {1}
+/\ everSlots = {W1, W2}
+/\ resolver = "none"
+/\ family = "revival"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+89 states generated, 89 distinct states found, 62 states left on queue.
+The depth of the complete state graph search is 3.
+Finished in 00s at (2026-10-08 23:11:02)

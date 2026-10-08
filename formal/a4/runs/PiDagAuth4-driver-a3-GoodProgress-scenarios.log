@@ -1,0 +1,48 @@
++ set -u
+++ dirname formal/a4/check.sh
++ cd formal/a4
++ mkdir -p runs
++ mod=PiDagAuth4
++ modes=a3
++ props=P:GoodProgress
++ consts='Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-scenarios
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodProgress
++ case $p in
++ kind=PROPERTY
++ name=GoodProgress
++ base=runs/PiDagAuth4-a3-GoodProgress-scenarios
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodProgress'
+++ sha256sum PiDagAuth4.tla
+++ cut -c1-64
++ echo '# module sha256 37e2b853c6e026bd1130f6ea0ca4d9d9a28b433a7bf07fb2c608d9f1f56ca009'
+++ sha256sum runs/PiDagAuth4-a3-GoodProgress-scenarios.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 e920e7cf835b0bda83b9cad9285961f4bcda7c40601f6a322ff95adb99d60603'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:12:59+08:00'
++ timeout 900 java -Xmx2g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagAuth4-a3-GoodProgress-scenarios.states -config runs/PiDagAuth4-a3-GoodProgress-scenarios.cfg PiDagAuth4.tla
++ rc=0
++ rm -rf runs/PiDagAuth4-a3-GoodProgress-scenarios.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagAuth4-a3-GoodProgress-scenarios.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth4-a3-GoodProgress-scenarios.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth4 a3 GoodProgress HOLDS '1019 distinct states found'
+PiDagAuth4       a3     GoodProgress           HOLDS     1019 distinct states found
++ exit 0

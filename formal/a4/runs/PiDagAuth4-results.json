@@ -1,0 +1,1996 @@
+{
+  "module_sha256": "37e2b853c6e026bd1130f6ea0ca4d9d9a28b433a7bf07fb2c608d9f1f56ca009",
+  "runs": 142,
+  "exit_counts": {
+    "0": 68,
+    "12": 74
+  },
+  "max_driver_seconds": 13.816,
+  "results": [
+    {
+      "mode": "a3",
+      "property": "AuthoritySound",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.319,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-AuthoritySound-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "DecisionAuthority",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.27,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-DecisionAuthority-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NoWriterJudge",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.219,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NoWriterJudge-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NoAuthorJudge",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.12,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NoAuthorJudge-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "RelevantInvalidates",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.069,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-RelevantInvalidates-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "UnrelatedPreserves",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.119,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-UnrelatedPreserves-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "StateRemainsDebt",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.118,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-StateRemainsDebt-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "ConflictDebt",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.219,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-ConflictDebt-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.169,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-SamePrincipalSupersedes-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "RetroHonored",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.069,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-RetroHonored-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "FuturePreserves",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.27,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-FuturePreserves-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "AllSafety",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.27,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-AllSafety-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "GoodProgress",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.52,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-GoodProgress-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "Finished",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.469,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-Finished-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NothingMerged",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 1.12,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NothingMerged-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NothingDeferredMerged",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 197,
+      "tlc_rc": 12,
+      "seconds": 1.172,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NothingDeferredMerged-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NothingParentWaived",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 242,
+      "tlc_rc": 12,
+      "seconds": 1.32,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NothingParentWaived-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NothingCrossWaived",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.27,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NothingCrossWaived-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NothingSpeechWaived",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.224,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NothingSpeechWaived-scenarios.log"
+    },
+    {
+      "mode": "a3",
+      "property": "NothingRevivedWaived",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1019,
+      "tlc_rc": 0,
+      "seconds": 1.169,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a3-NothingRevivedWaived-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "AuthoritySound",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 89,
+      "tlc_rc": 12,
+      "seconds": 1.069,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-AuthoritySound-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "DecisionAuthority",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 706,
+      "tlc_rc": 12,
+      "seconds": 1.771,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-DecisionAuthority-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NoWriterJudge",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.323,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NoWriterJudge-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NoAuthorJudge",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.372,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NoAuthorJudge-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "RelevantInvalidates",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.422,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-RelevantInvalidates-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "UnrelatedPreserves",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 753,
+      "tlc_rc": 12,
+      "seconds": 1.821,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-UnrelatedPreserves-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "StateRemainsDebt",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.323,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-StateRemainsDebt-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "ConflictDebt",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 1084,
+      "tlc_rc": 12,
+      "seconds": 1.822,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-ConflictDebt-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 446,
+      "tlc_rc": 12,
+      "seconds": 2.227,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-SamePrincipalSupersedes-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "RetroHonored",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 953,
+      "tlc_rc": 12,
+      "seconds": 2.827,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"retro\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-RetroHonored-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "FuturePreserves",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 1207,
+      "tlc_rc": 12,
+      "seconds": 3.834,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-FuturePreserves-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "AllSafety",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 89,
+      "tlc_rc": 12,
+      "seconds": 2.324,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-AllSafety-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "GoodProgress",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 5.237,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-GoodProgress-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "Finished",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 5.385,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-Finished-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NothingMerged",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 1.671,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NothingMerged-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NothingDeferredMerged",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 209,
+      "tlc_rc": 12,
+      "seconds": 2.176,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NothingDeferredMerged-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NothingParentWaived",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 294,
+      "tlc_rc": 12,
+      "seconds": 2.527,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NothingParentWaived-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NothingCrossWaived",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.646,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NothingCrossWaived-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NothingSpeechWaived",
+      "tag": "-scenarios",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.631,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NothingSpeechWaived-scenarios.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NothingRevivedWaived",
+      "tag": "-scenarios",
+      "result": "VIOLATED",
+      "states": 1476,
+      "tlc_rc": 12,
+      "seconds": 3.584,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NothingRevivedWaived-scenarios.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "AuthoritySound",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 71,
+      "tlc_rc": 12,
+      "seconds": 2.478,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-AuthoritySound-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "DecisionAuthority",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 21,
+      "tlc_rc": 12,
+      "seconds": 1.63,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-DecisionAuthority-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "NoWriterJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1989,
+      "tlc_rc": 0,
+      "seconds": 2.575,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-NoWriterJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "NoAuthorJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1989,
+      "tlc_rc": 0,
+      "seconds": 2.731,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-NoAuthorJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "RelevantInvalidates",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1989,
+      "tlc_rc": 0,
+      "seconds": 2.486,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-RelevantInvalidates-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "UnrelatedPreserves",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1989,
+      "tlc_rc": 0,
+      "seconds": 2.484,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-UnrelatedPreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "StateRemainsDebt",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 58,
+      "tlc_rc": 12,
+      "seconds": 1.874,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"waive\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-StateRemainsDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "ConflictDebt",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1102,
+      "tlc_rc": 12,
+      "seconds": 2.174,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-ConflictDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 460,
+      "tlc_rc": 12,
+      "seconds": 1.833,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-SamePrincipalSupersedes-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "RetroHonored",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 971,
+      "tlc_rc": 12,
+      "seconds": 2.128,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"retro\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-RetroHonored-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "FuturePreserves",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1989,
+      "tlc_rc": 0,
+      "seconds": 2.632,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-FuturePreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "GoodProgress",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1989,
+      "tlc_rc": 0,
+      "seconds": 3.531,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-GoodProgress-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "Finished",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1989,
+      "tlc_rc": 0,
+      "seconds": 4.189,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-Finished-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "NothingMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 1.932,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-NothingMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "NothingDeferredMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 213,
+      "tlc_rc": 12,
+      "seconds": 2.225,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-NothingDeferredMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noAuth",
+      "property": "NothingParentWaived",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 21,
+      "tlc_rc": 12,
+      "seconds": 2.274,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noAuth-NothingParentWaived-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "AuthoritySound",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 4.746,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-AuthoritySound-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "DecisionAuthority",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.231,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-DecisionAuthority-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "NoWriterJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.374,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-NoWriterJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "NoAuthorJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.824,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-NoAuthorJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "RelevantInvalidates",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.522,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-RelevantInvalidates-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "UnrelatedPreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 752,
+      "tlc_rc": 12,
+      "seconds": 2.223,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-UnrelatedPreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "StateRemainsDebt",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.935,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-StateRemainsDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "ConflictDebt",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1084,
+      "tlc_rc": 12,
+      "seconds": 5.921,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 5.756,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-SamePrincipalSupersedes-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "RetroHonored",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 4.44,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-RetroHonored-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "FuturePreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1206,
+      "tlc_rc": 12,
+      "seconds": 2.78,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-FuturePreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "GoodProgress",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.975,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-GoodProgress-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "Finished",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 4.23,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-Finished-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "NothingMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 2.279,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-NothingMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "NothingDeferredMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 209,
+      "tlc_rc": 12,
+      "seconds": 2.739,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-NothingDeferredMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noInformed",
+      "property": "NothingParentWaived",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 294,
+      "tlc_rc": 12,
+      "seconds": 2.525,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noInformed-NothingParentWaived-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "AuthoritySound",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 89,
+      "tlc_rc": 12,
+      "seconds": 2.132,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-AuthoritySound-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "DecisionAuthority",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 706,
+      "tlc_rc": 12,
+      "seconds": 3.279,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-DecisionAuthority-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "NoWriterJudge",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 131,
+      "tlc_rc": 12,
+      "seconds": 2.027,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> W1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> W1, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-NoWriterJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "NoAuthorJudge",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 46,
+      "tlc_rc": 12,
+      "seconds": 2.355,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"waive\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-NoAuthorJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "RelevantInvalidates",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 4.66,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-RelevantInvalidates-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "UnrelatedPreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 753,
+      "tlc_rc": 12,
+      "seconds": 3.281,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-UnrelatedPreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "StateRemainsDebt",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 4.692,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-StateRemainsDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "ConflictDebt",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1084,
+      "tlc_rc": 12,
+      "seconds": 7.413,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-ConflictDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 446,
+      "tlc_rc": 12,
+      "seconds": 5.869,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-SamePrincipalSupersedes-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "RetroHonored",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 953,
+      "tlc_rc": 12,
+      "seconds": 7.968,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"retro\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-RetroHonored-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "FuturePreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1207,
+      "tlc_rc": 12,
+      "seconds": 6.522,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-FuturePreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "GoodProgress",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 7.112,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-GoodProgress-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "Finished",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.727,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-Finished-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "NothingMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 1.118,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-NothingMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "NothingDeferredMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 209,
+      "tlc_rc": 12,
+      "seconds": 1.319,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-NothingDeferredMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRecused",
+      "property": "NothingParentWaived",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 294,
+      "tlc_rc": 12,
+      "seconds": 1.519,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRecused-NothingParentWaived-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "AuthoritySound",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 89,
+      "tlc_rc": 12,
+      "seconds": 1.169,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-AuthoritySound-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "DecisionAuthority",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 706,
+      "tlc_rc": 12,
+      "seconds": 1.621,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-DecisionAuthority-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "NoWriterJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.424,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-NoWriterJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "NoAuthorJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.373,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-NoAuthorJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "RelevantInvalidates",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.524,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-RelevantInvalidates-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "UnrelatedPreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 753,
+      "tlc_rc": 12,
+      "seconds": 1.721,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-UnrelatedPreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "StateRemainsDebt",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.473,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-StateRemainsDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "ConflictDebt",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1084,
+      "tlc_rc": 12,
+      "seconds": 2.022,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-ConflictDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 446,
+      "tlc_rc": 12,
+      "seconds": 1.52,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-SamePrincipalSupersedes-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "RetroHonored",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 953,
+      "tlc_rc": 12,
+      "seconds": 2.124,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"retro\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-RetroHonored-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "FuturePreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1207,
+      "tlc_rc": 12,
+      "seconds": 2.132,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-FuturePreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "GoodProgress",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.626,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-GoodProgress-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "Finished",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 4.582,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-Finished-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "NothingMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 2.475,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-NothingMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "NothingDeferredMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 209,
+      "tlc_rc": 12,
+      "seconds": 2.678,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-NothingDeferredMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRel1",
+      "property": "NothingParentWaived",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 294,
+      "tlc_rc": 12,
+      "seconds": 3.23,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel1-NothingParentWaived-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "AuthoritySound",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 4.734,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-AuthoritySound-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "DecisionAuthority",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.772,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-DecisionAuthority-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "NoWriterJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.574,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-NoWriterJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "NoAuthorJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.323,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-NoAuthorJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "RelevantInvalidates",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.373,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-RelevantInvalidates-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "UnrelatedPreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 752,
+      "tlc_rc": 12,
+      "seconds": 1.771,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-UnrelatedPreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "StateRemainsDebt",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.576,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-StateRemainsDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "ConflictDebt",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1084,
+      "tlc_rc": 12,
+      "seconds": 1.972,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-ConflictDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.524,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-SamePrincipalSupersedes-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "RetroHonored",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.674,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-RetroHonored-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "FuturePreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1206,
+      "tlc_rc": 12,
+      "seconds": 1.971,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-FuturePreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "GoodProgress",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.526,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-GoodProgress-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "Finished",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.427,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-Finished-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "NothingMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 1.12,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-NothingMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "NothingDeferredMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 209,
+      "tlc_rc": 12,
+      "seconds": 1.371,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-NothingDeferredMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRel2",
+      "property": "NothingParentWaived",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 294,
+      "tlc_rc": 12,
+      "seconds": 1.42,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel2-NothingParentWaived-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "AuthoritySound",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 89,
+      "tlc_rc": 12,
+      "seconds": 1.371,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-AuthoritySound-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "DecisionAuthority",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 706,
+      "tlc_rc": 12,
+      "seconds": 1.874,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-DecisionAuthority-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "NoWriterJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.323,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-NoWriterJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "NoAuthorJudge",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.523,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-NoAuthorJudge-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "RelevantInvalidates",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 2.976,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-RelevantInvalidates-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "UnrelatedPreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 753,
+      "tlc_rc": 12,
+      "seconds": 2.431,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-UnrelatedPreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "StateRemainsDebt",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 3.83,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-StateRemainsDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "ConflictDebt",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1084,
+      "tlc_rc": 12,
+      "seconds": 3.227,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-ConflictDebt-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "SamePrincipalSupersedes",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 446,
+      "tlc_rc": 12,
+      "seconds": 2.376,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"law\", from |-> P1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 1, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-SamePrincipalSupersedes-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "RetroHonored",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 953,
+      "tlc_rc": 12,
+      "seconds": 2.825,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"retro\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-RetroHonored-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "FuturePreserves",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 1207,
+      "tlc_rc": 12,
+      "seconds": 3.08,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"future\", key |-> 0, content |-> 0, premises |-> {1} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "GoodProgress",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 5.591,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-GoodProgress-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "Finished",
+      "tag": "-ablation",
+      "result": "HOLDS",
+      "states": 1955,
+      "tlc_rc": 0,
+      "seconds": 5.341,
+      "workers": 1,
+      "trace": [],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-Finished-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "NothingMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 69,
+      "tlc_rc": 12,
+      "seconds": 1.923,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-NothingMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "NothingDeferredMerged",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 209,
+      "tlc_rc": 12,
+      "seconds": 2.223,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"defer\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-NothingDeferredMerged-ablation.log"
+    },
+    {
+      "mode": "a4-noRel3",
+      "property": "NothingParentWaived",
+      "tag": "-ablation",
+      "result": "VIOLATED",
+      "states": 294,
+      "tlc_rc": 12,
+      "seconds": 2.075,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\", \"n2\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"waive\", from |-> P2, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-noRel3-NothingParentWaived-ablation.log"
+    },
+    {
+      "mode": "a4",
+      "property": "AllSafety",
+      "tag": "-free2",
+      "result": "VIOLATED",
+      "states": 8812,
+      "tlc_rc": 12,
+      "seconds": 5.335,
+      "workers": 4,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"retro\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-AllSafety-free2.log"
+    },
+    {
+      "mode": "a22",
+      "property": "AuthoritySound",
+      "tag": "-sanity2",
+      "result": "VIOLATED",
+      "states": 11802,
+      "tlc_rc": 12,
+      "seconds": 4.404,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> P1, to |-> P2, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]",
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a22-AuthoritySound-sanity2.log"
+    },
+    {
+      "mode": "a22",
+      "property": "DecisionAuthority",
+      "tag": "-sanity2",
+      "result": "VIOLATED",
+      "states": 8765,
+      "tlc_rc": 12,
+      "seconds": 2.626,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]",
+        "[ type |-> \"downgrade\", from |-> P1, to |-> Owner, scope |-> {\"n2\"}, node |-> \"n2\", value |-> 0, key |-> 0, content |-> 0 ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a22-DecisionAuthority-sanity2.log"
+    },
+    {
+      "mode": "a22",
+      "property": "NoWriterJudge",
+      "tag": "-sanity2",
+      "result": "VIOLATED",
+      "states": 10028,
+      "tlc_rc": 12,
+      "seconds": 2.631,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> W1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]",
+        "[ type |-> \"downgrade\", from |-> W1, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0 ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a22-NoWriterJudge-sanity2.log"
+    },
+    {
+      "mode": "a4",
+      "property": "NothingMerged",
+      "tag": "-witness2",
+      "result": "VIOLATED",
+      "states": 30372,
+      "tlc_rc": 12,
+      "seconds": 13.816,
+      "workers": 1,
+      "trace": [
+        "[ type |-> \"waive\", from |-> Owner, to |-> Owner, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {} ]",
+        "[ type |-> \"merge\", from |-> Owner, to |-> Owner, scope |-> {}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-NothingMerged-witness2.log"
+    },
+    {
+      "mode": "a4",
+      "property": "AllSafety",
+      "tag": "-free3",
+      "result": "VIOLATED",
+      "states": 34642,
+      "tlc_rc": 12,
+      "seconds": 6.738,
+      "workers": 8,
+      "trace": [
+        "[ type |-> \"grant\", from |-> Owner, to |-> P1, scope |-> {\"n1\"}, node |-> \"n1\", value |-> 0, key |-> 0, content |-> 0, premises |-> {0} ]",
+        "[ type |-> \"revoke\", from |-> Owner, to |-> P1, scope |-> {}, node |-> \"n1\", value |-> \"retro\", key |-> 0, content |-> 0, premises |-> {0} ]"
+      ],
+      "log": "formal/a4/runs/PiDagAuth4-a4-AllSafety-free3.log"
+    }
+  ]
+}

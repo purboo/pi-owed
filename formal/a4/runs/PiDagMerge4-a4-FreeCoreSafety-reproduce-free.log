@@ -1,0 +1,27 @@
+# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b
+# cfg    sha256 138914eb9d1ce7a9f40929eef8bcec37deb9c48817d5a138dd43f75025b6a915
+# flags  <deadlock checked> -simulate num=10000 -depth 20 -seed 3340778300967657810
+# argv ["nice", "-n", "19", "taskset", "-c", "0", "timeout", "890", "java", "-Xmx1g", "-XX:+UseParallelGC", "-cp", "../tla2tools.jar", "tlc2.TLC", "-noGenerateSpecTE", "-workers", "1", "-metadir", "/home/purboo/project/pi-things/pi-dag/formal/a4/runs/PiDagMerge4-a4-FreeCoreSafety-reproduce-free.states", "-simulate", "num=10000", "-depth", "20", "-seed", "3340778300967657810", "-config", "/home/purboo/project/pi-things/pi-dag/formal/a4/runs/PiDagMerge4-a4-FreeCoreSafety-reproduce-free.cfg", "PiDagMerge4.tla"]
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running Random Simulation with seed 3340778300967657810 with 1 worker on 1 cores with 910MB heap and 64MB offheap memory [pid: 3735403] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a4/PiDagMerge4.tla
+Parsing file /tmp/tlc-14362796145969265992/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-14362796145969265992/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-14362796145969265992/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-14362796145969265992/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagMerge4
+Linting of module PiDagMerge4
+Starting... (2026-10-09 00:28:32)
+Computed 16 initial states...
+Finished computing initial states: 16 distinct state generated at 2026-10-09 00:28:32.
+Progress: 1885607 states checked, 5763 traces generated (trace length: mean=20, var(x)=0, sd=0)
+Progress: 3289774 states checked, 10000 traces generated (trace length: mean=20, var(x)=0, sd=0)
+The number of states generated: 3289774
+Simulation using seed 3340778300967657810 and aril 0
+Finished in 01min 45s at (2026-10-09 00:30:16)
+
+TLC_EXIT=0

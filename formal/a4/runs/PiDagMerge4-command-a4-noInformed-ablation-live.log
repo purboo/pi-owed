@@ -1,0 +1,112 @@
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/home/purboo/project/pi-things/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4-noInformed", "P:GoodEventuallyMerges LeaseExcludes NothingMerged", "Scenario = \"live\"; O = o; K0 = k0; K1 = k1", "-ablation-live"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /home/purboo/project/pi-things/pi-dag/formal/a4/check.sh
++ cd /home/purboo/project/pi-things/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4-noInformed
++ props='P:GoodEventuallyMerges LeaseExcludes NothingMerged'
++ consts='Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tag=-ablation-live
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge4-a4-noInformed-GoodEventuallyMerges-ablation-live
++ echo CONSTANTS
++ echo '  Mode = "a4-noInformed"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noInformed-GoodEventuallyMerges-ablation-live.cfg
++ echo '# cfg    sha256 b1c689373eb17faa2c41b7f932bc8dc45ac27e68b79e36ac9605a809d99da7fa'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:05:20+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noInformed-GoodEventuallyMerges-ablation-live.states -config runs/PiDagMerge4-a4-noInformed-GoodEventuallyMerges-ablation-live.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noInformed-GoodEventuallyMerges-ablation-live.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noInformed-GoodEventuallyMerges-ablation-live.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noInformed-GoodEventuallyMerges-ablation-live.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noInformed GoodEventuallyMerges HOLDS '9 distinct states found'
+PiDagMerge4      a4-noInformed GoodEventuallyMerges   HOLDS     9 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge4-a4-noInformed-LeaseExcludes-ablation-live
++ echo CONSTANTS
++ echo '  Mode = "a4-noInformed"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noInformed-LeaseExcludes-ablation-live.cfg
++ echo '# cfg    sha256 41e8a392c8a2688daaea6f860a8037152cecbd5ead6e076161ee9e28b1a2cdaa'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:05:21+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noInformed-LeaseExcludes-ablation-live.states -config runs/PiDagMerge4-a4-noInformed-LeaseExcludes-ablation-live.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-noInformed-LeaseExcludes-ablation-live.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noInformed-LeaseExcludes-ablation-live.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noInformed-LeaseExcludes-ablation-live.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noInformed LeaseExcludes HOLDS '9 distinct states found'
+PiDagMerge4      a4-noInformed LeaseExcludes          HOLDS     9 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live
++ echo CONSTANTS
++ echo '  Mode = "a4-noInformed"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live.cfg
++ echo '# cfg    sha256 e28d8897b99661910bb248f342f22257db9e4cc1895c0d4829676670f616d67f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-09T00:05:23+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live.states -config runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noInformed-NothingMerged-ablation-live.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noInformed NothingMerged VIOLATED '8 distinct states found'
+PiDagMerge4      a4-noInformed NothingMerged          VIOLATED  8 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0

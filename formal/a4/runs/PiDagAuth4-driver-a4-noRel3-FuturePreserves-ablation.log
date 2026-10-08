@@ -1,0 +1,47 @@
++ set -u
+++ dirname formal/a4/check.sh
++ cd formal/a4
++ mkdir -p runs
++ mod=PiDagAuth4
++ modes=a4-noRel3
++ props=FuturePreserves
++ consts='Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-ablation
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=FuturePreserves
++ case $p in
++ base=runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FuturePreserves'
+++ sha256sum PiDagAuth4.tla
+++ cut -c1-64
++ echo '# module sha256 37e2b853c6e026bd1130f6ea0ca4d9d9a28b433a7bf07fb2c608d9f1f56ca009'
+++ sha256sum runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 8d21a6d0fcd6409921a64326f97eb33634874c2dc43c709b091fa5e2fc55f5f6'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:18:29+08:00'
++ timeout 900 java -Xmx2g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.states -config runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.cfg PiDagAuth4.tla
++ rc=12
++ rm -rf runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth4-a4-noRel3-FuturePreserves-ablation.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth4 a4-noRel3 FuturePreserves VIOLATED '1207 distinct states found'
+PiDagAuth4       a4-noRel3 FuturePreserves        VIOLATED  1207 distinct states found
++ exit 0
