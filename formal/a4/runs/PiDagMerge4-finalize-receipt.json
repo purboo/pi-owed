@@ -1,0 +1,9 @@
+{
+  "module_sha256": "241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b",
+  "planned_checks_complete": true,
+  "owned_tlc_pids": [],
+  "publication": "none",
+  "parent_acceptance": "not claimed",
+  "current_result_records": 759,
+  "open_contract_boundary": "Authorized defer touched-key scope; pure-a4 acceptance not claimed"
+}

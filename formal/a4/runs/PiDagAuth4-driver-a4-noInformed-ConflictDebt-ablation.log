@@ -1,0 +1,47 @@
++ set -u
+++ dirname formal/a4/check.sh
++ cd formal/a4
++ mkdir -p runs
++ mod=PiDagAuth4
++ modes=a4-noInformed
++ props=ConflictDebt
++ consts='Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-ablation
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=ConflictDebt
++ case $p in
++ base=runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation
++ echo CONSTANTS
++ echo '  Mode = "a4-noInformed"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT ConflictDebt'
+++ sha256sum PiDagAuth4.tla
+++ cut -c1-64
++ echo '# module sha256 37e2b853c6e026bd1130f6ea0ca4d9d9a28b433a7bf07fb2c608d9f1f56ca009'
+++ sha256sum runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 ff4b64c1e5a75cdc0f5f79eae7b187076f2946cfbc49280bf2e02d856dcf2d05'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:15:06+08:00'
++ timeout 900 java -Xmx2g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.states -config runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.cfg PiDagAuth4.tla
++ rc=12
++ rm -rf runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth4-a4-noInformed-ConflictDebt-ablation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth4 a4-noInformed ConflictDebt VIOLATED '1084 distinct states found'
+PiDagAuth4       a4-noInformed ConflictDebt           VIOLATED  1084 distinct states found
++ exit 0

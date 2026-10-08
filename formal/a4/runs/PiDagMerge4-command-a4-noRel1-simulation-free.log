@@ -1,0 +1,51 @@
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4-noRel1", "FreeCoreSafety", "Scenario = \"free\"; O = o; K0 = k0; K1 = k1", "-simulation-free"], "env": {"WORKERS": "1", "TLC_HEAP": "1g", "TLC_TIMEOUT": "890", "SIMULATE": "num=10000", "DEPTH": "20"}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4-noRel1
++ props=FreeCoreSafety
++ consts='Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ tag=-simulation-free
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n num=10000 ']'
++ sim='-simulate num=10000 -depth 20'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=FreeCoreSafety
++ case $p in
++ base=runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4-noRel1"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FreeCoreSafety'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free.cfg
++ echo '# cfg    sha256 31a367f2d00cdee99ba05e9c404f737cac9780bbf18da335769eedca8294b859'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:22:05+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free.states -config runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-noRel1-FreeCoreSafety-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4-noRel1 FreeCoreSafety VIOLATED ''
+PiDagMerge4      a4-noRel1 FreeCoreSafety         VIOLATED  
++ exit 0
+
+WRAPPER_EXIT=0

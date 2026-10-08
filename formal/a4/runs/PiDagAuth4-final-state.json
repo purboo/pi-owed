@@ -1,0 +1,22 @@
+{
+  "remaining_owned_processes": [],
+  "states_directories": [],
+  "module_sha256": "37e2b853c6e026bd1130f6ea0ca4d9d9a28b433a7bf07fb2c608d9f1f56ca009",
+  "a3_sha256": "4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0",
+  "check_sh_identical": true,
+  "current_rerun_policy": {
+    "prefix": [
+      "nice",
+      "-n",
+      "19",
+      "taskset",
+      "-c",
+      "0"
+    ],
+    "WORKERS": 1,
+    "TLC_HEAP": "1g",
+    "MaxLog3": "deferred to parent"
+  },
+  "post_constraint_TLC_launches": 0,
+  "scripts_parse": true
+}

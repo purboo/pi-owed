@@ -1,0 +1,409 @@
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4", "FreeCoreSafety", "Scenario = \"free\"; O = o; K0 = k0; K1 = k1", "-simulation-free"], "env": {"WORKERS": "1", "TLC_HEAP": "1g", "TLC_TIMEOUT": "890", "SIMULATE": "num=10000", "DEPTH": "20"}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4
++ props=FreeCoreSafety
++ consts='Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ tag=-simulation-free
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n num=10000 ']'
++ sim='-simulate num=10000 -depth 20'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=FreeCoreSafety
++ case $p in
++ base=runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FreeCoreSafety'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 e2d6d582784ee8951293ce9f00cc2979527bab1fe468a5d514755c61d8f85958'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.cfg
++ echo '# cfg    sha256 138914eb9d1ce7a9f40929eef8bcec37deb9c48817d5a138dd43f75025b6a915'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-08T23:40:11+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.states -config runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ '[' -n '-simulate num=10000 -depth 20' ']'
++ '[' 0 -eq 0 ']'
++ grep -qE '^Finished in ' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ grep -q '^Error' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ r=HOLDS-SIM
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 FreeCoreSafety HOLDS-SIM ''
+PiDagMerge4      a4     FreeCoreSafety         HOLDS-SIM 
++ exit 0
+
+WRAPPER_EXIT=0
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4", "FreeCoreSafety NoBypassedNegative EscapeAttributable DeferredDebtVisible NodeAcceptanceCovered NewEscapeAttributable NothingMerged NoDeferredMerge NoOwnerWaivedMerge FreeNoTwoMerges", "Scenario = \"free\"; O = o; K0 = k0; K1 = k1", "-simulation-free"], "env": {"WORKERS": "1", "TLC_HEAP": "1g", "TLC_TIMEOUT": "890", "SIMULATE": "num=10000", "DEPTH": "20"}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4
++ props='FreeCoreSafety NoBypassedNegative EscapeAttributable DeferredDebtVisible NodeAcceptanceCovered NewEscapeAttributable NothingMerged NoDeferredMerge NoOwnerWaivedMerge FreeNoTwoMerges'
++ consts='Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ tag=-simulation-free
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n num=10000 ']'
++ sim='-simulate num=10000 -depth 20'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=FreeCoreSafety
++ case $p in
++ base=runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FreeCoreSafety'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.cfg
++ echo '# cfg    sha256 138914eb9d1ce7a9f40929eef8bcec37deb9c48817d5a138dd43f75025b6a915'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:10:11+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.states -config runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ '[' -n '-simulate num=10000 -depth 20' ']'
++ '[' 0 -eq 0 ']'
++ grep -qE '^Finished in ' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ grep -q '^Error' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ r=HOLDS-SIM
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-FreeCoreSafety-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 FreeCoreSafety HOLDS-SIM ''
+PiDagMerge4      a4     FreeCoreSafety         HOLDS-SIM 
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.cfg
++ echo '# cfg    sha256 046aa4bcd24990d746263be5ed5f7353b03f48ce5f2ba3d4e9bd86b8755a5f48'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:12:12+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.states -config runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.log
++ '[' -n '-simulate num=10000 -depth 20' ']'
++ '[' 0 -eq 0 ']'
++ grep -qE '^Finished in ' runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.log
++ grep -q '^Error' runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.log
++ r=HOLDS-SIM
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoBypassedNegative-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoBypassedNegative HOLDS-SIM ''
+PiDagMerge4      a4     NoBypassedNegative     HOLDS-SIM 
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-EscapeAttributable-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.cfg
++ echo '# cfg    sha256 3afafe37eb2c9533224baa9c0423cb686c0198603ac21290261ac987348df50d'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:13:38+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.states -config runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.log
++ '[' -n '-simulate num=10000 -depth 20' ']'
++ '[' 0 -eq 0 ']'
++ grep -qE '^Finished in ' runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.log
++ grep -q '^Error' runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.log
++ r=HOLDS-SIM
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-EscapeAttributable-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 EscapeAttributable HOLDS-SIM ''
+PiDagMerge4      a4     EscapeAttributable     HOLDS-SIM 
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.cfg
++ echo '# cfg    sha256 bb4d10f176740236c89cc7dcaf17e7b750305e083e7d13290663e53921de959b'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:15:20+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.states -config runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.log
++ '[' -n '-simulate num=10000 -depth 20' ']'
++ '[' 0 -eq 0 ']'
++ grep -qE '^Finished in ' runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.log
++ grep -q '^Error' runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.log
++ r=HOLDS-SIM
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-DeferredDebtVisible-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 DeferredDebtVisible HOLDS-SIM ''
+PiDagMerge4      a4     DeferredDebtVisible    HOLDS-SIM 
++ for p in $props
++ kind=INVARIANT
++ name=NodeAcceptanceCovered
++ case $p in
++ base=runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NodeAcceptanceCovered'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.cfg
++ echo '# cfg    sha256 2de29d61d5bfe2f092f27b7b53612514dc489d88260719e418d2572d25d74ace'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:16:49+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.states -config runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.log
++ '[' -n '-simulate num=10000 -depth 20' ']'
++ '[' 0 -eq 0 ']'
++ grep -qE '^Finished in ' runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.log
++ grep -q '^Error' runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.log
++ r=HOLDS-SIM
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NodeAcceptanceCovered HOLDS-SIM ''
+PiDagMerge4      a4     NodeAcceptanceCovered  HOLDS-SIM 
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.cfg
++ echo '# cfg    sha256 f820b846c99e8c56ff2c462eca4948e653e124863ae219a5583f3e251422ca90'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:18:10+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.states -config runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.log
++ '[' -n '-simulate num=10000 -depth 20' ']'
++ '[' 0 -eq 0 ']'
++ grep -qE '^Finished in ' runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.log
++ grep -q '^Error' runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.log
++ r=HOLDS-SIM
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NewEscapeAttributable-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NewEscapeAttributable HOLDS-SIM ''
+PiDagMerge4      a4     NewEscapeAttributable  HOLDS-SIM 
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a4-NothingMerged-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NothingMerged-simulation-free.cfg
++ echo '# cfg    sha256 55a9aff0bcb2ca72337946ce6f501e01cddd075808c292932f39f04314d3a30f'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:19:45+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-NothingMerged-simulation-free.states -config runs/PiDagMerge4-a4-NothingMerged-simulation-free.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NothingMerged-simulation-free.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NothingMerged-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NothingMerged-simulation-free.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NothingMerged-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NothingMerged VIOLATED ''
+PiDagMerge4      a4     NothingMerged          VIOLATED  
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free.cfg
++ echo '# cfg    sha256 b5627e86433b827a8e518e2acb79c9f2cb2909c00f4da96c0767d823c8fb9831'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:19:48+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free.states -config runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoDeferredMerge-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoDeferredMerge VIOLATED ''
+PiDagMerge4      a4     NoDeferredMerge        VIOLATED  
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free.cfg
++ echo '# cfg    sha256 4e6fb25032f324e361fdcec2facec716cd5c0cde2d990f7787a798c51623e318'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:19:53+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free.states -config runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoOwnerWaivedMerge VIOLATED ''
+PiDagMerge4      a4     NoOwnerWaivedMerge     VIOLATED  
++ for p in $props
++ kind=INVARIANT
++ name=FreeNoTwoMerges
++ case $p in
++ base=runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "free"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FreeNoTwoMerges'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free.cfg
++ echo '# cfg    sha256 080420d42d99e2538f5857fa7f92be446a25a799d275b62f118dbf04f6182831'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=10000 -depth 20 2026-10-09T00:19:55+08:00'
++ timeout 890 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -simulate num=10000 -depth 20 -metadir runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free.states -config runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-FreeNoTwoMerges-simulation-free.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 FreeNoTwoMerges VIOLATED ''
+PiDagMerge4      a4     FreeNoTwoMerges        VIOLATED  
++ exit 0
+
+WRAPPER_EXIT=0

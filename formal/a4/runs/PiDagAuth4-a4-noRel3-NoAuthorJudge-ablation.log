@@ -1,0 +1,33 @@
+# module sha256 37e2b853c6e026bd1130f6ea0ca4d9d9a28b433a7bf07fb2c608d9f1f56ca009
+# cfg    sha256 095ea361260a0f3152f936596d5e64e5ecee8b9df1fa508599f5f979a7f250ef
+# flags  <deadlock checked> <exhaustive> 2026-10-08T23:18:09+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 1 and seed -4678611576710614576 with 1 worker on 20 cores with 1820MB heap and 64MB offheap memory [pid: 3584387] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/pi-dag/formal/a4/PiDagAuth4.tla
+Parsing file /tmp/tlc-1018497516598160791/Integers.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-1018497516598160791/Sequences.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-1018497516598160791/FiniteSets.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-1018497516598160791/TLC.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-1018497516598160791/Naturals.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth4
+Linting of module PiDagAuth4
+Starting... (2026-10-08 23:18:10)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 18 distinct states generated at 2026-10-08 23:18:10.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 9.8E-14
+2876 states generated, 1955 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 6.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 6 and the 95th percentile is 3).
+Finished in 02s at (2026-10-08 23:18:11)

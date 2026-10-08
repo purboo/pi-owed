@@ -1,0 +1,1136 @@
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4", "NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges", "Scenario = \"oldDebt\"; O = o; K0 = k0; K1 = k1", "-matrix-oldDebt"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4
++ props='NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges'
++ consts='Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-matrix-oldDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.cfg
++ echo '# cfg    sha256 243e52a0f22ba6e9090f4c10b3fd46c529c8e5843efe231f0b10bff88e2dd4f8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:23+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoBypassedNegative HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoBypassedNegative     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.cfg
++ echo '# cfg    sha256 5a3155b9199baf7e649b50360f9528b9971a9ba1fbbd40d68cb8db541536f3ec'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:25+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.states -config runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 EscapeAttributable HOLDS '13 distinct states found'
+PiDagMerge4      a4     EscapeAttributable     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NodeAcceptanceCovered
++ case $p in
++ base=runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NodeAcceptanceCovered'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.cfg
++ echo '# cfg    sha256 6a65999adb0a6cc3ebd9f1d9099d885a25c19dbcc5a1a184cc4b5684437cfa7d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:26+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NodeAcceptanceCovered HOLDS '13 distinct states found'
+PiDagMerge4      a4     NodeAcceptanceCovered  HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.cfg
++ echo '# cfg    sha256 97fcf1262011f86d4a95491f3a90d28198112d0a6325427dfa26a3c7ebf1292c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:28+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NewEscapeAttributable HOLDS '13 distinct states found'
+PiDagMerge4      a4     NewEscapeAttributable  HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.cfg
++ echo '# cfg    sha256 342ab26ac4939a83b819c5e05e867a5945d58baa53f0ae3ed06106e6428180d9'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:30+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoLaundering VIOLATED '12 distinct states found'
+PiDagMerge4      a4     NoLaundering           VIOLATED  12 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.cfg
++ echo '# cfg    sha256 27e96e7fe137803063cd417d379e004b314921556f309fb2bf3ec7aa2640db73'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:31+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoFlakyRerunEscape HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoFlakyRerunEscape     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.cfg
++ echo '# cfg    sha256 3f6819d4955f4b90e7a6204a5c2a0874c46e3cc4517cc71ddf2ab913ac1d6f7c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:33+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoNewBreakage HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoNewBreakage          HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.cfg
++ echo '# cfg    sha256 12667d7e556fbaaf386561153feb98e7bdef359e17e6288ecf0a8b5846e83945'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:35+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.states -config runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 JudgedAtCommit HOLDS '13 distinct states found'
+PiDagMerge4      a4     JudgedAtCommit         HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.cfg
++ echo '# cfg    sha256 789489132eeb62bec0becd2df9003cb5b47d3d26ebaaf94120523be99def9318'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:37+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.states -config runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 GenesisBeforeAdvance HOLDS '13 distinct states found'
+PiDagMerge4      a4     GenesisBeforeAdvance   HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.cfg
++ echo '# cfg    sha256 df967ae5c319d1b017247ba10644ef795da5014bf36975c54f52010a1acf5ed3'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:38+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.states -config runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 StateNeverWaived HOLDS '13 distinct states found'
+PiDagMerge4      a4     StateNeverWaived       HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.cfg
++ echo '# cfg    sha256 4b1becc70e7f056c7dc59435921085dce96dc0a634191077cc1cb5d06ca57aeb'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:40+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.states -config runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 DeferredDebtVisible HOLDS '13 distinct states found'
+PiDagMerge4      a4     DeferredDebtVisible    HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.cfg
++ echo '# cfg    sha256 9a1894588a91236fa219d71e1d1e8b83b38f7e952731e032d9e890d0791e8145'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:42+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.states -config runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 LeaseExcludes HOLDS '13 distinct states found'
+PiDagMerge4      a4     LeaseExcludes          HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.cfg
++ echo '# cfg    sha256 a1e50958b51731f9466269fd8dbe690ef66c1f9917586ab26629d3f73bdf55b9'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:43+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NothingMerged VIOLATED '8 distinct states found'
+PiDagMerge4      a4     NothingMerged          VIOLATED  8 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 63da63a9a7b80aec1012dcd42289fce00cde7d0230fba50630726078f1a1e7b2'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:45+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoDeferredMerge HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoDeferredMerge        HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 0a31140334cc7c29723e58ed279647b5ae9c90fed4ff9cb8f3fceddb099e087f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:47+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoOwnerWaivedMerge HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoOwnerWaivedMerge     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoUnrelatedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoUnrelatedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 27aab3eab61d39cc95daf933c244110dc43d24dc16e52e79275728d97f5103ff'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:48+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoUnrelatedMerge VIOLATED '10 distinct states found'
+PiDagMerge4      a4     NoUnrelatedMerge       VIOLATED  10 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOldDebtMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOldDebtMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 9138e81bbf5a1589f4d324539c61e84edce8c8ef1ad2a06229418954e2a94cbb'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:50+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoOldDebtMerge VIOLATED '8 distinct states found'
+PiDagMerge4      a4     NoOldDebtMerge         VIOLATED  8 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.cfg
++ echo '# cfg    sha256 de7b3f126a367812a81d7afeca8dd7b8df46fe872ed45da40102c9eb2105c752'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:38:52+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.states -config runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=13
++ rm -rf runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.states
++ '[' 13 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 GoodEventuallyMerges VIOLATED '13 distinct states found'
+PiDagMerge4      a4     GoodEventuallyMerges   VIOLATED  13 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4", "NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges", "Scenario = \"oldDebt\"; O = o; K0 = k0; K1 = k1", "-matrix-oldDebt"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4
++ props='NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges'
++ consts='Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-matrix-oldDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.cfg
++ echo '# cfg    sha256 243e52a0f22ba6e9090f4c10b3fd46c529c8e5843efe231f0b10bff88e2dd4f8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:12+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoBypassedNegative-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoBypassedNegative HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoBypassedNegative     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.cfg
++ echo '# cfg    sha256 5a3155b9199baf7e649b50360f9528b9971a9ba1fbbd40d68cb8db541536f3ec'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:14+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.states -config runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-EscapeAttributable-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 EscapeAttributable HOLDS '13 distinct states found'
+PiDagMerge4      a4     EscapeAttributable     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NodeAcceptanceCovered
++ case $p in
++ base=runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NodeAcceptanceCovered'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.cfg
++ echo '# cfg    sha256 6a65999adb0a6cc3ebd9f1d9099d885a25c19dbcc5a1a184cc4b5684437cfa7d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:16+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NodeAcceptanceCovered HOLDS '13 distinct states found'
+PiDagMerge4      a4     NodeAcceptanceCovered  HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.cfg
++ echo '# cfg    sha256 97fcf1262011f86d4a95491f3a90d28198112d0a6325427dfa26a3c7ebf1292c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:17+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NewEscapeAttributable-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NewEscapeAttributable HOLDS '13 distinct states found'
+PiDagMerge4      a4     NewEscapeAttributable  HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.cfg
++ echo '# cfg    sha256 342ab26ac4939a83b819c5e05e867a5945d58baa53f0ae3ed06106e6428180d9'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:19+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoLaundering-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoLaundering VIOLATED '12 distinct states found'
+PiDagMerge4      a4     NoLaundering           VIOLATED  12 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.cfg
++ echo '# cfg    sha256 27e96e7fe137803063cd417d379e004b314921556f309fb2bf3ec7aa2640db73'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:21+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoFlakyRerunEscape-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoFlakyRerunEscape HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoFlakyRerunEscape     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.cfg
++ echo '# cfg    sha256 3f6819d4955f4b90e7a6204a5c2a0874c46e3cc4517cc71ddf2ab913ac1d6f7c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:23+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoNewBreakage-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoNewBreakage HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoNewBreakage          HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.cfg
++ echo '# cfg    sha256 12667d7e556fbaaf386561153feb98e7bdef359e17e6288ecf0a8b5846e83945'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:25+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.states -config runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-JudgedAtCommit-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 JudgedAtCommit HOLDS '13 distinct states found'
+PiDagMerge4      a4     JudgedAtCommit         HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.cfg
++ echo '# cfg    sha256 789489132eeb62bec0becd2df9003cb5b47d3d26ebaaf94120523be99def9318'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:26+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.states -config runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-GenesisBeforeAdvance-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 GenesisBeforeAdvance HOLDS '13 distinct states found'
+PiDagMerge4      a4     GenesisBeforeAdvance   HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.cfg
++ echo '# cfg    sha256 df967ae5c319d1b017247ba10644ef795da5014bf36975c54f52010a1acf5ed3'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:28+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.states -config runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-StateNeverWaived-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 StateNeverWaived HOLDS '13 distinct states found'
+PiDagMerge4      a4     StateNeverWaived       HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.cfg
++ echo '# cfg    sha256 4b1becc70e7f056c7dc59435921085dce96dc0a634191077cc1cb5d06ca57aeb'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:30+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.states -config runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-DeferredDebtVisible-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 DeferredDebtVisible HOLDS '13 distinct states found'
+PiDagMerge4      a4     DeferredDebtVisible    HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.cfg
++ echo '# cfg    sha256 9a1894588a91236fa219d71e1d1e8b83b38f7e952731e032d9e890d0791e8145'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:31+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.states -config runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-LeaseExcludes-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 LeaseExcludes HOLDS '13 distinct states found'
+PiDagMerge4      a4     LeaseExcludes          HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.cfg
++ echo '# cfg    sha256 a1e50958b51731f9466269fd8dbe690ef66c1f9917586ab26629d3f73bdf55b9'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:33+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NothingMerged-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NothingMerged VIOLATED '8 distinct states found'
+PiDagMerge4      a4     NothingMerged          VIOLATED  8 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 63da63a9a7b80aec1012dcd42289fce00cde7d0230fba50630726078f1a1e7b2'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:35+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoDeferredMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoDeferredMerge HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoDeferredMerge        HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 0a31140334cc7c29723e58ed279647b5ae9c90fed4ff9cb8f3fceddb099e087f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:37+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoOwnerWaivedMerge HOLDS '13 distinct states found'
+PiDagMerge4      a4     NoOwnerWaivedMerge     HOLDS     13 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoUnrelatedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoUnrelatedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 27aab3eab61d39cc95daf933c244110dc43d24dc16e52e79275728d97f5103ff'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:38+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoUnrelatedMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoUnrelatedMerge VIOLATED '10 distinct states found'
+PiDagMerge4      a4     NoUnrelatedMerge       VIOLATED  10 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOldDebtMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOldDebtMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.cfg
++ echo '# cfg    sha256 9138e81bbf5a1589f4d324539c61e84edce8c8ef1ad2a06229418954e2a94cbb'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:40+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.states -config runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoOldDebtMerge-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoOldDebtMerge VIOLATED '8 distinct states found'
+PiDagMerge4      a4     NoOldDebtMerge         VIOLATED  8 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.cfg
++ echo '# cfg    sha256 de7b3f126a367812a81d7afeca8dd7b8df46fe872ed45da40102c9eb2105c752'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:42+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.states -config runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.cfg PiDagMerge4.tla
++ rc=13
++ rm -rf runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.states
++ '[' 13 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-GoodEventuallyMerges-matrix-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 GoodEventuallyMerges VIOLATED '13 distinct states found'
+PiDagMerge4      a4     GoodEventuallyMerges   VIOLATED  13 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0

@@ -1,0 +1,33 @@
+Main batch stopped; owned TLCs: []
+Same-seed a4 control TLC exit: 0
+Projection self-check wrapper exit: 0
+SHA 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b checks 758 {'HOLDS': 587, 'HOLDS-SIM': 14, 'VIOLATED': 157}
+FLIP a4-noAuth waiver NothingMerged HOLDS VIOLATED
+FLIP a4-noAuth waiver StateNeverWaived HOLDS VIOLATED
+FLIP a4-noInformed race JudgedAtCommit HOLDS VIOLATED
+FLIP a4-noInformed launderReview NoBypassedNegative HOLDS VIOLATED
+FLIP a4-noInformed launderTest NoBypassedNegative HOLDS VIOLATED
+FLIP a4-noInformed race NoBypassedNegative HOLDS VIOLATED
+FLIP a4-noInformed launderTest NoFlakyRerunEscape HOLDS VIOLATED
+FLIP a4-noRel1 race JudgedAtCommit HOLDS VIOLATED
+FLIP a4-noRel1 launderReview NoBypassedNegative HOLDS VIOLATED
+FLIP a4-noRel1 launderTest NoBypassedNegative HOLDS VIOLATED
+FLIP a4-noRel1 race NoBypassedNegative HOLDS VIOLATED
+FLIP a4-noRel1 launderTest NoFlakyRerunEscape HOLDS VIOLATED
+{
+  "module_sha256": "241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b",
+  "expected_checks": 756,
+  "present_checks": 758,
+  "completed_expected_checks": 756,
+  "missing_or_incomplete": [],
+  "wrong_simulation_budget": [],
+  "statuses": {
+    "HOLDS": 587,
+    "HOLDS-SIM": 14,
+    "VIOLATED": 157
+  },
+  "complete": true
+}
+Audit: 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b ground truth identical, check.sh exact copy, 27 baseline result/state-count matches
+Report generated: 234 complete pairs; 0 status divergences
+FINALIZER_COMPLETE

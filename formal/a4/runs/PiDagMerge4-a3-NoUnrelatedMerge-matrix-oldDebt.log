@@ -1,0 +1,287 @@
+# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b
+# cfg    sha256 61e5a6b524448bf0aa4e0dfe2b02aeef5fe7f8a82f5e02fa7c5970a81b1f9a78
+# flags  <deadlock checked> <exhaustive> 2026-10-08T23:58:07+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 21 and seed -571271179406985143 with 1 worker on 1 cores with 477MB heap and 64MB offheap memory [pid: 3664240] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/pi-dag/formal/a4/PiDagMerge4.tla
+Parsing file /tmp/tlc-16201707666749783169/Naturals.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-16201707666749783169/FiniteSets.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-16201707666749783169/Sequences.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-16201707666749783169/TLC.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagMerge4
+Linting of module PiDagMerge4
+Starting... (2026-10-08 23:58:08)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 23:58:09.
+Error: Invariant NoUnrelatedMerge is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ ledger4 = <<>>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> FALSE,
+  phase |-> "genesis",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> FALSE,
+  head |-> 0,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 2: <Next line 456, col 9 to line 456, col 47 of module PiDagMerge4>
+/\ ledger4 = <<>>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> FALSE,
+  phase |-> "start",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 3: <Next line 456, col 9 to line 456, col 47 of module PiDagMerge4>
+/\ ledger4 = <<>>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> FALSE,
+  phase |-> "observe",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 4: <Next line 456, col 9 to line 456, col 47 of module PiDagMerge4>
+/\ ledger4 = <<>>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> FALSE,
+  phase |-> "decide",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 2,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |->
+      << [ op |-> "observe",
+           key |-> k0,
+           result |-> "unknown",
+           rank |-> 1,
+           accurate |-> FALSE,
+           n |-> k0,
+           kind |-> "state",
+           truth |-> FALSE ] >> ]
+
+State 5: <Next line 456, col 9 to line 456, col 47 of module PiDagMerge4>
+/\ ledger4 = <<>>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> FALSE,
+  phase |-> "commit",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 2,
+  snap |-> 2,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |->
+      << [ op |-> "observe",
+           key |-> k0,
+           result |-> "unknown",
+           rank |-> 1,
+           accurate |-> FALSE,
+           n |-> k0,
+           kind |-> "state",
+           truth |-> FALSE ] >> ]
+
+State 6: <Next line 456, col 9 to line 456, col 47 of module PiDagMerge4>
+/\ ledger4 = <<>>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> FALSE,
+  phase |-> "commit",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 3,
+  snap |-> 2,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> TRUE,
+  hist |->
+      << [ op |-> "observe",
+           key |-> k0,
+           result |-> "unknown",
+           rank |-> 1,
+           accurate |-> FALSE,
+           n |-> k0,
+           kind |-> "state",
+           truth |-> FALSE ] >> ]
+
+State 7: <Next line 456, col 9 to line 456, col 47 of module PiDagMerge4>
+/\ ledger4 = <<>>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> FALSE,
+  phase |-> "done",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 4,
+  snap |-> 2,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> TRUE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> TRUE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> TRUE,
+  hist |->
+      << [ op |-> "observe",
+           key |-> k0,
+           result |-> "unknown",
+           rank |-> 1,
+           accurate |-> FALSE,
+           n |-> k0,
+           kind |-> "state",
+           truth |-> FALSE ] >> ]
+
+10 states generated, 10 distinct states found, 2 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 01s at (2026-10-08 23:58:09)

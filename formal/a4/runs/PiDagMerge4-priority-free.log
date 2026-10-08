@@ -1,0 +1,1 @@
+{"scenario": "free", "mode": "a4", "properties": ["FreeCoreSafety"], "simulate": true, "tag": "simulation", "wrapper_exit": 0, "log": "PiDagMerge4-command-a4-simulation-free.log"}

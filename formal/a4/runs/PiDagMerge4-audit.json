@@ -1,0 +1,228 @@
+{
+  "module_sha256": "241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b",
+  "a3_module_sha256": "7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957",
+  "check_sh_sha256": "282214ecf6d9d5e95bb10e78183686236e0160d8a99a2f04757fba32dda8a9fd",
+  "check_sh_exact_copy": true,
+  "ground_truth_tail_identical": true,
+  "ground_truth_tail_bytes": 6672,
+  "recorded_a3_intersections": 27,
+  "recorded_a3_result_and_state_counts_unchanged": true,
+  "baseline_comparison": [
+    {
+      "scenario": "defer",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "10",
+      "new_distinct": "10"
+    },
+    {
+      "scenario": "falsePass",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "14",
+      "new_distinct": "14"
+    },
+    {
+      "scenario": "flakyDebt",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "5",
+      "new_distinct": "5"
+    },
+    {
+      "scenario": "genesis",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "6",
+      "new_distinct": "6"
+    },
+    {
+      "scenario": "launderReview",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "33",
+      "new_distinct": "33"
+    },
+    {
+      "scenario": "launderTest",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "101",
+      "new_distinct": "101"
+    },
+    {
+      "scenario": "matrix",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "6",
+      "new_distinct": "6"
+    },
+    {
+      "scenario": "oldDebt",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "13",
+      "new_distinct": "13"
+    },
+    {
+      "scenario": "rerun",
+      "property": "DeferredDebtVisible",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "72",
+      "new_distinct": "72"
+    },
+    {
+      "scenario": "defer",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "10",
+      "new_distinct": "10"
+    },
+    {
+      "scenario": "falsePass",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "14",
+      "new_distinct": "14"
+    },
+    {
+      "scenario": "flakyDebt",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "5",
+      "new_distinct": "5"
+    },
+    {
+      "scenario": "genesis",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "6",
+      "new_distinct": "6"
+    },
+    {
+      "scenario": "launderReview",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "33",
+      "new_distinct": "33"
+    },
+    {
+      "scenario": "launderTest",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "101",
+      "new_distinct": "101"
+    },
+    {
+      "scenario": "matrix",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "6",
+      "new_distinct": "6"
+    },
+    {
+      "scenario": "oldDebt",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "13",
+      "new_distinct": "13"
+    },
+    {
+      "scenario": "rerun",
+      "property": "EscapeAttributable",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "72",
+      "new_distinct": "72"
+    },
+    {
+      "scenario": "defer",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "10",
+      "new_distinct": "10"
+    },
+    {
+      "scenario": "falsePass",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "14",
+      "new_distinct": "14"
+    },
+    {
+      "scenario": "flakyDebt",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "5",
+      "new_distinct": "5"
+    },
+    {
+      "scenario": "genesis",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "6",
+      "new_distinct": "6"
+    },
+    {
+      "scenario": "launderReview",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "33",
+      "new_distinct": "33"
+    },
+    {
+      "scenario": "launderTest",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "101",
+      "new_distinct": "101"
+    },
+    {
+      "scenario": "matrix",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "6",
+      "new_distinct": "6"
+    },
+    {
+      "scenario": "oldDebt",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "13",
+      "new_distinct": "13"
+    },
+    {
+      "scenario": "rerun",
+      "property": "NoBypassedNegative",
+      "old": "HOLDS",
+      "new": "HOLDS",
+      "old_distinct": "72",
+      "new_distinct": "72"
+    }
+  ]
+}

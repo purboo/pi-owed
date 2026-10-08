@@ -1,0 +1,309 @@
+--- formal/a3/PiDagMerge.tla
++++ formal/a4/PiDagMerge4.tla
+@@ -1,4 +1,4 @@
+------------------------------ MODULE PiDagMerge -----------------------------
++----------------------------- MODULE PiDagMerge4 -----------------------------
+ EXTENDS Naturals, FiniteSets, Sequences, TLC
+ CONSTANTS Mode, Scenario, O, K0, K1
+ \* Scripted scenarios: one node and two content keys. Free scenarios: two
+@@ -11,11 +11,20 @@
+ \* Negative is a truthful diagnostic by an accurate observer (review rank 2,
+ \* exact diagnostic rank 1). Rank 1 also admits inaccurate observers; rank
+ \* is policy authority, not a theorem of equal diagnostic accuracy.
+-VARIABLES x, f
+-vars == <<x, f>>
++VARIABLES x, f, ledger4
++vars == <<x, f, ledger4>>
++
++
++\* a4 adapter: the unchanged environment supplies trusted executors, ranked
++\* reviewers and owner dispositions, all distinct from content/closure writers.
++\* Each assertion quotes the entire prefix available when it is issued. Later
++\* negatives are NOT silently added to its premises. Positions include genesis.
++A4 == Mode \in {"a4", "a4-noAuth", "a4-noInformed", "a4-noRecused",
++                 "a4-noRel1", "a4-noRel2", "a4-noRel3"}
++Enabled4(c) == Mode # ("a4-no" \o c)
+ 
+ A3 == Mode # "a22"
+-FreeScenario == Scenario \in {"free", "replayNegative", "replayDeferred"}
++FreeScenario == Scenario \in {"free", "replayNegative", "replayDeferred", "replayWaiverCitation"}
+ Clause(c) == A3 /\ Mode # ("a3-" \o c)
+ ObsKey(k) == IF Clause("K1") THEN k ELSE IF A3 THEN K0 ELSE k
+ Item(k) == IF Clause("K3") THEN <<O,k>> ELSE O
+@@ -43,6 +52,106 @@
+   stateWaiver |-> FALSE, debtAfter |-> FALSE, lateBlock |-> FALSE,
+   invalidated |-> FALSE, lease |-> FALSE, leaseUsed |-> FALSE,
+   conflictMerge |-> FALSE, unrelated |-> FALSE, hist |-> <<>>]
++
++Raw4 == IF FreeScenario THEN f.hist ELSE x.hist
++GEvent4(n,k,r) == [op |-> "observe", n |-> n, key |-> k, kind |-> "state",
++ result |-> r, rank |-> 1, accurate |-> TRUE, truth |-> r = "pass"]
++Genesis4 == IF FreeScenario THEN
++ IF f.genesis THEN <<GEvent4(K0,<<K0,0>>,IF f.truth[K0][0] THEN "pass" ELSE "fail"),
++                      GEvent4(K1,<<K1,0>>,IF f.truth[K1][0] THEN "pass" ELSE "fail")>> ELSE <<>>
++ ELSE IF ~x.genesis THEN <<>> ELSE
++ IF PreObs = {} THEN <<>> ELSE IF PreObs = {"pass","fail"}
++ THEN <<GEvent4(K0,K0,"pass"),GEvent4(K0,K0,"fail")>>
++ ELSE <<GEvent4(K0,K0,IF "pass" \in PreObs THEN "pass" ELSE "fail")>>
++RECURSIVE Expand4(_)
++Expand4(h) == IF Len(h) = 0 THEN <<>> ELSE
++ (IF h[1].op = "genesis" THEN <<h[1],
++   GEvent4(K0,<<K0,0>>,IF f.truth[K0][0] THEN "pass" ELSE "fail"),
++   GEvent4(K1,<<K1,0>>,IF f.truth[K1][0] THEN "pass" ELSE "fail")>>
++  ELSE <<h[1]>>) \o Expand4(Tail(h))
++History4 == IF FreeScenario THEN Expand4(Raw4) ELSE Genesis4 \o Raw4
++Disposition4(e) == e.op \in {"waiver","stateWaiver","defer"}
++Author4(e) == IF Disposition4(e) THEN "owner"
++ ELSE IF e.kind = "judgment" THEN IF e.rank = 2 THEN "reviewer2" ELSE "reviewer1"
++ ELSE "executor"
++Assertion4(e,i) == [op |-> e.op, n |-> e.n, key |-> e.key,
++ kind |-> IF e.op = "defer" THEN "no-new-debt" ELSE e.kind,
++ result |-> e.result, rank |-> e.rank, author |-> Author4(e),
++ pos |-> i, premises |-> 1..(i-1), previous |-> 0]
++\* Materialized pure projection avoids re-expanding history at every lookup.
++\* It is constrained after EVERY environment step, never independently writable.
++DerivedLedger4 == [i \in 1..Len(History4) |-> Assertion4(History4[i],i)]
++Ledger4 == ledger4
++Affirm4(a) == (a.op = "observe" /\ a.result = "pass") \/ Disposition4(a)
++Negative4(a) == a.op = "observe" /\ a.result = "fail"
++SameObligation4(a,b) == a.n = b.n /\ a.kind = b.kind
++ItemRel4(a,t) == {i \in 1..(t-1) :
++ SameObligation4(a,Ledger4[i]) /\
++ (Negative4(Ledger4[i]) \/ a.key = Ledger4[i].key)}
++\* Name values are quotiented by epoch (or the live scenario's exact PRE bit).
++NameValue4 == IF FreeScenario THEN f.epoch ELSE IF Scenario = "live"
++ THEN IF x.invalidated THEN 1 ELSE 0 ELSE 0
++Rel(a,t) == [items |-> IF Enabled4("Rel1") /\ a.op # "trunk"
++                           THEN ItemRel4(a,t) ELSE {},
++ names |-> IF Enabled4("Rel2") /\ a.op = "trunk" THEN {NameValue4} ELSE {},
++ change |-> Enabled4("Rel3") /\ a.op = "trunk"]
++Witnesses(a) == IF a.op = "trunk" THEN {"merger"}
++ ELSE IF a.op = "stateWaiver" THEN {}
++ ELSE IF Disposition4(a) THEN {"owner"}
++ ELSE IF a.kind = "judgment" THEN {"reviewer1","reviewer2"} ELSE {"executor"}
++Authorized(a,t) == /\ a.author \in Witnesses(a)
++ /\ IF a.op = "defer" /\ FreeScenario THEN a.key # <<a.n,f.trunk[a.n]>> ELSE TRUE
++Authors(a) == {"writer","closureWriter","formerWriter"}
++Recused(a) == a.author \notin Authors(a)
++JudgmentCleared4(a,i,t) ==
++ (i \in a.premises /\ a.rank >= Ledger4[i].rank) \/
++ (\E j \in (i+1)..(t-1) : j \in a.premises /\
++   Affirm4(Ledger4[j]) /\
++   SameObligation4(a,Ledger4[j]) /\ Ledger4[j].rank >= Ledger4[i].rank /\
++   i \in Ledger4[j].premises)
++ExecutionCleared4(a,i,t) == \E j \in (i+1)..(t-1) :
++ j \in a.premises /\ Ledger4[j].op = "rerun" /\
++ SameObligation4(a,Ledger4[j]) /\ Ledger4[j].key = Ledger4[i].key /\
++ Ledger4[j].author = "executor" /\ Ledger4[j].result = "fail"
++Conflict4(a,t) == \E j \in 1..(t-1) :
++ /\ Ledger4[j].op = "rerun" /\ Ledger4[j].result = "pass"
++ /\ Ledger4[j].author = "executor" /\ SameObligation4(a,Ledger4[j])
++ /\ \E i \in 1..(j-1) : Negative4(Ledger4[i]) /\ Ledger4[i].kind # "judgment"
++     /\ SameObligation4(a,Ledger4[i]) /\ Ledger4[j].key = Ledger4[i].key
++RECURSIVE Counts(_, _)
++Positive4(n,k,kind,t) == \E i \in 1..(t-1) :
++ Ledger4[i].n = n /\ Ledger4[i].key = k /\ Ledger4[i].kind = kind /\
++ Affirm4(Ledger4[i]) /\ Ledger4[i].op # "defer" /\ Counts(Ledger4[i],t)
++DispositionCounts4(n,k,op,t) == \E i \in 1..(t-1) : Ledger4[i].op = op /\
++ Ledger4[i].n = n /\ Ledger4[i].key = k /\ Counts(Ledger4[i],t)
++Deferred4(n,k,t) == DispositionCounts4(n,k,"defer",t)
++Debt4(n,k,t) == IF Positive4(n,k,"state",t) THEN {} ELSE {<<n,k>>}
++Change4(a,t) == IF FreeScenario THEN
++ /\ Positive4(a.n,a.key,f.kind[a.n],t)
++ /\ (Deferred4(a.n,a.key,t) \/ Debt4(a.n,a.key,t) \subseteq Debt4(a.n,<<a.n,f.trunk[a.n]>>,t))
++ ELSE IF Scenario = "live" THEN TRUE ELSE
++ /\ (DebtCase \/ Positive4(K0,x.key,IF Scenario = "launderReview" THEN "judgment" ELSE "execution",t))
++ /\ (~DebtCase \/ Deferred4(K0,CK,t) \/ Debt4(K0,CK,t) \subseteq Debt4(K0,K0,t))
++Informed(a,t) ==
++ /\ \A v \in Rel(a,t).names : a.previous = v
++ /\ IF Rel(a,t).change THEN Change4(a,t) ELSE TRUE
++ /\ (~Enabled4("Rel1") \/ ~Conflict4(a,t))
++ /\ \A i \in Rel(a,t).items : Negative4(Ledger4[i]) =>
++        IF Ledger4[i].kind = "judgment" THEN JudgmentCleared4(a,i,t)
++        ELSE ExecutionCleared4(a,i,t)
++Counts(a,t) == /\ (~Enabled4("Auth") \/ Authorized(a,t))
++ /\ (~Enabled4("Informed") \/ Informed(a,t))
++ /\ (~Enabled4("Recused") \/ Recused(a))
++Trunk4(n,k,pre) == [op |-> "trunk", n |-> n, key |-> k, kind |-> "name",
++ result |-> "value", rank |-> 3, author |-> "merger", pos |-> Len(Ledger4)+1,
++ premises |-> 1..Len(Ledger4), previous |-> pre]
++\* Pointer contract explicitly adds successful change and no-new-debt to
++\* Counts. Consequently Rel3 can be redundant; we do not remove this clause
++\* to manufacture an ablation flip.
++Merge4(n,k,pre) == LET a == Trunk4(n,k,pre) t == Len(Ledger4)+1 IN
++ Counts(a,t) /\ Change4(a,t) /\ (IF FreeScenario THEN f.genesis ELSE x.genesis)
++Permit4(e) == Counts(Assertion4(e,Len(Ledger4)+1),Len(Ledger4)+1)
++
+ Genesis == /\ x.phase = "genesis"
+  /\ x' = [x EXCEPT !.phase = "start", !.genesis = TRUE,
+     !.obs[K0] = PreObs, !.head = @ + 1]
+@@ -93,19 +202,24 @@
+     !.hist = Append(@, SEvent("rerun", K0, r, 1, FALSE)),
+     !.conflict = r = "pass", !.original = @ \cup {r}, !.head = @ + 1]
+ OwnerWaive == /\ x.phase = "decide" /\ Launder /\ ~x.waiver
+- /\ x' = [x EXCEPT !.waiver = TRUE, !.head = @ + 1]
++ /\ (~A4 \/ Permit4(SEvent("waiver",x.key,"none",3,TRUE)))
++ /\ x' = [x EXCEPT !.waiver = TRUE, !.head = @ + 1,
++    !.hist = IF A4 THEN Append(@,SEvent("waiver",x.key,"none",3,TRUE)) ELSE @]
+ Defer == /\ x.phase = "decide" /\ Scenario = "defer" /\ ~x.deferred
+- /\ x' = [x EXCEPT !.deferred = TRUE, !.head = @ + 1]
++ /\ (~A4 \/ Permit4(SEvent("defer",x.key,"none",3,TRUE)))
++ /\ x' = [x EXCEPT !.deferred = TRUE, !.head = @ + 1,
++    !.hist = IF A4 THEN Append(@,SEvent("defer",x.key,"none",3,TRUE)) ELSE @]
+ StateWaive == /\ x.phase = "decide" /\ Scenario = "waiver"
+- /\ ~Clause("K3state") /\ ~x.stateWaiver
+- /\ x' = [x EXCEPT !.stateWaiver = TRUE, !.head = @ + 1]
++ /\ (IF A4 THEN Permit4(SEvent("stateWaiver",x.key,"none",3,TRUE)) ELSE ~Clause("K3state")) /\ ~x.stateWaiver
++ /\ x' = [x EXCEPT !.stateWaiver = TRUE, !.head = @ + 1,
++    !.hist = IF A4 THEN Append(@,SEvent("stateWaiver",x.key,"none",3,TRUE)) ELSE @]
+ Evidence(k) == x.obs[ObsKey(k)] = {"pass"}
+ PreDebt == IF x.obs[K0] = {"pass"} THEN {} ELSE {Item(K0)}
+ NextDebt == IF Evidence(CK) \/ x.stateWaiver THEN {} ELSE {Item(CK)}
+ NodeOK == IF Launder THEN
+   x.waiver \/ (Evidence(x.key) /\ (~Clause("K2") \/ (~x.sealed /\ ~x.conflict)))
+   ELSE Evidence(x.key) \/ DebtCase
+-Guard == /\ (~Clause("K4") \/ x.genesis)
++Guard == IF A4 THEN Merge4(K0,x.key,0) ELSE /\ (~Clause("K4") \/ x.genesis)
+  /\ NodeOK
+  /\ (IF DebtCase THEN x.deferred \/ NextDebt \subseteq PreDebt ELSE TRUE)
+ Eval == /\ x.phase = "decide" /\ Guard
+@@ -128,7 +242,7 @@
+     !.freshBlockMerged = x.lateBlock,
+     !.unobservedMerged = ~x.genesis,
+     !.waivedStateMerged = x.stateWaiver,
+-    !.truth = ~Bad, !.debtAfter = ~Evidence(CK), !.head = @ + 1]
++    !.truth = ~Bad, !.debtAfter = IF A4 THEN Debt4(K0,CK,Len(Ledger4)+1) # {} ELSE ~Evidence(CK), !.head = @ + 1]
+ Retry == /\ x.phase = "commit" /\ Clause("K5atomic") /\ ~Guard
+  /\ x' = [x EXCEPT !.phase = "decide"]
+ \* Unknown is not rejection. A scheduled accurate full run can finish the
+@@ -160,7 +274,8 @@
+  /\ x' = [x EXCEPT !.phase = "validate", !.invalidated = FALSE]
+ Validate == /\ x.phase = "validate"
+  /\ x' = [x EXCEPT !.phase = "ready"]
+-LiveCommit == /\ x.phase = "ready" /\ ~x.invalidated
++LiveCommit == /\ x.phase = "ready"
++ /\ (IF A4 THEN Merge4(K0,x.key,0) ELSE ~x.invalidated)
+  /\ x' = [x EXCEPT !.phase = "done", !.merged = TRUE,
+     !.lease = FALSE, !.leaseUsed = FALSE]
+ Rebase == /\ x.phase = "ready" /\ x.invalidated
+@@ -229,7 +344,7 @@
+  /\ f' = [f EXCEPT !.inputs = @+1, !.obs[n][FObsVer(n)] = @ \cup {r},
+    !.hist = Append(@,[FEvent("observe",n,FKey(n),r,1,accurate,f.truth[n][f.ver[n]])
+                       EXCEPT !.kind = "state"])]
+-FRerun(i,r) == /\ i \in f.blocks /\ f.hist[i].kind = "execution"
++FRerun(i,r) == /\ i \in (IF A4 THEN {j \in 1..Len(f.hist) : f.hist[j].op = "observe" /\ f.hist[j].result = "fail" /\ f.hist[j].kind = "execution"} ELSE f.blocks) /\ f.hist[i].kind = "execution"
+  /\ f.hist[i].n \notin f.done /\ f.inputs < FLimit
+  /\ f' = [f EXCEPT !.inputs = @ + 1,
+    !.hist = Append(@, FEvent("rerun",f.hist[i].n,f.hist[i].key,r,1,FALSE,
+@@ -237,17 +352,19 @@
+    !.reproduced = IF r = "fail" THEN @ \cup {j \in f.blocks :
+                         f.hist[j].n = f.hist[i].n /\ f.hist[j].key = f.hist[i].key} ELSE @,
+    !.conflict = IF r = "pass" THEN @ \cup {f.hist[i].n} ELSE @]
+-FWaive(n) == /\ n \notin f.done /\ f.inputs < FLimit /\ FKey(n) \notin f.waivers
++FWaive(n) == /\ (~A4 \/ Permit4(FEvent("waiver",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]])))
++ /\ n \notin f.done /\ f.inputs < FLimit /\ FKey(n) \notin f.waivers
+  /\ f' = [f EXCEPT !.waivers = @ \cup {FKey(n)}, !.inputs = @+1,
+    !.hist = Append(@,FEvent("waiver",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]]))]
+-FDefer(n) == /\ n \notin f.done /\ f.inputs < FLimit /\ FKey(n) \notin f.deferrals
+- /\ (~A3 \/ f.ver[n] # f.trunk[n])
++FDefer(n) == /\ (~A4 \/ Permit4(FEvent("defer",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]])))
++ /\ n \notin f.done /\ f.inputs < FLimit /\ FKey(n) \notin f.deferrals
++ /\ (A4 \/ ~A3 \/ f.ver[n] # f.trunk[n])
+  /\ f' = [f EXCEPT !.deferrals = @ \cup {FKey(n)}, !.inputs = @+1,
+    !.hist = Append(@,FEvent("defer",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]]))]
+-FStateWaive(n) == /\ ~Clause("K3state") /\ n \notin f.done
++FStateWaive(n) == /\ (IF A4 THEN Permit4([FEvent("stateWaiver",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]]) EXCEPT !.kind = "state"]) ELSE ~Clause("K3state")) /\ n \notin f.done
+  /\ f.inputs < FLimit /\ FKey(n) \notin f.stateW
+  /\ f' = [f EXCEPT !.stateW = @ \cup {FKey(n)}, !.inputs = @+1,
+-   !.hist = Append(@,FEvent("stateWaiver",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]]))]
++   !.hist = Append(@,IF A4 THEN [FEvent("stateWaiver",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]]) EXCEPT !.kind = "state"] ELSE FEvent("stateWaiver",n,FKey(n),"none",3,TRUE,f.truth[n][f.ver[n]]))]
+ FInQueue(n) == \E i \in 1..Len(f.queue) : f.queue[i] = n
+ FEnqueue(n) == /\ n \notin f.done /\ ~FInQueue(n)
+  /\ f' = [f EXCEPT !.queue = Append(@,n)]
+@@ -259,7 +376,7 @@
+ FExpire == /\ f.lease # "none" /\ f' = [f EXCEPT !.lease = "none"]
+ FDebt(n,v) == IF f.obs[n][v] = {"pass"} \/ <<n,v>> \in f.stateW THEN {}
+  ELSE {IF Clause("K3") THEN <<n,v>> ELSE n}
+-FGuard(n) == /\ (~Clause("K4") \/ f.genesis)
++FGuard(n) == IF A4 THEN Merge4(n,FKey(n),f.epoch) ELSE /\ (~Clause("K4") \/ f.genesis)
+  /\ (~A3 \/ FKey(n) \in f.waivers \/ f.nodeObs[n][FObsVer(n)] = {"pass"})
+  /\ (FKey(n) \in f.waivers \/ ~Clause("K2") \/
+       ((\A i \in f.blocks : f.hist[i].n # n) /\ n \notin f.conflict))
+@@ -269,7 +386,7 @@
+  /\ f' = [f EXCEPT !.eval[n] =
+              [valid |-> TRUE, epoch |-> f.epoch, ver |-> f.ver[n], at |-> Len(f.hist)]]
+ FCommit(n) == /\ n \notin f.done /\ FInQueue(n) /\ f.eval[n].valid
+- /\ f.eval[n].epoch = f.epoch /\ f.eval[n].ver = f.ver[n]
++ /\ (IF A4 THEN Counts(Trunk4(n,FKey(n),f.eval[n].epoch),Len(Ledger4)+1) ELSE f.eval[n].epoch = f.epoch) /\ f.eval[n].ver = f.ver[n]
+  /\ (~Clause("K5queue") \/ f.queue[1] = n)
+  /\ (~Clause("K5atomic") \/ FGuard(n))
+  /\ f' = [f EXCEPT !.done = @ \cup {n}, !.trunk[n] = f.ver[n], !.epoch = @+1,
+@@ -277,10 +394,11 @@
+    !.receipts = Append(@,[n |-> n, key |-> FKey(n), truth |-> f.truth[n][f.ver[n]],
+       prekey |-> <<n,f.trunk[n]>>, pretruth |-> f.truth[n][f.trunk[n]],
+       at |-> Len(f.hist), evalAt |-> f.eval[n].at,
+-      waived |-> FKey(n) \in f.waivers, deferred |-> FKey(n) \in f.deferrals,
+-      stateW |-> FKey(n) \in f.stateW,
+-      debt |-> f.obs[n][FObsVer(n)] # {"pass"} /\ FKey(n) \notin f.stateW,
+-      nodeDebt |-> f.nodeObs[n][FObsVer(n)] # {"pass"} /\ FKey(n) \notin f.waivers,
++      waived |-> IF A4 THEN DispositionCounts4(n,FKey(n),"waiver",Len(Ledger4)+1) ELSE FKey(n) \in f.waivers,
++      deferred |-> IF A4 THEN Deferred4(n,FKey(n),Len(Ledger4)+1) ELSE FKey(n) \in f.deferrals,
++      stateW |-> IF A4 THEN DispositionCounts4(n,FKey(n),"stateWaiver",Len(Ledger4)+1) ELSE FKey(n) \in f.stateW,
++      debt |-> IF A4 THEN Debt4(n,FKey(n),Len(Ledger4)+1) # {} ELSE f.obs[n][FObsVer(n)] # {"pass"} /\ FKey(n) \notin f.stateW,
++      nodeDebt |-> IF A4 THEN ~Positive4(n,FKey(n),f.kind[n],Len(Ledger4)+1) ELSE f.nodeObs[n][FObsVer(n)] # {"pass"} /\ FKey(n) \notin f.waivers,
+       lease |-> f.lease]),
+    !.hist = Append(@,FEvent("commit",n,FKey(n),"none",0,FALSE,f.truth[n][f.ver[n]]))]
+ \* Explicit cancellation completes a candidate, including exhausted finite
+@@ -295,13 +413,23 @@
+        \/ (\E b \in BOOLEAN : FEdit(n,b))
+        \/ (\E r \in {"pass","fail"}, accurate \in BOOLEAN : FStateObserve(n,r,accurate))
+        \/ (\E r \in {"pass","fail"}, rank \in {1,2}, accurate \in BOOLEAN : FObserve(n,r,rank,accurate)))
+- \/ (\E i \in f.blocks, r \in {"pass","fail"} : FRerun(i,r))
++ \/ (\E i \in (IF A4 THEN 1..Len(f.hist) ELSE f.blocks), r \in {"pass","fail"} : FRerun(i,r))
+ \* Minimized regressions schedule the SAME free actions; they do not change
+ \* any admission rule. General free exploration remains entirely unscripted.
+-ReplayInitial == IF Scenario = "replayNegative"
++ReplayInitial == IF Scenario \in {"replayNegative","replayWaiverCitation"}
+  THEN f.kind[K0] = "judgment" /\ ~f.truth[K0][0]
+  ELSE IF Scenario = "replayDeferred" THEN f.truth[K0][0] ELSE TRUE
+-ReplayNext == CASE Len(f.hist) = 0 -> FGenesis
++\* Diagnostic shortest replay: only scheduling is pinned; all actions and
++\* admission guards are identical to the general free environment.
++WaiverCitationNext == CASE Len(f.hist) = 0 -> FGenesis
++ [] Len(f.hist) = 1 -> FObserve(K0,"fail",2,TRUE)
++ [] Len(f.hist) = 2 -> FWaive(K0)
++ [] Len(f.hist) = 3 -> FEdit(K0,FALSE)
++ [] Len(f.hist) = 4 -> FObserve(K0,"pass",1,FALSE)
++ [] Len(f.hist) = 5 -> FDefer(K0)
++ [] OTHER -> FEnqueue(K0) \/ FEval(K0) \/ FCommit(K0) \/ UNCHANGED f
++ReplayNext == IF Scenario = "replayWaiverCitation" THEN WaiverCitationNext ELSE
++ CASE Len(f.hist) = 0 -> FGenesis
+  [] Scenario = "replayNegative" /\ Len(f.hist) = 1 -> FObserve(K0,"fail",1,TRUE)
+  [] Scenario = "replayNegative" /\ Len(f.hist) = 2 -> FObserve(K0,"pass",1,FALSE)
+  [] Scenario = "replayNegative" /\ Len(f.hist) = 3 -> FEdit(K0,FALSE)
+@@ -310,11 +438,23 @@
+  [] Scenario = "replayDeferred" /\ Len(f.hist) = 2 -> FDefer(K0)
+  [] Scenario = "replayDeferred" /\ Len(f.hist) = 3 -> FObserve(K0,"pass",1,FALSE)
+  [] OTHER -> FreeNext
+-Init == IF FreeScenario THEN FInit /\ ReplayInitial /\ x = [unused |-> TRUE]
++EnvInit == IF FreeScenario THEN FInit /\ ReplayInitial /\ x = [unused |-> TRUE]
+         ELSE ScriptInit /\ f = [unused |-> TRUE]
+-Next == IF FreeScenario THEN
++Init == /\ EnvInit /\ ledger4 = IF A4 THEN DerivedLedger4 ELSE <<>>
++EnvNext == IF FreeScenario THEN
+           (IF Scenario = "free" THEN FreeNext ELSE ReplayNext) /\ UNCHANGED x
+         ELSE ScriptNext /\ UNCHANGED f
++Append4(l,e) == Append(l,Assertion4(e,Len(l)+1))
++ProjectedNext4 == IF ~A4 THEN <<>> ELSE IF Len(Raw4') > Len(Raw4) THEN
++ LET e == Raw4'[Len(Raw4')] l == Append4(ledger4,e) IN
++ IF FreeScenario /\ e.op = "genesis" THEN
++ Append4(Append4(l,GEvent4(K0,<<K0,0>>,IF f'.truth[K0][0] THEN "pass" ELSE "fail")),
++                 GEvent4(K1,<<K1,0>>,IF f'.truth[K1][0] THEN "pass" ELSE "fail"))
++ ELSE l
++ ELSE IF ~FreeScenario THEN IF x'.genesis # x.genesis THEN DerivedLedger4' ELSE ledger4
++ ELSE ledger4
++Next == /\ EnvNext /\ ledger4' = ProjectedNext4
++Projection4 == ~A4 \/ ledger4 = DerivedLedger4
+ Spec == Init /\ [][Next]_vars /\ (IF FreeScenario THEN TRUE ELSE ScriptFair)
+ 
+ \* Independent reference predicates use historical observations, immutable

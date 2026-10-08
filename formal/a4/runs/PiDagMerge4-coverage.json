@@ -1,0 +1,14 @@
+{
+  "module_sha256": "241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b",
+  "expected_checks": 756,
+  "present_checks": 759,
+  "completed_expected_checks": 756,
+  "missing_or_incomplete": [],
+  "wrong_simulation_budget": [],
+  "statuses": {
+    "HOLDS": 587,
+    "HOLDS-SIM": 14,
+    "VIOLATED": 158
+  },
+  "complete": true
+}

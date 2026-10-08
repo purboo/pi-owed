@@ -1,0 +1,47 @@
++ set -u
+++ dirname formal/a4/check.sh
++ cd formal/a4
++ mkdir -p runs
++ mod=PiDagAuth4
++ modes=a4
++ props=AllSafety
++ consts='Scope = "free"; MaxLog = 3; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-free3
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AllSafety
++ case $p in
++ base=runs/PiDagAuth4-a4-AllSafety-free3
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scope = "free"; MaxLog = 3; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AllSafety'
+++ sha256sum PiDagAuth4.tla
+++ cut -c1-64
++ echo '# module sha256 37e2b853c6e026bd1130f6ea0ca4d9d9a28b433a7bf07fb2c608d9f1f56ca009'
+++ sha256sum runs/PiDagAuth4-a4-AllSafety-free3.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 5add11b69be72030f82be3f74d0bfbe3a58e54e918ae38e310c5321783eeec62'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:19:18+08:00'
++ timeout 2400 java -Xmx12g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 8 -metadir runs/PiDagAuth4-a4-AllSafety-free3.states -config runs/PiDagAuth4-a4-AllSafety-free3.cfg PiDagAuth4.tla
++ rc=12
++ rm -rf runs/PiDagAuth4-a4-AllSafety-free3.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagAuth4-a4-AllSafety-free3.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth4-a4-AllSafety-free3.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth4-a4-AllSafety-free3.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth4 a4 AllSafety VIOLATED '34642 distinct states found'
+PiDagAuth4       a4     AllSafety              VIOLATED  34642 distinct states found
++ exit 0

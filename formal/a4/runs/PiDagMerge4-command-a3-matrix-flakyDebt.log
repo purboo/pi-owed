@@ -1,0 +1,1692 @@
+{"argv": ["bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a3", "NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges", "Scenario = \"flakyDebt\"; O = o; K0 = k0; K1 = k1", "-matrix-flakyDebt"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a3
++ props='NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges'
++ consts='Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-matrix-flakyDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c18441bcdfdd7e8edf0f2579a80ea40284289720a08fde85c8beb3b0bc4b455d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:15+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoBypassedNegative HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoBypassedNegative     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 20ad06fccae719beaec255253090406169daec1bf9fe76f65f43774a5bc485bd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:16+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 EscapeAttributable HOLDS '5 distinct states found'
+PiDagMerge4      a3     EscapeAttributable     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NodeAcceptanceCovered
++ case $p in
++ base=runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NodeAcceptanceCovered'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c4061be5c75e32f24907a23c31f6e10951931a16a2b0c576186b618f55c20032'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:17+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NodeAcceptanceCovered HOLDS '5 distinct states found'
+PiDagMerge4      a3     NodeAcceptanceCovered  HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 dbe8356ce0792609e9b262471b280f489365fafcfcf4081912ae7c2f653759dd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:19+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NewEscapeAttributable HOLDS '5 distinct states found'
+PiDagMerge4      a3     NewEscapeAttributable  HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 ee53e714b288507f1e33fa5b3800c2a200d9170b03c8bbda21e16f6eeb52b5fd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:20+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoLaundering HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoLaundering           HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 efcb87cf6042cfc22421c40abe31f22d2c86bdd2ac4eaaec63b3966b2700f03c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:21+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoFlakyRerunEscape HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoFlakyRerunEscape     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 f739fb0306d2f9520528e1b9b773cdc57d3dd5cbcdecff4c0ee7b0c1fb240ab1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:23+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoNewBreakage HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoNewBreakage          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 963798c39bbc6b74d6e40cc684f81be870670e1f3a06522cef5574cfbd8624a8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:24+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 JudgedAtCommit HOLDS '5 distinct states found'
+PiDagMerge4      a3     JudgedAtCommit         HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 fc41d6147933772deeb2ead975f1d263896ce220fbccee5a990869ee0c9ab70c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:25+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 GenesisBeforeAdvance HOLDS '5 distinct states found'
+PiDagMerge4      a3     GenesisBeforeAdvance   HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 1d144e77269926e932524affc8d8b06ded6da394fd62bfc04fa0f4ca5e87d206'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:26+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 StateNeverWaived HOLDS '5 distinct states found'
+PiDagMerge4      a3     StateNeverWaived       HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 e6422cd7e5798ad481c022ba8d63d5a4e75db054bfa04fd18d1c41d285740e6d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:28+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 DeferredDebtVisible HOLDS '5 distinct states found'
+PiDagMerge4      a3     DeferredDebtVisible    HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 632b8d48a43c555b20167599725fb2c6bd76f90cecf4968415ad91547266a366'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:29+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 LeaseExcludes HOLDS '5 distinct states found'
+PiDagMerge4      a3     LeaseExcludes          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 6011363eccf931ea3b0ee308b4d5eea4108ba396cafa0cfdab0715ea717eb0b1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:30+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NothingMerged HOLDS '5 distinct states found'
+PiDagMerge4      a3     NothingMerged          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9115d12622c7d63aacffb6bd2a7eb68848878492e3535ceca5a5a449bbaa982e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:32+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoDeferredMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoDeferredMerge        HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 01837b4cd16edbdc3da5698987c28456c6d58d2b75d01c7162c635a7a3ec36e8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:33+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoOwnerWaivedMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoOwnerWaivedMerge     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoUnrelatedMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoUnrelatedMerge'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 b0f7b2e58d7ada3610faf1e285c875ed2669e470207a33e9d0c73ec424c27e9d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:34+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoUnrelatedMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoUnrelatedMerge       HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOldDebtMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOldDebtMerge'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 1a79f7c0d38e0a9d4fa64c80c0e86e35aa6ceeae0e0151789de72c8e8e9d9831'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:36+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoOldDebtMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoOldDebtMerge         HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ sha256sum PiDagMerge4.tla
+++ cut -c1-64
++ echo '# module sha256 ceaab0e424646540095fd20db8070f8475dbe96cb063fe1b8b56f8ec3b14407b'
+++ sha256sum runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 4ef9ee9a1edcb093d78c19c2e62249442b1cb8da1162379e3f246669041a9050'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:21:37+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=13
++ rm -rf runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.states
++ '[' 13 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 GoodEventuallyMerges VIOLATED '5 distinct states found'
+PiDagMerge4      a3     GoodEventuallyMerges   VIOLATED  5 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a3", "NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges", "Scenario = \"flakyDebt\"; O = o; K0 = k0; K1 = k1", "-matrix-flakyDebt"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a3
++ props='NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges'
++ consts='Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-matrix-flakyDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 c18441bcdfdd7e8edf0f2579a80ea40284289720a08fde85c8beb3b0bc4b455d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:18+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoBypassedNegative HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoBypassedNegative     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 20ad06fccae719beaec255253090406169daec1bf9fe76f65f43774a5bc485bd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:20+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 EscapeAttributable HOLDS '5 distinct states found'
+PiDagMerge4      a3     EscapeAttributable     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NodeAcceptanceCovered
++ case $p in
++ base=runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NodeAcceptanceCovered'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 c4061be5c75e32f24907a23c31f6e10951931a16a2b0c576186b618f55c20032'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:22+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NodeAcceptanceCovered HOLDS '5 distinct states found'
+PiDagMerge4      a3     NodeAcceptanceCovered  HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 dbe8356ce0792609e9b262471b280f489365fafcfcf4081912ae7c2f653759dd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:25+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NewEscapeAttributable HOLDS '5 distinct states found'
+PiDagMerge4      a3     NewEscapeAttributable  HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 ee53e714b288507f1e33fa5b3800c2a200d9170b03c8bbda21e16f6eeb52b5fd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:29+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoLaundering HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoLaundering           HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 efcb87cf6042cfc22421c40abe31f22d2c86bdd2ac4eaaec63b3966b2700f03c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:33+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoFlakyRerunEscape HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoFlakyRerunEscape     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 f739fb0306d2f9520528e1b9b773cdc57d3dd5cbcdecff4c0ee7b0c1fb240ab1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:36+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoNewBreakage HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoNewBreakage          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 963798c39bbc6b74d6e40cc684f81be870670e1f3a06522cef5574cfbd8624a8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:38+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 JudgedAtCommit HOLDS '5 distinct states found'
+PiDagMerge4      a3     JudgedAtCommit         HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 fc41d6147933772deeb2ead975f1d263896ce220fbccee5a990869ee0c9ab70c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:41+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 GenesisBeforeAdvance HOLDS '5 distinct states found'
+PiDagMerge4      a3     GenesisBeforeAdvance   HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 1d144e77269926e932524affc8d8b06ded6da394fd62bfc04fa0f4ca5e87d206'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:43+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 StateNeverWaived HOLDS '5 distinct states found'
+PiDagMerge4      a3     StateNeverWaived       HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 e6422cd7e5798ad481c022ba8d63d5a4e75db054bfa04fd18d1c41d285740e6d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:45+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 DeferredDebtVisible HOLDS '5 distinct states found'
+PiDagMerge4      a3     DeferredDebtVisible    HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 632b8d48a43c555b20167599725fb2c6bd76f90cecf4968415ad91547266a366'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:46+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 LeaseExcludes HOLDS '5 distinct states found'
+PiDagMerge4      a3     LeaseExcludes          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 6011363eccf931ea3b0ee308b4d5eea4108ba396cafa0cfdab0715ea717eb0b1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:48+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NothingMerged HOLDS '5 distinct states found'
+PiDagMerge4      a3     NothingMerged          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 9115d12622c7d63aacffb6bd2a7eb68848878492e3535ceca5a5a449bbaa982e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:50+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoDeferredMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoDeferredMerge        HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 01837b4cd16edbdc3da5698987c28456c6d58d2b75d01c7162c635a7a3ec36e8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:52+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoOwnerWaivedMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoOwnerWaivedMerge     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoUnrelatedMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoUnrelatedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 b0f7b2e58d7ada3610faf1e285c875ed2669e470207a33e9d0c73ec424c27e9d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:53+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoUnrelatedMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoUnrelatedMerge       HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOldDebtMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOldDebtMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 1a79f7c0d38e0a9d4fa64c80c0e86e35aa6ceeae0e0151789de72c8e8e9d9831'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:55+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoOldDebtMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoOldDebtMerge         HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 32ea4fa368ed63d2bdd30cae1d1c16ee02218f7cdd01405824618ff761d67085'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 4ef9ee9a1edcb093d78c19c2e62249442b1cb8da1162379e3f246669041a9050'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:32:57+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=13
++ rm -rf runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.states
++ '[' 13 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 GoodEventuallyMerges VIOLATED '5 distinct states found'
+PiDagMerge4      a3     GoodEventuallyMerges   VIOLATED  5 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a3", "NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges", "Scenario = \"flakyDebt\"; O = o; K0 = k0; K1 = k1", "-matrix-flakyDebt"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a3
++ props='NoBypassedNegative EscapeAttributable NodeAcceptanceCovered NewEscapeAttributable NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived DeferredDebtVisible LeaseExcludes NothingMerged NoDeferredMerge NoOwnerWaivedMerge NoUnrelatedMerge NoOldDebtMerge P:GoodEventuallyMerges'
++ consts='Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-matrix-flakyDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 c18441bcdfdd7e8edf0f2579a80ea40284289720a08fde85c8beb3b0bc4b455d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:37+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoBypassedNegative-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoBypassedNegative HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoBypassedNegative     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 20ad06fccae719beaec255253090406169daec1bf9fe76f65f43774a5bc485bd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:39+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-EscapeAttributable-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 EscapeAttributable HOLDS '5 distinct states found'
+PiDagMerge4      a3     EscapeAttributable     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NodeAcceptanceCovered
++ case $p in
++ base=runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NodeAcceptanceCovered'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 c4061be5c75e32f24907a23c31f6e10951931a16a2b0c576186b618f55c20032'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:40+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NodeAcceptanceCovered-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NodeAcceptanceCovered HOLDS '5 distinct states found'
+PiDagMerge4      a3     NodeAcceptanceCovered  HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 dbe8356ce0792609e9b262471b280f489365fafcfcf4081912ae7c2f653759dd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:42+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NewEscapeAttributable-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NewEscapeAttributable HOLDS '5 distinct states found'
+PiDagMerge4      a3     NewEscapeAttributable  HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 ee53e714b288507f1e33fa5b3800c2a200d9170b03c8bbda21e16f6eeb52b5fd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:43+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoLaundering-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoLaundering HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoLaundering           HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 efcb87cf6042cfc22421c40abe31f22d2c86bdd2ac4eaaec63b3966b2700f03c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:45+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoFlakyRerunEscape-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoFlakyRerunEscape HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoFlakyRerunEscape     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 f739fb0306d2f9520528e1b9b773cdc57d3dd5cbcdecff4c0ee7b0c1fb240ab1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:47+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoNewBreakage-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoNewBreakage HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoNewBreakage          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 963798c39bbc6b74d6e40cc684f81be870670e1f3a06522cef5574cfbd8624a8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:48+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-JudgedAtCommit-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 JudgedAtCommit HOLDS '5 distinct states found'
+PiDagMerge4      a3     JudgedAtCommit         HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 fc41d6147933772deeb2ead975f1d263896ce220fbccee5a990869ee0c9ab70c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:50+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-GenesisBeforeAdvance-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 GenesisBeforeAdvance HOLDS '5 distinct states found'
+PiDagMerge4      a3     GenesisBeforeAdvance   HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 1d144e77269926e932524affc8d8b06ded6da394fd62bfc04fa0f4ca5e87d206'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:51+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-StateNeverWaived-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 StateNeverWaived HOLDS '5 distinct states found'
+PiDagMerge4      a3     StateNeverWaived       HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 e6422cd7e5798ad481c022ba8d63d5a4e75db054bfa04fd18d1c41d285740e6d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:53+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-DeferredDebtVisible-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 DeferredDebtVisible HOLDS '5 distinct states found'
+PiDagMerge4      a3     DeferredDebtVisible    HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 632b8d48a43c555b20167599725fb2c6bd76f90cecf4968415ad91547266a366'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:55+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-LeaseExcludes-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 LeaseExcludes HOLDS '5 distinct states found'
+PiDagMerge4      a3     LeaseExcludes          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 6011363eccf931ea3b0ee308b4d5eea4108ba396cafa0cfdab0715ea717eb0b1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:56+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NothingMerged-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NothingMerged HOLDS '5 distinct states found'
+PiDagMerge4      a3     NothingMerged          HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 9115d12622c7d63aacffb6bd2a7eb68848878492e3535ceca5a5a449bbaa982e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:52:58+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoDeferredMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoDeferredMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoDeferredMerge        HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 01837b4cd16edbdc3da5698987c28456c6d58d2b75d01c7162c635a7a3ec36e8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:53:00+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoOwnerWaivedMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoOwnerWaivedMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoOwnerWaivedMerge     HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoUnrelatedMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoUnrelatedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 b0f7b2e58d7ada3610faf1e285c875ed2669e470207a33e9d0c73ec424c27e9d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:53:01+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoUnrelatedMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoUnrelatedMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoUnrelatedMerge       HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOldDebtMerge
++ case $p in
++ base=runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOldDebtMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 1a79f7c0d38e0a9d4fa64c80c0e86e35aa6ceeae0e0151789de72c8e8e9d9831'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:53:03+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-NoOldDebtMerge-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 NoOldDebtMerge HOLDS '5 distinct states found'
+PiDagMerge4      a3     NoOldDebtMerge         HOLDS     5 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.cfg
++ echo '# cfg    sha256 4ef9ee9a1edcb093d78c19c2e62249442b1cb8da1162379e3f246669041a9050'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:53:05+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.states -config runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.cfg PiDagMerge4.tla
++ rc=13
++ rm -rf runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.states
++ '[' 13 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a3-GoodEventuallyMerges-matrix-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a3 GoodEventuallyMerges VIOLATED '5 distinct states found'
+PiDagMerge4      a3     GoodEventuallyMerges   VIOLATED  5 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0

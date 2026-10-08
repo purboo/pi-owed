@@ -1,0 +1,222 @@
+--- /work/pi-dag/formal/a3/PiDagAuth3.tla
++++ /work/pi-dag/formal/a4/PiDagAuth4.tla
+@@ -1,4 +1,4 @@
+------------------------------ MODULE PiDagAuth3 -----------------------------
++----------------------------- MODULE PiDagAuth4 -----------------------------
+ EXTENDS Integers, Sequences, FiniteSets, TLC
+ CONSTANTS Mode, Scope, MaxLog, Owner, P1, P2, W1, W2
+ ASSUME MaxLog >= 1
+@@ -8,6 +8,9 @@
+ Writers == {W1, W2}
+ Drop(c) == Mode = "a3-" \o c
+ Old == Mode = "a22"
++A4 == Mode \in {"a4", "a4-noAuth", "a4-noInformed", "a4-noRecused",
++                  "a4-noRel1", "a4-noRel2", "a4-noRel3"}
++Omit(c) == Mode = "a4-no" \o c
+ 
+ \* Finite adversarial schedules: every permutation of each event alphabet,
+ \* not only the intended trace. Each event occurs once; no cross-family mixing.
+@@ -46,10 +49,11 @@
+  [] f = "deferred" -> {D("defer",Owner,"n1"),Edit("merge")}
+ 
+ VARIABLES family, log, pending, edges, accepted, invalid, key, content,
+-          slots, merged, lawView, conflict, resolver, lawWinner, lawValue, everSlots, authors
++          slots, merged, lawView, conflict, resolver, lawWinner, lawValue, everSlots, authors, counted
+ vars == <<family,log,pending,edges,accepted,invalid,key,content,slots,
+-          merged,lawView,conflict,resolver,lawWinner,lawValue,everSlots,authors>>
++          merged,lawView,conflict,resolver,lawWinner,lawValue,everSlots,authors,counted>>
+ ScenarioInit == /\ family \in Families /\ log = <<>> /\ pending = Events(family)
++        /\ counted={}
+         /\ everSlots=Writers /\ authors=[n \in Scopes |-> Author(n)]
+         /\ edges = {} /\ accepted = {} /\ invalid = {} /\ key = 0 /\ content = 0
+         /\ slots = Writers /\ merged = FALSE /\ lawView = [p \in {P1,P2} |-> -1]
+@@ -93,8 +97,50 @@
+  /\ IF Old \/ Drop("writers") THEN TRUE
+        ELSE IF Drop("past") THEN e.from \notin slots ELSE e.from \notin Writers
+  /\ (~StateItem \/ e.type="defer" \/ Old \/ Drop("state"))
++\* a4: 0 is the genesis name-value position. Names have no content authors
++\* in this abstraction; decisions use content and historical slot provenance.
++NameEvent(e) == e.type \in {"grant","revoke","law","acquire","release","merge"}
++Subject(e) == CASE e.type \in {"grant","revoke"} -> <<"permission",e.to>>
++ [] e.type="law" -> <<"law",e.node>>
++ [] e.type \in {"acquire","release"} -> <<"slot",e.node>>
++ [] e.type="merge" -> <<"trunk",e.node>>
++ [] OTHER -> <<"item",e.node>>
++Prior(e) == LET positions == {j \in counted : NameEvent(log[j]) /\ Subject(log[j])=Subject(e)}
++ IN IF positions={} THEN 0 ELSE CHOOSE j \in positions : \A k \in positions : j>=k
++Rel2(e) == IF NameEvent(e) THEN {Prior(e)} ELSE {}
++\* Rel1 has no negatives/attributions; Rel3 has no O(PRE->s) vector here.
++Rel1(e) == {}
++Rel3(e) == {}
++Rel(e) == (IF Omit("Rel1") THEN {} ELSE Rel1(e)) \cup
++          (IF Omit("Rel2") THEN {} ELSE Rel2(e)) \cup
++          (IF Omit("Rel3") THEN {} ELSE Rel3(e))
++Premised(e) == {e @@ [premises |-> ps] : ps \in
++ IF NameEvent(e) THEN {Rel1(e) \cup Rel2(e) \cup Rel3(e), {0}} ELSE {{}}}
++Witnesses(e) == CASE e.type="grant" -> {p \in Principals : e.scope \subseteq Rights(p,edges,log)}
++ [] e.type="revoke" -> {Owner}
++ [] e.type="law" -> {p \in Principals : e.node \in Rights(p,edges,log)}
++ [] Decision(e) -> IF (IF family="free" THEN e.node="n2" ELSE StateItem) /\ e.type#"defer"
++                  THEN {} ELSE {p \in Principals : e.node \in Rights(p,edges,log)}
++ [] e.type="acquire" /\ family="free" ->
++      IF slots[e.node]="none" THEN Principals\{P1,P2} ELSE {}
++ [] e.type="release" /\ family="free" -> {slots[e.node]} \cap Principals
++ [] OTHER -> Principals
++Authors(e) == IF Decision(e) THEN
++ (IF family="free" THEN {authors[e.node]} \cup everSlots
++  ELSE {CatalogAuthor(e.node)} \cup everSlots) ELSE {}
++\* t is the current log prefix. K8 continuity is maintained by edges/Prune;
++\* no oracle (Eff/SlotAt/AuthorAt) is used by Counts or its policy table.
++Authorized(e) == e.from \in Witnesses(e)
++Informed(e) == Rel(e) \subseteq e.premises
++Recused(e) == e.from \notin Authors(e)
++Counts(e) == (Omit("Auth") \/ Authorized(e)) /\
++             (Omit("Informed") \/ Informed(e)) /\
++             (Omit("Recused") \/ Recused(e))
++
++\* Item views recompute Counts at the current prefix; committed name updates
++\* were checked at their append position. Key identity remains K1's substrate.
+ Bound(i) == IF Old \/ Drop("key") THEN log[i].content=content ELSE log[i].key=key
+-Covers(i) == i \in accepted /\ i \notin invalid /\ Bound(i)
++Covers(i) == i \in accepted /\ i \notin invalid /\ Bound(i) /\ (~A4 \/ Counts(log[i]))
+ Waived == {i \in accepted : Covers(i) /\ log[i].type # "defer"}
+ Deferred == {i \in accepted : Covers(i) /\ log[i].type="defer"}
+ Debt == IF StateItem /\ Waived={} THEN {<<"I",key>>} ELSE {}
+@@ -104,38 +150,41 @@
+  LET i == Len(log)+1
+      entry == [e EXCEPT !.value = @] @@ [key |-> key, content |-> content]
+      l == Append(log,entry)
+-     canGrant == (Old \/ Drop("issue") \/ e.from=Owner \/ Rights(e.from,edges,log)#{})
++     ok == ~A4 \/ Counts(e)
++     canGrant == IF A4 THEN Counts(e) ELSE (Old \/ Drop("issue") \/ e.from=Owner \/ Rights(e.from,edges,log)#{})
+                  /\ (Drop("scope") \/ e.scope \subseteq Rights(e.from,edges,log)
+                        \/ ((Old \/ Drop("issue")) /\ Rights(e.from,edges,log)={}))
+      raw == CASE e.type="grant" /\ canGrant -> edges \cup {i}
+-              [] e.type="revoke" -> {j \in edges : log[j].to # e.to}
++              [] e.type="revoke" /\ ok -> {j \in edges : log[j].to # e.to}
+               [] OTHER -> edges
+      live == IF e.type="revoke" /\ ~Old /\ ~Drop("continuous")
+              THEN Prune(raw,l,5) ELSE raw
+      cut == {j \in accepted : log[j].node \in Rights(log[j].from,edges,log)
+                      /\ log[j].node \notin Rights(log[j].from,live,l)}
+-     lv == IF e.type="law" /\ e.node \in Rights(e.from,edges,log)
++     lv == IF e.type="law" /\ (IF A4 THEN Counts(e) ELSE e.node \in Rights(e.from,edges,log))
+            THEN [lawView EXCEPT ![e.from]=IF Drop("same") /\ @ # -1 THEN @ ELSE e.value] ELSE lawView
+      clash == lv[P1] # -1 /\ lv[P2] # -1 /\ lv[P1] # lv[P2]
+- IN /\ e \in pending /\ Len(log)<MaxLog
++ IN /\ (IF A4 THEN \E original \in pending : e \in Premised(original) ELSE e \in pending) /\ Len(log)<MaxLog
+     /\ (e.type # "merge" \/ family="good" \/ Deferred # {})
+-    /\ log'=l /\ pending'=pending\{e} /\ edges'=live
+-    /\ accepted'=IF Decision(e) /\ CanDecide(e) THEN accepted\cup{i} ELSE accepted
+-    /\ invalid'=IF e.type="revoke" /\ (e.value="retro" \/ Drop("future")) /\ ~Drop("retro")
++    /\ counted'=IF ok THEN counted\cup{i} ELSE counted
++    /\ log'=l /\ pending'=pending\{[type |-> e.type, from |-> e.from, to |-> e.to,
++                                     scope |-> e.scope, node |-> e.node, value |-> e.value]} /\ edges'=live
++    /\ accepted'=IF Decision(e) /\ (IF A4 THEN Counts(e) ELSE CanDecide(e)) THEN accepted\cup{i} ELSE accepted
++    /\ invalid'=IF ~A4 /\ e.type="revoke" /\ (e.value="retro" \/ Drop("future")) /\ ~Drop("retro")
+                  THEN invalid\cup cut ELSE invalid
+-    /\ key'=IF e.type \in {"related","closure"} THEN key+1 ELSE key
+-    /\ content'=IF e.type \in {"related","unrelated"} THEN content+1 ELSE content
+-    /\ slots'=IF e.type="release" THEN slots\{W1} ELSE slots
+-    /\ merged'=(merged \/ (e.type="merge" /\ (family="good" \/ Deferred # {})))
++    /\ key'=IF ok /\ e.type \in {"related","closure"} THEN key+1 ELSE key
++    /\ content'=IF ok /\ e.type \in {"related","unrelated"} THEN content+1 ELSE content
++    /\ slots'=IF ok /\ e.type="release" THEN slots\{W1} ELSE slots
++    /\ merged'=(merged \/ (ok /\ e.type="merge" /\ (family="good" \/ Deferred # {})))
+     /\ lawView'=lv
+-    /\ conflict'=(clash /\ ~Old /\ ~Drop("conflict"))
+-    /\ resolver'=IF clash /\ ~Old /\ ~Drop("conflict") THEN Owner ELSE "none"
+-    /\ lawWinner'=IF clash /\ ~Old /\ ~Drop("conflict") THEN "none"
++    /\ conflict'=(clash /\ ~A4 /\ ~Old /\ ~Drop("conflict"))
++    /\ resolver'=IF clash /\ ~A4 /\ ~Old /\ ~Drop("conflict") THEN Owner ELSE "none"
++    /\ lawWinner'=IF clash /\ ~A4 /\ ~Old /\ ~Drop("conflict") THEN "none"
+                    ELSE IF lv # lawView THEN e.from ELSE lawWinner
+-    /\ lawValue'=IF clash /\ ~Old /\ ~Drop("conflict") THEN -1
++    /\ lawValue'=IF clash /\ ~A4 /\ ~Old /\ ~Drop("conflict") THEN -1
+                   ELSE IF lv # lawView THEN e.value ELSE lawValue
+     /\ UNCHANGED <<family,everSlots,authors>>
+-ScenarioAdvance == \E e \in pending : Step(e)
++ScenarioAdvance == \E e \in pending : IF A4 THEN \E a \in Premised(e) : Step(a) ELSE Step(e)
+ Done == IF family="free" THEN Len(log)=MaxLog ELSE pending={}
+ Terminal == Done /\ UNCHANGED vars
+ 
+@@ -192,6 +241,7 @@
+  \cup {E("law",a,Owner,{n},n,v) : a \in Principals, n \in Scopes, v \in {0,1}}
+  \cup {E(ty,a,Owner,{},n,0) : ty \in {"unrelated","related","closure","acquire","release","merge"}, a \in Principals, n \in Scopes}
+ FreeInit == /\ family="free" /\ log = <<>> /\ pending={}
++ /\ counted={}
+  /\ edges={} /\ accepted={} /\ invalid={}
+  /\ key=[n \in Scopes |-> 0] /\ content=[n \in Scopes |-> 0]
+  /\ slots=[n \in Scopes |-> Author(n)] /\ everSlots=Writers /\ merged=FALSE
+@@ -210,45 +260,47 @@
+  /\ (e.node#"n2" \/ e.type="defer" \/ Old \/ Drop("state"))
+ FreeBound(i) == IF Old \/ Drop("key") THEN log[i].content=content[log[i].node]
+                ELSE log[i].key=key[log[i].node]
+-FreeCovers(i) == i \in accepted /\ i \notin invalid /\ FreeBound(i)
++FreeCovers(i) == i \in accepted /\ i \notin invalid /\ FreeBound(i) /\ (~A4 \/ Counts(log[i]))
+ FreeWaived == {i \in accepted : FreeCovers(i) /\ log[i].type#"defer"}
+ FreeDeferred == {i \in accepted : FreeCovers(i) /\ log[i].type="defer"}
+ FreeDebt == IF \E i \in FreeWaived : log[i].node="n2" THEN {} ELSE {<<"I",key["n2"]>>}
+ FreeStep(e) ==
+  LET i == Len(log)+1
+      l == Append(log,e @@ [key |-> key[e.node],content |-> content[e.node]])
+-     revoke == e.type="revoke" /\ e.from=Owner
+-     grant == e.type="grant" /\
++     ok == ~A4 \/ Counts(e)
++     revoke == e.type="revoke" /\ (IF A4 THEN Counts(e) ELSE e.from=Owner)
++     grant == e.type="grant" /\ (IF A4 THEN Counts(e) ELSE
+        (Old \/ Drop("issue") \/ Rights(e.from,edges,log)#{}) /\
+        (Drop("scope") \/ e.scope \subseteq Rights(e.from,edges,log) \/
+-         ((Old \/ Drop("issue")) /\ Rights(e.from,edges,log)={}))
++         ((Old \/ Drop("issue")) /\ Rights(e.from,edges,log)={})))
+      raw == IF grant THEN edges\cup{i} ELSE IF revoke
+             THEN {j \in edges : log[j].to#e.to} ELSE edges
+      live == IF revoke /\ ~Old /\ ~Drop("continuous") THEN Prune(raw,l,5) ELSE raw
+      cut == {j \in accepted : log[j].node \in Rights(log[j].from,edges,log) /\
+                         log[j].node \notin Rights(log[j].from,live,l)}
+-     acquire == e.type="acquire" /\ e.from \notin {P1,P2} /\ slots[e.node]="none"
+-     release == e.type="release" /\ slots[e.node]=e.from
+-     law == e.type="law" /\ e.node \in Rights(e.from,edges,log)
++     acquire == ok /\ e.type="acquire" /\ e.from \notin {P1,P2} /\ slots[e.node]="none"
++     release == ok /\ e.type="release" /\ slots[e.node]=e.from
++     law == e.type="law" /\ (IF A4 THEN Counts(e) ELSE e.node \in Rights(e.from,edges,log))
+      lv == IF law THEN [lawView EXCEPT ![e.node][e.from]=e.value] ELSE lawView
+-     clashes == IF Old \/ Drop("conflict") THEN {} ELSE {n \in Scopes : FreeClash(lv,n)}
++     clashes == IF A4 \/ Old \/ Drop("conflict") THEN {} ELSE {n \in Scopes : FreeClash(lv,n)}
+      winners == IF law THEN [lawWinner EXCEPT ![e.node]=e.from] ELSE lawWinner
+      values == IF law THEN [lawValue EXCEPT ![e.node]=e.value] ELSE lawValue
+  IN /\ Len(log)<MaxLog
++    /\ counted'=IF ok THEN counted\cup{i} ELSE counted
+     /\ log'=l /\ edges'=live
+-    /\ accepted'=IF Decision(e) /\ FreeCanDecide(e) THEN accepted\cup{i} ELSE accepted
+-    /\ invalid'=IF revoke /\ e.value="retro" THEN invalid\cup cut ELSE invalid
+-    /\ key'=IF e.type \in {"related","closure"} THEN [key EXCEPT ![e.node]=@+1] ELSE key
+-    /\ content'=IF e.type \in {"related","unrelated"} THEN [content EXCEPT ![e.node]=@+1] ELSE content
++    /\ accepted'=IF Decision(e) /\ (IF A4 THEN Counts(e) ELSE FreeCanDecide(e)) THEN accepted\cup{i} ELSE accepted
++    /\ invalid'=IF ~A4 /\ revoke /\ e.value="retro" THEN invalid\cup cut ELSE invalid
++    /\ key'=IF ok /\ e.type \in {"related","closure"} THEN [key EXCEPT ![e.node]=@+1] ELSE key
++    /\ content'=IF ok /\ e.type \in {"related","unrelated"} THEN [content EXCEPT ![e.node]=@+1] ELSE content
+     /\ slots'=IF acquire THEN [slots EXCEPT ![e.node]=e.from]
+                ELSE IF release THEN [slots EXCEPT ![e.node]="none"] ELSE slots
+     /\ everSlots'=IF acquire THEN everSlots\cup{e.from} ELSE everSlots
+-    /\ authors'=IF e.type="related" THEN [authors EXCEPT ![e.node]=e.from] ELSE authors
++    /\ authors'=IF ok /\ e.type="related" THEN [authors EXCEPT ![e.node]=e.from] ELSE authors
+     /\ lawView'=lv /\ conflict'=clashes
+     /\ resolver'=[n \in Scopes |-> IF n \in clashes THEN Owner ELSE "none"]
+     /\ lawWinner'=[n \in Scopes |-> IF n \in clashes THEN "none" ELSE winners[n]]
+     /\ lawValue'=[n \in Scopes |-> IF n \in clashes THEN -1 ELSE values[n]]
+-    /\ merged'=(merged \/ (e.type="merge" /\
++    /\ merged'=(merged \/ (ok /\ e.type="merge" /\
+               \E j \in (FreeWaived\cup FreeDeferred) : log[j].node=e.node))
+     /\ UNCHANGED <<family,pending>>
+ 
+@@ -307,7 +359,8 @@
+ \* Top-level disjunction/existential lets TLC sample each event as one action.
+ \* Equivalent reachable transitions to the IF family dispatch, without building
+ \* all 210 successors on every random simulation step.
+-Advance == (\E e \in FreeEvents : family="free" /\ FreeStep(e))
++Advance == (\E e \in FreeEvents : family="free" /\
++              IF A4 THEN \E a \in Premised(e) : FreeStep(a) ELSE FreeStep(e))
+            \/ (family#"free" /\ ScenarioAdvance)
+ Next == Advance \/ Terminal
+ Spec == Init /\ [][Next]_vars /\ WF_vars(Advance)

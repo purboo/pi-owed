@@ -1,0 +1,474 @@
+{"argv": ["nice", "-n", "19", "taskset", "-c", "0", "bash", "-x", "/work/pi-dag/formal/a4/check.sh", "PiDagMerge4", "a4", "FreeCoreSafety EscapeAttributable DeferredDebtVisible NodeAcceptanceCovered NewEscapeAttributable NoDeferredMerge NoOwnerWaivedMerge FreeNoTwoMerges NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived LeaseExcludes", "Scenario = \"replayWaiverCitation\"; O = o; K0 = k0; K1 = k1", "-diagnostic-replayWaiverCitation"], "env": {"WORKERS": "1", "TLC_HEAP": "512m", "TLC_TIMEOUT": "60", "SIMULATE": null, "DEPTH": null}}
++ set -u
+++ dirname /work/pi-dag/formal/a4/check.sh
++ cd /work/pi-dag/formal/a4
++ mkdir -p runs
++ mod=PiDagMerge4
++ modes=a4
++ props='FreeCoreSafety EscapeAttributable DeferredDebtVisible NodeAcceptanceCovered NewEscapeAttributable NoDeferredMerge NoOwnerWaivedMerge FreeNoTwoMerges NoLaundering NoFlakyRerunEscape P:NoNewBreakage JudgedAtCommit GenesisBeforeAdvance StateNeverWaived LeaseExcludes'
++ consts='Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ tag=-diagnostic-replayWaiverCitation
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=FreeCoreSafety
++ case $p in
++ base=runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FreeCoreSafety'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 a88eefda8ff61f3b2f894e265674a0b84d06582330987afac59a08ee15db303e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:48:57+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-FreeCoreSafety-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 FreeCoreSafety VIOLATED '40 distinct states found'
+PiDagMerge4      a4     FreeCoreSafety         VIOLATED  40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-EscapeAttributable-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-EscapeAttributable-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 3edf2b588738396a29b5c6cf9e44633e17c987d14ec1af271d397519d8072275'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:48:58+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-EscapeAttributable-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-EscapeAttributable-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-EscapeAttributable-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-EscapeAttributable-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-EscapeAttributable-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 EscapeAttributable HOLDS '40 distinct states found'
+PiDagMerge4      a4     EscapeAttributable     HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge4-a4-DeferredDebtVisible-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-DeferredDebtVisible-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 272413e9d7ff31ff6aee4a6bafa0d4fd0bba8c59134a4592e65ca22bd1c2a865'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:00+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-DeferredDebtVisible-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-DeferredDebtVisible-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-DeferredDebtVisible-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-DeferredDebtVisible-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-DeferredDebtVisible-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 DeferredDebtVisible HOLDS '40 distinct states found'
+PiDagMerge4      a4     DeferredDebtVisible    HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NodeAcceptanceCovered
++ case $p in
++ base=runs/PiDagMerge4-a4-NodeAcceptanceCovered-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NodeAcceptanceCovered'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NodeAcceptanceCovered-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 59782b242fad3d4a57333f0457169a1b1d1e9448f03f8bce6191348c5589479c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:02+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NodeAcceptanceCovered-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-NodeAcceptanceCovered-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NodeAcceptanceCovered-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NodeAcceptanceCovered-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NodeAcceptanceCovered HOLDS '40 distinct states found'
+PiDagMerge4      a4     NodeAcceptanceCovered  HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge4-a4-NewEscapeAttributable-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NewEscapeAttributable-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 029bce76035aa3280910e282151ca25eb317d5f586e94a5adaa1c345af359ddf'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:04+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NewEscapeAttributable-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-NewEscapeAttributable-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NewEscapeAttributable-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NewEscapeAttributable-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NewEscapeAttributable-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NewEscapeAttributable HOLDS '40 distinct states found'
+PiDagMerge4      a4     NewEscapeAttributable  HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 945325e6f7995fc57fa3d3df639320c919d6e7252106ee0621c01b85b2800c80'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:06+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoDeferredMerge-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoDeferredMerge VIOLATED '40 distinct states found'
+PiDagMerge4      a4     NoDeferredMerge        VIOLATED  40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge4-a4-NoOwnerWaivedMerge-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoOwnerWaivedMerge-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 9187daf5b6319b88aa0bbe0685d8c288dbadb56ba00551db6a35eb45c3df6117'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:08+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoOwnerWaivedMerge-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-NoOwnerWaivedMerge-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoOwnerWaivedMerge-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoOwnerWaivedMerge-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoOwnerWaivedMerge HOLDS '40 distinct states found'
+PiDagMerge4      a4     NoOwnerWaivedMerge     HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=FreeNoTwoMerges
++ case $p in
++ base=runs/PiDagMerge4-a4-FreeNoTwoMerges-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FreeNoTwoMerges'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-FreeNoTwoMerges-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 8c6315893c5b2e099bbb2b3e35bd29624d4bc3395cf9ce262b5ae1b50eccc379'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:09+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-FreeNoTwoMerges-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-FreeNoTwoMerges-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-FreeNoTwoMerges-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-FreeNoTwoMerges-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-FreeNoTwoMerges-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 FreeNoTwoMerges HOLDS '40 distinct states found'
+PiDagMerge4      a4     FreeNoTwoMerges        HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 20ecd59099bd650011324cdc7fcbdd45913cc1056b3d890bcf4863bb0466efb7'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:11+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=12
++ rm -rf runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation.states
++ '[' 12 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoLaundering-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoLaundering VIOLATED '40 distinct states found'
+PiDagMerge4      a4     NoLaundering           VIOLATED  40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge4-a4-NoFlakyRerunEscape-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoFlakyRerunEscape-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 13a4196b1ab828c18deb58f430ec77123b9c8c59bfdd743334687db6941efc34'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:13+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoFlakyRerunEscape-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-NoFlakyRerunEscape-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoFlakyRerunEscape-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoFlakyRerunEscape-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoFlakyRerunEscape-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoFlakyRerunEscape HOLDS '40 distinct states found'
+PiDagMerge4      a4     NoFlakyRerunEscape     HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge4-a4-NoNewBreakage-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-NoNewBreakage-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 2a3edbb1aef780a5297145e1d22c2cfadb41742c00982a27f9d1c9be30144cf2'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:15+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-NoNewBreakage-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-NoNewBreakage-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-NoNewBreakage-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-NoNewBreakage-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-NoNewBreakage-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 NoNewBreakage HOLDS '40 distinct states found'
+PiDagMerge4      a4     NoNewBreakage          HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge4-a4-JudgedAtCommit-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-JudgedAtCommit-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 49b5d5cb9d3a75168e49f14c4841fe0de23555f78baa5c35ed4adab4cb1796a1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:16+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-JudgedAtCommit-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-JudgedAtCommit-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-JudgedAtCommit-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-JudgedAtCommit-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-JudgedAtCommit-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 JudgedAtCommit HOLDS '40 distinct states found'
+PiDagMerge4      a4     JudgedAtCommit         HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge4-a4-GenesisBeforeAdvance-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-GenesisBeforeAdvance-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 1fb968de0631a42bbd68a8b952dd4ca5339de54731c2303b184413b724d0272f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:18+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-GenesisBeforeAdvance-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-GenesisBeforeAdvance-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-GenesisBeforeAdvance-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-GenesisBeforeAdvance-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-GenesisBeforeAdvance-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 GenesisBeforeAdvance HOLDS '40 distinct states found'
+PiDagMerge4      a4     GenesisBeforeAdvance   HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge4-a4-StateNeverWaived-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-StateNeverWaived-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 364c1ba8543d45b61a2daacf3343e628dcf9b33efdc43bb3ca433aca7f7d1f91'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:20+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-StateNeverWaived-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-StateNeverWaived-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-StateNeverWaived-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-StateNeverWaived-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-StateNeverWaived-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 StateNeverWaived HOLDS '40 distinct states found'
+PiDagMerge4      a4     StateNeverWaived       HOLDS     40 distinct states found
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge4-a4-LeaseExcludes-diagnostic-replayWaiverCitation
++ echo CONSTANTS
++ echo '  Mode = "a4"'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'Scenario = "replayWaiverCitation"; O = o; K0 = k0; K1 = k1'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ cut -c1-64
+++ sha256sum PiDagMerge4.tla
++ echo '# module sha256 241c794985fbbc7942f1c89dec7726e4b833bf276698cf2ed85a78bf42b3959b'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge4-a4-LeaseExcludes-diagnostic-replayWaiverCitation.cfg
++ echo '# cfg    sha256 4989080f1cb66cbd79f6ab217842b80d22bab01f7f0409a6c8f9b14b5ff508b8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T23:49:22+08:00'
++ timeout 60 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge4-a4-LeaseExcludes-diagnostic-replayWaiverCitation.states -config runs/PiDagMerge4-a4-LeaseExcludes-diagnostic-replayWaiverCitation.cfg PiDagMerge4.tla
++ rc=0
++ rm -rf runs/PiDagMerge4-a4-LeaseExcludes-diagnostic-replayWaiverCitation.states
++ '[' 0 -eq 124 ']'
++ grep -q 'No error has been found' runs/PiDagMerge4-a4-LeaseExcludes-diagnostic-replayWaiverCitation.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge4-a4-LeaseExcludes-diagnostic-replayWaiverCitation.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge4 a4 LeaseExcludes HOLDS '40 distinct states found'
+PiDagMerge4      a4     LeaseExcludes          HOLDS     40 distinct states found
++ exit 0
+
+WRAPPER_EXIT=0
