@@ -15,7 +15,9 @@ test('CLI real processes: DAG, laundering, closure, writes, invariant defer, CAS
     assert.equal((await cli(r.cwd,['--help'])).code,0);
     assert.equal((await cli(r.cwd,['wat'])).code,2);
     assert.equal((await cli(r.cwd,['init',plan])).code,1);
+    { const pre=await cli(r.cwd,['status']); assert.equal(pre.code,1); assert.match(pre.stderr,/尚未 init/); }
     await call(r.cwd,['init',plan,'--i-am-owner']);
+    { const text=await cli(r.cwd,['report']); assert.equal(text.code,0); assert.match(text.stdout,/初始化账本/); assert.doesNotMatch(text.stdout,/"kind"/); }
     await call(r.cwd,['rule','Keep tests meaningful','--nodes','*']);
     const a=await call<DispatchPacket>(r.cwd,['dispatch','a']); assert.match(a.packet,/owed submit a/); assert.match(a.packet,/Keep tests meaningful/); assert.equal(a.subagent.cwd,a.worktree);
     await commitAt(a.worktree,{'test/a.cjs':'module.exports=1;','test/a.test.cjs':checkTest('a',1)});
