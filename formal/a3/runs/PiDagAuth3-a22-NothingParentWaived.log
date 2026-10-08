@@ -1,0 +1,119 @@
+# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526
+# cfg    sha256 76ef9f448a92c521ec1f5f05696d1d616160126464b72a00ffcb6bd24db7ba06
+# flags  <deadlock checked> 2026-10-08T21:04:06+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 43 and seed 4363778462280821924 with 2 workers on 20 cores with 910MB heap and 64MB offheap memory [pid: 3291276] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-15584505211337138058/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-15584505211337138058/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-15584505211337138058/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-15584505211337138058/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-15584505211337138058/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth3
+Linting of module PiDagAuth3
+Starting... (2026-10-08 21:04:06)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 18 distinct states generated at 2026-10-08 21:04:07.
+Error: Invariant NothingParentWaived is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = <<>>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ pending = { [ type |-> "grant",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {"n1"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "downgrade",
+    from |-> P1,
+    to |-> Owner,
+    scope |-> {"n2"},
+    node |-> "n2",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {}
+/\ resolver = "none"
+/\ family = "permission"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 2: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ pending = { [ type |-> "downgrade",
+    from |-> P1,
+    to |-> Owner,
+    scope |-> {"n2"},
+    node |-> "n2",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {1}
+/\ resolver = "none"
+/\ family = "permission"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 3: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "downgrade",
+     from |-> P1,
+     to |-> Owner,
+     scope |-> {"n2"},
+     node |-> "n2",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {2}
+/\ pending = {}
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {1}
+/\ resolver = "none"
+/\ family = "permission"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+216 states generated, 212 distinct states found, 127 states left on queue.
+The depth of the complete state graph search is 4.
+Finished in 00s at (2026-10-08 21:04:07)

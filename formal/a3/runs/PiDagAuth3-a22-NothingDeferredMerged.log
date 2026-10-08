@@ -1,0 +1,119 @@
+# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526
+# cfg    sha256 a255eb853d605979eddd9ecb7c76ee0e2446b27bf86307d330be77953e97a57a
+# flags  <deadlock checked> 2026-10-08T21:04:05+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 1 and seed 7858556168661821367 with 2 workers on 20 cores with 910MB heap and 64MB offheap memory [pid: 3291226] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-2875125124634056026/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-2875125124634056026/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-2875125124634056026/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-2875125124634056026/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-2875125124634056026/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth3
+Linting of module PiDagAuth3
+Starting... (2026-10-08 21:04:06)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 18 distinct states generated at 2026-10-08 21:04:06.
+Error: Invariant NothingDeferredMerged is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = <<>>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ pending = { [ type |-> "defer",
+    from |-> Owner,
+    to |-> Owner,
+    scope |-> {"n1"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "merge",
+    from |-> Owner,
+    to |-> Owner,
+    scope |-> {},
+    node |-> "n1",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {}
+/\ resolver = "none"
+/\ family = "deferred"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 2: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "defer",
+     from |-> Owner,
+     to |-> Owner,
+     scope |-> {"n1"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {1}
+/\ pending = { [ type |-> "merge",
+    from |-> Owner,
+    to |-> Owner,
+    scope |-> {},
+    node |-> "n1",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {}
+/\ resolver = "none"
+/\ family = "deferred"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 3: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "defer",
+     from |-> Owner,
+     to |-> Owner,
+     scope |-> {"n1"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "merge",
+     from |-> Owner,
+     to |-> Owner,
+     scope |-> {},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {1}
+/\ pending = {}
+/\ conflict = FALSE
+/\ merged = TRUE
+/\ edges = {}
+/\ resolver = "none"
+/\ family = "deferred"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+297 states generated, 293 distinct states found, 182 states left on queue.
+The depth of the complete state graph search is 4.
+Finished in 00s at (2026-10-08 21:04:06)

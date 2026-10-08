@@ -1,0 +1,190 @@
+# module sha256 94f46b8ad5d849790b51f14b03098d903fed76105d155a80a21c6eb8af51093d
+# cfg    sha256 eb3558e5dc3d581022046196d544b77839e62d1138568bff5429f5d347a9c5a4
+# flags  <deadlock checked> 2026-10-08T20:47:39+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 74 and seed -2211003880175471151 with 1 worker on 20 cores with 477MB heap and 64MB offheap memory [pid: 3255032] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagEvidence.tla
+Parsing file /tmp/tlc-11293537777492700198/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-11293537777492700198/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-11293537777492700198/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-11293537777492700198/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module PiDagEvidence
+Linting of module PiDagEvidence
+Starting... (2026-10-08 20:47:39)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 20 distinct states generated at 2026-10-08 20:47:39.
+Error: Invariant FeatureCalibrationSound is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ reads = {}
+/\ traceOK = TRUE
+/\ realVerdict = "none"
+/\ decoyVerdict = "none"
+/\ pc = 0
+/\ strength = FALSE
+/\ receipt = "none"
+/\ revealed = FALSE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "none"
+/\ target = "none"
+/\ calibrated = FALSE
+/\ closure = "none"
+/\ cfs = {}
+/\ packet = <<"none", {}>>
+
+State 2: <Dispatch line 77, col 2 to line 81, col 82 of module PiDagEvidence>
+/\ reads = {}
+/\ traceOK = TRUE
+/\ realVerdict = "none"
+/\ decoyVerdict = "none"
+/\ pc = 1
+/\ strength = FALSE
+/\ receipt = "none"
+/\ revealed = FALSE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "none"
+/\ target = "target"
+/\ calibrated = FALSE
+/\ closure = "none"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+State 3: <Write line 84, col 2 to line 91, col 82 of module PiDagEvidence>
+/\ reads = {}
+/\ traceOK = TRUE
+/\ realVerdict = "none"
+/\ decoyVerdict = "none"
+/\ pc = 2
+/\ strength = FALSE
+/\ receipt = "none"
+/\ revealed = FALSE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "none"
+/\ target = "target"
+/\ calibrated = FALSE
+/\ closure = "none"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+State 4: <Materialize line 94, col 2 to line 102, col 82 of module PiDagEvidence>
+/\ reads = {"src", "runner"}
+/\ traceOK = TRUE
+/\ realVerdict = "none"
+/\ decoyVerdict = "none"
+/\ pc = 3
+/\ strength = FALSE
+/\ receipt = "none"
+/\ revealed = FALSE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "none"
+/\ target = "target"
+/\ calibrated = FALSE
+/\ closure = "pinned"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+State 5: <Run line 110, col 2 to line 123, col 73 of module PiDagEvidence>
+/\ reads = {"src", "runner"}
+/\ traceOK = TRUE
+/\ realVerdict = "none"
+/\ decoyVerdict = "none"
+/\ pc = 4
+/\ strength = FALSE
+/\ receipt = "review-run"
+/\ revealed = FALSE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "pass"
+/\ target = "target"
+/\ calibrated = FALSE
+/\ closure = "pinned"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+State 6: <StrengthRun line 127, col 2 to line 138, col 82 of module PiDagEvidence>
+/\ reads = {"src", "runner"}
+/\ traceOK = TRUE
+/\ realVerdict = "none"
+/\ decoyVerdict = "none"
+/\ pc = 5
+/\ strength = TRUE
+/\ receipt = "review-run"
+/\ revealed = FALSE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "pass"
+/\ target = "target"
+/\ calibrated = FALSE
+/\ closure = "pinned"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+State 7: <Judge line 148, col 2 to line 155, col 53 of module PiDagEvidence>
+/\ reads = {"src", "runner"}
+/\ traceOK = TRUE
+/\ realVerdict = "OK"
+/\ decoyVerdict = "BLOCK"
+/\ pc = 6
+/\ strength = TRUE
+/\ receipt = "review-run"
+/\ revealed = FALSE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "pass"
+/\ target = "target"
+/\ calibrated = TRUE
+/\ closure = "pinned"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+State 8: <Reveal line 157, col 2 to line 159, col 82 of module PiDagEvidence>
+/\ reads = {"src", "runner"}
+/\ traceOK = TRUE
+/\ realVerdict = "OK"
+/\ decoyVerdict = "BLOCK"
+/\ pc = 7
+/\ strength = TRUE
+/\ receipt = "review-run"
+/\ revealed = TRUE
+/\ scene = "shape"
+/\ merged = FALSE
+/\ exec = "pass"
+/\ target = "target"
+/\ calibrated = TRUE
+/\ closure = "pinned"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+State 9: <Merge line 164, col 2 to line 166, col 84 of module PiDagEvidence>
+/\ reads = {"src", "runner"}
+/\ traceOK = TRUE
+/\ realVerdict = "OK"
+/\ decoyVerdict = "BLOCK"
+/\ pc = 8
+/\ strength = TRUE
+/\ receipt = "review-run"
+/\ revealed = TRUE
+/\ scene = "shape"
+/\ merged = TRUE
+/\ exec = "pass"
+/\ target = "target"
+/\ calibrated = TRUE
+/\ closure = "pinned"
+/\ cfs = {"target"}
+/\ packet = <<"target", {"target"}>>
+
+173 states generated, 172 distinct states found, 19 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-08 20:47:39)

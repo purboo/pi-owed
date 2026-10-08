@@ -1,0 +1,42 @@
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 125 and seed 516633942236876146 with 4 workers on 20 cores with 7081MB heap and 64MB offheap memory [pid: 3026770] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/PiDag.tla
+Parsing file /tmp/tlc-11043799349131121320/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-11043799349131121320/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-11043799349131121320/_TLCTrace.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-11043799349131121320/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-11043799349131121320/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-11043799349131121320/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-11043799349131121320/TLCExt.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module PiDag
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module PiDag
+Starting... (2026-10-08 18:23:13)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 18:23:13.
+Progress(11) at 2026-10-08 18:23:16: 2,175,806 states generated (2,175,806 s/min), 361,886 distinct states found (361,886 ds/min), 215,133 states left on queue.
+Progress(16) at 2026-10-08 18:24:16: 60,614,572 states generated (58,438,766 s/min), 6,239,010 distinct states found (5,877,124 ds/min), 2,554,956 states left on queue.
+Progress(17) at 2026-10-08 18:25:16: 118,171,442 states generated (57,556,870 s/min), 10,990,822 distinct states found (4,751,812 ds/min), 3,803,885 states left on queue.
+Progress(18) at 2026-10-08 18:26:16: 175,828,407 states generated (57,656,965 s/min), 15,212,197 distinct states found (4,221,375 ds/min), 4,430,765 states left on queue.
+Progress(19) at 2026-10-08 18:27:16: 233,432,987 states generated (57,604,580 s/min), 19,082,243 distinct states found (3,870,046 ds/min), 4,603,068 states left on queue.
+Progress(20) at 2026-10-08 18:28:16: 290,493,095 states generated (57,060,108 s/min), 22,575,240 distinct states found (3,492,997 ds/min), 4,324,380 states left on queue.
+Progress(20) at 2026-10-08 18:29:16: 346,729,027 states generated (56,235,932 s/min), 25,841,025 distinct states found (3,265,785 ds/min), 3,654,509 states left on queue.
+Progress(22) at 2026-10-08 18:30:16: 402,158,426 states generated (55,429,399 s/min), 28,747,800 distinct states found (2,906,775 ds/min), 2,408,210 states left on queue.
+Progress(25) at 2026-10-08 18:31:16: 455,780,910 states generated (53,622,484 s/min), 31,094,683 distinct states found (2,346,883 ds/min), 183,611 states left on queue.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 7.2E-4
+  based on the actual fingerprints:  val = 5.3E-5
+457939360 states generated, 31149916 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 28.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 15 and the 95th percentile is 3).
+Finished in 08min 07s at (2026-10-08 18:31:20)

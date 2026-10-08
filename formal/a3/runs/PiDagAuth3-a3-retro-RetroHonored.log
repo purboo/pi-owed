@@ -1,0 +1,276 @@
+# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526
+# cfg    sha256 9dba5fed83f33129a72a7b9cdcfb2430d793c8423180758fc6aece6c6b006b10
+# flags  <deadlock checked> 2026-10-08T21:04:21+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 80 and seed -5043837749300996428 with 2 workers on 20 cores with 910MB heap and 64MB offheap memory [pid: 3292181] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-9037149856414105520/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-9037149856414105520/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-9037149856414105520/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-9037149856414105520/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-9037149856414105520/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth3
+Linting of module PiDagAuth3
+Starting... (2026-10-08 21:04:21)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 18 distinct states generated at 2026-10-08 21:04:21.
+Error: Invariant RetroHonored is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = <<>>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ pending = { [ type |-> "grant",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "grant",
+    from |-> P1,
+    to |-> P2,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "grant",
+    from |-> P2,
+    to |-> W1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "revoke",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {},
+    node |-> "n1",
+    value |-> "retro" ],
+  [ type |-> "waive",
+    from |-> P2,
+    to |-> Owner,
+    scope |-> {"n2"},
+    node |-> "n2",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {}
+/\ resolver = "none"
+/\ family = "chain"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 2: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1", "n2"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ pending = { [ type |-> "grant",
+    from |-> P1,
+    to |-> P2,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "grant",
+    from |-> P2,
+    to |-> W1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "revoke",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {},
+    node |-> "n1",
+    value |-> "retro" ],
+  [ type |-> "waive",
+    from |-> P2,
+    to |-> Owner,
+    scope |-> {"n2"},
+    node |-> "n2",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {1}
+/\ resolver = "none"
+/\ family = "chain"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 3: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1", "n2"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "grant",
+     from |-> P1,
+     to |-> P2,
+     scope |-> {"n1", "n2"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {}
+/\ pending = { [ type |-> "grant",
+    from |-> P2,
+    to |-> W1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "revoke",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {},
+    node |-> "n1",
+    value |-> "retro" ],
+  [ type |-> "waive",
+    from |-> P2,
+    to |-> Owner,
+    scope |-> {"n2"},
+    node |-> "n2",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {1, 2}
+/\ resolver = "none"
+/\ family = "chain"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 4: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1", "n2"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "grant",
+     from |-> P1,
+     to |-> P2,
+     scope |-> {"n1", "n2"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "waive",
+     from |-> P2,
+     to |-> Owner,
+     scope |-> {"n2"},
+     node |-> "n2",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {3}
+/\ pending = { [ type |-> "grant",
+    from |-> P2,
+    to |-> W1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ],
+  [ type |-> "revoke",
+    from |-> Owner,
+    to |-> P1,
+    scope |-> {},
+    node |-> "n1",
+    value |-> "retro" ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {1, 2}
+/\ resolver = "none"
+/\ family = "chain"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+State 5: <Advance line 137, col 12 to line 137, col 37 of module PiDagAuth3>
+/\ content = 0
+/\ lawWinner = "none"
+/\ slots = {W1, W2}
+/\ log = << [ type |-> "grant",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {"n1", "n2"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "grant",
+     from |-> P1,
+     to |-> P2,
+     scope |-> {"n1", "n2"},
+     node |-> "n1",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "waive",
+     from |-> P2,
+     to |-> Owner,
+     scope |-> {"n2"},
+     node |-> "n2",
+     value |-> 0,
+     key |-> 0,
+     content |-> 0 ],
+   [ type |-> "revoke",
+     from |-> Owner,
+     to |-> P1,
+     scope |-> {},
+     node |-> "n1",
+     value |-> "retro",
+     key |-> 0,
+     content |-> 0 ] >>
+/\ lawView = (P1 :> -1 @@ P2 :> -1)
+/\ accepted = {3}
+/\ pending = { [ type |-> "grant",
+    from |-> P2,
+    to |-> W1,
+    scope |-> {"n1", "n2"},
+    node |-> "n1",
+    value |-> 0 ] }
+/\ conflict = FALSE
+/\ merged = FALSE
+/\ edges = {}
+/\ resolver = "none"
+/\ family = "chain"
+/\ key = 0
+/\ invalid = {}
+/\ lawValue = -1
+
+776 states generated, 729 distinct states found, 334 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-10-08 21:04:22)

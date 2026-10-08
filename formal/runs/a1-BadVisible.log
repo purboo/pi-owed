@@ -1,0 +1,156 @@
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 21 and seed -2247893831258911929 with 4 workers on 20 cores with 7081MB heap and 64MB offheap memory [pid: 3014261] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/PiDag.tla
+Parsing file /tmp/tlc-13067442350405284425/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-13067442350405284425/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-13067442350405284425/_TLCTrace.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-13067442350405284425/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-13067442350405284425/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-13067442350405284425/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-13067442350405284425/TLCExt.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module PiDag
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module PiDag
+Starting... (2026-10-08 18:05:44)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 18:05:44.
+Error: Invariant BadVisible is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ debtMerges = 0
+/\ pending = (n1 :> -1 @@ n2 :> -1)
+/\ reviewObs = (n1 :> "none" @@ n2 :> "none")
+/\ downgraded = (n1 :> FALSE @@ n2 :> FALSE)
+/\ quality = (n1 :> "none" @@ n2 :> "none")
+/\ epoch = (n1 :> 0 @@ n2 :> 0)
+/\ gDebt = FALSE
+/\ trunkSeq = 0
+/\ writers = (n1 :> {} @@ n2 :> {})
+/\ waived = (n1 :> "none" @@ n2 :> "none")
+/\ testObs = (n1 :> {} @@ n2 :> {})
+/\ reviewReq = (n1 :> TRUE @@ n2 :> TRUE)
+/\ version = 0
+/\ author = (n1 :> "none" @@ n2 :> "none")
+/\ violation = {}
+/\ trunk = {}
+
+State 2: <Downgrade(n1) line 144, col 3 to line 149, col 64 of module PiDag>
+/\ debtMerges = 0
+/\ pending = (n1 :> -1 @@ n2 :> -1)
+/\ reviewObs = (n1 :> "none" @@ n2 :> "none")
+/\ downgraded = (n1 :> TRUE @@ n2 :> FALSE)
+/\ quality = (n1 :> "none" @@ n2 :> "none")
+/\ epoch = (n1 :> 0 @@ n2 :> 0)
+/\ gDebt = FALSE
+/\ trunkSeq = 0
+/\ writers = (n1 :> {} @@ n2 :> {})
+/\ waived = (n1 :> "none" @@ n2 :> "none")
+/\ testObs = (n1 :> {} @@ n2 :> {})
+/\ reviewReq = (n1 :> FALSE @@ n2 :> TRUE)
+/\ version = 1
+/\ author = (n1 :> "none" @@ n2 :> "none")
+/\ violation = {}
+/\ trunk = {}
+
+State 3: <Launch(n1) line 103, col 3 to line 107, col 87 of module PiDag>
+/\ debtMerges = 0
+/\ pending = (n1 :> -1 @@ n2 :> -1)
+/\ reviewObs = (n1 :> "none" @@ n2 :> "none")
+/\ downgraded = (n1 :> TRUE @@ n2 :> FALSE)
+/\ quality = (n1 :> "none" @@ n2 :> "none")
+/\ epoch = (n1 :> 1 @@ n2 :> 0)
+/\ gDebt = FALSE
+/\ trunkSeq = 0
+/\ writers = (n1 :> {1} @@ n2 :> {})
+/\ waived = (n1 :> "none" @@ n2 :> "none")
+/\ testObs = (n1 :> {} @@ n2 :> {})
+/\ reviewReq = (n1 :> FALSE @@ n2 :> TRUE)
+/\ version = 1
+/\ author = (n1 :> "none" @@ n2 :> "none")
+/\ violation = {}
+/\ trunk = {}
+
+State 4: <Next line 199, col 11 to line 199, col 69 of module PiDag>
+/\ debtMerges = 0
+/\ pending = (n1 :> -1 @@ n2 :> -1)
+/\ reviewObs = (n1 :> "none" @@ n2 :> "none")
+/\ downgraded = (n1 :> TRUE @@ n2 :> FALSE)
+/\ quality = (n1 :> "bad" @@ n2 :> "none")
+/\ epoch = (n1 :> 1 @@ n2 :> 0)
+/\ gDebt = FALSE
+/\ trunkSeq = 0
+/\ writers = (n1 :> {1} @@ n2 :> {})
+/\ waived = (n1 :> "none" @@ n2 :> "none")
+/\ testObs = (n1 :> {} @@ n2 :> {})
+/\ reviewReq = (n1 :> FALSE @@ n2 :> TRUE)
+/\ version = 1
+/\ author = (n1 :> "holder" @@ n2 :> "none")
+/\ violation = {}
+/\ trunk = {}
+
+State 5: <Test(n1) line 123, col 3 to line 127, col 87 of module PiDag>
+/\ debtMerges = 0
+/\ pending = (n1 :> -1 @@ n2 :> -1)
+/\ reviewObs = (n1 :> "none" @@ n2 :> "none")
+/\ downgraded = (n1 :> TRUE @@ n2 :> FALSE)
+/\ quality = (n1 :> "bad" @@ n2 :> "none")
+/\ epoch = (n1 :> 1 @@ n2 :> 0)
+/\ gDebt = FALSE
+/\ trunkSeq = 0
+/\ writers = (n1 :> {1} @@ n2 :> {})
+/\ waived = (n1 :> "none" @@ n2 :> "none")
+/\ testObs = (n1 :> {"pass"} @@ n2 :> {})
+/\ reviewReq = (n1 :> FALSE @@ n2 :> TRUE)
+/\ version = 1
+/\ author = (n1 :> "holder" @@ n2 :> "none")
+/\ violation = {}
+/\ trunk = {}
+
+State 6: <Evaluate(n1) line 174, col 3 to line 177, col 89 of module PiDag>
+/\ debtMerges = 0
+/\ pending = (n1 :> 0 @@ n2 :> -1)
+/\ reviewObs = (n1 :> "none" @@ n2 :> "none")
+/\ downgraded = (n1 :> TRUE @@ n2 :> FALSE)
+/\ quality = (n1 :> "bad" @@ n2 :> "none")
+/\ epoch = (n1 :> 1 @@ n2 :> 0)
+/\ gDebt = FALSE
+/\ trunkSeq = 0
+/\ writers = (n1 :> {1} @@ n2 :> {})
+/\ waived = (n1 :> "none" @@ n2 :> "none")
+/\ testObs = (n1 :> {"pass"} @@ n2 :> {})
+/\ reviewReq = (n1 :> FALSE @@ n2 :> TRUE)
+/\ version = 1
+/\ author = (n1 :> "holder" @@ n2 :> "none")
+/\ violation = {}
+/\ trunk = {}
+
+State 7: <CommitA1(n1) line 180, col 3 to line 184, col 55 of module PiDag>
+/\ debtMerges = 0
+/\ pending = (n1 :> -1 @@ n2 :> -1)
+/\ reviewObs = (n1 :> "none" @@ n2 :> "none")
+/\ downgraded = (n1 :> TRUE @@ n2 :> FALSE)
+/\ quality = (n1 :> "bad" @@ n2 :> "none")
+/\ epoch = (n1 :> 1 @@ n2 :> 0)
+/\ gDebt = FALSE
+/\ trunkSeq = 1
+/\ writers = (n1 :> {1} @@ n2 :> {})
+/\ waived = (n1 :> "none" @@ n2 :> "none")
+/\ testObs = (n1 :> {"pass"} @@ n2 :> {})
+/\ reviewReq = (n1 :> FALSE @@ n2 :> TRUE)
+/\ version = 1
+/\ author = (n1 :> "holder" @@ n2 :> "none")
+/\ violation = {}
+/\ trunk = {n1}
+
+6968 states generated, 2134 distinct states found, 1419 states left on queue.
+The depth of the complete state graph search is 8.
+Finished in 00s at (2026-10-08 18:05:44)
+Trace exploration spec path: ./PiDag_TTrace_1791453943.tla

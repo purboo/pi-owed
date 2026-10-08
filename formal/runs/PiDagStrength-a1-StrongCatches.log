@@ -1,0 +1,95 @@
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 20 and seed 4092540661913414737 with 8 workers on 20 cores with 7081MB heap and 64MB offheap memory [pid: 3199384] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/PiDagStrength.tla
+Parsing file /tmp/tlc-2265411232837109633/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-2265411232837109633/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-2265411232837109633/_TLCTrace.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-2265411232837109633/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-2265411232837109633/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-2265411232837109633/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-2265411232837109633/TLCExt.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module PiDagStrength
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module PiDagStrength
+Starting... (2026-10-08 19:43:54)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 19:43:54.
+Error: Invariant StrongCatches is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ testAuthor = "none"
+/\ testV = 0
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "none"
+/\ impl = "none"
+/\ implV = 0
+/\ cfPick = {}
+/\ execObs = {}
+/\ admitted = -1
+
+State 2: <PlanTest("strong") line 46, col 3 to line 49, col 48 of module PiDagStrength>
+/\ testAuthor = "planner"
+/\ testV = 1
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "none"
+/\ implV = 0
+/\ cfPick = {}
+/\ execObs = {}
+/\ admitted = -1
+
+State 3: <WriteImpl("bad") line 59, col 3 to line 62, col 60 of module PiDagStrength>
+/\ testAuthor = "planner"
+/\ testV = 1
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "bad"
+/\ implV = 1
+/\ cfPick = {}
+/\ execObs = {}
+/\ admitted = -1
+
+State 4: <Fake line 89, col 12 to line 90, col 47 of module PiDagStrength>
+/\ testAuthor = "planner"
+/\ testV = 1
+/\ merged = FALSE
+/\ fake = TRUE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "bad"
+/\ implV = 1
+/\ cfPick = {}
+/\ execObs = {}
+/\ admitted = -1
+
+State 5: <Merge line 103, col 3 to line 106, col 96 of module PiDagStrength>
+/\ testAuthor = "planner"
+/\ testV = 1
+/\ merged = TRUE
+/\ fake = TRUE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "bad"
+/\ implV = 1
+/\ cfPick = {}
+/\ execObs = {}
+/\ admitted = -1
+
+1338 states generated, 536 distinct states found, 365 states left on queue.
+The depth of the complete state graph search is 8.
+Finished in 00s at (2026-10-08 19:43:54)
+Trace exploration spec path: ./PiDagStrength_TTrace_1791459834.tla

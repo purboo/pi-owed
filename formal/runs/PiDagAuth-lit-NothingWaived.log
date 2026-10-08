@@ -1,0 +1,43 @@
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 6 and seed 8899690054647250237 with 8 workers on 20 cores with 7081MB heap and 64MB offheap memory [pid: 3201462] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/PiDagAuth.tla
+Parsing file /tmp/tlc-17698492686651797157/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-17698492686651797157/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-17698492686651797157/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-17698492686651797157/_TLCTrace.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-17698492686651797157/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-17698492686651797157/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-17698492686651797157/TLCExt.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module PiDagAuth
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module PiDagAuth
+Starting... (2026-10-08 19:45:17)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 19:45:18.
+Error: Invariant NothingWaived is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ ver = [n1 |-> 0, n2 |-> 0]
+/\ log = <<>>
+
+State 2: <Add line 39, col 19 to line 39, col 58 of module PiDagAuth>
+/\ ver = [n1 |-> 0, n2 |-> 0]
+/\ log = << [ v |-> 0,
+     type |-> "waive",
+     from |-> "owner",
+     to |-> "-",
+     scope |-> "-",
+     node |-> "n1" ] >>
+
+129 states generated, 129 distinct states found, 113 states left on queue.
+The depth of the complete state graph search is 5.
+Finished in 00s at (2026-10-08 19:45:18)
+Trace exploration spec path: ./PiDagAuth_TTrace_1791459917.tla
