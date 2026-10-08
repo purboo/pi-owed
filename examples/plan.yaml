@@ -1,0 +1,15 @@
+version: 1
+trunk: main
+closure: [plan.yaml]
+invariants: []
+nodes:
+  - id: greeting
+    title: Add a greeting
+    brief: Create hello.txt containing exactly hello followed by a newline.
+    writes: [hello.txt]
+    checks:
+      - id: content
+        run: 'test "$(cat hello.txt)" = hello'
+        timeout_s: 10
+        reads: [hello.txt]
+    review: {count: 1, min_rank: 1}
