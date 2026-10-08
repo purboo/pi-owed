@@ -1,0 +1,119 @@
+# owed develops owed: the acceptance plan for pi-owed itself.
+# The ledger is kept by the published pi-owed@0.1.0 (stage 0); nodes change the source.
+version: 1
+trunk: main
+closure: ["dev/**", "test/helpers/**", "tsconfig.json", "tsconfig.build.json", "package.json", "package-lock.json"]
+# Executor checkouts are git worktrees of this repository; reuse the main checkout's node_modules.
+setup: 'ln -s "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/node_modules" node_modules'
+invariants:
+  - id: typecheck
+    run: npx tsc -p tsconfig.json --noEmit
+    timeout_s: 300
+    reads: ["src/**", "test/**", "tsconfig.json", "package.json"]
+  - id: suite
+    run: node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'
+    timeout_s: 900
+    min_tests: 44
+    reads: ["**"]
+nodes:
+  - id: gc
+    title: owed gc — reclaim finished worktrees and branches
+    brief: |
+      Add `owed gc [--dry-run]` (CLI) and `ops.gc({cwd, dryRun})`. It removes the slot worktree
+      (`git worktree remove`, refusing dirty ones: list them as kept) and deletes the branch
+      `owed/<node>/<attempt>` for every attempt that is merged or abandoned, never for an open
+      slot; then runs `git worktree prune`. It appends a `note` entry describing what was removed
+      (no new entry kind). Output lists removed/kept with reasons; `--json` returns
+      `{removed:[{node,attempt,worktree,branch}], kept:[{...,reason}]}`. Idempotent: a second run
+      removes nothing. Document in docs/SPEC.md §8/§10 and README.
+    writes: [src/ops.ts, src/git.ts, src/cli.ts, docs/SPEC.md, README.md, test/gc.test.ts]
+    checks:
+      - id: gc
+        run: node --test --test-reporter=tap test/gc.test.ts
+        timeout_s: 300
+        reads: ["src/**", "bin/**", "test/gc.test.ts"]
+        min_tests: 3
+        red: true
+        tests: [test/gc.test.ts]
+        red_expect: ERR_ASSERTION
+    review: {count: 1, min_rank: 1}
+  - id: brief
+    title: Morning brief — what finished, what was rejected, what needs the owner
+    brief: |
+      Add `owed brief [--since seq|ISO]` (CLI), `ops.brief(...)`, `views.renderBrief(...)` and a
+      pi tool `owed_brief`. Sections, in this order, each item one line: (1) 需要你决定 — owner
+      queue items, sorted by number of transitively blocked downstream nodes, each with the exact
+      command that discharges it; (2) 已合并 — per merged node: counts of ✔ measured / ⚠ waived
+      obligations, 未测改动 count, reviewers; (3) 被拒或被封 — active blocks with node, obligation,
+      the failing obs seq and how to clear; (4) 进行中 — dispatched/submitted nodes with age;
+      (5) 一行总计 (merged / accepted-unmerged / blocked / ready counts). A waived item must never
+      be shown as measured. Plain text by default, `--json` returns the structured view. Document in
+      SPEC §9 and README.
+    writes: [src/ops.ts, src/views.ts, src/cli.ts, src/extension.ts, docs/SPEC.md, README.md, test/brief.test.ts]
+    checks:
+      - id: brief
+        run: node --test --test-reporter=tap test/brief.test.ts
+        timeout_s: 300
+        reads: ["src/**", "bin/**", "test/brief.test.ts"]
+        min_tests: 3
+        red: true
+        tests: [test/brief.test.ts]
+        red_expect: ERR_ASSERTION
+    review: {count: 1, min_rank: 1}
+  - id: escape
+    title: Escape ledger and commit-reveal decoys (the north-star metric)
+    brief: |
+      New entry kinds (types.ts Entry union, reducer, validateDraft):
+      - `escape` {node, merge: seq of the merge entry, class: 'missing'|'false-pass'|'reuse'|'weak'|'waiver',
+        note, evidence?: string}: a defect found after a node was merged. by parent or owner. class
+        maps to escape classes ② / ①a / ①b / ①c / ③ (missing obligation; false affirmative obs;
+        unsound evidence reuse; weak oracle; owner waiver). Refuse if `merge` is not a merge of `node`.
+      - `decoy-commit` {digest} by owner only: sha256 hex of the canonical JSON of the reveal payload
+        {nonce, decoys:[{node, defect}]}.
+      - `decoy-reveal` {nonce, decoys:[{node, defect}]} by owner only: refused unless it hashes to an
+        earlier unrevealed decoy-commit made before every listed node was first dispatched.
+      Reducer derives `state.escapes` and `state.decoys` with per-decoy outcome: 'caught' (the decoy
+      node got an execution or judgment block, or a rejecting obs, before any merge of it),
+      'escaped' (merged with no prior block), 'pending' (neither yet). Metrics: escape counts by
+      class; decoys caught / escaped / pending; escape rate = escaped / (caught + escaped).
+      CLI: `owed escape <node> --merge N --class C --note T`, `owed decoy commit <digest>`,
+      `owed decoy reveal <file.json>`, `owed decoy digest <file.json>` (helper, no ledger write),
+      and a 逃逸 section in `owed report`. Owner commands use the existing owner channel rules.
+      Document in SPEC (entry kinds, reducer, CLI) and README (north-star metric).
+    writes: [src/types.ts, src/reducer.ts, src/ops.ts, src/cli.ts, src/views.ts, docs/SPEC.md, README.md, test/escape.test.ts]
+    checks:
+      - id: escape
+        run: node --test --test-reporter=tap test/escape.test.ts
+        timeout_s: 300
+        reads: ["src/**", "bin/**", "test/escape.test.ts"]
+        min_tests: 5
+        red: true
+        tests: [test/escape.test.ts]
+        red_expect: ERR_ASSERTION
+    review: {count: 1, min_rank: 1}
+  - id: strength
+    title: Mutation counterfactuals — measure oracle strength
+    brief: |
+      CheckSpec gains `mutants?: string[]` (globs of patch files that must lie inside the plan
+      closure; validate in plan.ts) and `min_kill?: number` in (0,1], default 1. For such a check
+      the node gets obligation `strength:<check id>` (items list, keys, attestJobs). Executor: for
+      each mutant patch (read from the base B, never from the candidate) materialize the candidate,
+      overlay closure from B as for the check, `git apply` the patch (a patch that does not apply
+      counts as not killed and is reported), run the check command; killed iff exit != 0 or failing
+      tests > 0 (a zero-test run is not a kill). Verdict pass iff killed/total >= min_kill; record
+      counts {tests: total, pass: killed, fail: survived} and a log listing each mutant result.
+      Key = H(o:'strength', id, run, timeout_s, setup, min_tests, closure digest of B, mutants digest
+      of B, readsDigest(C, reads)) — changes when the candidate's read set, the check or any
+      mutant changes. A failed strength obs is an execution block like any other. The receipt card
+      shows "强度 k/n". Document in SPEC (§3 schema, §4 keys, §7 executor) and README.
+    writes: [src/types.ts, src/plan.ts, src/git.ts, src/exec.ts, src/reducer.ts, src/views.ts, docs/SPEC.md, README.md, test/strength.test.ts]
+    checks:
+      - id: strength
+        run: node --test --test-reporter=tap test/strength.test.ts
+        timeout_s: 600
+        reads: ["src/**", "bin/**", "test/strength.test.ts"]
+        min_tests: 4
+        red: true
+        tests: [test/strength.test.ts]
+        red_expect: ERR_ASSERTION
+    review: {count: 1, min_rank: 1}
