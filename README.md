@@ -1,4 +1,6 @@
-# pi-dag
+# owed
+
+> 产品名 **owed**（2026-10-08 决定；读作公式 `O = W ⊔ E ⊔ D`，npm/PyPI/crates 当日均空闲，尚未发布占位）。副标题：任务图的验收账本。仓库目录暂仍为 `pi-dag`，文档中的旧名 pi-dag 指同一产品。
 
 多 agent 项目的验收账本与合并门禁，构建在 pi-durable-subagents（`../pi-conductor`）之上。
 
