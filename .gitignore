@@ -1,0 +1,3 @@
+formal/tla2tools.jar
+*.states/
+formal/runs/traces/*.bin

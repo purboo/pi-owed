@@ -1,0 +1,31 @@
+# module sha256 94f46b8ad5d849790b51f14b03098d903fed76105d155a80a21c6eb8af51093d
+# cfg    sha256 7f135138a4e6538c44c4d907ec15b56c9d41013e8bef768c153d825ef7774017
+# flags  <deadlock checked> 2026-10-08T20:48:33+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 78 and seed -951550271503239894 with 1 worker on 20 cores with 477MB heap and 64MB offheap memory [pid: 3257587] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/pi-dag/formal/a3/PiDagEvidence.tla
+Parsing file /tmp/tlc-11107640956276880946/Integers.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-11107640956276880946/FiniteSets.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-11107640956276880946/Sequences.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-11107640956276880946/Naturals.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module PiDagEvidence
+Linting of module PiDagEvidence
+Starting... (2026-10-08 20:48:33)
+Computing initial states...
+Computed 2 initial states...
+Computed 4 initial states...
+Computed 8 initial states...
+Computed 16 initial states...
+Finished computing initial states: 20 distinct states generated at 2026-10-08 20:48:33.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 2.3E-16
+204 states generated, 180 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 9.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-10-08 20:48:33)

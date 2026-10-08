@@ -1,0 +1,156 @@
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 110 and seed -1944728374641128837 with 8 workers on 20 cores with 7081MB heap and 64MB offheap memory [pid: 3200442] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /work/pi-dag/formal/PiDagStrength.tla
+Parsing file /tmp/tlc-5326519223489575241/Integers.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-5326519223489575241/FiniteSets.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-5326519223489575241/_TLCTrace.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/_TLCTrace.tla)
+Parsing file /tmp/tlc-5326519223489575241/Naturals.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-5326519223489575241/Sequences.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-5326519223489575241/TLC.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-5326519223489575241/TLCExt.tla (jar:file:/work/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLCExt.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module TLCExt
+Semantic processing of module _TLCTrace
+Semantic processing of module PiDagStrength
+Linting of module TLCExt
+Linting of module _TLCTrace
+Linting of module PiDagStrength
+Starting... (2026-10-08 19:44:35)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 19:44:35.
+Error: Invariant NoWriterTestMerged is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ testAuthor = "none"
+/\ testV = 0
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "none"
+/\ impl = "none"
+/\ implV = 0
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {}
+/\ admitted = -1
+
+State 2: <PlanTest("strong") line 49, col 3 to line 52, col 55 of module PiDagStrength>
+/\ testAuthor = "planner"
+/\ testV = 1
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "none"
+/\ implV = 0
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {}
+/\ admitted = -1
+
+State 3: <WriterTest("strong") line 56, col 3 to line 59, col 55 of module PiDagStrength>
+/\ testAuthor = "writer"
+/\ testV = 2
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "none"
+/\ implV = 0
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {}
+/\ admitted = -1
+
+State 4: <WriterTest("strong") line 56, col 3 to line 59, col 55 of module PiDagStrength>
+/\ testAuthor = "writer"
+/\ testV = 3
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "none"
+/\ implV = 0
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {}
+/\ admitted = -1
+
+State 5: <WriteImpl("good") line 62, col 3 to line 65, col 67 of module PiDagStrength>
+/\ testAuthor = "writer"
+/\ testV = 3
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "good"
+/\ implV = 1
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {}
+/\ admitted = -1
+
+State 6: <Admit line 69, col 3 to line 71, col 101 of module PiDagStrength>
+/\ testAuthor = "writer"
+/\ testV = 3
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "good"
+/\ implV = 1
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {}
+/\ admitted = 3
+
+State 7: <RunExec line 89, col 12 to line 90, col 44 of module PiDagStrength>
+/\ testAuthor = "writer"
+/\ testV = 3
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {}
+/\ test = "strong"
+/\ impl = "good"
+/\ implV = 1
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {"pass"}
+/\ admitted = 3
+
+State 8: <RunBase line 91, col 12 to line 92, col 45 of module PiDagStrength>
+/\ testAuthor = "writer"
+/\ testV = 3
+/\ merged = FALSE
+/\ fake = FALSE
+/\ cfBase = {"expected"}
+/\ test = "strong"
+/\ impl = "good"
+/\ implV = 1
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {"pass"}
+/\ admitted = 3
+
+State 9: <Merge line 109, col 3 to line 112, col 103 of module PiDagStrength>
+/\ testAuthor = "writer"
+/\ testV = 3
+/\ merged = TRUE
+/\ fake = FALSE
+/\ cfBase = {"expected"}
+/\ test = "strong"
+/\ impl = "good"
+/\ implV = 1
+/\ cfPick = {}
+/\ cfLaw = "base"
+/\ execObs = {"pass"}
+/\ admitted = 3
+
+8387 states generated, 1907 distinct states found, 963 states left on queue.
+The depth of the complete state graph search is 9.
+Finished in 00s at (2026-10-08 19:44:35)
+Trace exploration spec path: ./PiDagStrength_TTrace_1791459874.tla
