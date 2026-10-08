@@ -22,7 +22,7 @@ export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   return { node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
-    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: b.state === 'flaky' ? `owner waive --accept-risk ${b.seq} 明确承担风险` : b.kind === 'exec' ? 'attest 对原始 key/commit/base 归因重跑；再次失败解除封，通过则转为冲突' : `当前义务键需要 rank >= ${b.rank} 的 review ok，或 owner waive --accept-risk ${b.seq}` })),
+    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: b.state === 'flaky' ? `owner waive --accept-risk ${b.seq} 明确承担风险` : b.kind === 'exec' ? 'attest 对原始 key/commit/base 归因重跑；再次失败解除封，通过则转为冲突' : `当前义务键上原评审者 rank >= ${b.rank} 或他人 rank > ${b.rank} 的 review ok，或 owner waive --accept-risk ${b.seq}` })),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')) };
@@ -38,7 +38,7 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
 }
 const phaseNames: Record<string,string> = { ready: '可派发', blocked: '依赖未完成', dispatched: '已派发', submitted: '待接收', accepted: '已接收', merged: '已合并' };
 function itemText(i: ItemView & { observations?: Entry[] }): string {
-  const label = i.status === 'W' ? '免' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? '评审' : i.obligation === 'rulings' ? '裁决已确认' : '实测') : ({ '✘': '拒收', '⊥': '待观察', '⊤': '冲突', '⏸': '缓判', '封': '封' } as Record<string,string>)[i.mark] ?? i.detail;
+  const label = i.status === 'W' ? '免' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? '评审' : i.obligation === 'rulings' ? '裁决已确认' : '实测') : ({ '✘': '拒收', '⊥': '待观察', '⊤': '冲突', '⏸': '缓判', '封': '被封' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' 弱确认' : ''})` : `#${e.seq}`).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }

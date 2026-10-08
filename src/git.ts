@@ -26,7 +26,7 @@ export async function isAncestor(cwd: string, a: string, b: string): Promise<boo
   const r = await git(cwd, ['merge-base', '--is-ancestor', a, b], { allowFail: true });
   if (r.code > 1) throw new OwedError(r.stderr, 'internal'); return r.code === 0;
 }
-export async function isClean(worktree: string): Promise<boolean> { return !(await git(worktree, ['status', '--porcelain', '--untracked-files=all'])).stdout; }
+export async function isClean(worktree: string, untracked = true): Promise<boolean> { return !(await git(worktree, ['status', '--porcelain', `--untracked-files=${untracked ? 'all' : 'no'}`])).stdout; }
 // [path, mode, oid]: the mode is content too (an executable bit or a symlink changes behavior).
 async function files(cwd: string, commit: string): Promise<[string, string, string][]> {
   return (await git(cwd, ['ls-tree', '-rz', '--full-tree', commit])).stdout.split('\0').filter(Boolean).map(line => {
@@ -81,7 +81,8 @@ export async function advanceTrunk(cwd: string, trunk: string, from: string, to:
     const fields = record.split('\0');
     if (!fields.includes(`branch ${ref}`)) continue;
     const path = fields.find(f => f.startsWith('worktree '))!.slice(9);
-    if (!await isClean(path)) throw new OwedError('trunk worktree is dirty');
+    // Untracked files are left to `merge --ff-only`, which refuses to overwrite them.
+    if (!await isClean(path, false)) throw new OwedError('trunk worktree is dirty');
     if (!await isAncestor(cwd, from, to)) throw new OwedError('trunk advance is not a fast-forward');
     if (await revParse(cwd, ref) !== from) throw new OwedError('trunk changed (CAS)');
     const r = await git(path, ['merge', '--ff-only', to], { allowFail: true });
