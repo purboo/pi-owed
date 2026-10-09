@@ -141,6 +141,7 @@ D24 (SPEC §7.10, §8.2): `runJobs` (attest, genesis attest) appends an observat
 class Dsa { killAll(sig?); run(rid, specBytes, labels?, cwd?); send(id, to, kind, message); describe(rid): RunView; inspect(rid): {view, gen?};
   request(id): {state: applied|rejected|pending|absent, reason?}; events(since?, limit?); hold(resource, argv, {shared?, cwd?}) /* --no-wait: ran|busy|refused|signal */ }
 // src/drive.ts: decide(state, plan, runs, opts): Action[] (pure)
+// src/drive.ts also (D22): runName(node, attempt, role, n?) (dsa run name in launch specs); deliveredRulings(state, node, attemptRuns, launch) / rulingMessage(node, role, rules) (ruling steers, SPEC §12.5.1); askingText(node, launch, view) (asking line with dsa's answer address)
 // src/drive.ts also: rejectedFixed(node) / rejectedHalt(node, 'run'|'send', id, reason) (halt text of a dsa rejection, D15.1); blockText(state, candidate, block) (a block in a `stalled:` halt, D15.3)
 // src/drive-run.ts
 export function drive(o: DriveOptions): Promise<number>;   // lock, then one pass (once) or the loop; OwedError('refused') when another driver runs

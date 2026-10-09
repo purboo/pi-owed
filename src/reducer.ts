@@ -325,7 +325,7 @@ export function driveReviewerSlot(by: string, node: string, attempt: number): nu
   return by.startsWith(prefix) && /^[1-9][0-9]*$/.test(by.slice(prefix.length)) ? Number(by.slice(prefix.length)) : undefined;
 }
 export const SEND_KINDS: readonly SendKind[] = ['follow-up', 'steer'];
-export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing'];
+export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing', 'ruling'];
 const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
 // Conservative local downgrade detection keeps this leaf independent of plan.ts.
@@ -563,6 +563,10 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (!blobHash(d.message)) errors.push('send message must be a blob hash (64 lowercase hex)');
       const seq = 'seq' in d && typeof d.seq === 'number' ? d.seq : s.seq + 1;
       if (d.send !== `${d.rid}:${d.sendKind}:${seq}`) errors.push(`send id must be ${d.rid}:${d.sendKind}:${seq} (rid, kind, seq of this entry)`);
+      // D22.1: `rulings` = the highest ruling seq a `ruling` send includes; required for reason ruling, forbidden otherwise.
+      if (d.reason === 'ruling') {
+        if (!Number.isInteger(d.rulings) || !s.rules.some(r => r.seq === d.rulings && (r.nodes === '*' || r.nodes.includes(d.node)))) errors.push(`send reason ruling requires rulings = the seq of a recorded ruling covering ${d.node}`);
+      } else if (d.rulings !== undefined) errors.push('send rulings is only allowed with reason ruling');
       break;
     }
     case 'evidence': errors.push(...evidenceErrors(d, n, spec)); break;
@@ -598,7 +602,7 @@ export function validateDraft(s: State, d: Draft): string[] {
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence', readonly string[]> = { evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence', readonly string[]> = { evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
