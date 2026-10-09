@@ -48,14 +48,20 @@ export class Ledger {
     if (text && !text.endsWith('\n')) throw new OwedError(`ledger seq ${entries.length - 1}: incomplete line`, 'internal');
     return entries;
   }
-  async withLock<T>(fn: () => Promise<T>, name?: string): Promise<T> {
+  /**
+   * Runs `fn` holding lock `name`. An abort of `signal` before the lock is acquired rejects at once with
+   * OwedError('aborted', 'aborted') and takes nothing (D16a.2); after acquisition `fn` runs to completion.
+   */
+  async withLock<T>(fn: () => Promise<T>, name?: string, signal?: AbortSignal): Promise<T> {
     const lockName = name ?? 'lock';
     if (!/^[a-zA-Z0-9_-]+$/.test(lockName)) throw new OwedError('invalid lock name', 'usage');
     if (this.held.getStore()?.has(lockName)) throw new OwedError(`nested lock ${lockName}`, 'internal');
+    const aborted = () => new OwedError('aborted', 'aborted');
     const path = join(this.dir, lockName), deadline = Date.now() + 60_000;
     let delay = 10;
     const token = randomUUID();
     for (;;) {
+      if (signal?.aborted) throw aborted();
       // Acquire by renaming a fully prepared directory into place: the owner
       // file is complete whenever the lock path exists.
       const staged = join(this.dir, `.${lockName}-${token}`);
@@ -85,7 +91,13 @@ export class Ledger {
         } finally { await rm(reaper, { recursive: true, force: true }); }
       }
       if (Date.now() >= deadline) throw new OwedError(`timed out waiting for ${lockName}`, 'internal');
-      await new Promise(r => setTimeout(r, delay)); delay = Math.min(250, delay * 2);
+      if (signal?.aborted) throw aborted();
+      await new Promise<void>((resolve, reject) => {
+        const stop = () => { clearTimeout(timer); reject(aborted()); };
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, delay);
+        signal?.addEventListener('abort', stop, { once: true });
+      });
+      delay = Math.min(250, delay * 2);
     }
     const owned = new Set(this.held.getStore()); owned.add(lockName);
     try {
