@@ -64,13 +64,14 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
     }
     const obs = await runJob({ cwd, ledger, plan, signal }, job);
     checkAbort(signal);
-    await ledger.withLock(async () => { const { state } = await load(ledger); stable(snapshot,state,id); guard(state,obs); result.push(...await ledger.append([obs])); });
+    await ledger.withLock(async () => { const { state } = await load(ledger); stable(snapshot,state,id); guard(state,obs); result.push(...await ledger.append([obs])); },undefined,signal);
   }
   return result;
 }
 /**
  * Records the observations a merge or adopt measured before an abort (valid evidence) when the ledger did not move
  * (the same check as the refusal path), else nothing; then rejects with OwedError('aborted'). Must not run under 'lock'.
+ * Its withLock takes no signal: the signal has already aborted, and passing it would drop these observations (D16a).
  */
 async function abortWith(ledger: Ledger, snapshot: State, observations: Draft[], id?: string): Promise<never> {
   if (observations.length) {
@@ -82,7 +83,7 @@ async function abortWith(ledger: Ledger, snapshot: State, observations: Draft[],
 export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal }): Promise<InitResult> {
   owner(o); checkAbort(o.signal); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit);
-  const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; });
+  const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
   const { state } = await load(ledger); const observations = await runJobs(o.cwd,ledger,state,genesisJobs(state),undefined,o.signal);
   return { entry, observations, status:await status(o) };
 }
@@ -145,7 +146,7 @@ export async function attest(o: Context & { node: string; rerun?: boolean; signa
     if (o.rerun && !jobs.some(j => j.obligation === 'writes' && j.key === n.candidate!.keys.writes)) jobs.push({ kind:'writes',subject:o.node,obligation:'writes',key:n.candidate!.keys.writes!,commit:n.candidate!.commit,base:n.slot!.base });
     const observations = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.node,o.signal), card = await why(o);
     return { node:o.node, observations, accepted:card.accepted, receipt:card };
-  },'attest');
+  },'attest',o.signal);
 }
 /** `needs: 'parent'` marks a block that needs a parent ruling (D18); the ledger refuses it on an ok verdict. */
 export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent' }): Promise<Entry> {
@@ -193,8 +194,8 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal }): P
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
       const entry = (await ledger.append([...observations,d])).at(-1)!;
       return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D')};
-    });
-  },'merge');
+    },undefined,o.signal);
+  },'merge',o.signal);
 }
 /** State after appending `observations` to the loaded ledger, without persisting them (each is guarded in turn). */
 function prospective(latest: Awaited<ReturnType<typeof load>>, observations: Draft[]): State {
@@ -273,8 +274,8 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel:
       const d: Draft = {kind:'adopt',by:by(o),channel:o.channel,trunk:p.trunk,prior:p.prior,commit:p.commit,state:sf,changed:p.changed,commits:p.commits,note:o.note}; guard(current,d);
       const appended = await ledger.append([...observations,d]);
       return {...p,entry:appended.at(-1)!,observations:appended.slice(0,-1)};
-    });
-  },'merge');
+    },undefined,o.signal);
+  },'merge',o.signal);
 }
 export async function status(o: Context): Promise<StatusView> {
   const {state,entries} = await load(await Ledger.open(o.cwd)), view = statusView(inited(state),entries);
