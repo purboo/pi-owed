@@ -1,4 +1,4 @@
-import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeState, SlotRebase, State } from './types.ts';
+import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Rule, SlotRebase, State } from './types.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
@@ -64,7 +64,7 @@ export function adoptionText(a: AdoptionView): string {
   const paths = a.changed.length > 20 ? [...a.changed.slice(0, 20), `… (+${a.changed.length - 20} more)`] : a.changed;
   return `#${a.seq} ${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : ''} adopted ${a.prior.slice(0, 12)}..${a.commit.slice(0, 12)} (${plural(a.commits, 'commit')} made outside owed, not reviewed by owed); changed: ${paths.join(', ') || 'none'}; note: ${a.note}`;
 }
-export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
+export function receipt(s: State, entries: readonly Entry[], node: string): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   return { node, phase: n.phase, accepted: n.accepted,
@@ -216,7 +216,7 @@ function decisionCommand(s: State, i: ItemView): string {
  * ready-to-run review command with `--as` of the original reviewer would invite another
  * principal to impersonate them. Only owner commands (gated by the owner channel) are printed.
  */
-function clearHint(s: State, entries: Entry[], b: Block): string {
+function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
@@ -269,6 +269,15 @@ export function renderBrief(v: Brief): string {
     ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),
     ...section('In progress', v.inProgress.map(p => `${p.node} ${p.phase} (attempt ${p.attempt}): dispatched ${age(p.ageMs)} ago${p.submitAgeMs !== undefined ? `, submitted ${age(p.submitAgeMs)} ago` : ''}`)),
     `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies`].join('\n');
+}
+
+// ---------- dispatch packet ----------
+/**
+ * Task text of attempt `attempt` of node `spec` in `worktree` (pure): the packet `owed dispatch` stores and the driver's
+ * writer task. `rules` are the rulings in scope at dispatch time, in ledger order.
+ */
+export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[]): string {
+  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`].join('\n');
 }
 
 // ---------- driver review packet (SPEC §12, D5) ----------

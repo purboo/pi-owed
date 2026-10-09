@@ -220,6 +220,16 @@ function clearsHalt(e: Entry, node: string): boolean {
   if (DRIVE_KINDS.includes(e.kind) || e.by === DRIVER || role(e.by) === 'executor') return false;
   return ('node' in e && e.node === node) || (e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(node));
 }
+/** Every replayed entry of the state, in ledger order (pure; the state's replay metadata). */
+export function entriesOf(s: State): readonly Entry[] { return context(s).entries; }
+/** Executor observations of one item (subject, obligation, key), in ledger order, including `error` ones. */
+export function observationsOf(s: State, subject: string, obligation: string, key: string): ObsEntry[] { return observations(s, subject, obligation, key); }
+/** The plan in force just before entry `seq` (the latest genesis/plan entry below it), e.g. the plan a dispatch packet was built from. */
+export function planAt(s: State, seq: number): Plan {
+  const law = context(s).entries.findLast(e => e.seq < seq && (e.kind === 'genesis' || e.kind === 'plan'));
+  if (!law || (law.kind !== 'genesis' && law.kind !== 'plan')) throw new OwedError(`No plan is in force before #${seq}`, 'internal');
+  return context(s).plans(law.plan);
+}
 /** The active driver halt of `node`'s current open attempt, if any. */
 export function halted(s: State, node: string): HaltEntry | undefined {
   const n = s.nodes[node];
