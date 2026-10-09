@@ -186,14 +186,26 @@ export interface EscapeView { seq: number; by: string; node: string; merge: numb
 export interface DecoyView { node: string; defect: string; commit: number; reveal: number; outcome: 'caught' | 'escaped' | 'pending'; decidedBy?: number }
 
 // ---------- driver (SPEC §12, D1) ----------
-/** The subset of `pi-durable-subagents describe --key <rid> --json` the driver uses. Unknown dsa states map to `running`; `pruned` is treated like `sealed`. */
+/** dsa run states the driver distinguishes (unknown dsa states map to `running`). */
+export type RunState = 'absent' | 'queued' | 'running' | 'asking' | 'sealed' | 'pruned';
+/** An open question of an `asking` run; `to` is dsa's answer address when reported. */
+export interface RunQuestion { qid: string; rev: number; question: string; to?: string }
+/**
+ * The subset of `pi-durable-subagents describe --key <rid> --json` the driver uses (the single definition; `src/dsa.ts`
+ * builds it). Unknown dsa states map to `running`; `pruned` is treated like `sealed` with the status describe still
+ * reports, else `unknown`. `lastFence.at` is dsa's epoch milliseconds. `wid`, `labels` and `spec_digest` are
+ * informational (spec_digest is opaque: never compare it with a locally computed hash).
+ */
 export interface RunView {
   rid: string;
-  state: 'absent' | 'queued' | 'running' | 'asking' | 'sealed' | 'pruned';
+  state: RunState;
   status?: string;
   error?: string;
-  questions?: { qid: string; rev: number; question: string }[];
-  lastFence?: { reason: string; at: string };
+  questions?: RunQuestion[];
+  lastFence?: { reason: string; at: number; exec?: string };
+  wid?: string;
+  labels?: Record<string, string>;
+  spec_digest?: string;
 }
 
 // ---------- executor jobs ----------
