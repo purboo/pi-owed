@@ -3,7 +3,7 @@
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
-import { attestJobs, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
+import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
 import { dispatchPacket, oneLine, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
 
@@ -105,16 +105,21 @@ export const rejectedFixed = (node: string): string => `this attempt's request i
 /** Halt reason of a run or send dsa rejected: dsa's reason, then `rejectedFixed`. */
 export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${rejectedFixed(node)}`;
 export const fencedMessage = (reason: string): string => `Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`;
-/** Repair follow-up: what to do, the notes of active review blocks, then the `owed why` card of the node. */
+/**
+ * Repair follow-up: what to do, the notes of active review blocks (a needs-parent block names the ruling that resolved
+ * it), the rulings covering the node recorded after the attempt's dispatch (D18.4), then the `owed why` card of the node.
+ */
 export function repairMessage(s: State, node: string): string {
   const n = s.nodes[node]!, c = n.candidate!, entries = entriesOf(s);
   const notes = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active').map(b => {
-    const e = entries.find(x => x.seq === b.seq);
-    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
+    const e = entries.find(x => x.seq === b.seq), ruled = parentRuling(s, b);
+    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${b.needs === 'parent' ? (ruled ? ` (needed a parent ruling: see #${ruled.seq})` : ' (needs a parent ruling)') : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
   });
+  const rulings = s.rules.filter(r => r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(node))).map(r => `- #${r.seq} ${oneLine(r.text)}`);
   return [`owed found problems with your candidate ${c.commit} (submit #${c.seq}) of ${node}, attempt ${n.slot!.attempt}.`,
     `Fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself.`,
     ...(notes.length ? ['Review blocks (the reviewer\'s note):', ...notes] : []),
+    ...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
     `The \`owed why ${node}\` card:`, '',
     renderReceipt(receipt(s, entries, node))].join('\n');
 }
@@ -287,6 +292,10 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // candidate is unsealed (row 12 already launched any needed run); otherwise halt needing the owner.
     const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
     const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
+    // D18: a current block whose reviewer says it needs a parent ruling halts (needs human) until a ruling naming the
+    // node is recorded after it; no repair is sent or counted. The ruling also clears the halt (D3), then it is repaired.
+    const unruled = current.filter(b => awaitingRuling(s, b));
+    if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
     if (current.length) return repair(`review block ${current.map(b => `#${b.seq} ${b.obligation}`).join(', ')}`);
     const reviewing = reviewers.some(l => !isSealed(view(l)));
     if (stale.length) {
@@ -309,6 +318,16 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   }
   // Row 18: the running writer was fenced after the last steer.
   return fenced();
+}
+
+/**
+ * Halt reason for current review blocks that need a parent ruling (D18.3): per block `review block #<seq> <obligation>
+ * needs a parent ruling: <note>`, then how to resolve it.
+ */
+export function needsRulingHalt(s: State, node: string, blocks: readonly Block[]): string {
+  const entries = entriesOf(s);
+  const each = blocks.map(b => { const e = entries.find(x => x.seq === b.seq); return `review block #${b.seq} ${b.obligation} needs a parent ruling: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; });
+  return `${each.join('; ')}; record \`owed rule --nodes ${node} "<decision>"\`, then the driver repairs with the ruling`;
 }
 
 /**

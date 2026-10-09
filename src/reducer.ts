@@ -1,6 +1,6 @@
 import { ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
-import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
+import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -164,7 +164,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       }
     } else if (e.kind === 'review') {
       const n = s.nodes[e.node]!;
-      if (e.verdict === 'block') n.blocks.push({ seq: e.seq, node: e.node, obligation: e.obligation, kind: 'judgment', key: e.key, rank: e.rank, state: 'active' });
+      if (e.verdict === 'block') n.blocks.push({ seq: e.seq, node: e.node, obligation: e.obligation, kind: 'judgment', key: e.key, rank: e.rank, state: 'active', ...(e.needs === 'parent' ? { needs: 'parent' as const } : {}) });
       else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === h.entries.find(x => x.seq === b.seq)?.by))) { b.state = 'cleared'; b.clearedBy = e.seq; }
     } else if (e.kind === 'waive') {
       const n = s.nodes[e.node]!;
@@ -230,6 +230,16 @@ export function planAt(s: State, seq: number): Plan {
   if (!law || (law.kind !== 'genesis' && law.kind !== 'plan')) throw new OwedError(`No plan is in force before #${seq}`, 'internal');
   return context(s).plans(law.plan);
 }
+/**
+ * The ruling that resolves a needs-parent review block (D18 as amended): the first ruling naming the block's node
+ * (`nodes` includes it; a `*` ruling is general guidance and does not) recorded after the block. Undefined when the
+ * block does not need a parent ruling or none exists yet.
+ */
+export function parentRuling(s: State, b: Block): Rule | undefined {
+  return b.needs === 'parent' ? s.rules.find(r => r.seq > b.seq && r.nodes !== '*' && r.nodes.includes(b.node)) : undefined;
+}
+/** An active review block that needs a parent ruling and has none yet (D18). */
+export function awaitingRuling(s: State, b: Block): boolean { return b.needs === 'parent' && b.state === 'active' && !parentRuling(s, b); }
 /** The active driver halt of `node`'s current open attempt, if any. */
 export function halted(s: State, node: string): HaltEntry | undefined {
   const n = s.nodes[node];
@@ -366,6 +376,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (n?.writers.includes(d.by) || n?.writers.some(w => w.slice(w.indexOf(':') + 1) === d.by.slice(d.by.indexOf(':') + 1))) errors.push('review reviewer must not be the writer of any attempt of this node');
       if (r === 'owner' ? d.rank !== 3 : ![1, 2].includes(d.rank)) errors.push('review rank: reviewer must use 1..2, owner must use 3');
       if (d.ack_rulings !== undefined && (!Number.isInteger(d.ack_rulings) || d.ack_rulings > Math.max(0, ...s.rules.map(x => x.seq)))) errors.push('ack_rulings must not reference future rulings');
+      if (d.needs !== undefined && (d.needs !== 'parent' || d.verdict !== 'block')) errors.push("review needs must be 'parent' and only on a block verdict");
       break;
     case 'waive':
       allow('owner'); current(d.obligation, d.key);
