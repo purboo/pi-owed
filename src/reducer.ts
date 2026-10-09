@@ -1,6 +1,7 @@
-import { ZERO, canonical, sha256 } from './canon.ts';
+import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
-import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
+import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
+import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -24,8 +25,22 @@ const observations = (s: State, subject: string, obligation: string, key: string
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => observations(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
 function required(spec: NodeSpec, facts: CandidateFacts): string[] {
-  return [...spec.checks.flatMap(c => [`check:${c.id}`, ...(c.red ? [`red:${c.id}`] : []), ...(c.mutants ? [`strength:${c.id}`] : [])]), 'writes', ...(facts.closureTouched ? ['closure-review'] : []), ...(spec.review.count > 0 ? ['review'] : []), 'rulings'];
+  return [...spec.checks.flatMap(c => [`check:${c.id}`, ...(c.red ? [`red:${c.id}`] : []), ...(c.mutants ? [`strength:${c.id}`] : [])]), 'writes', ...(facts.closureTouched ? ['closure-review'] : []), ...(spec.review.count > 0 ? ['review'] : []), ...(spec.approve ? ['approve'] : []), ...(spec.evidence ?? []).map(e => `evidence:${e.id}`), 'rulings'];
 }
+/**
+ * D23 item keys of a node's manual obligations on a candidate with patch `patch` (as for review):
+ * `approve` = H({o:"approve", patch}), `evidence:<id>` = H({o:"evidence", id, what, patch}). Empty for nodes without them.
+ */
+export function manualKeys(spec: NodeSpec, patch: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (spec.approve) out.approve = H({ o: 'approve', patch });
+  for (const e of spec.evidence ?? []) out[`evidence:${e.id}`] = H({ o: 'evidence', id: e.id, what: e.what, patch });
+  return out;
+}
+/** A D23 manual obligation (`approve` or `evidence:<id>`): never measured by the executor. */
+export const isManual = (obligation: string): boolean => obligation === 'approve' || obligation.startsWith('evidence:');
+/** `by` is a writer of node n (any attempt), or shares a writer's id (as for reviews). */
+const isWriter = (n: NodeState | undefined, by: string): boolean => !!n && (n.writers.includes(by) || n.writers.some(w => w.slice(w.indexOf(':') + 1) === by.slice(by.indexOf(':') + 1)));
 function latestRule(s: State, node: string): number {
   return Math.max(-1, ...s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node)).map(r => r.seq));
 }
@@ -62,6 +77,19 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
     out.discharger = 'reviewer';
     out.detail = latest === -1 ? NO_RULINGS : `rulings requires acknowledgment of applicable ruling #${latest}`;
     if (latest === -1 && out.status === 'E') return { ...out, mark: '✔', discharger: undefined };
+  } else if (obligation === 'approve') {
+    const oks = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.obligation === 'approve' && e.key === key && e.verdict === 'ok' && role(e.by) === 'owner');
+    out.evidence = oks.map(e => e.seq);
+    out.discharger = 'owner';
+    out.detail = 'approve requires an owner approval of the current candidate';
+    if (oks.length) out.status = 'E';
+  } else if (obligation.startsWith('evidence:')) {
+    const ev = spec?.evidence?.find(x => `evidence:${x.id}` === obligation), need = ev?.by ?? 'reviewer';
+    const found = context(s).entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.node === subject && e.id === ev?.id && e.key === key && e.merge === undefined && e.files.length > 0 && (role(e.by) === need || role(e.by) === 'owner') && !isWriter(node, e.by));
+    out.evidence = found.map(e => e.seq);
+    out.discharger = need as Discharger;
+    out.detail = `${obligation} requires manual evidence by ${need}${ev ? `: ${ev.what}` : ''}`;
+    if (found.length) out.status = 'E';
   } else {
     const obs = observations(s, subject, obligation, key);
     const pass = obs.some(e => e.verdict === 'pass');
@@ -79,7 +107,7 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
     out.discharger = out.mark === '⊤' || blocks.some(b => b.state === 'flaky' || (b.kind === 'judgment' && (b.rank ?? 0) >= 2)) ? 'owner' : blocks.some(b => b.kind === 'judgment') ? 'reviewer' : currentFailed ? 'writer' : 'executor';
     out.detail = `${obligation} still blocked: ${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' flaky' : ''}`).join(', ')}`;
   }
-  if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied` };
+  if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied${isManual(obligation) ? ' (manual)' : ''}` };
   if (subject !== 'trunk' && !obligation.startsWith('inv:')) {
     const waiver = context(s).entries.findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
     if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : ''}` };
@@ -168,7 +196,8 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     } else if (e.kind === 'review') {
       const n = s.nodes[e.node]!;
       if (e.verdict === 'block') n.blocks.push({ seq: e.seq, node: e.node, obligation: e.obligation, kind: 'judgment', key: e.key, rank: e.rank, state: 'active', ...(e.needs === 'parent' ? { needs: 'parent' as const } : {}) });
-      else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === h.entries.find(x => x.seq === b.seq)?.by))) { b.state = 'cleared'; b.clearedBy = e.seq; }
+      // An owner block on approve (D23) is cleared by a later owner ok on the current key, whichever owner id.
+      else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === h.entries.find(x => x.seq === b.seq)?.by) || (e.obligation === 'approve' && role(e.by) === 'owner'))) { b.state = 'cleared'; b.clearedBy = e.seq; }
     } else if (e.kind === 'waive') {
       const n = s.nodes[e.node]!;
       for (const b of n.blocks) if (active(b) && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && e.accept_risk?.includes(b.seq)) { b.state = 'cleared'; b.clearedBy = e.seq; }
@@ -321,6 +350,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
     if (m.review.count < n.review.count || m.review.min_rank < n.review.min_rank) add(n.id, 'review count/rank reduced');
     if (m.writes.some(w => !n.writes.some(p => w.startsWith(p)))) add(n.id, 'writes scope expanded');
     if (n.deps.some(d => !m.deps.includes(d))) add(n.id, 'dependency removed');
+    result.push(...manualDowngrades(n.id, n, m));
   }
   return result;
 }
@@ -362,6 +392,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       slot(); if (d.by !== n?.slot?.writer) errors.push('submit must be performed by the slot writer');
       if (d.facts.base !== n?.slot?.base) errors.push('submit base must match slot base');
       if (spec && required(spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit is missing required obligation keys');
+      if (spec && Object.entries(manualKeys(spec, d.facts.patch)).some(([o, k]) => d.facts.keys[o] !== k)) errors.push('submit approve/evidence keys must be derived from the candidate patch');
       break;
     case 'obs':
       if (d.by !== 'executor:owed') errors.push('obs may only be written by executor:owed');
@@ -384,6 +415,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (r === 'owner' ? d.rank !== 3 : ![1, 2].includes(d.rank)) errors.push('review rank: reviewer must use 1..2, owner must use 3');
       if (d.ack_rulings !== undefined && (!Number.isInteger(d.ack_rulings) || d.ack_rulings > Math.max(0, ...s.rules.map(x => x.seq)))) errors.push('ack_rulings must not reference future rulings');
       if (d.needs !== undefined && (d.needs !== 'parent' || d.verdict !== 'block')) errors.push("review needs must be 'parent' and only on a block verdict");
+      if (d.obligation === 'approve' && r !== 'owner') errors.push('approve can only be recorded by the owner');
       break;
     case 'waive':
       allow('owner'); current(d.obligation, d.key);
@@ -427,7 +459,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     }
   }
-  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt' || d.kind === 'launch' || d.kind === 'send' || d.kind === 'halt') {
+  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt' || d.kind === 'launch' || d.kind === 'send' || d.kind === 'halt' || d.kind === 'evidence') {
     const extra = Object.entries(d).filter(([k, v]) => v !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS[d.kind].includes(k)).map(([k]) => k);
     if (extra.length) errors.push(`${d.kind} has unknown fields: ${extra.join(', ')}`);
   }
@@ -463,6 +495,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.send !== `${d.rid}:${d.sendKind}:${seq}`) errors.push(`send id must be ${d.rid}:${d.sendKind}:${seq} (rid, kind, seq of this entry)`);
       break;
     }
+    case 'evidence': errors.push(...evidenceErrors(d, n, spec)); break;
     case 'halt':
       allow('parent'); slot();
       if (typeof d.reason !== 'string' || !d.reason.trim()) errors.push('halt requires a reason');
@@ -495,7 +528,38 @@ export function validateDraft(s: State, d: Draft): string[] {
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt', readonly string[]> = { escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence', readonly string[]> = { evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason'], halt: ['node', 'attempt', 'reason', 'needs'] };
+/**
+ * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
+ * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
+ * the open candidate: the current attempt and `evidence:<id>` key, a declared id, the role the plan requires (or the
+ * owner), not a writer of the node, and at least one file.
+ */
+function evidenceErrors(d: Extract<Draft, { kind: 'evidence' }>, n: NodeState | undefined, spec: NodeSpec | undefined): string[] {
+  const errors: string[] = [], r = role(d.by);
+  if (!['owner', 'parent', 'reviewer'].includes(r)) errors.push('evidence insufficient permissions; requires owner/parent/reviewer');
+  if (typeof d.id !== 'string' || !EVIDENCE_ID.test(d.id)) errors.push(`evidence id must match ${EVIDENCE_ID.source}`);
+  if (typeof d.note !== 'string' || !d.note.trim()) errors.push('evidence requires a note');
+  if (!Array.isArray(d.files) || d.files.some(f => !f || typeof f !== 'object' || Object.keys(f).sort().join() !== 'bytes,path,sha256' || typeof f.path !== 'string' || !f.path || typeof f.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(f.sha256) || !Number.isInteger(f.bytes) || f.bytes < 0)) errors.push('evidence files must be a list of {path, sha256 (64 lowercase hex), bytes}');
+  if (!n || !spec) return errors;
+  if (d.merge !== undefined) {
+    if (d.attempt !== undefined || d.key !== undefined) errors.push('an evidence receipt carries merge only, no attempt or key');
+    if (!n.merged) errors.push(`evidence receipt requires a merged node; ${d.node} is not merged`);
+    else if (d.merge !== n.merged.seq) errors.push(`evidence receipt merge must be #${n.merged.seq}, the latest merge of ${d.node}`);
+    return errors;
+  }
+  if (!n.slot?.open || !n.candidate) return [...errors, n.merged ? `node ${d.node} is merged: record a receipt (merge #${n.merged.seq})` : `evidence requires an open candidate of ${d.node}, or a merged node for a receipt`];
+  if (d.attempt !== n.slot.attempt) errors.push('attempt must match the current open writer slot');
+  const ev = spec.evidence?.find(x => x.id === d.id);
+  if (!ev) errors.push(`node ${d.node} has no evidence obligation ${d.id}`);
+  else {
+    if (!d.key || d.key !== n.candidate.keys[`evidence:${d.id}`]) errors.push(`evidence:${d.id} must reference the current candidate obligation key`);
+    if (r !== ev.by && r !== 'owner') errors.push(`evidence:${d.id} requires ${ev.by} (or owner)`);
+  }
+  if (isWriter(n, d.by)) errors.push('evidence must not be recorded by a writer of any attempt of this node');
+  if (Array.isArray(d.files) && !d.files.length) errors.push('evidence on a candidate requires at least one file');
+  return errors;
+}
 export const ESCAPE_CLASSES: readonly EscapeClass[] = ['missing', 'false-pass', 'reuse', 'weak', 'waiver'];
 /** sha256 hex of the canonical JSON of exactly {nonce, decoys:[{node, defect}]}; other fields are ignored. */
 export function decoyDigest(p: DecoyPayload): string {

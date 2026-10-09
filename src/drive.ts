@@ -4,7 +4,7 @@
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
-import { dispatchPacket, oneLine, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
@@ -303,6 +303,10 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       if (reviewing) return fenced();
       return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active and no reviewer run of candidate #${c.seq} is running; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}`, 'owner');
     }
+    // D23: everything but approve/evidence:* is satisfied and nothing blocks: halt for the owner (approve) or a human
+    // (evidence) with the exact commands. Never earlier: the rows above run first.
+    const manual = manualHalt(s, id);
+    if (manual) return halt(manual.reason, manual.needs);
     // Rows 16-17: accepted: merge; a merge this process saw refused: rebase when trunk moved, else halt.
     if (n.accepted) {
       const m = opts.merges?.get(id);
@@ -319,6 +323,24 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   }
   // Row 18: the running writer was fenced after the last steer.
   return fenced();
+}
+
+/**
+ * D23: when the only unsatisfied items of the node's candidate are `approve` and/or `evidence:<id>` (no active or flaky
+ * block), the halt the driver records: needs `owner` while approve is pending, else `human`; the reason names each item
+ * with the exact command (`owed approve <node>`, `owed evidence <node> <id> --file <path> --note "…" --as <role>:<id>`).
+ */
+export function manualHalt(s: State, node: string): { reason: string; needs: 'human' | 'owner' } | undefined {
+  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
+  if (!n?.candidate || !spec || n.blocks.some(b => b.state !== 'cleared')) return undefined;
+  const pending = n.items.filter(i => i.status === 'D');
+  if (!pending.length || !pending.every(i => i.obligation === 'approve' || i.obligation.startsWith('evidence:'))) return undefined;
+  const parts = pending.map(i => {
+    if (i.obligation === 'approve') return `awaiting owner approval of candidate ${n.candidate!.commit.slice(0, 12)}: owed approve ${node} [--note TEXT] (owner)`;
+    const ev = spec.evidence?.find(e => `evidence:${e.id}` === i.obligation);
+    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`)}`;
+  });
+  return { reason: parts.join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
 }
 
 /**

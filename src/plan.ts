@@ -1,7 +1,7 @@
 import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
-import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig, ExecConfig } from './types.ts';
+import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig, ExecConfig, EvidenceSpec } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
@@ -60,6 +60,38 @@ function parseWorktrees(v: unknown, errors: string[]): WorktreesConfig {
   if (r.branch !== undefined) {
     if (typeof r.branch !== 'string' || !r.branch.trim()) errors.push('worktrees.branch: expected non-empty string');
     else { const e = branchTemplateErrors(r.branch, 'worktrees.branch'); errors.push(...e); if (!e.length) out.branch = r.branch; }
+  }
+  return out;
+}
+
+/** Evidence ids (D23): also safe in an obligation name and a CLI argument. */
+export const EVIDENCE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const EVIDENCE_BY: readonly EvidenceSpec['by'][] = ['reviewer', 'parent', 'owner'];
+/** D23: the optional node fields `approve` (only `owner`) and `evidence` ([{id, what, by?}]); sets them on `out` only when present. */
+function parseManual(n: Record<string, unknown>, p: string, out: NodeSpec, errors: string[]): void {
+  if (n.approve !== undefined) { if (n.approve !== 'owner') errors.push(`${p}.approve: expected "owner"`); else out.approve = 'owner'; }
+  if (n.evidence === undefined) return;
+  if (!Array.isArray(n.evidence)) { errors.push(`${p}.evidence: expected array`); return; }
+  const ids = new Set<string>();
+  out.evidence = n.evidence.map((x, i) => {
+    const q = `${p}.evidence[${i}]`, res: EvidenceSpec = { id: '', what: '', by: 'reviewer' };
+    if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${q}: expected object`); return res; }
+    const e = x as Record<string, unknown>;
+    for (const k of Object.keys(e)) if (!['id', 'what', 'by'].includes(k)) errors.push(`${q}.${k}: unknown key`);
+    if (typeof e.id !== 'string' || !EVIDENCE_ID.test(e.id)) errors.push(`${q}.id: expected ${EVIDENCE_ID.source}`); else { if (ids.has(e.id)) errors.push(`${q}: duplicate evidence id ${e.id}`); ids.add(e.id); res.id = e.id; }
+    if (typeof e.what !== 'string' || !e.what.trim()) errors.push(`${q}.what: expected non-empty string`); else res.what = e.what;
+    if (e.by !== undefined) { if (!EVIDENCE_BY.includes(e.by as EvidenceSpec['by'])) errors.push(`${q}.by: expected reviewer, parent or owner`); else res.by = e.by as EvidenceSpec['by']; }
+    return res;
+  });
+}
+/** D23 downgrades: `approve removed`; `evidence <id> removed`; `evidence <id> weakened` when `by` changes to a role other than owner. */
+export function manualDowngrades(node: string, prev: NodeSpec, next: NodeSpec): Downgrade[] {
+  const out: Downgrade[] = [];
+  if (prev.approve && !next.approve) out.push({ node, what: 'approve removed' });
+  for (const e of prev.evidence ?? []) {
+    const m = next.evidence?.find(x => x.id === e.id);
+    if (!m) out.push({ node, what: `evidence ${e.id} removed` });
+    else if (m.by !== e.by && m.by !== 'owner') out.push({ node, what: `evidence ${e.id} weakened` });
   }
   return out;
 }
@@ -140,6 +172,7 @@ export function parsePlan(text: string): Plan {
     if (n.title !== undefined) out.title = str(n.title, `${p}.title`);
     if (n.brief !== undefined) out.brief = str(n.brief, `${p}.brief`);
     if (n.type !== undefined) { if (typeof n.type !== 'string' || !/^[a-z][a-z0-9-]*$/.test(n.type)) errors.push(`${p}.type: expected a string matching ^[a-z][a-z0-9-]*$`); else out.type = n.type; }
+    parseManual(n, p, out, errors);
     return out;
   });
   const ids = new Map<string, NodeSpec>();
@@ -191,6 +224,7 @@ export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
     if (m.review.count < n.review.count) out.push({ node: n.id, what: 'review count lowered' });
     if (m.review.min_rank < n.review.min_rank) out.push({ node: n.id, what: 'review rank lowered' });
     if (m.writes.some(p => !n.writes.some(old => p.startsWith(old)))) out.push({ node: n.id, what: 'writes widened' });
+    out.push(...manualDowngrades(n.id, n, m));
   }
   return out;
 }
