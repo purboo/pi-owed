@@ -89,6 +89,26 @@ plan (check removed, `red` turned off, `min_tests` lowered, review count/rank
 lowered, writes widened) is a **downgrade**: allowed only to the owner, and
 listed in reports as ΔO⁻.
 
+### 3.1 Worktree location and branch names (D19)
+
+```yaml
+worktrees:                          # optional; unknown keys and bad types are errors
+  root: ../dev/wais-worktree        # absolute, or relative to the main worktree root; default .owed/wt
+  branch: "{type}/{node}-{attempt}" # default "owed/{node}/{attempt}"
+nodes:
+  - id: auth-api
+    type: fix                       # optional, ^[a-z][a-z0-9-]*$, default feat; used only by {type}
+```
+
+The branch template must contain `{node}` and `{attempt}`; any placeholder other
+than `{node}`, `{attempt}` and `{type}` is a plan error. A plan without the block
+parses to a plan without a `worktrees` key (the same canonical plan and sha as
+0.4.1); a block present is filled with the defaults. Neither `worktrees` nor a
+node's `type` is an obligation: changing them is never a downgrade (a parent may
+record it), never invalidates a submitted candidate (the candidate-invalidation
+comparison ignores `type`), and affects only later dispatches; an open slot keeps
+the branch and worktree recorded in its dispatch entry (§8.1).
+
 ## 4. Items and keys
 
 An item is `(subject, obligation, key)`; status is evaluated per item.
@@ -357,7 +377,7 @@ init(o: {cwd, plan: string, as: Principal, channel, signal?}): Promise<InitResul
 readPlan(o: {cwd, path, rev?}): Promise<{plan, rev?, path}>   // plan text from the working tree, or from commit `rev` (`git show rev:path`); path repository-relative
 planSet(o: {cwd, plan, rev?, path?, as, channel?}): Promise<Entry>   // records rev/path in the plan entry
 rule(o: {cwd, text, nodes, as}): Promise<Entry>
-dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates branch owed/<node>/<attempt> at trunk + worktree <main worktree root>/.owed/wt/<node>-<attempt>
+dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
 attest(o: {cwd, node, rerun?: boolean, signal?: AbortSignal}): Promise<AttestResult>   // abort: §7.8
@@ -442,7 +462,7 @@ trunk commit missing from the repository.
 attempts. It is a parent/owner operation (same rule as `abandon`; default
 actor `parent:cli`), refused for any other role. For every `dispatch` entry whose attempt is merged or abandoned (never
 the current open slot) it removes the slot worktree with `git worktree remove`
-(no `--force`) and deletes the branch `owed/<node>/<attempt>` with `git branch -D`,
+(no `--force`) and deletes the branch recorded in the dispatch entry (§8.1) with `git branch -D`,
 then runs `git worktree prune` (also run first, so a hand-deleted slot directory
 does not pin its branch). Before removing anything of a finished attempt it pins
 each commit of that attempt's `submit` entries that the ledger's trunk commit does
@@ -467,6 +487,29 @@ removes or pins something (not in dry-run) it appends one `note` entry (by the c
 default `parent:cli`) naming what was removed and pinned; there is no new entry kind and
 the reducer is unaffected. `dryRun` reports the same classification without
 changing git or the ledger.
+
+### 8.1 Worktree layout and a trunk checked out elsewhere (D19)
+
+Dispatch of attempt `a` of node `n` creates the worktree at
+`resolve(<main worktree root>, worktrees.root, "<n>-<a>")` and the branch from
+the template (§3.1; `{type}` = the node's `type`, default `feat`). The expanded
+name must pass `git check-ref-format --branch`, and the root must not be the main
+worktree root itself; otherwise dispatch refuses (usage) before any ledger,
+exclude or worktree effect. Missing parent directories of the worktree are
+created. `<git common dir>/info/exclude` gets `.owed/` for the default root (as
+in 0.4.1), `/<repository-relative root>/` for another root inside the main
+worktree, and nothing for a root outside it (compared after resolving symlinks of
+the deepest existing ancestor). The dispatch entry records `branch` and
+`worktree`; every later use (submit/rebase writer inference, rebase packets,
+gc, the driver, views) reads the recorded values and never reconstructs them.
+
+When the trunk branch is checked out in a linked worktree, a merge fast-forwards
+it there (`git merge --ff-only` in that worktree) and refuses when it has
+uncommitted tracked changes, before trunk moves and without recording the merge:
+`trunk worktree <path> has uncommitted changes: commit them there, or detach it
+(git -C <path> switch --detach), then retry` (refused, exit 1). Unless the trunk
+is checked out in the main worktree, dispatch, merge and gc never switch, check
+out or write the main worktree.
 
 ## 9. Views
 
@@ -543,6 +586,14 @@ changing git or the ledger.
   `since` (seq or ISO time, invalid → usage error) filters only the Merged
   and Adopted sections; the other sections always show the current state. `--json` returns
   the structured `Brief`.
+
+### 9.1 Trunk checked out in another worktree (D19.5)
+
+`owed status` (and `/owed`, `owed_status`) shows one line after the trunk line
+when the trunk branch is checked out in a worktree other than the main worktree:
+`Trunk <name> is checked out at <path>; merges fast-forward it there (keep it
+clean).`; `--json` has `trunkWorktree: <path>`. Nothing is shown when the trunk
+is checked out in the main worktree or nowhere.
 
 ## 10. CLI
 

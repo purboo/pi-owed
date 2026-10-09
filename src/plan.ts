@@ -1,7 +1,7 @@
 import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
-import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig } from './types.ts';
+import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
@@ -28,6 +28,39 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   };
   out.writer = agent(r.writer, 'drive.writer', out.writer);
   out.reviewer = agent(r.reviewer, 'drive.reviewer', out.reviewer);
+  return out;
+}
+
+/** Worktree defaults (SPEC §3, D19): slots in `<main worktree>/.owed/wt/<node>-<attempt>` on branch `owed/<node>/<attempt>`. */
+export const WORKTREE_DEFAULTS: WorktreesConfig = { root: '.owed/wt', branch: 'owed/{node}/{attempt}' };
+/** Default node `type` (fills `{type}` only). */
+export const DEFAULT_NODE_TYPE = 'feat';
+/** The plan's worktree config, or the defaults when it has no `worktrees:` block. */
+export function worktreesConfig(plan: Plan): WorktreesConfig { return { ...(plan.worktrees ?? WORKTREE_DEFAULTS) }; }
+const PLACEHOLDER = /\{([^{}]*)\}/g;
+/** Errors of a branch template: it must contain `{node}` and `{attempt}`; `{type}` is the only other placeholder. */
+export function branchTemplateErrors(template: string, label: string): string[] {
+  const errors: string[] = [], names = [...template.matchAll(PLACEHOLDER)].map(m => m[1]!);
+  for (const name of names) if (!['node', 'attempt', 'type'].includes(name)) errors.push(`${label}: unknown placeholder {${name}}`);
+  for (const name of ['node', 'attempt']) if (!names.includes(name)) errors.push(`${label}: must contain {${name}}`);
+  return errors;
+}
+/** Expands a (valid) branch template for attempt `attempt` of node `spec`; `{type}` defaults to `feat`. */
+export function expandBranch(template: string, spec: Pick<NodeSpec, 'id' | 'type'>, attempt: number): string {
+  const values: Record<string, string> = { node: spec.id, attempt: String(attempt), type: spec.type ?? DEFAULT_NODE_TYPE };
+  return template.replace(PLACEHOLDER, (all, name: string) => values[name] ?? all);
+}
+/** Parses an optional `worktrees:` block; unknown keys and bad types are errors. */
+function parseWorktrees(v: unknown, errors: string[]): WorktreesConfig {
+  const out = { ...WORKTREE_DEFAULTS };
+  if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('worktrees: expected object'); return out; }
+  const r = v as Record<string, unknown>;
+  for (const k of Object.keys(r)) if (k !== 'root' && k !== 'branch') errors.push(`worktrees.${k}: unknown key`);
+  if (r.root !== undefined) { if (typeof r.root !== 'string' || !r.root.trim() || r.root.includes('\0')) errors.push('worktrees.root: expected non-empty string'); else out.root = r.root; }
+  if (r.branch !== undefined) {
+    if (typeof r.branch !== 'string' || !r.branch.trim()) errors.push('worktrees.branch: expected non-empty string');
+    else { const e = branchTemplateErrors(r.branch, 'worktrees.branch'); errors.push(...e); if (!e.length) out.branch = r.branch; }
+  }
   return out;
 }
 
@@ -75,6 +108,7 @@ export function parsePlan(text: string): Plan {
     if (out.checks.length && !out.writes.length) errors.push(`${p}: writes required with checks`);
     if (n.title !== undefined) out.title = str(n.title, `${p}.title`);
     if (n.brief !== undefined) out.brief = str(n.brief, `${p}.brief`);
+    if (n.type !== undefined) { if (typeof n.type !== 'string' || !/^[a-z][a-z0-9-]*$/.test(n.type)) errors.push(`${p}.type: expected a string matching ^[a-z][a-z0-9-]*$`); else out.type = n.type; }
     return out;
   });
   const ids = new Map<string, NodeSpec>();
@@ -91,6 +125,7 @@ export function parsePlan(text: string): Plan {
   const plan: Plan = { version: 1, trunk: str(r.trunk, 'trunk'), closure: strings(r.closure ?? [], 'closure'), invariants: checks(r.invariants, 'invariants'), nodes };
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
   if (r.drive !== undefined) plan.drive = parseDrive(r.drive, errors);
+  if (r.worktrees !== undefined) plan.worktrees = parseWorktrees(r.worktrees, errors);
   errors.push(...mutantErrors(plan));
   if (errors.length) throw new OwedError(errors.join('\n'), 'usage');
   return plan;

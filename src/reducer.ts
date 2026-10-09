@@ -18,6 +18,8 @@ const role = (by: string): string => by.split(':')[0] ?? '';
 const blankPlan = (): Plan => ({ version: 1, trunk: '', closure: [], invariants: [], nodes: [] });
 const emptyNode = (id: string): NodeState => ({ id, phase: 'blocked', items: [], blocks: [], accepted: false, dependents: 0, writers: [], runs: [] });
 const nodeSpec = (s: State, id: string): NodeSpec | undefined => s.plan.nodes.find(n => n.id === id);
+/** A node spec without its `type` (D19.4: not an obligation). */
+const withoutType = (n: NodeSpec | undefined): NodeSpec | undefined => n && { ...n, type: undefined };
 const observations = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => context(s).entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === subject && e.obligation === obligation && e.key === key);
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => observations(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
@@ -130,7 +132,8 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       const detected = downgradeDetails(s.plan, next);
       // A candidate's facts were computed under the old plan; if its node's
       // obligations, setup or closure changed, the writer must submit again.
-      for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(nodeSpec(s, n.id)) !== canonical(next.nodes.find(x => x.id === n.id)) || s.plan.setup !== next.setup || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
+      // D19.4: the node `type` only names later branches; changing it never invalidates a candidate.
+      for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(withoutType(nodeSpec(s, n.id))) !== canonical(withoutType(next.nodes.find(x => x.id === n.id))) || s.plan.setup !== next.setup || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
       s.plan = next; s.planSha = e.plan;
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items });

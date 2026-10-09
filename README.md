@@ -123,6 +123,23 @@ A decoy is **caught** if its node received an execution failure or a review bloc
 
 The ledger lives under the Git common directory in `owed/`, shared by the repository's worktrees. Dispatch worktrees live under `.owed/wt/` and are locally excluded from Git. `OWED_DIR` overrides ledger storage for isolated tests.
 
+### Worktree location and branch names
+
+A repository whose rules forbid worktrees inside the main worktree, or prescribe branch names, configures both in the plan:
+
+```yaml
+worktrees:
+  root: ../dev/wais-worktree          # absolute, or relative to the main worktree root; default .owed/wt
+  branch: "{type}/{node}-{attempt}"   # default "owed/{node}/{attempt}"; must contain {node} and {attempt}
+nodes:
+  - id: auth-api
+    type: fix                         # optional, default feat; only fills {type}
+```
+
+Dispatch creates `<root>/<node>-<attempt>` (missing parent directories are created) on the templated branch; a name that `git check-ref-format --branch` rejects is refused before anything is written. Only a root inside the main worktree is added to `.git/info/exclude` (`.owed/` for the default root, as before); an outside root adds nothing. Every later command uses the branch and worktree recorded at dispatch, so changing `worktrees` or `type` affects only later dispatches; it is never a downgrade and keeps submitted candidates. Unless the trunk is checked out in the main worktree (then a merge fast-forwards it, as before), dispatch, merge and gc never switch, check out or write the main worktree, so a main worktree with uncommitted user changes stays byte-identical.
+
+If the trunk branch is checked out in another worktree (say `dev` in `../dev/wais-worktree/dev`), `owed status` says `Trunk dev is checked out at <path>; merges fast-forward it there (keep it clean).` A merge fast-forwards that worktree, and refuses while it has uncommitted changes: `trunk worktree <path> has uncommitted changes: commit them there, or detach it (git -C <path> switch --detach), then retry`.
+
 This is a local, same-user trust boundary. It guards against mistakes and lazy cheating through normal tools, not a malicious user with shell access. The hash chain detects edits; it does not prevent them, and a user who controls the files can rewrite the chain. Principal names are workflow assertions, not authenticated accounts. Check commands execute locally with the current user's permissions.
 
 ## Parallel slots and a moving trunk
@@ -145,7 +162,7 @@ Before asking for confirmation (and also with `--i-am-owner`) the CLI prints the
 
 ## Reclaiming worktrees
 
-Each dispatch leaves a worktree under `.owed/wt/<node>-<attempt>` of the main worktree (also when dispatched from inside another slot worktree) and a branch `owed/<node>/<attempt>`. Once an attempt is merged or abandoned, `owed gc` (parent or owner only) reclaims them:
+Each dispatch leaves a worktree under `.owed/wt/<node>-<attempt>` of the main worktree (also when dispatched from inside another slot worktree) and a branch `owed/<node>/<attempt>` (or the configured root and branch template, see above). Once an attempt is merged or abandoned, `owed gc` (parent or owner only) reclaims them:
 
 ```sh
 owed gc --dry-run   # list what would be removed and what is kept, change nothing
