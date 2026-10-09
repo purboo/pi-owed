@@ -1,5 +1,6 @@
-import type { Block, Entry, EscapeClass, ItemView, NodeState, SlotRebase, State } from './types.ts';
+import type { AdoptionView, Block, Entry, EscapeClass, ItemView, NodeState, SlotRebase, State } from './types.ts';
 import type { GcResult } from './ops.ts';
+import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
 import { NO_RULINGS, overlapping } from './reducer.ts';
 
@@ -16,13 +17,30 @@ export interface StatusView {
   ready: string[]; pending: Record<string, ItemView[]>; invariants: ItemView[]; ownerFlags: Entry[];
   /** Ready nodes whose writes overlap a node with an open slot (dispatch refuses them without --allow-overlap). */
   overlaps: Record<string, string[]>;
+  /** Present when refs/heads/<trunk> differs from the ledger trunk (commits made outside owed, or a rewritten trunk). */
+  drift?: TrunkDrift;
+}
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+/** One line explaining a trunk ref that differs from the ledger trunk, and what the owner can do. */
+export function driftText(d: TrunkDrift): string {
+  const ref = `${d.ref}${d.commit ? ` (${d.commit.slice(0, 12)})` : ''}`, ledger = d.ledger.slice(0, 12);
+  if (d.relation === 'missing') return `trunk ref ${d.ref} does not exist; the ledger trunk is ${ledger}`;
+  if (d.relation === 'ahead') return `trunk moved outside owed: ${ref} is ahead of the ledger trunk ${ledger} by ${plural(d.ahead, 'commit')}; review them, then the owner runs owed adopt --note TEXT`;
+  return `trunk diverged from the ledger (rewritten or reset outside owed): ${ref} is not a fast-forward of the ledger trunk ${ledger} (${d.ahead} ahead, ${d.behind} behind); owed adopt accepts only fast-forwards: restore ${d.ref} to a descendant of ${ledger}`;
 }
 export interface Report {
   since: number | string; merges: Entry[]; blocks: ReceiptCard['blocks']; waivers: Entry[];
   downgrades: State['downgrades']; rulings: State['rules']; decisions: ItemView[];
   changes: { subject: string; obligation: string; before?: string; after: string }[];
   ownerActions: Entry[];
+  /** Owner adoptions of trunk commits made outside owed, after `since`. */
+  adoptions: AdoptionView[];
   escapes: EscapeSummary;
+}
+/** prior..commit, commit count, changed paths and note of one adoption. */
+export function adoptionText(a: AdoptionView): string {
+  const paths = a.changed.length > 20 ? [...a.changed.slice(0, 20), `… (+${a.changed.length - 20} more)`] : a.changed;
+  return `#${a.seq} ${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : ''} adopted ${a.prior.slice(0, 12)}..${a.commit.slice(0, 12)} (${plural(a.commits, 'commit')} made outside owed, not reviewed by owed); changed: ${paths.join(', ') || 'none'}; note: ${a.note}`;
 }
 export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
   const n = s.nodes[node]!;
@@ -57,7 +75,7 @@ export function renderReceipt(v: ReceiptCard): string {
   return [`${v.node}: ${phaseNames[v.phase]}`, ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
-  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -74,6 +92,7 @@ function entryLine(e: Entry): string {
     case 'rule': return `${head} ruling (${e.nodes === '*' ? 'all nodes' : e.nodes.join(', ')}): ${e.text}`;
     case 'review': return `${head} reviewed ${e.node}/${e.obligation ?? 'review'} ${e.verdict} rank=${e.rank}${e.note ? `: ${e.note}` : ''}`;
     case 'escape': return `${head} recorded escape ${e.node} (merge #${e.merge}, ${e.class} ${escapeLabels[e.class]}): ${e.note}${e.evidence ? ` [${e.evidence}]` : ''}`;
+    case 'adopt': return `${head} adopted trunk ${e.trunk} ${e.prior.slice(0, 12)}..${e.commit.slice(0, 12)} (${plural(e.commits, 'commit')} made outside owed, ${plural(e.changed.length, 'changed path')}): ${e.note}`;
     case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
     case 'decoy-reveal': return `${head} revealed decoys ${e.decoys.map(d => d.node).join(', ')}`;
     default: return `${head} ${e.kind}`;
@@ -97,6 +116,7 @@ export function renderReport(v: Report): string {
     ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
     ...list('Owner decisions needed', v.decisions.map(itemText)),
     ...list('Owner actions', v.ownerActions.map(entryLine)),
+    ...(v.adoptions?.length ? list('Trunk adoptions (owner decisions: commits made outside owed)', v.adoptions.map(adoptionText)) : []),
     ...renderEscapes(v.escapes)].join('\n');
 }
 
@@ -134,6 +154,8 @@ export interface BriefProgress { node: string; phase: 'dispatched' | 'submitted'
 export interface Brief {
   since: number | string; now: string;
   decisions: BriefDecision[]; merged: BriefMerged[]; rejected: BriefBlock[]; inProgress: BriefProgress[];
+  /** Owner adoptions of trunk commits made outside owed after `since` (shown only when there are any). */
+  adoptions: AdoptionView[];
   totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number };
 }
 const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
@@ -191,7 +213,8 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
       ...(sub !== undefined ? { submitSeq: n.candidate!.seq, submittedAt: sub, submitAgeMs: Math.max(0, now - Date.parse(sub)) } : {}) };
   });
   const count = (phase: NodeState['phase']): number => nodes.filter(n => n.phase === phase).length;
-  return { since, now: new Date(now).toISOString(), decisions, merged, rejected, inProgress,
+  const adoptions = s.adoptions.filter(a => { const e = entries.find(x => x.seq === a.seq); return !!e && included(e); });
+  return { since, now: new Date(now).toISOString(), decisions, merged, adoptions, rejected, inProgress,
     totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: count('blocked') } };
 }
 function age(ms: number): string {
@@ -200,10 +223,10 @@ function age(ms: number): string {
 }
 export function renderBrief(v: Brief): string {
   const section = (title: string, lines: string[]) => [`${title}${lines.length ? ` (${lines.length}):` : ': none'}`, ...lines.map(l => `  ${l}`)];
-  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
   return [`Brief (since ${v.since === -1 ? 'start' : typeof v.since === 'number' ? `#${v.since}` : v.since})`,
     ...section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)),
     ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
+    ...(v.adoptions?.length ? section('Adopted outside owed (owner decisions)', v.adoptions.map(adoptionText)) : []),
     ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),
     ...section('In progress', v.inProgress.map(p => `${p.node} ${p.phase} (attempt ${p.attempt}): dispatched ${age(p.ageMs)} ago${p.submitAgeMs !== undefined ? `, submitted ${age(p.submitAgeMs)} ago` : ''}`)),
     `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies`].join('\n');

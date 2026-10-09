@@ -134,6 +134,7 @@ All keys are sha256 hex over canonical JSON.
 | `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot; `reason` is the `--note` text |
 | `merge` | executor | `{node, attempt, prior, commit, tree}` | trunk advanced (CAS on prior) |
 | `note` | any | `{text}` | speech, no effect |
+| `adopt` | owner | `{trunk, prior, commit, state, changed, commits, note}` | trunk commits made outside owed adopted (§6.6): `prior` = current ledger trunk (CAS), `commit` = `state.commit` = refs/heads/<trunk>, a fast-forward of `prior`; `changed` = `git diff --name-only prior commit`, `commits` = number of commits in `prior..commit`; the trunk state becomes `state` |
 | `escape` | parent/owner | `{node, merge, class, note, evidence?}` | defect found after a merge (§6.5); `merge` must be the seq of a merge of `node` |
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
@@ -226,7 +227,7 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
   waiver let it through). Refused unless `merge` is the seq of a `merge` entry
   whose node is n; `note` must be non-empty; `evidence` is optional text.
   `state.escapes` lists them in ledger order.
-- `escape`, `decoy-commit` and `decoy-reveal` entries carry exactly the fields
+- `escape`, `decoy-commit`, `decoy-reveal` and `adopt` entries carry exactly the fields
   of the entry table (plus `kind`, `by`, `channel` and the ledger-assigned
   `seq`, `ts`, `prev`, `hash`); any other field is refused.
 - **Decoys** measure what escapes when nobody knows which nodes are planted.
@@ -256,6 +257,31 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
 - Metrics (report): escape counts by class; decoys caught / escaped / pending;
   unrevealed commitments; **escape rate** = escaped / (caught + escaped), n/a
   while no decoy is decided. These are cumulative over the whole ledger.
+
+### 6.6 Adoption of trunk commits made outside owed
+Trunk can move outside owed (a release commit, a human hotfix). Then
+refs/heads/<trunk> is ahead of the ledger trunk and every merge fails the CAS.
+The owner records such commits explicitly with `adopt`; owed never trusts a
+moved ref silently.
+- Reducer: `adopt` requires role owner, `trunk` = the ledger trunk name,
+  `prior` = the current trunk commit, `commit` = `state.commit` ≠ `prior`, a
+  non-empty `note`, `changed` a list of paths, `commits` a positive integer, and
+  exactly the fields of the entry table. The trunk state becomes `state` (as for
+  a merge; `trunk.seq` = the adopt seq) and `state.adoptions` lists
+  `{seq, by, channel, prior, commit, commits, changed, note}` in ledger order.
+- **No new debt** (`adoptGuard`, also checked on replay): for each invariant,
+  key on the adopted state; if equal to its key on the current trunk the status
+  is inherited; otherwise, when the item on the current trunk is E, the item on
+  the adopted key must be E. An invariant that is already debt on the current
+  trunk (D: failing, ⊥, ⊤ or deferred) does not block. Genesis observations must
+  be finished (§6.4 rule 4). There is no owner `defer` for an adoption: the owner
+  fixes trunk and adopts again.
+- Open slots are not touched. Their base stays; a merge builds on the adopted
+  trunk as after any other trunk move (`owed rebase` when it conflicts).
+- Limits: only fast-forwards are adopted (a rewritten or reset trunk is refused;
+  restore the ref to a descendant of the ledger trunk). `escape` cannot name an
+  adoption (it names merges only). The adopted commits are not reviewed by owed;
+  the entry records that the owner took them on trunk.
 
 ## 7. Executor (attest)
 
@@ -301,6 +327,8 @@ waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel}): Promise<En
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
 abandon(o: {cwd, node, reason, as}): Promise<Entry>      // reason = the --note text
 merge(o: {cwd, node, as}): Promise<MergeResult>          // builds M, attests M, guarded CAS
+adopt(o: {cwd, commit?, note, as, channel}): Promise<AdoptResult>   // owner; records trunk commits made outside owed (§6.6)
+adoptPreview(o: {cwd, commit?}): Promise<AdoptPreview>   // the same preconditions, no effect: {trunk, prior, commit, commits, changed}
 status(o: {cwd}): Promise<StatusView>
 why(o: {cwd, node}): Promise<ReceiptCard>
 report(o: {cwd, since?: number | string}): Promise<Report>
@@ -348,6 +376,26 @@ A merge whose candidate conflicts with trunk refuses with
 checks on M, pass or fail, refused or not — with `merging: <node>` (§6.5).
 Genesis invariants that merge measures first on the current trunk are not
 merge results and carry no `merging`.
+
+`adopt` (owner only; role checked first, then a confirmation channel) checks,
+before any ledger effect: `note` is non-empty; `commit` (default
+refs/heads/<trunk>) resolves to a commit equal to the current refs/heads/<trunk>
+(adopt what is on trunk, nothing else); it differs from the ledger trunk
+("nothing to adopt" otherwise); the ledger trunk is an ancestor of it ("trunk
+was rewritten", otherwise). Under the `merge` lock (serialized with merges) it
+computes the state facts of the commit, runs genesis jobs and every invariant
+whose key changed on the adopted commit and lacks a verdict (subject `trunk`,
+no `merging`), then under the ledger lock re-checks that plan and ledger trunk
+are unchanged and that refs/heads/<trunk> still equals the commit — otherwise it
+appends nothing. If `adoptGuard` (§6.6) fails it appends the observations and
+refuses, naming each invariant that was satisfied on the ledger trunk and not on
+the commit with its observation seqs; trunk stays unadopted. Otherwise it appends
+the observations and the `adopt` entry. It never moves a ref.
+`AdoptResult` = `AdoptPreview & {entry, observations}`.
+
+The merge CAS refusal (refs/heads/<trunk> ≠ ledger trunk) says how the ref
+differs: ahead by N commits made outside owed (then the owner runs `owed adopt`),
+or diverged/rewritten (not a fast-forward; adopt cannot record it).
 
 `gc(o: {cwd, dryRun?, as?, channel?}): Promise<GcResult>` reclaims finished
 attempts. It is a parent/owner operation (same rule as `abandon`; default
@@ -407,9 +455,16 @@ changing git or the ledger.
 - **Status**: trunk, nodes by state, ready list (sorted by number of transitive
   dependents; a ready node whose writes overlap an open slot is marked
   `(writes overlap open slot of X)`, `--json` `overlaps: {node: [ids]}`), pending queue grouped by discharger (owner / parent+writer /
-  reviewer / executor), invariant debt on trunk.
+  reviewer / executor), invariant debt on trunk. When refs/heads/<trunk> differs
+  from the ledger trunk, a line after the trunk says so: `trunk moved outside
+  owed: … ahead of the ledger trunk … by N commits; … owed adopt` (a fast-forward),
+  or `trunk diverged from the ledger (rewritten or reset outside owed)` with the
+  ahead/behind counts, or that the ref does not exist; `--json` has
+  `drift: {ref, commit, ledger, relation: ahead|diverged|missing, ahead, behind}`.
 - **Report** (`report --since`): merges, new E/W/D, blocks, downgrades, rulings,
-  owner decisions needed — written in plain language — and an **Escapes**
+  owner decisions needed — written in plain language —, trunk adoptions after
+  `since` as owner decisions (seq, owner, prior..commit, commit count, changed
+  paths, note; `--json` `adoptions`; the section is shown only when non-empty), and an **Escapes**
   section: escape counts by class with each escape, decoys caught / escaped /
   pending with each revealed decoy, unrevealed commitments and the escape rate
   (cumulative, §6.5; `--json` returns it as `escapes`).
@@ -429,6 +484,9 @@ changing git or the ledger.
      obligations, reviewed obligations, deferred invariants, untested changes
      (as in the receipt card) and the reviewers. A waived item is counted only
      as waived, never as measured.
+  2a. *Adopted outside owed (owner decisions)* — per `adopt` entry after
+     `since`: seq, owner, prior..commit, commit count, changed paths and note
+     (`--json` `adoptions`); omitted when there is none.
   3. *Rejected or blocked* — every non-cleared block of an unmerged node: node,
      obligation, the failing observation seq (execution blocks; the block seq
      is the failing obs) or the blocking review (judgment blocks), and how to
@@ -438,7 +496,7 @@ changing git or the ledger.
   5. *Total* — merged / accepted-unmerged / blocked (unmerged nodes with a
      non-cleared block) / ready counts, plus nodes waiting on dependencies.
   `since` (seq or ISO time, invalid → usage error) filters only the Merged
-  section; the other sections always show the current state. `--json` returns
+  and Adopted sections; the other sections always show the current state. `--json` returns
   the structured `Brief`.
 
 ## 10. CLI
@@ -454,6 +512,7 @@ run inside its worktree), `attest <node> [--rerun]`,
 `defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
 spelling `--reason`; not both), `merge <node>`, `status`,
 `why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
+`adopt [--commit X] --note TEXT` (owner),
 `escape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note T [--evidence T]`
 (parent by default, or owner), `decoy commit <digest>`, `decoy reveal <file.json>`
 (owner commands), `decoy digest <file.json>` (prints the digest to commit;
@@ -490,13 +549,14 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
 | `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
+| `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted |
 | `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
 
-Owner operations (`waive`, `defer`, downgrade plans, decoys, and any tool
+Owner operations (`waive`, `defer`, `adopt`, downgrade plans, decoys, and any tool
 called with `as: owner:…`) call `ctx.ui.confirm` and are recorded with
 `channel: "pi-confirm"`; without UI they refuse. The confirmation text is the
 fixed summary, then `Repository: <dir>` and `Identity: owner:<id>`, then each
-free-text field (note, reason, ruling, evidence) as `Label: value` on one line
+free-text field (note, reason, ruling, evidence, changed paths) as `Label: value` on one line
 with `\`, newlines and tabs escaped and C0/C1 controls (U+0000–U+001F,
 U+007F–U+009F), U+2028/U+2029 and bidi controls (U+202A–U+202E, U+2066–U+2069)
 written as `\uXXXX`, then the closing

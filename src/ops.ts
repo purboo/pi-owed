@@ -5,10 +5,10 @@ import { canonical } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
-import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping } from './reducer.ts';
+import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView, escapeSummary } from './views.ts';
+import { receipt, statusView, escapeSummary, driftText } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import type { Brief } from './views.ts';
@@ -147,7 +147,7 @@ export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node);
     if (!n.accepted) throw new OwedError(`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
-    if (await git.revParse(o.cwd,`refs/heads/${state.trunk.name}`) !== state.trunk.commit) throw new OwedError('trunk changed (CAS)');
+    { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
     if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
     const facts = await git.candidateFacts(o.cwd,state.plan,state.plan.nodes.find(x => x.id === o.node)!,state.trunk.commit,built.commit,n.slot!.attempt), sf = await git.stateFacts(o.cwd,state.plan,built.commit), m = {facts,state:sf};
@@ -159,12 +159,7 @@ export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
       const latest = await load(ledger); stable(state,latest.state,o.node);
       // Evaluate the prospective observations without persisting them before CAS.
       // A moved ref must leave the ledger completely unchanged by this merge.
-      const replay = [...latest.entries]; let current = latest.state;
-      for (const obs of observations) {
-        guard(current,obs);
-        const entry = {...obs,seq:current.seq+1,ts:new Date().toISOString(),prev:current.head} as Entry;
-        entry.hash=entryHash(entry); replay.push(entry); current=reduce(replay,latest.lookup);
-      }
+      const current = prospective(latest,observations);
       const g = mergeGuard(current,o.node,m);
       if (!g.ok) { if (observations.length) await ledger.append(observations); throw new OwedError(g.reasons.join('; ')); }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts,state:sf}; guard(current,d);
@@ -174,7 +169,75 @@ export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
     });
   },'merge');
 }
-export async function status(o: Context): Promise<StatusView> { const {state,entries} = await load(await Ledger.open(o.cwd)); return statusView(inited(state),entries); }
+/** State after appending `observations` to the loaded ledger, without persisting them (each is guarded in turn). */
+function prospective(latest: Awaited<ReturnType<typeof load>>, observations: Draft[]): State {
+  const replay = [...latest.entries]; let current = latest.state;
+  for (const obs of observations) {
+    guard(current,obs);
+    const entry = {...obs,seq:current.seq+1,ts:new Date().toISOString(),prev:current.head} as Entry;
+    entry.hash=entryHash(entry); replay.push(entry); current=reduce(replay,latest.lookup);
+  }
+  return current;
+}
+
+// ---------- adopt: trunk commits made outside owed (SPEC §6.6) ----------
+export interface AdoptPreview { trunk: string; prior: string; commit: string; commits: number; changed: string[] }
+export interface AdoptResult extends AdoptPreview { entry: Entry; observations: Entry[] }
+/** Preconditions of an adoption, checked before any ledger effect: commit = refs/heads/<trunk> ≠ ledger trunk, a fast-forward of it. */
+async function adoptable(cwd: string, s: State, commit?: string): Promise<AdoptPreview> {
+  const ref = `refs/heads/${s.trunk.name}`, prior = s.trunk.commit;
+  const head = await git.git(cwd,['rev-parse','--verify','--quiet','--end-of-options',`${ref}^{commit}`],{allowFail:true});
+  if (head.code) throw new OwedError(`${ref} does not exist; nothing to adopt`);
+  const current = head.stdout.trim();
+  let target = current;
+  if (commit !== undefined) {
+    const r = await git.git(cwd,['rev-parse','--verify','--quiet','--end-of-options',`${commit}^{commit}`],{allowFail:true});
+    if (r.code) throw new OwedError(`${commit} is not a commit`,'usage');
+    target = r.stdout.trim();
+    if (target !== current) throw new OwedError(`adopt records only what is on trunk: ${commit} (${target.slice(0,12)}) is not ${ref} (${current.slice(0,12)})`);
+  }
+  if (target === prior) throw new OwedError(`nothing to adopt: ${ref} equals the ledger trunk ${prior.slice(0,12)}`);
+  const ff = (await git.git(cwd,['merge-base','--is-ancestor',prior,target],{allowFail:true})).code === 0;
+  if (!ff) throw new OwedError(`trunk was rewritten: the ledger trunk ${prior.slice(0,12)} is not an ancestor of ${ref} (${target.slice(0,12)}); owed adopt records only fast-forwards: restore ${ref} to a descendant of ${prior.slice(0,12)}`);
+  return { trunk:s.trunk.name, prior, commit:target, commits:await git.countCommits(cwd,prior,target), changed:await git.changedPaths(cwd,prior,target) };
+}
+/** What `adopt` would record (no effect): for owner confirmation dialogs. */
+export async function adoptPreview(o: Context & { commit?: string }): Promise<AdoptPreview> { const { state } = await load(await Ledger.open(o.cwd)); return adoptable(o.cwd,inited(state),o.commit); }
+/**
+ * Owner adoption of trunk commits made outside owed. Measures every invariant whose key changed on the adopted
+ * commit; an invariant satisfied on the prior trunk but not on the adopted commit refuses the adoption (its
+ * observations are recorded). Same lock/CAS discipline as merge: a moved ref or ledger records nothing.
+ */
+export async function adopt(o: Actor & { commit?: string; note: string; channel: Channel }): Promise<AdoptResult> {
+  owner(o); if (o.as.role !== 'owner') throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
+  if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('adopt requires a note','usage');
+  const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => {
+    const { state } = await load(ledger); inited(state);
+    const p = await adoptable(o.cwd,state,o.commit), sf = await git.stateFacts(o.cwd,state.plan,p.commit);
+    const observations: Draft[] = [];
+    for (const job of [...genesisJobs(state),...adoptJobs(state,sf)]) observations.push(await runJob({cwd:o.cwd,ledger,plan:state.plan},job));
+    return ledger.withLock(async () => {
+      const latest = await load(ledger); stable(state,latest.state);
+      const now = await git.git(o.cwd,['rev-parse','--verify','--quiet','--end-of-options',`refs/heads/${p.trunk}^{commit}`],{allowFail:true});
+      if (now.code || now.stdout.trim() !== p.commit) throw new OwedError(`refs/heads/${p.trunk} moved during adopt (was ${p.commit.slice(0,12)}); nothing was recorded, run owed adopt again`);
+      const current = prospective(latest,observations), g = adoptGuard(current,sf);
+      if (!g.ok) {
+        const appended = observations.length ? await ledger.append(observations) : [];
+        const seqs = (id: string) => appended.filter(e => e.kind === 'obs' && e.obligation === `inv:${id}`).map(e => `#${e.seq}`);
+        throw new OwedError(`adoption refused: ${g.failed.length ? `invariant${g.failed.length > 1 ? 's' : ''} ${g.failed.map(id => `${id}${seqs(id).length ? ` (obs ${seqs(id).join(', ')})` : ''}`).join(', ')} satisfied on the ledger trunk but not on ${p.commit.slice(0,12)}; fix trunk, then run owed adopt again. ` : ''}${g.reasons.join('; ')}`);
+      }
+      const d: Draft = {kind:'adopt',by:by(o),channel:o.channel,trunk:p.trunk,prior:p.prior,commit:p.commit,state:sf,changed:p.changed,commits:p.commits,note:o.note}; guard(current,d);
+      const appended = await ledger.append([...observations,d]);
+      return {...p,entry:appended.at(-1)!,observations:appended.slice(0,-1)};
+    });
+  },'merge');
+}
+export async function status(o: Context): Promise<StatusView> {
+  const {state,entries} = await load(await Ledger.open(o.cwd)), view = statusView(inited(state),entries);
+  const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
+  return drift ? {...view,drift} : view;
+}
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> { const {state,entries} = await load(await Ledger.open(o.cwd)); node(state,o.node); return receipt(state,entries,o.node); }
 export async function report(o: Context & {since?:number|string}): Promise<Report> {
   const {state,entries,lookup} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
@@ -182,7 +245,7 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const included = (e: {seq:number;ts?:string}) => typeof since === 'number' ? e.seq > since : Date.parse(e.ts ?? entries[e.seq]?.ts ?? '') > Date.parse(since);
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
-  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:')),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:')),adoptions:state.adoptions.filter(included),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */

@@ -154,6 +154,15 @@ export default function owed(pi: ExtensionAPI): void {
     const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${oneLine(p.node)}: ${p.items.map(oneLine).join(', ')}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`, { Reason: p.reason });
     const r = await ops.defer({ ...a, channel: 'pi-confirm', node: p.node, reason: p.reason, items }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
   });
+  tool('adopt', 'Owner adoption of trunk commits made outside owed (release commits, hotfixes): commit (default refs/heads/<trunk>) must equal the trunk ref and fast-forward the ledger trunk; invariants whose key changed are measured and a new failure refuses it. UI confirmation is required.', Type.Object({ commit: Type.Optional(Type.String({ minLength: 1, description: 'Commit to adopt; must equal refs/heads/<trunk> (the default).' })), note: Type.String({ minLength: 1, description: 'Why these commits are adopted (recorded).' }), as, cwd }), async (p, ctx, dir) => {
+    const who = requireRole(p.as, 'owner:human', ['owner'], 'adopt trunk commits');
+    if (!p.note.trim()) throw new OwedError('adopt requires a note', 'usage');
+    const v = await ops.adoptPreview({ cwd: dir, commit: p.commit });
+    const shown = v.changed.length > 20 ? [...v.changed.slice(0, 20), `… (+${v.changed.length - 20} more)`] : v.changed;
+    const a = await actor(ctx, dir, who, `Adopt trunk ${oneLine(v.trunk)} ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}: ${v.commits} commit${v.commits === 1 ? '' : 's'} made outside owed\nThese changes were not reviewed through owed; adopting them makes ${v.commit.slice(0, 12)} the ledger trunk.`, { 'Changed paths': shown.join(', ') || '(none)', Note: p.note });
+    const r = await ops.adopt({ ...a, channel: 'pi-confirm', commit: v.commit, note: p.note });
+    return result(r, `${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
+  });
   tool('escape', 'Record an escape: a defect found after a merge of node; merge is the seq of that merge entry (parent or owner).', Type.Object({ node, merge: Type.Integer({ minimum: 0, description: 'Seq of the merge entry of node.' }), class: Type.Union((['missing', 'false-pass', 'reuse', 'weak', 'waiver'] as const).map(c => Type.Literal(c))), note: reason, evidence: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'record escapes');
     const a = await actor(ctx, dir, who, `Record escape for node ${oneLine(p.node)} (merge #${p.merge}, class ${p.class})`, { Note: p.note, Evidence: p.evidence });
