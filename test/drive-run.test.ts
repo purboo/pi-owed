@@ -480,3 +480,36 @@ test('D15.2: merge refused with the transient `Plan, candidate or trunk changed;
     await f.cleanup();
   }
 });
+
+test('D15.2/D14.2: trunk CAS drift is not the transient refusal: merge halts needing the owner', { timeout: 180_000 }, async () => {
+  const f = await rig(planOf(node('t')));
+  try {
+    await f.agent('t-writer', 'echo t > t.txt; git add t.txt; git commit -qm t; owed submit t');
+    assert.ok(await f.once(6, async () => (await ops.status({ cwd: f.cwd })).nodes.t!.accepted), f.out.join('\n'));
+    // trunk moves outside owed (no adopt): the ledger trunk no longer matches refs/heads/main.
+    await f.put('other.txt', 'x\n'); await f.commit();
+    const r = await f.drive({ once: true });
+    assert.match(r.lines.join('\n'), /merge t: refused — trunk changed \(CAS\).*; halted \(needs owner\)/, r.lines.join('\n'));
+    assert.doesNotMatch(r.lines.join('\n'), /retry next pass/);
+    const h = halts(await f.entries());
+    assert.equal(h.length, 1); assert.equal(h[0]!.needs, 'owner'); assert.match(h[0]!.reason, /^merge refused: trunk changed \(CAS\)/);
+    assert.ok(!merged(await f.entries(), 't'));
+  } finally { await f.cleanup(); }
+});
+
+test('D15.2/D14.2: any other merge refusal (an invariant failing on the merge result) halts needing a human, no retry', { timeout: 180_000 }, async () => {
+  const f = await rig({ ...planOf(node('z')), invariants: [{ id: 'no-z', run: 'test ! -f z.txt', reads: ['z.txt'] }] });
+  try {
+    await f.agent('z-writer', 'echo z > z.txt; git add z.txt; git commit -qm z; owed submit z');
+    assert.ok(await f.once(6, async () => (await ops.status({ cwd: f.cwd })).nodes.z!.accepted), f.out.join('\n'));
+    const r = await f.drive({ once: true });
+    const out = r.lines.join('\n');
+    assert.match(out, /merge z: refused — .*; halted \(needs human\)/, out);
+    assert.doesNotMatch(out, /retry next pass/);
+    const h = halts(await f.entries());
+    assert.equal(h.length, 1); assert.equal(h[0]!.needs, 'human'); assert.match(h[0]!.reason, /^merge refused: /);
+    assert.doesNotMatch(h[0]!.reason, /Plan, candidate or trunk changed/);
+    assert.ok(!merged(await f.entries(), 'z'));
+    assert.deepEqual((await f.drive({ once: true })).lines, [], 'halted: no further merge');
+  } finally { await f.cleanup(); }
+});

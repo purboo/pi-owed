@@ -52,11 +52,14 @@ test('candidate run keeps the unknown-format error with min_tests', async () => 
   const obs = await runJob(ctx, { ...job, spec: { ...job.spec!, run: 'echo unknown' } });
   assert.equal(obs.verdict, 'error'); assert.match(obs.note ?? '', /unknown test count format with min_tests/);
 });
-test('D15.4: a red run whose command is not found (127) or not executable (126) is an error, even when red_expect matches', async () => {
+test('D15.4: a red run whose command is not found (exit 127) is an error although red_expect matches', async () => {
   const missing = await runJob(ctx, { ...job, kind: 'red', obligation: 'red:unit', spec: { ...job.spec!, run: 'echo not ok; owed-no-such-command-x' } });
   assert.equal(missing.exit, 127); assert.equal(missing.verdict, 'error'); assert.match(missing.note ?? '', /exit 127: not found/);
+});
+test('D15.4: a red run whose command is not executable (exit 126) is an error although red_expect matches', async () => {
   const noexec = await runJob(ctx, { ...job, kind: 'red', obligation: 'red:unit', spec: { ...job.spec!, run: "echo not ok; printf 'x' > nx; ./nx" } });
   assert.equal(noexec.exit, 126); assert.equal(noexec.verdict, 'error'); assert.match(noexec.note ?? '', /exit 126: not executable/);
-  // Any other non-zero exit stays a pass when red_expect matches.
+});
+test('D15.4: any other non-zero red exit still passes when red_expect matches', async () => {
   assert.equal((await runJob(ctx, { ...job, kind: 'red', obligation: 'red:unit', spec: { ...job.spec!, run: 'echo not ok; exit 2' } })).verdict, 'pass');
 });
