@@ -51,7 +51,7 @@ export interface DriveOptions {
   limit?: number;
   /** Stops the loop after the current action (tests; the CLI uses SIGINT/SIGTERM). */
   signal?: AbortSignal;
-  /** Install SIGINT/SIGTERM handlers in loop mode (default true). */
+  /** Install SIGINT/SIGTERM handlers (default true; loop: D14.8, `once`: D16.3); the pi tool's pass installs none. */
   handleSignals?: boolean;
 }
 
@@ -356,7 +356,8 @@ export class Driver {
  */
 export async function driveOnce(o: Omit<DriveOptions, 'once' | 'log'>): Promise<{ lines: string[]; error?: string }> {
   const lines: string[] = [];
-  try { await drive({ ...o, once: true, log: l => lines.push(l) }); return { lines }; }
+  // In-process (the pi session): no signal handlers, which would exit the host process.
+  try { await drive({ ...o, once: true, handleSignals: false, log: l => lines.push(l) }); return { lines }; }
   catch (e) { return { lines, error: e instanceof Error ? e.message : String(e) }; }
 }
 
@@ -390,7 +391,7 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> => new Promise(re
  * `owed drive`: takes the single-driver lock, then one pass (`once`), or the loop: passes back to back while they make
  * progress (at most 20), then wait for an `events --all` event labeled with this project (polled every `pollMs`) or
  * `passMs`, whichever comes first. Exits 0 when idle (nothing open, nothing to dispatch) or after SIGINT/SIGTERM (or
- * `signal`) once the current action is done; a second signal exits 130 at once. A live driver refuses with
+ * `signal`) once the current action is done; a second signal exits 130 at once (with `once`, the first one does). A live driver refuses with
  * OwedError('refused').
  */
 export async function drive(o: DriveOptions): Promise<number> {
@@ -400,20 +401,21 @@ export async function drive(o: DriveOptions): Promise<number> {
   const say = (line: string, json: object) => o.log(o.json ? JSON.stringify(json) : line);
   const onAbort = () => { driver.stopping = true; stop.abort(); };
   let signals = 0;
-  // First SIGINT/SIGTERM: stop after the current action. Second: stop at once (D14.8): end the running dsa invocation
-  // (hold passes it to `owed attest`) and direct attest children, release the lock, exit 130. The ledger stays
-  // consistent: every entry is appended whole, and attest records its own observations.
+  // Loop: the first SIGINT/SIGTERM stops after the current action; the second stops at once (D14.8). `--once`: the
+  // first stops at once (D16.3). At once = end the running dsa invocations (hold passes SIGTERM to `owed attest`) and
+  // the process groups of direct attest children (attest then ends its checks, D16.2), release the lock, exit 130. The
+  // ledger stays consistent: every entry is appended whole, and attest records its own observations.
   const onSignal = () => {
-    if (++signals === 1) { onAbort(); return; }
+    if (!o.once && ++signals === 1) { onAbort(); return; }
     driver.dsa.killAll('SIGTERM');
     for (const pid of directChildren) { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
     lock.releaseSync();
-    say('killed: second signal, stopped at once', { event: 'killed' });
+    say(o.once ? 'killed: signal, stopped at once' : 'killed: second signal, stopped at once', { event: 'killed' });
     process.exit(130);
   };
   o.signal?.addEventListener('abort', onAbort);
   if (o.signal?.aborted) onAbort();
-  const handle = !o.once && o.handleSignals !== false;
+  const handle = o.handleSignals !== false;
   if (handle) { process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal); }
   try {
     if (o.once) { const r = await driver.pass(); if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }

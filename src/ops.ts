@@ -42,9 +42,18 @@ async function mutate(o: Actor, make: (s: State) => Draft): Promise<Entry> {
   return ledger.withLock(async () => { const { state } = await load(ledger); const d = make(state); guard(state,d); return (await ledger.append([d]))[0]!; });
 }
 async function storePlan(ledger: Ledger, text: string) { const plan = parsePlan(text); const sha = await ledger.putBlob(stringify(JSON.parse(canonical(plan)), { sortMapEntries: true })); return { plan, sha }; }
-async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: AttestJob[], id?: string): Promise<Entry[]> {
+/** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
+const aborted = (): OwedError => new OwedError('aborted', 'aborted');
+function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) throw aborted(); }
+/**
+ * Runs the jobs in order, appending each observation under the lock. On abort (D16) the running check's process group
+ * is killed (src/exec.ts), its observation is not recorded, no further job starts, and this rejects with
+ * OwedError('aborted'); observations appended before stay.
+ */
+async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: AttestJob[], id?: string, signal?: AbortSignal): Promise<Entry[]> {
   const result: Entry[] = [];
   for (const job of jobs) {
+    checkAbort(signal);
     let plan = snapshot.plan;
     // Attribution must use the original setup, closure and writes as well as the original check spec.
     if (job.attribution) {
@@ -53,16 +62,28 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
       const law = h.entries.filter(e => e.seq <= (block?.seq ?? -1) && (e.kind === 'plan' || e.kind === 'genesis')).at(-1);
       if (law && (law.kind === 'plan' || law.kind === 'genesis')) plan = h.lookup(law.plan);
     }
-    const obs = await runJob({ cwd, ledger, plan }, job);
+    const obs = await runJob({ cwd, ledger, plan, signal }, job);
+    checkAbort(signal);
     await ledger.withLock(async () => { const { state } = await load(ledger); stable(snapshot,state,id); guard(state,obs); result.push(...await ledger.append([obs])); });
   }
   return result;
 }
-export async function init(o: Actor & { plan: string; channel: Channel }): Promise<InitResult> {
-  owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
+/**
+ * Records the observations a merge or adopt measured before an abort (valid evidence) when the ledger did not move
+ * (the same check as the refusal path), else nothing; then rejects with OwedError('aborted'). Must not run under 'lock'.
+ */
+async function abortWith(ledger: Ledger, snapshot: State, observations: Draft[], id?: string): Promise<never> {
+  if (observations.length) {
+    try { await ledger.withLock(async () => { const latest = await load(ledger); stable(snapshot,latest.state,id); prospective(latest,observations); await ledger.append(observations); }); }
+    catch (e) { if (!(e instanceof OwedError)) throw e; /* the ledger moved: nothing recorded */ }
+  }
+  throw aborted();
+}
+export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal }): Promise<InitResult> {
+  owner(o); checkAbort(o.signal); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit);
   const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; });
-  const { state } = await load(ledger); const observations = await runJobs(o.cwd,ledger,state,genesisJobs(state));
+  const { state } = await load(ledger); const observations = await runJobs(o.cwd,ledger,state,genesisJobs(state),undefined,o.signal);
   return { entry, observations, status:await status(o) };
 }
 /** Reads a plan file for `owed plan`: from commit `rev` when given (path relative to cwd), else from the working tree. */
@@ -113,8 +134,8 @@ export async function submit(o: Actor & { node: string; commit?: string }): Prom
   const facts = await git.candidateFacts(o.cwd,state.plan,state.plan.nodes.find(x => x.id === o.node)!,n.slot.base,commit,n.slot.attempt);
   return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts }; guard(current,d); return (await ledger.append([d]))[0]!; });
 }
-export async function attest(o: Context & { node: string; rerun?: boolean }): Promise<AttestResult> {
-  const ledger = await Ledger.open(o.cwd);
+export async function attest(o: Context & { node: string; rerun?: boolean; signal?: AbortSignal }): Promise<AttestResult> {
+  checkAbort(o.signal); const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node), jobs = attestJobs(state,o.node);
     if (o.rerun) for (const c of state.plan.nodes.find(x => x.id === o.node)!.checks) for (const kind of ['check', ...(c.red ? ['red'] : [])] as ('check'|'red')[]) {
@@ -122,7 +143,7 @@ export async function attest(o: Context & { node: string; rerun?: boolean }): Pr
       if (!jobs.some(j => j.key === key && j.obligation === obligation)) jobs.push({kind,subject:o.node,obligation,key,spec:c,commit:n.candidate!.commit,base:n.slot!.base});
     }
     if (o.rerun && !jobs.some(j => j.obligation === 'writes' && j.key === n.candidate!.keys.writes)) jobs.push({ kind:'writes',subject:o.node,obligation:'writes',key:n.candidate!.keys.writes!,commit:n.candidate!.commit,base:n.slot!.base });
-    const observations = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.node), card = await why(o);
+    const observations = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.node,o.signal), card = await why(o);
     return { node:o.node, observations, accepted:card.accepted, receipt:card };
   },'attest');
 }
@@ -141,8 +162,9 @@ export async function rebase(o: Actor & { node:string }): Promise<RebaseResult> 
   const packet = [`# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `In the worktree run: git rebase --onto ${entry.base} ${entry.from}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
   return { node:o.node, attempt:entry.attempt, worktree:slot.worktree, branch:slot.branch, base:entry.base, from:entry.from, ...(previous ? { previous } : {}), packet, entry };
 }
-export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
+export async function merge(o: Actor & { node:string; signal?: AbortSignal }): Promise<MergeResult> {
   owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
+  checkAbort(o.signal);
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node);
@@ -152,14 +174,18 @@ export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
     if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
     const facts = await git.candidateFacts(o.cwd,state.plan,state.plan.nodes.find(x => x.id === o.node)!,state.trunk.commit,built.commit,n.slot!.attempt), sf = await git.stateFacts(o.cwd,state.plan,built.commit), m = {facts,state:sf};
     const observations: Draft[] = [];
+    // An aborted run (D16) is not measured: undefined, and the merge stops before trunk moves.
+    const measure = async (job: AttestJob) => { if (o.signal?.aborted) return undefined; const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); return o.signal?.aborted ? undefined : obs; };
     // Genesis jobs are not about this merge; merge-result jobs record the node being merged (decoy attribution).
-    for (const job of genesisJobs(state)) observations.push(await runJob({cwd:o.cwd,ledger,plan:state.plan},job));
-    for (const job of mergeJobs(state,o.node,m)) observations.push({...await runJob({cwd:o.cwd,ledger,plan:state.plan},job),merging:o.node} as Draft);
+    for (const job of genesisJobs(state)) { const obs = await measure(job); if (!obs) return abortWith(ledger,state,observations,o.node); observations.push(obs); }
+    for (const job of mergeJobs(state,o.node,m)) { const obs = await measure(job); if (!obs) return abortWith(ledger,state,observations,o.node); observations.push({...obs,merging:o.node} as Draft); }
     return ledger.withLock(async () => {
       const latest = await load(ledger); stable(state,latest.state,o.node);
       // Evaluate the prospective observations without persisting them before CAS.
       // A moved ref must leave the ledger completely unchanged by this merge.
       const current = prospective(latest,observations);
+      // Last abort point (D16): after it trunk moves and the merge entry must follow.
+      if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
       const g = mergeGuard(current,o.node,m);
       if (!g.ok) { if (observations.length) await ledger.append(observations); throw new OwedError(g.reasons.join('; ')); }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts,state:sf}; guard(current,d);
@@ -209,20 +235,27 @@ export async function adoptPreview(o: Context & { commit?: string }): Promise<Ad
  * commit; an invariant satisfied on the prior trunk but not on the adopted commit refuses the adoption (its
  * observations are recorded). Same lock/CAS discipline as merge: a moved ref or ledger records nothing.
  */
-export async function adopt(o: Actor & { commit?: string; note: string; channel: Channel }): Promise<AdoptResult> {
+export async function adopt(o: Actor & { commit?: string; note: string; channel: Channel; signal?: AbortSignal }): Promise<AdoptResult> {
   owner(o); if (o.as.role !== 'owner') throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('adopt requires a note','usage');
+  checkAbort(o.signal);
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger); inited(state);
     const p = await adoptable(o.cwd,state,o.commit), sf = await git.stateFacts(o.cwd,state.plan,p.commit);
     const observations: Draft[] = [];
-    for (const job of [...genesisJobs(state),...adoptJobs(state,sf)]) observations.push(await runJob({cwd:o.cwd,ledger,plan:state.plan},job));
+    for (const job of [...genesisJobs(state),...adoptJobs(state,sf)]) {
+      if (o.signal?.aborted) return abortWith(ledger,state,observations);
+      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job);
+      if (o.signal?.aborted) return abortWith(ledger,state,observations);
+      observations.push(obs);
+    }
     return ledger.withLock(async () => {
       const latest = await load(ledger); stable(state,latest.state);
       const now = await git.git(o.cwd,['rev-parse','--verify','--quiet','--end-of-options',`refs/heads/${p.trunk}^{commit}`],{allowFail:true});
       if (now.code || now.stdout.trim() !== p.commit) throw new OwedError(`refs/heads/${p.trunk} moved during adopt (was ${p.commit.slice(0,12)}); nothing was recorded, run owed adopt again`);
       const current = prospective(latest,observations), g = adoptGuard(current,sf);
+      if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
       if (!g.ok) {
         const appended = observations.length ? await ledger.append(observations) : [];
         // The observation that decides each failing invariant: the one just appended, else (a repeated adopt

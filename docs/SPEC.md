@@ -326,24 +326,33 @@ moved ref silently.
 6. Skip an item whose key already has an executor verdict (reuse), unless
    `--rerun`.
 7. Remove the temporary worktree. Append one `obs` per item under the lock.
+8. Abort (D16): `attest`, `merge`, `init` and `adopt` take an optional
+   `signal` (AbortSignal). On abort the running check's process group gets
+   SIGKILL, that run records nothing, no further job starts, and the operation
+   rejects with `OwedError('aborted', 'aborted')`. Observations of jobs that
+   completed before stay: attest/init appended them already; merge/adopt
+   append the ones they measured when the ledger did not move meanwhile (the
+   same stability check as their refusal path). An abort never moves trunk:
+   merge/adopt check it last under the lock, before `git update-ref`. An
+   already-aborted signal starts nothing.
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
 ```ts
-init(o: {cwd, plan: string, as: Principal, channel}): Promise<InitResult>      // genesis + genesis attest of invariants
+init(o: {cwd, plan: string, as: Principal, channel, signal?}): Promise<InitResult>      // genesis + genesis attest of invariants; signal: §7.8
 readPlan(o: {cwd, path, rev?}): Promise<{plan, rev?, path}>   // plan text from the working tree, or from commit `rev` (`git show rev:path`); path repository-relative
 planSet(o: {cwd, plan, rev?, path?, as, channel?}): Promise<Entry>   // records rev/path in the plan entry
 rule(o: {cwd, text, nodes, as}): Promise<Entry>
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates branch owed/<node>/<attempt> at trunk + worktree <main worktree root>/.owed/wt/<node>-<attempt>
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
-attest(o: {cwd, node, rerun?: boolean}): Promise<AttestResult>
+attest(o: {cwd, node, rerun?: boolean, signal?: AbortSignal}): Promise<AttestResult>   // abort: §7.8
 review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review"}): Promise<Entry>
 waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel}): Promise<Entry>
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
 abandon(o: {cwd, node, reason, as}): Promise<Entry>      // reason = the --note text
-merge(o: {cwd, node, as}): Promise<MergeResult>          // builds M, attests M, guarded CAS
-adopt(o: {cwd, commit?, note, as, channel}): Promise<AdoptResult>   // owner; records trunk commits made outside owed (§6.6)
+merge(o: {cwd, node, as, signal?}): Promise<MergeResult>          // builds M, attests M, guarded CAS; abort: §7.8
+adopt(o: {cwd, commit?, note, as, channel, signal?}): Promise<AdoptResult>   // owner; records trunk commits made outside owed (§6.6); abort: §7.8
 adoptPreview(o: {cwd, commit?}): Promise<AdoptPreview>   // the same preconditions, no effect: {trunk, prior, commit, commits, changed}
 status(o: {cwd}): Promise<StatusView>
 why(o: {cwd, node}): Promise<ReceiptCard>
@@ -547,7 +556,18 @@ no ledger write, no owner confirmation), `gc [--dry-run]` (parent/owner), and
 `--as role:id` sets the principal (default `parent:cli`; `submit` and `rebase`
 default to the slot's writer when run inside its worktree). Owner commands prompt on a TTY
 unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused
-by a guard (message says which obligation), 2 usage error, 3 internal error.
+by a guard (message says which obligation), 2 usage error, 3 internal error,
+130/143 aborted by a signal.
+
+Signals (D16). While `attest`, `merge`, `init` or `adopt` runs (after any owner
+confirmation), SIGINT, SIGTERM and SIGHUP are handled: the first aborts the
+operation (§7.8: the running check's process group is killed, nothing more
+starts), the CLI prints `Aborted: <signal>` to stderr and exits 130 (SIGINT) or
+143 (SIGTERM/SIGHUP); a second signal while aborting exits at once with the same
+code. So `hold machine -- owed attest` releases the lease only after the checks
+ended. The handlers are removed when the command ends. SIGKILL cannot be handled:
+checks already started then keep running in their own process groups until their
+own end (their timeout timer died with owed) — out of scope.
 
 ## 11. pi extension
 
@@ -578,6 +598,10 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
 | `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
 | `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
+
+`owed_attest`, `owed_merge` and `owed_adopt` pass the tool call's abort signal
+to the operation (§7.8, D16.4): aborting the call ends the running check; the
+result is a tool error `Aborted: aborted` (details `code: aborted`).
 
 Owner operations (`waive`, `defer`, `adopt`, downgrade plans, decoys, and any tool
 called with `as: owner:…`) call `ctx.ui.confirm` and are recorded with
@@ -805,9 +829,12 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   when its text changed for that node (busy compared without hold's ages).
   Exit 0 with `idle` when no attempt is open and nothing is dispatched; the
   first SIGINT/SIGTERM stops after the current action (`stopped`), a second
-  stops at once: the running dsa invocation (hold and its `owed attest`) is
-  ended, the lock released, exit 130 (the ledger stays consistent; a check
-  `owed attest` had started runs in its own process group and is not ended).
+  stops at once: SIGTERM to the running dsa invocations (hold forwards it to its
+  `owed attest`) and to the process groups of direct `owed attest` children,
+  the lock released, exit 130 (the ledger stays consistent; `owed attest` ends
+  the checks it started, §10 Signals). `owed drive --once` stops at once like
+  this on the first SIGINT/SIGTERM (D16.3). The pi tool's pass installs no
+  signal handlers.
 - **Surfaces.** CLI `owed drive [--once] [--max N] [--json]` (one line per
   action: `<action>: <outcome> — <detail>`; notify lines verbatim; `--json`
   JSON lines). `--once` is one pass. Pi tool `owed_drive` runs `--once` only
