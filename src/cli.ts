@@ -17,7 +17,13 @@ function usage(message:string): never { throw new OwedError(message,'usage'); }
 /** Terminal I/O of the CLI; tests inject `ask` (the owner's answer to the TTY prompt) and capture output. */
 export interface CliIo { ask?: (question: string) => Promise<string>; log: (text: string) => void; error: (text: string) => void }
 const terminal: CliIo = { log: text => console.log(text), error: text => console.error(text) };
+/** Commands that run checks (D16): a signal aborts them and ends the check started; exit 130 for SIGINT, 143 for SIGTERM and SIGHUP. */
+const ABORTABLE = ['attest','merge','init','adopt'], SIGNALS: NodeJS.Signals[] = ['SIGINT','SIGTERM','SIGHUP'];
+const signalExit = (s: NodeJS.Signals): number => s === 'SIGINT' ? 130 : 143;
+/** Signals within this time of the first are one stop request (D16a.3). */
+const SAME_REQUEST_MS = 1000;
 export async function main(argv: string[], io: CliIo = terminal): Promise<number> {
+  const abort = new AbortController(), got: { signal?: NodeJS.Signals; at?: number; unhandle?: () => void } = {};
   try {
     const args:string[] = [], opts = new Map<string,string|boolean>();
     for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key)) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); } }
@@ -49,22 +55,37 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
       else if(io.ask) { if(await io.ask(`Execute ${cmd} as owner? Type yes to confirm: `) !== 'yes') throw new OwedError('owner did not confirm'); channel='tty'; }
       else { if(!process.stdin.isTTY || !process.stdout.isTTY) throw new OwedError('owner actions require TTY confirmation or --i-am-owner'); const rl=createInterface({input:process.stdin,output:process.stdout}); try { const answer=await rl.question(`Execute ${cmd} as owner? Type yes to confirm: `); if(answer !== 'yes') throw new OwedError('owner did not confirm'); channel='tty'; } finally { rl.close(); } }
     }
-    const actor={cwd,as:principal,channel}, node=args[0]!;
+    const actor={cwd,as:principal,channel}, node=args[0]!, signal=abort.signal;
     let result:unknown, text:string|undefined, exit=0;
+    // D16: for the duration of a command that runs checks, the first SIGINT/SIGTERM/SIGHUP aborts it (the running
+    // check's process group is killed, nothing more starts); a second one exits at once with the first one's code.
+    // One stop request may arrive twice (D16a.3: `owed drive` signals hold's process group, which holds this process,
+    // and hold also forwards it), so signals within 1 s of the first are the same request; only a later one is a second.
+    if(ABORTABLE.includes(cmd)) {
+      const onSignal = (s: NodeJS.Signals) => {
+        if(got.signal) {
+          if(Date.now() - got.at! < SAME_REQUEST_MS) return;
+          io.error(`Aborted: ${got.signal}`); process.exit(signalExit(got.signal));
+        }
+        got.signal=s; got.at=Date.now(); abort.abort();
+      };
+      for(const s of SIGNALS) process.on(s,onSignal);
+      got.unhandle=() => { for(const s of SIGNALS) process.off(s,onSignal); };
+    }
     switch(cmd) {
-      case 'init': { const r=await ops.init({...actor,channel:channel!,plan:await readFile(resolve(cwd,node),'utf8')}); result=r; text=`${renderEntry(r.entry)}\nInitial observations: ${r.observations.length}\n${renderStatus(r.status)}`; break; }
+      case 'init': { const r=await ops.init({...actor,channel:channel!,signal,plan:await readFile(resolve(cwd,node),'utf8')}); result=r; text=`${renderEntry(r.entry)}\nInitial observations: ${r.observations.length}\n${renderStatus(r.status)}`; break; }
       case 'plan': result=await ops.planSet({...actor,...await ops.readPlan({cwd,path:node,rev:value('rev')})}); break;
       case 'rule': { const nodes=value('nodes',true)!; result=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(',')}); break; }
       case 'dispatch': { const r=await ops.dispatch({...actor,node,allowOverlap:opts.has('allow-overlap')}); result=r; text=`${r.packet}\n\n---\nDispatched ${r.node} attempt ${r.attempt}\nworktree: ${r.worktree}\nbranch: ${r.branch}\nwriter: commit in the worktree, then run owed submit ${r.node}`; break; }
       case 'submit': result=await ops.submit({...actor,node,commit:value('commit')}); break;
       case 'rebase': { const r=await ops.rebase({...actor,node}); result=r; text=`${renderEntry(r.entry)}\n${r.packet}\n${renderReceipt(await ops.why({cwd,node}))}`; break; }
-      case 'attest': { const r=await ops.attest({cwd,node,rerun:opts.has('rerun')}); result=r; text=renderReceipt(r.receipt); exit=r.accepted ? 0 : 1; break; }
+      case 'attest': { const r=await ops.attest({cwd,node,rerun:opts.has('rerun'),signal}); result=r; text=renderReceipt(r.receipt); exit=r.accepted ? 0 : 1; break; }
       case 'review': { if(opts.has('ok') === opts.has('block')) usage('review requires --ok or --block'); const obligation=value('obligation'); if(obligation && !['review','closure-review'].includes(obligation)) usage('Invalid review obligation'); result=await ops.review({...actor,node,verdict:opts.has('ok')?'ok':'block',rank:integer('rank',true)!,note:value('note') ?? '',ack_rulings:integer('ack-rulings'),obligation:obligation as 'review'|'closure-review'|undefined}); break; }
       case 'waive': { const risk=value('accept-risk'); if(risk && !/^\d+(,\d+)*$/.test(risk)) usage('accept-risk must be a list of seq numbers'); result=await ops.waive({...actor,channel:channel!,node,obligation:args[1]!,reason:value('reason',true)!,accept_risk:risk?.split(',').map(Number)}); break; }
       case 'defer': { const s=await ops.status({cwd}), n=s.nodes[node]; if(!n?.candidate) throw new OwedError('defer requires a current candidate'); const ledger=await Ledger.open(cwd), entries=await ledger.read(), law=entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis'); if(!law || (law.kind !== 'plan' && law.kind !== 'genesis')) throw new OwedError('Missing plan'); const plan=parsePlan((await ledger.getBlob(law.plan)).toString()); const m=await git.buildMerge(cwd,s.trunk.commit,n.candidate.commit,`owed merge ${node}`); if('conflicts' in m) throw new OwedError('rebase needed'); const facts=await git.stateFacts(cwd,plan,m.commit); result=await ops.defer({...actor,channel:channel!,node,items:args.slice(1).map(id => ({id,key:facts.invKeys[id] ?? ''})),reason:value('reason',true)!}); break; }
       case 'abandon': { if(opts.has('note') && opts.has('reason')) usage('abandon takes --note (or its older spelling --reason), not both'); result=await ops.abandon({...actor,node,reason:value('note') ?? value('reason') ?? ''}); break; }
-      case 'merge': { const r=await ops.merge({...actor,node}); result=r; text=`${renderEntry(r.entry)}\nTrunk advanced to ${r.commit}${r.deferred.length ? `\nDeferred debt remains: ${r.deferred.map(i => `${i.subject}/${i.obligation}`).join(', ')}` : ''}`; break; }
-      case 'adopt': { const note=value('note',true)!; const r=await ops.adopt({...actor,channel:channel!,commit:adoptCommit ?? value('commit'),note}); result=r; text=`${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\nLedger trunk ${r.trunk} is now ${r.commit}`; break; }
+      case 'merge': { const r=await ops.merge({...actor,node,signal}); result=r; text=`${renderEntry(r.entry)}\nTrunk advanced to ${r.commit}${r.deferred.length ? `\nDeferred debt remains: ${r.deferred.map(i => `${i.subject}/${i.obligation}`).join(', ')}` : ''}`; break; }
+      case 'adopt': { const note=value('note',true)!; const r=await ops.adopt({...actor,channel:channel!,commit:adoptCommit ?? value('commit'),note,signal}); result=r; text=`${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\nLedger trunk ${r.trunk} is now ${r.commit}`; break; }
       case 'status': { const r=await ops.status({cwd}); result=r; text=renderStatus(r); break; }
       case 'why': { const r=await ops.why({cwd,node}); result=r; text=renderReceipt(r); break; }
       case 'report': { const v=value('since'), r=await ops.report({cwd,since:v && /^\d+$/.test(v) ? Number(v) : v}); result=r; text=renderReport(r); break; }
@@ -75,6 +96,13 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
       case 'gc': { const r=await ops.gc({...actor,dryRun:opts.has('dry-run')}); result=r; text=renderGc(r); break; }
     }
     if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }
-    io.log(opts.has('json') ? JSON.stringify(result) : text!); return exit;
-  } catch(e) { const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3; }
+    io.log(opts.has('json') ? JSON.stringify(result) : text!);
+    // A signal after the last abort point: the operation completed and is recorded. The exit code describes the ledger
+    // outcome (`owed drive` reads it, D14.3), so it stays the normal one; only an aborted operation exits 130/143.
+    if(got.signal) io.error(`Signal ${got.signal} arrived after the operation completed; nothing was aborted`);
+    return exit;
+  } catch(e) {
+    if(e instanceof OwedError && e.code === 'aborted') { io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
+    const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3;
+  } finally { got.unhandle?.(); }
 }
