@@ -6,14 +6,14 @@ import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch } from './plan.ts';
 import { genesisProgress, jobCurrent } from './reducer.ts';
-import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted } from './reducer.ts';
+import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import type { Brief } from './views.ts';
-import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
+import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
 /** An item a job measured: its observation was not recorded because the item was no longer current (D24.1). */
@@ -239,7 +239,9 @@ export async function submit(o: Actor & { node: string; commit?: string }): Prom
   if ((!o.commit || resolve(await git.repoRoot(o.cwd)) === resolve(n.slot.worktree)) && !await git.isClean(n.slot.worktree)) throw new OwedError('slot worktree is dirty');
   const commit = await git.revParse(o.commit ? o.cwd : n.slot.worktree,o.commit ?? 'HEAD');
   if (!await git.isAncestor(o.cwd,n.slot.base,commit)) throw new OwedError('submit commit must be a descendant of slot base');
-  const facts = await git.candidateFacts(o.cwd,state.plan,state.plan.nodes.find(x => x.id === o.node)!,n.slot.base,commit,n.slot.attempt);
+  const spec = state.plan.nodes.find(x => x.id === o.node)!, facts = await git.candidateFacts(o.cwd,state.plan,spec,n.slot.base,commit,n.slot.attempt);
+  // D23: approve and evidence keys derive from the patch, like review.
+  Object.assign(facts.keys, manualKeys(spec,facts.patch));
   return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts }; guard(current,d); return (await ledger.append([d]))[0]!; });
 }
 export async function attest(o: Context & { node: string; rerun?: boolean; signal?: AbortSignal }): Promise<AttestResult> {
@@ -397,7 +399,8 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const included = (e: {seq:number;ts?:string}) => typeof since === 'number' ? e.seq > since : Date.parse(e.ts ?? entries[e.seq]?.ts ?? '') > Date.parse(since);
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
-  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  const receipts = entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.merge !== undefined && included(e));
+  return {...(receipts.length ? {receipts} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
@@ -438,6 +441,71 @@ export async function send(o: Actor & { node: string; attempt: number; rid: stri
 /** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. */
 export async function halt(o: Actor & { node: string; attempt: number; reason: string; needs: 'human' | 'owner' }): Promise<HaltEntry> {
   return await mutate(o, () => ({ kind: 'halt', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, reason: o.reason, needs: o.needs })) as HaltEntry;
+}
+
+// ---------- owner approval and manual evidence (D23) ----------
+/** The candidate an owner confirmed (submit seq and commit): an owner act on a node records only on that candidate. */
+export interface CandidatePin { seq: number; commit: string }
+/** Refuses when the node's current open candidate is not the confirmed one (D23 review ruling #389). */
+function pinned(s: State, id: string, pin?: CandidatePin): void {
+  const c = s.nodes[id]?.slot?.open ? s.nodes[id]?.candidate : undefined;
+  if (pin && (c?.seq !== pin.seq || c.commit !== pin.commit)) throw new OwedError('candidate changed since confirmation; nothing recorded');
+}
+/** What the owner approves: the open candidate of `node` (for confirmation dialogs and prompts; no effect). */
+export async function approvePreview(o: Context & { node: string }): Promise<{ node: string; seq: number; commit: string; base: string; changed: number }> {
+  const { state } = await load(await Ledger.open(o.cwd)), n = candidate(state,o.node);
+  if (!state.plan.nodes.find(x => x.id === o.node)?.approve) throw new OwedError(`Node ${o.node} has no approve obligation`);
+  return { node:o.node, seq:n.candidate!.seq, commit:n.candidate!.commit, base:n.slot!.base, changed:n.candidate!.changed.length };
+}
+/**
+ * Owner approval (`block`: an owner block) of the open candidate: a `review` entry on obligation `approve`, rank 3.
+ * `candidate` (the one the owner confirmed) refuses at append time when the current candidate differs.
+ */
+export async function approve(o: Actor & { node: string; note?: string; block?: boolean; candidate?: CandidatePin }): Promise<Entry> {
+  if (o.as.role !== 'owner') throw new OwedError('approve requires owner');
+  return mutate(o,s => {
+    const n = candidate(s,o.node);
+    pinned(s,o.node,o.candidate);
+    if (!s.plan.nodes.find(x => x.id === o.node)?.approve) throw new OwedError(`Node ${o.node} has no approve obligation`);
+    return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation:'approve',key:n.candidate!.keys.approve ?? '',verdict:o.block ? 'block' : 'ok',rank:3,note:o.note ?? '' };
+  });
+}
+/** Reads and hashes evidence files (relative to cwd); a path inside the repository is stored repository-relative, else absolute. */
+export async function evidenceFiles(o: Context & { files: string[] }): Promise<EvidenceFile[]> {
+  let top: string | undefined;
+  try { top = await realpath(await git.repoRoot(o.cwd)); } catch { /* outside a repository: absolute paths */ }
+  const out: EvidenceFile[] = [];
+  for (const f of o.files) {
+    const file = resolve(o.cwd,f); let data: Buffer;
+    try { data = await readFile(file); } catch (e) { throw new OwedError(`cannot read ${f}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`,'usage'); }
+    const real = await realpath(file), rel = top === undefined ? '' : relative(top,real);
+    out.push({ path:rel && !rel.startsWith('..') && !isAbsolute(rel) ? rel.split(sep).join('/') : real, sha256:sha256(data), bytes:data.length });
+  }
+  return out;
+}
+/** Where evidence on `node` would be recorded (no effect): the open candidate, else the latest merge (a receipt). */
+export async function evidencePreview(o: Context & { node: string }): Promise<{ node: string; candidate?: CandidatePin & { base: string }; merge?: number }> {
+  const { state } = await load(await Ledger.open(o.cwd)), n = node(state,o.node);
+  if (n.slot?.open && n.candidate) return { node:o.node, candidate:{ seq:n.candidate.seq, commit:n.candidate.commit, base:n.slot.base } };
+  return { node:o.node, ...(n.merged ? { merge:n.merged.seq } : {}) };
+}
+/**
+ * Manual evidence (D23): on a node with an open candidate it records evidence for `evidence:<id>` (files required);
+ * on a merged node a receipt citing its latest merge (files optional). Files are hashed now; `expect` (the files a
+ * confirmation dialog showed) refuses when they changed since; `candidate` (the candidate it showed) refuses when the
+ * current open candidate differs.
+ */
+export async function evidence(o: Actor & { node: string; id: string; files: string[]; note: string; expect?: EvidenceFile[]; candidate?: CandidatePin }): Promise<EvidenceEntry> {
+  if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('evidence requires a note','usage');
+  const files = await evidenceFiles({ cwd:o.cwd, files:o.files });
+  if (o.expect && canonical(o.expect) !== canonical(files)) throw new OwedError('evidence files changed since they were confirmed; nothing was recorded');
+  return await mutate(o,s => {
+    const n = node(s,o.node);
+    pinned(s,o.node,o.candidate);
+    if (n.merged && !n.slot?.open) return { kind:'evidence',by:by(o),channel:o.channel,node:o.node,merge:n.merged.seq,id:o.id,files,note:o.note };
+    const c = candidate(s,o.node);
+    return { kind:'evidence',by:by(o),channel:o.channel,node:o.node,attempt:c.slot!.attempt,key:c.candidate!.keys[`evidence:${o.id}`] ?? '',id:o.id,files,note:o.note };
+  }) as EvidenceEntry;
 }
 
 // ---------- escapes and decoys ----------

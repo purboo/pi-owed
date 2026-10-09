@@ -27,9 +27,15 @@ export interface NodeSpec {
   brief?: string;
   /** D19: fills `{type}` of the worktree branch template only (default `feat`); never an obligation. */
   type?: string;
+  /** D23: obligation `approve`, discharged only by an owner `review` ok on obligation `approve`. Absent = no approval needed. */
+  approve?: 'owner';
+  /** D23: manual evidence obligations `evidence:<id>`, discharged by an `evidence` entry. Absent = none. */
+  evidence?: EvidenceSpec[];
 }
 /** D19: optional `worktrees:` block of the plan; never an obligation, read by later dispatches only. */
 export interface WorktreesConfig { root: string /* absolute, or relative to the main worktree root */; branch: string /* template with {node}, {attempt}, optional {type} */ }
+/** D23: one manual evidence obligation of a node; `by` (default reviewer) is the role that may record it (the owner always may). */
+export interface EvidenceSpec { id: string; what: string; by: 'reviewer' | 'parent' | 'owner' }
 /** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
 export interface DriveAgent { agent: string; model?: string }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
@@ -94,7 +100,7 @@ export interface ObsEntry extends Base {
   note?: string;
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
-export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent' }
+export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent' }
 export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[] }
 export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string }
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
@@ -102,6 +108,14 @@ export interface AbandonEntry extends Base { kind: 'abandon'; node: string; atte
 export interface RebaseEntry extends Base { kind: 'rebase'; node: string; attempt: number; base: string; from: string }
 export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts }
 export interface NoteEntry extends Base { kind: 'note'; text: string }
+/** A file recorded as manual evidence: `path` repository-relative when inside the repository, else absolute; hashed when recorded. */
+export interface EvidenceFile { path: string; sha256: string; bytes: number }
+/**
+ * D23 manual evidence. On a node with an open candidate (`attempt`, `key` = the `evidence:<id>` key, no `merge`) it
+ * discharges `evidence:<id>`; on a merged node (`merge` = seq of its latest merge, no attempt/key) it is an
+ * informational receipt. Strict fields.
+ */
+export interface EvidenceEntry extends Base { kind: 'evidence'; node: string; attempt?: number; key?: string; merge?: number; id: string; files: EvidenceFile[]; note: string }
 /**
  * Owner adoption of trunk commits made outside owed (release commits, hotfixes): `commit` (= refs/heads/<trunk>)
  * is a fast-forward of the ledger trunk `prior`; `changed` = paths of prior..commit, `commits` = number of commits
@@ -126,7 +140,7 @@ export interface LaunchEntry extends Base { kind: 'launch'; node: string; attemp
 export interface SendEntry extends Base { kind: 'send'; node: string; attempt: number; rid: string; send: string; sendKind: SendKind; message: string; reason: SendReason }
 /** The driver stops on this attempt until a later non-driver entry on the node or a new attempt (SPEC §12, D3). */
 export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: number; reason: string; needs: 'human' | 'owner' }
-export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry;
+export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
