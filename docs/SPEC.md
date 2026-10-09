@@ -86,7 +86,8 @@ it; `min_kill` requires `mutants` and lies in (0, 1]. Removing `mutants` or
 lowering `min_kill` is a downgrade. Plan changes are laws (§5) by owner or
 parent. Removing or weakening an obligation of a node relative to the previous
 plan (check removed, `red` turned off, `min_tests` lowered, review count/rank
-lowered, writes widened) is a **downgrade**: allowed only to the owner, and
+lowered, writes widened) is a **downgrade**: allowed only to the owner (or to a
+parent when an allowance of the prior plan covers it, §3.4), and
 listed in reports as ΔO⁻.
 
 ### 3.1 Worktree location and branch names (D19)
@@ -151,6 +152,55 @@ weakened` when its `by` changes to a role other than `owner`. Adding either, or
 changing an evidence `what` (a new key), is not a downgrade; it changes the node
 spec and so invalidates the open candidate (§3).
 
+### 3.4 Owner allowances (D21)
+
+An optional `allow:` block lets the owner pre-authorize parent downgrades and
+parent adoptions. It is a list of rules; unknown keys and bad types are errors,
+and a rule needs at least one permission:
+
+```yaml
+allow:
+  - nodes: ["phaseA-*"]          # node id globs (path.matchesGlob on the id); default ["*"]
+    review_count: 0              # parent may lower review.count down to this (integer >= 0)
+    review_rank: 1               # parent may lower review.min_rank down to this (1..3)
+    writes: ["tests/", "docs/"]  # parent may widen writes with prefixes inside these prefixes
+    checks: ["ui-*"]             # parent may remove/weaken node checks and evidence obligations (§3.3) whose id matches these globs
+  - adopt: ["testdata/", "tasks/"]   # parent may adopt trunk commits whose changed paths all lie under these
+```
+
+`allow` is not an obligation: it is not part of any key and changing it never
+invalidates a candidate.
+
+- **Coverage.** A downgrade of a plan update is *covered* when a rule of the
+  **prior** plan (never the new one) whose `nodes` match the node permits it:
+  review count (rank) lowered to a value ≥ the rule's `review_count`
+  (`review_rank`); every newly widened writes prefix lies under one of the rule's
+  `writes` prefixes; a check weakening (removed, red disabled, `min_tests`
+  lowered, mutants removed/changed, `min_kill` lowered, definition changed)
+  whose check id matches one of the rule's `checks` globs; an evidence obligation
+  removed or weakened (`evidence <id> removed`, `evidence <id> weakened`, §3.3)
+  whose evidence id matches one of the rule's `checks` globs. An item that reads
+  both ways (e.g. check id `evidence`, evidence id `check`: `evidence check
+  removed`) is covered only if every reading is. Never covered:
+  `approve removed` (the owner's gate), `node removed`, `dependency removed`,
+  any downgrade of trunk invariants, the
+  plan-level `*` items (setup/closure changed, exec changed), and `allow`
+  changes. Any change of `allow` other than deleting whole rules (some new rule
+  deep-equals no prior rule, after defaults) is the downgrade
+  `{node: "trunk", what: "allow changed"}`: owner only.
+- **Parent plan updates.** A `plan` entry by a parent whose downgrades (the
+  detected ones and those the entry lists) are all covered is valid without an
+  owner — a reducer rule, so it also holds on replay. The downgrades still enter
+  ΔO⁻; every view labels them `by parent:<id> under allowance (plan #S)`, where
+  S is the seq of the latest genesis/plan entry that changed the `allow` block
+  before that update. An uncovered downgrade still needs the owner; the refusal
+  for a parent lists the uncovered items.
+- **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
+  `changed` lies under an `adopt` prefix of a rule of the **current** plan and
+  `adoptGuard` passes. No owner channel is needed.
+- An `allow` rule never turns a failing writes item into a pass; it only lets
+  the parent widen `writes` in the plan (§9 receipt card).
+
 ## 4. Items and keys
 
 An item is `(subject, obligation, key)`; status is evaluated per item.
@@ -194,7 +244,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | kind | by | payload | effect |
 |---|---|---|---|
 | `genesis` | owner | `{trunk, commit, plan}` (plan = blob sha) | names s₀ and the plan |
-| `plan` | owner/parent | `{prior, plan, rev?, path?}` | new plan; must cite current plan sha (CAS); downgrade needs owner; `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
+| `plan` | owner/parent | `{prior, plan, rev?, path?}` | new plan; must cite current plan sha (CAS); downgrade needs owner, unless the parent's downgrades are all covered by an allowance of the prior plan (§3.4); `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
 | `rule` | owner/parent | `{text, nodes: string[] \| "*"}` | ruling; in scope for those nodes |
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
@@ -206,7 +256,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot; `reason` is the `--note` text |
 | `merge` | executor | `{node, attempt, prior, commit, tree}` | trunk advanced (CAS on prior) |
 | `note` | any | `{text}` | speech, no effect |
-| `adopt` | owner | `{trunk, prior, commit, state, changed, commits, note}` | trunk commits made outside owed adopted (§6.6): `prior` = current ledger trunk (CAS), `commit` = `state.commit` = refs/heads/<trunk>, a fast-forward of `prior`; `changed` = `git diff --name-only prior commit`, `commits` = number of commits in `prior..commit`; the trunk state becomes `state` |
+| `adopt` | owner, or parent under an `adopt` allowance (§3.4) | `{trunk, prior, commit, state, changed, commits, note}` | trunk commits made outside owed adopted (§6.6): `prior` = current ledger trunk (CAS), `commit` = `state.commit` = refs/heads/<trunk>, a fast-forward of `prior`; `changed` = `git diff --name-only prior commit`, `commits` = number of commits in `prior..commit`; the trunk state becomes `state` |
 | `escape` | parent/owner | `{node, merge, class, note, evidence?}` | defect found after a merge (§6.5); `merge` must be the seq of a merge of `node` |
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
@@ -364,7 +414,7 @@ Trunk can move outside owed (a release commit, a human hotfix). Then
 refs/heads/<trunk> is ahead of the ledger trunk and every merge fails the CAS.
 The owner records such commits explicitly with `adopt`; owed never trusts a
 moved ref silently.
-- Reducer: `adopt` requires role owner, `trunk` = the ledger trunk name,
+- Reducer: `adopt` requires role owner (or a parent under an allowance, below), `trunk` = the ledger trunk name,
   `prior` = the current trunk commit, `commit` = `state.commit` ≠ `prior`, a
   non-empty `note`, `changed` a list of paths, `commits` a positive integer, and
   exactly the fields of the entry table. The trunk state becomes `state` (as for
@@ -380,6 +430,14 @@ moved ref silently.
   observation that decides it (`h1 (obs #3)`): the obs appended by this adopt,
   else (a repeated adopt measures nothing new and appends nothing) the latest
   existing trunk obs of that invariant at the adopted state's key.
+- **Parent adoption** (§3.4, D21.4): role parent may adopt instead of the owner
+  when the current plan has `adopt` allowances and every path of `changed` lies
+  under one of their prefixes; otherwise the entry is refused (no prefixes:
+  `adopt insufficient permissions; requires owner`; else `parent adoption
+  refused: changed path <first uncovered path> is not under an allow adopt prefix
+  (…)`). `adoptGuard` applies as for the owner. `state.adoptions` carries
+  `allowance: S` for a parent adoption (S as in §3.4) and views show `adopted by
+  parent:<id> under allowance (plan #S)`. Owner adoptions are unchanged.
 - Open slots are not touched. Their base stays; a merge builds on the adopted
   trunk as after any other trunk move (`owed rebase` when it conflicts).
 - Limits: only fast-forwards are adopted (a rewritten or reset trunk is refused;
@@ -492,7 +550,7 @@ waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel}): Promise<En
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
 abandon(o: {cwd, node, reason, as}): Promise<Entry>      // reason = the --note text
 merge(o: {cwd, node, as, signal?}): Promise<MergeResult>          // builds M, attests M, guarded CAS; abort: §7.8
-adopt(o: {cwd, commit?, note, as, channel, signal?}): Promise<AdoptResult>   // owner; records trunk commits made outside owed (§6.6); abort: §7.8
+adopt(o: {cwd, commit?, note, as, channel?, signal?}): Promise<AdoptResult>   // owner, or parent under an adopt allowance (§3.4); records trunk commits made outside owed (§6.6); abort: §7.8
 adoptPreview(o: {cwd, commit?}): Promise<AdoptPreview>   // the same preconditions, no effect: {trunk, prior, commit, commits, changed}
 status(o: {cwd}): Promise<StatusView>
 why(o: {cwd, node}): Promise<ReceiptCard>
@@ -554,8 +612,10 @@ checks on M, pass or fail, refused or not — with `merging: <node>` (§6.5).
 Genesis invariants that merge measures first on the current trunk are not
 merge results and carry no `merging`.
 
-`adopt` (owner only; role checked first, then a confirmation channel) checks,
-before any ledger effect: `note` is non-empty; `commit` (default
+`adopt` (owner, or a parent when the current plan has `adopt` allowances, §3.4;
+role checked first, then a confirmation channel for the owner) checks,
+before any ledger effect (for a parent also that every changed path lies under an
+`adopt` prefix, naming the first one that does not): `note` is non-empty; `commit` (default
 refs/heads/<trunk>) resolves to a commit equal to the current refs/heads/<trunk>
 (adopt what is on trunk, nothing else); it differs from the ledger trunk
 ("nothing to adopt" otherwise); the ledger trunk commit exists in the repository
@@ -569,7 +629,8 @@ appends nothing. If `adoptGuard` (§6.6) fails it appends the observations and
 refuses, naming each invariant that was satisfied on the ledger trunk and not on
 the commit with its observation seqs; trunk stays unadopted. Otherwise it appends
 the observations and the `adopt` entry. It never moves a ref.
-`AdoptResult` = `AdoptPreview & {entry, observations}`.
+`AdoptResult` = `AdoptPreview & {entry, observations, allowance?}` (`allowance` =
+S of §3.4 for a parent adoption).
 
 The merge CAS refusal (refs/heads/<trunk> ≠ ledger trunk) says how the ref
 differs: ahead by N commits made outside owed (then the owner runs `owed adopt`),
@@ -693,6 +754,21 @@ while genesis items lack observations.
   require the writer's submit.
   Also "Untested": obligations absent relative to the plan baseline (downgrades) and
   the node's changed files not matched by any passing check's `reads`.
+- **Allowances in views** (§3.4, D21): a downgrade a parent recorded under an
+  allowance is labelled `by parent:<id> under allowance (plan #S)` — in the
+  report's ΔO⁻ list (instead of the bare principal), in the receipt card (one
+  `ΔO⁻ #seq by parent:<id> under allowance (plan #S): <node>: <what>` line after
+  the JSON line; `--json` downgrades carry `allowance: S`) and in the CLI/pi
+  output of `plan`. A parent adoption reads `#seq adopted by parent:<id> under
+  allowance (plan #S) prior..commit …` in report and brief (`--json`
+  `adoptions[].allowance`) and in the `adopt` output.
+- **Out-of-writes paths** (receipt card, D21.5, for every plan): when the
+  candidate's `writes` item is ✘ or ⛔ and changed paths lie outside the node's
+  writes, the line `Out-of-writes paths: <p1>, <p2>, …` lists them (the first 20,
+  then `… +N more`; `--json` `outOfWrites: {paths, allowance?}` lists all). When
+  an allowance of the current plan matching the node covers every one of them
+  with a `writes` prefix, the line ends with `; the parent may widen writes in the
+  plan (allowance plan #S)`. A ruling never accepts out-of-writes paths.
 - **Receipt card after a rebase**: `Rebased #seq: slot base <from> → <base>`,
   the previously reviewed patch (old base..old commit, submit seq) and
   `Re-review only the resolution: git range-diff <old base>..<old commit>
@@ -784,7 +860,8 @@ run inside its worktree), `attest <node> [--rerun]`,
 `defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
 spelling `--reason`; not both), `merge <node>`, `status`,
 `why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
-`adopt [--commit X] --note TEXT` (owner; before the TTY prompt, and also with
+`adopt [--commit X] --note TEXT` (owner; `--as parent:ID` under an `adopt`
+allowance, §3.4, with no prompt and no preview; before the TTY prompt, and also with
 `--i-am-owner`, it prints to stderr the preview — full ledger trunk
 prior..commit, commit count, every changed path one per line and the note,
 escaped as in §11 — and adopts exactly the previewed commit, so a ref that moves
@@ -876,14 +953,14 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_rule` | `text`, `nodes`, `as` | ruling |
-| `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `as` | plan update; a downgrade needs the owner |
+| `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
 | `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:human`, owner only) | initialize the ledger (§11.1) |
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
 | `owed_approve` | `node`, `note?`, `block?`, `as` (default `owner:human`, owner only) | owner approval (D23); the dialog shows `Approve node <node>` (or `Block approval of node <node>`), `Candidate: <commit> (submit #<seq>)`, `Base: <base>`, `Changed files: <n>`, then the note; only that candidate is approved (§8) |
 | `owed_evidence` | `node`, `id`, `files?`, `note`, `as` (reviewer/parent/owner) | manual evidence or receipt (D23); an owner gets a dialog showing `Candidate: <commit> (submit #<seq>)` and `Base: <base>` (or `Receipt on merge #<m>`), `Files (N):` as `path sha12 (bytes)` and the note; the recording is refused if the files or the candidate changed after the dialog |
 | `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
-| `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
+| `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner; `as: parent:…` under an `adopt` allowance, §3.4, with no dialog); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
 | `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
 | `owed_drive` | `action?` (`once` default, `start`, `status`, `stop`), `max?` (once/start), `now?` (stop) | the driver (§12.7, §12.8): one pass, or start/report/stop the background driver; start makes this session follow its log for wake-ups |
 
