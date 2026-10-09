@@ -85,13 +85,13 @@ export function writerTask(s: State, node: string): string {
   return dispatchPacket(spec, slot.attempt, slot.worktree, s.rules.filter(r => r.seq < slot.dispatchSeq && (r.nodes === '*' || r.nodes.includes(node))));
 }
 /** Launch action of the writer of the node's open attempt (spec: writer agent/model, cwd = slot worktree, task = dispatch packet). */
-export function writerLaunch(s: State, plan: Plan, node: string, project: string): Extract<Action, { do: 'launch' }> {
-  const slot = s.nodes[node]!.slot!, agent = driveConfig(plan).writer;
+export function writerLaunch(s: State, node: string, project: string): Extract<Action, { do: 'launch' }> {
+  const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan).writer;
   return { do: 'launch', node, attempt: slot.attempt, role: 'writer', rid: runId(project, node, slot.attempt, 'writer'), spec: launchSpec({ ...agent, cwd: slot.worktree, task: writerTask(s, node) }), labels: runLabels(project, node, slot.attempt, 'writer') };
 }
 /** Launch action of reviewer run `n` (attempt-global) on the node's current candidate (cwd = repo root, task = review packet). */
-export function reviewerLaunch(s: State, plan: Plan, node: string, n: number, project: string, root: string): Extract<Action, { do: 'launch' }> {
-  const slot = s.nodes[node]!.slot!, agent = driveConfig(plan).reviewer;
+export function reviewerLaunch(s: State, node: string, n: number, project: string, root: string): Extract<Action, { do: 'launch' }> {
+  const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan).reviewer;
   return { do: 'launch', node, attempt: slot.attempt, role: 'reviewer', n, rid: runId(project, node, slot.attempt, 'reviewer', n), spec: launchSpec({ ...agent, cwd: root, task: reviewPacket(s, node, n) }), labels: runLabels(project, node, slot.attempt, 'reviewer') };
 }
 export const WRITER_INTERRUPTED = 'You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.';
@@ -117,20 +117,33 @@ export function rebaseMessage(s: State, node: string): string {
   return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): in ${slot.worktree} run \`git rebase --onto ${r.base} ${r.from}\`, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
 }
 
+// ---------- driver reviewers ----------
+/**
+ * The review slot k of `by` when it is a driver reviewer of the node's current open attempt: `reviewer:drive-<node>-
+ * <attempt>-<k>` with 1 <= k <= max(review.count, 1) (slot 1 also records closure-review); else undefined (D11: any other
+ * k is not a driver reviewer).
+ */
+export function driverSlot(s: State, node: string, by: string): number | undefined {
+  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
+  if (!n?.slot?.open || !spec) return undefined;
+  const k = driveReviewerSlot(by, node, n.slot.attempt);
+  return k !== undefined && k <= Math.max(spec.review.count, 1) ? k : undefined;
+}
+
 // ---------- owner-needed ----------
 /**
  * Why the node needs an owner decision the driver must not touch (D4), or undefined. Owner blocks: a flaky block, or an
- * active review block of rank >= 2 — except one authored by a driver reviewer (`reviewer:drive-<node>-<attempt>-<k>`)
- * of the node's current open attempt, which the driver repairs (its slot reviewer re-reviews at the block's rank;
+ * active review block of rank >= 2 — except one authored by a driver reviewer (`driverSlot`: `reviewer:drive-<node>-
+ * <attempt>-<k>`, k in range) of the node's current open attempt, which the driver repairs (its slot reviewer re-reviews at the block's rank;
  * rank 3 is owner-only and never driver-authored). With an open candidate: an item with conflicting observations (⊤),
  * an item with an owner block, or a review the plan requires at rank > 2 (a closure-review merely awaiting a rank-2
  * review is reviewer work). Otherwise: an owner block still active on the node (a new attempt cannot clear it).
  */
-export function ownerNeeded(s: State, plan: Plan, node: string): string | undefined {
-  const n = s.nodes[node], spec = plan.nodes.find(x => x.id === node);
+export function ownerNeeded(s: State, node: string): string | undefined {
+  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
   if (!n) return undefined;
-  const entries = entriesOf(s), attempt = n.slot?.open ? n.slot.attempt : undefined;
-  const driverAuthored = (seq: number): boolean => attempt !== undefined && driveReviewerSlot(entries.find(e => e.seq === seq)?.by ?? '', node, attempt) !== undefined;
+  const entries = entriesOf(s);
+  const driverAuthored = (seq: number): boolean => driverSlot(s, node, entries.find(e => e.seq === seq)?.by ?? '') !== undefined;
   const ownerBlock = n.blocks.filter(b => b.state === 'flaky' || (b.state === 'active' && b.kind === 'judgment' && (b.rank ?? 0) >= 2 && !((b.rank ?? 0) <= 2 && driverAuthored(b.seq))));
   const text = (b: (typeof ownerBlock)[number]): string => `${b.state === 'flaky' ? 'flaky' : `rank ${b.rank} review`} block #${b.seq} on ${b.obligation} needs the owner`;
   if (n.slot?.open && n.candidate) {
@@ -154,20 +167,22 @@ const reviewerN = (l: LaunchEntry): number => Number(l.rid.slice(l.rid.lastIndex
 const byStatusOrder = (a: NodeState, b: NodeState): number => b.dependents - a.dependents || a.id.localeCompare(b.id);
 
 /**
- * The actions of one pass (contract D1/D4): per open attempt the first matching row of the policy table, then
+ * The actions of one pass (contract D1/D4/D10/D11): per open attempt the first matching row of the policy table, then
  * dispatches of ready nodes while open attempts < `max`. Pure: equal inputs give deep-equal outputs; inputs are not
  * modified. A node whose recorded run lacks a view in `runs` (describe failed) gets no action this pass.
+ * The plan is read from `s.plan` only (D11); the `plan` parameter is kept for the D1 signature and not used.
  */
-export function decide(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, opts: DriveOpts): Action[] {
+export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>, opts: DriveOpts): Action[] {
   if (s.seq < 0) return [];
+  const plan = s.plan;
   const out: Action[] = [];
   const open = Object.values(s.nodes).filter(n => n.slot?.open).sort(byStatusOrder);
-  for (const n of open) { const a = slotAction(s, plan, runs, opts, n); if (a) out.push(a); }
+  for (const n of open) { const a = slotAction(s, runs, opts, n); if (a) out.push(a); }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
   const taken = open.map(n => writes(n.id));
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
-    const owner = ownerNeeded(s, plan, n.id);
+    const owner = ownerNeeded(s, n.id);
     if (owner) { out.push(ownerNotify(n.id, owner)); continue; }
     if (taken.length >= opts.max || !plan.nodes.some(x => x.id === n.id) || taken.some(w => writesOverlap(writes(n.id), w))) continue;
     out.push({ do: 'dispatch', node: n.id });
@@ -176,19 +191,19 @@ export function decide(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>,
   return out;
 }
 
-function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, opts: DriveOpts, n: NodeState): Action | undefined {
+function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpts, n: NodeState): Action | undefined {
   const id = n.id, slot = n.slot!, attempt = slot.attempt, c = n.candidate;
   const halt = (reason: string, needs: 'human' | 'owner' = 'human'): Action => ({ do: 'halt', node: id, attempt, reason, needs });
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string): Action => ({ do: 'send', node: id, attempt, rid: l.rid, sendKind, message, reason });
   // Row 1: halted.
   if (halted(s, id)) return undefined;
   // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only.
-  const owner = ownerNeeded(s, plan, id);
+  const owner = ownerNeeded(s, id);
   if (owner) return ownerNotify(id, owner);
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
   const writer = ar.launches.find(l => l.role === 'writer');
   // Row 2: writer launch missing.
-  if (!writer) return writerLaunch(s, plan, id, opts.project);
+  if (!writer) return writerLaunch(s, id, opts.project);
   // Runs that matter: the writer and the reviewer runs of the current candidate (a reviewer run belongs to the latest
   // candidate submitted before its launch entry); runs of earlier candidates are obsolete.
   const live = ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq));
@@ -198,7 +213,7 @@ function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, op
   for (const l of live) {
     const rejected = opts.rejected.get(l.rid);
     if (rejected !== undefined) return halt(`dsa rejected run ${l.rid}: ${rejected}`);
-    if (view(l).state === 'absent') return relaunch(s, plan, opts, l) ?? halt(`cannot re-launch ${l.rid}: the stored spec bytes (blob ${l.spec}) were not supplied and the rebuilt spec differs`);
+    if (view(l).state === 'absent') return relaunch(s, opts, l) ?? halt(`cannot re-launch ${l.rid}: the stored spec bytes (blob ${l.spec}) were not supplied and the rebuilt spec differs`);
   }
   // Row 4: a recorded send not confirmed applied in this process: re-send the same id and bytes.
   for (const x of ar.sends) {
@@ -248,7 +263,7 @@ function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, op
     // Row 12: review obligations awaiting and fewer reviewer runs than the candidate needs: launch the next n.
     const reviewers = live.filter(l => l.role === 'reviewer');
     if (n.items.some(i => (i.obligation === 'review' || i.obligation === 'closure-review') && i.status === 'D') && reviewers.length < reviewRuns(s, id))
-      return reviewerLaunch(s, plan, id, nextReviewerN(s, id), opts.project, opts.root);
+      return reviewerLaunch(s, id, nextReviewerN(s, id), opts.project, opts.root);
     // Rows 13-14: a sealed reviewer run whose obligations are still awaiting (it recorded no review on them).
     const entries = entriesOf(s);
     for (const l of reviewers) {
@@ -260,9 +275,18 @@ function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, op
       if (statusOf(v) === 'unknown' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
       return halt(`review-missing: reviewer run ${l.rid} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}`);
     }
-    // Row 15: a review block: repair (counts as a repair).
+    // Row 15 (D11): a review block recorded on the current candidate's key: repair (counts as a repair). A stale block
+    // (recorded on an earlier candidate) is left to the slot re-review: wait while any slot reviewer of this candidate
+    // has not recorded its review on the current key; once all have and it is still active, halt needing the owner.
     const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
-    if (judged.length) return repair(`review block ${judged.map(b => `#${b.seq} ${b.obligation}`).join(', ')}`);
+    const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
+    if (current.length) return repair(`review block ${current.map(b => `#${b.seq} ${b.obligation}`).join(', ')}`);
+    if (stale.length) {
+      const base = reviewerBase(s, id), slots = Array.from({ length: reviewRuns(s, id) }, (_, i) => i + 1);
+      const reviewed = slots.every(k => reviewObligations(s, id, base + k).every(o => entries.some(e => e.kind === 'review' && e.node === id && e.by === driveReviewer(id, attempt, k) && e.obligation === o && e.key === c.keys[o])));
+      if (!reviewed) return fenced();
+      return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active after every slot reviewer reviewed candidate #${c.seq}; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}`, 'owner');
+    }
     // Rows 16-17: accepted: merge; a merge this process saw refused: rebase when trunk moved, else halt.
     if (n.accepted) {
       const m = opts.merges?.get(id);
@@ -275,9 +299,9 @@ function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, op
 }
 
 /** Re-launch action of a recorded launch: rebuilt bytes when they hash to the stored spec, else the supplied stored bytes. */
-function relaunch(s: State, plan: Plan, opts: DriveOpts, l: LaunchEntry): Action | undefined {
+function relaunch(s: State, opts: DriveOpts, l: LaunchEntry): Action | undefined {
   let rebuilt: Extract<Action, { do: 'launch' }> | undefined;
-  try { rebuilt = l.role === 'writer' ? writerLaunch(s, plan, l.node, opts.project) : reviewerLaunch(s, plan, l.node, reviewerN(l), opts.project, opts.root); } catch { rebuilt = undefined; }
+  try { rebuilt = l.role === 'writer' ? writerLaunch(s, l.node, opts.project) : reviewerLaunch(s, l.node, reviewerN(l), opts.project, opts.root); } catch { rebuilt = undefined; }
   const base = { do: 'launch' as const, node: l.node, attempt: l.attempt, role: l.role, ...(l.role === 'reviewer' ? { n: reviewerN(l) } : {}), rid: l.rid, labels: { ...l.labels } };
   if (rebuilt && sha256(rebuilt.spec) === l.spec) return { ...base, spec: rebuilt.spec };
   const stored = opts.blobs?.get(l.spec);
