@@ -24,7 +24,7 @@ const basePlan = (drive?: DriveConfig, nodes: Partial<Record<string, Partial<Nod
   spec({ id: 'c', ...nodes.c }),
   spec({ id: 'd', writes: ['a/sub/'], ...nodes.d }),
 ], ...(drive ? { drive } : {}) });
-const DRIVE: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker', model: 'sota/x:high' }, reviewer: { agent: 'reviewer' } };
+const DRIVE: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker', model: 'example/x:high' }, reviewer: { agent: 'reviewer' } };
 
 function rig(plan: Plan = basePlan(DRIVE)) {
   const entries: Entry[] = [], plans: Record<string, Plan> = { p: plan }, blobs = new Map<string, string>();
@@ -112,7 +112,7 @@ test('row 2: writer launch missing → launch writer (agent/model from drive:, s
   assert.equal(a.n, undefined, 'writers have no n');
   const parsed = JSON.parse(a.spec);
   assert.deepEqual(Object.keys(parsed), ['agent', 'cwd', 'isolation', 'model', 'once', 'task']);
-  assert.deepEqual({ ...parsed, task: undefined }, { agent: 'worker', model: 'sota/x:high', cwd: '/repo/.owed/wt/a-1', isolation: 'none', once: true, task: undefined });
+  assert.deepEqual({ ...parsed, task: undefined }, { agent: 'worker', model: 'example/x:high', cwd: '/repo/.owed/wt/a-1', isolation: 'none', once: true, task: undefined });
   const s = r.state(), rules = s.rules.filter(x => x.text === 'before dispatch');
   assert.equal(parsed.task, dispatchPacket(s.plan.nodes[0]!, 1, '/repo/.owed/wt/a-1', rules), 'task = the dispatch packet, with the rulings seen at dispatch only');
   assert.match(parsed.task, /Node: a; attempt: 1\nWorking directory: \/repo\/\.owed\/wt\/a-1/);
@@ -139,7 +139,7 @@ test('row 3: a launch whose run is absent → re-launch with identical bytes and
   const stored = act(r, runs);
   assert.ok(stored?.do === 'launch');
   assert.equal(stored.spec, r.blobs.get(l.spec));
-  assert.equal(JSON.parse(stored.spec).model, 'sota/x:high');
+  assert.equal(JSON.parse(stored.spec).model, 'example/x:high');
   const none = act(r, runs, { blobs: new Map() });
   assert.ok(none?.do === 'halt' && none.needs === 'human');
   assert.match(none.reason, /cannot re-launch .*writer: the stored spec bytes/);

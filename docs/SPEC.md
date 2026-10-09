@@ -623,8 +623,8 @@ error?, questions?: {qid, rev, question}[], lastFence?: {reason, at}}`
 drive:
   max: 4                 # concurrent open attempts the driver starts (default 4, integer >= 1)
   repairs: 2             # follow-ups after a failed check / block before halting (default 2, integer >= 0)
-  writer:   { agent: worker,   model: "sota-claude/claude-opus-5-5:high" }   # default {agent: worker}
-  reviewer: { agent: reviewer, model: "sota-claude/claude-opus-5-5:high" }   # default {agent: reviewer}
+  writer:   { agent: worker,   model: "example/model-large:high" }   # default {agent: worker}
+  reviewer: { agent: reviewer, model: "example/model-large:high" }   # default {agent: reviewer}
 ```
 Optional; `model` is optional (agent default). `parsePlan` fills the defaults
 when the block is present (`Plan.drive`; absent block → `Plan.drive`

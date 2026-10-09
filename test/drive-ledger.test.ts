@@ -25,9 +25,9 @@ test('drive plan block: absent, defaults, explicit values, never a downgrade', (
   assert.deepEqual(driveConfig(plain), { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } });
   assert.deepEqual(DRIVE_DEFAULTS, { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } });
   assert.deepEqual(parsePlan(JSON.stringify({ ...base, drive: {} })).drive, { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } });
-  const yaml = `version: 1\ntrunk: main\ndrive:\n  max: 2\n  repairs: 0\n  writer: { agent: worker, model: "sota-claude/claude-opus-5-5:high" }\n  reviewer: { agent: reviewer }\nnodes: []\n`;
+  const yaml = `version: 1\ntrunk: main\ndrive:\n  max: 2\n  repairs: 0\n  writer: { agent: worker, model: "example/model-large:high" }\n  reviewer: { agent: reviewer }\nnodes: []\n`;
   const p = parsePlan(yaml);
-  assert.deepEqual(p.drive, { max: 2, repairs: 0, writer: { agent: 'worker', model: 'sota-claude/claude-opus-5-5:high' }, reviewer: { agent: 'reviewer' } });
+  assert.deepEqual(p.drive, { max: 2, repairs: 0, writer: { agent: 'worker', model: 'example/model-large:high' }, reviewer: { agent: 'reviewer' } });
   assert.deepEqual(driveConfig(p), p.drive);
   // Changing or removing drive: is never a downgrade.
   assert.deepEqual(planDowngrades(p, plain), []);
