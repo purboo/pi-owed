@@ -26,6 +26,10 @@ export interface NodeSpec {
   review: { count: number; min_rank: number };   // default {count:0,min_rank:1}
   brief?: string;
 }
+/** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
+export interface DriveAgent { agent: string; model?: string }
+/** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
+export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent }
 export interface Plan {
   version: 1;
   trunk: string;
@@ -33,6 +37,7 @@ export interface Plan {
   setup?: string;
   invariants: CheckSpec[];
   nodes: NodeSpec[];
+  drive?: DriveConfig;        // present only when the plan has a `drive:` block (filled with defaults)
 }
 export interface Downgrade { node: string; what: string }   // e.g. {node:'a', what:'check auth-tests removed'}
 
@@ -99,7 +104,17 @@ export interface Decoy { node: string; defect: string }
 export interface DecoyPayload { nonce: string; decoys: Decoy[] }
 export interface DecoyCommitEntry extends Base { kind: 'decoy-commit'; digest: string }
 export interface DecoyRevealEntry extends Base, DecoyPayload { kind: 'decoy-reveal' }
-export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry;
+// ---------- driver entries (SPEC §12, D3); appended by role parent (the driver is `parent:drive`) ----------
+export type RunRole = 'writer' | 'reviewer';
+export type SendKind = 'follow-up' | 'steer';
+export type SendReason = 'submit' | 'repair' | 'interrupted' | 'fenced' | 'rebase' | 'review-missing';
+/** Intent to start a dsa run, persisted before the dsa call. `spec` = blob hash of the exact spec JSON bytes; `rid` = runId(...); `labels` = runLabels(...). */
+export interface LaunchEntry extends Base { kind: 'launch'; node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string> }
+/** Intent to send a message to a run; `send` = `${rid}:${sendKind}:${seq of this entry}` (the dsa request id); `message` = blob hash of the exact message bytes. */
+export interface SendEntry extends Base { kind: 'send'; node: string; attempt: number; rid: string; send: string; sendKind: SendKind; message: string; reason: SendReason }
+/** The driver stops on this attempt until a later non-driver entry on the node or a new attempt (SPEC §12, D3). */
+export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: number; reason: string; needs: 'human' | 'owner' }
+export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
@@ -141,7 +156,12 @@ export interface NodeState {
   dependents: number;         // transitive dependents count (for ready ordering)
   writers: string[];          // every writer principal that ever held a slot of this node
   merged?: { seq: number; commit: string };
+  /** Driver launches and sends per attempt, in attempt order (only attempts with a launch or send). */
+  runs: AttemptRuns[];
+  /** Active driver halt on the current open attempt (see reducer `halted`). */
+  halt?: HaltEntry;
 }
+export interface AttemptRuns { attempt: number; launches: LaunchEntry[]; sends: SendEntry[] }
 export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string }
 export interface State {
   seq: number;                 // last seq, -1 when empty
@@ -164,6 +184,17 @@ export interface AdoptionView { seq: number; by: string; channel?: Channel; prio
 export interface EscapeView { seq: number; by: string; node: string; merge: number; class: EscapeClass; note: string; evidence?: string }
 /** caught: a block or rejecting obs on the node before any merge of it; escaped: merged with no prior block; pending: neither yet. */
 export interface DecoyView { node: string; defect: string; commit: number; reveal: number; outcome: 'caught' | 'escaped' | 'pending'; decidedBy?: number }
+
+// ---------- driver (SPEC §12, D1) ----------
+/** The subset of `pi-durable-subagents describe --key <rid> --json` the driver uses. Unknown dsa states map to `running`; `pruned` is treated like `sealed`. */
+export interface RunView {
+  rid: string;
+  state: 'absent' | 'queued' | 'running' | 'asking' | 'sealed' | 'pruned';
+  status?: string;
+  error?: string;
+  questions?: { qid: string; rev: number; question: string }[];
+  lastFence?: { reason: string; at: string };
+}
 
 // ---------- executor jobs ----------
 export interface AttestJob {
