@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.0
+
+- **`owed drive [--once] [--max N] [--json]`** (also the pi tool `owed_drive`,
+  one pass). Runs the mechanical loop — dispatch, writer, submit, attest,
+  reviewers, merge — with pi-durable-subagents as the process runner, as
+  principal `parent:drive`, and stops only for decisions: it never answers a
+  question, waives, changes the plan or forces a dsa restart. Every intent is
+  recorded before the dsa call and retried with the same id and bytes, so a
+  kill at any point is safe. Attest runs under `hold machine --shared
+  --no-wait`. One driver per repository (`.git/owed/drive.lock`). An optional
+  `drive:` block in the plan sets `max`, `repairs` and the writer/reviewer
+  agent and model. **Requires pi-durable-subagents >= 1.0.27** (only for
+  `owed drive`; the rest of owed does not use it).
+- New ledger kinds `launch`, `send` and `halt` (written by the driver).
+  `owed status`, `why` and `report` show driver halts and launches; a halt is
+  cleared by a later action on the node by anyone other than the driver. A
+  halt from dsa rejecting a run or send names the recovery: that attempt's
+  request is fixed, so fix the cause and `owed abandon <node>`.
+  Ledgers containing these entries need pi-owed 0.4.0 or later.
+- Red runs: `min_tests` applies to every non-red run (candidate checks and
+  invariants), never to the red run, which needs only a recognizable failure
+  (non-zero exit, `red_expect`, not a zero-test run); an unknown count format
+  is accepted there. A red run whose command exits 126/127 (not executable /
+  not found) or cannot be spawned is now an `error` observation, not a pass.
+
 ## 0.3.1
 
 - The pi tool `owed_adopt` confirmation dialog lists up to 50 changed paths,

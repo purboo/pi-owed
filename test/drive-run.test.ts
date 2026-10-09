@@ -291,7 +291,7 @@ test('D14.1: dsa run exit 1 halts in the same pass; --once ×4 gives one halt an
     const es = await f.entries();
     assert.deepEqual(es.map(e => e.kind), ['genesis', 'dispatch', 'launch', 'halt'], out.join('\n'));
     const h = halts(es)[0]!;
-    assert.equal(h.needs, 'human'); assert.match(h.reason, /^dsa rejected run owed:[0-9a-f]{12}:n:1:writer: fault$/);
+    assert.equal(h.needs, 'human'); assert.match(h.reason, /^dsa rejected run owed:[0-9a-f]{12}:n:1:writer: fault; this attempt's request is fixed; fix the cause \(plan, agent, model\), then `owed abandon n` to start a new attempt$/);
     assert.match(out.join('\n'), /launch n writer .*: rejected — fault; halted/);
     assert.equal((await f.log()).filter(x => x.cmd === 'run').length, 1, 'never re-launched while halted');
   } finally { await f.cleanup(); }
@@ -430,4 +430,53 @@ test('D14.9: a lock of another host is never taken over; the refusal says how to
     await assert.rejects(f.drive({ once: true }), /held by pid \d+ on host elsewhere\.example .*never taken over.*remove .*drive\.lock by hand/);
     assert.ok(existsSync(lock));
   } finally { await f.cleanup(); }
+});
+
+test('D15.1: a dsa rejection is fixed for the attempt: a ruling clears, the retry re-halts with the abandon text, abandon → attempt 2 launches', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('n')));
+  const fixed = "this attempt's request is fixed; fix the cause (plan, agent, model), then `owed abandon n` to start a new attempt";
+  try {
+    await f.file('faults', 'run 1 none\nrun 1 none\n');
+    await f.drive({ once: true }); await f.drive({ once: true });
+    assert.equal(halts(await f.entries()).length, 1);
+    assert.ok(halts(await f.entries())[0]!.reason.endsWith(fixed));
+    await ops.rule({ cwd: f.cwd, as: { role: 'parent', id: 'main' }, text: 'agent config fixed', nodes: ['n'] });
+    const again = await f.drive({ once: true });
+    assert.match(again.lines.join('\n'), /launch n writer owed:[0-9a-f]{12}:n:1:writer: rejected — fault; halted/);
+    const h = halts(await f.entries());
+    assert.equal(h.length, 2); assert.equal(h[1]!.attempt, 1); assert.ok(h[1]!.reason.endsWith(fixed), h[1]!.reason);
+    const first = (await f.log()).filter(x => x.cmd === 'run');
+    assert.deepEqual(first.map(x => [x.request, x.exit]), [[first[0]!.request, 1], [first[0]!.request, 1]], 'the same id both times');
+    await ops.abandon({ cwd: f.cwd, as: { role: 'parent', id: 'main' }, node: 'n', reason: 'dsa rejected attempt 1' });
+    const out = [...(await f.drive({ once: true })).lines, ...(await f.drive({ once: true })).lines];
+    assert.match(out.join('\n'), /launch n writer owed:[0-9a-f]{12}:n:2:writer: applied — created/, out.join('\n'));
+    const runs = (await f.log()).filter(x => x.cmd === 'run');
+    assert.equal(runs.length, 3); assert.match(String(runs[2]!.request), /:n:2:writer$/); assert.equal(runs[2]!.exit, 0);
+    assert.equal(halts(await f.entries()).length, 2);
+  } finally { await f.cleanup(); }
+});
+
+test('D15.2: merge refused with the transient `Plan, candidate or trunk changed; retry` retries next pass without a halt', { timeout: 180_000 }, async () => {
+  // The invariant runs on the merge result; armed once, it submits the slot again while merge measures, so merge's
+  // final stability check refuses with the transient message.
+  const race = `if [ -n "$OWED_RACE_WT" ] && mkdir "$OWED_RACE_DONE" 2>/dev/null; then cd "$OWED_RACE_WT" && "$OWED_RACE_NODE" "$OWED_RACE_CLI" submit r >/dev/null; fi; true`;
+  const f = await rig({ ...planOf(node('r')), invariants: [{ id: 'race', run: race, reads: ['r.txt'] }] });
+  const done = join(f.root, 'race-done');
+  try {
+    await f.agent('r-writer', 'echo r > r.txt; git add r.txt; git commit -qm r; owed submit r');
+    assert.ok(await f.once(6, async () => (await ops.status({ cwd: f.cwd })).nodes.r!.accepted), f.out.join('\n'));
+    const s = await ops.status({ cwd: f.cwd });
+    Object.assign(process.env, { OWED_RACE_WT: s.nodes.r!.slot!.worktree, OWED_RACE_DONE: done, OWED_RACE_NODE: process.execPath, OWED_RACE_CLI: OWED });
+    const before = (await f.entries()).length;
+    const r = await f.drive({ once: true });
+    assert.ok(existsSync(done), 'the race ran');
+    assert.match(r.lines.join('\n'), /merge r: retry — merge refused \(Plan, candidate or trunk changed; retry\); retry next pass/, r.lines.join('\n'));
+    const added = (await f.entries()).slice(before);
+    assert.deepEqual(added.map(e => e.kind), ['submit'], 'only the racing submit; merge recorded nothing and no halt');
+    assert.ok(await f.once(6, async () => merged(await f.entries(), 'r')), f.out.join('\n'));
+    assert.equal(halts(await f.entries()).length, 0);
+  } finally {
+    for (const k of ['OWED_RACE_WT', 'OWED_RACE_DONE', 'OWED_RACE_NODE', 'OWED_RACE_CLI']) delete process.env[k];
+    await f.cleanup();
+  }
 });
