@@ -57,40 +57,75 @@ test('escape entries: must cite a merge of the node, by parent or owner, with a 
   assert.equal((s.escapes as { seq: number }[] | undefined)?.[0]?.seq, first);
 });
 
-test('decoys: commit-reveal is owner-only, binds the digest and the first dispatch; outcomes caught/escaped/pending', () => {
+const reveal = (p: unknown, by = 'owner:human') => ({ kind: 'decoy-reveal', by, channel: 'tty', ...(p as object) });
+const commitOf = (p: unknown) => ({ kind: 'decoy-commit', by: 'owner:human', channel: 'tty', digest: digestOf(p) });
+const payload = { nonce: '7f3a9c2e1b5d4f60aa', decoys: [{ node: 'a', defect: 'off-by-one in a' }, { node: 'b', defect: 'b ignores errors' }, { node: 'c', defect: 'c leaks handles' }] };
+
+test('decoy-commit: owner only, a sha256 hex digest, never the same digest twice', () => {
   const r = rig();
-  const payload = { nonce: '7f3a9c2e1b5d4f60aa', decoys: [{ node: 'a', defect: 'off-by-one in a' }, { node: 'b', defect: 'b ignores errors' }, { node: 'c', defect: 'c leaks handles' }] };
   const digest = digestOf(payload);
   assert.match(r.errors({ kind: 'decoy-commit', by: 'parent:main', digest }).join(), /insufficient permissions/);
+  assert.match(r.errors({ kind: 'decoy-commit', by: 'writer:a#1', digest }).join(), /insufficient permissions/);
   assert.match(r.errors({ kind: 'decoy-commit', by: 'owner:human', channel: 'tty', digest: 'not-hex' }).join(), /digest/);
-  const commit = r.add({ kind: 'decoy-commit', by: 'owner:human', channel: 'tty', digest });
-  assert.match(r.errors({ kind: 'decoy-commit', by: 'owner:human', channel: 'tty', digest }).join(), /already committed/);
-  // a is caught by a rejecting obs; b merges without any prior block (escaped); c is not dispatched yet.
-  r.dispatch('a'); r.submit('a'); const caughtAt = r.writes('a', 'fail');
-  r.dispatch('b'); r.submit('b'); r.writes('b', 'pass'); const escapedAt = r.merge('b');
-  const reveal = (p: unknown, by = 'owner:human') => ({ kind: 'decoy-reveal', by, channel: 'tty', ...(p as object) });
+  assert.match(r.errors({ kind: 'decoy-commit', by: 'owner:human', channel: 'tty', digest: digest.toUpperCase() }).join(), /digest/);
+  const seq = r.add(commitOf(payload));
+  assert.match(r.errors(commitOf(payload)).join(), /already committed/);
+  assert.deepEqual((r.state() as State & { decoyCommits?: unknown[] }).decoyCommits, [{ seq, digest, by: 'owner:human' }]);
+  assert.deepEqual(r.state().decoys, [], 'nothing is revealed by a commitment');
+});
+
+test('decoy-reveal: must hash to an earlier unrevealed commitment made before every listed node was first dispatched', () => {
+  const r = rig();
+  r.add(commitOf(payload));
+  r.dispatch('a');
   assert.match(r.errors(reveal({ ...payload, nonce: '7f3a9c2e1b5d4f60ab' })).join(), /does not hash to an unrevealed decoy-commit/);
   assert.match(r.errors(reveal({ ...payload, decoys: payload.decoys.slice(1) })).join(), /does not hash/);
   assert.match(r.errors(reveal(payload, 'parent:main')).join(), /insufficient permissions/);
   assert.match(r.errors(reveal({ nonce: 'short', decoys: payload.decoys })).join(), /nonce/);
   assert.match(r.errors(reveal({ ...payload, decoys: [] })).join(), /decoys/);
+  assert.match(r.errors(reveal({ ...payload, decoys: [{ node: 'a', defect: 'x', extra: 1 }] })).join(), /exactly \{node, defect\}/);
+  // Dispatching a after the commitment is fine; b and c were never dispatched.
+  r.add(reveal(payload));
+  assert.match(r.errors(reveal(payload)).join(), /unrevealed/, 'a commitment cannot be revealed twice');
+  // A commitment made after a listed node was first dispatched cannot be revealed.
+  const late = { nonce: 'late-nonce-0123456789', decoys: [{ node: 'a', defect: 'named after the fact' }] };
+  r.add(commitOf(late));
+  assert.match(r.errors(reveal(late)).join(), /first dispatched/);
+  const ghost = { nonce: 'ghost-nonce-0123456789', decoys: [{ node: 'zz', defect: 'no such node' }] };
+  r.add(commitOf(ghost));
+  assert.match(r.errors(reveal(ghost)).join(), /does not exist/);
+});
+
+test('decoy outcomes: caught by a rejecting obs or review block before merge, escaped by an unblocked merge, pending otherwise', () => {
+  const r = rig();
+  const commit = r.add(commitOf(payload));
+  // a is caught by a rejecting obs; b merges without any prior block (escaped); c is not dispatched yet.
+  r.dispatch('a'); r.submit('a'); const caughtAt = r.writes('a', 'fail');
+  r.dispatch('b'); r.submit('b'); r.writes('b', 'pass'); const escapedAt = r.merge('b');
   const revealSeq = r.add(reveal(payload));
   let decoys = r.state().decoys ?? [];
   assert.deepEqual(decoys.map(d => [d.node, d.outcome, d.decidedBy]), [['a', 'caught', caughtAt], ['b', 'escaped', escapedAt], ['c', 'pending', undefined]]);
   assert.ok(decoys.every(d => (d as { commit?: number }).commit === commit && (d as { reveal?: number }).reveal === revealSeq));
-  assert.match(r.errors(reveal(payload)).join(), /unrevealed/, 'a commitment cannot be revealed twice');
   // A revealed pending decoy keeps being judged: a review block before merge catches it.
   r.dispatch('c'); r.submit('c');
   const blockAt = r.add({ kind: 'review', by: 'reviewer:x', node: 'c', attempt: 1, obligation: 'review', key: 'rv-c', verdict: 'block', rank: 1 });
   decoys = r.state().decoys ?? [];
-  assert.deepEqual(decoys.find(d => d.node === 'c'), { ...decoys.find(d => d.node === 'c'), outcome: 'caught', decidedBy: blockAt });
-  // A commitment made after a listed node was first dispatched cannot be revealed.
-  const late = { nonce: 'late-nonce-0123456789', decoys: [{ node: 'b', defect: 'named after the fact' }] };
-  r.add({ kind: 'decoy-commit', by: 'owner:human', channel: 'tty', digest: digestOf(late) });
-  assert.match(r.errors(reveal(late)).join(), /first dispatched/);
-  const ghost = { nonce: 'ghost-nonce-0123456789', decoys: [{ node: 'zz', defect: 'no such node' }] };
-  r.add({ kind: 'decoy-commit', by: 'owner:human', channel: 'tty', digest: digestOf(ghost) });
-  assert.match(r.errors(reveal(ghost)).join(), /does not exist/);
+  assert.deepEqual(decoys.map(d => [d.node, d.outcome, d.decidedBy]), [['a', 'caught', caughtAt], ['b', 'escaped', escapedAt], ['c', 'caught', blockAt]]);
+});
+
+test('decoy outcomes are decided by the first event: a later merge keeps a catch, a later failure keeps an escape', () => {
+  const r = rig();
+  r.add(commitOf(payload));
+  // c: blocked by a review, the block is cleared, then c merges: still caught.
+  r.dispatch('c'); r.submit('c'); r.writes('c', 'pass');
+  const blockAt = r.add({ kind: 'review', by: 'reviewer:x', node: 'c', attempt: 1, obligation: 'review', key: 'rv-c', verdict: 'block', rank: 1 });
+  r.add({ kind: 'review', by: 'reviewer:x', node: 'c', attempt: 1, obligation: 'review', key: 'rv-c', verdict: 'ok', rank: 1 });
+  r.merge('c');
+  // b: merges cleanly, then an executor failure on b arrives after the merge: still escaped.
+  r.dispatch('b'); r.submit('b'); r.writes('b', 'pass'); const mergeB = r.merge('b');
+  r.add({ kind: 'obs', by: 'executor:owed', subject: 'b', obligation: 'writes', key: 'w-b-late', verdict: 'fail', exit: 1, durationMs: 1, commit: 'late', base: 'late' });
+  r.add(reveal(payload));
+  assert.deepEqual((r.state().decoys ?? []).map(d => [d.node, d.outcome, d.decidedBy]), [['a', 'pending', undefined], ['b', 'escaped', mergeB], ['c', 'caught', blockAt]]);
 });
 
 test('CLI: escape and decoy commands, owner channel, report Escapes section and escape rate', { timeout: 120_000 }, async () => {
