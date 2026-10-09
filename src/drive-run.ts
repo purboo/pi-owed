@@ -426,53 +426,63 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> => new Promise(re
  * `passMs`, whichever comes first. Exits 0 when idle (nothing open, nothing to dispatch) or after SIGINT/SIGTERM (or
  * `signal`) once the current action is done; a second signal exits 130 at once (with `once`, the first one does). A live driver refuses with
  * OwedError('refused').
- * In `--json` loop mode the last line is the exit record `{"event":"exit","code","reason","at","error"?}` (D17.2):
- * then a failure (drive threw, the lock refused) is that record plus the CLI exit code (refused 1, usage 2, else 3)
- * instead of a throw, so a background driver's log always ends with it (unless SIGKILL or a crash).
+ * In `--json` loop mode the last line is the exit record `{"event":"exit","code","reason","at","error"?}` (D17.2),
+ * written before the lock is released (D17a.2), so a released lock means the record is in the log. A failure (drive
+ * threw, the lock refused) is that record plus the CLI exit code (refused 1, usage 2, else 3) instead of a throw, so a
+ * background driver's log always ends with it (unless SIGKILL or a crash).
  */
 export async function drive(o: DriveOptions): Promise<number> {
   if (o.once || !o.json) return driveLoop(o, {});
-  const exit = (code: number, reason: ExitReason, error?: string): void => o.log(exitRecord(code, reason, error));
-  const end: { reason?: ExitReason } = {};
-  try { const code = await driveLoop(o, end); exit(code, end.reason ?? 'stopped'); return code; }
+  const end: LoopEnd = { record: true };
+  try { return await driveLoop(o, end); }
   catch (e) {
-    const code = e instanceof OwedError ? (e.code === 'refused' ? 1 : e.code === 'usage' ? 2 : 3) : 3;
-    exit(code, 'error', e instanceof Error ? e.message : String(e));
+    const code = errorCode(e);
+    // Written by driveLoop when it held the lock; else (no lock: Ledger.open or the lock refused) here.
+    if (!end.written) o.log(exitRecord(code, 'error', e instanceof Error ? e.message : String(e)));
     return code;
   }
 }
 const exitRecord = (code: number, reason: ExitReason, error?: string): string => JSON.stringify({ event: 'exit', code, reason, at: new Date().toISOString(), ...(error !== undefined ? { error } : {}) });
+const errorCode = (e: unknown): number => e instanceof OwedError ? (e.code === 'refused' ? 1 : e.code === 'usage' ? 2 : 3) : 3;
+/** `record`: write the exit record (`--json` loop); `reason`: how the loop ended; `written`: the record is out. */
+interface LoopEnd { record?: boolean; reason?: ExitReason; written?: boolean }
 
-async function driveLoop(o: DriveOptions, end: { reason?: ExitReason }): Promise<number> {
-  const ledger = await Ledger.open(o.cwd);
-  const lock = await acquireDriveLock(ledger.dir);
+async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
   const driver = new Driver(o), stop = new AbortController();
+  let lock: DriveLock | undefined;
   const say = (line: string, json: object) => o.log(o.json ? JSON.stringify(json) : line);
   const onAbort = () => { driver.stopping = true; stop.abort(); };
   let signals = 0;
   // Loop: the first SIGINT/SIGTERM stops after the current action; the second stops at once (D14.8). `--once`: the
   // first stops at once (D16.3). At once = end the running dsa invocations (hold passes SIGTERM to `owed attest`) and
-  // the process groups of direct attest children (attest then ends its checks, D16.2), release the lock, exit 130. The
+  // the process groups of direct attest children (attest then ends its checks, D16.2), write the killed line (and in a
+  // `--json` loop the exit record, before the release: D17a.2), release the lock, exit 130. The
   // ledger stays consistent: every entry is appended whole, and attest records its own observations. An in-process merge
   // is aborted first (D16a.1: its checks get SIGKILL; a stop between advanceTrunk and the append surfaces as CAS drift).
   // One stop request is one signal per process group (D16a.3): this path runs once (it ends in process.exit, which is
   // synchronous), killAll signals each pid of dsa's live set once, and directChildren holds only `owed attest` children
   // spawned by runProcess, never a dsa invocation, so the two sets are disjoint and no group is signalled twice.
+  // The handlers are installed before the lock is taken (D17a.6): in the loop a signal while starting stops it at its
+  // first check; with `once` it stops at once as above (no lock yet: nothing to release).
   const onSignal = () => {
     if (!o.once && ++signals === 1) { onAbort(); return; }
     driver.abort.abort();
     driver.dsa.killAll('SIGTERM');
     for (const pid of directChildren) { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
-    lock.releaseSync();
     say(o.once ? 'killed: signal, stopped at once' : 'killed: second signal, stopped at once', { event: 'killed' });
-    if (o.json && !o.once) o.log(exitRecord(130, 'killed'));
+    if (end.record && !end.written) { o.log(exitRecord(130, 'killed')); end.written = true; }
+    lock?.releaseSync();
     process.exit(130);
   };
-  o.signal?.addEventListener('abort', onAbort);
-  if (o.signal?.aborted) onAbort();
   const handle = o.handleSignals !== false;
   if (handle) { process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal); }
+  o.signal?.addEventListener('abort', onAbort);
+  if (o.signal?.aborted) onAbort();
+  let failure: { e: unknown } | undefined;
   try {
+    const ledger = await Ledger.open(o.cwd);
+    lock = await acquireDriveLock(ledger.dir);
+    if (!o.once && driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     if (o.once) { const r = await driver.pass(); if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
     const dsa = driver.dsa, cursorFile = join(ledger.dir, 'drive', 'cursor'), LIMIT = o.limit ?? 100;
     await mkdir(join(ledger.dir, 'drive'), { recursive: true });
@@ -525,9 +535,15 @@ async function driveLoop(o: DriveOptions, end: { reason?: ExitReason }): Promise
       }
       if (driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     }
-  } finally {
+  } catch (e) { failure = { e }; throw e; }
+  finally {
     if (handle) { process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); }
     o.signal?.removeEventListener('abort', onAbort);
-    await lock.release();
+    // D17a.2: the exit record precedes the release; it stays the last line (nothing is printed after it).
+    if (end.record && lock && !end.written) {
+      o.log(failure ? exitRecord(errorCode(failure.e), 'error', failure.e instanceof Error ? failure.e.message : String(failure.e)) : exitRecord(0, end.reason ?? 'stopped'));
+      end.written = true;
+    }
+    await lock?.release();
   }
 }
