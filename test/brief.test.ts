@@ -45,7 +45,7 @@ async function harness() {
 async function scenario() {
   const h = await harness(), { r, run, json, brief } = h;
   await h.init();
-  const dispatch = async (id: string) => (await json<{ worktree: string }>(r.cwd, ['dispatch', id])).worktree;
+  const dispatch = async (id: string) => (await json<{ worktree: string }>(r.cwd, ['dispatch', id, '--allow-overlap'])).worktree;
   const failSeq = (obs: Obs[], obligation: string) => obs.find(o => o.kind === 'obs' && o.obligation === obligation && o.verdict === 'fail')!.seq;
   const wa = await dispatch('a');
   await commitAt(wa, { 'a.txt': 'bad\n' }); await run(wa, ['submit', 'a']);
