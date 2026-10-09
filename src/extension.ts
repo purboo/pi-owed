@@ -7,10 +7,11 @@ import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
+import { adoptPrefixes, uncoveredDowngrades } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, renderDriveStart, renderDriveStatus, renderDriveStop } from './drive-bg.ts';
-import { oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
+import { allowanceLabel, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -160,15 +161,18 @@ export default function owed(pi: ExtensionAPI): void {
   tool('rule', 'Record a ruling for the applicable nodes.', Type.Object({ text: reason, nodes: Type.Union([Type.Literal('*'), Type.Array(node)]), as, cwd }), async (p, ctx, dir) => {
     const r = await ops.rule({ text: p.text, nodes: p.nodes, ...await actor(ctx, dir, p.as, `Ruling for ${JSON.stringify(p.nodes)}`, { Ruling: p.text }) }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
   });
-  tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades require owner UI confirmation.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), as, cwd }), async (p, ctx, dir) => {
+  tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades require owner UI confirmation unless an `allow` rule of the current plan covers them all (then the parent records them, labelled under allowance).', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), as, cwd }), async (p, ctx, dir) => {
     const read = await ops.readPlan({ cwd: dir, path: p.plan, rev: p.rev }), text = read.plan;
-    const downgrades = planDowngrades(await currentPlan(dir), parsePlan(text));
-    const who = p.as ?? (downgrades.length ? 'owner:human' : 'parent:pi');
-    if (downgrades.length && principal(who).role !== 'owner') throw new OwedError('Only owner may confirm plan downgrades');
+    const prior = await currentPlan(dir), next = parsePlan(text), downgrades = planDowngrades(prior, next);
+    // D21.3: downgrades that an allowance of the current plan covers need no owner; the parent records them.
+    const gaps = downgrades.length ? uncoveredDowngrades(prior, next, downgrades) : [];
+    const who = p.as ?? (gaps.length ? 'owner:human' : 'parent:pi');
+    if (gaps.length && principal(who).role !== 'owner') throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}`);
     const r = await ops.planSet({ ...await actor(ctx, dir, who, `Update plan ${oneLine(read.path)}${read.rev ? ` at ${read.rev}` : ''}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`), ...read });
     const pending = await ops.genesisPending({ cwd: dir });
     const warning = pending.length ? `Warning: genesis attest pending for ${pending.join(', ')}\n` : '';
-    return result(pending.length ? { ...r, warning: warning.trim() } : r, `${warning}${renderStatus(await ops.status({ cwd: dir }))}`);
+    const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.seq - 1 })).downgrades.find(x => x.seq === r.seq);
+    return result(pending.length ? { ...r, warning: warning.trim() } : r, `${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(await ops.status({ cwd: dir }))}`);
   });
   tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), after a UI confirmation showing the trunk commit, plan sha, node count and invariants. Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'owner:human', ['owner'], 'initialize the ledger');
@@ -204,15 +208,17 @@ export default function owed(pi: ExtensionAPI): void {
     const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${oneLine(p.node)}: ${p.items.map(oneLine).join(', ')}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`, { Reason: p.reason });
     const r = await ops.defer({ ...a, channel: 'pi-confirm', node: p.node, reason: p.reason, items }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
   });
-  tool('adopt', 'Owner adoption of trunk commits made outside owed (release commits, hotfixes): commit (default refs/heads/<trunk>) must equal the trunk ref and fast-forward the ledger trunk; invariants whose key changed are measured and a new failure refuses it. UI confirmation is required.', Type.Object({ commit: Type.Optional(Type.String({ minLength: 1, description: 'Commit to adopt; must equal refs/heads/<trunk> (the default).' })), note: Type.String({ minLength: 1, description: 'Why these commits are adopted (recorded).' }), as, cwd }), async (p, ctx, dir, signal) => {
-    const who = requireRole(p.as, 'owner:human', ['owner'], 'adopt trunk commits');
+  tool('adopt', 'Owner adoption of trunk commits made outside owed (release commits, hotfixes): commit (default refs/heads/<trunk>) must equal the trunk ref and fast-forward the ledger trunk; invariants whose key changed are measured and a new failure refuses it. UI confirmation is required; as parent:<id> (no dialog) only when every changed path lies under an `allow` adopt prefix of the plan.', Type.Object({ commit: Type.Optional(Type.String({ minLength: 1, description: 'Commit to adopt; must equal refs/heads/<trunk> (the default).' })), note: Type.String({ minLength: 1, description: 'Why these commits are adopted (recorded).' }), as, cwd }), async (p, ctx, dir, signal) => {
+    // D21.4: a parent may adopt (no dialog) only when the current plan has an `adopt` allowance; ops checks the paths.
+    const who = p.as ?? 'owner:human';
+    if (!(principal(who).role === 'owner' || (principal(who).role === 'parent' && adoptPrefixes(await currentPlan(dir)).length))) throw new OwedError('Only owner may adopt trunk commits');
     if (!p.note.trim()) throw new OwedError('adopt requires a note', 'usage');
     const v = await ops.adoptPreview({ cwd: dir, commit: p.commit });
     // Up to ADOPT_SHOWN paths one per line; beyond that, the exact command that lists them all.
     const shown = { items: v.changed.slice(0, ADOPT_SHOWN), ...(v.changed.length > ADOPT_SHOWN ? { more: `… +${v.changed.length - ADOPT_SHOWN} more paths; full list: git diff --no-renames --name-only ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}` } : {}) };
     const a = await actor(ctx, dir, who, `Adopt trunk ${oneLine(v.trunk)} ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}: ${v.commits} commit${v.commits === 1 ? '' : 's'} made outside owed\nThese changes were not reviewed through owed; adopting them makes ${v.commit.slice(0, 12)} the ledger trunk.`, { [`Changed paths (${v.changed.length})`]: shown, Note: p.note });
-    const r = await ops.adopt({ ...a, channel: 'pi-confirm', commit: v.commit, note: p.note, signal });
-    return result(r, `${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
+    const r = await ops.adopt({ ...a, commit: v.commit, note: p.note, signal });
+    return result(r, `${renderEntry(r.entry)}${r.allowance !== undefined ? `\nAdopted by ${r.entry.by} under allowance (plan #${r.allowance})` : ''}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
   });
   tool('escape', 'Record an escape: a defect found after a merge of node; merge is the seq of that merge entry (parent or owner).', Type.Object({ node, merge: Type.Integer({ minimum: 0, description: 'Seq of the merge entry of node.' }), class: Type.Union((['missing', 'false-pass', 'reuse', 'weak', 'waiver'] as const).map(c => Type.Literal(c))), note: reason, evidence: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'record escapes');

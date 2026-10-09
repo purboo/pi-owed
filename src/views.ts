@@ -2,7 +2,7 @@ import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntr
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
-import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual } from './reducer.ts';
+import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq } from './reducer.ts';
 import { genesisProgress } from './reducer.ts';
 import { OwedError } from './errors.ts';
 
@@ -25,6 +25,11 @@ export interface ReceiptCard {
   runs?: AttemptRuns;
   /** D23 receipts recorded on the merged node (informational), in ledger order; present only when there are any. */
   receipts?: EvidenceEntry[];
+  /**
+   * D21.5: when the writes item fails (✘/⛔), the candidate's changed paths outside the node's writes; `allowance` = S
+   * when an allowance of the current plan lets the parent widen writes to cover all of them.
+   */
+  outOfWrites?: { paths: string[]; allowance?: number };
 }
 export interface StatusView {
   trunk: State['trunk']; nodes: Record<string, NodeState>; groups: Record<string, string[]>;
@@ -92,11 +97,13 @@ export function renderAdoptPreview(p: AdoptPreview, note: string): string {
 /** prior..commit, commit count, changed paths and note of one adoption. */
 export function adoptionText(a: AdoptionView): string {
   const paths = a.changed.length > 20 ? [...a.changed.slice(0, 20), `… (+${a.changed.length - 20} more)`] : a.changed;
-  return `#${a.seq} ${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : ''} adopted ${a.prior.slice(0, 12)}..${a.commit.slice(0, 12)} (${plural(a.commits, 'commit')} made outside owed, not reviewed by owed); changed: ${paths.join(', ') || 'none'}; note: ${a.note}`;
+  const who = a.allowance !== undefined ? `adopted by ${a.by} under allowance (plan #${a.allowance})` : `${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : ''} adopted`;
+  return `#${a.seq} ${who} ${a.prior.slice(0, 12)}..${a.commit.slice(0, 12)} (${plural(a.commits, 'commit')} made outside owed, not reviewed by owed); changed: ${paths.join(', ') || 'none'}; note: ${a.note}`;
 }
 export function receipt(s: State, entries: readonly Entry[], node: string): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
+  const outOfWrites = outsideWrites(s, node);
   return { node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
     blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: clearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}) })),
@@ -106,6 +113,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string): Rece
     ...(halted(s, node) ? { halt: halted(s, node) } : {}),
     ...(s.plan.exec ? { exec: execText(s.plan) } : {}),
     ...(entries.some(e => e.kind === 'evidence' && e.node === node && e.merge !== undefined) ? { receipts: entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.node === node && e.merge !== undefined) } : {}),
+    ...(outOfWrites ? { outOfWrites } : {}),
     ...(n.slot?.open && n.runs.some(r => r.attempt === n.slot!.attempt) ? { runs: n.runs.find(r => r.attempt === n.slot!.attempt) } : {}),
     ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) };
 }
@@ -115,6 +123,21 @@ export function execText(plan: Plan): string {
   const parts = [...(plan.exec?.wrap?.length ? [`wrap ${plan.exec.wrap.map(w => oneLine(word(w))).join(' ')}`] : []), ...(plan.exec?.env && Object.keys(plan.exec.env).length ? [`env ${Object.keys(plan.exec.env).sort().join(', ')}`] : [])];
   return `Exec: ${parts.join(' · ')}`;
 }
+/** D21.5: out-of-writes paths of the current candidate when its writes item fails, and the allowance that covers them all. */
+function outsideWrites(s: State, node: string): ReceiptCard['outOfWrites'] {
+  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node), writes = n?.items.find(i => i.obligation === 'writes');
+  if (!n?.candidate || !spec || !writes || (writes.mark !== '✘' && writes.mark !== '⛔')) return undefined;
+  const paths = n.candidate.changed.filter(p => !spec.writes.some(w => p.startsWith(w))), seq = allowanceSeq(s);
+  return paths.length ? { paths, ...(seq !== undefined && writesAllowed(s.plan, node, paths) ? { allowance: seq } : {}) } : undefined;
+}
+/** Out-of-writes paths shown in the receipt card (D21.5); the JSON keeps them all. */
+const OUT_OF_WRITES_SHOWN = 20;
+function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
+  const shown = o.paths.slice(0, OUT_OF_WRITES_SHOWN).map(oneLine).join(', '), more = o.paths.length > OUT_OF_WRITES_SHOWN ? `, … +${o.paths.length - OUT_OF_WRITES_SHOWN} more` : '';
+  return `Out-of-writes paths: ${shown}${more}${o.allowance !== undefined ? `; the parent may widen writes in the plan (allowance plan #${o.allowance})` : ''}`;
+}
+/** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
+export const allowanceLabel = (d: { by: string; allowance?: number }): string => d.allowance === undefined ? '' : `by ${d.by} under allowance (plan #${d.allowance})`;
 export function statusView(s: State, entries: Entry[] = []): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
@@ -167,7 +190,7 @@ function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
 export function renderReceipt(v: ReceiptCard): string {
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${HALT_CLEAR}`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${HALT_CLEAR}`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
   return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
@@ -211,7 +234,7 @@ export function renderReport(v: Report): string {
     ...list('Status changes', v.changes.map(c => `${c.subject}/${c.obligation}: ${c.before ? statusNames[c.before] ?? c.before : 'new'} → ${statusNames[c.after] ?? c.after}`)),
     ...list('Active blocks', v.blocks.map(b => `#${b.seq} ${b.node}/${b.obligation} (${b.kind === 'exec' ? 'execution' : 'review'}, rank ${b.rank}): ${b.clear}`)),
     ...list('Waivers', v.waivers.map(entryLine)),
-    ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.by} ${i.node}: ${i.what}`))),
+    ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.allowance !== undefined ? allowanceLabel(d) : d.by} ${i.node}: ${i.what}`))),
     ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
     ...list('Owner decisions needed', v.decisions.map(itemText)),
     ...list('Owner actions', v.ownerActions.map(entryLine)),
