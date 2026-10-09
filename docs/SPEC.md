@@ -564,10 +564,19 @@ confirmation), SIGINT, SIGTERM and SIGHUP are handled: the first aborts the
 operation (§7.8: the running check's process group is killed, nothing more
 starts), the CLI prints `Aborted: <signal>` to stderr and exits 130 (SIGINT) or
 143 (SIGTERM/SIGHUP); a second signal while aborting exits at once with the same
-code. So `hold machine -- owed attest` releases the lease only after the checks
-ended. The handlers are removed when the command ends. SIGKILL cannot be handled:
-checks already started then keep running in their own process groups until their
-own end (their timeout timer died with owed) — out of scope.
+code as the first. So `hold machine -- owed attest` releases the lease only after
+the checks ended. Exit codes describe the ledger outcome (`owed drive` reads them,
+D14.3): a signal that arrives after the last abort point, when the operation
+completed, does not change the exit code — the normal result is printed, stderr
+says `Signal <SIG> arrived after the operation completed; nothing was aborted`,
+and the exit is the operation's normal code (0/1); only an operation that was
+actually aborted exits 130/143. The handlers are removed when the command ends.
+SIGKILL cannot be handled: checks already started then keep running in their own
+process groups until their own end (their timeout timer died with owed) — out of
+scope. A second signal exits without removing the running job's temporary
+worktree (`owed-run-*/tree` under the temp directory): `git worktree remove --force
+<path>` removes it; once the directory is gone (deleted, or by the temp cleaner),
+`git worktree prune` (also run by `owed gc`) drops its registration.
 
 ## 11. pi extension
 

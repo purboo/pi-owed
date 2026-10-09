@@ -90,11 +90,12 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     }
     if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }
     io.log(opts.has('json') ? JSON.stringify(result) : text!);
-    // A signal that arrived after the last abort point: the result above is recorded; the exit still reports the signal.
-    if(got.signal) { io.error(`Aborted: ${got.signal}`); return signalExit(got.signal); }
+    // A signal after the last abort point: the operation completed and is recorded. The exit code describes the ledger
+    // outcome (`owed drive` reads it, D14.3), so it stays the normal one; only an aborted operation exits 130/143.
+    if(got.signal) io.error(`Signal ${got.signal} arrived after the operation completed; nothing was aborted`);
     return exit;
   } catch(e) {
-    if(got.signal || (e instanceof OwedError && e.code === 'aborted')) { io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
+    if(e instanceof OwedError && e.code === 'aborted') { io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
     const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3;
   } finally { got.unhandle?.(); }
 }

@@ -213,6 +213,25 @@ test('D16.4: the owed_attest tool passes its abort signal: an aborted call is a 
   } finally { await r.cleanup(); }
 });
 
+test('D16.2: a signal after attest completed keeps the normal exit code (0/1) and says nothing was aborted', { timeout: 60_000 }, async () => {
+  const r = await submitted(() => ({}));
+  const cwd = process.cwd();
+  try {
+    const before = SIGNALS.map(s => process.listenerCount(s)), out: string[] = [], errors: string[] = [];
+    let emitted = 0;
+    // io.log runs after the operation returned and before main() removes its handlers: deliver SIGTERM there (to the
+    // handler, in-process; no real signal is sent, so a missing handler cannot end the test runner).
+    const io = { log: (t: string) => { out.push(t); if (!emitted++) assert.ok(process.emit('SIGTERM', 'SIGTERM'), 'the attest handler is installed'); }, error: (t: string) => { errors.push(t); } };
+    process.chdir(r.cwd);
+    assert.equal(await main(['attest', 'a'], io), 0, errors.join('\n'));
+    assert.equal(emitted, 1);
+    assert.deepEqual(errors, ['Signal SIGTERM arrived after the operation completed; nothing was aborted']);
+    assert.match(out.join('\n'), /writes/);
+    assert.equal(obsOf(await entries(r.cwd), 'writes').length, 1, 'the completed attest is recorded');
+    assert.deepEqual(SIGNALS.map(s => process.listenerCount(s)), before);
+  } finally { process.chdir(cwd); await r.cleanup(); }
+});
+
 test('D16.2: main() removes its signal handlers after attest/merge (in-process calls repeat)', { timeout: 60_000 }, async () => {
   const r = await submitted(() => ({}));
   try {
