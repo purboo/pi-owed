@@ -291,6 +291,32 @@ decoyCommit(o: {cwd, digest, as, channel}): Promise<Entry>
 decoyReveal(o: {cwd, payload: string, as, channel}): Promise<Entry>   // payload = reveal JSON text
 ```
 
+`gc(o: {cwd, dryRun?, as?, channel?}): Promise<GcResult>` reclaims finished
+attempts. For every `dispatch` entry whose attempt is merged or abandoned (never
+the current open slot) it removes the slot worktree with `git worktree remove`
+(no `--force`) and deletes the branch `owed/<node>/<attempt>` with `git branch -D`,
+then runs `git worktree prune` (also run first, so a hand-deleted slot directory
+does not pin its branch). Before removing anything of a finished attempt it pins
+each commit of that attempt's `submit` entries that the ledger's trunk commit does
+not reach, with `git update-ref refs/owed/keep/<node>/<attempt>/<submit-seq>
+<commit>` (one ref per submit entry; create-only, an existing ref is left alone),
+because attribution reruns (§7) re-execute old blocks on those commits; this also
+applies when the branch is already gone but the commit still exists. gc never
+deletes `refs/owed/keep/*`. If a pin fails the worktree and branch are kept; a
+submitted commit that is already missing is reported in `kept`. It runs under the `dispatch` lock. A finished worktree
+that is locked or dirty (`git status --porcelain` shows tracked or untracked
+non-ignored changes) is kept together with its branch; a branch checked out in
+another worktree is kept; an unregistered directory at the slot path is left
+untouched. Attempts whose worktree and branch are both gone are skipped, so gc
+is idempotent. Result: `{dryRun, removed: {node, attempt, worktree, branch, pinned}[],
+kept: {node, attempt, worktree, branch, reason}[], entry?}`; in `removed`,
+`worktree`/`branch` is `null` for a part that was already absent, and `pinned`
+lists the keep refs created (in dry-run: that would be created). When it
+removes or pins something (not in dry-run) it appends one `note` entry (by the caller,
+default `parent:cli`) naming what was removed and pinned; there is no new entry kind and
+the reducer is unaffected. `dryRun` reports the same classification without
+changing git or the ledger.
+
 ## 9. Views
 
 - **Receipt card** (`why`): per obligation: ✔ measured (executor pass, with log
@@ -345,8 +371,8 @@ decoyReveal(o: {cwd, payload: string, as, channel}): Promise<Entry>   // payload
 `why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
 `escape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note T [--evidence T]`
 (parent by default, or owner), `decoy commit <digest>`, `decoy reveal <file.json>`
-(owner commands), and `decoy digest <file.json>` (prints the digest to commit;
-no ledger write, no owner confirmation).
+(owner commands), `decoy digest <file.json>` (prints the digest to commit;
+no ledger write, no owner confirmation), and `gc [--dry-run]`.
 `--as role:id` sets the principal (default `parent:cli`; `submit` defaults to
 the slot's writer when run inside its worktree). Owner commands prompt on a TTY
 unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused

@@ -9,9 +9,9 @@ import { OwedError } from './errors.ts';
 import { renderReceipt, renderStatus, renderReport, renderEntry, renderBrief } from './views.ts';
 import type { Entry } from './types.ts';
 import type { Channel, EscapeClass, Principal, Role } from './types.ts';
-const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arguments] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> | rule <text> --nodes a,b|*\ndispatch <node> | submit <node> [--commit X] | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--reason TEXT]\nmerge <node> | status | why <node> | report [--since seq|ISO] | brief [--since seq|ISO] | verify\nescape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note TEXT [--evidence TEXT]\ndecoy commit <digest> | decoy reveal <file.json> | decoy digest <file.json>\nowner actions require TTY confirmation or --i-am-owner (flag weak confirmation).`;
+const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arguments] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> | rule <text> --nodes a,b|*\ndispatch <node> | submit <node> [--commit X] | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--reason TEXT]\nmerge <node> | status | why <node> | report [--since seq|ISO] | brief [--since seq|ISO] | verify\nescape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note TEXT [--evidence TEXT]\ndecoy commit <digest> | decoy reveal <file.json> | decoy digest <file.json>\ngc [--dry-run]  (reclaim worktrees/branches of merged or abandoned attempts)\nowner actions require TTY confirmation or --i-am-owner (flag weak confirmation).`;
 const values = new Set(['as','commit','nodes','rank','note','ack-rulings','obligation','reason','accept-risk','since','merge','class','evidence']);
-const flags = new Set(['json','i-am-owner','rerun','ok','block','help']);
+const flags = new Set(['json','i-am-owner','rerun','ok','block','help','dry-run']);
 function usage(message:string): never { throw new OwedError(message,'usage'); }
 export async function main(argv: string[]): Promise<number> {
   try {
@@ -19,10 +19,10 @@ export async function main(argv: string[]): Promise<number> {
     for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key)) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); } }
     if (opts.has('help')) { console.log(HELP); return 0; }
     const cmd=args.shift(); if(!cmd) usage(HELP);
-    const allowed:Record<string,string[]> = { init:[],plan:[],rule:['nodes'],dispatch:[],submit:['commit'],attest:['rerun'],review:['ok','block','rank','note','ack-rulings','obligation'],waive:['reason','accept-risk'],defer:['reason'],abandon:['reason'],merge:[],status:[],why:[],report:['since'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[] };
+    const allowed:Record<string,string[]> = { init:[],plan:[],rule:['nodes'],dispatch:[],submit:['commit'],attest:['rerun'],review:['ok','block','rank','note','ack-rulings','obligation'],waive:['reason','accept-risk'],defer:['reason'],abandon:['reason'],merge:[],status:[],why:[],report:['since'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[],gc:['dry-run'] };
     if (!allowed[cmd]) usage(`Unknown command ${cmd}`);
     for (const k of opts.keys()) if (!['json','as','i-am-owner'].includes(k) && !allowed[cmd]!.includes(k)) usage(`${cmd} does not support --${k}`);
-    const count = cmd === 'waive' || cmd === 'defer' || cmd === 'decoy' ? 2 : ['status','report','brief','verify'].includes(cmd) ? 0 : 1;
+    const count = cmd === 'waive' || cmd === 'defer' || cmd === 'decoy' ? 2 : ['status','report','brief','verify','gc'].includes(cmd) ? 0 : 1;
     if(args.length < count || (cmd !== 'defer' && args.length !== count)) usage(`${cmd} wrong number of arguments`);
     if(cmd === 'decoy' && !['commit','reveal','digest'].includes(args[0]!)) usage('decoy requires commit <digest>, reveal <file.json> or digest <file.json>');
     const value = (key:string,required=false):string|undefined => { const v=opts.get(key); if(required && (typeof v !== 'string' || !v.trim())) usage(`Required: --${key}`); return typeof v === 'string' ? v : undefined; };
@@ -57,8 +57,14 @@ export async function main(argv: string[]): Promise<number> {
       case 'escape': { const cls=value('class',true)!; if(!['missing','false-pass','reuse','weak','waiver'].includes(cls)) usage('--class must be missing, false-pass, reuse, weak or waiver'); result=await ops.escape({...actor,node,merge:integer('merge',true)!,class:cls as EscapeClass,note:value('note',true)!,evidence:value('evidence')}); break; }
       case 'decoy': { const file=resolve(cwd,args[1]!); if(args[0] === 'digest') { const r=ops.decoyDigest(await readFile(file,'utf8')); result=r; text=r.digest; } else if(args[0] === 'commit') result=await ops.decoyCommit({...actor,channel:channel!,digest:args[1]!}); else result=await ops.decoyReveal({...actor,channel:channel!,payload:await readFile(file,'utf8')}); break; }
       case 'verify': { const r=await ops.verify({cwd}); result=r; text=r.ok ? `Ledger verification passed: ${r.entries} entries` : `Ledger verification failed:${r.error}`; exit=r.ok ? 0 : 3; break; }
+      case 'gc': { const r=await ops.gc({...actor,dryRun:opts.has('dry-run')}); result=r; text=renderGc(r); break; }
     }
     if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }
     console.log(opts.has('json') ? JSON.stringify(result) : text); return exit;
   } catch(e) { const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); console.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3; }
+}
+function renderGc(r: ops.GcResult): string {
+  const removed = r.removed.map(i => `  ${i.node}#${i.attempt}: ${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(ref => `${r.dryRun ? 'would pin' : 'pinned'} ${ref}`)].filter(Boolean).join(', ')}`);
+  const kept = r.kept.map(i => `  ${i.node}#${i.attempt} (${i.branch}): ${i.reason}`);
+  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
 }

@@ -125,6 +125,17 @@ The ledger lives under the Git common directory in `owed/`, shared by the reposi
 
 This is a local, same-user trust boundary. It guards against mistakes and lazy cheating through normal tools, not a malicious user with shell access. The hash chain detects edits; it does not prevent them, and a user who controls the files can rewrite the chain. Principal names are workflow assertions, not authenticated accounts. Check commands execute locally with the current user's permissions.
 
+## Reclaiming worktrees
+
+Each dispatch leaves a worktree under `.owed/wt/<node>-<attempt>` and a branch `owed/<node>/<attempt>`. Once an attempt is merged or abandoned, `owed gc` reclaims them:
+
+```sh
+owed gc --dry-run   # list what would be removed and what is kept, change nothing
+owed gc             # remove clean finished worktrees and their branches, then git worktree prune
+```
+
+The current open slot is never touched. A finished worktree with uncommitted or untracked (non-ignored) changes is kept and reported as dirty, together with its branch, so no work is lost; clean or commit it and run `gc` again. Branches of abandoned attempts are deleted even though they were never merged. Before a branch goes, every commit submitted in that attempt that trunk does not already reach is pinned under `refs/owed/keep/<node>/<attempt>/<submit-seq>`, so `git gc` cannot prune it and a later attribution rerun of an old failure still works; `gc` never deletes `refs/owed/keep/*`. Each run that removes something appends a `note` entry to the ledger; a second run removes nothing. `--json` returns `{removed:[{node,attempt,worktree,branch,pinned}], kept:[{node,attempt,worktree,branch,reason}]}`, where `worktree`/`branch` in `removed` is `null` when that part was already gone and `pinned` lists the keep refs created (or, with `--dry-run`, that would be created).
+
 ## Development
 
 ```sh
