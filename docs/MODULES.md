@@ -24,6 +24,15 @@ export function driveConfig(plan: Plan): DriveConfig;  // plan.drive or the defa
 ```
 `parsePlan` parses the optional `drive:` block (SPEC §12.2): defaults filled when present, unknown keys and bad types are errors; `planDowngrades` ignores it.
 
+D19 (SPEC §3.1): `parsePlan` also parses the optional `worktrees:` block (`plan.worktrees` only when present, filled with defaults) and node `type`; `planDowngrades` ignores both.
+```ts
+export const WORKTREE_DEFAULTS: WorktreesConfig;       // {root: '.owed/wt', branch: 'owed/{node}/{attempt}'}
+export const DEFAULT_NODE_TYPE = 'feat';
+export function worktreesConfig(plan: Plan): WorktreesConfig;   // plan.worktrees or the defaults
+export function branchTemplateErrors(template: string, label: string): string[];   // needs {node} and {attempt}; only {type} besides
+export function expandBranch(template: string, spec: Pick<NodeSpec, 'id' | 'type'>, attempt: number): string;
+```
+
 ## src/ledger.ts  (leaf io)
 ```ts
 export function ledgerDir(cwd: string): Promise<string>;  // OWED_DIR env, else `${git common dir}/owed`; creates it
@@ -104,6 +113,8 @@ export function reviewerBase(state: State, node: string): number;   // reviewer 
 `ops.ts` implements SPEC §8 using the modules above (every mutation: compute outside the lock where slow, then `withLock` → `read` → `reduce` → `validateDraft` → `append`). Merge holds a second lock `merge` for the whole merge (serial queue) and the ledger lock only for guard + `advanceTrunk` + append. `adopt` uses the same discipline: preconditions before any effect, invariant jobs under the `merge` lock, then under the ledger lock a re-check of plan, ledger trunk and refs/heads/<trunk>, the guard on the prospective observations, and one append (observations only when refused). `status` adds `drift` (git `trunkDrift`) when the trunk ref differs from the ledger trunk. `views.ts` renders `StatusView`, `ReceiptCard`, `Report` as plain text (Chinese labels, as in SPEC §9) and JSON. `cli.ts` exports `main(argv: string[], io?: CliIo): Promise<number>` (`io` = `{ask?, log, error}`: tests inject the owner's TTY answer and capture output; default is the terminal). `views.ts` exports `oneLine` (dialog/prompt escaping shared by the CLI adopt preview and the pi owner dialogs).
 
 Dispatch worktrees: `<mainRoot>/.owed/wt/<node>-<attempt>` (main worktree root, never the toplevel of the cwd, so dispatching from inside a slot worktree does not nest), branch `owed/<node>/<attempt>`; ops adds `.owed/` to `<git common dir>/info/exclude`. Dispatch refuses writes overlapping an open slot unless `allowOverlap` (ops-level check; `reducer.overlapping(state, node)` is shared with the status view). `views.ts` also owns `renderGc`. `ops.launch` (idempotent on identical content, `{entry, created}`), `ops.send`, `ops.halt` record driver entries (SPEC §12.3). `views.ts` exports `reviewPacket(state, node, n)`, `reviewRuns`, `reviewObligations` (SPEC §12.6, pure; `n` attempt-global, local k = n - reviewerBase) and renders halts/launches in status, why and report (SPEC §12.4). `src/types.ts` holds `RunView` (SPEC §12.1) for the later `src/drive.ts`. The dispatch packet (blob) is markdown: node title/brief, writes, checks (commands), red requirement, in-scope rulings, the worktree path and the rule "commit your work; do not edit files outside writes; owed will run the checks itself".
+
+D19 (SPEC §8.1, §9.1): `ops.dispatch` takes the branch and worktree from a private `slotLayout(mainRoot, plan, spec, attempt)` (template expansion, `git check-ref-format --branch`, root resolution, the exclude line or none for a root outside the main worktree), all before any effect. `git.advanceTrunk` refuses a dirty trunk worktree with `git.trunkDirtyText(path)`; `git.trunkElsewhere(cwd, trunk)` returns the path of a worktree other than the main one that has the trunk checked out, which `ops.status` exposes as `StatusView.trunkWorktree` and `renderStatus` prints with `views.trunkWorktreeText`. The reducer ignores node `type` when deciding whether a plan change invalidates a candidate.
 
 ## src/dsa.ts, src/drive.ts, src/drive-run.ts  (driver, SPEC §12)
 ```ts

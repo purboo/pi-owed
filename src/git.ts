@@ -141,7 +141,7 @@ export async function advanceTrunk(cwd: string, trunk: string, from: string, to:
     if (!fields.includes(`branch ${ref}`)) continue;
     const path = fields.find(f => f.startsWith('worktree '))!.slice(9);
     // Untracked files are left to `merge --ff-only`, which refuses to overwrite them.
-    if (!await isClean(path, false)) throw new OwedError('trunk worktree is dirty');
+    if (!await isClean(path, false)) throw new OwedError(trunkDirtyText(path));
     if (!await isAncestor(cwd, from, to)) throw new OwedError('trunk advance is not a fast-forward');
     if (await revParse(cwd, ref) !== from) throw new OwedError('trunk changed (CAS)');
     const r = await git(path, ['merge', '--ff-only', to], { allowFail: true });
@@ -149,6 +149,17 @@ export async function advanceTrunk(cwd: string, trunk: string, from: string, to:
   }
   const r = await git(cwd, ['update-ref', ref, to, from], { allowFail: true });
   if (r.code) throw new OwedError(`trunk changed (CAS): ${r.stderr}`);
+}
+/** D19.5: refusal of a merge whose trunk worktree has uncommitted changes. */
+export const trunkDirtyText = (path: string): string => `trunk worktree ${path} has uncommitted changes: commit them there, or detach it (git -C ${path} switch --detach), then retry`;
+/**
+ * D19.5: path of the worktree that has refs/heads/<trunk> checked out when it is not the main worktree (merges
+ * fast-forward it there), else undefined. A layout whose main worktree cannot be located reports nothing.
+ */
+export async function trunkElsewhere(cwd: string, trunk: string): Promise<string | undefined> {
+  let main: string; try { main = await realOr(await mainRoot(cwd)); } catch { return undefined; }
+  const tree = (await listWorktrees(cwd)).find(w => w.branch === `refs/heads/${trunk}`);
+  return tree && await realOr(tree.path) !== main ? tree.path : undefined;
 }
 export async function addWorktree(cwd: string, path: string, branch: string, base: string): Promise<void> { await git(cwd, ['worktree', 'add', '-b', branch, path, base]); }
 export async function materialize(cwd: string, commit: string): Promise<{ path: string; dispose(): Promise<void> }> {
