@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { attestJobs, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
 import { dispatchPacket, oneLine, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
-import type { AttemptRuns, LaunchEntry, NodeState, Plan, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
+import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
 export type Action =
@@ -97,6 +97,13 @@ export function reviewerLaunch(s: State, node: string, n: number, project: strin
 export const WRITER_INTERRUPTED = 'You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.';
 export const submitMessage = (node: string): string => `commit your work and run \`owed submit ${node}\``;
 export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node}\` for reviews you already recorded on this candidate, finish the rest.`;
+/**
+ * Ending of a halt for a request dsa rejected (D15.1): the id and bytes of a recorded run or send are fixed for the
+ * attempt and dsa answers the same id the same way, so clearing the halt only re-halts; a new attempt is the recovery.
+ */
+export const rejectedFixed = (node: string): string => `this attempt's request is fixed; fix the cause (plan, agent, model), then \`owed abandon ${node}\` to start a new attempt`;
+/** Halt reason of a run or send dsa rejected: dsa's reason, then `rejectedFixed`. */
+export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${rejectedFixed(node)}`;
 export const fencedMessage = (reason: string): string => `Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`;
 /** Repair follow-up: what to do, the notes of active review blocks, then the `owed why` card of the node. */
 export function repairMessage(s: State, node: string): string {
@@ -212,14 +219,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 3: a launch whose run is absent: re-launch with the stored bytes and the same rid; a rejection seen by this process halts (D9).
   for (const l of live) {
     const rejected = opts.rejected.get(l.rid);
-    if (rejected !== undefined) return halt(`dsa rejected run ${l.rid}: ${rejected}`);
+    if (rejected !== undefined) return halt(rejectedHalt(id, 'run', l.rid, rejected));
     if (view(l).state === 'absent') return relaunch(s, opts, l) ?? halt(`cannot re-launch ${l.rid}: the stored spec bytes (blob ${l.spec}) were not supplied and the rebuilt spec differs`);
   }
   // Row 4: a recorded send not confirmed applied in this process: re-send the same id and bytes.
   for (const x of ar.sends) {
     if (opts.applied.has(x.send) || !live.some(l => l.rid === x.rid)) continue;
     const refused = opts.rejected.get(x.send);
-    if (refused !== undefined) return halt(`dsa rejected send ${x.send}: ${refused}`);
+    if (refused !== undefined) return halt(rejectedHalt(id, 'send', x.send, refused));
     const bytes = opts.blobs?.get(x.message);
     if (bytes === undefined || sha256(bytes) !== x.message) return halt(`cannot re-send ${x.send}: the stored message bytes (blob ${x.message}) were not supplied`);
     return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send };
@@ -230,7 +237,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
   // Row 7: writer sealed non-ok.
-  if (wSealed && wStatus !== 'ok') return halt(`writer run ${writer.rid} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}`);
+  if (wSealed && wStatus !== 'ok') return halt(`writer run ${writer.rid} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
   // Row 8: writer done without a current candidate (after a rebase: the rebase follow-up first).
   if (wSealed && !c) {
     const rb = slot.rebase;
@@ -273,7 +280,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const awaiting = reviewObligations(s, id, k).filter(o => n.items.find(i => i.obligation === o)?.status === 'D' && !entries.some(e => e.kind === 'review' && e.node === id && e.by === who && e.obligation === o && e.key === c.keys[o]));
       if (!awaiting.length) continue;
       if (statusOf(v) === 'unknown' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
-      return halt(`review-missing: reviewer run ${l.rid} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}`);
+      return halt(`review-missing: reviewer run ${l.rid} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${statusOf(v) === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
     }
     // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale
     // block (recorded on an earlier candidate) is left to the slot re-review: wait only while a reviewer run of this
@@ -296,12 +303,22 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // "nothing to do": halt needing the owner with every non-E item and active block.
     if (wSealed && !reviewing) {
       const items = n.items.filter(i => i.status !== 'E').map(i => `${i.obligation} ${i.mark} ${i.detail}`);
-      const blocks = n.blocks.filter(b => b.state === 'active').map(b => `#${b.seq}`);
+      const blocks = n.blocks.filter(b => b.state === 'active').map(b => blockText(s, c, b));
       return halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}`, 'owner');
     }
   }
   // Row 18: the running writer was fenced after the last steer.
   return fenced();
+}
+
+/**
+ * One active block in a `stalled:` halt (D15.3): `#seq <obligation> by <principal> rank <r> on candidate #C`, or `stale`
+ * instead of `on candidate #C` when it was recorded on another key than the candidate's. `rank` is omitted for an
+ * execution block (it has none).
+ */
+export function blockText(s: State, c: { seq: number; keys: Record<string, string> }, b: Block): string {
+  const by = entriesOf(s).find(e => e.seq === b.seq)?.by ?? '?';
+  return `#${b.seq} ${b.obligation} by ${by}${b.rank !== undefined ? ` rank ${b.rank}` : ''} ${b.key === c.keys[b.obligation] ? `on candidate #${c.seq}` : 'stale'}`;
 }
 
 /** Re-launch action of a recorded launch: rebuilt bytes when they hash to the stored spec, else the supplied stored bytes. */

@@ -175,7 +175,12 @@ owed drive --once     # one pass (also the pi tool owed_drive)
 
 The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,
-`owed why`) waits for a human action on the node.
+`owed why`) waits for a human action on the node. A ruling, submit, review,
+rebase or abandon on the node clears a halt, and the next pass resumes. A halt
+from dsa rejecting a run or send is the exception: that request's id and bytes
+are fixed for the attempt and dsa rejects it again, so fix the cause (plan,
+agent, model) and run `owed abandon <node>`; the driver then dispatches a new
+attempt.
 
 ## Development
 
