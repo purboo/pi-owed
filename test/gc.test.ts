@@ -12,33 +12,47 @@ type Item = { node: string; attempt: number; worktree: string | null; branch: st
 type Gc = { removed: Item[]; kept: Item[] };
 const hasBranch = async (cwd: string, b: string) => (await git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true })).code === 0;
 const ids = (items: Item[]) => items.map(i => `${i.node}#${i.attempt}`).sort();
+async function call<T>(cwd: string, args: string[]): Promise<T> { const out = await cli(cwd, [...args, '--json']); assert.equal(out.code, 0, `${args.join(' ')}\n${out.stderr}\n${out.stdout}`); return JSON.parse(out.stdout) as T; }
 
-test('gc reclaims merged and abandoned attempts, keeps dirty and open slots, and is idempotent', { timeout: 120_000 }, async () => {
+/** a#1 merged (clean); b#1 abandoned with an untracked file; b#2 abandoned (clean, committed work); b#3 open slot. */
+async function scenario() {
   const r = await repo();
-  try {
-    await seed(r.cwd); const plan = join(r.root, 'plan.yaml'); await writeFile(plan, planText);
-    async function call<T>(cwd: string, args: string[]): Promise<T> { const out = await cli(cwd, [...args, '--json']); assert.equal(out.code, 0, `${args.join(' ')}\n${out.stderr}\n${out.stdout}`); return JSON.parse(out.stdout) as T; }
-    const ledgerLines = async () => (await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8')).split('\n').filter(Boolean);
-    await call(r.cwd, ['init', plan, '--i-am-owner']);
-    // a#1: merged (clean). b#1: abandoned with a dirty worktree. b#2: abandoned (clean). b#3: open slot.
-    const a = await call<DispatchPacket>(r.cwd, ['dispatch', 'a']);
-    await commitAt(a.worktree, { 'test/a.cjs': 'module.exports=1;', 'test/a.test.cjs': checkTest('a', 1) });
-    await call(a.worktree, ['submit', 'a']); await call(r.cwd, ['attest', 'a']); await call(r.cwd, ['merge', 'a']);
-    const b1 = await call<DispatchPacket>(r.cwd, ['dispatch', 'b']);
-    await writeFile(join(b1.worktree, 'scratch.txt'), 'uncommitted work');
-    await call(r.cwd, ['abandon', 'b', '--reason', 'dirty retry']);
-    const b2 = await call<DispatchPacket>(r.cwd, ['dispatch', 'b']);
-    await commitAt(b2.worktree, { 'test/b.test.cjs': checkTest('b', 1) });
-    await call(r.cwd, ['abandon', 'b', '--reason', 'clean retry']);
-    const b3 = await call<DispatchPacket>(r.cwd, ['dispatch', 'b']);
-    const before = (await ledgerLines()).length;
+  try { return await build(r); } catch (e) { await r.cleanup(); throw e; }
+}
+async function build(r: Awaited<ReturnType<typeof repo>>) {
+  await seed(r.cwd); const plan = join(r.root, 'plan.yaml'); await writeFile(plan, planText);
+  const ledgerLines = async () => (await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8')).split('\n').filter(Boolean);
+  await call(r.cwd, ['init', plan, '--i-am-owner']);
+  const a = await call<DispatchPacket>(r.cwd, ['dispatch', 'a']);
+  await commitAt(a.worktree, { 'test/a.cjs': 'module.exports=1;', 'test/a.test.cjs': checkTest('a', 1) });
+  await call(a.worktree, ['submit', 'a']); await call(r.cwd, ['attest', 'a']); await call(r.cwd, ['merge', 'a']);
+  const b1 = await call<DispatchPacket>(r.cwd, ['dispatch', 'b']);
+  await writeFile(join(b1.worktree, 'scratch.txt'), 'uncommitted work');
+  await call(r.cwd, ['abandon', 'b', '--reason', 'dirty retry']);
+  const b2 = await call<DispatchPacket>(r.cwd, ['dispatch', 'b']);
+  await commitAt(b2.worktree, { 'test/b.test.cjs': checkTest('b', 1) });
+  await call(r.cwd, ['abandon', 'b', '--reason', 'clean retry']);
+  const b3 = await call<DispatchPacket>(r.cwd, ['dispatch', 'b']);
+  return { r, a, b1, b2, b3, ledgerLines, before: (await ledgerLines()).length };
+}
 
+test('gc --dry-run classifies finished attempts without touching git or the ledger', { timeout: 120_000 }, async () => {
+  const { r, a, b1, b2, b3, ledgerLines, before } = await scenario();
+  try {
     const dry = await call<Gc>(r.cwd, ['gc', '--dry-run']);
     assert.deepEqual(ids(dry.removed), ['a#1', 'b#2']);
     assert.deepEqual(ids(dry.kept), ['b#1', 'b#3']);
     for (const p of [a, b1, b2, b3]) { assert.ok(existsSync(p.worktree), p.worktree); assert.ok(await hasBranch(r.cwd, p.branch), p.branch); }
     assert.equal((await ledgerLines()).length, before, 'dry run must not write the ledger');
+    const text = await cli(r.cwd, ['gc', '--dry-run']);
+    assert.equal(text.code, 0, text.stderr); assert.match(text.stdout, /^Would remove\n/); assert.match(text.stdout, /b#1 \(owed\/b\/1\): .*dirty/);
+    assert.doesNotMatch(text.stdout, /Recorded/);
+  } finally { await r.cleanup(); }
+});
 
+test('gc removes merged and abandoned attempts, keeps dirty and open slots, records one note and is idempotent', { timeout: 120_000 }, async () => {
+  const { r, a, b1, b2, b3, ledgerLines, before } = await scenario();
+  try {
     const run = await call<Gc>(r.cwd, ['gc']);
     assert.deepEqual([...run.removed].sort((x, y) => `${x.node}#${x.attempt}`.localeCompare(`${y.node}#${y.attempt}`)), [
       { node: 'a', attempt: 1, worktree: a.worktree, branch: a.branch },
@@ -63,25 +77,30 @@ test('gc reclaims merged and abandoned attempts, keeps dirty and open slots, and
     assert.equal((await ledgerLines()).length, before + 1);
     const text = await cli(r.cwd, ['gc']);
     assert.equal(text.code, 0); assert.match(text.stdout, /Removed: nothing/); assert.match(text.stdout, /b#1 \(owed\/b\/1\): .*dirty/); assert.match(text.stdout, /b#3 \(owed\/b\/3\): .*open/);
-
-    // Once the dirty attempt is cleaned it becomes reclaimable; the open slot never is.
-    await git(b1.worktree, ['clean', '-fdq']);
-    const textRun = await cli(r.cwd, ['gc']);
-    assert.equal(textRun.code, 0, textRun.stderr); assert.match(textRun.stdout, /^Removed\n {2}b#1: worktree .*, branch owed\/b\/1$/m); assert.match(textRun.stdout, /Recorded/);
-    assert.ok(!existsSync(b1.worktree)); assert.ok(!await hasBranch(r.cwd, b1.branch));
-    assert.ok(existsSync(b3.worktree)); assert.ok(await hasBranch(r.cwd, b3.branch));
-    assert.equal((await ledgerLines()).length, before + 2);
-
-    // The ops API is the same operation (guarded so a missing export is an assertion failure).
-    const ops = await import('../src/ops.ts') as unknown as { gc?: (o: { cwd: string; dryRun?: boolean }) => Promise<Gc> };
-    assert.equal(typeof ops.gc, 'function', 'ops.gc must be exported');
-    const api = await ops.gc!({ cwd: r.cwd, dryRun: true });
-    assert.deepEqual(api.removed, []); assert.deepEqual(ids(api.kept), ['b#3']);
     await call(r.cwd, ['verify']);
   } finally { await r.cleanup(); }
 });
 
-test('gc handles a slot directory deleted by hand and rejects bad usage', { timeout: 120_000 }, async () => {
+test('gc reclaims a kept dirty attempt once it is cleaned but never the open slot (CLI and ops.gc)', { timeout: 120_000 }, async () => {
+  const { r, b1, b3, ledgerLines, before } = await scenario();
+  try {
+    await git(b1.worktree, ['clean', '-fdq']);
+    const textRun = await cli(r.cwd, ['gc']);
+    assert.equal(textRun.code, 0, textRun.stderr);
+    assert.match(textRun.stdout, /^ {2}b#1: worktree .*, branch owed\/b\/1$/m); assert.match(textRun.stdout, /Recorded/);
+    assert.ok(!existsSync(b1.worktree)); assert.ok(!await hasBranch(r.cwd, b1.branch));
+    assert.ok(existsSync(b3.worktree)); assert.ok(await hasBranch(r.cwd, b3.branch));
+    assert.equal((await ledgerLines()).length, before + 1);
+    // The ops API is the same operation (guarded so a missing export is an assertion failure).
+    const ops = await import('../src/ops.ts') as unknown as { gc?: (o: { cwd: string; dryRun?: boolean }) => Promise<Gc> };
+    assert.equal(typeof ops.gc, 'function', 'ops.gc must be exported');
+    const api = await ops.gc!({ cwd: r.cwd });
+    assert.deepEqual(api.removed, []); assert.deepEqual(ids(api.kept), ['b#3']);
+    assert.equal((await ledgerLines()).length, before + 1);
+  } finally { await r.cleanup(); }
+});
+
+test('gc recovers a branch whose slot directory was deleted by hand and rejects bad usage', { timeout: 120_000 }, async () => {
   const r = await repo();
   try {
     await seed(r.cwd); const plan = join(r.root, 'plan.yaml'); await writeFile(plan, planText);
