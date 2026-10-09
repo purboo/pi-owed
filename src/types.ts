@@ -82,7 +82,8 @@ export interface ObsEntry extends Base {
   merging?: string;          // node whose `owed merge` appended this obs (merge-result checks/invariants)
   note?: string;
 }
-export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number }
+/** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
+export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent' }
 export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[] }
 export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string }
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
@@ -140,6 +141,8 @@ export interface Block {
   rank?: number;
   state: 'active' | 'cleared' | 'flaky';
   clearedBy?: number;
+  /** Copied from a review block recorded with `needs: 'parent'` (D18): resolved by a later ruling naming the node (`parentRuling`). */
+  needs?: 'parent';
 }
 /** Latest rebase of a slot: `previous` is the last candidate submitted before a rebase (the patch reviewers already saw). */
 export interface SlotRebase { seq: number; from: string; base: string; previous?: { base: string; commit: string; submit: number } }

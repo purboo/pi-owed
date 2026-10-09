@@ -147,8 +147,9 @@ export async function attest(o: Context & { node: string; rerun?: boolean; signa
     return { node:o.node, observations, accepted:card.accepted, receipt:card };
   },'attest');
 }
-export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review' }): Promise<Entry> {
-  return mutate(o,s => { const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings }; });
+/** `needs: 'parent'` marks a block that needs a parent ruling (D18); the ledger refuses it on an ok verdict. */
+export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent' }): Promise<Entry> {
+  return mutate(o,s => { const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings,...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
 }
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel }): Promise<Entry> { return mutate(o,s => ({kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key:candidate(s,o.node).candidate!.keys[o.obligation] ?? '',reason:o.reason,accept_risk:o.accept_risk})); }
 export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items,reason:o.reason})); }
