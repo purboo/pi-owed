@@ -2,7 +2,7 @@ import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, I
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
-import { NO_RULINGS, overlapping, halted, driveReviewer } from './reducer.ts';
+import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase } from './reducer.ts';
 import { OwedError } from './errors.ts';
 
 export interface ReceiptCard {
@@ -87,7 +87,7 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
   const ready = Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), overlaps: Record<string, string[]> = {};
   for (const id of ready) { const o = overlapping(s, id); if (o.length) overlaps[id] = o; }
   const halts = Object.keys(s.nodes).flatMap(id => halted(s, id) ?? []), launches: Record<string, LaunchEntry[]> = {};
-  for (const h of halts) if (h.needs === 'owner') pending.owner!.push({ subject: h.node, obligation: 'driver-halt', key: '', status: 'D', mark: '⏸', discharger: 'owner', evidence: [h.seq], detail: `driver halted attempt ${h.attempt} (#${h.seq}): ${h.reason}` });
+  for (const h of halts) if (h.needs === 'owner') pending.owner!.push({ subject: h.node, obligation: 'driver-halt', key: '', status: 'D', mark: '⏸', discharger: 'owner', evidence: [h.seq], detail: `driver halted attempt ${h.attempt} (#${h.seq}): ${oneLine(h.reason)}` });
   for (const n of Object.values(s.nodes)) { const runs = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined; if (runs?.launches.length) launches[n.id] = runs.launches; }
   return { trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, launches };
 }
@@ -130,7 +130,7 @@ function entryLine(e: Entry): string {
     case 'adopt': return `${head} adopted trunk ${e.trunk} ${e.prior.slice(0, 12)}..${e.commit.slice(0, 12)} (${plural(e.commits, 'commit')} made outside owed, ${plural(e.changed.length, 'changed path')}): ${e.note}`;
     case 'launch': return `${head} recorded driver launch of ${e.node} attempt ${e.attempt} ${e.role} ${e.rid}`;
     case 'send': return `${head} recorded driver ${e.sendKind} (${e.reason}) to ${e.rid}: ${e.send}`;
-    case 'halt': return `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${e.reason}`;
+    case 'halt': return `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${oneLine(e.reason)}`;
     case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
     case 'decoy-reveal': return `${head} revealed decoys ${e.decoys.map(d => d.node).join(', ')}`;
     default: return `${head} ${e.kind}`;
@@ -272,21 +272,32 @@ export function renderBrief(v: Brief): string {
 }
 
 // ---------- driver review packet (SPEC §12, D5) ----------
-/** Reviewer runs the driver launches for the current candidate: one covers review and closure-review; `review.count` > 1 needs that many distinct reviewers. 0 when no review obligation exists. */
+/**
+ * Number of reviewer runs the driver launches for the current candidate: one covers review and closure-review;
+ * `review.count` > 1 needs that many distinct reviewers; 0 when no review obligation exists. Their attempt-global
+ * run numbers are n = reviewerBase(state, node) + 1 … + reviewRuns(state, node) (SPEC §12.3).
+ */
 export function reviewRuns(s: State, node: string): number {
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
   if (!n?.candidate || !spec) return 0;
   const closure = n.items.some(i => i.obligation === 'closure-review');
   return Math.max(spec.review.count, closure ? 1 : 0);
 }
-/** Review obligations recorded by reviewer run `n` (1-based): `review` while n <= review.count, `closure-review` by run 1. */
+/**
+ * Review obligations recorded by the attempt-global reviewer run `n` on the current candidate, through the local
+ * index k = n - reviewerBase: `review` while k <= review.count, `closure-review` by k = 1; none for a run of an
+ * earlier candidate (k < 1) or beyond the candidate's runs.
+ */
 export function reviewObligations(s: State, node: string, n: number): ('review' | 'closure-review')[] {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
-  if (!st?.candidate || !spec) return [];
-  return [...(n <= spec.review.count ? ['review' as const] : []), ...(n === 1 && st.items.some(i => i.obligation === 'closure-review') ? ['closure-review' as const] : [])];
+  if (!st?.candidate || !spec || !Number.isInteger(n)) return [];
+  const k = n - reviewerBase(s, node);
+  if (k < 1) return [];
+  return [...(k <= spec.review.count ? ['review' as const] : []), ...(k === 1 && st.items.some(i => i.obligation === 'closure-review') ? ['closure-review' as const] : [])];
 }
 /**
- * Task text of the driver's n-th reviewer run on the node's current candidate (pure): node, attempt, candidate,
+ * Task text of the driver's reviewer run `n` (attempt-global, SPEC §12.3) on the node's current candidate (pure;
+ * usable before the launch entry for `n` exists): node, attempt, candidate,
  * base, brief, writes, obligations with required count/rank, rulings in scope, the exact `owed review` commands
  * for reviewer `reviewer:drive-<node>-<attempt>-<n>`, and the rules (inspect the diff, edit nothing, reply with seqs).
  */
@@ -294,8 +305,8 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
   if (!st || !spec) throw new OwedError(`Node ${node} does not exist`);
   if (!st.slot?.open || !st.candidate) throw new OwedError(`Node ${node} has no open candidate`);
-  const runs = reviewRuns(s, node);
-  if (!Number.isInteger(n) || n < 1 || n > runs) throw new OwedError(`Node ${node} has ${runs} reviewer run(s); run ${n} does not exist`);
+  const runs = reviewRuns(s, node), first = reviewerBase(s, node) + 1, k = n - first + 1;
+  if (!Number.isInteger(n) || k < 1 || k > runs) throw new OwedError(`Node ${node} candidate #${st.candidate.seq} has ${runs} reviewer run(s)${runs ? ` (n = ${first}${runs > 1 ? `..${first + runs - 1}` : ''})` : ''}; run ${n} does not exist for it`);
   const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, n);
   const rulings = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
   const rulingsItem = st.items.find(i => i.obligation === 'rulings');
@@ -304,7 +315,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : 'measured by owed';
   const mine = reviewObligations(s, node, n);
   const commands = mine.flatMap(o => rank(o) > 2 ? [`(${o} requires rank ${rank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${rank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
-  return [`# Review ${spec.title ?? node} (node ${node}, attempt ${attempt}, reviewer run ${n} of ${runs})`,
+  return [`# Review ${spec.title ?? node} (node ${node}, attempt ${attempt}, reviewer run ${k} of ${runs} for this candidate, n = ${n})`,
     `Node: ${node}; attempt: ${attempt}`,
     `Candidate: ${commit} (submit #${st.candidate.seq})`,
     `Base: ${base}`,

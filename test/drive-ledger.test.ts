@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
 import { parsePlan, planDowngrades, driveConfig, DRIVE_DEFAULTS } from '../src/plan.ts';
-import { reduce, validateDraft, halted, projectId, runId, runLabels, driveReviewer } from '../src/reducer.ts';
-import { renderStatus, renderReceipt, renderReport, reviewPacket, reviewRuns, statusView, receipt } from '../src/views.ts';
+import { reduce, validateDraft, halted, projectId, runId, runLabels, driveReviewer, nextReviewerN, reviewerBase } from '../src/reducer.ts';
+import { renderStatus, renderReceipt, renderReport, reviewPacket, reviewRuns, reviewObligations, statusView, receipt } from '../src/views.ts';
 import { sha256 } from '../src/canon.ts';
 import type { Draft, Entry, Plan, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
@@ -138,6 +138,7 @@ test('refusals: non-parent, wrong attempt, malformed fields leave the ledger unc
     await refused(r.cwd, () => launch({ rid: 'owed:000000000000:a:1:writer' }), /launch rid must be/);
     await refused(r.cwd, () => launch({ rid: `${rid}:1` }), /launch rid must be/);
     await refused(r.cwd, () => launch({ role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer', 0), labels: runLabels(p, 'a', 1, 'reviewer') }), /launch rid must be/);
+    await refused(r.cwd, () => launch({ role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer'), labels: runLabels(p, 'a', 1, 'reviewer') }), /launch rid must be .*:<n> \(n >= 1; reviewer runs always carry n\)/);
     await refused(r.cwd, () => launch({ labels: { ...labels, extra: 'x' } }), /launch labels must be/);
     await refused(r.cwd, () => launch({ labels: { ...labels, role: 'reviewer' } }), /launch labels must be/);
     const send = (o: Partial<Parameters<typeof ops.send>[0]>) => ops.send({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, rid, sendKind: 'follow-up', message: 'm', reason: 'repair', ...o });
@@ -157,7 +158,7 @@ test('refusals: non-parent, wrong attempt, malformed fields leave the ledger unc
     const raw = (d: object) => validateDraft(now, { by: 'parent:drive', ...d } as Draft);
     assert.deepEqual(raw({ kind: 'halt', node: 'a', attempt: 1, reason: 'x', needs: 'human' }), []);
     assert.match(raw({ kind: 'halt', node: 'a', attempt: 1, reason: 'x', needs: 'human', extra: 1 }).join(), /halt has unknown fields: extra/);
-    assert.match(raw({ kind: 'launch', node: 'a', attempt: 1, role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer'), spec: 'nothex', labels: runLabels(p, 'a', 1, 'reviewer') }).join(), /launch spec must be a blob hash/);
+    assert.match(raw({ kind: 'launch', node: 'a', attempt: 1, role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer', 1), spec: 'nothex', labels: runLabels(p, 'a', 1, 'reviewer') }).join(), /launch spec must be a blob hash/);
     assert.match(raw({ kind: 'launch', node: 'a', attempt: 1, role: 'writer', rid, spec: sha256(spec), labels }).join(), /already recorded/);
     const good = { kind: 'send', node: 'a', attempt: 1, rid, sendKind: 'steer', message: sha256('m'), reason: 'fenced' };
     assert.deepEqual(raw({ ...good, send: `${rid}:steer:${now.seq + 1}` }), []);
@@ -236,6 +237,33 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     assert.match(text, /Reply with the ledger seqs/);
     assert.throws(() => reviewPacket(state, 'a', 2), /run 2 does not exist/);
     assert.throws(() => reviewPacket(state, 'b', 1), /no open candidate/);
+    // Repair cycle: candidate 1 gets reviewer run n=1 (launched after building its packet), the reviewer blocks,
+    // the writer resubmits, and candidate 2 gets n=2 with fresh rid and reviewer id; n=1 now belongs to candidate 1.
+    const p = projectId(state);
+    assert.equal(nextReviewerN(state, 'a'), 1);
+    const l1 = await ops.launch({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer', 1), spec: '{"n":1}', labels: runLabels(p, 'a', 1, 'reviewer') });
+    assert.equal(nextReviewerN((await load(r.cwd)).state, 'a'), 2);
+    assert.ok(reviewPacket((await load(r.cwd)).state, 'a', 1).includes('--as reviewer:drive-a-1-1 '), 'the launched run still builds its packet for its candidate');
+    await ops.review({ cwd: r.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'block', rank: 1, note: 'fix it' });
+    await submitA(r.cwd, a.worktree, { 'a/x.txt': '2\n', 'closure/c.txt': '0\n' });
+    const s2 = (await load(r.cwd)).state, c2 = s2.nodes.a!.candidate!;
+    assert.ok(c2.seq > l1.entry.seq);
+    assert.equal(reviewerBase(s2, 'a'), 1);
+    assert.equal(nextReviewerN(s2, 'a'), 2);
+    assert.equal(reviewRuns(s2, 'a'), 1, 'candidate 2 does not touch the closure: one run');
+    const t2 = reviewPacket(s2, 'a', 2);
+    assert.ok(t2.split('\n').includes(`Candidate: ${c2.commit} (submit #${c2.seq})`));
+    assert.ok(t2.split('\n').includes(`  owed review a --as reviewer:drive-a-1-2 --ok|--block --rank 1 --ack-rulings ${rule.seq} --note "..."`), t2);
+    assert.match(t2, /reviewer run 1 of 1 for this candidate, n = 2/);
+    assert.doesNotMatch(t2, /closure-review --ack/);
+    assert.deepEqual(reviewObligations(s2, 'a', 2), ['review']);
+    assert.deepEqual(reviewObligations(s2, 'a', 1), [], 'n=1 is a run of candidate 1');
+    assert.throws(() => reviewPacket(s2, 'a', 1), /run 1 does not exist/);
+    assert.throws(() => reviewPacket(s2, 'a', 3), /run 3 does not exist/);
+    await ops.launch({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer', 2), spec: '{"n":2}', labels: runLabels(p, 'a', 1, 'reviewer') });
+    const s3 = (await load(r.cwd)).state;
+    assert.equal(nextReviewerN(s3, 'a'), 3);
+    assert.ok(reviewPacket(s3, 'a', 2).includes('--as reviewer:drive-a-1-2 '), 'the run launched after the submit belongs to candidate 2');
   } finally { await r.cleanup(); }
   // Two reviews required, no closure touched, no rulings: run 2 records only review, with its own id and rank.
   const r2 = await fixture({ ...base, nodes: [base.nodes[0], { ...base.nodes[1], writes: ['b/'] }] });
@@ -251,6 +279,18 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     assert.doesNotMatch(one + two, /closure-review|--ack-rulings/);
     assert.match(two, /reviewer run 2 of 2/);
     assert.match(one, /Rulings in scope: none/);
+    // Two reviewers per candidate: candidate 1 used n=1,2; after a resubmit candidate 2 has n=3,4.
+    const p = projectId(state);
+    for (const n of [1, 2]) await ops.launch({ cwd: r2.cwd, as: drive, node: 'b', attempt: 1, role: 'reviewer', rid: runId(p, 'b', 1, 'reviewer', n), spec: `{"n":${n}}`, labels: runLabels(p, 'b', 1, 'reviewer') });
+    await commitAt(b.worktree, { 'b/y.txt': 'y2\n' });
+    await ops.submit({ cwd: b.worktree, node: 'b', as: { role: 'writer', id: 'b#1' } });
+    const s2 = (await load(r2.cwd)).state;
+    assert.deepEqual([reviewerBase(s2, 'b'), nextReviewerN(s2, 'b'), reviewRuns(s2, 'b')], [2, 3, 2]);
+    assert.ok(reviewPacket(s2, 'b', 3).split('\n').includes('  owed review b --as reviewer:drive-b-1-3 --ok|--block --rank 2 --note "..."'));
+    assert.ok(reviewPacket(s2, 'b', 4).split('\n').includes('  owed review b --as reviewer:drive-b-1-4 --ok|--block --rank 2 --note "..."'));
+    assert.match(reviewPacket(s2, 'b', 4), /reviewer run 2 of 2 for this candidate, n = 4/);
+    for (const n of [1, 2, 5]) { assert.throws(() => reviewPacket(s2, 'b', n), new RegExp(`n = 3\\.\\.4\\); run ${n} does not exist`)); assert.deepEqual(reviewObligations(s2, 'b', n), []); }
+    assert.deepEqual([reviewObligations(s2, 'b', 3), reviewObligations(s2, 'b', 4)], [['review'], ['review']]);
   } finally { await r2.cleanup(); }
 });
 
