@@ -84,7 +84,7 @@ test('English extension descriptions, output, slash command and owner confirmati
   const r = await repo();
   try {
     const h = harness(r.cwd);
-    assert.equal(h.tools.size, 12);
+    for (const name of ['status', 'why', 'report', 'dispatch', 'submit', 'attest', 'review', 'merge', 'rule', 'plan', 'waive', 'defer']) assert.ok(h.tools.has(`owed_${name}`), `includes owed_${name}`);
     for (const tool of h.tools.values()) english({ name: tool.name, label: tool.label, description: tool.description, parameters: tool.parameters }, 'tool metadata');
     for (const command of h.commands.values()) english(command.description, 'command description');
     assert.equal((await h.call('status')).isError, true);

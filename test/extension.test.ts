@@ -28,7 +28,7 @@ test('registers direct typed tools and command; status uses ctx.cwd; guards beco
   const r = await fixture();
   try {
     const h = harness(r.cwd);
-    assert.equal(h.tools.size, 12);
+    for (const name of ['status', 'why', 'report', 'dispatch', 'submit', 'attest', 'review', 'merge', 'rule', 'plan', 'waive', 'defer']) assert.ok(h.tools.has(`owed_${name}`), `includes owed_${name}`);
     for (const t of h.tools.values()) { assert.equal(t.exposure, 'direct'); assert.equal((t.parameters as { type?: string }).type, 'object'); }
     const status = await h.call('status'); assert.match(JSON.stringify(status.content), /Trunk main/); assert.ok(status.details);
     const missing = await h.call('why', { node: 'missing' }); assert.equal(missing.isError, true); assert.match(JSON.stringify(missing.content), /does not exist/);
