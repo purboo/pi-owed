@@ -9,6 +9,7 @@ import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
 import { OwedError } from './errors.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
+import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, renderDriveStart, renderDriveStatus, renderDriveStop } from './drive-bg.ts';
 import { oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
@@ -70,6 +71,13 @@ const ADOPT_SHOWN = 50;
 function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
 
 export default function owed(pi: ExtensionAPI): void {
+  // Wake-ups of the background driver (D17.7): one follower per driver log; the session gets one follow-up message per
+  // poll that saw a halt, a question, a refusal or the driver's end. session_shutdown clears the timers only.
+  const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }));
+  if (typeof pi.on === 'function') {
+    pi.on('session_start', async (_event, ctx) => { await watch.attach(ctx.cwd).catch(() => undefined); });
+    pi.on('session_shutdown', () => { watch.stopAll(); });
+  }
   // `signal`: the tool call's abort signal; attest, merge and adopt pass it to ops, which then end their checks (D16.4).
   function tool<S extends TSchema>(name: string, description: string, parameters: S, run: (p: Static<S>, ctx: ExtensionContext, dir: string, signal?: AbortSignal) => Promise<ReturnType<typeof result>>) {
     pi.registerTool({ name: `owed_${name}`, label: `owed ${name}`, description, parameters, exposure: 'direct', executionMode: 'sequential',
@@ -182,7 +190,18 @@ export default function owed(pi: ExtensionAPI): void {
     const a = await actor(ctx, dir, who, `Reveal decoys from ${oneLine(p.file!)}: ${decoys.map(d => oneLine(d.node)).join(', ')}\nThe revealed list must match an earlier unrevealed commitment; outcomes become part of the escape metrics.`);
     const r = await ops.decoyReveal({ ...a, channel: 'pi-confirm', payload }); return result(r, renderEntry(r));
   });
-  tool('drive', 'One pass of the owed driver (`owed drive --once`) as parent:drive: dispatch ready nodes, launch writers and reviewers through pi-durable-subagents (>= 1.0.27), send follow-ups, attest under `hold machine --shared --no-wait`, merge, rebase, halt for decisions. It never answers questions, waives, changes the plan or forces restarts. A long-running loop (`owed drive` without --once) belongs in a terminal or a `systemd-run --user` unit, not inside a tool or dsa call. Refused while another driver runs for the repository.', Type.Object({ max: Type.Optional(Type.Integer({ minimum: 1, description: 'Concurrent open attempts (overrides drive.max).' })), cwd }), async (p, _ctx, dir) => {
+  tool('drive', 'The owed driver as parent:drive: dispatch ready nodes, launch writers and reviewers through pi-durable-subagents (>= 1.0.27), send follow-ups, attest under `hold machine --shared --no-wait`, merge, rebase, halt for decisions. It never answers questions, waives, changes the plan or forces restarts. action once (default): one pass (`owed drive --once`). To run the DAG to completion use action start: a detached background driver (`owed drive --detach`; like a loop in a terminal or a `systemd-run --user` unit, never a long loop inside a tool or dsa call) that survives pi exiting; this session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or the driver exits, so do not poll status. action status reports the background driver; action stop stops it after its current action (now: at once). Refused while another driver runs for the repository.', Type.Object({ action: Type.Optional(Type.Union([Type.Literal('once'), Type.Literal('start'), Type.Literal('status'), Type.Literal('stop')], { description: 'once (default): one pass; start: background driver with wake-ups; status; stop.' })), max: Type.Optional(Type.Integer({ minimum: 1, description: 'Concurrent open attempts (overrides drive.max); action once or start.' })), now: Type.Optional(Type.Boolean({ description: 'action stop: stop at once (second SIGTERM after 1 s) instead of after the current action.' })), cwd }), async (p, _ctx, dir) => {
+    const action = p.action ?? 'once';
+    if (p.now && action !== 'stop') throw new OwedError('now is only valid with action stop', 'usage');
+    if (p.max !== undefined && (action === 'status' || action === 'stop')) throw new OwedError('max is only valid with action once or start', 'usage');
+    if (action === 'start') {
+      const r = await driveStart({ cwd: dir, max: p.max });
+      // Follow the fresh log from its start (it was rotated for this driver): nothing it wrote before this is missed.
+      watch.follow({ log: r.log, repo: r.repo, pid: r.pid, ...(r.start ? { start: r.start } : {}), from: 0 });
+      return result(r, `${renderDriveStart(r)}\nThis session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or it exits; do not poll status.`);
+    }
+    if (action === 'status') { const r = await driveStatus({ cwd: dir }); return result(r, renderDriveStatus(r)); }
+    if (action === 'stop') { const r = await driveStop({ cwd: dir, now: !!p.now }); return result(r, renderDriveStop(r)); }
     const r = await driveOnce({ cwd: dir, max: p.max });
     const text = [...r.lines, ...(r.error ? [`Refused: ${r.error}`] : [])].join('\n') || 'nothing to do';
     return r.error ? { ...result(r, text), isError: true } : result(r, text);
@@ -191,7 +210,7 @@ export default function owed(pi: ExtensionAPI): void {
     try {
       const parts = args.trim().split(/\s+/);
       let text: string;
-      if (!args.trim() || args.trim() === 'status') { text = renderStatus(await ops.status(ctx)); const live = await liveRunLines(ctx.cwd).catch(() => []); if (live.length) text += `\nDriver runs in dsa:\n${live.join('\n')}`; }
+      if (!args.trim() || args.trim() === 'status') { text = renderStatus(await ops.status(ctx)); const live = await liveRunLines(ctx.cwd).catch(() => []); if (live.length) text += `\nDriver runs in dsa:\n${live.join('\n')}`; const bg = await driverLine(ctx.cwd).catch(() => undefined); if (bg) text += `\n${bg}`; }
       else if (parts.length === 2 && parts[0] === 'why') text = renderReceipt(await ops.why({ cwd: ctx.cwd, node: parts[1]! }));
       else throw new OwedError('Usage: /owed or /owed why <node>', 'usage');
       ctx.ui.notify(text, 'info');

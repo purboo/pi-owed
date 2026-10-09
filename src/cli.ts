@@ -5,14 +5,15 @@ import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { drive } from './drive-run.ts';
+import { driveStart, driveStatus, driveStop, renderDriveStart, renderDriveStatus, renderDriveStop } from './drive-bg.ts';
 import { parsePlan } from './plan.ts';
 import { OwedError } from './errors.ts';
 import { renderReceipt, renderStatus, renderReport, renderEntry, renderBrief, renderGc, renderAdoptPreview } from './views.ts';
 import type { Entry } from './types.ts';
 import type { Channel, EscapeClass, Principal, Role } from './types.ts';
-const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arguments] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> [--rev COMMIT] | rule <text> --nodes a,b|*\ndispatch <node> [--allow-overlap] | submit <node> [--commit X] | rebase <node> | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--note TEXT]\nmerge <node> | adopt [--commit X] --note TEXT (owner: record trunk commits made outside owed) | status | why <node> | report [--since seq|ISO] | brief [--since seq|ISO] | verify\nescape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note TEXT [--evidence TEXT]\ndecoy commit <digest> | decoy reveal <file.json> | decoy digest <file.json>\ngc [--dry-run]  (parent/owner: reclaim worktrees/branches of merged or abandoned attempts)\ndrive [--once] [--max N]  (run the mechanical loop with pi-durable-subagents >= 1.0.27 until idle; --once: one pass; one driver per repository)\nowner actions require TTY confirmation or --i-am-owner (flag weak confirmation).`;
+const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arguments] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> [--rev COMMIT] | rule <text> --nodes a,b|*\ndispatch <node> [--allow-overlap] | submit <node> [--commit X] | rebase <node> | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--note TEXT]\nmerge <node> | adopt [--commit X] --note TEXT (owner: record trunk commits made outside owed) | status | why <node> | report [--since seq|ISO] | brief [--since seq|ISO] | verify\nescape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note TEXT [--evidence TEXT]\ndecoy commit <digest> | decoy reveal <file.json> | decoy digest <file.json>\ngc [--dry-run]  (parent/owner: reclaim worktrees/branches of merged or abandoned attempts)\ndrive [--once] [--max N]  (run the mechanical loop with pi-durable-subagents >= 1.0.27 until idle; --once: one pass; one driver per repository)\ndrive --detach [--max N] | drive --status | drive --stop [--now]  (background driver: start it detached, logging to .git/owed/drive/log.jsonl; report it; stop it after its current action, --now at once)\nowner actions require TTY confirmation or --i-am-owner (flag weak confirmation).`;
 const values = new Set(['max','as','commit','nodes','rank','note','ack-rulings','obligation','reason','accept-risk','since','merge','class','evidence','rev']);
-const flags = new Set(['json','i-am-owner','rerun','ok','block','help','dry-run','allow-overlap','once']);
+const flags = new Set(['json','i-am-owner','rerun','ok','block','help','dry-run','allow-overlap','once','detach','status','stop','now']);
 function usage(message:string): never { throw new OwedError(message,'usage'); }
 /** Terminal I/O of the CLI; tests inject `ask` (the owner's answer to the TTY prompt) and capture output. */
 export interface CliIo { ask?: (question: string) => Promise<string>; log: (text: string) => void; error: (text: string) => void }
@@ -29,7 +30,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key)) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); } }
     if (opts.has('help')) { io.log(HELP); return 0; }
     const cmd=args.shift(); if(!cmd) usage(HELP);
-    const allowed:Record<string,string[]> = { init:[],plan:['rev'],rule:['nodes'],dispatch:['allow-overlap'],submit:['commit'],rebase:[],attest:['rerun'],review:['ok','block','rank','note','ack-rulings','obligation'],waive:['reason','accept-risk'],defer:['reason'],abandon:['note','reason'],merge:[],status:[],why:[],report:['since'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[],gc:['dry-run'],adopt:['commit','note'],drive:['once','max'] };
+    const allowed:Record<string,string[]> = { init:[],plan:['rev'],rule:['nodes'],dispatch:['allow-overlap'],submit:['commit'],rebase:[],attest:['rerun'],review:['ok','block','rank','note','ack-rulings','obligation'],waive:['reason','accept-risk'],defer:['reason'],abandon:['note','reason'],merge:[],status:[],why:[],report:['since'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[],gc:['dry-run'],adopt:['commit','note'],drive:['once','max','detach','status','stop','now'] };
     if (!allowed[cmd]) usage(`Unknown command ${cmd}`);
     for (const k of opts.keys()) if (!['json','as','i-am-owner'].includes(k) && !allowed[cmd]!.includes(k)) usage(`${cmd} does not support --${k}`);
     const count = cmd === 'waive' || cmd === 'defer' || cmd === 'decoy' ? 2 : ['status','report','brief','verify','gc','adopt','drive'].includes(cmd) ? 0 : 1;
@@ -40,7 +41,15 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     if(cmd === 'adopt') value('note',true);
     if(cmd === 'drive') {
       if(opts.has('as') || opts.has('i-am-owner')) usage('drive always acts as parent:drive');
+      const modes=['once','detach','status','stop'].filter(k => opts.has(k));
+      if(modes.length > 1) usage(`drive: ${modes.map(k => `--${k}`).join(' and ')} cannot be combined`);
+      if(opts.has('now') && !opts.has('stop')) usage('--now is only valid with --stop');
+      if(opts.has('max') && (opts.has('status') || opts.has('stop'))) usage('--max is only valid with --detach, --once or the loop');
       const max=integer('max'); if(max !== undefined && max < 1) usage('--max must be at least 1');
+      const json=opts.has('json');
+      if(opts.has('detach')) { const r=await driveStart({cwd:process.cwd(),max}); io.log(json ? JSON.stringify(r) : renderDriveStart(r)); return 0; }
+      if(opts.has('status')) { const r=await driveStatus({cwd:process.cwd()}); io.log(json ? JSON.stringify(r) : renderDriveStatus(r)); return 0; }
+      if(opts.has('stop')) { const r=await driveStop({cwd:process.cwd(),now:opts.has('now')}); io.log(json ? JSON.stringify(r) : renderDriveStop(r)); return 0; }
       return await drive({cwd:process.cwd(),once:opts.has('once'),max,json:opts.has('json'),log:io.log});
     }
     const cwd=process.cwd(); let principal:Principal={role:'parent',id:'cli'};
