@@ -1,6 +1,6 @@
 {
   "name": "pi-owed",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "owed — the acceptance ledger for multi-agent task graphs. No receipt, not done.",
   "type": "module",
   "license": "MIT",
@@ -12,7 +12,7 @@
   "engines": { "node": ">=22.19" },
   "bin": { "owed": "bin/owed.js" },
   "pi": { "extensions": ["./index.js"], "skills": ["./skills"] },
-  "files": ["index.js", "bin", "dist", "skills", "docs", "README.md", "LICENSE"],
+  "files": ["index.js", "bin", "dist", "skills", "docs", "README.md", "CHANGELOG.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
