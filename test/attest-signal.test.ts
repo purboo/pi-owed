@@ -15,7 +15,7 @@ import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
 import { drive } from '../src/drive-run.ts';
 import { OwedError } from '../src/errors.ts';
-import { revParse } from '../src/git.ts';
+import { git, revParse } from '../src/git.ts';
 import type { Entry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt, identity } from './helpers/surface.ts';
@@ -88,7 +88,37 @@ async function submitted(make: (root: string) => { checks?: object[]; invariants
   } catch (e) { await r.cleanup(); throw e; }
 }
 
-for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130]] as const) {
+/**
+ * A check whose output pipe outlives its process group: `setsid sleep <hold>` escapes the SIGKILL of the group and keeps
+ * stdout open, so the aborted run (and with it owed's abort path) waits until it exits. Records the escaped pid, the
+ * temp worktree (pwd), then `<pid> <owed pid>` like slowRun.
+ */
+const heldRun = (root: string, hold: number) => `setsid sleep ${hold} & echo $! > '${join(root, 'escaped')}'; pwd > '${join(root, 'tree')}'; echo $$ $PPID > '${join(root, 'pid')}'; sleep 60`;
+const escapedPid = async (root: string): Promise<number | undefined> => Number((await readFile(join(root, 'escaped'), 'utf8').catch(() => '')).trim()) || undefined;
+
+/** A repository driven by the fake dsa: `owed` on PATH, scripted agents in `<root>/dsa/agents`, owner-initialized plan. */
+async function driveRig(make: (root: string) => object): Promise<Repo & { dir: string; env: Record<string, string>; dsa: Dsa; passes(until: () => Promise<boolean>): Promise<string[]> }> {
+  const r = await repo();
+  try {
+    const dir = join(r.root, 'dsa'), bin = join(r.root, 'bin');
+    await mkdir(join(dir, 'agents'), { recursive: true }); await mkdir(bin);
+    await writeFile(join(bin, 'owed'), `#!/bin/sh\nexec "${process.execPath}" "${OWED}" "$@"\n`); await chmod(join(bin, 'owed'), 0o755);
+    const env: Record<string, string> = { FAKE_DSA_DIR: dir, PATH: `${bin}:${process.env.PATH}`, ...identity };
+    await commitAt(r.cwd, { README: 'x\n' });
+    await ops.init({ cwd: r.cwd, plan: JSON.stringify(make(r.root)), as: owner, channel: 'flag' });
+    const dsa = new Dsa({ bin: FAKE, env, timeoutMs: 120_000 });
+    /** In-process `--once` passes (at most 6) until `until` holds; returns their output. */
+    const passes = async (until: () => Promise<boolean>) => {
+      const lines: string[] = [];
+      for (let i = 0; i < 6 && !await until(); i++) await drive({ cwd: r.cwd, once: true, dsa, log: l => lines.push(l), handleSignals: false });
+      assert.ok(await until(), lines.join('\n'));
+      return lines;
+    };
+    return { ...r, dir, env, dsa, passes };
+  } catch (e) { await r.cleanup(); throw e; }
+}
+
+for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 143]] as const) {
   test(`D16.2: ${sig} to \`owed attest\` ends its running check: exit ${code}, the check is gone, nothing recorded for the run`, { timeout: 120_000 }, async () => {
     const r = await submitted(root => ({ checks: [{ id: 'slow', run: slowRun(join(root, 'pid')) }] }));
     let pids: Pids | undefined;
@@ -166,26 +196,20 @@ test('D16.1/2: `owed merge` aborted during its merge-tree check leaves trunk and
   } finally { reap(pids?.check); await r.cleanup(); }
 });
 
+const writer = 'set -e\necho s > s.txt; git add s.txt; git commit -qm s; owed submit s\n';
+const sNode = (checks: object[]) => ({ id: 's', writes: ['s.txt'], checks, review: { count: 0, min_rank: 1 } });
+
 test('D16.3: SIGTERM to `owed drive --once` while hold runs a long attest: exit 130, attest and its check gone, lock released', { timeout: 180_000 }, async () => {
-  const r = await repo();
-  const pidFile = join(r.root, 'pid'), dir = join(r.root, 'dsa'), bin = join(r.root, 'bin');
+  const r = await driveRig(root => ({ version: 1, trunk: 'main', closure: [], invariants: [], nodes: [sNode([{ id: 'slow', run: slowRun(join(root, 'pid')), reads: ['s.txt'] }])] }));
   let pids: Pids | undefined;
   try {
-    await mkdir(join(dir, 'agents'), { recursive: true }); await mkdir(bin);
-    await writeFile(join(bin, 'owed'), `#!/bin/sh\nexec "${process.execPath}" "${OWED}" "$@"\n`); await chmod(join(bin, 'owed'), 0o755);
-    const env = { FAKE_DSA_DIR: dir, PATH: `${bin}:${process.env.PATH}`, ...identity };
-    const plan = { version: 1, trunk: 'main', closure: [], invariants: [], nodes: [{ id: 's', writes: ['s.txt'], checks: [{ id: 'slow', run: slowRun(pidFile), reads: ['s.txt'] }], review: { count: 0, min_rank: 1 } }] };
-    await commitAt(r.cwd, { README: 'x\n' });
-    await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'flag' });
-    await writeFile(join(dir, 'agents', 's-writer.sh'), 'set -e\necho s > s.txt; git add s.txt; git commit -qm s; owed submit s\n');
+    await writeFile(join(r.dir, 'agents', 's-writer.sh'), writer);
     // In-process passes: dispatch, then launch (the fake writer commits and submits).
-    const dsa = new Dsa({ bin: FAKE, env, timeoutMs: 120_000 }), lines: string[] = [];
-    for (let i = 0; i < 4 && !(await entries(r.cwd)).some(e => e.kind === 'submit'); i++) await drive({ cwd: r.cwd, once: true, dsa, log: l => lines.push(l), handleSignals: false });
-    assert.ok((await entries(r.cwd)).some(e => e.kind === 'submit'), lines.join('\n'));
+    await r.passes(async () => (await entries(r.cwd)).some(e => e.kind === 'submit'));
     const before = await entries(r.cwd);
     // The next pass attests under `hold machine --shared --no-wait`, and the check is slow.
-    const c = owedChild(r.cwd, ['drive', '--once'], { ...env, OWED_DSA: FAKE });
-    pids = await pidsFrom(pidFile);
+    const c = owedChild(r.cwd, ['drive', '--once'], { ...r.env, OWED_DSA: FAKE });
+    pids = await pidsFrom(join(r.root, 'pid'));
     c.child.kill('SIGTERM');
     assert.equal(await within(c.exited, 5000), 130, c.out());
     assert.ok(await gone(pids.owed), '`owed attest` is gone within 5 s');
@@ -196,6 +220,95 @@ test('D16.3: SIGTERM to `owed drive --once` while hold runs a long attest: exit 
     const v = await cli(r.cwd, ['verify']);
     assert.equal(v.code, 0, v.stderr);
   } finally { reap(pids?.check, pids?.owed); await r.cleanup(); }
+});
+
+test('D16a.1: the first signal to `owed drive --once` during a slow merge-tree check kills that check; trunk does not move', { timeout: 180_000 }, async () => {
+  // The invariant sleeps only on a tree with s.txt: genesis passes at once; the merge the driver runs in-process is slow.
+  const r = await driveRig(root => ({ version: 1, trunk: 'main', closure: [], invariants: [{ id: 'slow', run: slowRun(join(root, 'pid'), 's.txt'), reads: ['s.txt'] }], nodes: [sNode([])] }));
+  let pids: Pids | undefined;
+  try {
+    await writeFile(join(r.dir, 'agents', 's-writer.sh'), writer);
+    // Dispatch, launch (submit), attest: stop as soon as the node is accepted, so the next pass merges.
+    await r.passes(async () => (await ops.status({ cwd: r.cwd })).nodes.s!.accepted);
+    const before = await entries(r.cwd), trunk = await revParse(r.cwd, 'main');
+    const c = owedChild(r.cwd, ['drive', '--once'], { ...r.env, OWED_DSA: FAKE });
+    pids = await pidsFrom(join(r.root, 'pid'));
+    assert.equal(pids.owed, c.child.pid, 'the merge check runs under the driver process itself');
+    c.child.kill('SIGTERM');
+    assert.equal(await within(c.exited, 5000), 130, c.out());
+    assert.ok(await gone(pids.check), 'the merge-tree check is gone within 5 s');
+    assert.equal(await revParse(r.cwd, 'main'), trunk, 'trunk unchanged');
+    const added = (await entries(r.cwd)).slice(before.length);
+    assert.ok(!added.some(e => e.kind === 'merge'), 'no merge entry');
+    assert.equal(obsOf(added, 'inv:slow').length, 0, 'the aborted check records nothing');
+    assert.ok(!existsSync(join(process.env.OWED_DIR!, 'drive.lock')), 'lock released');
+    const v = await cli(r.cwd, ['verify']);
+    assert.equal(v.code, 0, v.stderr);
+  } finally { reap(pids?.check); await r.cleanup(); }
+});
+
+test('D16a.3: a second signal 1 s or more after the first exits at once with the first signal\'s code', { timeout: 120_000 }, async () => {
+  // The escaped pipe holder keeps the first abort waiting (60 s), so only the second signal can end owed.
+  const r = await submitted(root => ({ checks: [{ id: 'held', run: heldRun(root, 60) }] }));
+  let pids: Pids | undefined, escaped: number | undefined;
+  try {
+    const c = owedChild(r.cwd, ['attest', 'a']);
+    pids = await pidsFrom(join(r.root, 'pid')); escaped = await escapedPid(r.root);
+    c.child.kill('SIGTERM');
+    assert.ok(await gone(pids.check), 'the first signal killed the check\'s process group');
+    // By design this waits 1.2 s: owed is still aborting (the escaped holder keeps the pipe open).
+    assert.equal(await within(c.exited, 1200), 'timeout', c.out());
+    c.child.kill('SIGINT');
+    assert.equal(await within(c.exited, 5000), 143, c.out());
+    assert.match(c.stderr(), /Aborted: SIGTERM/);
+  } finally { reap(pids?.check, escaped); await r.cleanup(); }
+});
+
+test('D16a.3: two SIGTERMs within 1 s are one request: the normal abort path runs and removes the temp worktree', { timeout: 120_000 }, async () => {
+  // The escaped holder (3 s) keeps owed in its abort path long enough for the second SIGTERM to arrive during it.
+  const r = await submitted(root => ({ checks: [{ id: 'held', run: heldRun(root, 3) }] }));
+  let pids: Pids | undefined, escaped: number | undefined;
+  try {
+    const c = owedChild(r.cwd, ['attest', 'a']);
+    pids = await pidsFrom(join(r.root, 'pid')); escaped = await escapedPid(r.root);
+    const tree = (await readFile(join(r.root, 'tree'), 'utf8')).trim();
+    assert.ok(existsSync(tree), tree);
+    const t0 = Date.now();
+    c.child.kill('SIGTERM');
+    // The first signal was handled (its abort killed the check's group); the second follows it within 1 s.
+    assert.ok(await gone(pids.check), 'the first signal killed the check\'s process group');
+    assert.ok(Date.now() - t0 < 900, `precondition: the second SIGTERM is sent within 1 s of the first (${Date.now() - t0} ms)`);
+    c.child.kill('SIGTERM');
+    assert.equal(await within(c.exited, 10_000), 143, c.out());
+    assert.match(c.stderr(), /Aborted: SIGTERM/);
+    assert.ok(!existsSync(tree), 'the temp worktree was removed (normal abort path, not the immediate exit)');
+    assert.ok(!(await git(r.cwd, ['worktree', 'list', '--porcelain'])).stdout.includes(tree), 'and unregistered');
+    assert.equal(obsOf(await entries(r.cwd), 'check:held').length, 0);
+  } finally { reap(pids?.check, escaped); await r.cleanup(); }
+});
+
+test('D16a.4: merge aborted during its second merge-tree job keeps the first job\'s observation; trunk does not move', { timeout: 120_000 }, async () => {
+  // Both invariants read a.txt: they ran on genesis (quickly) and run again on the merge tree, fast first.
+  const r = await submitted(root => ({ invariants: [{ id: 'fast', run: 'true', reads: ['a.txt'] }, { id: 'slow', run: slowRun(join(root, 'pid'), 'a.txt'), reads: ['a.txt'] }] }));
+  let pids: Pids | undefined;
+  try {
+    assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    const before = await entries(r.cwd), trunk = await revParse(r.cwd, 'main');
+    const ac = new AbortController();
+    const run = ops.merge({ cwd: r.cwd, node: 'a', as: parent, signal: ac.signal });
+    run.catch(() => {});
+    pids = await pidsFrom(join(r.root, 'pid'));
+    ac.abort();
+    await assert.rejects(run, (e: unknown) => e instanceof OwedError && e.code === 'aborted');
+    assert.ok(await gone(pids.check), 'the slow check is gone');
+    const added = (await entries(r.cwd)).slice(before.length);
+    assert.deepEqual(added.map(e => e.kind), ['obs'], 'only the completed observation');
+    const fast = obsOf(added, 'inv:fast');
+    assert.equal(fast.length, 1); assert.equal(fast[0]!.verdict, 'pass'); assert.equal(fast[0]!.merging, 'a');
+    assert.equal(obsOf(added, 'inv:slow').length, 0);
+    assert.equal(await revParse(r.cwd, 'main'), trunk, 'trunk unchanged');
+    assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
+  } finally { reap(pids?.check); await r.cleanup(); }
 });
 
 test('D16.4: the owed_attest tool passes its abort signal: an aborted call is a tool error and records nothing', { timeout: 60_000 }, async () => {

@@ -17,11 +17,13 @@ function usage(message:string): never { throw new OwedError(message,'usage'); }
 /** Terminal I/O of the CLI; tests inject `ask` (the owner's answer to the TTY prompt) and capture output. */
 export interface CliIo { ask?: (question: string) => Promise<string>; log: (text: string) => void; error: (text: string) => void }
 const terminal: CliIo = { log: text => console.log(text), error: text => console.error(text) };
-/** Commands that run checks (D16): a signal aborts them and ends the check started; exit 128 + signal number. */
+/** Commands that run checks (D16): a signal aborts them and ends the check started; exit 130 for SIGINT, 143 for SIGTERM and SIGHUP. */
 const ABORTABLE = ['attest','merge','init','adopt'], SIGNALS: NodeJS.Signals[] = ['SIGINT','SIGTERM','SIGHUP'];
 const signalExit = (s: NodeJS.Signals): number => s === 'SIGINT' ? 130 : 143;
+/** Signals within this time of the first are one stop request (D16a.3). */
+const SAME_REQUEST_MS = 1000;
 export async function main(argv: string[], io: CliIo = terminal): Promise<number> {
-  const abort = new AbortController(), got: { signal?: NodeJS.Signals; unhandle?: () => void } = {};
+  const abort = new AbortController(), got: { signal?: NodeJS.Signals; at?: number; unhandle?: () => void } = {};
   try {
     const args:string[] = [], opts = new Map<string,string|boolean>();
     for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key)) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); } }
@@ -56,11 +58,16 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     const actor={cwd,as:principal,channel}, node=args[0]!, signal=abort.signal;
     let result:unknown, text:string|undefined, exit=0;
     // D16: for the duration of a command that runs checks, the first SIGINT/SIGTERM/SIGHUP aborts it (the running
-    // check's process group is killed, nothing more starts); a second one exits at once with the same code.
+    // check's process group is killed, nothing more starts); a second one exits at once with the first one's code.
+    // One stop request may arrive twice (D16a.3: `owed drive` signals hold's process group, which holds this process,
+    // and hold also forwards it), so signals within 1 s of the first are the same request; only a later one is a second.
     if(ABORTABLE.includes(cmd)) {
       const onSignal = (s: NodeJS.Signals) => {
-        if(got.signal) { io.error(`Aborted: ${got.signal}`); process.exit(signalExit(got.signal)); }
-        got.signal=s; abort.abort();
+        if(got.signal) {
+          if(Date.now() - got.at! < SAME_REQUEST_MS) return;
+          io.error(`Aborted: ${got.signal}`); process.exit(signalExit(got.signal));
+        }
+        got.signal=s; got.at=Date.now(); abort.abort();
       };
       for(const s of SIGNALS) process.on(s,onSignal);
       got.unhandle=() => { for(const s of SIGNALS) process.off(s,onSignal); };
