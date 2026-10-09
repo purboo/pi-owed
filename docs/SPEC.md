@@ -168,8 +168,11 @@ harness, materialization failure) is ⊥: no information, no block.
 1. `check:<id>` for each check; executor observation.
 2. `red:<id>` for each check with `red: true`; executor observation: the red run
    (base tree + candidate `tests` files + pinned closure) must exit non-zero,
-   match `red_expect` if given, and not be a zero-test run. Verdict `pass` means
-   "the counterfactual was rejected as specified".
+   match `red_expect` if given, and not be a zero-test run. `min_tests` does not
+   apply to the red run (a new test file often cannot load on the base, so the
+   runner reports one failing test); an unknown count format is accepted there.
+   `min_tests` applies only to the candidate run (`check:<id>`). Verdict `pass`
+   means "the counterfactual was rejected as specified".
 3. `writes`: every path in `diff --name-only B C` starts with a `writes` prefix.
 4. `closure-review` iff the diff touches closure globs: needs a review `ok` with
    rank ≥ 2 by a non-writer, or an owner waiver.
@@ -304,6 +307,8 @@ moved ref silently.
    `min_tests` unmet = fail; unknown format with `min_tests` set = error.
 3. Red runs: materialize B, overlay candidate `tests` files, restore closure
    from B, run; pass iff exit ≠ 0 and not zero-test and `red_expect` matches.
+   `min_tests` is not applied to red runs, and an unknown count format there is
+   not an error (the base usually fails to load the new test file).
 4. Strength runs (`strength:<id>`, checks with `mutants`): the mutants are the
    files of B matching `mutants` and the closure, read from B (never from C);
    none → `error`. For each mutant: materialize C, restore closure from B as for
