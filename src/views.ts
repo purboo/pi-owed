@@ -1,8 +1,8 @@
-import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeState, SlotRebase, State } from './types.ts';
+import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Rule, SlotRebase, State } from './types.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
-import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase } from './reducer.ts';
+import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf } from './reducer.ts';
 import { OwedError } from './errors.ts';
 
 export interface ReceiptCard {
@@ -64,7 +64,7 @@ export function adoptionText(a: AdoptionView): string {
   const paths = a.changed.length > 20 ? [...a.changed.slice(0, 20), `… (+${a.changed.length - 20} more)`] : a.changed;
   return `#${a.seq} ${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : ''} adopted ${a.prior.slice(0, 12)}..${a.commit.slice(0, 12)} (${plural(a.commits, 'commit')} made outside owed, not reviewed by owed); changed: ${paths.join(', ') || 'none'}; note: ${a.note}`;
 }
-export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
+export function receipt(s: State, entries: readonly Entry[], node: string): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   return { node, phase: n.phase, accepted: n.accepted,
@@ -216,7 +216,7 @@ function decisionCommand(s: State, i: ItemView): string {
  * ready-to-run review command with `--as` of the original reviewer would invite another
  * principal to impersonate them. Only owner commands (gated by the owner channel) are printed.
  */
-function clearHint(s: State, entries: Entry[], b: Block): string {
+function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
@@ -271,6 +271,15 @@ export function renderBrief(v: Brief): string {
     `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies`].join('\n');
 }
 
+// ---------- dispatch packet ----------
+/**
+ * Task text of attempt `attempt` of node `spec` in `worktree` (pure): the packet `owed dispatch` stores and the driver's
+ * writer task. `rules` are the rulings in scope at dispatch time, in ledger order.
+ */
+export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[]): string {
+  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`].join('\n');
+}
+
 // ---------- driver review packet (SPEC §12, D5) ----------
 /**
  * Number of reviewer runs the driver launches for the current candidate: one covers review and closure-review;
@@ -299,7 +308,12 @@ export function reviewObligations(s: State, node: string, n: number): ('review' 
  * Task text of the driver's reviewer run `n` (attempt-global, SPEC §12.3) on the node's current candidate (pure;
  * usable before the launch entry for `n` exists): node, attempt, candidate,
  * base, brief, writes, obligations with required count/rank, rulings in scope, the exact `owed review` commands
- * for reviewer `reviewer:drive-<node>-<attempt>-<n>`, and the rules (inspect the diff, edit nothing, reply with seqs).
+ * for the slot reviewer `reviewer:drive-<node>-<attempt>-<k>` (k = n − reviewerBase: the identity is per review slot,
+ * the same principal for every candidate of the attempt), and the rules (inspect the diff, edit nothing, reply with
+ * seqs). When that principal has active review blocks on the node, the packet quotes them (seq, obligation, rank, note).
+ * Per obligation it asks for rank max(required rank, this principal's block rank, 1 + rank of any other principal's
+ * active rank-1 block) (D11), so its ok clears its own block and outranks another reviewer's rank-1 block; such other
+ * blocks are quoted too.
  */
 export function reviewPacket(s: State, node: string, n = 1): string {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
@@ -307,14 +321,21 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   if (!st.slot?.open || !st.candidate) throw new OwedError(`Node ${node} has no open candidate`);
   const runs = reviewRuns(s, node), first = reviewerBase(s, node) + 1, k = n - first + 1;
   if (!Number.isInteger(n) || k < 1 || k > runs) throw new OwedError(`Node ${node} candidate #${st.candidate.seq} has ${runs} reviewer run(s)${runs ? ` (n = ${first}${runs > 1 ? `..${first + runs - 1}` : ''})` : ''}; run ${n} does not exist for it`);
-  const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, n);
+  const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, k);
   const rulings = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
   const rulingsItem = st.items.find(i => i.obligation === 'rulings');
   const ack = rulingsItem && rulingsItem.status === 'D' && rulings.length ? ` --ack-rulings ${Math.max(...rulings.map(r => r.seq))}` : '';
   const rank = (o: 'review' | 'closure-review'): number => o === 'closure-review' ? 2 : Math.max(1, spec.review.min_rank);
+  // Active review blocks recorded by this slot's principal (on any earlier candidate of the attempt).
+  const entries = entriesOf(s), author = (seq: number) => entries.find(e => e.seq === seq);
+  const judged = st.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
+  const blocks = judged.filter(b => author(b.seq)?.by === who), others = judged.filter(b => author(b.seq)?.by !== who && b.rank === 1);
+  const slotRank = (o: 'review' | 'closure-review'): number => Math.max(rank(o), ...blocks.filter(b => b.obligation === o).map(b => b.rank ?? 0), ...others.filter(b => b.obligation === o).map(b => (b.rank ?? 0) + 1));
   const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : 'measured by owed';
   const mine = reviewObligations(s, node, n);
-  const commands = mine.flatMap(o => rank(o) > 2 ? [`(${o} requires rank ${rank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${rank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
+  const commands = mine.flatMap(o => slotRank(o) > 2 ? [`(${o} requires rank ${slotRank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${slotRank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
+  const quote = (b: Block): string => { const e = author(b.seq); return `- #${b.seq} ${b.obligation} rank ${b.rank}${author(b.seq)?.by === who ? '' : ` by ${e?.by ?? '?'}`}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; };
+  const quoted = blocks.map(quote), otherQuoted = others.filter(b => mine.includes(b.obligation as 'review')).map(quote);
   return [`# Review ${spec.title ?? node} (node ${node}, attempt ${attempt}, reviewer run ${k} of ${runs} for this candidate, n = ${n})`,
     `Node: ${node}; attempt: ${attempt}`,
     `Candidate: ${commit} (submit #${st.candidate.seq})`,
@@ -326,6 +347,8 @@ export function reviewPacket(s: State, node: string, n = 1): string {
     `Rulings in scope:${rulings.length ? '' : ' none'}`,
     ...rulings.map(r => `- #${r.seq} ${r.text}`),
     `Your reviewer identity: ${who} (never the writer of this node).`,
+    ...(quoted.length ? [`Your earlier review block(s) on this node, still active (check whether this candidate fixes them; an ok at the rank given below clears them):`, ...quoted] : []),
+    ...(otherQuoted.length ? [`Active rank-1 review block(s) by other reviewers on the obligations you record (check whether this candidate fixes them; an ok at the rank given below clears them):`, ...otherQuoted] : []),
     `Inspect the actual diff: git diff ${base} ${commit}`,
     'Do not edit files, commit or run owed submit; review only.',
     'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',
