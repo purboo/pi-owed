@@ -118,11 +118,26 @@ export class Driver { pass(): Promise<PassResult> }        // one pass: observe,
 export function driveOnce(o): Promise<{ lines: string[]; error?: string }>;   // the pi tool's pass: lines of executed actions, also on a throw
 export function acquireDriveLock(dir: string): Promise<{ release(); releaseSync() }>;   // other-host locks are never taken over
 export function liveRunLines(cwd: string, dsa?: Dsa): Promise<string[]>;   // `/owed` dsa states of live runs
+export function reportText(json: object): string;   // text-mode line of an ActionReport or a LoopEvent (SPEC §12.8)
+export function procStart(pid); lockAlive(owner: LockOwner); defaultOwed(): string[];   // shared with drive-bg.ts
 ```
+`drive()` in `--json` loop mode ends with the exit record `{event:'exit', code, reason, at, error?}` and returns the CLI code instead of throwing (SPEC §12.8).
+
+## src/drive-bg.ts  (background driver and wake-ups, SPEC §12.8)
+```ts
+export function driveStart(o: { cwd; max?; owed?; waitMs? }): Promise<DriveStart>;   // --detach: detached `owed drive --json`, log rotated, waits for the lock
+export function driveStatus(o: { cwd }): Promise<DriveStatus>;   // --status: lock + log (reads only)
+export function driveStop(o: { cwd; now?; waitMs? }): Promise<DriveStop>;   // --stop: SIGTERM only when pid + start time match
+export function renderDriveStart / renderDriveStatus / renderDriveStop; driverLine(cwd): Promise<string>;   // texts; `/owed` Driver line
+export function readLock(dir): LockState; driveDir(cwd); lockPath(dir); logPath(dir); classifyLine(line); logLineText(line);
+export class Follower { tick(): string | undefined; start(); stop() }   // one driver log → wake messages
+export class DriveWatch { follow(o); attach(cwd); stopAll() }          // the extension's followers (one per log)
+```
+`driveDir` resolves the ledger directory like `ledgerDir` but creates nothing (session_start runs in any repository).
 `drive-run.ts` writes every verdict (dsa rejection/conflict, merge refusal, attest error) to the ledger in the pass it happens (contract D14) and uses `ops` for every ledger write (dispatch, launch, send, halt, rebase, merge as `parent:drive`) and runs attest as a subprocess under `hold machine --shared --no-wait`. A dsa rejection halts with the abandon recovery (the attempt's request is fixed, D15.1); the transient merge refusal `Plan, candidate or trunk changed; retry` is retried next pass (D15.2). Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs the driver at that point.
 
 ## src/extension.ts, skills/owed/SKILL.md  (leaf surface)
-Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters.
+Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters. Registers `session_start` (follow a live background driver) and `session_shutdown` (clear the followers) when `pi.on` exists; wake-ups use `pi.sendMessage` (SPEC §12.8).
 
 ## Tests
 `test/<module>.test.ts` with `node:test`. Git tests create temp repos under `os.tmpdir()` with `OWED_DIR` pointing into the temp dir; never touch the real repository's `.git`. Keep CPU low: no parallel heavy work; the machine is shared (run tests with `nice -n 10`).

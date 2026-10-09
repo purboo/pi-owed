@@ -557,7 +557,9 @@ after the confirmation is refused),
 (parent by default, or owner), `decoy commit <digest>`, `decoy reveal <file.json>`
 (owner commands), `decoy digest <file.json>` (prints the digest to commit;
 no ledger write, no owner confirmation), `gc [--dry-run]` (parent/owner), and
-`drive [--once] [--max N]` (the driver, §12.7; always `parent:drive`, no `--as`).
+`drive [--once] [--max N]` (the driver, §12.7; always `parent:drive`, no `--as`),
+`drive --detach [--max N]`, `drive --status [--json]`, `drive --stop [--now]`
+(the background driver, §12.8).
 `--as role:id` sets the principal (default `parent:cli`; `submit` and `rebase`
 default to the slot's writer when run inside its worktree). Owner commands prompt on a TTY
 unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused
@@ -613,10 +615,13 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
 | `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
 | `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
+| `owed_drive` | `action?` (`once` default, `start`, `status`, `stop`), `max?` (once/start), `now?` (stop) | the driver (§12.7, §12.8): one pass, or start/report/stop the background driver; start makes this session follow its log for wake-ups |
 
 `owed_attest`, `owed_merge` and `owed_adopt` pass the tool call's abort signal
 to the operation (§7.8, D16.4): aborting the call ends the running check; the
-result is a tool error `Aborted: aborted` (details `code: aborted`).
+result is a tool error `Aborted: aborted` (details `code: aborted`). `owed_drive`
+(action once) passes it to its pass as well: the pass stops after the current
+action (§12.7).
 
 Owner operations (`waive`, `defer`, `adopt`, downgrade plans, decoys, and any tool
 called with `as: owner:…`) call `ctx.ui.confirm` and are recorded with
@@ -859,10 +864,99 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   (hold may forward the driver's SIGTERM while the group also gets it).
 - **Surfaces.** CLI `owed drive [--once] [--max N] [--json]` (one line per
   action: `<action>: <outcome> — <detail>`; notify lines verbatim; `--json`
-  JSON lines). `--once` is one pass. Pi tool `owed_drive` runs `--once` only
-  and returns the output of the actions already executed also when a later
+  JSON lines). `--once` is one pass. Pi tool `owed_drive` runs `--once` by
+  default (`action` start/status/stop: §12.8; the tool's abort signal stops
+  the pass after the current action) and returns the output of the actions already executed also when a later
   step throws (as a tool error);
   a long loop belongs in a terminal or a `systemd-run --user` unit (a forced
   dsa restart kills every process of the dsa call that runs it, including its
   attest). `/owed` status adds `Driver runs in dsa:` with each live run's dsa
   state when dsa is available.
+
+### 12.8 Background driver and wake-ups (D17)
+
+`src/drive-bg.ts`. A tool call never runs the loop; `--detach` makes it a
+separate, durable process, and the session is woken by its log instead of
+polling.
+
+- **Start** (`owed drive --detach [--max N]`, tool `action: "start"`).
+  Serialized per repository by the ledger lock `drive-detach`. A live lock
+  (this host, pid and process start time match) or a lock of another host →
+  refused, naming pid, host, start time and the log. Else
+  `<ledger dir>/drive/log.jsonl` is rotated to `log.jsonl.1` (one kept) and
+  `owed drive --json [--max N]` (`process.execPath` + `bin/owed.js`, as for
+  the attest child) is spawned detached (own session and process group, stdin
+  ignored, stdout and stderr appended to the log, cwd = main worktree root,
+  environment inherited without `NODE_TEST_CONTEXT`, `DSA_EXEC` and `DSA_CALL`
+  (the driver carries no dsa call identity; `DSA_HOME` stays), unref'd). When
+  the starter has `DSA_EXEC`, the output adds `note: started from inside a dsa
+  call; if that call's processes are contained, the driver may end with it —
+  prefer starting it from a top-level session or systemd-run --user`. It keeps the
+  `drive-detach` lock until the drive lock names the child pid (then prints
+  `driver started: pid P, log <path>`) or the child exited, waiting up to 30 s
+  (D17a.3). A child that exits first with an `idle`/`stopped` exit record is
+  reported as started and already ended (the tool starts no follower then);
+  without an exit record or with an `error` record → refused with the last log
+  lines (exit 1). No lock after 30 s → SIGTERM to the child (pid and start time
+  checked), refused with the log tail (exit 1).
+- **Exit record** (`--json` loop mode only, not `--once`): the last line is
+  `{"event":"exit","code":C,"reason":R,"at":ISO,"error"?:text}`, R ∈ `idle`
+  (after the `idle` line), `stopped` (after `stopped`), `killed` (the second
+  signal path writes it before `process.exit(130)`), `error` (drive threw or
+  the lock refused; `error` is the message, code = the CLI code 1/2/3, and
+  `drive()` returns that code instead of throwing). The record is written
+  before the drive lock is released (D17a.2), so a released lock implies the
+  record. Signal handlers are installed before the lock is taken (D17a.6); a
+  signal while starting stops the loop at its first check (`stopped`). Only
+  SIGKILL or a crash leave no exit record. Text mode and `--once` are unchanged.
+- **Text of a JSON line.** `reportText(json)` (drive-run.ts) is the text-mode
+  line of an action report or a loop event; `Driver.emit` prints it in text
+  mode, and status and wake-ups render log lines with it (a line that is not
+  JSON is shown escaped).
+- **Status** (`owed drive --status [--json]`, tool `action: "status"`): reads
+  the lock and the log only (creates nothing): `driver running: pid P on H
+  since T`, a lock of another host (not checked), or `driver not running`
+  (`; it ended without an exit record (killed or crashed)` when the log has
+  driver lines but no exit record; an empty log adds `no driver output yet`); `last exit: R (exit C) at T[: error]` from the log; the log
+  path and its last 10 lines as text. Exit 0.
+- **Stop** (`owed drive --stop [--now]`, tool `action: "stop"`, `now`): no
+  live lock → `no driver running` (exit 0, nothing created). Otherwise under
+  the `drive-detach` lock, so concurrent stops send one signal. A lock of another host, or one
+  without a process start time, refuses. Else SIGTERM to the lock's pid when
+  its start time still matches (never a reused pid); `--now` sends a second
+  SIGTERM 1 s later if the lock is still held (D14.8: stop at once). Waits up
+  to 10 s for the lock to be released: `stopped`, else `stopping: pid P exits
+  after its current action`. Exit 0.
+- **Flags.** `--detach`, `--status`, `--stop` and `--once` exclude each other;
+  `--now` only with `--stop`; `--max` not with `--status`/`--stop` (it stays
+  valid with `--once`); `--json` with any. The tool refuses `now` without
+  `stop` and `max` with `status`/`stop` (usage).
+- **Wake-ups** (src/extension.ts, `DriveWatch`/`Follower`). After a tool
+  start (in any session), the follower reads the fresh (rotated) log from its
+  start; on `session_start` of a session not inside a dsa call (`DSA_EXEC` and
+  `DSA_CALL` unset, D17a.1), when the repository of `ctx.cwd` has a live lock,
+  from the log's size at that moment (no replay). Every top-level pi session
+  opened in the repository is therefore woken. A log replaced by rotation
+  (other dev/ino, or shorter than the offset) is read from 0 (D17a.4). Every 2 s (unref'd timer) it reads the
+  complete lines appended since. Wake lines: `do: halt`, `do: notify` (asking
+  runs, owner-needed, describe failures), outcomes `rejected`, `conflict`,
+  `refused` and `error` (refused merges and attest errors also halt), event
+  `events-error`, terminal events `exit`, `killed`, `stopped`, `idle`, and any
+  line that is not a JSON report. `cursor-reset`, dispatch, launch/send
+  applied, attest, busy and pending are quiet; `merge` `merged` does not wake
+  alone and is listed in the next message. All wake lines of one read form one
+  `pi.sendMessage({customType: "owed-drive", display: true, content},
+  {triggerTurn: true, deliverAs: "followUp"})`, content = `owed drive
+  (<repo>):`, the carried merges and wake lines in log order, `Next: owed
+  status / owed why <node>`. Identical wake lines within one read collapse;
+  there is no dedupe across reads (D17a.5: every halt line wakes). If
+  `sendMessage` throws, the batch is kept and retried next tick (D17a.8). It stops after a read with a terminal line, or when the pid is
+  gone without one (`driver pid P ended without an exit record`; liveness is
+  checked before the read, so nothing the driver wrote is missed). One
+  follower per driver log (repository) per extension instance; a new start
+  replaces it; `session_shutdown` clears every timer (the driver keeps
+  running).
+- **`/owed`** appends `Driver: running pid P since T`, `Driver: not running
+  (last exit R at T)`, `Driver: not running (ended without an exit record)`,
+  `Driver: not running (no driver output yet)`, `Driver: not running`, or for another host `Driver: lock held by pid P on
+  host H since T`.
