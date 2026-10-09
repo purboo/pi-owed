@@ -1,7 +1,35 @@
 import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
-import type { Plan, CheckSpec, NodeSpec, Downgrade } from './types.ts';
+import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig } from './types.ts';
+
+/** Driver defaults (SPEC §12, D2). */
+export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
+/** The plan's driver config, or the defaults when it has no `drive:` block. */
+export function driveConfig(plan: Plan): DriveConfig { return structuredClone(plan.drive ?? DRIVE_DEFAULTS); }
+/** Parses an optional `drive:` block; unknown keys and bad types are errors. */
+function parseDrive(v: unknown, errors: string[]): DriveConfig {
+  const out = structuredClone(DRIVE_DEFAULTS);
+  if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('drive: expected object'); return out; }
+  const r = v as Record<string, unknown>;
+  for (const k of Object.keys(r)) if (!['max', 'repairs', 'writer', 'reviewer'].includes(k)) errors.push(`drive.${k}: unknown key`);
+  const int = (x: unknown, label: string, min: number, dflt: number): number => { if (x === undefined) return dflt; if (typeof x !== 'number' || !Number.isInteger(x) || x < min) { errors.push(`${label}: expected integer >= ${min}`); return dflt; } return x; };
+  out.max = int(r.max, 'drive.max', 1, out.max);
+  out.repairs = int(r.repairs, 'drive.repairs', 0, out.repairs);
+  const agent = (x: unknown, label: string, dflt: DriveAgent): DriveAgent => {
+    if (x === undefined) return dflt;
+    if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${label}: expected object`); return dflt; }
+    const a = x as Record<string, unknown>;
+    for (const k of Object.keys(a)) if (k !== 'agent' && k !== 'model') errors.push(`${label}.${k}: unknown key`);
+    const res: DriveAgent = { agent: dflt.agent };
+    if (a.agent !== undefined) { if (typeof a.agent !== 'string' || !a.agent.trim()) errors.push(`${label}.agent: expected non-empty string`); else res.agent = a.agent; }
+    if (a.model !== undefined) { if (typeof a.model !== 'string' || !a.model.trim()) errors.push(`${label}.model: expected non-empty string`); else res.model = a.model; }
+    return res;
+  };
+  out.writer = agent(r.writer, 'drive.writer', out.writer);
+  out.reviewer = agent(r.reviewer, 'drive.reviewer', out.reviewer);
+  return out;
+}
 
 export function globMatch(path: string, glob: string): boolean {
   return glob === '**' || (glob.endsWith('/') ? path.startsWith(glob) : matchesGlob(path, glob));
@@ -62,6 +90,7 @@ export function parsePlan(text: string): Plan {
   for (const id of ids.keys()) visit(id);
   const plan: Plan = { version: 1, trunk: str(r.trunk, 'trunk'), closure: strings(r.closure ?? [], 'closure'), invariants: checks(r.invariants, 'invariants'), nodes };
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
+  if (r.drive !== undefined) plan.drive = parseDrive(r.drive, errors);
   errors.push(...mutantErrors(plan));
   if (errors.length) throw new OwedError(errors.join('\n'), 'usage');
   return plan;
