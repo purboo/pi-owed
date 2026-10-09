@@ -5,14 +5,14 @@ import { canonical } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
-import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard } from './reducer.ts';
+import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, decoyDigest as digestOf, decoyPayloadErrors } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView } from './views.ts';
+import { receipt, statusView, escapeSummary } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import type { Brief } from './views.ts';
-import type { AttestJob, Channel, Draft, Entry, ItemView, Plan, Principal, State } from './types.ts';
+import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, ItemView, Plan, Principal, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
 export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView }
@@ -157,7 +157,7 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const included = (e: {seq:number;ts?:string}) => typeof since === 'number' ? e.seq > since : Date.parse(e.ts ?? entries[e.seq]?.ts ?? '') > Date.parse(since);
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
-  return {since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:')),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:')),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
@@ -166,3 +166,17 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
   return briefView(state,entries,since,o.now ?? Date.now());
 }
+
+// ---------- escapes and decoys ----------
+export async function escape(o: Actor & { node:string; merge:number; class:EscapeClass; note:string; evidence?:string }): Promise<Entry> { return mutate(o,() => ({kind:'escape',by:by(o),channel:o.channel,node:o.node,merge:o.merge,class:o.class,note:o.note,evidence:o.evidence})); }
+/** Parses a reveal payload file; only {nonce, decoys:[{node, defect}]} is kept. */
+export function decoyPayload(text: string): DecoyPayload {
+  let value: unknown;
+  try { value = JSON.parse(text); } catch { throw new OwedError('decoy file must be JSON {nonce, decoys:[{node, defect}]}','usage'); }
+  const errors = decoyPayloadErrors(value); if (errors.length) throw new OwedError(errors.join('; '),'usage');
+  const p = value as DecoyPayload; return { nonce:p.nonce, decoys:p.decoys.map(x => ({node:x.node,defect:x.defect})) };
+}
+/** Helper: the digest to commit for a reveal payload. Writes nothing. */
+export function decoyDigest(text: string): { digest: string } { return { digest:digestOf(decoyPayload(text)) }; }
+export async function decoyCommit(o: Actor & { digest:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'decoy-commit',by:by(o),channel:o.channel,digest:o.digest})); }
+export async function decoyReveal(o: Actor & { payload:string; channel:Channel }): Promise<Entry> { const p = decoyPayload(o.payload); return mutate(o,() => ({kind:'decoy-reveal',by:by(o),channel:o.channel,...p})); }

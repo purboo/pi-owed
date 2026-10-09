@@ -1,6 +1,6 @@
-import { ZERO, canonical } from './canon.ts';
+import { ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
-import type { AttestJob, Block, CandidateFacts, Downgrade, Draft, Entry, ItemView, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, State, StateFacts } from './types.ts';
+import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, ItemView, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -103,7 +103,7 @@ function refresh(s: State): void {
 
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
 export function reduce(entries: Entry[], plans: PlanLookup): State {
-  const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [] };
+  const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [] };
   const h: History = { entries: [], plans, obsPlans: new Map() };
   Object.defineProperty(s, history, { value: h });
   for (const original of entries) {
@@ -156,7 +156,18 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       const n = s.nodes[e.node]!;
       n.merged = { seq: e.seq, commit: e.commit }; n.slot!.open = false;
       s.trunk = { name: s.trunk.name, ...e.state, seq: e.seq };
+    } else if (e.kind === 'escape') s.escapes.push({ seq: e.seq, by: e.by, node: e.node, merge: e.merge, class: e.class, note: e.note, evidence: e.evidence });
+    else if (e.kind === 'decoy-commit') s.decoyCommits.push({ seq: e.seq, digest: e.digest, by: e.by });
+    else if (e.kind === 'decoy-reveal') {
+      const c = s.decoyCommits.find(c => c.digest === decoyDigest(e) && c.revealed === undefined)!;
+      c.revealed = e.seq;
+      for (const x of e.decoys) {
+        const v: DecoyView = { node: x.node, defect: x.defect, commit: c.seq, reveal: e.seq, outcome: 'pending' };
+        for (const prior of h.entries) settleDecoy(v, prior);
+        s.decoys.push(v);
+      }
     }
+    for (const v of s.decoys) settleDecoy(v, e);
     h.entries.push(e); s.seq = e.seq; s.head = e.hash;
     refresh(s);
   }
@@ -203,7 +214,7 @@ export function validateDraft(s: State, d: Draft): string[] {
   if (s.seq === -1) return [...errors, 'genesis must be established first'];
   const n = 'node' in d ? s.nodes[d.node] : undefined;
   const spec = 'node' in d ? nodeSpec(s, d.node) : undefined;
-  if ('node' in d && (!n || !spec)) errors.push(`Node ${d.node} does not exist`);
+  if ('node' in d && (!n || (!spec && d.kind !== 'escape'))) errors.push(`Node ${d.node} does not exist`);
   const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
   const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && active(b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
   switch (d.kind) {
@@ -268,8 +279,65 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state }).reasons);
       break;
     case 'note': break;
+    case 'escape': {
+      allow('owner', 'parent');
+      const m = Number.isInteger(d.merge) ? context(s).entries.find(e => e.seq === d.merge) : undefined;
+      if (m?.kind !== 'merge' || m.node !== d.node) errors.push(`escape merge #${d.merge} is not a merge of node ${d.node}`);
+      if (!ESCAPE_CLASSES.includes(d.class)) errors.push(`escape class must be one of ${ESCAPE_CLASSES.join(', ')}`);
+      if (typeof d.note !== 'string' || !d.note.trim()) errors.push('escape requires a note');
+      if (d.evidence !== undefined && typeof d.evidence !== 'string') errors.push('escape evidence must be text');
+      break;
+    }
+    case 'decoy-commit':
+      allow('owner');
+      if (typeof d.digest !== 'string' || !/^[0-9a-f]{64}$/.test(d.digest)) errors.push('decoy-commit digest must be 64 lowercase hex characters (sha256)');
+      else if (s.decoyCommits.some(c => c.digest === d.digest)) errors.push('decoy-commit digest was already committed');
+      break;
+    case 'decoy-reveal': {
+      allow('owner');
+      const shape = decoyPayloadErrors(d);
+      errors.push(...shape);
+      if (shape.length) break;
+      const c = s.decoyCommits.find(c => c.digest === decoyDigest(d) && c.revealed === undefined);
+      if (!c) { errors.push('decoy-reveal does not hash to an unrevealed decoy-commit'); break; }
+      for (const x of d.decoys) {
+        if (!s.nodes[x.node]) errors.push(`decoy node ${x.node} does not exist`);
+        const first = context(s).entries.find(e => e.kind === 'dispatch' && e.node === x.node);
+        if (first && first.seq < c.seq) errors.push(`decoy-commit #${c.seq} was made after node ${x.node} was first dispatched (#${first.seq})`);
+      }
+      break;
+    }
   }
   return errors;
+}
+
+// ---------- escapes and decoys ----------
+export const ESCAPE_CLASSES: readonly EscapeClass[] = ['missing', 'false-pass', 'reuse', 'weak', 'waiver'];
+/** sha256 hex of the canonical JSON of exactly {nonce, decoys:[{node, defect}]}; other fields are ignored. */
+export function decoyDigest(p: DecoyPayload): string {
+  return sha256(canonical({ nonce: p.nonce, decoys: p.decoys.map(x => ({ node: x.node, defect: x.defect })) }));
+}
+/** Shape errors of a reveal payload (it may come from an untrusted JSON file). */
+export function decoyPayloadErrors(p: unknown): string[] {
+  const errors: string[] = [];
+  const v = p as Partial<DecoyPayload> | null;
+  if (!v || typeof v !== 'object') return ['decoy payload must be a JSON object {nonce, decoys}'];
+  if (typeof v.nonce !== 'string' || v.nonce.length < 16) errors.push('decoy nonce must be a string of at least 16 characters');
+  if (!Array.isArray(v.decoys) || !v.decoys.length) return [...errors, 'decoys must be a non-empty list of {node, defect}'];
+  const seen = new Set<string>();
+  for (const x of v.decoys as unknown[]) {
+    const d = x as Partial<{ node: unknown; defect: unknown }> | null;
+    if (!d || typeof d !== 'object' || Object.keys(d).sort().join() !== 'defect,node' || typeof d.node !== 'string' || !d.node || typeof d.defect !== 'string' || !d.defect.trim()) { errors.push('each decoy must be exactly {node, defect} with non-empty text'); continue; }
+    if (seen.has(d.node)) errors.push(`decoy node ${d.node} is listed twice`);
+    seen.add(d.node);
+  }
+  return errors;
+}
+/** A pending decoy is caught by an execution failure or review block on its node, and escapes on a merge of it. */
+function settleDecoy(v: DecoyView, e: Entry): void {
+  if (v.outcome !== 'pending') return;
+  if ((e.kind === 'obs' && e.by === 'executor:owed' && e.subject === v.node && e.verdict === 'fail') || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
+  else if (e.kind === 'merge' && e.node === v.node) Object.assign(v, { outcome: 'escaped', decidedBy: e.seq });
 }
 
 function job(spec: NodeSpec | undefined, subject: string, obligation: string, key: string, commit: string, base: string, plan: Plan): AttestJob | undefined {

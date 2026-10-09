@@ -1,4 +1,4 @@
-import type { Block, Entry, ItemView, NodeState, State } from './types.ts';
+import type { Block, Entry, EscapeClass, ItemView, NodeState, State } from './types.ts';
 import { matchesAny } from './plan.ts';
 
 export interface ReceiptCard {
@@ -16,6 +16,7 @@ export interface Report {
   downgrades: State['downgrades']; rulings: State['rules']; decisions: ItemView[];
   changes: { subject: string; obligation: string; before?: string; after: string }[];
   ownerActions: Entry[];
+  escapes: EscapeSummary;
 }
 export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
   const n = s.nodes[node]!;
@@ -60,6 +61,9 @@ function entryLine(e: Entry): string {
     case 'plan': return `${head} updated plan${e.downgrades.length ? `, downgrades ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ')}` : ''}`;
     case 'rule': return `${head} ruling (${e.nodes === '*' ? 'all nodes' : e.nodes.join(', ')}): ${e.text}`;
     case 'review': return `${head} reviewed ${e.node}/${e.obligation ?? 'review'} ${e.verdict} rank=${e.rank}${e.note ? `: ${e.note}` : ''}`;
+    case 'escape': return `${head} recorded escape ${e.node} (merge #${e.merge}, ${e.class} ${escapeLabels[e.class]}): ${e.note}${e.evidence ? ` [${e.evidence}]` : ''}`;
+    case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
+    case 'decoy-reveal': return `${head} revealed decoys ${e.decoys.map(d => d.node).join(', ')}`;
     default: return `${head} ${e.kind}`;
   }
 }
@@ -74,7 +78,30 @@ export function renderReport(v: Report): string {
     ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.by} ${i.node}: ${i.what}`))),
     ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
     ...list('Owner decisions needed', v.decisions.map(itemText)),
-    ...list('Owner actions', v.ownerActions.map(entryLine))].join('\n');
+    ...list('Owner actions', v.ownerActions.map(entryLine)),
+    ...renderEscapes(v.escapes)].join('\n');
+}
+
+// ---------- escapes and decoys (north-star metric) ----------
+export interface EscapeSummary {
+  escapes: State['escapes']; byClass: Record<EscapeClass, number>;
+  decoys: State['decoys']; caught: number; escaped: number; pending: number; unrevealed: number;
+  rate: number | null;          // escaped / (caught + escaped); null before any decoy is decided
+}
+const escapeLabels: Record<EscapeClass, string> = { missing: '② missing obligation', 'false-pass': '①a false affirmative observation', reuse: '①b unsound evidence reuse', weak: '①c weak oracle', waiver: '③ owner waiver' };
+/** Cumulative over the whole ledger, independent of the report window. */
+export function escapeSummary(s: State): EscapeSummary {
+  const byClass = { missing: 0, 'false-pass': 0, reuse: 0, weak: 0, waiver: 0 } as Record<EscapeClass, number>;
+  for (const e of s.escapes) byClass[e.class]++;
+  const count = (o: string) => s.decoys.filter(d => d.outcome === o).length, caught = count('caught'), escaped = count('escaped');
+  return { escapes: s.escapes, byClass, decoys: s.decoys, caught, escaped, pending: count('pending'), unrevealed: s.decoyCommits.filter(c => c.revealed === undefined).length, rate: caught + escaped ? escaped / (caught + escaped) : null };
+}
+export function renderEscapes(v: EscapeSummary): string[] {
+  return [`Escapes (all time): ${v.escapes.length} — ${Object.entries(v.byClass).map(([k, n]) => `${k} ${escapeLabels[k as EscapeClass].split(' ')[0]}: ${n}`).join(', ')}`,
+    ...v.escapes.map(e => `  #${e.seq} ${e.by} ${e.node} (merge #${e.merge}) ${e.class} ${escapeLabels[e.class]}: ${e.note}${e.evidence ? ` [${e.evidence}]` : ''}`),
+    `Decoys: caught ${v.caught}, escaped ${v.escaped}, pending ${v.pending}; unrevealed commitments ${v.unrevealed}`,
+    ...v.decoys.map(d => `  ${d.node}: ${d.outcome}${d.decidedBy !== undefined ? ` at #${d.decidedBy}` : ''} (committed #${d.commit}, revealed #${d.reveal}) — ${d.defect}`),
+    `Escape rate: ${v.rate === null ? 'n/a (no decided decoys)' : `${(v.rate * 100).toFixed(1)}% (${v.escaped} escaped / ${v.caught + v.escaped} decided)`}`];
 }
 
 // ---------- morning brief ----------

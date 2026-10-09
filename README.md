@@ -99,6 +99,26 @@ For this small demonstration a person can perform the independent review. In a r
 
 Plans are versioned through `owed plan <file>` / `owed_plan`. Parents may strengthen or otherwise update a plan; weakening obligations requires an owner decision and remains visible as a downgrade. Pi owner operations require `ctx.ui.confirm`, record `channel: pi-confirm`, and refuse without UI. CLI owner operations prompt on a terminal. The CLI's `--i-am-owner` flag is a weaker human automation channel, recorded visibly; agents must never use it.
 
+## North-star metric: escapes
+
+Acceptance is only as good as what it lets through. When a defect is found after a node was merged, record it against that merge:
+
+```sh
+owed escape greeting --merge 12 --class weak --note "check passed for any greeting" --evidence "issue 7"
+```
+
+`--class` names how it escaped: `missing` (② an obligation was missing), `false-pass` (①a a false affirmative observation), `reuse` (①b unsound evidence reuse), `weak` (①c a weak oracle) or `waiver` (③ an owner waiver let it through). The merge must be a merge of that node.
+
+To measure the escape rate rather than wait for accidents, the owner can plant decoys: nodes whose work deliberately carries a known defect. Before dispatching them, write `{"nonce": "<at least 16 random characters>", "decoys": [{"node": "...", "defect": "..."}]}` to a file outside the repository, then commit to it without revealing it:
+
+```sh
+owed decoy digest decoys.json            # prints the sha256 to commit; writes nothing
+owed decoy commit <digest>               # owner; before any listed node is dispatched
+owed decoy reveal decoys.json            # owner; later, when the outcome should count
+```
+
+A decoy is **caught** if its node received an execution failure or a review block before any merge, **escaped** if it merged without one, and **pending** otherwise. `owed report` ends with an Escapes section: counts by class, decoy outcomes and the escape rate, escaped / (caught + escaped).
+
 ## Trust boundary and storage
 
 The ledger lives under the Git common directory in `owed/`, shared by the repository's worktrees. Dispatch worktrees live under `.owed/wt/` and are locally excluded from Git. `OWED_DIR` overrides ledger storage for isolated tests.
