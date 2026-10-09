@@ -116,7 +116,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const result = await command(spec.run, work.path, spec.timeout_s); obs.exit = result.code;
       obs.counts = parseCounts(result.log);
       if (result.error) throw new Error(result.error);
-      // min_tests applies only to candidate runs: on the base tree a new test file often cannot load
+      // min_tests applies to every non-red run (candidate and invariant runs): on the base tree a new test file often cannot load
       // (missing module/export), so the runner reports a single failing test; a red run needs only a
       // recognizable failure (non-zero exit, red_expect match, not a known-format zero-test run).
       const red = job.kind === 'red';

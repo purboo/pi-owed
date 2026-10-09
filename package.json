@@ -1,6 +1,6 @@
 {
   "name": "pi-owed",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "owed — the acceptance ledger for multi-agent task graphs. No receipt, not done.",
   "type": "module",
   "license": "MIT",

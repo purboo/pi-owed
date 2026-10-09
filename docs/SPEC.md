@@ -739,7 +739,8 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `send`: `ops.send` (assigns the send id) then `dsa send --request <id>`; a
   re-send uses the recorded id and the stored message bytes. Outcomes: 0
   applied (the send id is remembered as applied); 1 rejected → `halt` needing
-  a human in the same pass, reason = dsa's text; 3 request-conflict → `halt`
+  a human in the same pass, reason = dsa's text followed by the abandon
+  recovery sentence (D15.1); 3 request-conflict → `halt`
   in the same pass (never retried with other bytes); 75, a timeout or a dsa
   child killed by a signal → pending, the next pass retries the same id and
   bytes. After a human clears a halt, the next pass retries the same id and
