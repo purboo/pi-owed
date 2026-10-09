@@ -171,7 +171,38 @@ file by hand. A first Ctrl-C stops after the current action, a second at once.
 ```sh
 owed drive            # until idle; run it in a terminal or a systemd-run --user unit
 owed drive --once     # one pass (also the pi tool owed_drive)
+owed drive --detach   # the same loop as a detached background process; prints its pid and log
+owed drive --status   # running (pid, host, since) or not, its last exit record, the last 10 log lines
+owed drive --stop     # stop it after its current action (--now: at once)
 ```
+
+`--detach` refuses while a driver holds the lock (naming pid, host, start and
+log). Otherwise it keeps the previous log as `.git/owed/drive/log.jsonl.1`,
+starts `owed drive --json` in its own session with stdout and stderr appended to
+`.git/owed/drive/log.jsonl` and returns once that driver holds the lock; if it
+has not taken the lock within 30 s, `--detach` stops it (SIGTERM), prints the
+log tail and exits 1. A concurrent `--detach` or `--stop` waits until that is
+decided. The log's last line is the exit record
+`{"event":"exit","code":C,"reason":"idle|stopped|killed|error","at":…}`; only
+SIGKILL or a crash leave none, and `--status` then says it ended without an exit
+record (an empty log says `no driver output yet`). The exit record is written
+before the lock is released, so once `--stop` says `stopped` it is in the log.
+`--stop` signals the lock's pid only when its process start time matches
+(never a reused pid, never another host). In pi, `owed_drive` with `action:
+"start"` does the same, and the session is woken with one message when the
+driver halts, needs the owner, a run asks a question, it is stalled, dsa events
+fail or the driver exits (merges ride along with the next message; every halt
+wakes, also one with the same text as an earlier one). Every top-level pi
+session opened in the repository later follows a running driver from then on
+and is woken too; sessions inside a dsa call (`DSA_EXEC`/`DSA_CALL` set, e.g.
+dsa writers and reviewers in the repository's worktrees) do not attach by
+themselves (an explicit start still follows). Nobody has to poll
+`action: "status"`; `action: "stop"` stops it. The driver survives pi exiting.
+The driver carries no dsa call identity (`DSA_EXEC` and `DSA_CALL` are removed
+from its environment; `DSA_HOME` and the rest are kept). Started from inside a
+dsa call, start still works but prints `note: started from inside a dsa call; if
+that call's processes are contained, the driver may end with it — prefer
+starting it from a top-level session or systemd-run --user`.
 
 The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,
