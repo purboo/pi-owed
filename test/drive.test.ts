@@ -339,7 +339,7 @@ test('monotone reviewer n across a resubmitted candidate; runs of an earlier can
   const a = act(r, runsOf(okWriter(), view(R(1), 'absent')), { applied: new Set([...applied(r)].filter(x => x !== old.send)) });
   assert.ok(a?.do === 'launch' && a.role === 'reviewer', JSON.stringify(a));
   assert.equal(a.n, 2); assert.equal(a.rid, R(2));
-  assert.match(JSON.parse(a.spec).task, /--as reviewer:drive-a-1-2 /);
+  assert.match(JSON.parse(a.spec).task, /--as reviewer:drive-a-1-1 /, 'run n=2 is review slot k=1: the same principal as on candidate 1');
   assert.match(JSON.parse(a.spec).task, /Candidate: ac2/);
 });
 
@@ -359,18 +359,19 @@ test('dispatch: ready nodes in status order while open < max, skipping writes ov
 test('owner-needed nodes are never touched: open slot with ⊤ items, ready node with a flaky block', () => {
   const r = submitted(); r.obs('check:unit', 'pass'); r.obs('check:unit', 'fail');
   assert.match(ownerNeeded(r.state(), r.state().plan, 'a') ?? '', /check:unit/);
-  assert.equal(act(r, runsOf(okWriter())), undefined);
+  const n1 = act(r, runsOf(okWriter()));
+  assert.ok(n1?.do === 'notify' && /^a: needs the owner \(check:unit: .*\); the driver leaves it alone$/.test(n1.text), JSON.stringify(n1));
   // Flaky block (attribution rerun passed), attempt abandoned: the ready node is not re-dispatched.
   const f = submitted(); f.obs('writes', 'pass'); f.obs('check:unit', 'fail');
   f.submit('2'); f.obs('check:unit', 'pass', { attribution: true, key: 'a-check:unit-1', commit: 'ac1', base: 's0' });
   f.add({ kind: 'abandon', by: 'parent:main', node: 'a', attempt: 1, reason: 'x' });
   assert.equal(f.state().nodes.a!.phase, 'ready');
   assert.match(ownerNeeded(f.state(), f.state().plan, 'a') ?? '', /flaky block/);
-  assert.deepEqual(go(f).map(x => `${x.do}:${x.node}`), ['dispatch:c', 'dispatch:d'], 'a skipped; d no longer overlaps an open slot');
+  assert.deepEqual(go(f).map(x => `${x.do}:${x.node}`), ['notify:a', 'dispatch:c', 'dispatch:d'], 'a only notified; d no longer overlaps an open slot');
   // A review the plan requires at rank 3: only the owner can record it.
   const o = submitted(basePlan(DRIVE, { a: { review: { count: 1, min_rank: 3 } } })); o.pass();
   assert.match(ownerNeeded(o.state(), o.state().plan, 'a') ?? '', /rank 3/);
-  assert.equal(act(o, runsOf(okWriter())), undefined);
+  assert.equal(act(o, runsOf(okWriter()))?.do, 'notify');
   // A closure-review merely awaiting a rank-2 review is reviewer work, not owner-needed.
   const cl = rig(); cl.dispatch(); cl.launchWriter(); cl.submit('1', 'a', true); cl.pass();
   assert.equal(ownerNeeded(cl.state(), cl.state().plan, 'a'), undefined);
@@ -419,4 +420,79 @@ test('writerTask rebuilds exactly the packet ops.dispatch stored (git fixture)',
     const a = decide(s, s.plan, new Map(), { max: 4, repairs: 2, project: projectId(s), root: rp.cwd, applied: new Set(), rejected: new Map() });
     assert.ok(a[0]?.do === 'launch' && JSON.parse(a[0].spec).task === d.packet && JSON.parse(a[0].spec).cwd === d.worktree);
   } finally { await rp.cleanup(); }
+});
+
+// ---------- driver-authored review blocks: per-slot reviewer identity (parent decision 2026-10-09) ----------
+/** block → repair follow-up (with the note) → resubmit → the same slot principal re-reviews at the block's rank → merge. */
+function blockCycle(rank: 1 | 2) {
+  const r = submitted(); r.pass(); r.launchReviewer(1);
+  const blk = r.review('block', 'reviewer:drive-a-1-1', rank);
+  assert.equal(ownerNeeded(r.state(), r.state().plan, 'a'), undefined, `a rank-${rank} block by a driver reviewer of this attempt is repairable`);
+  const runs1 = runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }));
+  const repair = act(r, runs1);
+  assert.ok(repair?.do === 'send' && repair.reason === 'repair' && repair.rid === W(), JSON.stringify(repair));
+  assert.ok(repair.message.includes(`Review blocks (the reviewer's note):\n- #${blk.seq} review by reviewer:drive-a-1-1 rank ${rank}: n`), repair.message);
+  r.send(W(), 'repair', 'follow-up', repair.message);
+  r.submit('2'); r.pass();
+  const launch = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), { applied: applied(r) });
+  assert.ok(launch?.do === 'launch' && launch.role === 'reviewer' && launch.n === 2 && launch.rid === R(2), JSON.stringify(launch));
+  const task: string = JSON.parse(launch.spec).task, lines = task.split('\n');
+  assert.ok(lines.includes('Your reviewer identity: reviewer:drive-a-1-1 (never the writer of this node).'), task);
+  assert.ok(lines.includes(`- #${blk.seq} review rank ${rank}: n`), task);
+  assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank ${rank} --note "..."`), task);
+  assert.equal(task, reviewPacket(r.state(), 'a', 2));
+  r.launchReviewer(2);
+  r.review('ok', 'reviewer:drive-a-1-1', rank);
+  assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === blk.seq)?.state, 'cleared', 'the same principal at the block rank clears it');
+  assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r) }), { do: 'merge', node: 'a' });
+}
+test('driver reviewer rank-1 block: repair, resubmit, same-principal re-review at rank 1, merge', () => blockCycle(1));
+test('driver reviewer rank-2 block: repair (not owner-needed), resubmit, same-principal re-review asked at rank 2, merge', () => blockCycle(2));
+
+test('rank-2 blocks by a non-driver reviewer, or by a driver reviewer of an earlier attempt, stay owner-needed', () => {
+  const r = submitted(); r.pass(); r.review('block', 'reviewer:human', 2);
+  assert.match(ownerNeeded(r.state(), r.state().plan, 'a') ?? '', /rank 2 review block #\d+ on review needs the owner/);
+  const a = act(r, runsOf(okWriter()));
+  assert.ok(a?.do === 'notify' && /needs the owner/.test(a.text), 'notified, never repaired');
+  // A rank-1 block by a non-driver reviewer stays repairable (unchanged).
+  const one = submitted(); one.pass(); one.launchReviewer(1); one.review('block', 'reviewer:human', 1);
+  assert.equal(ownerNeeded(one.state(), one.state().plan, 'a'), undefined);
+  assert.equal((act(one, runsOf(okWriter(), view(R(1), 'running'))) as { reason?: string }).reason, 'repair');
+  // A driver block of attempt 1 binds attempt 2 too, but attempt 2's slot reviewers are other principals: owner.
+  const old = submitted(); old.pass(); old.launchReviewer(1); old.review('block', 'reviewer:drive-a-1-1', 2);
+  old.add({ kind: 'abandon', by: 'parent:main', node: 'a', attempt: 1, reason: 'x' });
+  assert.match(ownerNeeded(old.state(), old.state().plan, 'a') ?? '', /rank 2 review block/);
+  old.dispatch();
+  assert.equal(act(old)?.do, 'notify', 'not even the writer launch');
+});
+
+test('review packet without blocks keeps its text (slot identity k = n − base)', () => {
+  const r = submitted(); r.pass();
+  const s = r.state(), c = s.nodes.a!.candidate!;
+  assert.equal(reviewPacket(s, 'a', 1), [
+    '# Review Node A (node a, attempt 1, reviewer run 1 of 1 for this candidate, n = 1)',
+    'Node: a; attempt: 1',
+    `Candidate: ac1 (submit #${c.seq})`,
+    'Base: s0',
+    'Brief:', 'Do A.',
+    'Allowed writes: a/',
+    'Obligations of the candidate:',
+    `- check:unit: measured by owed [✔ check:unit satisfied]`,
+    `- writes: measured by owed [✔ writes satisfied]`,
+    `- review: 1 non-writer review(s) by distinct reviewers, rank >= 1 [⊥ review requires 1 non-writer reviews with rank at least 1] — recorded by this run`,
+    `- rulings: acknowledge applicable rulings [✔ no ruling is in scope for this node]`,
+    'Rulings in scope: none',
+    'Your reviewer identity: reviewer:drive-a-1-1 (never the writer of this node).',
+    'Inspect the actual diff: git diff s0 ac1',
+    'Do not edit files, commit or run owed submit; review only.',
+    'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',
+    '  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --note "..."',
+    'Reply with the ledger seqs of the reviews you recorded.'].join('\n'));
+});
+
+test('a re-send dsa refuses (exit 1, e.g. pruned run) → halt needing a human, never retried', () => {
+  const r = rig(); r.dispatch(); r.launchWriter();
+  const x = r.send(W(), 'submit', 'follow-up', 'commit your work and run `owed submit a`');
+  const a = act(r, runsOf(view(W(), 'pruned', { status: 'ok' })), { rejected: new Map([[x.send, 'unknown run']]) });
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `dsa rejected send ${x.send}: unknown run`, needs: 'human' });
 });

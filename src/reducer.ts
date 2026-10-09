@@ -265,8 +265,18 @@ export function reviewerBase(s: State, node: string): number {
 export function runLabels(project: string, node: string, attempt: number, role: RunRole): Record<string, string> {
   return { owed: project, node, attempt: String(attempt), role };
 }
-/** Reviewer principal of the driver's n-th reviewer run of an attempt. */
-export function driveReviewer(node: string, attempt: number, n: number): string { return `reviewer:drive-${node}-${attempt}-${n}`; }
+/**
+ * Reviewer principal of review slot `k` of an attempt: `reviewer:drive-<node>-<attempt>-<k>`. The identity is per review
+ * SLOT, not per run: k = n − reviewerBase (the local index 1..runs of the candidate), so the slot-k reviewer of every
+ * candidate of the attempt is the same principal and its ok at rank >= its own block's rank clears that block. Run ids
+ * keep the attempt-global n.
+ */
+export function driveReviewer(node: string, attempt: number, k: number): string { return `reviewer:drive-${node}-${attempt}-${k}`; }
+/** The review slot k of a principal that is a driver reviewer of `node`'s attempt `attempt`, else undefined. */
+export function driveReviewerSlot(by: string, node: string, attempt: number): number | undefined {
+  const prefix = `reviewer:drive-${node}-${attempt}-`;
+  return by.startsWith(prefix) && /^[1-9][0-9]*$/.test(by.slice(prefix.length)) ? Number(by.slice(prefix.length)) : undefined;
+}
 export const SEND_KINDS: readonly SendKind[] = ['follow-up', 'steer'];
 export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing'];
 const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
