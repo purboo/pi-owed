@@ -310,8 +310,10 @@ export function reviewObligations(s: State, node: string, n: number): ('review' 
  * base, brief, writes, obligations with required count/rank, rulings in scope, the exact `owed review` commands
  * for the slot reviewer `reviewer:drive-<node>-<attempt>-<k>` (k = n − reviewerBase: the identity is per review slot,
  * the same principal for every candidate of the attempt), and the rules (inspect the diff, edit nothing, reply with
- * seqs). When that principal has active review blocks on the node, the packet quotes them (seq, obligation, rank, note)
- * and asks for rank max(required rank, block rank) on the blocked obligation, so its ok clears its own block.
+ * seqs). When that principal has active review blocks on the node, the packet quotes them (seq, obligation, rank, note).
+ * Per obligation it asks for rank max(required rank, this principal's block rank, 1 + rank of any other principal's
+ * active rank-1 block) (D11), so its ok clears its own block and outranks another reviewer's rank-1 block; such other
+ * blocks are quoted too.
  */
 export function reviewPacket(s: State, node: string, n = 1): string {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
@@ -326,12 +328,14 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   const rank = (o: 'review' | 'closure-review'): number => o === 'closure-review' ? 2 : Math.max(1, spec.review.min_rank);
   // Active review blocks recorded by this slot's principal (on any earlier candidate of the attempt).
   const entries = entriesOf(s), author = (seq: number) => entries.find(e => e.seq === seq);
-  const blocks = st.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && author(b.seq)?.by === who);
-  const slotRank = (o: 'review' | 'closure-review'): number => Math.max(rank(o), ...blocks.filter(b => b.obligation === o).map(b => b.rank ?? 0));
+  const judged = st.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
+  const blocks = judged.filter(b => author(b.seq)?.by === who), others = judged.filter(b => author(b.seq)?.by !== who && b.rank === 1);
+  const slotRank = (o: 'review' | 'closure-review'): number => Math.max(rank(o), ...blocks.filter(b => b.obligation === o).map(b => b.rank ?? 0), ...others.filter(b => b.obligation === o).map(b => (b.rank ?? 0) + 1));
   const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : 'measured by owed';
   const mine = reviewObligations(s, node, n);
   const commands = mine.flatMap(o => slotRank(o) > 2 ? [`(${o} requires rank ${slotRank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${slotRank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
-  const quoted = blocks.map(b => { const e = author(b.seq); return `- #${b.seq} ${b.obligation} rank ${b.rank}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; });
+  const quote = (b: Block): string => { const e = author(b.seq); return `- #${b.seq} ${b.obligation} rank ${b.rank}${author(b.seq)?.by === who ? '' : ` by ${e?.by ?? '?'}`}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; };
+  const quoted = blocks.map(quote), otherQuoted = others.filter(b => mine.includes(b.obligation as 'review')).map(quote);
   return [`# Review ${spec.title ?? node} (node ${node}, attempt ${attempt}, reviewer run ${k} of ${runs} for this candidate, n = ${n})`,
     `Node: ${node}; attempt: ${attempt}`,
     `Candidate: ${commit} (submit #${st.candidate.seq})`,
@@ -344,6 +348,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
     ...rulings.map(r => `- #${r.seq} ${r.text}`),
     `Your reviewer identity: ${who} (never the writer of this node).`,
     ...(quoted.length ? [`Your earlier review block(s) on this node, still active (check whether this candidate fixes them; an ok at the rank given below clears them):`, ...quoted] : []),
+    ...(otherQuoted.length ? [`Active rank-1 review block(s) by other reviewers on the obligations you record (check whether this candidate fixes them; an ok at the rank given below clears them):`, ...otherQuoted] : []),
     `Inspect the actual diff: git diff ${base} ${commit}`,
     'Do not edit files, commit or run owed submit; review only.',
     'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, sha256 } from '../src/canon.ts';
-import { decide, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
+import { decide, driverSlot, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, runLabels, projectId, entriesOf } from '../src/reducer.ts';
 import { reviewPacket, dispatchPacket } from '../src/views.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -41,8 +41,8 @@ function rig(plan: Plan = basePlan(DRIVE)) {
       const s = state(), attempt = (s.nodes[node]!.slot?.attempt ?? 0) + 1, rules = s.rules.filter(x => x.nodes === '*' || x.nodes.includes(node));
       return add({ kind: 'dispatch', by: 'parent:drive', node, attempt, base: s.trunk.commit, branch: `owed/${node}/${attempt}`, worktree: `/repo/.owed/wt/${node}-${attempt}`, packet: 'blob', rulings_seen: Math.max(-1, ...rules.map(x => x.seq)) });
     },
-    launchWriter(node = 'a') { const a = writerLaunch(state(), state().plan, node, P); return add({ kind: 'launch', by: 'parent:drive', node, attempt: a.attempt, role: 'writer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
-    launchReviewer(n: number, node = 'a') { const a = reviewerLaunch(state(), state().plan, node, n, P, '/repo'); return add({ kind: 'launch', by: 'parent:drive', node, attempt: a.attempt, role: 'reviewer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
+    launchWriter(node = 'a') { const a = writerLaunch(state(), node, P); return add({ kind: 'launch', by: 'parent:drive', node, attempt: a.attempt, role: 'writer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
+    launchReviewer(n: number, node = 'a') { const a = reviewerLaunch(state(), node, n, P, '/repo'); return add({ kind: 'launch', by: 'parent:drive', node, attempt: a.attempt, role: 'reviewer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
     send(rid: string, reason: Extract<Draft, { kind: 'send' }>['reason'], sendKind: 'follow-up' | 'steer' = 'follow-up', message = `msg ${entries.length}`, node = 'a') {
       return add({ kind: 'send', by: 'parent:drive', node, attempt: slot(node).attempt, rid, send: `${rid}:${sendKind}:${entries.length}`, sendKind, message: blob(message), reason }) as Extract<Entry, { kind: 'send' }>;
     },
@@ -358,7 +358,7 @@ test('dispatch: ready nodes in status order while open < max, skipping writes ov
 
 test('owner-needed nodes are never touched: open slot with ⊤ items, ready node with a flaky block', () => {
   const r = submitted(); r.obs('check:unit', 'pass'); r.obs('check:unit', 'fail');
-  assert.match(ownerNeeded(r.state(), r.state().plan, 'a') ?? '', /check:unit/);
+  assert.match(ownerNeeded(r.state(), 'a') ?? '', /check:unit/);
   const n1 = act(r, runsOf(okWriter()));
   assert.ok(n1?.do === 'notify' && /^a: needs the owner \(check:unit: .*\); the driver leaves it alone$/.test(n1.text), JSON.stringify(n1));
   // Flaky block (attribution rerun passed), attempt abandoned: the ready node is not re-dispatched.
@@ -366,15 +366,15 @@ test('owner-needed nodes are never touched: open slot with ⊤ items, ready node
   f.submit('2'); f.obs('check:unit', 'pass', { attribution: true, key: 'a-check:unit-1', commit: 'ac1', base: 's0' });
   f.add({ kind: 'abandon', by: 'parent:main', node: 'a', attempt: 1, reason: 'x' });
   assert.equal(f.state().nodes.a!.phase, 'ready');
-  assert.match(ownerNeeded(f.state(), f.state().plan, 'a') ?? '', /flaky block/);
+  assert.match(ownerNeeded(f.state(), 'a') ?? '', /flaky block/);
   assert.deepEqual(go(f).map(x => `${x.do}:${x.node}`), ['notify:a', 'dispatch:c', 'dispatch:d'], 'a only notified; d no longer overlaps an open slot');
   // A review the plan requires at rank 3: only the owner can record it.
   const o = submitted(basePlan(DRIVE, { a: { review: { count: 1, min_rank: 3 } } })); o.pass();
-  assert.match(ownerNeeded(o.state(), o.state().plan, 'a') ?? '', /rank 3/);
+  assert.match(ownerNeeded(o.state(), 'a') ?? '', /rank 3/);
   assert.equal(act(o, runsOf(okWriter()))?.do, 'notify');
   // A closure-review merely awaiting a rank-2 review is reviewer work, not owner-needed.
   const cl = rig(); cl.dispatch(); cl.launchWriter(); cl.submit('1', 'a', true); cl.pass();
-  assert.equal(ownerNeeded(cl.state(), cl.state().plan, 'a'), undefined);
+  assert.equal(ownerNeeded(cl.state(), 'a'), undefined);
   assert.equal(act(cl, runsOf(okWriter()))?.do, 'launch');
 });
 
@@ -398,9 +398,9 @@ test('launch spec bytes are canonical and stable', () => {
   assert.equal(launchSpec({ agent: 'a', cwd: '/w', task: 't' }), '{"agent":"a","cwd":"/w","isolation":"none","once":true,"task":"t"}');
   assert.equal(x, canonical(JSON.parse(x)));
   const r = rig(); r.dispatch();
-  const before = writerLaunch(r.state(), r.state().plan, 'a', P);
+  const before = writerLaunch(r.state(), 'a', P);
   r.rule('later'); r.dispatch('c'); r.launchWriter('c');
-  assert.deepEqual(writerLaunch(r.state(), r.state().plan, 'a', P), before, 'a retry rebuilds identical bytes');
+  assert.deepEqual(writerLaunch(r.state(), 'a', P), before, 'a retry rebuilds identical bytes');
 });
 
 test('writerTask rebuilds exactly the packet ops.dispatch stored (git fixture)', async () => {
@@ -427,7 +427,7 @@ test('writerTask rebuilds exactly the packet ops.dispatch stored (git fixture)',
 function blockCycle(rank: 1 | 2) {
   const r = submitted(); r.pass(); r.launchReviewer(1);
   const blk = r.review('block', 'reviewer:drive-a-1-1', rank);
-  assert.equal(ownerNeeded(r.state(), r.state().plan, 'a'), undefined, `a rank-${rank} block by a driver reviewer of this attempt is repairable`);
+  assert.equal(ownerNeeded(r.state(), 'a'), undefined, `a rank-${rank} block by a driver reviewer of this attempt is repairable`);
   const runs1 = runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }));
   const repair = act(r, runs1);
   assert.ok(repair?.do === 'send' && repair.reason === 'repair' && repair.rid === W(), JSON.stringify(repair));
@@ -451,17 +451,17 @@ test('driver reviewer rank-2 block: repair (not owner-needed), resubmit, same-pr
 
 test('rank-2 blocks by a non-driver reviewer, or by a driver reviewer of an earlier attempt, stay owner-needed', () => {
   const r = submitted(); r.pass(); r.review('block', 'reviewer:human', 2);
-  assert.match(ownerNeeded(r.state(), r.state().plan, 'a') ?? '', /rank 2 review block #\d+ on review needs the owner/);
+  assert.match(ownerNeeded(r.state(), 'a') ?? '', /rank 2 review block #\d+ on review needs the owner/);
   const a = act(r, runsOf(okWriter()));
   assert.ok(a?.do === 'notify' && /needs the owner/.test(a.text), 'notified, never repaired');
   // A rank-1 block by a non-driver reviewer stays repairable (unchanged).
   const one = submitted(); one.pass(); one.launchReviewer(1); one.review('block', 'reviewer:human', 1);
-  assert.equal(ownerNeeded(one.state(), one.state().plan, 'a'), undefined);
+  assert.equal(ownerNeeded(one.state(), 'a'), undefined);
   assert.equal((act(one, runsOf(okWriter(), view(R(1), 'running'))) as { reason?: string }).reason, 'repair');
   // A driver block of attempt 1 binds attempt 2 too, but attempt 2's slot reviewers are other principals: owner.
   const old = submitted(); old.pass(); old.launchReviewer(1); old.review('block', 'reviewer:drive-a-1-1', 2);
   old.add({ kind: 'abandon', by: 'parent:main', node: 'a', attempt: 1, reason: 'x' });
-  assert.match(ownerNeeded(old.state(), old.state().plan, 'a') ?? '', /rank 2 review block/);
+  assert.match(ownerNeeded(old.state(), 'a') ?? '', /rank 2 review block/);
   old.dispatch();
   assert.equal(act(old)?.do, 'notify', 'not even the writer launch');
 });
@@ -495,4 +495,90 @@ test('a re-send dsa refuses (exit 1, e.g. pruned run) → halt needing a human, 
   const x = r.send(W(), 'submit', 'follow-up', 'commit your work and run `owed submit a`');
   const a = act(r, runsOf(view(W(), 'pruned', { status: 'ok' })), { rejected: new Map([[x.send, 'unknown run']]) });
   assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `dsa rejected send ${x.send}: unknown run`, needs: 'human' });
+});
+
+// ---------- D11: stale review blocks wait for the slot re-review (review #224) ----------
+/** Slot-1 driver block (rank 2) on c1 → repair → c2 submitted and attested → slot re-review run n=2 launched. */
+function reReview(o: { closure?: boolean; blockOn?: 'review' | 'closure-review' } = {}) {
+  const r = rig(); r.dispatch(); r.launchWriter(); r.submit('1', 'a', !!o.closure); r.pass(); r.launchReviewer(1);
+  const blk = o.blockOn === 'closure-review'
+    ? (r.review('ok', 'reviewer:drive-a-1-1', 1), r.review('block', 'reviewer:drive-a-1-1', 2, 'closure-review'))
+    : r.review('block', 'reviewer:drive-a-1-1', 2);
+  const repair = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })));
+  assert.ok(repair?.do === 'send' && repair.reason === 'repair', JSON.stringify(repair));
+  r.send(W(), 'repair', 'follow-up', repair.message);
+  r.submit('2'); r.pass(); r.launchReviewer(2);
+  return { r, blk };
+}
+test('D11 reproduction of #224: while the slot re-review is queued or running, no second repair; its ok clears the block', () => {
+  const { r, blk } = reReview();
+  for (const state of ['queued', 'running'] as const)
+    for (const repairs of [1, 2])
+      assert.equal(act(r, runsOf(okWriter(), view(R(2), state)), { applied: applied(r), repairs }), undefined, `${state}, repairs ${repairs}`);
+  assert.equal(r.entries.filter(e => e.kind === 'send' && e.reason === 'repair').length, 1);
+  r.review('ok', 'reviewer:drive-a-1-1', 2);
+  assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === blk.seq)?.state, 'cleared');
+  assert.deepEqual(act(r, runsOf(okWriter(), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r), repairs: 1 }), { do: 'merge', node: 'a' });
+});
+
+test('D11: the slot reviewer records a new block on c2 → exactly one repair', () => {
+  const { r } = reReview();
+  const b2 = r.review('block', 'reviewer:drive-a-1-1', 1);
+  const runs = runsOf(okWriter(), view(R(2), 'sealed', { status: 'ok' }));
+  const a = act(r, runs, { applied: applied(r) });
+  assert.ok(a?.do === 'send' && a.reason === 'repair' && a.message.includes(`- #${b2.seq} review by reviewer:drive-a-1-1 rank 1: n`), JSON.stringify(a));
+  r.send(W(), 'repair', 'follow-up', a.message);
+  assert.equal(act(r, runsOf(view(W(), 'running'), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r) }), undefined, 'no second repair while the writer works');
+  const done = act(r, runs, { applied: applied(r) });
+  assert.ok(done?.do === 'halt' && /finished repair follow-up/.test(done.reason), 'a writer that does not resubmit halts; never a second repair');
+  assert.equal(r.entries.filter(e => e.kind === 'send' && e.reason === 'repair').length, 2, 'one repair per candidate (c1, c2)');
+  // With repairs 1 the c2 block exhausts the cap instead.
+  const { r: q } = reReview(); q.review('block', 'reviewer:drive-a-1-1', 1);
+  assert.match((act(q, runs, { applied: applied(q), repairs: 1 }) as { reason: string }).reason, /^repairs exhausted \(1 of 1\): review block #\d+ review$/);
+});
+
+test('D11: the slot reviewer oks c2 but a stale closure-review block stays active → halt needing the owner, naming the seq', () => {
+  const { r, blk } = reReview({ closure: true, blockOn: 'closure-review' });
+  assert.equal(act(r, runsOf(okWriter(), view(R(2), 'running')), { applied: applied(r) }), undefined, 'waits for the re-review');
+  r.review('ok', 'reviewer:drive-a-1-1', 1);
+  const a = act(r, runsOf(okWriter(), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r) });
+  assert.ok(a?.do === 'halt' && a.needs === 'owner', JSON.stringify(a));
+  assert.equal(a.reason, `stale review block #${blk.seq} closure-review rank 2 by reviewer:drive-a-1-1 still active after every slot reviewer reviewed candidate #${r.state().nodes.a!.candidate!.seq}; the driver cannot clear it`);
+});
+
+test('D11: an active rank-1 block by another principal → the slot packet asks for rank 2, and that ok clears it', () => {
+  const r = submitted(); r.pass(); const h = r.review('block', 'reviewer:human', 1);
+  const a = act(r, runsOf(okWriter()));
+  assert.ok(a?.do === 'launch' && a.role === 'reviewer', JSON.stringify(a));
+  const lines = JSON.parse(a.spec).task.split('\n');
+  assert.ok(lines.includes('  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 2 --note "..."'), lines.join('\n'));
+  assert.ok(lines.includes(`- #${h.seq} review rank 1 by reviewer:human: n`));
+  // Repaired (current block), resubmitted; the slot reviewer of c2 is asked for rank 2 again and its ok clears the human block.
+  r.launchReviewer(1);
+  const fix = act(r, runsOf(okWriter(), view(R(1), 'running')));
+  assert.ok(fix?.do === 'send' && fix.reason === 'repair');
+  r.send(W(), 'repair', 'follow-up', fix.message); r.submit('2'); r.pass();
+  assert.equal(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), { applied: applied(r) })?.do, 'launch');
+  assert.match(reviewPacket(r.state(), 'a', 2), /--as reviewer:drive-a-1-1 --ok\|--block --rank 2 /);
+  r.launchReviewer(2); r.review('ok', 'reviewer:drive-a-1-1', 2);
+  assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === h.seq)?.state, 'cleared');
+  assert.deepEqual(act(r, runsOf(okWriter(), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r) }), { do: 'merge', node: 'a' });
+});
+
+test('D11: reviewer:drive-<node>-<attempt>-<k> with k outside 1..count is not a driver reviewer', () => {
+  const r = submitted(); r.pass();
+  assert.equal(driverSlot(r.state(), 'a', 'reviewer:drive-a-1-1'), 1);
+  for (const by of ['reviewer:drive-a-1-2', 'reviewer:drive-a-1-0', 'reviewer:drive-a-2-1', 'reviewer:drive-a-1-1x']) assert.equal(driverSlot(r.state(), 'a', by), undefined, by);
+  r.review('block', 'reviewer:drive-a-1-2', 2);
+  assert.match(ownerNeeded(r.state(), 'a') ?? '', /rank 2 review block #\d+ on review needs the owner/);
+  assert.equal(act(r, runsOf(okWriter()))?.do, 'notify');
+  const two = submitted(basePlan(DRIVE, { a: { review: { count: 2, min_rank: 1 } } })); two.pass();
+  assert.equal(driverSlot(two.state(), 'a', 'reviewer:drive-a-1-2'), 2, 'in range when count is 2');
+});
+
+test('D11: decide reads the plan from s.plan only', () => {
+  const r = rig(); r.dispatch();
+  const other = basePlan({ ...DRIVE, max: 1, writer: { agent: 'impostor' } }, { a: { writes: ['zzz/'] } });
+  assert.deepEqual(decide(r.state(), other, runsOf(), optsOf(r)), go(r));
+  assert.equal(JSON.parse((go(r)[0] as { spec: string }).spec).agent, 'worker');
 });
