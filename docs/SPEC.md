@@ -66,6 +66,8 @@ nodes:
         tests: ["test/auth/**"]   # files overlaid onto base for the red run (required if red)
         red_expect: "not ok|AssertionError"   # optional regex the red-run log must match
         min_tests: 1
+        mutants: [".owed/mutants/auth/*.patch"]   # optional: mutant patch globs inside the closure (read from the base)
+        min_kill: 0.8          # optional, in (0, 1], default 1: fraction of mutants the check must kill
     review: {count: 1, min_rank: 1}   # default {count: 0}
     brief: |                   # free text included in the dispatch packet
       ...
@@ -76,7 +78,11 @@ node's submitted candidate: the writer must submit again so keys are recomputed.
 Invariants removed by the owner no longer need their genesis observation.
 
 Validation: unique ids; deps exist; acyclic; `red: true` requires `tests`;
-`writes` non-empty for nodes with checks. Plan changes are laws (§5) by owner or
+`writes` non-empty for nodes with checks; `mutants` (node checks only, non-empty)
+must lie inside the closure — each glob, read as a path, matches a closure glob,
+and a glob containing `**` needs a closure prefix (`dir/` or `dir/**`) covering
+it; `min_kill` requires `mutants` and lies in (0, 1]. Removing `mutants` or
+lowering `min_kill` is a downgrade. Plan changes are laws (§5) by owner or
 parent. Removing or weakening an obligation of a node relative to the previous
 plan (check removed, `red` turned off, `min_tests` lowered, review count/rank
 lowered, writes widened) is a **downgrade**: allowed only to the owner, and
@@ -96,6 +102,11 @@ All keys are sha256 hex over canonical JSON.
   Because keys use content, a merge commit whose tree equals the candidate's
   tree reuses the candidate's observations automatically.
 - Red item key: `H({o:"red", id, run, red_expect, timeout_s, setup, min_tests, closure: closureDigest(B), base: treeOid(B), tests: readsDigest(C, tests)})`.
+- Strength item key (checks with `mutants`):
+  `H({o:"strength", id, run, timeout_s, setup, min_tests, min_kill, closure: closureDigest(B), mutants: mutantsDigest(B), reads: readsDigest(C, reads)})`,
+  where `mutantsDigest(B)` = `readsDigest` over the files of B matching both
+  `mutants` and the closure. It changes when the candidate's read set, the check
+  or any mutant changes.
 - Writes item key: `H({o:"writes", base: B, cand: C, writes})`.
 - Closure-review item (exists iff diff(B,C) touches a closure glob):
   `H({o:"closure-review", patch})`.
@@ -149,6 +160,9 @@ harness, materialization failure) is ⊥: no information, no block.
    `min_rank`, none of them a writer of this node (any attempt).
 6. `rulings`: satisfied iff the attempt's `rulings_seen` ≥ the latest in-scope
    `rule` seq, or a later `review ok` by rank ≥ 1 with `ack_rulings` ≥ that seq.
+7. `strength:<id>` for each check with `mutants`; executor observation (§7):
+   `pass` means the check killed at least `min_kill` of the base's mutants. A
+   `fail` is an execution block like any other. On merge it keeps the candidate's key.
 
 ### 6.3 Status of an item
 - Executor verdicts on the same item join in the lattice ⊥ < pass, fail < ⊤
@@ -206,10 +220,19 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
    `min_tests` unmet = fail; unknown format with `min_tests` set = error.
 3. Red runs: materialize B, overlay candidate `tests` files, restore closure
    from B, run; pass iff exit ≠ 0 and not zero-test and `red_expect` matches.
-4. Writes / closure-touch computed from `git diff --name-only B C`.
-5. Skip an item whose key already has an executor verdict (reuse), unless
+4. Strength runs (`strength:<id>`, checks with `mutants`): the mutants are the
+   files of B matching `mutants` and the closure, read from B (never from C);
+   none → `error`. For each mutant: materialize C, restore closure from B as for
+   the check, `git apply` the patch (one that does not apply counts as not
+   killed and is reported), run `setup`, run the check command. Killed iff
+   (exit ≠ 0, a timeout included, or failing tests > 0) and the run is not
+   zero-test. Verdict pass iff killed/total ≥ `min_kill`; counts
+   `{tests: total, pass: killed, fail: survived}`; the log lists each mutant's
+   result. The receipt card shows `strength k/n`.
+5. Writes / closure-touch computed from `git diff --name-only B C`.
+6. Skip an item whose key already has an executor verdict (reuse), unless
    `--rerun`.
-6. Remove the temporary worktree. Append one `obs` per item under the lock.
+7. Remove the temporary worktree. Append one `obs` per item under the lock.
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 

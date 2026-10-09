@@ -13,7 +13,7 @@ function context(state: State): History {
 }
 const active = (b: Block): boolean => b.state !== 'cleared';
 /** Blocks that still bind the node: judgment blocks always; execution blocks only while their obligation exists (removing it is an owner-only, visible downgrade). */
-const binding = (b: Block, spec: NodeSpec | undefined): boolean => active(b) && (b.kind === 'judgment' || !spec || spec.checks.some(c => b.obligation === `check:${c.id}` || (c.red && b.obligation === `red:${c.id}`)) || b.obligation === 'writes');
+const binding = (b: Block, spec: NodeSpec | undefined): boolean => active(b) && (b.kind === 'judgment' || !spec || spec.checks.some(c => b.obligation === `check:${c.id}` || (c.red && b.obligation === `red:${c.id}`) || (!!c.mutants && b.obligation === `strength:${c.id}`)) || b.obligation === 'writes');
 const role = (by: string): string => by.split(':')[0] ?? '';
 const blankPlan = (): Plan => ({ version: 1, trunk: '', closure: [], invariants: [], nodes: [] });
 const emptyNode = (id: string): NodeState => ({ id, phase: 'blocked', items: [], blocks: [], accepted: false, dependents: 0, writers: [] });
@@ -22,7 +22,7 @@ const observations = (s: State, subject: string, obligation: string, key: string
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => observations(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
 function required(spec: NodeSpec, facts: CandidateFacts): string[] {
-  return [...spec.checks.flatMap(c => [`check:${c.id}`, ...(c.red ? [`red:${c.id}`] : [])]), 'writes', ...(facts.closureTouched ? ['closure-review'] : []), ...(spec.review.count > 0 ? ['review'] : []), 'rulings'];
+  return [...spec.checks.flatMap(c => [`check:${c.id}`, ...(c.red ? [`red:${c.id}`] : []), ...(c.mutants ? [`strength:${c.id}`] : [])]), 'writes', ...(facts.closureTouched ? ['closure-review'] : []), ...(spec.review.count > 0 ? ['review'] : []), 'rulings'];
 }
 function latestRule(s: State, node: string): number {
   return Math.max(-1, ...s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node)).map(r => r.seq));
@@ -174,6 +174,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
       if (c.red && !d.red) add(node, `${c.id} red disabled`);
       if ((d.min_tests ?? 0) < (c.min_tests ?? 0)) add(node, `${c.id} min_tests reduced`);
       if (c.run !== d.run || c.timeout_s !== d.timeout_s || canonical(c.reads) !== canonical(d.reads) || canonical(c.tests) !== canonical(d.tests) || c.red_expect !== d.red_expect) add(node, `${c.id} check definition changed; cannot prove obligations were not reduced`);
+      if (c.mutants && (canonical(c.mutants) !== canonical(d.mutants) || (d.min_kill ?? 1) < (c.min_kill ?? 1))) add(node, `${c.id} mutants removed or changed, or min_kill reduced`);
     }
   };
   if (prev.setup !== next.setup || canonical(prev.closure) !== canonical(next.closure)) add('*', 'setup/closure changed; cannot prove obligations were not reduced');
@@ -235,7 +236,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       } else {
         const target = s.nodes[d.subject];
         if (!target) errors.push('obs node does not exist');
-        if (!/^(check:.+|red:.+|writes)$/.test(d.obligation)) errors.push('obs can only observe execution obligations');
+        if (!/^(check:.+|red:.+|strength:.+|writes)$/.test(d.obligation)) errors.push('obs can only observe execution obligations');
         if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.key === d.key && b.obligation === d.obligation && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
       }
       if (!d.key) errors.push('obs is missing an obligation key');
@@ -274,8 +275,8 @@ export function validateDraft(s: State, d: Draft): string[] {
 function job(spec: NodeSpec | undefined, subject: string, obligation: string, key: string, commit: string, base: string, plan: Plan): AttestJob | undefined {
   if (obligation === 'writes') return { kind: 'writes', subject, obligation, key, commit, base };
   const colon = obligation.indexOf(':'), kind = obligation.slice(0, colon), id = obligation.slice(colon + 1);
-  if (kind !== 'check' && kind !== 'red' && kind !== 'inv') return undefined;
-  const check = (kind === 'inv' ? plan.invariants : spec?.checks)?.find(c => c.id === id);
+  if (kind !== 'check' && kind !== 'red' && kind !== 'strength' && kind !== 'inv') return undefined;
+  const check = (kind === 'inv' ? plan.invariants : spec?.checks)?.find(c => c.id === id && (kind !== 'strength' || !!c.mutants));
   return check ? { kind, subject, obligation, key, spec: structuredClone(check), commit, base } : undefined;
 }
 export function attestJobs(s: State, id: string): AttestJob[] {
