@@ -275,23 +275,29 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       if (statusOf(v) === 'unknown' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
       return halt(`review-missing: reviewer run ${l.rid} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}`);
     }
-    // Row 15 (D11): a review block recorded on the current candidate's key: repair (counts as a repair). A stale block
-    // (recorded on an earlier candidate) is left to the slot re-review: wait while any slot reviewer of this candidate
-    // has not recorded its review on the current key; once all have and it is still active, halt needing the owner.
+    // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale
+    // block (recorded on an earlier candidate) is left to the slot re-review: wait only while a reviewer run of this
+    // candidate is unsealed (row 12 already launched any needed run); otherwise halt needing the owner.
     const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
     const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
     if (current.length) return repair(`review block ${current.map(b => `#${b.seq} ${b.obligation}`).join(', ')}`);
+    const reviewing = reviewers.some(l => !isSealed(view(l)));
     if (stale.length) {
-      const base = reviewerBase(s, id), slots = Array.from({ length: reviewRuns(s, id) }, (_, i) => i + 1);
-      const reviewed = slots.every(k => reviewObligations(s, id, base + k).every(o => entries.some(e => e.kind === 'review' && e.node === id && e.by === driveReviewer(id, attempt, k) && e.obligation === o && e.key === c.keys[o])));
-      if (!reviewed) return fenced();
-      return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active after every slot reviewer reviewed candidate #${c.seq}; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}`, 'owner');
+      if (reviewing) return fenced();
+      return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active and no reviewer run of candidate #${c.seq} is running; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}`, 'owner');
     }
     // Rows 16-17: accepted: merge; a merge this process saw refused: rebase when trunk moved, else halt.
     if (n.accepted) {
       const m = opts.merges?.get(id);
       if (m && m.candidate === c.seq) return m.rebase ? { do: 'rebase', node: id } : halt(`merge refused: ${m.reason}`, m.needs ?? 'human');
       return { do: 'merge', node: id };
+    }
+    // Liveness (D12): a candidate that is not accepted while no driver run of the attempt is unsealed never yields
+    // "nothing to do": halt needing the owner with every non-E item and active block.
+    if (wSealed && !reviewing) {
+      const items = n.items.filter(i => i.status !== 'E').map(i => `${i.obligation} ${i.mark} ${i.detail}`);
+      const blocks = n.blocks.filter(b => b.state === 'active').map(b => `#${b.seq}`);
+      return halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}`, 'owner');
     }
   }
   // Row 18: the running writer was fenced after the last steer.
