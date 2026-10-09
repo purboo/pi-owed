@@ -25,8 +25,23 @@ export function git(cwd: string, args: string[], opts?: { input?: string; allowF
 export async function repoRoot(cwd: string): Promise<string> { return (await git(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim(); }
 /** Absolute git common directory shared by every worktree of the repository. */
 export async function commonDir(cwd: string): Promise<string> { return resolve(cwd, (await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim()); }
-/** Root of the main worktree (dirname of the common dir), the same from inside any linked worktree. */
-export async function mainRoot(cwd: string): Promise<string> { return dirname(await commonDir(cwd)); }
+async function realOr(path: string): Promise<string> { try { return await realpath(path); } catch { return resolve(path); } }
+/**
+ * Top level of the repository's main worktree, the same from inside any linked worktree (ruling #122).
+ * In the main worktree (git dir == common dir) it is `--show-toplevel`; this covers submodules
+ * (common dir super/.git/modules/sub) and `--separate-git-dir`. In a linked worktree, d = dirname(common dir)
+ * is used only when git at d reports the same common dir and d is its top level; otherwise OwedError('usage').
+ */
+export async function mainRoot(cwd: string): Promise<string> {
+  const [gitDir, common] = (await git(cwd, ['rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).stdout.trim().split('\n').map(p => resolve(cwd, p));
+  if (await realOr(gitDir!) === await realOr(common!)) return (await git(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim();
+  const d = dirname(common!), refuse = (): never => { throw new OwedError(`cannot locate the main worktree of this repository from the linked worktree ${cwd}: run owed from the main worktree`, 'usage'); };
+  const there = await git(d, ['rev-parse', '--path-format=absolute', '--git-common-dir'], { allowFail: true });
+  if (there.code || await realOr(resolve(d, there.stdout.trim())) !== await realOr(common!)) refuse();
+  const top = await git(d, ['rev-parse', '--show-toplevel'], { allowFail: true });
+  if (top.code || await realOr(top.stdout.trim()) !== await realOr(d)) refuse();
+  return top.stdout.trim();
+}
 /** Reads `path` (relative to cwd, or absolute inside the worktree) from commit `rev`; returns the resolved commit and repository-relative path. */
 export async function readAt(cwd: string, rev: string, path: string): Promise<{ commit: string; path: string; text: string }> {
   const top = await realpath(await repoRoot(cwd)), abs = isAbsolute(path) ? path : resolve(await realpath(cwd), path);

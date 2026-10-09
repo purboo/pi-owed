@@ -80,15 +80,16 @@ export async function planSet(o: Actor & { plan: string; rev?: string; path?: st
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*' }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes })); }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
-  owner(o); const ledger = await Ledger.open(o.cwd);
+  // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
+  // Resolved first, so an unverifiable layout is refused before any ledger, exclude or worktree effect.
+  owner(o); const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('Node id is unsafe for a worktree path','usage');
     // Overlapping writes of concurrent slots produce conflicts or ambiguous ownership; refuse unless explicitly allowed.
     const overlaps = overlapping(state,o.node);
     if (overlaps.length && !o.allowOverlap) throw new OwedError(`writes of ${o.node} overlap the open slot of ${overlaps.join(', ')}; wait for ${overlaps.length > 1 ? 'them' : 'it'} or dispatch with --allow-overlap`);
-    // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
-    const attempt = (n.slot?.attempt ?? 0)+1, branch = `owed/${o.node}/${attempt}`, root = await git.mainRoot(o.cwd);
+    const attempt = (n.slot?.attempt ?? 0)+1, branch = `owed/${o.node}/${attempt}`;
     const worktree = join(root,'.owed','wt',`${o.node}-${attempt}`), rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
     const packet = [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${o.node}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${o.node}`].join('\n');
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
@@ -216,12 +217,11 @@ export const keepRef = (node: string, attempt: number, seq: number): string => `
 export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channel?: Channel }): Promise<GcResult> {
   const actor: Actor = { cwd: o.cwd, as: o.as ?? { role: 'parent', id: 'cli' }, channel: o.channel }, dryRun = !!o.dryRun;
   owner(actor); if (!['owner','parent'].includes(actor.as.role)) throw new OwedError('gc requires parent/owner');
-  const ledger = await Ledger.open(o.cwd);
+  // Run git from the main worktree: cwd may be (inside) a worktree that gc removes. Resolved before any effect.
+  const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
   // The dispatch lock serializes gc with worktree/branch creation by dispatch.
   return ledger.withLock(async () => {
     const { state, entries } = await load(ledger); inited(state);
-    // Run git from the main worktree: cwd may be (inside) a worktree that gc removes.
-    const root = await git.mainRoot(o.cwd);
     const openTrees = await Promise.all(Object.values(state.nodes).filter(n => n.slot?.open).map(n => real(n.slot!.worktree)));
     // Stale registrations (directory deleted by hand) would otherwise pin their branches.
     if (!dryRun) await git.git(root, ['worktree', 'prune']);

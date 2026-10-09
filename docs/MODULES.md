@@ -42,7 +42,7 @@ export function verifyChain(entries: Entry[]): { ok: true } | { ok: false; seq: 
 export function git(cwd: string, args: string[], opts?: { input?: string; allowFail?: boolean; env?: Record<string,string> }): Promise<{ code: number; stdout: string; stderr: string }>;  // throws OwedError('internal') on failure unless allowFail
 export function repoRoot(cwd: string): Promise<string>;     // top level of the worktree containing cwd (`--show-toplevel`); only for "is cwd this slot worktree"
 export function commonDir(cwd: string): Promise<string>;    // absolute git common dir (shared by all worktrees)
-export function mainRoot(cwd: string): Promise<string>;     // main worktree root = dirname(commonDir); every repository path (dispatch worktrees, gc, info/exclude) derives from it
+export function mainRoot(cwd: string): Promise<string>;     // main worktree root (SPEC §8, ruling #122): --show-toplevel in the main worktree; in a linked worktree dirname(commonDir) only if verified, else OwedError('usage') 'run owed from the main worktree'; every repository path (dispatch worktrees, gc, info/exclude) derives from it
 export function readAt(cwd: string, rev: string, path: string): Promise<{ commit: string; path: string; text: string }>;  // file at a commit; path relative to cwd, returned repository-relative; OwedError('usage') if outside the repo, not a commit, or missing
 export function revParse(cwd: string, rev: string): Promise<string>;   // full 40-hex OID of a commit (`^{commit}`)
 export function isAncestor(cwd: string, a: string, b: string): Promise<boolean>;

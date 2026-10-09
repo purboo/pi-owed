@@ -313,11 +313,20 @@ decoyReveal(o: {cwd, payload: string, as, channel}): Promise<Entry>   // payload
 ```
 
 Repository root. Every path owed derives for the repository (dispatch worktree
-paths, gc, `info/exclude`) uses the **main worktree root**: the parent directory
-of the absolute git common dir (`git rev-parse --path-format=absolute
---git-common-dir`), never `--show-toplevel` of the cwd. So running dispatch or gc
-from inside a slot worktree (or a subdirectory) gives the same paths as from the
-main checkout, and a new worktree is never nested inside another one. Only the
+paths, gc, `info/exclude`) uses the **main worktree root** (ruling #122):
+- in the main worktree (absolute git dir = absolute common dir, which also holds
+  for a submodule, common dir `super/.git/modules/sub`, and for
+  `--separate-git-dir`) it is `git rev-parse --show-toplevel`;
+- in a linked worktree it is `d` = parent directory of the common dir, used only
+  when `git -C d rev-parse --path-format=absolute --git-common-dir` is the same
+  common dir and `git -C d rev-parse --show-toplevel` is `d`; otherwise dispatch
+  and gc refuse with a usage error "run owed from the main worktree" before any
+  ledger, `info/exclude` or `git worktree` effect (a submodule's or a
+  separate-git-dir repository's linked worktrees cannot locate the main worktree).
+
+So running dispatch or gc from inside a slot worktree (or a subdirectory) of an
+ordinary repository gives the same paths as from the main checkout, and a new
+worktree is never nested inside another one. Only the
 questions "is the cwd this slot's worktree" (writer inference, submit's
 dirty check) use the per-worktree top level.
 
@@ -488,7 +497,9 @@ called with `as: owner:…`) call `ctx.ui.confirm` and are recorded with
 `channel: "pi-confirm"`; without UI they refuse. The confirmation text is the
 fixed summary, then `Repository: <dir>` and `Identity: owner:<id>`, then each
 free-text field (note, reason, ruling, evidence) as `Label: value` on one line
-with `\`, newlines, tabs and control characters escaped, then the closing
+with `\`, newlines and tabs escaped and C0/C1 controls (U+0000–U+001F,
+U+007F–U+009F), U+2028/U+2029 and bidi controls (U+202A–U+202E, U+2066–U+2069)
+written as `\uXXXX`, then the closing
 `Confirmation will be recorded as pi-confirm.` line — so free text cannot fake
 the Repository/Identity lines of the dialog. The ledger keeps the exact text. Command `/owed` shows
 status. A skill (`skills/owed/SKILL.md`) explains the loop: status → dispatch →

@@ -84,6 +84,70 @@ test('gc keeps a finished worktree that contains another worktree (layout left b
   } finally { await r.cleanup(); }
 });
 
+// ---------- ruling #122: main worktree root in submodule and --separate-git-dir layouts ----------
+/** A repository whose git dir is not `<top>/.git`: a submodule (common dir super/.git/modules/sub) or `--separate-git-dir`. */
+async function layout(r: Repo, kind: 'submodule' | 'separate'): Promise<{ main: string; linked: string; outer?: string }> {
+  const g = (cwd: string, args: string[]) => git(cwd, args, { env: identity });
+  if (kind === 'separate') {
+    const main = join(r.root, 'work');
+    await g(r.root, ['init', '-q', '-b', 'main', `--separate-git-dir=${join(r.root, 'meta.git')}`, main]);
+    await commitAt(main, { 'plan.json': JSON.stringify(plain), README: 'x\n' });
+    const linked = join(r.root, 'linked'); await g(main, ['worktree', 'add', '-q', '-b', 'side', linked, 'main']);
+    return { main, linked };
+  }
+  const origin = join(r.root, 'origin');
+  await g(r.root, ['init', '-q', '-b', 'main', origin]);
+  await commitAt(origin, { 'plan.json': JSON.stringify(plain), README: 'x\n' });
+  await commitAt(r.cwd, { 'super.txt': 'super\n' });
+  await g(r.cwd, ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', '-b', 'main', origin, 'sub']);
+  await commitAt(r.cwd, {});
+  const main = join(r.cwd, 'sub'), linked = join(r.root, 'linked-sub');
+  assert.match((await git(main, ['rev-parse', '--git-common-dir'])).stdout, /modules[\\/]sub/);
+  await g(main, ['worktree', 'add', '-q', '-b', 'side', linked, 'main']);
+  return { main, linked, outer: r.cwd };
+}
+for (const kind of ['submodule', 'separate'] as const) {
+  test(`${kind === 'submodule' ? 'submodule' : '--separate-git-dir'}: dispatch, gc --dry-run and gc work from the main worktree; from a linked worktree they refuse with no effect (ruling #122)`, { timeout: 120_000 }, async () => {
+    const r = await repo();
+    delete process.env.OWED_DIR; // the ledger lives in the layout's own git common dir
+    try {
+      const { main, linked, outer } = await layout(r, kind);
+      const refs = async (cwd: string) => (await git(cwd, ['for-each-ref', '--format=%(refname) %(objectname)'])).stdout;
+      const trees = async (cwd: string) => (await git(cwd, ['worktree', 'list', '--porcelain'])).stdout;
+      const snapshot = async () => ({ ledger: (await entries(main)).length, trees: await trees(main), refs: await refs(main), outerTrees: outer && await trees(outer), outerRefs: outer && await refs(outer), outerStatus: outer && (await git(outer, ['status', '--porcelain'])).stdout });
+      await call(main, ['init', 'plan.json', '--i-am-owner']);
+      // From a linked worktree: refused before any ledger, exclude or worktree effect.
+      const before = await snapshot();
+      for (const args of [['dispatch', 'b'], ['gc', '--dry-run'], ['gc']]) {
+        const out = await cli(linked, args);
+        assert.equal(out.code, 2, `${args.join(' ')}: ${out.stderr}${out.stdout}`); assert.match(out.stderr, /run owed from the main worktree/);
+      }
+      assert.deepEqual(await snapshot(), before, 'no effect on the ledger, worktrees or refs (also of the super repository)');
+      assert.equal(await exists(join(main, '.owed')), false, 'no .owed directory was created');
+      // From the main worktree (and a subdirectory of it): as on base.
+      const top = await realpath(main);
+      await mkdir(join(main, 'dir'), { recursive: true });
+      const a = await call<ops.DispatchPacket>(join(main, 'dir'), ['dispatch', 'a']);
+      assert.equal(await realpath(a.worktree), join(top, '.owed', 'wt', 'a-1'));
+      assert.ok(await exists(join(a.worktree, 'README')));
+      if (outer) { assert.equal(await trees(outer), before.outerTrees, 'the super repository has no new worktree'); assert.equal(await refs(outer), before.outerRefs); }
+      const exclude = await readFile(join((await git(main, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim(), 'info', 'exclude'), 'utf8');
+      assert.ok(exclude.split('\n').includes('.owed/'));
+      await call(main, ['abandon', 'a', '--note', 'layout test']);
+      const dry = await call<ops.GcResult>(main, ['gc', '--dry-run']);
+      assert.deepEqual(dry.removed.map(i => [i.node, i.attempt, i.branch]), [['a', 1, 'owed/a/1']]);
+      assert.ok(await exists(a.worktree), 'dry run keeps the worktree');
+      const done = await call<ops.GcResult>(main, ['gc']);
+      assert.deepEqual(done.removed.map(i => [i.node, i.attempt, i.branch]), [['a', 1, 'owed/a/1']]);
+      assert.equal(await exists(a.worktree), false);
+      assert.doesNotMatch(await refs(main), /refs\/heads\/owed\/a\/1/);
+      assert.match(await trees(main), new RegExp(`worktree ${linked.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\n`), 'the linked worktree is untouched');
+      if (outer) { assert.equal(await trees(outer), before.outerTrees, 'gc did not prune the super repository'); assert.equal(await refs(outer), before.outerRefs); }
+      await call(main, ['verify']);
+    } finally { await r.cleanup(); }
+  });
+}
+
 test('dispatch refuses overlapping writes of an open slot unless --allow-overlap, which is recorded; status marks such ready nodes', { timeout: 60_000 }, async () => {
   const r = await fixture();
   try {
@@ -251,6 +315,22 @@ test('owner confirmation renders free text on one escaped line after Repository/
     const abandoned = await h.call('abandon', { node: 'a', note: evil, as: 'owner:human', cwd: r.cwd });
     assert.notEqual(abandoned.isError, true, text(abandoned)); check(h.prompts.at(-1)!, 'Note');
     assert.equal((await h.call('abandon', { node: 'a', note: 'x', reason: 'y', cwd: r.cwd })).isError, true);
+  } finally { await r.cleanup(); }
+});
+
+test('owner dialog escapes C1 controls, line/paragraph separators and bidi controls in free text', { timeout: 60_000 }, async () => {
+  const r = await fixture();
+  try {
+    const h = harness(r.cwd);
+    assert.notEqual((await h.call('dispatch', { node: 'b', cwd: r.cwd })).isError, true);
+    const note = 'a\u0085b\u009bc\u2028d\u2029e\u202ef\u202ag\u2066h\u2069i\u0080j\u009fk';
+    const out = await h.call('abandon', { node: 'b', note, as: 'owner:human', cwd: r.cwd });
+    assert.notEqual(out.isError, true, text(out));
+    const prompt = h.prompts.at(-1)!;
+    assert.doesNotMatch(prompt, /[\u0080-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/, 'no raw control or bidi character reaches the dialog');
+    assert.ok(prompt.split('\n').includes('Note: a\\u0085b\\u009bc\\u2028d\\u2029e\\u202ef\\u202ag\\u2066h\\u2069i\\u0080j\\u009fk'), prompt);
+    const last = (await entries(r.cwd)).at(-1)!;
+    assert.ok(last.kind === 'abandon' && last.reason === note, 'the ledger keeps the exact text');
   } finally { await r.cleanup(); }
 });
 

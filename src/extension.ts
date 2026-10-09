@@ -35,8 +35,9 @@ async function readText(dir: string, file: string): Promise<string> {
   catch (e) { throw new OwedError(`cannot read ${file}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`, 'usage'); }
 }
 /** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog. */
+/** Escapes C0/C1 controls, DEL, line/paragraph separators and bidi controls (U+202A–U+202E, U+2066–U+2069). */
 function oneLine(text: string): string {
-  return text.replace(/[\\\u0000-\u001f\u007f\u2028\u2029]/g, c => c === '\\' ? '\\\\' : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => c === '\\' ? '\\\\' : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 /**
  * Resolves the principal; an owner action needs a confirmed dialog. `summary` lines are fixed text whose
