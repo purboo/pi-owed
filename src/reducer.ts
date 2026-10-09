@@ -8,7 +8,7 @@ interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
-  if (!value) throw new OwedError('状态缺少回放信息，请使用 reduce 返回的状态', 'internal');
+  if (!value) throw new OwedError('State lacks replay metadata; use the state returned by reduce', 'internal');
   return value;
 }
 const active = (b: Block): boolean => b.state !== 'cleared';
@@ -31,15 +31,15 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
   const node = s.nodes[subject];
   const spec = nodeSpec(s, subject);
   const blocks = node?.blocks.filter(b => b.obligation === obligation && active(b)) ?? [];
-  const out: ItemView = { subject, obligation, key, status: 'D', mark: '⊥', discharger: 'executor', evidence: [], detail: `${obligation} 待执行观察` };
-  if (!key) return { ...out, detail: `${obligation} 缺少事实键` };
+  const out: ItemView = { subject, obligation, key, status: 'D', mark: '⊥', discharger: 'executor', evidence: [], detail: `${obligation} awaiting observation` };
+  if (!key) return { ...out, detail: `${obligation} missing fact key` };
   if (obligation === 'review' || obligation === 'closure-review') {
     const rank = obligation === 'closure-review' ? 2 : spec?.review.min_rank ?? 1;
     const count = obligation === 'closure-review' ? 1 : spec?.review.count ?? 1;
     const reviews = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.obligation === obligation && e.key === key && e.verdict === 'ok' && e.rank >= rank && !node?.writers.includes(e.by));
     out.evidence = reviews.map(e => e.seq);
     out.discharger = obligation === 'closure-review' ? 'owner' : 'reviewer';
-    out.detail = `${obligation} 需要 ${count} 位等级至少 ${rank} 的非作者评审`;
+    out.detail = `${obligation} requires ${count} non-writer reviews with rank at least ${rank}`;
     if (new Set(reviews.map(e => e.by)).size >= count) out.status = 'E';
   } else if (obligation === 'rulings') {
     const latest = latestRule(s, subject);
@@ -49,32 +49,32 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
       out.evidence = acknowledgments.length ? acknowledgments.map(e => e.seq) : [node!.slot!.dispatchSeq];
     }
     out.discharger = 'reviewer';
-    out.detail = `rulings 需要确认适用裁决 #${latest}`;
+    out.detail = `rulings requires acknowledgment of applicable ruling #${latest}`;
   } else {
     const obs = observations(s, subject, obligation, key);
     const pass = obs.some(e => e.verdict === 'pass');
     const fail = obs.some(e => e.verdict === 'fail');
     out.evidence = obs.map(e => e.seq);
-    if (pass && fail) Object.assign(out, { mark: '⊤', discharger: 'owner', detail: `${obligation} 同键通过与失败冲突` });
-    else if (fail) Object.assign(out, { mark: '✘', discharger: 'writer', detail: `${obligation} 当前内容失败` });
+    if (pass && fail) Object.assign(out, { mark: '⊤', discharger: 'owner', detail: `${obligation} conflicting pass and fail observations on the same key` });
+    else if (fail) Object.assign(out, { mark: '✘', discharger: 'writer', detail: `${obligation} current content failed` });
     else if (pass) out.status = 'E';
   }
   if (blocks.length) {
     out.status = 'D';
     out.evidence = [...new Set([...out.evidence, ...blocks.map(b => b.seq)])];
     const currentFailed = out.mark === '✘';
-    if (out.mark !== '⊤') out.mark = '封';
+    if (out.mark !== '⊤') out.mark = '⛔';
     out.discharger = out.mark === '⊤' || blocks.some(b => b.state === 'flaky' || (b.kind === 'judgment' && (b.rank ?? 0) >= 2)) ? 'owner' : blocks.some(b => b.kind === 'judgment') ? 'reviewer' : currentFailed ? 'writer' : 'executor';
-    out.detail = `${obligation} 仍有封：${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' 不稳定' : ''}`).join('、')}`;
+    out.detail = `${obligation} still blocked: ${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' flaky' : ''}`).join(', ')}`;
   }
-  if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} 已满足` };
+  if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied` };
   if (subject !== 'trunk' && !obligation.startsWith('inv:')) {
     const waiver = context(s).entries.findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
-    if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner 免：${waiver.reason}${waiver.channel === 'flag' ? '（flag 弱确认）' : ''}` };
+    if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : ''}` };
   }
   if (subject === 'trunk') {
     const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key);
-    if (defer) Object.assign(out, { mark: '⏸', discharger: 'owner', detail: `${obligation} 已缓判，仍为债务`, evidence: [...out.evidence, defer.seq] });
+    if (defer) Object.assign(out, { mark: '⏸', discharger: 'owner', detail: `${obligation} deferred, still debt`, evidence: [...out.evidence, defer.seq] });
   }
   return out;
 }
@@ -109,7 +109,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
   for (const original of entries) {
     const e = structuredClone(original);
     const errors = validateDraft(s, e);
-    if (errors.length) throw new OwedError(`记录 #${e.seq} 无效：${errors.join('；')}`);
+    if (errors.length) throw new OwedError(`Entry #${e.seq} invalid: ${errors.join('; ')}`);
     if (e.kind === 'genesis') {
       h.genesis = e;
       s.plan = structuredClone(plans(e.plan)); s.planSha = e.plan;
@@ -170,100 +170,100 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
   const checks = (node: string, a: Plan['invariants'], b: Plan['invariants']): void => {
     for (const c of a) {
       const d = b.find(x => x.id === c.id);
-      if (!d) { add(node, `${c.id} 检查移除`); continue; }
-      if (c.red && !d.red) add(node, `${c.id} red 关闭`);
-      if ((d.min_tests ?? 0) < (c.min_tests ?? 0)) add(node, `${c.id} min_tests 降低`);
-      if (c.run !== d.run || c.timeout_s !== d.timeout_s || canonical(c.reads) !== canonical(d.reads) || canonical(c.tests) !== canonical(d.tests) || c.red_expect !== d.red_expect) add(node, `${c.id} 检查定义改变，无法证明未降低义务`);
+      if (!d) { add(node, `${c.id} check removed`); continue; }
+      if (c.red && !d.red) add(node, `${c.id} red disabled`);
+      if ((d.min_tests ?? 0) < (c.min_tests ?? 0)) add(node, `${c.id} min_tests reduced`);
+      if (c.run !== d.run || c.timeout_s !== d.timeout_s || canonical(c.reads) !== canonical(d.reads) || canonical(c.tests) !== canonical(d.tests) || c.red_expect !== d.red_expect) add(node, `${c.id} check definition changed; cannot prove obligations were not reduced`);
     }
   };
-  if (prev.setup !== next.setup || canonical(prev.closure) !== canonical(next.closure)) add('*', 'setup/closure 改变，无法证明未降低义务');
+  if (prev.setup !== next.setup || canonical(prev.closure) !== canonical(next.closure)) add('*', 'setup/closure changed; cannot prove obligations were not reduced');
   checks('trunk', prev.invariants, next.invariants);
   for (const n of prev.nodes) {
     const m = next.nodes.find(x => x.id === n.id);
-    if (!m) { add(n.id, '节点移除'); continue; }
+    if (!m) { add(n.id, 'node removed'); continue; }
     checks(n.id, n.checks, m.checks);
-    if (m.review.count < n.review.count || m.review.min_rank < n.review.min_rank) add(n.id, '评审 count/rank 降低');
-    if (m.writes.some(w => !n.writes.some(p => w.startsWith(p)))) add(n.id, 'writes 范围扩大');
-    if (n.deps.some(d => !m.deps.includes(d))) add(n.id, '依赖移除');
+    if (m.review.count < n.review.count || m.review.min_rank < n.review.min_rank) add(n.id, 'review count/rank reduced');
+    if (m.writes.some(w => !n.writes.some(p => w.startsWith(p)))) add(n.id, 'writes scope expanded');
+    if (n.deps.some(d => !m.deps.includes(d))) add(n.id, 'dependency removed');
   }
   return result;
 }
 export function validateDraft(s: State, d: Draft): string[] {
   const errors: string[] = [];
   const r = role(d.by);
-  const allow = (...roles: string[]): void => { if (!roles.includes(r)) errors.push(`${d.kind} 权限不足，需要 ${roles.join('/')}`); };
-  if (!/^(owner|parent|writer|reviewer|executor):.+$/.test(d.by)) errors.push('身份格式无效');
+  const allow = (...roles: string[]): void => { if (!roles.includes(r)) errors.push(`${d.kind} insufficient permissions; requires ${roles.join('/')}`); };
+  if (!/^(owner|parent|writer|reviewer|executor):.+$/.test(d.by)) errors.push('Invalid identity format');
   if (d.kind === 'genesis') {
     allow('owner');
-    if (s.seq !== -1) errors.push('genesis 只能是首条记录');
-    if (d.commit !== d.state.commit) errors.push('genesis commit 与事实不一致');
+    if (s.seq !== -1) errors.push('genesis must be the first entry');
+    if (d.commit !== d.state.commit) errors.push('genesis commit does not match facts');
     return errors;
   }
-  if (s.seq === -1) return [...errors, '必须先建立 genesis'];
+  if (s.seq === -1) return [...errors, 'genesis must be established first'];
   const n = 'node' in d ? s.nodes[d.node] : undefined;
   const spec = 'node' in d ? nodeSpec(s, d.node) : undefined;
-  if ('node' in d && (!n || !spec)) errors.push(`节点 ${d.node} 不存在`);
-  const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt 必须匹配当前开放的 writer slot'); };
-  const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && active(b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} 必须引用当前候选的义务键`); };
+  if ('node' in d && (!n || !spec)) errors.push(`Node ${d.node} does not exist`);
+  const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
+  const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && active(b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
   switch (d.kind) {
     case 'plan': {
       allow('owner', 'parent');
-      if (d.prior !== s.planSha) errors.push('plan prior 必须引用当前 plan sha');
+      if (d.prior !== s.planSha) errors.push('plan prior must reference the current plan sha');
       let downgrade = d.downgrades.length > 0;
-      try { downgrade = downgradeDetails(s.plan, context(s).plans(d.plan)).length > 0 || downgrade; } catch { errors.push('无法读取新 plan'); }
-      if (downgrade && r !== 'owner') errors.push('降低义务的 plan 只能由 owner 批准');
+      try { downgrade = downgradeDetails(s.plan, context(s).plans(d.plan)).length > 0 || downgrade; } catch { errors.push('Cannot read new plan'); }
+      if (downgrade && r !== 'owner') errors.push('Only owner may approve a plan that reduces obligations');
       break;
     }
-    case 'rule': allow('owner', 'parent'); if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule 引用了不存在的节点'); break;
+    case 'rule': allow('owner', 'parent'); if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node'); break;
     case 'dispatch':
       allow('parent', 'owner');
-      if (n?.phase !== 'ready' || n.slot?.open) errors.push('dispatch 需要 ready 节点且无开放 slot');
-      if (!Number.isInteger(d.attempt) || d.attempt !== (n?.slot?.attempt ?? 0) + 1) errors.push('attempt 必须从 1 开始连续递增');
-      if (d.base !== s.trunk.commit) errors.push('dispatch base 必须是当前 trunk');
-      if (!Number.isInteger(d.rulings_seen) || d.rulings_seen < -1 || d.rulings_seen > Math.max(0, ...s.rules.map(x => x.seq))) errors.push('rulings_seen 不得引用尚不存在的裁决');
+      if (n?.phase !== 'ready' || n.slot?.open) errors.push('dispatch requires a ready node with no open slot');
+      if (!Number.isInteger(d.attempt) || d.attempt !== (n?.slot?.attempt ?? 0) + 1) errors.push('attempt must increase consecutively starting at 1');
+      if (d.base !== s.trunk.commit) errors.push('dispatch base must be the current trunk');
+      if (!Number.isInteger(d.rulings_seen) || d.rulings_seen < -1 || d.rulings_seen > Math.max(0, ...s.rules.map(x => x.seq))) errors.push('rulings_seen must not reference a ruling that does not yet exist');
       break;
     case 'submit':
-      slot(); if (d.by !== n?.slot?.writer) errors.push('submit 只能由 slot writer 提交');
-      if (d.facts.base !== n?.slot?.base) errors.push('submit base 必须匹配 slot base');
-      if (spec && required(spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit 缺少必要义务键');
+      slot(); if (d.by !== n?.slot?.writer) errors.push('submit must be performed by the slot writer');
+      if (d.facts.base !== n?.slot?.base) errors.push('submit base must match slot base');
+      if (spec && required(spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit is missing required obligation keys');
       break;
     case 'obs':
-      if (d.by !== 'executor:owed') errors.push('obs 只能由 executor:owed 写入');
+      if (d.by !== 'executor:owed') errors.push('obs may only be written by executor:owed');
       if (d.subject === 'trunk') {
-        if (!d.obligation.startsWith('inv:') || !s.plan.invariants.some(i => `inv:${i.id}` === d.obligation)) errors.push('trunk obs 必须引用 invariant 义务');
-        if (d.attribution) errors.push('invariant 不使用节点归因重跑');
+        if (!d.obligation.startsWith('inv:') || !s.plan.invariants.some(i => `inv:${i.id}` === d.obligation)) errors.push('trunk obs must reference an invariant obligation');
+        if (d.attribution) errors.push('invariant does not use node attribution reruns');
       } else {
         const target = s.nodes[d.subject];
-        if (!target) errors.push('obs 节点不存在');
-        if (!/^(check:.+|red:.+|writes)$/.test(d.obligation)) errors.push('obs 只能观察执行义务');
-        if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.key === d.key && b.obligation === d.obligation && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('归因必须匹配活动执行封的原始 key/commit/base');
+        if (!target) errors.push('obs node does not exist');
+        if (!/^(check:.+|red:.+|writes)$/.test(d.obligation)) errors.push('obs can only observe execution obligations');
+        if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.key === d.key && b.obligation === d.obligation && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
       }
-      if (!d.key) errors.push('obs 缺少义务键');
+      if (!d.key) errors.push('obs is missing an obligation key');
       break;
     case 'review':
       allow('reviewer', 'owner'); slot(); current(d.obligation, d.key, true);
-      if (n?.writers.includes(d.by) || n?.writers.some(w => w.slice(w.indexOf(':') + 1) === d.by.slice(d.by.indexOf(':') + 1))) errors.push('review 评审者不得是节点任一 attempt 的 writer');
-      if (r === 'owner' ? d.rank !== 3 : ![1, 2].includes(d.rank)) errors.push('review rank：reviewer 为 1..2，owner 为 3');
-      if (d.ack_rulings !== undefined && (!Number.isInteger(d.ack_rulings) || d.ack_rulings > Math.max(0, ...s.rules.map(x => x.seq)))) errors.push('ack_rulings 不得引用未来裁决');
+      if (n?.writers.includes(d.by) || n?.writers.some(w => w.slice(w.indexOf(':') + 1) === d.by.slice(d.by.indexOf(':') + 1))) errors.push('review reviewer must not be the writer of any attempt of this node');
+      if (r === 'owner' ? d.rank !== 3 : ![1, 2].includes(d.rank)) errors.push('review rank: reviewer must use 1..2, owner must use 3');
+      if (d.ack_rulings !== undefined && (!Number.isInteger(d.ack_rulings) || d.ack_rulings > Math.max(0, ...s.rules.map(x => x.seq)))) errors.push('ack_rulings must not reference future rulings');
       break;
     case 'waive':
       allow('owner'); current(d.obligation, d.key);
-      if (d.obligation.startsWith('inv:') || d.node === 'trunk') errors.push('invariant 永远不能 waive');
-      if (!d.reason.trim()) errors.push('waive 必须说明原因');
-      if (d.accept_risk?.some(seq => !n?.blocks.some(b => b.seq === seq && b.obligation === d.obligation && active(b)))) errors.push('accept_risk 必须引用该义务的活动封');
+      if (d.obligation.startsWith('inv:') || d.node === 'trunk') errors.push('invariant can never be waived');
+      if (!d.reason.trim()) errors.push('waive requires a reason');
+      if (d.accept_risk?.some(seq => !n?.blocks.some(b => b.seq === seq && b.obligation === d.obligation && active(b)))) errors.push('accept_risk must reference active blocks for this obligation');
       break;
     case 'defer':
       allow('owner');
-      if (!n?.slot?.open || !n.candidate) errors.push('defer 需要当前候选');
-      if (!d.reason.trim() || !d.items.length) errors.push('defer 必须列出义务并说明原因');
-      if (d.items.some(i => !i.key || !s.plan.invariants.some(c => c.id === i.id))) errors.push('defer 必须引用有效 invariant 和键');
+      if (!n?.slot?.open || !n.candidate) errors.push('defer requires a current candidate');
+      if (!d.reason.trim() || !d.items.length) errors.push('defer must list obligations and give a reason');
+      if (d.items.some(i => !i.key || !s.plan.invariants.some(c => c.id === i.id))) errors.push('defer must reference valid invariants and keys');
       break;
     case 'abandon': allow('parent', 'owner'); slot(); break;
     case 'merge':
-      if (d.by !== 'executor:owed') errors.push('merge 只能由 executor:owed 写入');
+      if (d.by !== 'executor:owed') errors.push('merge may only be written by executor:owed');
       slot();
-      if (d.prior !== s.trunk.commit) errors.push('merge prior 必须引用当前 trunk');
-      if (d.commit !== d.facts.commit || d.commit !== d.state.commit) errors.push('merge commit 与事实不一致');
+      if (d.prior !== s.trunk.commit) errors.push('merge prior must reference the current trunk');
+      if (d.commit !== d.facts.commit || d.commit !== d.state.commit) errors.push('merge commit does not match facts');
       if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state }).reasons);
       break;
     case 'note': break;
@@ -280,7 +280,7 @@ function job(spec: NodeSpec | undefined, subject: string, obligation: string, ke
 }
 export function attestJobs(s: State, id: string): AttestJob[] {
   const n = s.nodes[id];
-  if (!n) throw new OwedError(`节点 ${id} 不存在`);
+  if (!n) throw new OwedError(`Node ${id} does not exist`);
   const jobs: AttestJob[] = [];
   const seen = new Set<string>();
   for (const b of n.blocks) if (b.kind === 'exec' && b.state === 'active') {
@@ -312,7 +312,7 @@ export function genesisJobs(s: State): AttestJob[] {
 }
 export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): AttestJob[] {
   const spec = nodeSpec(s, id);
-  if (!spec || !s.nodes[id]?.candidate) throw new OwedError(`节点 ${id} 没有当前候选`);
+  if (!spec || !s.nodes[id]?.candidate) throw new OwedError(`Node ${id} has no current candidate`);
   const jobs: AttestJob[] = [];
   for (const c of spec.checks) {
     const o = `check:${c.id}`, key = m.facts.keys[o];
@@ -328,9 +328,9 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
   const reasons: string[] = [];
   const n = s.nodes[id], spec = nodeSpec(s, id);
   const nodeItemsOnMerge: ItemView[] = [];
-  if (!n?.accepted) reasons.push(`节点 ${id} 当前候选尚未接收`);
-  if (m.facts.base !== s.trunk.commit) reasons.push('writes 合并事实的 base 必须是当前 trunk');
-  if (m.facts.commit !== m.state.commit || m.facts.tree !== m.state.tree) reasons.push('合并事实 commit/tree 不一致');
+  if (!n?.accepted) reasons.push(`Node ${id} current candidate is not yet accepted`);
+  if (m.facts.base !== s.trunk.commit) reasons.push('writes merge facts base must be the current trunk');
+  if (m.facts.commit !== m.state.commit || m.facts.tree !== m.state.tree) reasons.push('Merge facts commit/tree mismatch');
   if (n?.candidate && spec) {
     for (const o of required(spec, n.candidate)) {
       const onMerge = o === 'writes' || o.startsWith('check:');
@@ -338,25 +338,25 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
       // CandidateFacts.changed is trusted git output for PRE..M. Unlike command
       // checks, writes can be re-evaluated synchronously without an executor job.
       if (o === 'writes' && m.facts.keys.writes) {
-        if (m.facts.changed.some(p => !spec.writes.some(prefix => p.startsWith(prefix)))) Object.assign(v, { status: 'D', mark: '✘', discharger: 'writer', detail: 'writes 合并改动超出允许路径' });
-        else if (v.mark === '⊥') Object.assign(v, { status: 'E', mark: '✔', discharger: undefined, detail: 'writes 合并改动已重新核对允许路径' });
+        if (m.facts.changed.some(p => !spec.writes.some(prefix => p.startsWith(prefix)))) Object.assign(v, { status: 'D', mark: '✘', discharger: 'writer', detail: 'writes merge changes exceed allowed paths' });
+        else if (v.mark === '⊥') Object.assign(v, { status: 'E', mark: '✔', discharger: undefined, detail: 'writes merge changes rechecked against allowed paths' });
       }
       nodeItemsOnMerge.push(v);
-      if (v.status === 'D') reasons.push(`${id} 的 ${o} 未满足：${v.detail}`);
+      if (v.status === 'D') reasons.push(`${id} obligation ${o} unsatisfied:${v.detail}`);
     }
-    if (n.blocks.some(b => binding(b, spec))) reasons.push(`${id} 仍有活动封：${n.blocks.filter(b => binding(b, spec)).map(b => `${b.obligation} #${b.seq}`).join('、')}`);
+    if (n.blocks.some(b => binding(b, spec))) reasons.push(`${id} still has active blocks: ${n.blocks.filter(b => binding(b, spec)).map(b => `${b.obligation} #${b.seq}`).join(', ')}`);
   }
   const invItems = s.plan.invariants.map(i => {
     const key = m.state.invKeys[i.id] ?? '';
     const v = item(s, 'trunk', `inv:${i.id}`, key);
-    if (!key) reasons.push(`invariant ${i.id} 缺少合并义务键`);
+    if (!key) reasons.push(`invariant ${i.id} missing merge obligation key`);
     else if (key !== s.trunk.invKeys[i.id] && v.status !== 'E') {
       const d = s.deferred.findLast(d => d.node === id && d.id === i.id && d.key === key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
-      if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner 缓判，仍为债务` });
-      else reasons.push(`invariant ${i.id} 新增债务：需要合并键上的实测通过或该节点的 owner defer`);
+      if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner deferred, still debt` });
+      else reasons.push(`invariant ${i.id} new debt: requires a measured pass on the merge key or owner defer for this node`);
     }
     return v;
   });
-  if (!s.genesisDone) reasons.push('genesis invariant 初始观察尚未完成');
+  if (!s.genesisDone) reasons.push('genesis invariant initial observations are incomplete');
   return { ok: reasons.length === 0, reasons, nodeItems: nodeItemsOnMerge, invItems };
 }

@@ -22,7 +22,7 @@ function rig(p = plan()) {
   const pass = (f = facts()) => { for (const o of ['check:unit', 'red:unit', 'writes']) obs(o, f.keys[o]!, 'pass', { commit: f.commit, base: f.base }); };
   const genesis = (verdict: 'pass' | 'fail' | 'error' = 'pass') => obs('inv:safe', 'inv0', verdict, { subject: 'trunk', commit: 's0', base: 's0' });
   const review = (verdict: 'ok' | 'block', rank = 1, key = 'review1', by = 'reviewer:r', obligation: 'review' | 'closure-review' = 'review', ack_rulings?: number) => add({ kind: 'review', by, node: 'a', attempt: 1, obligation, verdict, rank, key, ack_rulings });
-  const waive = (obligation: string, key: string, accept_risk?: number[]) => add({ kind: 'waive', by: 'owner:human', channel: 'tty', node: 'a', obligation, key, reason: '接受风险', accept_risk });
+  const waive = (obligation: string, key: string, accept_risk?: number[]) => add({ kind: 'waive', by: 'owner:human', channel: 'tty', node: 'a', obligation, key, reason: 'Accept risk', accept_risk });
   return { entries, plans, state, add, dispatch, submit, obs, pass, genesis, review, waive };
 }
 const mergeFacts = (key = 'inv0', check = 'check1') => ({ facts: facts('m', { tree: 'tm', keys: { ...facts().keys, 'check:unit': check, writes: 'writesM' } }), state: sf('cm', key) });
@@ -78,7 +78,7 @@ test('flaky attribution requires a current-key owner risk waiver citing the bloc
   assert.equal(r.state().nodes.a!.blocks[0]?.state, 'flaky');
   assert.equal(attestJobs(r.state(), 'a').length, 0);
   const stale: Draft = { kind: 'waive', by: 'owner:human', node: 'a', obligation: 'check:unit', key: 'check1', reason: 'risk', accept_risk: [block] };
-  assert.match(validateDraft(r.state(), stale).join(), /当前候选/);
+  assert.match(validateDraft(r.state(), stale).join(), /current candidate/);
   r.waive('check:unit', 'check2'); assert.equal(r.state().nodes.a!.accepted, false);
   r.waive('check:unit', 'check2', [block]); assert.equal(r.state().nodes.a!.accepted, true);
   assert.equal(r.state().nodes.a!.blocks[0]?.state, 'cleared');
@@ -99,8 +99,8 @@ test('ranked judgment blocks: low rank cannot clear; same reviewer high rank can
   r.review('ok', 1); assert.equal(r.state().nodes.a!.accepted, false);
   r.submit(facts('2')); r.pass(facts('2'));
   const old: Draft = { kind: 'review', by: 'reviewer:r', node: 'a', attempt: 1, obligation: 'review', key: 'review1', verdict: 'ok', rank: 2 };
-  assert.match(validateDraft(r.state(), old).join(), /当前候选/);
-  assert.match(validateDraft(r.state(), { kind: 'waive', by: 'owner:h', node: 'a', obligation: 'review', key: 'review1', reason: 'x', accept_risk: [4] }).join(), /当前候选/);
+  assert.match(validateDraft(r.state(), old).join(), /current candidate/);
+  assert.match(validateDraft(r.state(), { kind: 'waive', by: 'owner:h', node: 'a', obligation: 'review', key: 'review1', reason: 'x', accept_risk: [4] }).join(), /current candidate/);
   r.review('ok', 2, 'review2'); assert.equal(r.state().nodes.a!.accepted, true);
 });
 
@@ -131,7 +131,7 @@ test('rulings need dispatch coverage or a later current-key review acknowledgmen
   assert.equal(r.state().nodes.a!.accepted, false);
   r.review('ok', 1, 'review1', 'reviewer:r', 'review', rule); assert.equal(r.state().nodes.a!.accepted, true);
   const future: Draft = { kind: 'review', by: 'reviewer:r', node: 'a', attempt: 1, obligation: 'review', key: 'review1', verdict: 'ok', rank: 1, ack_rulings: 999 };
-  assert.match(validateDraft(r.state(), future).join(), /未来裁决/);
+  assert.match(validateDraft(r.state(), future).join(), /future rulings/);
 });
 
 test('rulings can be acknowledged by an optional review when review.count is zero', () => {
@@ -218,7 +218,7 @@ test('plan CAS and downgrade authority use actual plan, not a dishonest empty do
   const r = rig(); const weaker = plan(); weaker.nodes[0]!.checks = []; r.plans.weak = weaker;
   const d: Draft = { kind: 'plan', by: 'parent:main', prior: 'p', plan: 'weak', downgrades: [] };
   assert.match(validateDraft(r.state(), d).join(), /owner/);
-  assert.match(validateDraft(r.state(), { ...d, prior: 'stale' }).join(), /当前 plan sha/);
+  assert.match(validateDraft(r.state(), { ...d, prior: 'stale' }).join(), /current plan sha/);
   assert.deepEqual(validateDraft(r.state(), { ...d, by: 'owner:human' }), []);
   r.add({ ...d, by: 'owner:human', downgrades: [{ node: 'a', what: 'unit removed' }] });
   assert.equal(r.state().downgrades.length, 1);
@@ -231,7 +231,7 @@ test('authority and failure paths: genesis first, executor exact identity, open 
   const r = rig(); r.dispatch(); r.submit();
   const o: Draft = { kind: 'obs', by: 'executor:fake', subject: 'a', obligation: 'check:unit', key: 'check1', verdict: 'pass', exit: 0, durationMs: 0, commit: 'c1', base: 's0' };
   assert.match(validateDraft(r.state(), o).join(), /executor:owed/);
-  assert.match(validateDraft(r.state(), { ...o, by: 'executor:owed', attribution: true }).join(), /归因/);
+  assert.match(validateDraft(r.state(), { ...o, by: 'executor:owed', attribution: true }).join(), /Attribution/);
   assert.match(validateDraft(r.state(), { kind: 'abandon', by: 'parent:p', node: 'a', attempt: 2, reason: 'x' }).join(), /attempt/);
   r.add(o); assert.throws(() => r.state(), /executor:owed/);
 });

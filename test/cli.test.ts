@@ -15,9 +15,9 @@ test('CLI real processes: DAG, laundering, closure, writes, invariant defer, CAS
     assert.equal((await cli(r.cwd,['--help'])).code,0);
     assert.equal((await cli(r.cwd,['wat'])).code,2);
     assert.equal((await cli(r.cwd,['init',plan])).code,1);
-    { const pre=await cli(r.cwd,['status']); assert.equal(pre.code,1); assert.match(pre.stderr,/尚未 init/); }
+    { const pre=await cli(r.cwd,['status']); assert.equal(pre.code,1); assert.match(pre.stderr,/Not initialized/); }
     await call(r.cwd,['init',plan,'--i-am-owner']);
-    { const text=await cli(r.cwd,['report']); assert.equal(text.code,0); assert.match(text.stdout,/初始化账本/); assert.doesNotMatch(text.stdout,/"kind"/); }
+    { const text=await cli(r.cwd,['report']); assert.equal(text.code,0); assert.match(text.stdout,/initialized ledger/); assert.doesNotMatch(text.stdout,/"kind"/); }
     await call(r.cwd,['rule','Keep tests meaningful','--nodes','*']);
     const a=await call<DispatchPacket>(r.cwd,['dispatch','a']); assert.match(a.packet,/owed submit a/); assert.match(a.packet,/Keep tests meaningful/); assert.equal(a.subagent.cwd,a.worktree);
     await commitAt(a.worktree,{'test/a.cjs':'module.exports=1;','test/a.test.cjs':checkTest('a',1)});
@@ -53,9 +53,9 @@ test('CLI real processes: DAG, laundering, closure, writes, invariant defer, CAS
     // Restore only this isolated fixture's external test commit to exercise the successful defer path.
     await git(r.cwd,['reset','--hard',before]);
     const merged=await call<{deferred:unknown[]}>(r.cwd,['merge','b']); assert.equal(merged.deferred.length,1);
-    const report=await cli(r.cwd,['report']); assert.match(report.stdout,/flag/); assert.match(report.stdout,/缓判|defer/);
-    assert.match((await cli(r.cwd,['status'])).stdout,/flag 弱确认/);
-    assert.match((await cli(r.cwd,['why','a'])).stdout,/flag 弱确认/);
+    const report=await cli(r.cwd,['report']); assert.match(report.stdout,/flag/); assert.match(report.stdout,/deferred|defer/);
+    assert.match((await cli(r.cwd,['status'])).stdout,/flag weak confirmation/);
+    assert.match((await cli(r.cwd,['why','a'])).stdout,/flag weak confirmation/);
     await call(r.cwd,['verify']);
     const ledger=join(r.root,'ledger','ledger.jsonl'), lines=(await readFile(ledger,'utf8')).split('\n'), first=JSON.parse(lines[0]!); first.by='owner:tampered'; lines[0]=JSON.stringify(first); await writeFile(ledger,lines.join('\n'));
     const tampered=await cli(r.cwd,['verify']); assert.equal(tampered.code,3); assert.match(tampered.stdout,/invalid hash/);

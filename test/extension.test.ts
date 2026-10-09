@@ -30,11 +30,11 @@ test('registers direct typed tools and command; status uses ctx.cwd; guards beco
     const h = harness(r.cwd);
     assert.equal(h.tools.size, 12);
     for (const t of h.tools.values()) { assert.equal(t.exposure, 'direct'); assert.equal((t.parameters as { type?: string }).type, 'object'); }
-    const status = await h.call('status'); assert.match(JSON.stringify(status.content), /主干 main/); assert.ok(status.details);
-    const missing = await h.call('why', { node: 'missing' }); assert.equal(missing.isError, true); assert.match(JSON.stringify(missing.content), /不存在/);
+    const status = await h.call('status'); assert.match(JSON.stringify(status.content), /Trunk main/); assert.ok(status.details);
+    const missing = await h.call('why', { node: 'missing' }); assert.equal(missing.isError, true); assert.match(JSON.stringify(missing.content), /does not exist/);
     const command = h.commands.get('owed')!;
-    await command.handler('', h.ctx as Parameters<typeof command.handler>[1]); assert.match(h.notices[0]!, /主干 main/);
-    await command.handler('why a', h.ctx as Parameters<typeof command.handler>[1]); assert.match(h.notices[1]!, /a：/);
+    await command.handler('', h.ctx as Parameters<typeof command.handler>[1]); assert.match(h.notices[0]!, /Trunk main/);
+    await command.handler('why a', h.ctx as Parameters<typeof command.handler>[1]); assert.match(h.notices[1]!, /a: /);
   } finally { await r.cleanup(); }
 });
 
@@ -48,7 +48,7 @@ test('dispatch packet, slot writer inference, explicit reviewer and owner confir
     assert.equal((await h.call('submit', { node: 'a' })).isError, true, 'parent does not silently impersonate writer');
     assert.notEqual((await harness(packet.worktree).call('submit', { node: 'a' })).isError, true);
     assert.equal((await h.call('review', { node: 'a', verdict: 'ok', rank: 1, note: '' })).isError, true);
-    const args = { node: 'a', obligation: 'review', reason: '人工承担缺少独立评审的风险' };
+    const args = { node: 'a', obligation: 'review', reason: 'Human accepts the risk of missing independent review' };
     const ledger = await Ledger.open(r.cwd), before = (await ledger.read()).length;
     for (const confirmation of [false, undefined]) {
       const denied = confirmation === undefined ? harness(r.cwd, true) : harness(r.cwd, confirmation);
@@ -61,7 +61,7 @@ test('dispatch packet, slot writer inference, explicit reviewer and owner confir
     const waived = await h.call('waive', args); assert.notEqual(waived.isError, true);
     const entry = (await ledger.read()).at(-1)!;
     assert.equal(entry.kind, 'waive'); assert.equal(entry.channel, 'pi-confirm'); assert.equal(entry.by, 'owner:human');
-    assert.match(h.prompts[0]!, /a\/review/); assert.match(h.prompts[0]!, /人工承担/); assert.match(JSON.stringify(waived.content), /免/);
+    assert.match(h.prompts[0]!, /a\/review/); assert.match(h.prompts[0]!, /Human accepts/); assert.match(JSON.stringify(waived.content), /waived/);
   } finally { await r.cleanup(); }
 });
 
@@ -78,7 +78,7 @@ test('plan strengthening needs no UI; downgrade requires confirmed owner and rec
     assert.equal((await ledger.read()).length, before);
     const allowed = harness(r.cwd);
     assert.notEqual((await allowed.call('plan', { plan: 'plan.json' })).isError, true);
-    assert.match(allowed.prompts[0]!, /降级/); assert.equal((await ledger.read()).at(-1)!.channel, 'pi-confirm');
+    assert.match(allowed.prompts[0]!, /Downgraded/); assert.equal((await ledger.read()).at(-1)!.channel, 'pi-confirm');
   } finally { await r.cleanup(); }
 });
 
@@ -93,7 +93,7 @@ test('defer binds confirmed decisions to prospective invariant keys and refuses 
     const dispatched = (await h.call('dispatch', { node: 'a' })).details as { worktree: string };
     await commitAt(dispatched.worktree, { 'a.txt': 'new invariant debt\n' });
     await harness(dispatched.worktree).call('submit', { node: 'a' });
-    const args = { node: 'a', items: ['health'], reason: '临时接受健康检查债务' };
+    const args = { node: 'a', items: ['health'], reason: 'Temporarily accept health check debt' };
     const ledger = await Ledger.open(r.cwd), before = (await ledger.read()).length;
     const noUI = harness(r.cwd); noUI.ctx.hasUI = false;
     assert.equal((await noUI.call('defer', args)).isError, true);
@@ -105,12 +105,12 @@ test('defer binds confirmed decisions to prospective invariant keys and refuses 
     assert.equal(entry.kind, 'defer'); assert.equal(entry.channel, 'pi-confirm');
     if (entry.kind !== 'defer') assert.fail('expected defer');
     assert.match(entry.items[0]!.key, /^[a-f0-9]{64}$/);
-    assert.match(h.prompts[0]!, /health/); assert.match(h.prompts[0]!, /仍为债务/);
+    assert.match(h.prompts[0]!, /health/); assert.match(h.prompts[0]!, /remain debt/);
     assert.notEqual((await h.call('attest', { node: 'a' })).isError, true);
     assert.notEqual((await h.call('review', { node: 'a', as: 'reviewer:independent', rank: 1, verdict: 'ok', note: 'independent review' })).isError, true);
     const merged = await h.call('merge', { node: 'a' }); assert.notEqual(merged.isError, true);
-    const status = await h.call('status'); assert.match(JSON.stringify(status.content), /缓判/);
-    assert.match(JSON.stringify((await h.call('report')).content), /合并/);
+    const status = await h.call('status'); assert.match(JSON.stringify(status.content), /deferred/);
+    assert.match(JSON.stringify((await h.call('report')).content), /Merges/);
   } finally { await r.cleanup(); }
 });
 
@@ -127,7 +127,7 @@ test('README quickstart runs from sample plan through merge and verification', a
     const worktree = join(r.cwd, '.owed/wt/greeting-1');
     await commitAt(worktree, { 'hello.txt': 'hello\n' });
     assert.equal((await cli(worktree, ['submit', 'greeting'])).code, 0);
-    const attested = await cli(r.cwd, ['attest', 'greeting']); assert.equal(attested.code, 1); assert.match(attested.stdout, /实测/);
+    const attested = await cli(r.cwd, ['attest', 'greeting']); assert.equal(attested.code, 1); assert.match(attested.stdout, /measured/);
     for (const args of [['why', 'greeting'], ['review', 'greeting', '--ok', '--rank', '1', '--as', 'reviewer:demo-reviewer', '--note', 'Inspected greeting and acceptance evidence'], ['merge', 'greeting'], ['report'], ['verify']]) {
       const out = await cli(r.cwd, args); assert.equal(out.code, 0, out.stderr);
     }

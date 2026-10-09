@@ -155,7 +155,7 @@ harness, materialization failure) is ⊥: no information, no block.
   (pass and fail both present = ⊤). E ⟺ lattice value is `pass`.
 - Review items: E ⟺ required reviews `ok` on the current key (rank, count,
   recusal) and no active judgment block.
-- **Blocks (封)**: a `fail` obs or a `review block` on node n, obligation o
+- **Blocks (⛔ blocked)**: a `fail` obs or a `review block` on node n, obligation o
   (any key, any attempt) creates an active block on (n, o).
   - Execution block (from `obs fail` on key k): cleared by a later executor obs
     on the **same key k** with `attribution: true`. If that rerun fails, the
@@ -233,10 +233,10 @@ verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
 
 ## 9. Views
 
-- **Receipt card** (`why`): per obligation: ✔ 实测 (executor pass, with log
-  sha, counts, duration), ✔ 评审 (reviewers), ⚠ 免 (owner, reason, channel),
-  ✘ 拒收, ⊥ 待观察, ⊤ 冲突, ⏸ 缓判, 封 (active blocks and how to clear them).
-  Also "未测": obligations absent relative to the plan baseline (downgrades) and
+- **Receipt card** (`why`): per obligation: ✔ measured (executor pass, with log
+  sha, counts, duration), ✔ reviewed (reviewers), ⚠ waived (owner, reason, channel),
+  ✘ rejected, ⊥ awaiting observation, ⊤ conflict, ⏸ deferred, ⛔ blocked (active blocks and how to clear them).
+  Also "Untested": obligations absent relative to the plan baseline (downgrades) and
   the node's changed files not matched by any passing check's `reads`.
 - **Status**: trunk, nodes by state, ready list (sorted by number of transitive
   dependents), pending queue grouped by discharger (owner / parent+writer /
