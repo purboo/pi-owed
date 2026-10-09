@@ -2,10 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -13,7 +13,7 @@ import owedExtension from '../src/extension.ts';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
-import { drive } from '../src/drive-run.ts';
+import { busyKey, drive, driveOnce } from '../src/drive-run.ts';
 import { git } from '../src/git.ts';
 import type { Entry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
@@ -43,9 +43,9 @@ async function rig(plan: object) {
     log: async (): Promise<Log[]> => (await readFile(join(dir, 'log.jsonl'), 'utf8').catch(() => '')).split('\n').filter(Boolean).map(l => JSON.parse(l) as Log),
     entries: async (): Promise<Entry[]> => (await Ledger.open(r.cwd)).read(),
     /** In-process driver; returns its output lines. */
-    async drive(o: { once?: boolean; signal?: AbortSignal; passMs?: number } = {}) {
+    async drive(o: { once?: boolean; signal?: AbortSignal; passMs?: number; owed?: string[]; dsa?: Dsa } = {}) {
       const lines: string[] = [];
-      const exit = await drive({ cwd: r.cwd, once: o.once, dsa, log: l => lines.push(l), pollMs: 50, passMs: o.passMs ?? 300, handleSignals: false, signal: o.signal });
+      const exit = await drive({ cwd: r.cwd, once: o.once, dsa: o.dsa ?? dsa, owed: o.owed, log: l => lines.push(l), pollMs: 50, passMs: o.passMs ?? 300, handleSignals: false, signal: o.signal });
       return { exit, lines };
     },
     /** `owed drive --once` as a separate process (crash tests). */
@@ -241,7 +241,7 @@ test('attest lease: busy (75) queues nothing and retries; granted runs attest; a
     // Old dsa (< 1.0.27): hold rejects --no-wait: an attest error that halts, not a busy machine.
     await f.file('leases.json', '[]'); await f.file('old-hold', '');
     const old = await f.drive({ once: true });
-    assert.match(old.lines.join('\n'), /attest k: error — hold refused \(owed drive requires pi-durable-subagents >= 1\.0\.27/);
+    assert.match(old.lines.join('\n'), /attest k: error — pi-durable-subagents hold refused: .*Unknown option --no-wait.*\(owed drive requires pi-durable-subagents >= 1\.0\.27/);
     const h = kinds(await f.entries(), 'halt')[0] as Extract<Entry, { kind: 'halt' }>;
     assert.ok(h && /Unknown option --no-wait/.test(h.reason) && /1\.0\.27/.test(h.reason));
     // A human clears the halt (here: a ruling naming the node); a shared holder alone does not block.
@@ -271,5 +271,163 @@ test('a describe still reporting the sealed generation after an applied follow-u
     const log = await f.log();
     assert.ok(log.filter(x => x.cmd === 'describe' && x.stale).length >= 1, 'the stale describe was served');
     assert.equal(log.filter(x => x.cmd === 'send').length, 1);
+  } finally { await f.cleanup(); }
+});
+
+// ---------- D14: verdicts are durable when they happen ----------
+const halts = (es: Entry[]) => kinds(es, 'halt') as Extract<Entry, { kind: 'halt' }>[];
+const sleepMs = (ms: number) => new Promise(r => setTimeout(r, ms));
+async function loopFor(f: Awaited<ReturnType<typeof rig>>, ms: number, o: { passMs?: number } = {}) {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms);
+  try { return await f.drive({ signal: ac.signal, passMs: o.passMs ?? 200 }); } finally { clearTimeout(t); }
+}
+
+test('D14.1: dsa run exit 1 halts in the same pass; --once ×4 gives one halt and no re-launch', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('n')));
+  try {
+    await f.file('faults', 'run 1 none\nrun 1 none\nrun 1 none\n');
+    const out: string[] = [];
+    for (let i = 0; i < 4; i++) out.push(...(await f.drive({ once: true })).lines);
+    const es = await f.entries();
+    assert.deepEqual(es.map(e => e.kind), ['genesis', 'dispatch', 'launch', 'halt'], out.join('\n'));
+    const h = halts(es)[0]!;
+    assert.equal(h.needs, 'human'); assert.match(h.reason, /^dsa rejected run owed:[0-9a-f]{12}:n:1:writer: fault$/);
+    assert.match(out.join('\n'), /launch n writer .*: rejected — fault; halted/);
+    assert.equal((await f.log()).filter(x => x.cmd === 'run').length, 1, 'never re-launched while halted');
+  } finally { await f.cleanup(); }
+});
+
+test('D14.1/4: after a human clears the halt the next pass relaunches with the same id and bytes', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('n')));
+  try {
+    await f.file('faults', 'run 1 none\n');
+    await f.drive({ once: true }); await f.drive({ once: true });
+    assert.equal(halts(await f.entries()).length, 1);
+    await ops.rule({ cwd: f.cwd, as: { role: 'parent', id: 'main' }, text: 'agent config fixed', nodes: ['n'] });
+    const r = await f.drive({ once: true });
+    assert.match(r.lines.join('\n'), /launch n writer owed:[0-9a-f]{12}:n:1:writer: applied — created/);
+    const runs = (await f.log()).filter(x => x.cmd === 'run');
+    assert.deepEqual(runs.map(x => [x.request, x.exit]), [[runs[0]!.request, 1], [runs[0]!.request, 0]]);
+    assert.equal(kinds(await f.entries(), 'launch').length, 1, 'the same launch entry');
+  } finally { await f.cleanup(); }
+});
+
+test('D14.2: merge refused with `rebase needed` rebases in the same pass', { timeout: 180_000 }, async () => {
+  const f = await rig(planOf(node('p', { writes: ['shared.txt'] })));
+  try {
+    await f.put('shared.txt', 'base\n'); await f.commit();
+    await ops.adopt({ cwd: f.cwd, as: { role: 'owner', id: 'human' }, channel: 'flag', note: 'seed shared.txt' });
+    await f.agent('p-writer', 'echo writer > shared.txt; git commit -qam p; owed submit p');
+    assert.ok(await f.once(6, async () => (await ops.status({ cwd: f.cwd })).nodes.p!.accepted), f.out.join('\n'));
+    await f.put('shared.txt', 'trunk\n'); await f.commit();
+    await ops.adopt({ cwd: f.cwd, as: { role: 'owner', id: 'human' }, channel: 'flag', note: 'hotfix on trunk' });
+    const before = (await f.entries()).length;
+    const r = await f.drive({ once: true });
+    assert.match(r.lines.join('\n'), /merge p: rebased — merge refused \(rebase needed/);
+    const added = (await f.entries()).slice(before);
+    assert.deepEqual(added.map(e => [e.kind, e.by]), [['rebase', 'parent:drive']]);
+    assert.equal(halts(await f.entries()).length, 0);
+  } finally { await f.cleanup(); }
+});
+
+test('D14.3: owed attest exiting 2 halts needing a human in the same pass', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('q', { checks: [{ id: 'q', run: 'true' }] })));
+  try {
+    await f.agent('q-writer', 'echo q > q.txt; git add q.txt; git commit -qm q; owed submit q');
+    const bad = join(f.root, 'bad-owed');
+    await writeFile(bad, '#!/bin/sh\necho "Usage error: attest is broken here" >&2\nexit 2\n'); await chmod(bad, 0o755);
+    await f.drive({ once: true }); await f.drive({ once: true });
+    const r = await f.drive({ once: true, owed: [bad] });
+    assert.match(r.lines.join('\n'), /attest q: error — owed attest exited 2: Usage error: attest is broken here; halted/);
+    const h = halts(await f.entries());
+    assert.equal(h.length, 1); assert.equal(h[0]!.needs, 'human'); assert.match(h[0]!.reason, /^attest error: owed attest exited 2: Usage error/);
+    assert.deepEqual((await f.drive({ once: true, owed: [bad] })).lines, [], 'halted: no further attest');
+  } finally { await f.cleanup(); }
+});
+
+test('D14.7: a rejected or expired events cursor is reset to the head', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('g')));
+  try {
+    await f.agent('g-writer', 'echo "ASK: keep going?"');
+    const cursor = join(process.env.OWED_DIR!, 'drive', 'cursor');
+    await mkdir(join(process.env.OWED_DIR!, 'drive'), { recursive: true });
+    await writeFile(cursor, 'not-a-cursor\n');
+    const a = await loopFor(f, 1200);
+    assert.match(a.lines.join('\n'), /events: cursor rejected \(malformed cursor not-a-cursor\), reset to \d+:\d+/);
+    assert.match(await readFile(cursor, 'utf8'), /^\d+:\d+\n$/);
+    await writeFile(cursor, 'other-epoch:3\n');
+    const b = await loopFor(f, 1200);
+    assert.match(b.lines.join('\n'), /events: cursor expired, reset to \d+:\d+/);
+    assert.match(await readFile(cursor, 'utf8'), /^\d+:\d+\n$/);
+  } finally { await f.cleanup(); }
+});
+
+test('D14.6: a busy machine is printed once although hold reports a different age every pass', { timeout: 120_000 }, async () => {
+  assert.equal(busyKey('hold: machine is not free now (pid 7 `sleep 6` (exclusive, 2s)); not running the command (exit 75)'), busyKey('hold: machine is not free now (pid 7 `sleep 6` (exclusive, 13s)); not running the command (exit 75)'));
+  assert.notEqual(busyKey('hold: machine is not free now (pid 7 (exclusive, 2s))'), busyKey('hold: machine is not free now (pid 8 (exclusive, 2s))'));
+  const f = await rig(planOf(node('k', { checks: [{ id: 'k', run: 'true' }] })));
+  try {
+    await f.agent('k-writer', 'echo k > k.txt; git add k.txt; git commit -qm k; owed submit k');
+    await f.drive({ once: true }); await f.drive({ once: true });
+    await f.file('leases.json', JSON.stringify([{ resource: 'machine', holders: [{ mode: 'exclusive', who: 'pid 1 `make bench`', since: Date.now() - 5000 }], waiters: [] }]));
+    const r = await loopFor(f, 3500, { passMs: 250 });
+    const refused = (await f.log()).filter(x => x.cmd === 'hold' && x.refused).length;
+    assert.ok(refused >= 3, `several passes attested (${refused})`);
+    assert.equal(r.lines.filter(l => /attest k: busy/.test(l)).length, 1, r.lines.join('\n'));
+  } finally { await f.cleanup(); }
+});
+
+test('D14.8: a second SIGINT stops the loop at once: hold killed, lock released, exit 130', { timeout: 180_000 }, async () => {
+  // The check marks that attest runs, then takes long.
+  const mark = join(tmpdir(), `owed-drive-sig-${process.pid}-${Date.now()}`);
+  const g = await rig(planOf(node('sigtest', { checks: [{ id: 'sigtest', run: `touch ${mark}; sleep 31.5` }] })));
+  try {
+    await g.agent('sigtest-writer', 'echo s > sigtest.txt; git add sigtest.txt; git commit -qm s; owed submit sigtest');
+    const child = spawn(process.execPath, [OWED, 'drive'], { cwd: g.cwd, env: { ...process.env, ...g.env, OWED_DSA: FAKE }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '', stderr = ''; child.stdout.on('data', b => { stdout += b; }); child.stderr.on('data', b => { stderr += b; });
+    const exited = new Promise<number | null>(resolve => child.on('exit', code => resolve(code)));
+    for (let i = 0; i < 600 && !existsSync(mark); i++) await sleepMs(100);
+    assert.ok(existsSync(mark), `attest started\n${stdout}\n${stderr}`);
+    const lock = join(process.env.OWED_DIR!, 'drive.lock');
+    assert.ok(existsSync(lock));
+    const t0 = Date.now();
+    child.kill('SIGINT'); await sleepMs(300); child.kill('SIGINT');
+    assert.equal(await exited, 130, `${stdout}\n${stderr}`);
+    assert.ok(Date.now() - t0 < 10_000, 'at once, not after the 31 s check');
+    assert.match(stdout, /killed: second signal/);
+    assert.ok(!existsSync(lock), 'lock released');
+    await sleepMs(300);
+    const holds = (() => { try { return execFileSync('pgrep', ['-f', 'hold machine.*attest sigtest'], { encoding: 'utf8' }); } catch { return ''; } })();
+    assert.equal(holds.trim(), '', 'the hold child is gone');
+  } finally {
+    // The check runs in its own process group (src/exec.ts), which `owed attest` does not end on SIGTERM: end it here.
+    let leaders = ''; try { leaders = execFileSync('pgrep', ['-f', `touch ${mark}; sleep 31.5`], { encoding: 'utf8' }); } catch { /* none left */ }
+    for (const pid of leaders.split('\n').filter(Boolean).map(Number)) { try { process.kill(-pid, 'SIGKILL'); } catch { /* gone */ } }
+    await rm(mark, { force: true });
+    await g.cleanup();
+  }
+});
+
+test('D14.8: the pi tool pass keeps the output of executed actions when a later action throws', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('u'), node('v')));
+  try {
+    await f.drive({ once: true });
+    const d = new Dsa({ bin: FAKE, env: f.env, timeoutMs: 120_000 }), run = d.run.bind(d);
+    let calls = 0;
+    d.run = async (...a: Parameters<Dsa['run']>) => { if (++calls === 2) throw new Error('boom'); return run(...a); };
+    const r = await driveOnce({ cwd: f.cwd, dsa: d });
+    assert.equal(r.error, 'boom');
+    assert.equal(r.lines.length, 1); assert.match(r.lines[0]!, /^launch u writer .*: applied — created$/);
+    assert.ok(!existsSync(join(process.env.OWED_DIR!, 'drive.lock')), 'lock released after the throw');
+  } finally { await f.cleanup(); }
+});
+
+test('D14.9: a lock of another host is never taken over; the refusal says how to clear it', { timeout: 60_000 }, async () => {
+  const f = await rig(planOf(node('w')));
+  try {
+    const lock = join(process.env.OWED_DIR!, 'drive.lock');
+    await writeFile(lock, JSON.stringify({ pid: 2 ** 22 + 9, host: 'elsewhere.example', at: 'then', token: 'x' }));
+    await assert.rejects(f.drive({ once: true }), /held by pid \d+ on host elsewhere\.example .*never taken over.*remove .*drive\.lock by hand/);
+    assert.ok(existsSync(lock));
   } finally { await f.cleanup(); }
 });

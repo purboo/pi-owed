@@ -734,11 +734,18 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   content) then `dsa run --request <rid> --spec -` with the exact spec bytes;
   `send`: `ops.send` (assigns the send id) then `dsa send --request <id>`; a
   re-send uses the recorded id and the stored message bytes. Outcomes: 0
-  applied (the send id is remembered as applied); 1 rejected → remembered,
-  the next `decide` halts the attempt needing a human (never re-launched or
-  re-sent); 3 request-conflict → `halt` at once (never retried with other
-  bytes); 75, a timeout or a dsa child killed by a signal → pending, the next
-  pass retries the same id and bytes.
+  applied (the send id is remembered as applied); 1 rejected → `halt` needing
+  a human in the same pass, reason = dsa's text; 3 request-conflict → `halt`
+  in the same pass (never retried with other bytes); 75, a timeout or a dsa
+  child killed by a signal → pending, the next pass retries the same id and
+  bytes. After a human clears a halt, the next pass retries the same id and
+  bytes (dsa answers again).
+- **Verdicts are durable when they happen (D14).** The ledger (plus
+  `describe`) is the only state that carries a decision across passes: every
+  verdict (dsa rejection or conflict, merge refusal, attest error) is written
+  in the pass that meets it; nothing in memory decides a later pass. What the
+  process keeps are caches of dsa's answers (send ids dsa reported applied,
+  follow-up generations) and what the loop last printed.
 - **Follow-up generations.** A follow-up applied in this process returns the
   generation it started; until `describe` reports that generation (highest
   `calls[].gen`), a sealed view of the run is the previous generation's and is
@@ -753,26 +760,38 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `pi-durable-subagents:` error on stderr and no stdout is dsa rejecting the
   invocation — on dsa < 1.0.27 `Unknown option --no-wait` — and halts the
   attempt needing a human (an attest error, not a busy machine). `owed attest`
-  exits 0/1 are normal; any other exit three times in a row halts.
-- **Merge** refusals are remembered for the candidate: `rebase needed` → the
-  next `decide` rebases; trunk CAS drift → halt needing the owner; any other →
-  halt needing a human.
+  exits 0/1 are done (the ledger says what follows); any other exit (2/3), a
+  signal or a timeout halts needing a human in the same pass.
+- **Merge** refusals are acted on in the same pass: `rebase needed` →
+  `ops.rebase` (the writer's `rebase` follow-up comes from a later `decide`);
+  trunk CAS drift → halt needing the owner; any other → halt needing a human.
 - **Lock.** `<ledger dir>/drive.lock` (`.git/owed/drive.lock`): pid, process
   start time, host, written aside and hard-linked into place; stale when the
   pid is gone or reused; a live holder makes `owed drive` (also `--once`)
-  refuse (exit 1).
-- **Loop.** Passes run back to back while they make progress (at most 20),
-  then the driver polls `events --all --since <cursor> --limit 100` every 3 s
-  and runs a pass on an event labeled `owed: <project>`, or after 30 s. The
-  cursor is `<ledger dir>/drive/cursor` (deletable); an expired cursor (exit 4)
-  is reset to the head and triggers a pass; a page the client cannot read
-  halves the limit. In the loop a notify (asking run, owner-needed node) or a
-  busy machine is printed only when its text changed for that node. Exit 0
-  with `idle` when no attempt is open and nothing is dispatched; SIGINT/SIGTERM
-  stop after the current action (`stopped`).
+  refuse (exit 1). A lock of another host is never taken over: the refusal
+  names host and pid; after checking that no driver runs there, remove the
+  lock by hand.
+- **Loop.** Passes run back to back while they make progress (at most 20;
+  progress = the ledger head advanced or dsa applied a request in the pass, so
+  an attest exiting 1 without a new entry is not progress), then the driver
+  polls `events --all --since <cursor> --limit 100` every 3 s and runs a pass
+  on an event labeled `owed: <project>`, or after 30 s. The cursor is
+  `<ledger dir>/drive/cursor` (deletable); an expired (exit 4) or rejected
+  (exit 1) cursor is reset to the head and triggers a pass; the limit halves
+  only after a page the client could not parse and returns to 100 after a good
+  page; other failures (e.g. a missing binary) are printed. In the loop a
+  notify (asking run, owner-needed node) or a busy machine is printed only
+  when its text changed for that node (busy compared without hold's ages).
+  Exit 0 with `idle` when no attempt is open and nothing is dispatched; the
+  first SIGINT/SIGTERM stops after the current action (`stopped`), a second
+  stops at once: the running dsa invocation (hold and its `owed attest`) is
+  ended, the lock released, exit 130 (the ledger stays consistent; a check
+  `owed attest` had started runs in its own process group and is not ended).
 - **Surfaces.** CLI `owed drive [--once] [--max N] [--json]` (one line per
   action: `<action>: <outcome> — <detail>`; notify lines verbatim; `--json`
-  JSON lines). `--once` is one pass. Pi tool `owed_drive` runs `--once` only;
+  JSON lines). `--once` is one pass. Pi tool `owed_drive` runs `--once` only
+  and returns the output of the actions already executed also when a later
+  step throws (as a tool error);
   a long loop belongs in a terminal or a `systemd-run --user` unit (a forced
   dsa restart kills every process of the dsa call that runs it, including its
   attest). `/owed` status adds `Driver runs in dsa:` with each live run's dsa

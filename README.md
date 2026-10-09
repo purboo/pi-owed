@@ -164,7 +164,9 @@ id, so killing the driver at any point is safe. Attest runs under
 `pi-durable-subagents hold machine --shared --no-wait` and is retried later
 while the machine is busy; with an older dsa that rejects `--no-wait` the
 attempt is halted with that error. One driver per repository
-(`.git/owed/drive.lock`).
+(`.git/owed/drive.lock`); a lock left by a dead driver on this host is taken
+over, but a lock from another host is not: check that host, then remove the
+file by hand. A first Ctrl-C stops after the current action, a second at once.
 
 ```sh
 owed drive            # until idle; run it in a terminal or a systemd-run --user unit

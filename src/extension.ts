@@ -8,7 +8,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
 import { OwedError } from './errors.ts';
-import { drive, liveRunLines } from './drive-run.ts';
+import { driveOnce, liveRunLines } from './drive-run.ts';
 import { oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
@@ -182,9 +182,9 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.decoyReveal({ ...a, channel: 'pi-confirm', payload }); return result(r, renderEntry(r));
   });
   tool('drive', 'One pass of the owed driver (`owed drive --once`) as parent:drive: dispatch ready nodes, launch writers and reviewers through pi-durable-subagents (>= 1.0.27), send follow-ups, attest under `hold machine --shared --no-wait`, merge, rebase, halt for decisions. It never answers questions, waives, changes the plan or forces restarts. A long-running loop (`owed drive` without --once) belongs in a terminal or a `systemd-run --user` unit, not inside a tool or dsa call. Refused while another driver runs for the repository.', Type.Object({ max: Type.Optional(Type.Integer({ minimum: 1, description: 'Concurrent open attempts (overrides drive.max).' })), cwd }), async (p, _ctx, dir) => {
-    const lines: string[] = [];
-    await drive({ cwd: dir, once: true, max: p.max, log: line => lines.push(line) });
-    return result({ lines }, lines.join('\n') || 'nothing to do');
+    const r = await driveOnce({ cwd: dir, max: p.max });
+    const text = [...r.lines, ...(r.error ? [`Refused: ${r.error}`] : [])].join('\n') || 'nothing to do';
+    return r.error ? { ...result(r, text), isError: true } : result(r, text);
   });
   pi.registerCommand('owed', { description: 'owed status; /owed why <node> shows the receipt card', handler: async (args, ctx) => {
     try {
