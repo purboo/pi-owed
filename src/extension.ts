@@ -8,7 +8,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
 import { OwedError } from './errors.ts';
-import { renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
+import { oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -33,11 +33,6 @@ async function target(ctx: ExtensionContext, value?: string): Promise<string> {
 async function readText(dir: string, file: string): Promise<string> {
   try { return await readFile(resolve(dir, file), 'utf8'); }
   catch (e) { throw new OwedError(`cannot read ${file}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`, 'usage'); }
-}
-/** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog. */
-/** Escapes C0/C1 controls, DEL, line/paragraph separators and bidi controls (U+202A–U+202E, U+2066–U+2069). */
-function oneLine(text: string): string {
-  return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => c === '\\' ? '\\\\' : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 /**
  * Resolves the principal; an owner action needs a confirmed dialog. `summary` lines are fixed text whose

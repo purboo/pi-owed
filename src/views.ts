@@ -1,5 +1,5 @@
 import type { AdoptionView, Block, Entry, EscapeClass, ItemView, NodeState, SlotRebase, State } from './types.ts';
-import type { GcResult } from './ops.ts';
+import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
 import { NO_RULINGS, overlapping } from './reducer.ts';
@@ -20,11 +20,17 @@ export interface StatusView {
   /** Present when refs/heads/<trunk> differs from the ledger trunk (commits made outside owed, or a rewritten trunk). */
   drift?: TrunkDrift;
 }
+/** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog or terminal prompt. */
+/** Escapes C0/C1 controls, DEL, line/paragraph separators and bidi controls (U+202A–U+202E, U+2066–U+2069). */
+export function oneLine(text: string): string {
+  return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => c === '\\' ? '\\\\' : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** One line explaining a trunk ref that differs from the ledger trunk, and what the owner can do. */
 export function driftText(d: TrunkDrift): string {
   const ref = `${d.ref}${d.commit ? ` (${d.commit.slice(0, 12)})` : ''}`, ledger = d.ledger.slice(0, 12);
   if (d.relation === 'missing') return `trunk ref ${d.ref} does not exist; the ledger trunk is ${ledger}`;
+  if (d.relation === 'ledger-missing') return `ledger trunk ${d.ledger} is missing from the repository; ${ref} cannot be compared with it, and owed adopt cannot record it`;
   if (d.relation === 'ahead') return `trunk moved outside owed: ${ref} is ahead of the ledger trunk ${ledger} by ${plural(d.ahead, 'commit')}; review them, then the owner runs owed adopt --note TEXT`;
   return `trunk diverged from the ledger (rewritten or reset outside owed): ${ref} is not a fast-forward of the ledger trunk ${ledger} (${d.ahead} ahead, ${d.behind} behind); owed adopt accepts only fast-forwards: restore ${d.ref} to a descendant of ${ledger}`;
 }
@@ -36,6 +42,10 @@ export interface Report {
   /** Owner adoptions of trunk commits made outside owed, after `since`. */
   adoptions: AdoptionView[];
   escapes: EscapeSummary;
+}
+/** CLI owner confirmation for adopt: full prior..commit, commit count, every changed path (one per line) and the note, escaped onto single lines. */
+export function renderAdoptPreview(p: AdoptPreview, note: string): string {
+  return [`Adopt trunk ${oneLine(p.trunk)}: ledger trunk ${p.prior}..${p.commit}`, `${plural(p.commits, 'commit')} made outside owed, not reviewed by owed; adopting makes ${p.commit} the ledger trunk.`, `Changed paths (${p.changed.length}):${p.changed.length ? '' : ' none'}`, ...p.changed.map(path => `  ${oneLine(path)}`), `Note: ${oneLine(note)}`].join('\n');
 }
 /** prior..commit, commit count, changed paths and note of one adoption. */
 export function adoptionText(a: AdoptionView): string {

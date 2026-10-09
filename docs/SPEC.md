@@ -381,8 +381,9 @@ merge results and carry no `merging`.
 before any ledger effect: `note` is non-empty; `commit` (default
 refs/heads/<trunk>) resolves to a commit equal to the current refs/heads/<trunk>
 (adopt what is on trunk, nothing else); it differs from the ledger trunk
-("nothing to adopt" otherwise); the ledger trunk is an ancestor of it ("trunk
-was rewritten", otherwise). Under the `merge` lock (serialized with merges) it
+("nothing to adopt" otherwise); the ledger trunk commit exists in the repository
+("ledger trunk <sha> is missing from the repository" otherwise) and is an
+ancestor of it ("trunk was rewritten", otherwise). Under the `merge` lock (serialized with merges) it
 computes the state facts of the commit, runs genesis jobs and every invariant
 whose key changed on the adopted commit and lacks a verdict (subject `trunk`,
 no `merging`), then under the ledger lock re-checks that plan and ledger trunk
@@ -395,7 +396,8 @@ the observations and the `adopt` entry. It never moves a ref.
 
 The merge CAS refusal (refs/heads/<trunk> ≠ ledger trunk) says how the ref
 differs: ahead by N commits made outside owed (then the owner runs `owed adopt`),
-or diverged/rewritten (not a fast-forward; adopt cannot record it).
+or diverged/rewritten (not a fast-forward; adopt cannot record it), or a ledger
+trunk commit missing from the repository.
 
 `gc(o: {cwd, dryRun?, as?, channel?}): Promise<GcResult>` reclaims finished
 attempts. It is a parent/owner operation (same rule as `abandon`; default
@@ -459,8 +461,10 @@ changing git or the ledger.
   from the ledger trunk, a line after the trunk says so: `trunk moved outside
   owed: … ahead of the ledger trunk … by N commits; … owed adopt` (a fast-forward),
   or `trunk diverged from the ledger (rewritten or reset outside owed)` with the
-  ahead/behind counts, or that the ref does not exist; `--json` has
-  `drift: {ref, commit, ledger, relation: ahead|diverged|missing, ahead, behind}`.
+  ahead/behind counts, or that the ref does not exist, or that the ledger trunk
+  commit is missing from the repository (`ledger trunk <sha> is missing from the
+  repository`); `--json` has
+  `drift: {ref, commit, ledger, relation: ahead|diverged|missing|ledger-missing, ahead, behind}`.
 - **Report** (`report --since`): merges, new E/W/D, blocks, downgrades, rulings,
   owner decisions needed — written in plain language —, trunk adoptions after
   `since` as owner decisions (seq, owner, prior..commit, commit count, changed
@@ -512,7 +516,11 @@ run inside its worktree), `attest <node> [--rerun]`,
 `defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
 spelling `--reason`; not both), `merge <node>`, `status`,
 `why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
-`adopt [--commit X] --note TEXT` (owner),
+`adopt [--commit X] --note TEXT` (owner; before the TTY prompt, and also with
+`--i-am-owner`, it prints to stderr the preview — full ledger trunk
+prior..commit, commit count, every changed path one per line and the note,
+escaped as in §11 — and adopts exactly the previewed commit, so a ref that moves
+after the confirmation is refused),
 `escape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note T [--evidence T]`
 (parent by default, or owner), `decoy commit <digest>`, `decoy reveal <file.json>`
 (owner commands), `decoy digest <file.json>` (prints the digest to commit;

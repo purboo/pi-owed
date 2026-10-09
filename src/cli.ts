@@ -6,18 +6,21 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan } from './plan.ts';
 import { OwedError } from './errors.ts';
-import { renderReceipt, renderStatus, renderReport, renderEntry, renderBrief, renderGc } from './views.ts';
+import { renderReceipt, renderStatus, renderReport, renderEntry, renderBrief, renderGc, renderAdoptPreview } from './views.ts';
 import type { Entry } from './types.ts';
 import type { Channel, EscapeClass, Principal, Role } from './types.ts';
 const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arguments] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> [--rev COMMIT] | rule <text> --nodes a,b|*\ndispatch <node> [--allow-overlap] | submit <node> [--commit X] | rebase <node> | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--note TEXT]\nmerge <node> | adopt [--commit X] --note TEXT (owner: record trunk commits made outside owed) | status | why <node> | report [--since seq|ISO] | brief [--since seq|ISO] | verify\nescape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note TEXT [--evidence TEXT]\ndecoy commit <digest> | decoy reveal <file.json> | decoy digest <file.json>\ngc [--dry-run]  (parent/owner: reclaim worktrees/branches of merged or abandoned attempts)\nowner actions require TTY confirmation or --i-am-owner (flag weak confirmation).`;
 const values = new Set(['as','commit','nodes','rank','note','ack-rulings','obligation','reason','accept-risk','since','merge','class','evidence','rev']);
 const flags = new Set(['json','i-am-owner','rerun','ok','block','help','dry-run','allow-overlap']);
 function usage(message:string): never { throw new OwedError(message,'usage'); }
-export async function main(argv: string[]): Promise<number> {
+/** Terminal I/O of the CLI; tests inject `ask` (the owner's answer to the TTY prompt) and capture output. */
+export interface CliIo { ask?: (question: string) => Promise<string>; log: (text: string) => void; error: (text: string) => void }
+const terminal: CliIo = { log: text => console.log(text), error: text => console.error(text) };
+export async function main(argv: string[], io: CliIo = terminal): Promise<number> {
   try {
     const args:string[] = [], opts = new Map<string,string|boolean>();
     for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key)) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); } }
-    if (opts.has('help')) { console.log(HELP); return 0; }
+    if (opts.has('help')) { io.log(HELP); return 0; }
     const cmd=args.shift(); if(!cmd) usage(HELP);
     const allowed:Record<string,string[]> = { init:[],plan:['rev'],rule:['nodes'],dispatch:['allow-overlap'],submit:['commit'],rebase:[],attest:['rerun'],review:['ok','block','rank','note','ack-rulings','obligation'],waive:['reason','accept-risk'],defer:['reason'],abandon:['note','reason'],merge:[],status:[],why:[],report:['since'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[],gc:['dry-run'],adopt:['commit','note'] };
     if (!allowed[cmd]) usage(`Unknown command ${cmd}`);
@@ -32,9 +35,12 @@ export async function main(argv: string[]): Promise<number> {
     if(opts.has('as')) { const match=/^(owner|parent|writer|reviewer|executor):(.+)$/.exec(value('as')!); if(!match) usage('--as must be role:id'); principal={role:match[1] as Role,id:match[2]!}; }
     else if(['init','waive','defer','adopt'].includes(cmd) || (cmd === 'decoy' && args[0] !== 'digest') || opts.has('i-am-owner')) principal={role:'owner',id:'human'};
     else if(cmd === 'submit' || cmd === 'rebase') { const s=await ops.status({cwd}), slot=s.nodes[args[0]!]?.slot; if(slot && resolve(await git.repoRoot(cwd)) === resolve(slot.worktree)) principal={role:'writer',id:slot.writer.slice(7)}; }
-    let channel:Channel|undefined;
+    let channel:Channel|undefined, adoptCommit:string|undefined;
+    // The owner confirms what is adopted: the preview is printed first and its commit is pinned, so a ref moving after the confirmation is refused.
+    if(cmd === 'adopt' && principal.role === 'owner') { const p=await ops.adoptPreview({cwd,commit:value('commit')}); io.error(renderAdoptPreview(p,value('note')!)); adoptCommit=p.commit; }
     if(principal.role === 'owner') {
       if(opts.has('i-am-owner')) channel='flag';
+      else if(io.ask) { if(await io.ask(`Execute ${cmd} as owner? Type yes to confirm: `) !== 'yes') throw new OwedError('owner did not confirm'); channel='tty'; }
       else { if(!process.stdin.isTTY || !process.stdout.isTTY) throw new OwedError('owner actions require TTY confirmation or --i-am-owner'); const rl=createInterface({input:process.stdin,output:process.stdout}); try { const answer=await rl.question(`Execute ${cmd} as owner? Type yes to confirm: `); if(answer !== 'yes') throw new OwedError('owner did not confirm'); channel='tty'; } finally { rl.close(); } }
     }
     const actor={cwd,as:principal,channel}, node=args[0]!;
@@ -52,7 +58,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'defer': { const s=await ops.status({cwd}), n=s.nodes[node]; if(!n?.candidate) throw new OwedError('defer requires a current candidate'); const ledger=await Ledger.open(cwd), entries=await ledger.read(), law=entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis'); if(!law || (law.kind !== 'plan' && law.kind !== 'genesis')) throw new OwedError('Missing plan'); const plan=parsePlan((await ledger.getBlob(law.plan)).toString()); const m=await git.buildMerge(cwd,s.trunk.commit,n.candidate.commit,`owed merge ${node}`); if('conflicts' in m) throw new OwedError('rebase needed'); const facts=await git.stateFacts(cwd,plan,m.commit); result=await ops.defer({...actor,channel:channel!,node,items:args.slice(1).map(id => ({id,key:facts.invKeys[id] ?? ''})),reason:value('reason',true)!}); break; }
       case 'abandon': { if(opts.has('note') && opts.has('reason')) usage('abandon takes --note (or its older spelling --reason), not both'); result=await ops.abandon({...actor,node,reason:value('note') ?? value('reason') ?? ''}); break; }
       case 'merge': { const r=await ops.merge({...actor,node}); result=r; text=`${renderEntry(r.entry)}\nTrunk advanced to ${r.commit}${r.deferred.length ? `\nDeferred debt remains: ${r.deferred.map(i => `${i.subject}/${i.obligation}`).join(', ')}` : ''}`; break; }
-      case 'adopt': { const note=value('note',true)!; const r=await ops.adopt({...actor,channel:channel!,commit:value('commit'),note}); result=r; text=`${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\nLedger trunk ${r.trunk} is now ${r.commit}`; break; }
+      case 'adopt': { const note=value('note',true)!; const r=await ops.adopt({...actor,channel:channel!,commit:adoptCommit ?? value('commit'),note}); result=r; text=`${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\nLedger trunk ${r.trunk} is now ${r.commit}`; break; }
       case 'status': { const r=await ops.status({cwd}); result=r; text=renderStatus(r); break; }
       case 'why': { const r=await ops.why({cwd,node}); result=r; text=renderReceipt(r); break; }
       case 'report': { const v=value('since'), r=await ops.report({cwd,since:v && /^\d+$/.test(v) ? Number(v) : v}); result=r; text=renderReport(r); break; }
@@ -63,6 +69,6 @@ export async function main(argv: string[]): Promise<number> {
       case 'gc': { const r=await ops.gc({...actor,dryRun:opts.has('dry-run')}); result=r; text=renderGc(r); break; }
     }
     if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }
-    console.log(opts.has('json') ? JSON.stringify(result) : text); return exit;
-  } catch(e) { const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); console.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3; }
+    io.log(opts.has('json') ? JSON.stringify(result) : text!); return exit;
+  } catch(e) { const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3; }
 }

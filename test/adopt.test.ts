@@ -4,6 +4,7 @@ import { access, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
+import { main } from '../src/cli.ts';
 import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
 import { git, revParse } from '../src/git.ts';
@@ -179,6 +180,7 @@ test('a failing invariant on the external commit refuses the adoption and record
     assert.equal(out.code, 1);
     assert.match(out.stderr, /adoption refused: invariant health \(obs #\d+\) satisfied on the ledger trunk but not on [0-9a-f]{12}; fix trunk, then run owed adopt again/);
     assert.doesNotMatch(out.stderr, /invariant clean/, 'pre-existing debt does not block');
+    assert.equal(out.stderr.match(/invariant health/g)?.length, 1, 'the failing invariant is named once');
     const after = await entries(r.cwd), added = after.slice(before.length);
     assert.deepEqual(added.map(e => e.kind === 'obs' && `${e.subject} ${e.obligation} ${e.verdict} ${e.commit === bad} ${e.merging ?? '-'}`), ['trunk inv:health fail true -', 'trunk inv:clean fail true -']);
     s = await state(r.cwd);
@@ -212,6 +214,59 @@ test('a trunk ref moved while adopt measures invariants leaves the ledger unchan
     const result = await outcome;
     assert.match(String(result.error), /refs\/heads\/main moved during adopt .*nothing was recorded/);
     assert.deepEqual(await ledger.read(), before);
+  } finally { await r.cleanup(); }
+});
+
+test('CLI adopt prints the full preview before confirming and pins the previewed commit', { timeout: 60_000 }, async () => {
+  const r = await fixture();
+  const home = process.cwd();
+  try {
+    const odd = 'odd\nname\u202e.txt';
+    await commitAt(r.cwd, { 'CHANGELOG.md': '1\n' });
+    const head = await commitAt(r.cwd, { [odd]: 'x\n', VERSION: '1\n' });
+    const ledger = await Ledger.open(r.cwd), before = await ledger.read();
+    // In-process run with an injected terminal answer: the ref moves after the preview, before "yes".
+    process.chdir(r.cwd);
+    const run = async (args: string[], answer: () => Promise<string>) => {
+      const out: string[] = [], err: string[] = [];
+      const code = await main(args, { ask: answer, log: t => { out.push(t); }, error: t => { err.push(t); } });
+      return { code, out: out.join('\n'), err: err.join('\n') };
+    };
+    const declined = await run(['adopt', '--note', 'release 1\nIdentity: owner:fake'], async () => 'no');
+    assert.equal(declined.code, 1); assert.match(declined.err, /owner did not confirm/);
+    assert.deepEqual(declined.err.split('\n').slice(0, 7), [`Adopt trunk main: ledger trunk ${r.s0}..${head}`, `2 commits made outside owed, not reviewed by owed; adopting makes ${head} the ledger trunk.`, 'Changed paths (3):', '  CHANGELOG.md', '  VERSION', '  odd\\nname\\u202e.txt', 'Note: release 1\\nIdentity: owner:fake']);
+    const moved = await run(['adopt', '--note', 'release 1'], async () => { await commitAt(r.cwd, { late: 'moved after the preview\n' }); return 'yes'; });
+    assert.equal(moved.code, 1, moved.err);
+    assert.match(moved.err, new RegExp(`Refused: adopt records only what is on trunk: ${head} \\(${head.slice(0, 12)}\\) is not refs/heads/main`));
+    assert.deepEqual(await ledger.read(), before, 'a ref moved after the confirmation records nothing');
+    const now = await revParse(r.cwd, 'refs/heads/main');
+    const ok = await run(['adopt', '--note', 'release 1', '--json'], async () => 'yes');
+    assert.equal(ok.code, 0, ok.err);
+    assert.match(ok.err, new RegExp(`^Adopt trunk main: ledger trunk ${r.s0}\\.\\.${now}\\n3 commits`));
+    const e = JSON.parse(ok.out).entry as Entry;
+    assert.ok(e.kind === 'adopt' && e.commit === now && e.channel === 'tty');
+    // --i-am-owner prints the same preview (subprocess; stdout stays pure JSON).
+    await commitAt(r.cwd, { 'CHANGELOG.md': '2\n' });
+    const flag = await cli(r.cwd, ['adopt', '--note', 'second', '--i-am-owner', '--json']);
+    assert.equal(flag.code, 0, flag.stderr);
+    assert.match(flag.stderr, new RegExp(`^Adopt trunk main: ledger trunk ${now}\\.\\.[0-9a-f]{40}\\n1 commit made outside owed[^]*Changed paths \\(1\\):\\n  CHANGELOG.md\\nNote: second`));
+    assert.equal((JSON.parse(flag.stdout).entry as Entry).channel, 'flag');
+  } finally { process.chdir(home); await r.cleanup(); }
+});
+
+test('a ledger trunk commit missing from the repository is reported as such by status and adopt', { timeout: 60_000 }, async () => {
+  const r = await fixture();
+  try {
+    const tree = (await git(r.cwd, ['rev-parse', 'HEAD^{tree}'])).stdout.trim();
+    await git(r.cwd, ['update-ref', 'refs/heads/main', (await git(r.cwd, ['commit-tree', tree, '-m', 'rewritten'], { env: identity })).stdout.trim()]);
+    await git(r.cwd, ['reflog', 'expire', '--expire=now', '--all']);
+    await git(r.cwd, ['gc', '-q', '--prune=now']);
+    assert.notEqual((await git(r.cwd, ['cat-file', '-e', `${r.s0}^{commit}`], { allowFail: true })).code, 0, 'fixture: s0 was pruned');
+    const before = await entries(r.cwd);
+    assert.equal((await ops.status({ cwd: r.cwd })).drift?.relation, 'ledger-missing');
+    assert.match((await cli(r.cwd, ['status'])).stdout, new RegExp(`ledger trunk ${r.s0} is missing from the repository`));
+    { const out = await cli(r.cwd, ['adopt', '--note', 'x', '--i-am-owner']); assert.equal(out.code, 1); assert.match(out.stderr, new RegExp(`ledger trunk ${r.s0} is missing from the repository`)); }
+    assert.deepEqual(await entries(r.cwd), before);
   } finally { await r.cleanup(); }
 });
 
