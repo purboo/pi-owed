@@ -119,7 +119,7 @@ export async function driveStart(o: { cwd: string; max?: number; owed?: string[]
     const argv = [...(o.owed ?? defaultOwed()), 'drive', '--json', ...(o.max !== undefined ? ['--max', String(o.max)] : [])];
     // A relative $OWED_DIR resolves against cwd: pass the resolved ledger dir, since the driver runs at the root.
     // The driver is an independent long-lived process: no dsa call identity (DSA_EXEC, DSA_CALL); DSA_HOME and the rest stay.
-    const env = { ...process.env, ...(process.env.OWED_DIR ? { OWED_DIR: dir } : {}) }; delete env.NODE_TEST_CONTEXT; delete env.DSA_EXEC; delete env.DSA_CALL;
+    const env: NodeJS.ProcessEnv = { ...process.env, ...(process.env.OWED_DIR ? { OWED_DIR: dir } : {}) }; delete env.NODE_TEST_CONTEXT; delete env.DSA_EXEC; delete env.DSA_CALL;
     const fromDsa = !!process.env.DSA_EXEC;
     const fd = openSync(log, 'a');
     const child = (() => { try { return spawn(argv[0]!, argv.slice(1), { cwd: repo, env, detached: true, stdio: ['ignore', fd, fd] }); } finally { closeSync(fd); } })();
