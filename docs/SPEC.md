@@ -171,8 +171,11 @@ harness, materialization failure) is ⊥: no information, no block.
    match `red_expect` if given, and not be a zero-test run. `min_tests` does not
    apply to the red run (a new test file often cannot load on the base, so the
    runner reports one failing test); an unknown count format is accepted there.
-   `min_tests` applies only to the candidate run (`check:<id>`). Verdict `pass`
-   means "the counterfactual was rejected as specified".
+   `min_tests` applies to every non-red run — the candidate run (`check:<id>`)
+   and invariant runs (`inv:<id>`) — and never to the red run. A red run whose
+   command exits 126 or 127 (not executable / not found), or that cannot be
+   spawned, is an `error` observation, not a pass, even when `red_expect`
+   matches. Verdict `pass` means "the counterfactual was rejected as specified".
 3. `writes`: every path in `diff --name-only B C` starts with a `writes` prefix.
 4. `closure-review` iff the diff touches closure globs: needs a review `ok` with
    rank ≥ 2 by a non-writer, or an owner waiver.
@@ -306,7 +309,8 @@ moved ref silently.
    `test result: ok. N passed`); zero tests with a known format = fail;
    `min_tests` unmet = fail; unknown format with `min_tests` set = error.
 3. Red runs: materialize B, overlay candidate `tests` files, restore closure
-   from B, run; pass iff exit ≠ 0 and not zero-test and `red_expect` matches.
+   from B, run; pass iff exit ≠ 0 and not zero-test and `red_expect` matches;
+   exit 126/127 (the command could not run) or a spawn failure is `error`.
    `min_tests` is not applied to red runs, and an unknown count format there is
    not an error (the base usually fails to load the new test file).
 4. Strength runs (`strength:<id>`, checks with `mutants`): the mutants are the
@@ -740,6 +744,15 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   child killed by a signal → pending, the next pass retries the same id and
   bytes. After a human clears a halt, the next pass retries the same id and
   bytes (dsa answers again).
+- **A rejected request is fixed for its attempt (D15.1).** The id and bytes of
+  a recorded run or send cannot change, and dsa answers the same id the same
+  way (a send id stays rejected; a run rejected before creation is checked
+  again, with the same stored bytes). The halt reason of a rejection (exit 1,
+  or `describe` reporting the run `rejected`) therefore ends with "this
+  attempt's request is fixed; fix the cause (plan, agent, model), then `owed
+  abandon <node>` to start a new attempt". A ruling, submit or review clears
+  the halt as any other, but the retry re-halts with the same text; abandon
+  (then the driver dispatches a new attempt with new ids) is the recovery.
 - **Verdicts are durable when they happen (D14).** The ledger (plus
   `describe`) is the only state that carries a decision across passes: every
   verdict (dsa rejection or conflict, merge refusal, attest error) is written
@@ -764,7 +777,14 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   signal or a timeout halts needing a human in the same pass.
 - **Merge** refusals are acted on in the same pass: `rebase needed` →
   `ops.rebase` (the writer's `rebase` follow-up comes from a later `decide`);
-  trunk CAS drift → halt needing the owner; any other → halt needing a human.
+  the transient `Plan, candidate or trunk changed; retry` (the ledger moved
+  while merge measured; merge recorded nothing) → retried next pass, no halt,
+  not progress; trunk CAS drift → halt needing the owner; any other → halt
+  needing a human.
+- **Stalled** (D12): the `stalled:` halt lists every non-E item and each
+  active block as `#seq <obligation> by <principal> rank <r> on candidate #C`
+  (`stale` instead of `on candidate #C` when recorded on another key; no rank
+  for an execution block), so the owner can act without `owed why`.
 - **Lock.** `<ledger dir>/drive.lock` (`.git/owed/drive.lock`): pid, process
   start time, host, written aside and hard-linked into place; stale when the
   pid is gone or reused; a live holder makes `owed drive` (also `--once`)

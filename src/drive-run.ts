@@ -16,12 +16,15 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, driveConfig } from './plan.ts';
 import { reduce, halted, projectId } from './reducer.ts';
-import { decide } from './drive.ts';
+import { decide, rejectedHalt } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable } from './dsa.ts';
 import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
 import type { Plan, Principal, RunView, State } from './types.ts';
+
+/** The transient merge refusal of `ops` (the plan, the candidate or trunk changed while merge measured). */
+const MERGE_TRANSIENT = 'Plan, candidate or trunk changed; retry';
 
 /** The driver's principal (`parent:drive`, contract D3). */
 export const DRIVE_PRINCIPAL: Principal = { role: 'parent', id: 'drive' };
@@ -269,8 +272,9 @@ export class Driver {
           const r = await this.dsa.run(a.rid, a.spec, a.labels);
           crashPoint('after-dsa', 'launch');
           if (r.outcome === 'applied') return done('applied', true, r.created ? 'created' : 'already created', extra);
-          // D14.1: a rejection is a verdict: halt in this pass; after a human clears it the next pass retries the same id.
-          if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, `dsa rejected run ${a.rid}: ${r.reason}`); return done('rejected', false, `${r.reason}; halted`, extra); }
+          // D14.1/D15.1: a rejection is a verdict: halt in this pass. The id and bytes are fixed for the attempt, so a
+          // cleared halt retries the same request and dsa rejects it again; the halt names the recovery (abandon).
+          if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'run', a.rid, r.reason)); return done('rejected', false, `${r.reason}; halted`, extra); }
           if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on run ${a.rid} (recorded content differs${r.state ? `, state ${r.state}` : ''}); never retried with other bytes`); return done('conflict', false, 'halted', extra); }
           return done('pending', false, r.reason ?? 'retry next pass', extra);
         }
@@ -289,7 +293,7 @@ export class Driver {
             }
             return done('applied', true, a.send ? 're-sent' : undefined, x);
           }
-          if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, `dsa rejected send ${id}: ${r.reason}`); return done('rejected', false, `${r.reason}; halted`, x); }
+          if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'send', id, r.reason)); return done('rejected', false, `${r.reason}; halted`, x); }
           if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on send ${id}; never retried with other bytes`); return done('conflict', false, 'halted', x); }
           return done('pending', false, r.reason ?? 'retry next pass', x);
         }
@@ -301,6 +305,8 @@ export class Driver {
             if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
             // D14.2: the refusal is acted on in this pass: rebase when trunk moved under a conflicting candidate, else halt.
             const attempt = s.nodes[a.node]!.slot!.attempt;
+            // D15.2: another writer moved the ledger while merge measured; nothing was recorded: retry next pass.
+            if (e.message === MERGE_TRANSIENT) return done('retry', false, `merge refused (${e.message}); retry next pass`);
             if (e.message.startsWith('rebase needed')) {
               const r = await ops.rebase({ cwd, as, node: a.node });
               return done('rebased', false, `merge refused (${e.message}); slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`);

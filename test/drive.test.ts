@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, sha256 } from '../src/canon.ts';
-import { decide, driverSlot, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
+import { blockText, decide, driverSlot, rejectedFixed, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, runLabels, projectId, entriesOf } from '../src/reducer.ts';
 import { reviewPacket, dispatchPacket } from '../src/views.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -146,7 +146,7 @@ test('row 3: a launch whose run is absent → re-launch with identical bytes and
   // D9: a rejection of the rid in this process halts with the reason (never re-launched on absent); outranks row 4+.
   r.send(W(), 'submit');
   const rej = act(r, runs, { rejected: new Map([[W(), 'unknown agent worker']]) });
-  assert.deepEqual(rej, { do: 'halt', node: 'a', attempt: 1, reason: `dsa rejected run ${W()}: unknown agent worker`, needs: 'human' });
+  assert.deepEqual(rej, { do: 'halt', node: 'a', attempt: 1, reason: `dsa rejected run ${W()}: unknown agent worker; this attempt's request is fixed; fix the cause (plan, agent, model), then \`owed abandon a\` to start a new attempt`, needs: 'human' });
   // A run that exists is not re-launched.
   assert.notEqual(act(r, runsOf(okWriter()))?.do, 'launch');
 });
@@ -187,7 +187,7 @@ test('row 7: writer sealed failed/timeout/budget/stopped/other → halt needs hu
   const r = submitted();
   for (const status of ['failed', 'timeout', 'budget', 'stopped', 'rejected', 'weird']) {
     const a = act(r, runsOf(view(W(), 'sealed', { status, error: 'boom' })));
-    assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `writer run ${W()} sealed ${status}: boom`, needs: 'human' });
+    assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `writer run ${W()} sealed ${status}: boom${status === 'rejected' ? `; ${rejectedFixed('a')}` : ''}`, needs: 'human' });
   }
   assert.equal(act(r, runsOf(view(W(), 'pruned', { status: 'failed' })))?.do, 'halt');
 });
@@ -510,7 +510,7 @@ test('a re-send dsa refuses (exit 1, e.g. pruned run) → halt needing a human, 
   const r = rig(); r.dispatch(); r.launchWriter();
   const x = r.send(W(), 'submit', 'follow-up', 'commit your work and run `owed submit a`');
   const a = act(r, runsOf(view(W(), 'pruned', { status: 'ok' })), { rejected: new Map([[x.send, 'unknown run']]) });
-  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `dsa rejected send ${x.send}: unknown run`, needs: 'human' });
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `dsa rejected send ${x.send}: unknown run; ${rejectedFixed('a')}`, needs: 'human' });
 });
 
 // ---------- D11: stale review blocks wait for the slot re-review (review #224) ----------
@@ -643,4 +643,44 @@ test('D12 liveness catch-all: not accepted, nothing unsealed, no other row → s
   // With a run still live it waits instead.
   assert.equal(act(r, runsOf(view(W(), 'running'), view(R(1), 'sealed', { status: 'ok' }))), undefined);
   assert.equal(act(r, runsOf(okWriter(), view(R(1), 'running'))), undefined);
+});
+
+// ---------- D15: polish before 0.4.0 ----------
+test('D15.3: a stalled: halt lists each active block with obligation, principal, rank and candidate (or stale)', () => {
+  const r = submitted(); r.pass(); r.rule('acknowledge me'); r.launchReviewer(1); r.review('ok', 'reviewer:drive-a-1-1', 1);
+  const obs = r.entries.find(e => e.kind === 'obs')!;
+  // An execution block on an obligation the current candidate does not carry (e.g. a check the plan no longer has).
+  const s = r.state(), c = s.nodes.a!.candidate!;
+  s.nodes.a!.blocks.push({ seq: obs.seq, node: 'a', obligation: 'check:gone', kind: 'exec', key: 'old-key', state: 'active' });
+  const rulings = s.nodes.a!.items.find(i => i.obligation === 'rulings')!;
+  const a = decide(s, s.plan, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), optsOf(r)).find(x => x.node === 'a');
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'owner', reason: `stalled: rulings ${rulings.mark} ${rulings.detail}; active blocks #${obs.seq} check:gone by executor:owed stale` });
+  // A judgment block on the current candidate's key names the candidate and the rank.
+  const blk = r.review('block', 'reviewer:human', 1);
+  const s2 = r.state(), b = s2.nodes.a!.blocks.find(x => x.seq === blk.seq)!;
+  assert.equal(blockText(s2, s2.nodes.a!.candidate!, b), `#${blk.seq} review by reviewer:human rank 1 on candidate #${c.seq}`);
+});
+
+test('D15.1: a run or send dsa reports rejected halts with the abandon recovery (decide rows 3, 4, 7)', () => {
+  const r = rig(); r.dispatch(); r.launchWriter();
+  const fixed = "this attempt's request is fixed; fix the cause (plan, agent, model), then `owed abandon a` to start a new attempt";
+  assert.equal(rejectedFixed('a'), fixed);
+  const run = act(r, runsOf(view(W(), 'absent')), { rejected: new Map([[W(), 'unknown agent']]) });
+  assert.ok(run?.do === 'halt' && run.reason.endsWith(fixed), JSON.stringify(run));
+  const x = r.send(W(), 'submit');
+  const send = act(r, runsOf(okWriter()), { rejected: new Map([[x.send, 'unknown run']]) });
+  assert.ok(send?.do === 'halt' && send.reason === `dsa rejected send ${x.send}: unknown run; ${fixed}`, JSON.stringify(send));
+  // describe reporting the run rejected (dsa recorded the rejection): row 7 names the same recovery.
+  const sealed = act(r, runsOf(view(W(), 'sealed', { status: 'rejected', error: 'unknown agent' })), { applied: applied(r) });
+  assert.ok(sealed?.do === 'halt' && sealed.reason === `writer run ${W()} sealed rejected: unknown agent; ${fixed}`, JSON.stringify(sealed));
+});
+
+test('D15.1 (widened): describe reporting a reviewer run rejected halts review-missing with the abandon recovery', () => {
+  const r = submitted(); r.pass(); r.launchReviewer(1);
+  const c = r.state().nodes.a!.candidate!;
+  const a = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'rejected', error: 'unknown agent reviewer' })));
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'human', reason: `review-missing: reviewer run ${R(1)} sealed rejected: unknown agent reviewer without recording review on candidate #${c.seq}; ${rejectedFixed('a')}` });
+  // Any other sealed status of the reviewer keeps the plain review-missing text.
+  const f = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'x' })));
+  assert.ok(f?.do === 'halt' && !f.reason.includes('owed abandon'), JSON.stringify(f));
 });
