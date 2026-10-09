@@ -619,7 +619,9 @@ repository. Most tools also take `as` (`role:id`).
 
 `owed_attest`, `owed_merge` and `owed_adopt` pass the tool call's abort signal
 to the operation (§7.8, D16.4): aborting the call ends the running check; the
-result is a tool error `Aborted: aborted` (details `code: aborted`).
+result is a tool error `Aborted: aborted` (details `code: aborted`). `owed_drive`
+(action once) passes it to its pass as well: the pass stops after the current
+action (§12.7).
 
 Owner operations (`waive`, `defer`, `adopt`, downgrade plans, decoys, and any tool
 called with `as: owner:…`) call `ctx.ui.confirm` and are recorded with
