@@ -8,6 +8,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
 import { OwedError } from './errors.ts';
+import { driveOnce, liveRunLines } from './drive-run.ts';
 import { oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
@@ -180,11 +181,16 @@ export default function owed(pi: ExtensionAPI): void {
     const a = await actor(ctx, dir, who, `Reveal decoys from ${oneLine(p.file!)}: ${decoys.map(d => oneLine(d.node)).join(', ')}\nThe revealed list must match an earlier unrevealed commitment; outcomes become part of the escape metrics.`);
     const r = await ops.decoyReveal({ ...a, channel: 'pi-confirm', payload }); return result(r, renderEntry(r));
   });
+  tool('drive', 'One pass of the owed driver (`owed drive --once`) as parent:drive: dispatch ready nodes, launch writers and reviewers through pi-durable-subagents (>= 1.0.27), send follow-ups, attest under `hold machine --shared --no-wait`, merge, rebase, halt for decisions. It never answers questions, waives, changes the plan or forces restarts. A long-running loop (`owed drive` without --once) belongs in a terminal or a `systemd-run --user` unit, not inside a tool or dsa call. Refused while another driver runs for the repository.', Type.Object({ max: Type.Optional(Type.Integer({ minimum: 1, description: 'Concurrent open attempts (overrides drive.max).' })), cwd }), async (p, _ctx, dir) => {
+    const r = await driveOnce({ cwd: dir, max: p.max });
+    const text = [...r.lines, ...(r.error ? [`Refused: ${r.error}`] : [])].join('\n') || 'nothing to do';
+    return r.error ? { ...result(r, text), isError: true } : result(r, text);
+  });
   pi.registerCommand('owed', { description: 'owed status; /owed why <node> shows the receipt card', handler: async (args, ctx) => {
     try {
       const parts = args.trim().split(/\s+/);
       let text: string;
-      if (!args.trim() || args.trim() === 'status') text = renderStatus(await ops.status(ctx));
+      if (!args.trim() || args.trim() === 'status') { text = renderStatus(await ops.status(ctx)); const live = await liveRunLines(ctx.cwd).catch(() => []); if (live.length) text += `\nDriver runs in dsa:\n${live.join('\n')}`; }
       else if (parts.length === 2 && parts[0] === 'why') text = renderReceipt(await ops.why({ cwd: ctx.cwd, node: parts[1]! }));
       else throw new OwedError('Usage: /owed or /owed why <node>', 'usage');
       ctx.ui.notify(text, 'info');
