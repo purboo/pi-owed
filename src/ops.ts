@@ -180,3 +180,49 @@ export function decoyPayload(text: string): DecoyPayload {
 export function decoyDigest(text: string): { digest: string } { return { digest:digestOf(decoyPayload(text)) }; }
 export async function decoyCommit(o: Actor & { digest:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'decoy-commit',by:by(o),channel:o.channel,digest:o.digest})); }
 export async function decoyReveal(o: Actor & { payload:string; channel:Channel }): Promise<Entry> { const p = decoyPayload(o.payload); return mutate(o,() => ({kind:'decoy-reveal',by:by(o),channel:o.channel,...p})); }
+// ---------- gc: reclaim worktrees and branches of finished attempts (SPEC §8) ----------
+import { realpath, stat } from 'node:fs/promises';
+export interface GcItem { node: string; attempt: number; worktree: string | null; branch: string | null }
+export interface GcKept { node: string; attempt: number; worktree: string; branch: string; reason: string }
+export interface GcResult { dryRun: boolean; removed: GcItem[]; kept: GcKept[]; entry?: Entry }
+async function real(path: string): Promise<string> { try { return await realpath(path); } catch { return resolve(path); } }
+async function exists(path: string): Promise<boolean> { try { await stat(path); return true; } catch { return false; } }
+export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channel?: Channel }): Promise<GcResult> {
+  const actor: Actor = { cwd: o.cwd, as: o.as ?? { role: 'parent', id: 'cli' }, channel: o.channel }, dryRun = !!o.dryRun;
+  owner(actor); const ledger = await Ledger.open(o.cwd);
+  // The dispatch lock serializes gc with worktree/branch creation by dispatch.
+  return ledger.withLock(async () => {
+    const { state, entries } = await load(ledger); inited(state);
+    // Stale registrations (directory deleted by hand) would otherwise pin their branches.
+    if (!dryRun) await git.git(o.cwd, ['worktree', 'prune']);
+    const trees = await Promise.all((await git.listWorktrees(o.cwd)).filter(w => !w.prunable).map(async w => ({ ...w, path: await real(w.path) })));
+    const removed: GcItem[] = [], kept: GcKept[] = [];
+    for (const d of entries) {
+      if (d.kind !== 'dispatch') continue;
+      const keep = (reason: string) => { kept.push({ node: d.node, attempt: d.attempt, worktree: d.worktree, branch: d.branch, reason }); };
+      const path = await real(d.worktree), tree = trees.find(w => w.path === path), hasBranch = await git.branchExists(o.cwd, d.branch), onDisk = await exists(d.worktree);
+      if (!tree && !hasBranch && !onDisk) continue; // already reclaimed
+      const slot = state.nodes[d.node]?.slot;
+      if (slot?.open && slot.attempt === d.attempt) { keep('open writer slot'); continue; }
+      let worktree: string | null = null, branch: string | null = null;
+      if (tree) {
+        if (tree.locked) { keep('worktree is locked'); continue; }
+        if (!await git.isClean(tree.path)) { keep('worktree is dirty (uncommitted or untracked changes)'); continue; }
+        if (!dryRun) { const r = await git.git(o.cwd, ['worktree', 'remove', tree.path], { allowFail: true }); if (r.code) { keep(`git worktree remove failed: ${r.stderr.trim()}`); continue; } }
+        worktree = d.worktree;
+      } else if (onDisk) keep('path exists but is not a registered git worktree; left untouched');
+      if (hasBranch) {
+        const user = trees.find(w => w.branch === `refs/heads/${d.branch}` && w.path !== path);
+        if (user) keep(`branch is checked out in ${user.path}`);
+        else if (dryRun) branch = d.branch;
+        else { const r = await git.git(o.cwd, ['branch', '-D', d.branch], { allowFail: true }); if (r.code) keep(`git branch -D failed: ${r.stderr.trim()}`); else branch = d.branch; }
+      }
+      if (worktree || branch) removed.push({ node: d.node, attempt: d.attempt, worktree, branch });
+    }
+    if (dryRun || !removed.length) return { dryRun, removed, kept };
+    await git.git(o.cwd, ['worktree', 'prune']);
+    const text = `gc removed ${removed.map(i => `${i.node}#${i.attempt} (${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`].filter(Boolean).join(', ')})`).join('; ')}`;
+    const entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; const d: Draft = { kind: 'note', by: by(actor), channel: actor.channel, text }; guard(current, d); return (await ledger.append([d]))[0]!; });
+    return { dryRun, removed, kept, entry };
+  }, 'dispatch');
+}

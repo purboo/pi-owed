@@ -115,3 +115,11 @@ export async function overlay(cwd: string, dir: string, fromCommit: string, glob
   // Git restores modes, symlinks and binary content without shell interpolation.
   if (source.length) await git(dir, ['--literal-pathspecs', 'restore', `--source=${fromCommit}`, '--worktree', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: source.join('\0') + '\0' });
 }
+export interface WorktreeRecord { path: string; branch?: string; locked: boolean; prunable: boolean }
+export async function listWorktrees(cwd: string): Promise<WorktreeRecord[]> {
+  return (await git(cwd, ['worktree', 'list', '--porcelain', '-z'])).stdout.split('\0\0').filter(Boolean).map(record => {
+    const fields = record.split('\0'), field = (name: string) => fields.find(f => f === name || f.startsWith(`${name} `));
+    return { path: field('worktree')!.slice(9), branch: field('branch')?.slice(7), locked: !!field('locked'), prunable: !!field('prunable') };
+  });
+}
+export async function branchExists(cwd: string, branch: string): Promise<boolean> { return (await git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], { allowFail: true })).code === 0; }
