@@ -889,19 +889,24 @@ polling.
   (the driver carries no dsa call identity; `DSA_HOME` stays), unref'd). When
   the starter has `DSA_EXEC`, the output adds `note: started from inside a dsa
   call; if that call's processes are contained, the driver may end with it —
-  prefer starting it from a top-level session or systemd-run --user`. It waits up to
-  5 s until the lock names the child pid and prints `driver started: pid P,
-  log <path>`. A child that exits first with an `idle`/`stopped` exit record is
-  reported as started and already ended; without an exit record or with an
-  `error` record → refused with the last log lines (exit 1). Still starting
-  after 5 s → started, with a note to check `--status`.
+  prefer starting it from a top-level session or systemd-run --user`. It keeps the
+  `drive-detach` lock until the drive lock names the child pid (then prints
+  `driver started: pid P, log <path>`) or the child exited, waiting up to 30 s
+  (D17a.3). A child that exits first with an `idle`/`stopped` exit record is
+  reported as started and already ended (the tool starts no follower then);
+  without an exit record or with an `error` record → refused with the last log
+  lines (exit 1). No lock after 30 s → SIGTERM to the child (pid and start time
+  checked), refused with the log tail (exit 1).
 - **Exit record** (`--json` loop mode only, not `--once`): the last line is
   `{"event":"exit","code":C,"reason":R,"at":ISO,"error"?:text}`, R ∈ `idle`
   (after the `idle` line), `stopped` (after `stopped`), `killed` (the second
   signal path writes it before `process.exit(130)`), `error` (drive threw or
   the lock refused; `error` is the message, code = the CLI code 1/2/3, and
-  `drive()` returns that code instead of throwing). Only SIGKILL or a crash
-  leave no exit record. Text mode and `--once` are unchanged.
+  `drive()` returns that code instead of throwing). The record is written
+  before the drive lock is released (D17a.2), so a released lock implies the
+  record. Signal handlers are installed before the lock is taken (D17a.6); a
+  signal while starting stops the loop at its first check (`stopped`). Only
+  SIGKILL or a crash leave no exit record. Text mode and `--once` are unchanged.
 - **Text of a JSON line.** `reportText(json)` (drive-run.ts) is the text-mode
   line of an action report or a loop event; `Driver.emit` prints it in text
   mode, and status and wake-ups render log lines with it (a line that is not
@@ -909,11 +914,12 @@ polling.
 - **Status** (`owed drive --status [--json]`, tool `action: "status"`): reads
   the lock and the log only (creates nothing): `driver running: pid P on H
   since T`, a lock of another host (not checked), or `driver not running`
-  (`; it ended without an exit record (killed or crashed)` when the log exists
-  without one); `last exit: R (exit C) at T[: error]` from the log; the log
+  (`; it ended without an exit record (killed or crashed)` when the log has
+  driver lines but no exit record; an empty log adds `no driver output yet`); `last exit: R (exit C) at T[: error]` from the log; the log
   path and its last 10 lines as text. Exit 0.
 - **Stop** (`owed drive --stop [--now]`, tool `action: "stop"`, `now`): no
-  live lock → `no driver running` (exit 0). A lock of another host, or one
+  live lock → `no driver running` (exit 0, nothing created). Otherwise under
+  the `drive-detach` lock, so concurrent stops send one signal. A lock of another host, or one
   without a process start time, refuses. Else SIGTERM to the lock's pid when
   its start time still matches (never a reused pid); `--now` sends a second
   SIGTERM 1 s later if the lock is still held (D14.8: stop at once). Waits up
@@ -924,9 +930,12 @@ polling.
   valid with `--once`); `--json` with any. The tool refuses `now` without
   `stop` and `max` with `status`/`stop` (usage).
 - **Wake-ups** (src/extension.ts, `DriveWatch`/`Follower`). After a tool
-  start, the follower reads the fresh (rotated) log from its start; on
-  `session_start`, when the repository of `ctx.cwd` has a live lock, from the
-  log's size at that moment (no replay). Every 2 s (unref'd timer) it reads the
+  start (in any session), the follower reads the fresh (rotated) log from its
+  start; on `session_start` of a session not inside a dsa call (`DSA_EXEC` and
+  `DSA_CALL` unset, D17a.1), when the repository of `ctx.cwd` has a live lock,
+  from the log's size at that moment (no replay). Every top-level pi session
+  opened in the repository is therefore woken. A log replaced by rotation
+  (other dev/ino, or shorter than the offset) is read from 0 (D17a.4). Every 2 s (unref'd timer) it reads the
   complete lines appended since. Wake lines: `do: halt`, `do: notify` (asking
   runs, owner-needed, describe failures), outcomes `rejected`, `conflict`,
   `refused` and `error` (refused merges and attest errors also halt), event
@@ -937,8 +946,9 @@ polling.
   `pi.sendMessage({customType: "owed-drive", display: true, content},
   {triggerTurn: true, deliverAs: "followUp"})`, content = `owed drive
   (<repo>):`, the carried merges and wake lines in log order, `Next: owed
-  status / owed why <node>`. A wake text already delivered by that follower is
-  not repeated. It stops after a read with a terminal line, or when the pid is
+  status / owed why <node>`. Identical wake lines within one read collapse;
+  there is no dedupe across reads (D17a.5: every halt line wakes). If
+  `sendMessage` throws, the batch is kept and retried next tick (D17a.8). It stops after a read with a terminal line, or when the pid is
   gone without one (`driver pid P ended without an exit record`; liveness is
   checked before the read, so nothing the driver wrote is missed). One
   follower per driver log (repository) per extension instance; a new start
@@ -946,5 +956,5 @@ polling.
   running).
 - **`/owed`** appends `Driver: running pid P since T`, `Driver: not running
   (last exit R at T)`, `Driver: not running (ended without an exit record)`,
-  `Driver: not running`, or for another host `Driver: lock held by pid P on
+  `Driver: not running (no driver output yet)`, `Driver: not running`, or for another host `Driver: lock held by pid P on
   host H since T`.

@@ -2,11 +2,11 @@
 // loop, the pi tool actions and the log follower. Fake dsa only (test/fixtures/fake-dsa.mjs), no real dsa.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owedExtension from '../src/extension.ts';
@@ -21,6 +21,7 @@ import { identity } from './helpers/surface.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url));
 const OWED = fileURLToPath(new URL('../bin/owed.js', import.meta.url));
+const SHUTDOWN_CHILD = fileURLToPath(new URL('./fixtures/shutdown-child.ts', import.meta.url));
 type Json = Record<string, unknown>;
 const sleepMs = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function until(fn: () => boolean | Promise<boolean>, ms: number, what: string): Promise<void> {
@@ -63,9 +64,9 @@ async function rig(plan: object) {
     logLines: (): string[] => readFileSync(self.log, 'utf8').split('\n').filter(Boolean),
     logJson: (): Json[] => self.logLines().map(l => JSON.parse(l) as Json),
     lockPid: (): number | undefined => { try { return (JSON.parse(readFileSync(self.lock, 'utf8')) as { pid: number }).pid; } catch { return undefined; } },
-    cli(args: string[], extra: Record<string, string> = {}) {
+    cli(args: string[], extra: Record<string, string> = {}, cwd: string = r.cwd) {
       return new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
-        execFile(process.execPath, [OWED, ...args], { cwd: r.cwd, env: { ...process.env, ...env, OWED_DSA: FAKE, ...extra }, timeout: 60_000 }, (e, stdout, stderr) => {
+        execFile(process.execPath, [OWED, ...args], { cwd, env: { ...process.env, ...env, OWED_DSA: FAKE, ...extra }, timeout: 60_000 }, (e, stdout, stderr) => {
           const x = e as (Error & { code?: number }) | null;
           resolve({ code: x ? (typeof x.code === 'number' ? x.code : null) : 0, stdout, stderr });
         });
@@ -120,6 +121,8 @@ async function withEnv<T>(extra: Record<string, string>, fn: () => Promise<T>): 
   try { return await fn(); }
   finally { for (const [k, v] of prior) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 }
+/** session_start as a top-level session (not inside a dsa call; the test itself may run under a dsa hold). */
+const topLevelStart = (h: ReturnType<typeof harness>) => withEnv({ DSA_EXEC: '', DSA_CALL: '' }, () => h.emit('session_start', { type: 'session_start', reason: 'startup' }));
 const liveLock = (path: string, token = 'test') => {
   mkdirSync(join(path, '..'), { recursive: true });
   writeFileSync(path, JSON.stringify({ pid: process.pid, start: procStart(process.pid), host: hostname(), at: '2026-10-09T00:00:00.000Z', token }));
@@ -297,7 +300,7 @@ test('D17.7: Follower: no replay, quiet lines do not wake, merges ride along, an
     const m1 = f.tick()!;
     assert.deepEqual(m1.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk abc', 'b: writer run r2 asks (qid q1-1, rev 1): which db?', 'Next: owed status / owed why <node>']);
     put({ do: 'notify', node: 'b', outcome: 'notify', text: 'b: writer run r2 asks (qid q1-1, rev 1): which db?' });
-    assert.equal(f.tick(), undefined, 'an identical notify is not re-delivered');
+    assert.match(f.tick() ?? '', /\nb: writer run r2 asks \(qid q1-1, rev 1\): which db\?\n/, 'no dedupe across reads (D17a.5): the same line in a later read wakes again');
     appendFileSync(log, '{"do":"halt","node":"c","outcome":"halted","attempt":1,"needs":"hu');
     assert.equal(f.tick(), undefined, 'an incomplete line waits');
     appendFileSync(log, 'man","detail":"stalled: x"}\n');
@@ -314,7 +317,7 @@ test('D17.7: Follower: no replay, quiet lines do not wake, merges ride along, an
     assert.equal(f.stopped, true, 'a terminal line stops the follower');
     put({ do: 'halt', node: 'f', outcome: 'halted', attempt: 1, needs: 'human' });
     assert.equal(f.tick(), undefined);
-    assert.equal(got.length, 6);
+    assert.equal(got.length, 7);
     // A driver pid that is gone without an exit record.
     const g: string[] = [], dead = 2 ** 22 + 11;
     const h = new Follower({ log, repo: '/r', pid: dead, deliver: c => g.push(c) });
@@ -378,39 +381,45 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
 
 test('D17.7/8: session_start follows a live driver without replaying old lines; session_shutdown stops the follower', { timeout: 60_000 }, async () => {
   const f = await rig(planOf(node('s')));
-  const h = harness(f.cwd);
+  const h = harness(f.cwd), witness = harness(f.cwd), late = harness(f.cwd);
+  const line = (o: Json) => appendFileSync(f.log, `${JSON.stringify(o)}\n`);
   try {
     mkdirSync(join(f.log, '..'), { recursive: true });
-    appendFileSync(f.log, `${JSON.stringify({ do: 'notify', node: 'old', outcome: 'notify', text: 'old question' })}\n`);
+    line({ do: 'notify', node: 'old', outcome: 'notify', text: 'old question' });
     liveLock(f.lock);   // this test process plays the live driver
-    await h.emit('session_start', { type: 'session_start', reason: 'startup' });
-    await sleepMs(2500);
-    assert.equal(h.messages.length, 0, 'old lines are not replayed');
-    appendFileSync(f.log, `${JSON.stringify({ do: 'halt', node: 's', outcome: 'halted', attempt: 1, needs: 'owner', detail: 'new reason' })}\n`);
+    await topLevelStart(h);
+    line({ do: 'halt', node: 's', outcome: 'halted', attempt: 1, needs: 'owner', detail: 'new reason' });
     await until(() => h.messages.length >= 1, 8000, 'the wake for the new line');
     const c = h.messages[0]!.message.content;
     assert.match(c, /halt s attempt 1 \(needs owner\): halted — new reason/);
-    assert.doesNotMatch(c, /old question/);
+    assert.doesNotMatch(c, /old question/, 'lines before the attach are not replayed');
     // A second session_start for the same driver keeps the one follower (no duplicate message).
-    await h.emit('session_start', { type: 'session_start', reason: 'reload' });
-    appendFileSync(f.log, `${JSON.stringify({ do: 'notify', node: 's', outcome: 'notify', text: 'second' })}\n`);
+    await topLevelStart(h);
+    line({ do: 'notify', node: 's', outcome: 'notify', text: 'second' });
     await until(() => h.messages.length >= 2, 8000, 'the second wake');
-    await sleepMs(2500);
+    await sleepMs(2500);   // after the positive: a second follower would have delivered a duplicate by now
     assert.equal(h.messages.length, 2, 'one follower per repository');
     assert.match(await h.status(), new RegExp(`\\nDriver: running pid ${process.pid} since `));
+    // After shutdown: a witness session (still attached) is woken by the next line, h is not.
+    await topLevelStart(witness);
     await h.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' });
-    appendFileSync(f.log, `${JSON.stringify({ do: 'notify', node: 's', outcome: 'notify', text: 'after shutdown' })}\n`);
-    await sleepMs(4500);
+    line({ do: 'notify', node: 's', outcome: 'notify', text: 'after shutdown' });
+    await until(() => witness.messages.some(m => /after shutdown/.test(m.message.content)), 8000, 'the witness wake');
+    await sleepMs(2500);
     assert.equal(h.messages.length, 2, 'no follower after session_shutdown');
     rmSync(f.lock, { force: true });
     assert.match(await h.status(), /\nDriver: not running \(ended without an exit record\)/);
-    // No lock: session_start follows nothing.
-    const h2 = harness(f.cwd);
-    await h2.emit('session_start', { type: 'session_start', reason: 'startup' });
-    appendFileSync(f.log, `${JSON.stringify({ do: 'notify', node: 's', outcome: 'notify', text: 'nobody follows' })}\n`);
+    // No lock: session_start follows nothing (the witness, attached before, shows the line was there to read).
+    await topLevelStart(late);
+    line({ do: 'notify', node: 's', outcome: 'notify', text: 'nobody follows' });
+    await until(() => witness.messages.some(m => /nobody follows/.test(m.message.content)), 8000, 'the witness wake');
     await sleepMs(2500);
-    assert.equal(h2.messages.length, 0);
-  } finally { rmSync(f.lock, { force: true }); await h.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' }); await f.done(); }
+    assert.equal(late.messages.length, 0);
+  } finally {
+    rmSync(f.lock, { force: true });
+    for (const x of [h, witness, late]) await x.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' });
+    await f.done();
+  }
 });
 
 test('D17 (A): the detached driver carries no dsa call identity (DSA_EXEC/DSA_CALL removed, DSA_HOME kept); started inside a dsa call it says so', { timeout: 120_000 }, async () => {
@@ -477,4 +486,185 @@ test('D17 (B): owed_drive action once passes the tool abort signal: an aborted c
     assert.deepEqual(launches.map(l => l.node), ['u'], 'v was not launched after the abort');
     assert.ok(!existsSync(f.lock), 'the pass released the lock');
   } finally { writeFileSync(gate, ''); await f.done(); }
+});
+
+// ---------- D17a ----------
+const startedPid = (stdout: string): number => Number(/^driver started: pid (\d+), log /m.exec(stdout)?.[1]);
+const environOf = (pid: number): string[] => readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean);
+
+test('D17a.3: concurrent --detach calls are serialized (one driver, the other refuses, no rotation); concurrent --stop sends one signal', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('cc')));   // the writer run stays running
+  try {
+    const both = await Promise.all([f.cli(['drive', '--detach']), f.cli(['drive', '--detach'])]);
+    const ok = both.filter(r => r.code === 0), refused = both.filter(r => r.code === 1);
+    assert.equal(ok.length, 1, both.map(r => r.stdout + r.stderr).join('\n---\n'));
+    assert.equal(refused.length, 1, both.map(r => r.stdout + r.stderr).join('\n---\n'));
+    const pid = startedPid(ok[0]!.stdout); f.pids.push(pid);
+    assert.match(refused[0]!.stderr, new RegExp(`^Refused: a driver is running for this repository: pid ${pid} `));
+    assert.equal(f.lockPid(), pid);
+    assert.ok(!existsSync(`${f.log}.1`), 'the refused --detach did not rotate the log under the driver');
+    await until(() => f.logJson().some(x => x.do === 'launch'), 30_000, 'the launch line');
+    for (const l of f.logLines()) assert.doesNotThrow(() => JSON.parse(l), l);
+    const stops = await Promise.all([f.cli(['drive', '--stop']), f.cli(['drive', '--stop'])]);
+    assert.deepEqual(stops.map(r => r.stdout.trim()).sort(), ['no driver running', 'stopped'], stops.map(r => r.stdout + r.stderr).join('\n'));
+    const lines = f.logJson();
+    assert.deepEqual([lines.at(-1)!.event, lines.at(-1)!.reason], ['exit', 'stopped']);
+    assert.equal(lines.filter(x => x.event === 'killed').length, 0, 'one SIGTERM: no second-signal stop');
+    assert.equal(lines.filter(x => x.event === 'stopped').length, 1);
+  } finally { await f.done(); }
+});
+
+test('D17a.3: --stop refuses a lock without a process start time and signals nothing', { timeout: 60_000 }, async () => {
+  const f = await rig(planOf(node('ns')));
+  try {
+    // This test process as the "driver" without start time: a signal would end this test.
+    writeFileSync(f.lock, JSON.stringify({ pid: process.pid, host: hostname(), at: 'then', token: 'n' }));
+    const r = await f.cli(['drive', '--stop']);
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stderr, new RegExp(`^Refused: cannot verify that pid ${process.pid} is the driver`));
+    assert.ok(existsSync(f.lock), 'the lock is left alone');
+    const now = await f.cli(['drive', '--stop', '--now']);
+    assert.equal(now.code, 1);
+  } finally { rmSync(f.lock, { force: true }); await f.done(); }
+});
+
+test('D17a.2: the killed path (--stop --now while an action runs) ends the log with exit record killed before the lock is released', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('kk')));
+  const mark = join(f.root, 'kk-started'), gate = join(f.root, 'gate-kk');
+  try {
+    // The writer run blocks inside the driver's dsa call until the gate opens: the first SIGTERM cannot end the loop.
+    await f.agent('kk-writer', `touch '${mark}'\nwhile [ ! -e '${gate}' ]; do sleep 0.1; done`);
+    const { pid } = await f.detach();
+    await until(() => existsSync(mark), 60_000, 'the writer run started');
+    const s = await f.cli(['drive', '--stop', '--now']);
+    assert.equal(s.code, 0, s.stderr);
+    assert.equal(s.stdout.trim(), 'stopped');
+    // `stopped` means the lock was released, and the record precedes the release: it is in the log now.
+    assert.ok(!existsSync(f.lock));
+    const lines = f.logJson();
+    assert.deepEqual([lines.at(-2)!.event, lines.at(-1)!.event, lines.at(-1)!.reason, lines.at(-1)!.code], ['killed', 'exit', 'killed', 130]);
+    await until(() => !alive(pid), 5000, 'the driver ended');
+  } finally { writeFileSync(gate, ''); await f.done(); }
+});
+
+test('D17a (OWED_DIR): a relative OWED_DIR reaches the detached driver as an absolute path', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('od')));
+  try {
+    const abs = process.env.OWED_DIR!, sub = join(f.cwd, 'sub');
+    mkdirSync(sub);
+    const rel = relative(sub, abs);
+    assert.ok(!rel.startsWith('/'), rel);
+    const s = await f.cli(['drive', '--detach'], { OWED_DIR: rel }, sub);
+    assert.equal(s.code, 0, s.stderr);
+    const pid = startedPid(s.stdout); f.pids.push(pid);
+    assert.equal(f.lockPid(), pid, 'the driver took the lock in the same ledger dir');
+    const given = environOf(pid).find(e => e.startsWith('OWED_DIR='))?.slice('OWED_DIR='.length);
+    assert.ok(given && given.startsWith('/'), `absolute: ${given}`);
+    assert.equal(realpathSync(given), realpathSync(abs));
+    assert.equal((await f.cli(['drive', '--stop'])).stdout.trim(), 'stopped');
+  } finally { await f.done(); }
+});
+
+test('D17a.1: a session inside a dsa call does not auto-attach; a top-level session does', { timeout: 60_000 }, async () => {
+  const f = await rig(planOf(node('da')));
+  const sub = harness(f.cwd), top = harness(f.cwd);
+  try {
+    mkdirSync(dirname(f.log), { recursive: true }); writeFileSync(f.log, '');
+    liveLock(f.lock);
+    await withEnv({ DSA_EXEC: 'exec-x', DSA_CALL: 'call-x' }, () => sub.emit('session_start', { type: 'session_start', reason: 'startup' }));
+    await withEnv({ DSA_EXEC: '', DSA_CALL: 'call-only' }, () => sub.emit('session_start', { type: 'session_start', reason: 'reload' }));
+    await topLevelStart(top);
+    appendFileSync(f.log, `${JSON.stringify({ do: 'halt', node: 'da', outcome: 'halted', attempt: 1, needs: 'human', detail: 'x' })}\n`);
+    await until(() => top.messages.length >= 1, 8000, 'the top-level wake');
+    await sleepMs(2500);   // after the positive: a follower of the dsa session would have delivered by now
+    assert.equal(sub.messages.length, 0, 'no wake-ups injected into a dsa subagent session');
+  } finally {
+    rmSync(f.lock, { force: true });
+    for (const x of [sub, top]) await x.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' });
+    await f.done();
+  }
+});
+
+test('D17a.5: the same halt text in two reads wakes twice; identical lines within one read collapse', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'owed-follow-')), log = join(dir, 'log.jsonl');
+  const halt = JSON.stringify({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail: 'dsa rejected run r; this attempt\'s request is fixed' });
+  try {
+    writeFileSync(log, '');
+    const got: string[] = [];
+    const f = new Follower({ log, repo: '/r', pid: process.pid, start: procStart(process.pid), deliver: c => got.push(c) });
+    appendFileSync(log, `${halt}\n`);
+    assert.match(f.tick()!, /halt h attempt 1/);
+    appendFileSync(log, `${halt}\n`);
+    assert.match(f.tick() ?? '', /halt h attempt 1/, 'a re-halt with the same text wakes again');
+    appendFileSync(log, `${halt}\n${halt}\n`);
+    const m = f.tick()!;
+    assert.equal(m.split('\n').filter(l => /^halt h attempt 1/.test(l)).length, 1, m);
+    assert.equal(got.length, 3);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('D17a.4: a log replaced by rotation (new dev/ino, not shorter) is read from its start', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'owed-follow-')), log = join(dir, 'log.jsonl');
+  const quiet = (i: number) => JSON.stringify({ do: 'dispatch', node: `n${i}`, outcome: 'done', detail: `attempt ${i}` });
+  try {
+    writeFileSync(log, [1, 2, 3].map(quiet).join('\n') + '\n');
+    const got: string[] = [];
+    const f = new Follower({ log, repo: '/r', pid: process.pid, start: procStart(process.pid), deliver: c => got.push(c) });
+    assert.equal(f.tick(), undefined);
+    renameSync(log, `${log}.1`);
+    // The new file starts with a halt and is longer than the old offset: size alone would skip the halt.
+    const fresh = [JSON.stringify({ do: 'halt', node: 'rot', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'after rotation' }), ...[4, 5, 6, 7, 8, 9].map(quiet)].join('\n') + '\n';
+    writeFileSync(log, fresh);
+    assert.ok(fresh.length > readFileSync(`${log}.1`, 'utf8').length);
+    assert.match(f.tick() ?? '', /halt rot attempt 2 \(needs owner\): halted — after rotation/);
+    assert.equal(got.length, 1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('D17a.8: a failing sendMessage keeps the batch for the next tick; the follower stops only after the terminal line was delivered', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'owed-follow-')), log = join(dir, 'log.jsonl');
+  const put = (o: Json) => appendFileSync(log, `${JSON.stringify(o)}\n`);
+  try {
+    writeFileSync(log, '');
+    const got: string[] = [];
+    let fail = true;
+    const f = new Follower({ log, repo: '/r', pid: process.pid, start: procStart(process.pid), deliver: c => { if (fail) throw new Error('session busy'); got.push(c); } });
+    put({ do: 'merge', node: 'a', outcome: 'merged', detail: 'trunk 1' });
+    put({ do: 'halt', node: 'b', outcome: 'halted', attempt: 1, needs: 'human', detail: 'first' });
+    assert.equal(f.tick(), undefined, 'delivery failed');
+    put({ do: 'notify', node: 'c', outcome: 'notify', text: 'c asks' });
+    fail = false;
+    assert.deepEqual(f.tick()!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1 (needs human): halted — first', 'c asks', 'Next: owed status / owed why <node>']);
+    put({ event: 'stopped' }); put({ event: 'exit', code: 0, reason: 'stopped', at: 'T' });
+    fail = true;
+    assert.equal(f.tick(), undefined);
+    assert.equal(f.stopped, false, 'not stopped while the terminal line is undelivered');
+    fail = false;
+    assert.match(f.tick() ?? '', /\nstopped\ndriver exited 0 \(stopped\)\n/);
+    assert.equal(f.stopped, true);
+    assert.equal(got.length, 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('D17a.9: after session_shutdown a process that loaded the extension and attached exits on its own', { timeout: 60_000 }, async () => {
+  const f = await rig(planOf(node('sd')));
+  let child: ReturnType<typeof spawn> | undefined;
+  try {
+    mkdirSync(dirname(f.log), { recursive: true }); writeFileSync(f.log, '');
+    liveLock(f.lock);   // this test process is the live driver the child attaches to
+    const env: NodeJS.ProcessEnv = { ...process.env, DSA_EXEC: '', DSA_CALL: '' }; delete env.NODE_TEST_CONTEXT;
+    child = spawn(process.execPath, [SHUTDOWN_CHILD, f.cwd, f.log], { cwd: f.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout!.on('data', (b: Buffer) => { out += b; }); child.stderr!.on('data', (b: Buffer) => { err += b; });
+    const exited = new Promise<number | null>(r => child!.on('exit', code => r(code)));
+    await until(() => /shutdown\n/.test(out) || child!.exitCode !== null, 30_000, 'the child attached, was woken and shut down');
+    const t0 = Date.now();
+    const code = await Promise.race([exited, sleepMs(5000).then(() => 'still running' as const)]);
+    assert.equal(code, 0, `${out}\n${err}`);
+    assert.ok(Date.now() - t0 < 5000);
+    assert.equal(out, 'woken\nshutdown\n', err);
+  } finally {
+    if (child && child.exitCode === null) child.kill('SIGKILL');
+    rmSync(f.lock, { force: true }); await f.done();
+  }
 });

@@ -75,7 +75,9 @@ export default function owed(pi: ExtensionAPI): void {
   // poll that saw a halt, a question, a refusal or the driver's end. session_shutdown clears the timers only.
   const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }));
   if (typeof pi.on === 'function') {
-    pi.on('session_start', async (_event, ctx) => { await watch.attach(ctx.cwd).catch(() => undefined); });
+    // D17a.1: auto-attach only in a session that is not inside a dsa call (dsa writers and reviewers run in worktrees of
+    // the same repository and must not be woken by its driver); every top-level session in the repository is woken.
+    pi.on('session_start', async (_event, ctx) => { if (process.env.DSA_EXEC || process.env.DSA_CALL) return; await watch.attach(ctx.cwd).catch(() => undefined); });
     pi.on('session_shutdown', () => { watch.stopAll(); });
   }
   // `signal`: the tool call's abort signal; attest, merge and adopt pass it to ops, which then end their checks (D16.4);
@@ -198,7 +200,9 @@ export default function owed(pi: ExtensionAPI): void {
     if (action === 'start') {
       const r = await driveStart({ cwd: dir, max: p.max });
       // Follow the fresh log from its start (it was rotated for this driver): nothing it wrote before this is missed.
-      watch.follow({ log: r.log, repo: r.repo, pid: r.pid, ...(r.start ? { start: r.start } : {}), from: 0 });
+      // A driver that already ended (its exit record is in this result) gets no follower (D17a.8). An explicit start
+      // follows in any session, also inside a dsa call.
+      if (!r.exited) watch.follow({ log: r.log, repo: r.repo, pid: r.pid, ...(r.start ? { start: r.start } : {}), from: 0 });
       return result(r, `${renderDriveStart(r)}\nThis session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or it exits; do not poll status.`);
     }
     if (action === 'status') { const r = await driveStatus({ cwd: dir }); return result(r, renderDriveStatus(r)); }
