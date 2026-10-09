@@ -674,3 +674,13 @@ test('D15.1: a run or send dsa reports rejected halts with the abandon recovery 
   const sealed = act(r, runsOf(view(W(), 'sealed', { status: 'rejected', error: 'unknown agent' })), { applied: applied(r) });
   assert.ok(sealed?.do === 'halt' && sealed.reason === `writer run ${W()} sealed rejected: unknown agent; ${fixed}`, JSON.stringify(sealed));
 });
+
+test('D15.1 (widened): describe reporting a reviewer run rejected halts review-missing with the abandon recovery', () => {
+  const r = submitted(); r.pass(); r.launchReviewer(1);
+  const c = r.state().nodes.a!.candidate!;
+  const a = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'rejected', error: 'unknown agent reviewer' })));
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'human', reason: `review-missing: reviewer run ${R(1)} sealed rejected: unknown agent reviewer without recording review on candidate #${c.seq}; ${rejectedFixed('a')}` });
+  // Any other sealed status of the reviewer keeps the plain review-missing text.
+  const f = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'x' })));
+  assert.ok(f?.do === 'halt' && !f.reason.includes('owed abandon'), JSON.stringify(f));
+});
