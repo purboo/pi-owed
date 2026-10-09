@@ -9,7 +9,7 @@
 //   leases [--json]
 // Test hooks (not dsa commands): `fake-prune <rid>` marks a run pruned; `fake-compact <n>` drops the oldest n events.
 // Leases: $FAKE_DSA_DIR/leases.json holds other processes' tickets, [{resource, holders:[{mode,…}], waiters:[…]}]
-// (what `leases --json` prints). `hold` decides like dsa 1.0.27: a shared request is blocked by an exclusive holder or
+// (what `leases --json` prints; an optional `since` (epoch ms) gives the age hold prints). `hold` decides like dsa 1.0.27: a shared request is blocked by an exclusive holder or
 // waiter, an exclusive one by any; blocked with --no-wait (or --max-wait 0) → exit 75 naming the blockers, nothing
 // written; blocked without it → logged `queued: true` (a waiter was written) and then run; granted → the command runs
 // (stdio passed through) and hold exits with its status. $FAKE_DSA_DIR/old-hold makes hold reject --no-wait like dsa
@@ -281,7 +281,7 @@ function holdCmd(args) {
   const incompatible = (t) => mode === 'exclusive' || t.mode === 'exclusive';
   const blockers = [...entry.holders.filter(incompatible).map(t => ({ ...t, state: 'holding' })), ...entry.waiters.filter(incompatible).map(t => ({ ...t, state: 'waiting' }))];
   if (blockers.length && noWait) {
-    process.stderr.write(`hold: ${resource} is not free now (${blockers.map(t => `${t.who ?? 'pid ?'} (${t.mode}${t.state === 'waiting' ? ', waiting' : ''}, 1s)`).join(', ')}); not running the command (exit 75)\n`);
+    process.stderr.write(`hold: ${resource} is not free now (${blockers.map(t => `${t.who ?? 'pid ?'} (${t.mode}${t.state === 'waiting' ? ', waiting' : ''}, ${t.since ? Math.max(0, Math.round((Date.now() - t.since) / 1000)) : 1}s)`).join(', ')}); not running the command (exit 75)\n`);
     log({ cmd: 'hold', resource, mode, refused: true, exit: 75 }); return new Exit(75);
   }
   const r = spawnSync(argvCmd[0], argvCmd.slice(1), { stdio: 'inherit' });

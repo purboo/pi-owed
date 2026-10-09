@@ -56,6 +56,10 @@ const LIMIT = 16 * 1024 * 1024;
 
 export class Dsa {
   readonly bin: string; private readonly opts: DsaOptions;
+  /** Process groups of the CLI invocations still running (`killAll`). */
+  private readonly live = new Set<number>();
+  /** Ends every running invocation's process group (hold forwards it to its command): the driver's hard stop. */
+  killAll(sig: NodeJS.Signals = 'SIGTERM'): void { for (const pid of this.live) { try { process.kill(-pid, sig); } catch { /* gone */ } } }
   constructor(opts: DsaOptions = {}) { this.opts = opts; this.bin = opts.bin ?? dsaBin({ ...process.env, ...opts.env }); }
 
   private timeout(): number { return this.opts.timeoutMs ?? (this.opts.waitMs ?? 60_000) + 30_000; }
@@ -69,6 +73,7 @@ export class Dsa {
       // detached into a group of its own and survives).
       try { child = spawn(this.bin, args, { cwd, env: { ...process.env, ...this.opts.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
       catch (e) { reject(new DsaError(`cannot run ${this.bin}: ${(e as Error).message}`)); return; }
+      const pid = child.pid; if (pid) this.live.add(pid);
       const out: Buffer[] = [], err: Buffer[] = []; let outLen = 0, errLen = 0, timedOut = false, failed: Error | undefined;
       child.stdout.on('data', (b: Buffer) => { if (outLen < LIMIT) { out.push(b); outLen += b.length; } });
       child.stderr.on('data', (b: Buffer) => { if (errLen < LIMIT) { err.push(b); errLen += b.length; } });
@@ -83,6 +88,7 @@ export class Dsa {
       // EPIPE when the child exits before reading stdin is reported by `close`/`exit`, not as a crash here.
       child.stdin.on('error', () => {});
       child.on('close', (code, sig) => {
+        if (pid) this.live.delete(pid);
         if (timer) clearTimeout(timer);
         const stdout = Buffer.concat(out).toString('utf8'), stderr = Buffer.concat(err).toString('utf8');
         // A spawn failure (missing binary: Node reports the negative errno, e.g. -2 for ENOENT, as the code) never ran dsa.

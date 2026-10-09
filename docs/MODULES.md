@@ -107,16 +107,17 @@ Dispatch worktrees: `<mainRoot>/.owed/wt/<node>-<attempt>` (main worktree root, 
 ## src/dsa.ts, src/drive.ts, src/drive-run.ts  (driver, SPEC §12)
 ```ts
 // src/dsa.ts: the pi-durable-subagents CLI client (argv, --json, exit codes 0/1/3/4/75)
-class Dsa { run(rid, specBytes, labels?, cwd?); send(id, to, kind, message); describe(rid): RunView; inspect(rid): {view, gen?};
+class Dsa { killAll(sig?); run(rid, specBytes, labels?, cwd?); send(id, to, kind, message); describe(rid): RunView; inspect(rid): {view, gen?};
   request(id): {state: applied|rejected|pending|absent, reason?}; events(since?, limit?); hold(resource, argv, {shared?, cwd?}) /* --no-wait: ran|busy|refused|signal */ }
 // src/drive.ts: decide(state, plan, runs, opts): Action[] (pure)
 // src/drive-run.ts
 export function drive(o: DriveOptions): Promise<number>;   // lock, then one pass (once) or the loop; OwedError('refused') when another driver runs
 export class Driver { pass(): Promise<PassResult> }        // one pass: observe, decide, execute
-export function acquireDriveLock(dir: string): Promise<() => Promise<void>>;
+export function driveOnce(o): Promise<{ lines: string[]; error?: string }>;   // the pi tool's pass: lines of executed actions, also on a throw
+export function acquireDriveLock(dir: string): Promise<{ release(); releaseSync() }>;   // other-host locks are never taken over
 export function liveRunLines(cwd: string, dsa?: Dsa): Promise<string[]>;   // `/owed` dsa states of live runs
 ```
-`drive-run.ts` uses `ops` for every ledger write (dispatch, launch, send, halt, rebase, merge as `parent:drive`) and runs attest as a subprocess under `hold machine --shared --no-wait`. Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs the driver at that point.
+`drive-run.ts` writes every verdict (dsa rejection/conflict, merge refusal, attest error) to the ledger in the pass it happens (contract D14) and uses `ops` for every ledger write (dispatch, launch, send, halt, rebase, merge as `parent:drive`) and runs attest as a subprocess under `hold machine --shared --no-wait`. Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs the driver at that point.
 
 ## src/extension.ts, skills/owed/SKILL.md  (leaf surface)
 Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters.
