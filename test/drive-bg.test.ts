@@ -14,7 +14,7 @@ import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
 import { drive, procStart, reportText } from '../src/drive-run.ts';
-import { Follower, classifyLine } from '../src/drive-bg.ts';
+import { Follower, classifyLine, driveStart, driveStop, renderDriveStart } from '../src/drive-bg.ts';
 import type { Entry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { identity } from './helpers/surface.ts';
@@ -101,8 +101,8 @@ function harness(cwd: string) {
   const ctx = { cwd, hasUI: false, ui: { notify(text: string) { notices.push(text); }, async confirm() { return false; } } };
   return {
     tools, commands, handlers, messages, notices, ctx,
-    async call(name: string, args: Json = {}) {
-      const r = await tools.get(`owed_${name}`)!.execute('t', args, undefined, undefined, ctx as unknown as Parameters<ToolDefinition['execute']>[4]);
+    async call(name: string, args: Json = {}, signal?: AbortSignal) {
+      const r = await tools.get(`owed_${name}`)!.execute('t', args, signal, undefined, ctx as unknown as Parameters<ToolDefinition['execute']>[4]);
       return { ...r, text: (r.content[0] as { text: string }).text };
     },
     async status(): Promise<string> {
@@ -245,10 +245,11 @@ test('D17.2/3: a --json loop ends with an exit record (stopped; error for a refu
   const f = await rig(planOf(node('j')));
   try {
     const dsa = new Dsa({ bin: FAKE, env: f.env, timeoutMs: 60_000 });
-    const lines: string[] = [], ac = new AbortController(), timer = setTimeout(() => ac.abort(), 1500);
-    const code = await drive({ cwd: f.cwd, json: true, dsa, log: l => lines.push(l), pollMs: 50, passMs: 300, handleSignals: false, signal: ac.signal });
-    clearTimeout(timer);
+    // Stop once the launch line is out (an event, not a timer); the writer run stays running, so the loop would go on.
+    const lines: string[] = [], ac = new AbortController();
+    const code = await drive({ cwd: f.cwd, json: true, dsa, log: l => { lines.push(l); if (/"do":"launch"/.test(l)) ac.abort(); }, pollMs: 50, passMs: 300, handleSignals: false, signal: ac.signal });
     assert.equal(code, 0);
+    assert.ok(lines.some(l => /"do":"launch"/.test(l)), lines.join('\n'));
     const objs = lines.map(l => JSON.parse(l) as Json);
     assert.deepEqual([objs.at(-2)!.event, objs.at(-1)!.event, objs.at(-1)!.reason, objs.at(-1)!.code], ['stopped', 'exit', 'stopped', 0]);
     assert.equal(objs.filter(x => x.event === 'exit').length, 1, 'one exit record, the last line');
@@ -328,10 +329,12 @@ test('D17.7: Follower: no replay, quiet lines do not wake, merges ride along, an
 
 test('D17.6/7: the tool starts the driver; it wakes once for the halt and once at exit with the merge listed; launch/attest lines do not wake', { timeout: 180_000 }, async () => {
   const f = await rig(planOf(node('k'), node('m')));
-  const h = harness(f.cwd);
+  const h = harness(f.cwd), gate = join(f.root, 'gate-m');
   try {
     await f.file('faults', 'run 1 none\n');   // k launches first (status order): dsa rejects it → halt
-    await f.agent('m-writer', 'sleep 5; echo m > m.txt; git add m.txt; git commit -qm m; owed submit m');
+    // m's writer (run synchronously inside the driver's `run` call) waits for the gate, which the test opens only after
+    // it saw the halt wake: the merge of m cannot reach the log before that message, whatever the timing.
+    await f.agent('m-writer', `while [ ! -e '${gate}' ]; do sleep 0.1; done\necho m > m.txt; git add m.txt; git commit -qm m; owed submit m`);
     assert.match(h.tools.get('owed_drive')!.description, /action start/);
     assert.match(h.tools.get('owed_drive')!.description, /do not poll/);
     assert.equal((await h.call('drive', { action: 'status', now: true })).isError, true, 'now only with stop');
@@ -349,8 +352,11 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
     assert.match(first.message.content, /launch k writer \S+: rejected — fault; halted/);
     assert.doesNotMatch(first.message.content, /launch m |dispatch |attest |merge /);
     assert.match(first.message.content, /\nNext: owed status \/ owed why <node>$/);
+    assert.ok(!f.logLines().some(l => /"do":"merge"/.test(l)), 'the gate holds m back');
+    writeFileSync(gate, '');
     await until(async () => merged(await f.entries(), 'm'), 90_000, 'm merged');
-    await sleepMs(2500);
+    await until(() => f.logJson().some(x => x.do === 'merge' && x.outcome === 'merged'), 30_000, 'the merge line in the log');
+    await sleepMs(2500);   // more than one follower interval (2 s): a wrong wake on the merge would have arrived
     assert.equal(h.messages.length, 1, 'the merge alone did not wake');
     const status = await h.call('drive', { action: 'status' });
     assert.match(status.text, new RegExp(`^driver running: pid ${pid} `));
@@ -367,7 +373,7 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
     await sleepMs(4500);
     assert.equal(h.messages.length, 2, 'the follower stopped after the exit');
     assert.match(await withEnv(fakeDsa, () => h.status()), /\nDriver: not running \(last exit stopped at /);
-  } finally { await h.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' }); await f.done(); }
+  } finally { writeFileSync(gate, ''); await h.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' }); await f.done(); }
 });
 
 test('D17.7/8: session_start follows a live driver without replaying old lines; session_shutdown stops the follower', { timeout: 60_000 }, async () => {
@@ -405,4 +411,70 @@ test('D17.7/8: session_start follows a live driver without replaying old lines; 
     await sleepMs(2500);
     assert.equal(h2.messages.length, 0);
   } finally { rmSync(f.lock, { force: true }); await h.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' }); await f.done(); }
+});
+
+test('D17 (A): the detached driver carries no dsa call identity (DSA_EXEC/DSA_CALL removed, DSA_HOME kept); started inside a dsa call it says so', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('q')));   // no agent script: the writer run stays running
+  const home = join(f.root, 'dsa-home');
+  const note = "note: started from inside a dsa call; if that call's processes are contained, the driver may end with it — prefer starting it from a top-level session or systemd-run --user";
+  const environ = (pid: number): string[] => readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').filter(Boolean);
+  try {
+    // In process (the tool's path).
+    const r = await withEnv({ ...f.env, OWED_DSA: FAKE, DSA_EXEC: 'exec-1', DSA_CALL: 'call-1', DSA_HOME: home }, () => driveStart({ cwd: f.cwd }));
+    f.pids.push(r.pid);
+    assert.equal(r.fromDsa, true);
+    const env = environ(r.pid);
+    assert.ok(!env.some(e => e.startsWith('DSA_EXEC=') || e.startsWith('DSA_CALL=')), env.filter(e => e.startsWith('DSA_')).join(' '));
+    assert.ok(env.includes(`DSA_HOME=${home}`), 'DSA_HOME is kept');
+    assert.ok(env.includes(`FAKE_DSA_DIR=${f.dir}`), 'the rest of the environment is inherited');
+    assert.equal(renderDriveStart(r), `driver started: pid ${r.pid}, log ${f.log}\n${note}`);
+    assert.equal((await driveStop({ cwd: f.cwd })).state, 'stopped');
+    // The CLI prints the same note; its driver has no call identity either.
+    const c = await f.cli(['drive', '--detach'], { DSA_EXEC: 'exec-2', DSA_CALL: 'call-2', DSA_HOME: home });
+    assert.equal(c.code, 0, c.stderr);
+    const pid = Number(/^driver started: pid (\d+), log /m.exec(c.stdout)?.[1]);
+    assert.ok(pid > 0, c.stdout); f.pids.push(pid);
+    assert.ok(c.stdout.trimEnd().endsWith(`\n${note}`), c.stdout);
+    const env2 = environ(pid);
+    assert.ok(!env2.some(e => e.startsWith('DSA_EXEC=') || e.startsWith('DSA_CALL=')));
+    assert.ok(env2.includes(`DSA_HOME=${home}`));
+    assert.equal((await f.cli(['drive', '--stop'])).stdout.trim(), 'stopped');
+    // Outside a dsa call: no note (DSA_EXEC empty: the test itself may run under a dsa hold).
+    const plain = await f.cli(['drive', '--detach'], { DSA_EXEC: '' });
+    assert.equal(plain.code, 0, plain.stderr);
+    const pid3 = Number(/^driver started: pid (\d+), log /m.exec(plain.stdout)?.[1]);
+    assert.ok(pid3 > 0, plain.stdout); f.pids.push(pid3);
+    assert.doesNotMatch(plain.stdout, /note:/);
+    assert.equal((await f.cli(['drive', '--stop'])).stdout.trim(), 'stopped');
+  } finally { await f.done(); }
+});
+
+test('D17 (B): owed_drive action once passes the tool abort signal: an aborted call stops after the current action', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('u'), node('v')));
+  const h = harness(f.cwd), mark = join(f.root, 'u-started'), gate = join(f.root, 'gate-u');
+  const fake = { ...f.env, OWED_DSA: FAKE };
+  try {
+    // u's writer runs inside the driver's `run` call: it marks that it started, then waits for the gate.
+    await f.agent('u-writer', `touch '${mark}'\nwhile [ ! -e '${gate}' ]; do sleep 0.1; done`);
+    const pre = new AbortController(); pre.abort();
+    const none = await withEnv(fake, () => h.call('drive', {}, pre.signal));
+    assert.equal(none.text, 'nothing to do', 'an already aborted call executes no action');
+    assert.equal((await f.entries()).filter(e => e.kind === 'dispatch').length, 0);
+    const p1 = await withEnv(fake, () => h.call('drive', {}));
+    assert.match(p1.text, /^dispatch u: done/m); assert.match(p1.text, /^dispatch v: done/m);
+    // The next pass launches u (blocked on the gate), then v. Abort while u's launch runs, then open the gate.
+    const ac = new AbortController();
+    const p2 = withEnv(fake, () => h.call('drive', {}, ac.signal));
+    await until(() => existsSync(mark), 60_000, "u's writer started");
+    ac.abort();
+    writeFileSync(gate, '');
+    const r = await p2;
+    assert.notEqual(r.isError, true, r.text);
+    const lines = r.text.split('\n');
+    assert.equal(lines.length, 1, r.text);
+    assert.match(lines[0]!, /^launch u writer \S+: applied — created$/);
+    const launches = (await f.entries()).filter(e => e.kind === 'launch') as Extract<Entry, { kind: 'launch' }>[];
+    assert.deepEqual(launches.map(l => l.node), ['u'], 'v was not launched after the abort');
+    assert.ok(!existsSync(f.lock), 'the pass released the lock');
+  } finally { writeFileSync(gate, ''); await f.done(); }
 });

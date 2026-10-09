@@ -95,7 +95,11 @@ export interface DriveStart {
   confirmed: boolean;
   /** The driver already ended (e.g. idle at once) without an error; its exit record. */
   exited?: ExitRecord;
+  /** The starter ran inside a dsa call (`DSA_EXEC` set); the driver itself carries no call identity. */
+  fromDsa?: boolean;
 }
+/** Shown when `--detach` / action start runs inside a dsa call. */
+export const FROM_DSA_NOTE = 'note: started from inside a dsa call; if that call\'s processes are contained, the driver may end with it — prefer starting it from a top-level session or systemd-run --user';
 /**
  * `owed drive --detach` (D17.1): refuses while a driver holds the lock (naming pid, host, start and log); else rotates
  * the log (one old log kept as log.jsonl.1), spawns `owed drive --json [--max N]` detached (own session and process
@@ -115,7 +119,9 @@ export async function driveStart(o: { cwd: string; max?: number; owed?: string[]
     try { renameSync(log, `${log}.1`); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     const argv = [...(o.owed ?? defaultOwed()), 'drive', '--json', ...(o.max !== undefined ? ['--max', String(o.max)] : [])];
     // A relative $OWED_DIR resolves against cwd: pass the resolved ledger dir, since the driver runs at the root.
-    const env = { ...process.env, ...(process.env.OWED_DIR ? { OWED_DIR: dir } : {}) }; delete env.NODE_TEST_CONTEXT;
+    // The driver is an independent long-lived process: no dsa call identity (DSA_EXEC, DSA_CALL); DSA_HOME and the rest stay.
+    const env = { ...process.env, ...(process.env.OWED_DIR ? { OWED_DIR: dir } : {}) }; delete env.NODE_TEST_CONTEXT; delete env.DSA_EXEC; delete env.DSA_CALL;
+    const fromDsa = !!process.env.DSA_EXEC;
     const fd = openSync(log, 'a');
     const child = (() => { try { return spawn(argv[0]!, argv.slice(1), { cwd: repo, env, detached: true, stdio: ['ignore', fd, fd] }); } finally { closeSync(fd); } })();
     const run: { ended?: string } = {};
@@ -127,21 +133,21 @@ export async function driveStart(o: { cwd: string; max?: number; owed?: string[]
     const start = procStart(pid), deadline = Date.now() + (o.waitMs ?? 5000);
     for (;;) {
       const l = readLock(dir);
-      if (l.state === 'live' && l.owner.pid === pid) return { pid, log, repo, ...(start ? { start } : {}), confirmed: true };
+      if (l.state === 'live' && l.owner.pid === pid) return { pid, log, repo, ...(start ? { start } : {}), confirmed: true, ...(fromDsa ? { fromDsa } : {}) };
       if (run.ended !== undefined) {
         const lines = tailLines(log) ?? [], rec = lastExit(lines);
-        if (rec && rec.reason !== 'error') return { pid, log, repo, ...(start ? { start } : {}), confirmed: true, exited: rec };
+        if (rec && rec.reason !== 'error') return { pid, log, repo, ...(start ? { start } : {}), confirmed: true, exited: rec, ...(fromDsa ? { fromDsa } : {}) };
         throw new OwedError(`the driver (pid ${pid}) ended (${run.ended}) before taking the lock; log ${log}:\n${lines.slice(-10).map(logLineText).join('\n')}`);
       }
-      if (Date.now() >= deadline) return { pid, log, repo, ...(start ? { start } : {}), confirmed: false };
+      if (Date.now() >= deadline) return { pid, log, repo, ...(start ? { start } : {}), confirmed: false, ...(fromDsa ? { fromDsa } : {}) };
       await sleep(100);
     }
   }, 'drive-detach');
 }
 export function renderDriveStart(r: DriveStart): string {
-  const head = `driver started: pid ${r.pid}, log ${r.log}`;
-  if (r.exited) return `${head}\n${logLineText(JSON.stringify(r.exited))}`;
-  return r.confirmed ? head : `${head} (it has not taken the lock yet; see owed drive --status)`;
+  const head = `driver started: pid ${r.pid}, log ${r.log}`, note = r.fromDsa ? `\n${FROM_DSA_NOTE}` : '';
+  if (r.exited) return `${head}\n${logLineText(JSON.stringify(r.exited))}${note}`;
+  return `${r.confirmed ? head : `${head} (it has not taken the lock yet; see owed drive --status)`}${note}`;
 }
 
 // ---------- --status ----------
