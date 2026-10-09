@@ -133,6 +133,9 @@ All keys are sha256 hex over canonical JSON.
 | `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot |
 | `merge` | executor | `{node, attempt, prior, commit, tree}` | trunk advanced (CAS on prior) |
 | `note` | any | `{text}` | speech, no effect |
+| `escape` | parent/owner | `{node, merge, class, note, evidence?}` | defect found after a merge (§6.5); `merge` must be the seq of a merge of `node` |
+| `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
+| `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
 
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
 harness, materialization failure) is ⊥: no information, no block.
@@ -206,6 +209,35 @@ The merge entry is appended in the same locked step as the guard evaluation.
 Conflicts in merge-tree → the merge is refused with a `writer` debt
 "rebase needed".
 
+### 6.5 Escapes and decoys (north-star metric)
+- An **escape** is a defect found after node n was merged. `class` names the
+  escape class: `missing` ② (an obligation that should have existed was
+  missing), `false-pass` ①a (a false affirmative observation), `reuse` ①b
+  (unsound evidence reuse), `weak` ①c (a weak oracle), `waiver` ③ (an owner
+  waiver let it through). Refused unless `merge` is the seq of a `merge` entry
+  whose node is n; `note` must be non-empty; `evidence` is optional text.
+  `state.escapes` lists them in ledger order.
+- **Decoys** measure what escapes when nobody knows which nodes are planted.
+  The owner first records `decoy-commit {digest}` with
+  `digest = sha256(canonical({nonce, decoys: [{node, defect}]}))` (§1 canonical
+  JSON; only those fields). `nonce` is ≥ 16 characters, `decoys` non-empty with
+  distinct existing nodes and non-empty `defect`. The payload stays outside the
+  ledger and the repository until the reveal.
+- `decoy-reveal` is refused unless its payload hashes to an earlier
+  **unrevealed** `decoy-commit` whose seq is lower than the first `dispatch` of
+  every listed node (nodes not yet dispatched qualify). A commitment is revealed
+  once.
+- `state.decoys` gives each revealed decoy an outcome, judged on the whole
+  ledger (entries before and after the reveal):
+  `caught` — an executor `obs` with verdict `fail` (execution block or
+  rejecting obs) or a `review` with verdict `block` (judgment block) on the node
+  before any merge of it; `escaped` — a merge of the node with no such entry
+  before it; `pending` — neither yet. `decidedBy` is the deciding seq.
+  `state.decoyCommits` lists commitments and the seq that revealed them.
+- Metrics (report): escape counts by class; decoys caught / escaped / pending;
+  unrevealed commitments; **escape rate** = escaped / (caught + escaped), n/a
+  while no decoy is decided. These are cumulative over the whole ledger.
+
 ## 7. Executor (attest)
 
 `attest(node)` for the current candidate:
@@ -253,6 +285,10 @@ why(o: {cwd, node}): Promise<ReceiptCard>
 report(o: {cwd, since?: number | string}): Promise<Report>
 brief(o: {cwd, since?: number | string, now?: number}): Promise<Brief>
 verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
+escape(o: {cwd, node, merge, class, note, evidence?, as, channel?}): Promise<Entry>
+decoyDigest(text: string): {digest}                      // pure helper; parses the reveal JSON, writes nothing
+decoyCommit(o: {cwd, digest, as, channel}): Promise<Entry>
+decoyReveal(o: {cwd, payload: string, as, channel}): Promise<Entry>   // payload = reveal JSON text
 ```
 
 ## 9. Views
@@ -266,7 +302,10 @@ verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
   dependents), pending queue grouped by discharger (owner / parent+writer /
   reviewer / executor), invariant debt on trunk.
 - **Report** (`report --since`): merges, new E/W/D, blocks, downgrades, rulings,
-  owner decisions needed — written in plain language.
+  owner decisions needed — written in plain language — and an **Escapes**
+  section: escape counts by class with each escape, decoys caught / escaped /
+  pending with each revealed decoy, unrevealed commitments and the escape rate
+  (cumulative, §6.5; `--json` returns it as `escapes`).
 - **Brief** (`brief [--since seq|ISO]`, `briefView`/`renderBrief`): a morning
   summary, one line per item, sections in this order:
   1. *Needs your decision* — the owner queue (node and trunk items with status D
@@ -303,7 +342,11 @@ verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
 `review <node> --ok|--block --rank N --as reviewer:ID [--note] [--ack-rulings]`,
 `waive <node> <obligation> --reason ... [--accept-risk 12,15]`,
 `defer <node> <inv-id...> --reason`, `abandon <node>`, `merge <node>`, `status`,
-`why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`.
+`why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
+`escape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note T [--evidence T]`
+(parent by default, or owner), `decoy commit <digest>`, `decoy reveal <file.json>`
+(owner commands), and `decoy digest <file.json>` (prints the digest to commit;
+no ledger write, no owner confirmation).
 `--as role:id` sets the principal (default `parent:cli`; `submit` defaults to
 the slot's writer when run inside its worktree). Owner commands prompt on a TTY
 unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused

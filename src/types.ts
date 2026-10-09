@@ -81,7 +81,15 @@ export interface DeferEntry extends Base { kind: 'defer'; node: string; items: {
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
 export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts }
 export interface NoteEntry extends Base { kind: 'note'; text: string }
-export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | MergeEntry | NoteEntry;
+/** Escape classes: missing ② missing obligation; false-pass ①a false affirmative obs; reuse ①b unsound evidence reuse; weak ①c weak oracle; waiver ③ owner waiver. */
+export type EscapeClass = 'missing' | 'false-pass' | 'reuse' | 'weak' | 'waiver';
+export interface EscapeEntry extends Base { kind: 'escape'; node: string; merge: number; class: EscapeClass; note: string; evidence?: string }
+export interface Decoy { node: string; defect: string }
+/** Reveal payload; its digest is sha256 of canonical JSON of exactly {nonce, decoys:[{node, defect}]}. */
+export interface DecoyPayload { nonce: string; decoys: Decoy[] }
+export interface DecoyCommitEntry extends Base { kind: 'decoy-commit'; digest: string }
+export interface DecoyRevealEntry extends Base, DecoyPayload { kind: 'decoy-reveal' }
+export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | MergeEntry | NoteEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
@@ -135,7 +143,13 @@ export interface State {
   rules: Rule[];
   downgrades: { seq: number; by: string; items: Downgrade[] }[];
   deferred: { seq: number; node: string; id: string; key: string }[];
+  escapes: EscapeView[];
+  decoys: DecoyView[];             // revealed decoys with outcomes
+  decoyCommits: { seq: number; digest: string; by: string; revealed?: number }[];
 }
+export interface EscapeView { seq: number; by: string; node: string; merge: number; class: EscapeClass; note: string; evidence?: string }
+/** caught: a block or rejecting obs on the node before any merge of it; escaped: merged with no prior block; pending: neither yet. */
+export interface DecoyView { node: string; defect: string; commit: number; reveal: number; outcome: 'caught' | 'escaped' | 'pending'; decidedBy?: number }
 
 // ---------- executor jobs ----------
 export interface AttestJob {
