@@ -55,7 +55,7 @@ test('owed_adopt dialog with 60 changed paths lists 50 and the exact git diff co
     const lines = await dialog(r.cwd), at = lines.indexOf('Changed paths (60):');
     assert.ok(at > lines.indexOf('Identity: owner:human'), lines.join('\n'));
     assert.deepEqual(lines.slice(at + 1, at + 51), all.slice(0, 50).map(p => `  ${p}`));
-    assert.equal(lines[at + 51], `… +10 more paths; full list: git diff --name-only ${r.s0.slice(0, 12)}..${head.slice(0, 12)}`);
+    assert.equal(lines[at + 51], `… +10 more paths; full list: git diff --no-renames --name-only ${r.s0.slice(0, 12)}..${head.slice(0, 12)}`);
     assert.deepEqual(lines.slice(at + 52), ['Note: release', 'Confirmation will be recorded as pi-confirm.']);
     for (const p of all.slice(50)) assert.ok(!lines.some(l => l.includes(p)), `${p} is behind the git diff line`);
   } finally { await r.cleanup(); }

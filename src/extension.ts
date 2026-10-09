@@ -64,7 +64,7 @@ async function slotWriter(dir: string, id: string): Promise<string | undefined> 
   const slot = (await ops.status({ cwd: dir })).nodes[id]?.slot;
   return slot?.open && resolve(await git.repoRoot(dir)) === resolve(slot.worktree) ? slot.writer : undefined;
 }
-/** Changed paths listed in the owed_adopt confirmation dialog before the `git diff --name-only` line (SPEC §11). */
+/** Changed paths listed in the owed_adopt confirmation dialog before the `git diff --no-renames --name-only` line (SPEC §11). */
 const ADOPT_SHOWN = 50;
 function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
 
@@ -157,7 +157,7 @@ export default function owed(pi: ExtensionAPI): void {
     if (!p.note.trim()) throw new OwedError('adopt requires a note', 'usage');
     const v = await ops.adoptPreview({ cwd: dir, commit: p.commit });
     // Up to ADOPT_SHOWN paths one per line; beyond that, the exact command that lists them all.
-    const shown = { items: v.changed.slice(0, ADOPT_SHOWN), ...(v.changed.length > ADOPT_SHOWN ? { more: `… +${v.changed.length - ADOPT_SHOWN} more paths; full list: git diff --name-only ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}` } : {}) };
+    const shown = { items: v.changed.slice(0, ADOPT_SHOWN), ...(v.changed.length > ADOPT_SHOWN ? { more: `… +${v.changed.length - ADOPT_SHOWN} more paths; full list: git diff --no-renames --name-only ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}` } : {}) };
     const a = await actor(ctx, dir, who, `Adopt trunk ${oneLine(v.trunk)} ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}: ${v.commits} commit${v.commits === 1 ? '' : 's'} made outside owed\nThese changes were not reviewed through owed; adopting them makes ${v.commit.slice(0, 12)} the ledger trunk.`, { [`Changed paths (${v.changed.length})`]: shown, Note: p.note });
     const r = await ops.adopt({ ...a, channel: 'pi-confirm', commit: v.commit, note: p.note });
     return result(r, `${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
