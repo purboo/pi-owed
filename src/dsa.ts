@@ -61,29 +61,29 @@ export class Dsa {
   private timeout(): number { return this.opts.timeoutMs ?? (this.opts.waitMs ?? 60_000) + 30_000; }
   private wait(): string[] { return this.opts.waitMs === undefined ? [] : ['--wait-ms', String(this.opts.waitMs)]; }
 
-  /** One invocation; `input` is written to stdin byte-for-byte. Spawn failures (missing binary) throw DsaError. */
-  private exec(args: string[], input?: string | Uint8Array): Promise<Spawned> {
+  /** One invocation; `input` is written to stdin byte-for-byte. Spawn failures (missing binary) throw DsaError. `timeoutMs` 0: no time limit. */
+  private exec(args: string[], input?: string | Uint8Array, timeoutMs = this.timeout(), cwd = this.opts.cwd): Promise<Spawned> {
     return new Promise((resolve, reject) => {
       let child;
       // Own process group, so a timeout can end the CLI with whatever it started in its group (dsa's orchestrator is
       // detached into a group of its own and survives).
-      try { child = spawn(this.bin, args, { cwd: this.opts.cwd, env: { ...process.env, ...this.opts.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
+      try { child = spawn(this.bin, args, { cwd, env: { ...process.env, ...this.opts.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
       catch (e) { reject(new DsaError(`cannot run ${this.bin}: ${(e as Error).message}`)); return; }
       const out: Buffer[] = [], err: Buffer[] = []; let outLen = 0, errLen = 0, timedOut = false, failed: Error | undefined;
       child.stdout.on('data', (b: Buffer) => { if (outLen < LIMIT) { out.push(b); outLen += b.length; } });
       child.stderr.on('data', (b: Buffer) => { if (errLen < LIMIT) { err.push(b); errLen += b.length; } });
       const signal = (sig: NodeJS.Signals) => { try { if (child.pid) process.kill(-child.pid, sig); } catch { /* already gone */ } };
-      const timer = setTimeout(() => {
+      const timer = timeoutMs <= 0 ? undefined : setTimeout(() => {
         timedOut = true; signal('SIGTERM');
         setTimeout(() => signal('SIGKILL'), 2000).unref();
         // A descendant outside the group may still hold the pipes: stop waiting for them.
         setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); }, 4000).unref();
-      }, this.timeout());
+      }, timeoutMs);
       child.on('error', e => { failed = e; });
       // EPIPE when the child exits before reading stdin is reported by `close`/`exit`, not as a crash here.
       child.stdin.on('error', () => {});
       child.on('close', (code, sig) => {
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         const stdout = Buffer.concat(out).toString('utf8'), stderr = Buffer.concat(err).toString('utf8');
         // A spawn failure (missing binary: Node reports the negative errno, e.g. -2 for ENOENT, as the code) never ran dsa.
         if (failed && !timedOut) { reject(new DsaError(`cannot run ${this.bin}: ${failed.message}`, { stderr, stdout })); return; }
@@ -113,13 +113,52 @@ export class Dsa {
   }
 
   /** `describe --key <rid> --json` reduced to a RunView. Failures (non-zero exit, timeout, unparsable output) throw. */
-  async describe(rid: string): Promise<RunView> {
+  async describe(rid: string): Promise<RunView> { return (await this.inspect(rid)).view; }
+
+  /**
+   * `describe` plus the run's latest generation (the highest `calls[].gen`, when dsa reports one). The driver compares it
+   * with the generation a follow-up returned, so a describe that still shows the previous, sealed generation is not
+   * read as the follow-up's outcome.
+   */
+  async inspect(rid: string): Promise<{ view: RunView; gen?: number }> {
     const r = await this.exec(['describe', '--key', rid, '--json']);
     if (r.timedOut) throw new DsaError(`dsa describe ${rid} timed out`, r);
     if (r.exit !== 0) throw new DsaError(`dsa describe ${rid} exited ${r.exit}: ${tail(r.stderr || r.stdout)}`, r);
     const d = parseWhole(r.stdout);
     if (!d) throw new DsaError(`dsa describe ${rid}: unparsable output`, r);
-    return toRunView(rid, d);
+    const gens = (Array.isArray(d.calls) ? d.calls as Json[] : []).map(c => c.gen).filter((g): g is number => typeof g === 'number');
+    return { view: toRunView(rid, d), ...(gens.length ? { gen: Math.max(...gens) } : {}) };
+  }
+
+  /**
+   * State of a send (or stop) request id: `describe --key <id>` reports `applied` or `rejected` (with `reason`) once dsa
+   * decided it, `pending` before, `absent` when dsa never saw it. Failures throw like `describe`.
+   */
+  async request(id: string): Promise<{ state: 'applied' | 'rejected' | 'pending' | 'absent'; reason?: string }> {
+    const r = await this.exec(['describe', '--key', id, '--json']);
+    if (r.timedOut) throw new DsaError(`dsa describe ${id} timed out`, r);
+    if (r.exit !== 0) throw new DsaError(`dsa describe ${id} exited ${r.exit}: ${tail(r.stderr || r.stdout)}`, r);
+    const d = parseWhole(r.stdout), state = str(d?.state);
+    if (state === 'applied' || state === 'pending' || state === 'absent') return { state };
+    if (state === 'rejected') return { state, reason: str(d?.reason) || 'rejected' };
+    throw new DsaError(`dsa describe ${id}: not a send request (state ${state || 'unknown'})`, r);
+  }
+
+  /**
+   * `hold <resource> [--shared] --no-wait -- <argv…>` (dsa >= 1.0.27): run `argv` while holding the lease, or refuse at
+   * once. `cwd`: where the command runs. No time limit (the command's own limits apply). Outcomes: `busy` — exit 75, the lease was refused and nothing
+   * was queued (the caller's command never exits 75: `owed` exits 0..3), `reason` names the blockers; `refused` — dsa
+   * itself rejected the invocation (non-zero exit, a `pi-durable-subagents:` error on stderr and nothing on stdout,
+   * e.g. an older dsa that does not know `--no-wait`); `signal` — hold was ended by a signal; else `ran` with the
+   * command's exit status and output.
+   */
+  async hold(resource: string, argv: string[], o: { shared?: boolean; cwd?: string } = {}): Promise<
+    { outcome: 'ran'; exit: number | null; stdout: string; stderr: string } | { outcome: 'busy'; reason: string } | { outcome: 'refused'; reason: string } | { outcome: 'signal'; reason: string }> {
+    const r = await this.exec(['hold', resource, ...(o.shared ? ['--shared'] : []), '--no-wait', '--', ...argv], undefined, 0, o.cwd ?? this.opts.cwd);
+    if (r.signal) return { outcome: 'signal', reason: `signal ${r.signal}` };
+    if (r.exit === 75) return { outcome: 'busy', reason: tail(r.stderr || r.stdout) || `${resource} is busy` };
+    if (r.exit !== 0 && !r.stdout.trim() && /^pi-durable-subagents: /m.test(r.stderr)) return { outcome: 'refused', reason: tail(r.stderr) };
+    return { outcome: 'ran', exit: r.exit, stdout: r.stdout, stderr: r.stderr };
   }
 
   /** `events --all [--since <cursor>] [--limit <n>] --json`. Without `since` only the head is returned. */

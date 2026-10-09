@@ -1,0 +1,416 @@
+// owed drive: the executor and the loop (SPEC §12.7, contract D6/D7/D9). One pass = load the ledger state, describe
+// every live launch of the open attempts, `decide` (pure, src/drive.ts), execute the actions in order. Persist before
+// submit: a launch/send entry is appended before the dsa call, and a retry re-sends the stored bytes with the same id.
+// Everything this process learns (applied sends, rejections, merge refusals, follow-up generations) only refines the
+// next `decide`; losing it (a crash, a restart) is harmless because the ledger plus `describe` re-derive the state.
+import { spawn } from 'node:child_process';
+import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { hostname } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import * as ops from './ops.ts';
+import * as git from './git.ts';
+import { Ledger } from './ledger.ts';
+import { parsePlan, driveConfig } from './plan.ts';
+import { reduce, halted, projectId } from './reducer.ts';
+import { decide } from './drive.ts';
+import type { Action, MergeRefusal } from './drive.ts';
+import { Dsa, DsaError, dsaAvailable } from './dsa.ts';
+import { OwedError } from './errors.ts';
+import { oneLine } from './views.ts';
+import type { Plan, Principal, RunView, State } from './types.ts';
+
+/** The driver's principal (`parent:drive`, contract D3). */
+export const DRIVE_PRINCIPAL: Principal = { role: 'parent', id: 'drive' };
+
+export interface DriveOptions {
+  /** A directory inside the repository. */
+  cwd: string;
+  /** One pass, then exit (no lock is kept, no events are read). */
+  once?: boolean;
+  /** Overrides `drive.max` of the plan. */
+  max?: number;
+  /** JSON lines instead of text lines. */
+  json?: boolean;
+  /** One output line (an action, a notify, a halt, idle). */
+  log: (line: string) => void;
+  /** dsa client; default `new Dsa()` (`$OWED_DSA`, else the installed CLI). */
+  dsa?: Dsa;
+  /** argv prefix that runs the owed CLI for `attest` (default: this package's `bin/owed.js` under the current node). */
+  owed?: string[];
+  /** Event poll interval (default 3 s) and the period of an unconditional pass (default 30 s). */
+  pollMs?: number;
+  passMs?: number;
+  /** Events per `events --all` page (default 100; halved after a page the client could not read). */
+  limit?: number;
+  /** Stops the loop after the current action (tests; the CLI uses SIGINT/SIGTERM). */
+  signal?: AbortSignal;
+  /** Install SIGINT/SIGTERM handlers in loop mode (default true). */
+  handleSignals?: boolean;
+}
+
+/** One executed action as printed (`--json`: one object per line). */
+export interface ActionReport {
+  do: Action['do']; node: string; outcome: string; detail?: string;
+  attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
+}
+export interface PassResult { actions: ActionReport[]; progress: boolean; idle: boolean }
+
+/** Facts this process learned from dsa and ops (the in-process inputs of `decide`, D4/D9/D10). */
+class Facts {
+  readonly applied = new Set<string>();
+  readonly rejected = new Map<string, string>();
+  readonly merges = new Map<string, MergeRefusal>();
+  /** rid → generation a follow-up applied in this process started; a describe of an older, sealed generation is stale. */
+  readonly expectGen = new Map<string, number>();
+  /** rid → latest generation describe reported. */
+  readonly lastGen = new Map<string, number>();
+  /** node → consecutive attest invocations that failed (not 0/1). */
+  readonly attestFailures = new Map<string, number>();
+  /** node → last printed text (notify, machine busy): the loop prints a line only when it changed. */
+  readonly printed = new Map<string, string>();
+}
+
+// ---------- ledger state ----------
+async function loadState(ledger: Ledger): Promise<State> {
+  const entries = await ledger.read(), plans = new Map<string, Plan>();
+  for (const e of entries) if ((e.kind === 'genesis' || e.kind === 'plan') && !plans.has(e.plan)) plans.set(e.plan, parsePlan((await ledger.getBlob(e.plan)).toString()));
+  const s = reduce(entries, sha => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; });
+  if (s.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
+  return s;
+}
+
+// ---------- single-driver lock (D6) ----------
+/** Start time of a process (Linux `/proc/<pid>/stat` field 22), to tell a reused pid from the lock holder; else undefined. */
+function procStart(pid: number): string | undefined {
+  try { const stat = readFileSync(`/proc/${pid}/stat`, 'utf8'); return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]; } catch { return undefined; }
+}
+interface LockOwner { pid: number; start?: string; host: string; at: string; token: string }
+function lockAlive(o: LockOwner): boolean {
+  if (o.host !== hostname()) return true;
+  try { process.kill(o.pid, 0); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EPERM') return false; }
+  const now = procStart(o.pid);
+  return o.start === undefined || now === undefined || now === o.start;
+}
+/**
+ * Takes `<ledger dir>/drive.lock` (the file appears complete: written aside, then hard-linked into place, which fails
+ * when it exists). A lock whose pid is gone (or reused by another process) is stale and taken over; a live one refuses.
+ * Returns the release function.
+ */
+export async function acquireDriveLock(dir: string): Promise<() => Promise<void>> {
+  const path = join(dir, 'drive.lock'), me: LockOwner = { pid: process.pid, ...(procStart(process.pid) ? { start: procStart(process.pid)! } : {}), host: hostname(), at: new Date().toISOString(), token: randomUUID() };
+  const text = JSON.stringify(me);
+  for (let i = 0; i < 10; i++) {
+    const staged = `${path}.${me.token}`;
+    await writeFile(staged, text);
+    try { await link(staged, path); await rm(staged, { force: true }); }
+    catch (e) {
+      await rm(staged, { force: true });
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      let held: string;
+      try { held = await readFile(path, 'utf8'); } catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; throw err; }
+      let owner: LockOwner | undefined;
+      try { owner = JSON.parse(held) as LockOwner; } catch { owner = undefined; }
+      if (owner && Number.isInteger(owner.pid) && lockAlive(owner)) throw new OwedError(`another owed drive is running for this repository (pid ${owner.pid} on ${owner.host}, since ${owner.at}); lock ${path}`);
+      // Stale: move it aside, and put it back if what was moved is not what was judged stale (a racing takeover).
+      const aside = `${path}.stale-${me.token}`;
+      try { await rename(path, aside); } catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; throw err; }
+      const moved = await readFile(aside, 'utf8').catch(() => '');
+      if (moved !== held) { try { await link(aside, path); } catch { /* another driver holds it now */ } }
+      await rm(aside, { force: true });
+      continue;
+    }
+    return async () => { if (await readFile(path, 'utf8').catch(() => '') === text) await rm(path, { force: true }); };
+  }
+  throw new OwedError(`could not take ${path}`, 'internal');
+}
+
+// ---------- process helpers ----------
+const defaultOwed = (): string[] => [process.execPath, fileURLToPath(new URL('../bin/owed.js', import.meta.url))];
+function runProcess(argv: string[], cwd: string): Promise<{ exit: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
+    const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const out: Buffer[] = [], err: Buffer[] = [];
+    child.stdout.on('data', (b: Buffer) => out.push(b)); child.stderr.on('data', (b: Buffer) => err.push(b));
+    child.on('error', reject);
+    child.on('close', code => resolve({ exit: code, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') }));
+  });
+}
+const tail = (s: string): string => oneLine(s.trim().split('\n').slice(-3).join(' | ')).slice(-500);
+/** Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs this process at that point (crash tests, D8.3). */
+function crashPoint(point: 'before-dsa' | 'after-dsa', kind: 'launch' | 'send'): void {
+  if (process.env.OWED_DRIVE_TEST_KILL === `${point}:${kind}`) process.kill(process.pid, 'SIGKILL');
+}
+
+// ---------- the driver ----------
+export class Driver {
+  readonly facts = new Facts();
+  private readonly o: DriveOptions; private readonly dsa: Dsa; private readonly owed: string[];
+  private ledger?: Ledger; private root?: string; project?: string;
+  stopping = false;
+  constructor(o: DriveOptions) { this.o = o; this.dsa = o.dsa ?? new Dsa(); this.owed = o.owed ?? defaultOwed(); }
+
+  private async init(): Promise<Ledger> {
+    if (!this.ledger) { this.ledger = await Ledger.open(this.o.cwd); this.root = await git.mainRoot(this.o.cwd); }
+    return this.ledger;
+  }
+
+  /** Describe the live runs of every open, not halted attempt; read the stored bytes `decide` may need for retries. */
+  private async observe(s: State): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string> }> {
+    const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>();
+    const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
+    for (const n of Object.values(s.nodes)) {
+      if (!n.slot?.open || halted(s, n.id)) continue;
+      const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
+      if (!ar) continue;
+      for (const l of ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq))) {
+        try {
+          const { view, gen } = await this.dsa.inspect(l.rid);
+          runs.set(l.rid, this.current(view, gen));
+          if (view.state === 'absent') await blob(l.spec);
+        } catch (e) { this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }); }
+      }
+      // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a
+      // crash after the call); only an undecided one is re-sent (with the stored bytes and the same id).
+      for (const x of ar.sends) {
+        if (this.facts.applied.has(x.send) || this.facts.rejected.has(x.send)) continue;
+        try {
+          const r = await this.dsa.request(x.send);
+          if (r.state === 'applied') { this.facts.applied.add(x.send); continue; }
+          if (r.state === 'rejected') { this.facts.rejected.set(x.send, r.reason ?? 'rejected'); continue; }
+        } catch { /* unknown: re-send; dsa returns the first outcome for the same id */ }
+        await blob(x.message);
+      }
+    }
+    return { runs, blobs };
+  }
+
+  /**
+   * A follow-up applied in this process started generation g; until describe reports g, a sealed view is the previous
+   * generation's (dsa's view lags the applied send), not the follow-up's outcome: present it as running.
+   */
+  private current(view: RunView, gen: number | undefined): RunView {
+    if (gen !== undefined) this.facts.lastGen.set(view.rid, gen);
+    const want = this.facts.expectGen.get(view.rid);
+    if (want === undefined || gen === undefined) return view;
+    if (gen >= want) { this.facts.expectGen.delete(view.rid); return view; }
+    if (view.state !== 'sealed' && view.state !== 'pruned') return view;
+    return { rid: view.rid, state: 'running', ...(view.wid ? { wid: view.wid } : {}), ...(view.labels ? { labels: view.labels } : {}) };
+  }
+
+  /** One pass: load, observe, decide, execute in order (stops between actions when `stopping`). */
+  async pass(): Promise<PassResult> {
+    const ledger = await this.init(), s = await loadState(ledger), cfg = driveConfig(s.plan);
+    this.project = projectId(s);
+    const { runs, blobs } = await this.observe(s);
+    const actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected: this.facts.rejected, blobs, merges: this.facts.merges });
+    const reports: ActionReport[] = []; let progress = false;
+    for (const a of actions) {
+      if (this.stopping) break;
+      const r = await this.execute(s, a);
+      reports.push(r.report); progress ||= r.progress;
+      this.emit(r.report, r.quiet);
+    }
+    const open = Object.values(s.nodes).some(n => n.slot?.open);
+    return { actions: reports, progress, idle: !open && !actions.some(a => a.do === 'dispatch') };
+  }
+
+  private print(line: string, json: object): void { this.o.log(this.o.json ? JSON.stringify(json) : line); }
+  /** Prints a report; in the loop a notify / busy line for a node only when its text changed. */
+  emit(r: ActionReport, quiet = false): void {
+    if (quiet) return;
+    if (!this.o.once && (r.outcome === 'notify' || r.outcome === 'busy')) {
+      const text = r.text ?? r.detail ?? '';
+      if (this.facts.printed.get(`${r.node}:${r.outcome}`) === text) return;
+      this.facts.printed.set(`${r.node}:${r.outcome}`, text);
+    }
+    const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' ? `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})` : `${r.do} ${r.node}`;
+    this.print(r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`, r);
+  }
+
+  private async halt(node: string, attempt: number, reason: string, needs: 'human' | 'owner' = 'human'): Promise<void> {
+    await ops.halt({ cwd: this.o.cwd, as: DRIVE_PRINCIPAL, node, attempt, reason, needs });
+  }
+
+  /** Executes one action. `progress`: the ledger or dsa changed, so another pass right away may do more. */
+  private async execute(s: State, a: Action): Promise<{ report: ActionReport; progress: boolean; quiet?: boolean }> {
+    const base: ActionReport = { do: a.do, node: a.node, outcome: 'done' };
+    const cwd = this.o.cwd, as = DRIVE_PRINCIPAL;
+    const done = (outcome: string, progress: boolean, detail?: string, extra: Partial<ActionReport> = {}) => ({ report: { ...base, ...extra, outcome, ...(detail ? { detail: oneLine(detail) } : {}) }, progress });
+    try {
+      switch (a.do) {
+        case 'dispatch': { const r = await ops.dispatch({ cwd, as, node: a.node }); return done('done', true, `attempt ${r.attempt} in ${r.worktree}`); }
+        case 'launch': {
+          const extra = { attempt: a.attempt, role: a.role, rid: a.rid };
+          await ops.launch({ cwd, as, node: a.node, attempt: a.attempt, role: a.role, rid: a.rid, spec: a.spec, labels: a.labels });
+          crashPoint('before-dsa', 'launch');
+          const r = await this.dsa.run(a.rid, a.spec, a.labels);
+          crashPoint('after-dsa', 'launch');
+          if (r.outcome === 'applied') return done('applied', true, r.created ? 'created' : 'already created', extra);
+          if (r.outcome === 'rejected') { this.facts.rejected.set(a.rid, r.reason); return done('rejected', true, r.reason, extra); }
+          if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on run ${a.rid} (recorded content differs${r.state ? `, state ${r.state}` : ''}); never retried with other bytes`); return done('conflict', true, 'halted', extra); }
+          return done('pending', false, r.reason ?? 'retry next pass', extra);
+        }
+        case 'send': {
+          const extra = { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason };
+          const id = a.send ?? (await ops.send({ cwd, as, node: a.node, attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, message: a.message, reason: a.reason })).send;
+          crashPoint('before-dsa', 'send');
+          const r = await this.dsa.send(id, a.rid, a.sendKind, a.message);
+          crashPoint('after-dsa', 'send');
+          const x = { ...extra, send: id };
+          if (r.outcome === 'applied') {
+            this.facts.applied.add(id);
+            if (a.sendKind === 'follow-up') {
+              const last = this.facts.lastGen.get(a.rid), gen = r.generation ?? (last !== undefined ? last + 1 : undefined);
+              if (gen !== undefined) this.facts.expectGen.set(a.rid, gen);
+            }
+            return done('applied', true, a.send ? 're-sent' : undefined, x);
+          }
+          if (r.outcome === 'rejected') { this.facts.rejected.set(id, r.reason); return done('rejected', true, r.reason, x); }
+          if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on send ${id}; never retried with other bytes`); return done('conflict', true, 'halted', x); }
+          return done('pending', false, r.reason ?? 'retry next pass', x);
+        }
+        case 'attest': return await this.attest(s, a.node);
+        case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node }); return done('done', true, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
+        case 'merge': {
+          try { const r = await ops.merge({ cwd, as, node: a.node }); return done('merged', true, `trunk ${r.commit.slice(0, 12)}`); }
+          catch (e) {
+            if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
+            const c = s.nodes[a.node]?.candidate;
+            if (c) this.facts.merges.set(a.node, { candidate: c.seq, reason: e.message, ...(e.message.startsWith('rebase needed') ? { rebase: true } : /trunk changed \(CAS\)/.test(e.message) ? { needs: 'owner' as const } : {}) });
+            return done('refused', true, e.message);
+          }
+        }
+        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs); return done('halted', true, a.reason, { attempt: a.attempt, needs: a.needs });
+        case 'notify': return { report: { ...base, outcome: 'notify', text: a.text }, progress: false };
+      }
+    } catch (e) {
+      if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message);
+      throw e;
+    }
+  }
+
+  /**
+   * `pi-durable-subagents hold machine --shared --no-wait -- owed attest <node>` when dsa is available (D6/D9, dsa >=
+   * 1.0.27), else `owed attest <node>`. Exit 75 is hold refusing the lease (`owed` itself exits 0..3): the machine is
+   * busy, nothing was queued, retry next pass. dsa rejecting the invocation (an older dsa without `--no-wait`) halts.
+   */
+  private async attest(s: State, node: string): Promise<{ report: ActionReport; progress: boolean; quiet?: boolean }> {
+    const argv = [...this.owed, 'attest', node], cwd = this.root!;
+    const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(detail ? { detail: oneLine(detail) } : {}) });
+    let ran: { exit: number | null; stdout: string; stderr: string };
+    if (dsaAvailable(this.dsa.bin)) {
+      const r = await this.dsa.hold('machine', argv, { shared: true, cwd });
+      if (r.outcome === 'busy') return { report: report('busy', `machine lease refused, retry next pass: ${tail(r.reason)}`), progress: false };
+      if (r.outcome === 'signal') return { report: report('pending', r.reason), progress: false };
+      if (r.outcome === 'refused') {
+        const old = /--no-wait/.test(r.reason) ? ' (owed drive requires pi-durable-subagents >= 1.0.27 for `hold --no-wait`)' : '';
+        await this.halt(node, s.nodes[node]!.slot!.attempt, `attest error: pi-durable-subagents hold refused: ${tail(r.reason)}${old}`);
+        return { report: report('error', `hold refused${old}: ${tail(r.reason)}; halted`), progress: true };
+      }
+      ran = r;
+    } else ran = await runProcess(argv, cwd);
+    if (ran.exit === 0 || ran.exit === 1) { this.facts.attestFailures.delete(node); return { report: report('done', ran.exit === 0 ? 'accepted' : 'not accepted yet'), progress: true }; }
+    const failures = (this.facts.attestFailures.get(node) ?? 0) + 1;
+    this.facts.attestFailures.set(node, failures);
+    const why = `owed attest exited ${ran.exit}: ${tail(ran.stderr || ran.stdout)}`;
+    if (failures >= 3) {
+      this.facts.attestFailures.delete(node);
+      await this.halt(node, s.nodes[node]!.slot!.attempt, `attest error ${failures} times in a row: ${why}`);
+      return { report: report('error', `${why}; halted`), progress: true };
+    }
+    return { report: report('error', why), progress: false };
+  }
+}
+
+/**
+ * `/owed` status lines of the live driver runs of open attempts with their dsa state (D7): `<node> <role> <rid>: <state>
+ * [status]`. Empty when dsa is unavailable or nothing was launched; a failed describe shows `describe failed`.
+ */
+export async function liveRunLines(cwd: string, dsa: Dsa = new Dsa({ timeoutMs: 10_000 })): Promise<string[]> {
+  if (!dsaAvailable(dsa.bin)) return [];
+  const s = await loadState(await Ledger.open(cwd)), lines: string[] = [];
+  for (const n of Object.values(s.nodes)) {
+    const ar = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined, c = n.candidate;
+    for (const l of ar?.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq)) ?? []) {
+      let state: string;
+      try { const v = await dsa.describe(l.rid); state = `${v.state}${v.status ? ` ${v.status}` : ''}`; } catch { state = 'describe failed'; }
+      lines.push(`${n.id} ${l.role} ${l.rid}: ${state}`);
+    }
+  }
+  return lines;
+}
+
+// ---------- the loop ----------
+const sleep = (ms: number, signal: AbortSignal): Promise<void> => new Promise(resolve => {
+  if (signal.aborted) { resolve(); return; }
+  const t = setTimeout(done, ms);
+  function done() { clearTimeout(t); signal.removeEventListener('abort', done); resolve(); }
+  signal.addEventListener('abort', done);
+});
+
+/**
+ * `owed drive`: takes the single-driver lock, then one pass (`once`), or the loop: passes back to back while they make
+ * progress (at most 20), then wait for an `events --all` event labeled with this project (polled every `pollMs`) or
+ * `passMs`, whichever comes first. Exits 0 when idle (nothing open, nothing to dispatch) or after SIGINT/SIGTERM (or
+ * `signal`) once the current action is done. A live driver refuses with OwedError('refused').
+ */
+export async function drive(o: DriveOptions): Promise<number> {
+  const ledger = await Ledger.open(o.cwd);
+  const release = await acquireDriveLock(ledger.dir);
+  const driver = new Driver(o), stop = new AbortController();
+  const onSignal = () => { driver.stopping = true; stop.abort(); };
+  o.signal?.addEventListener('abort', onSignal);
+  if (o.signal?.aborted) onSignal();
+  const handle = !o.once && o.handleSignals !== false;
+  if (handle) { process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal); }
+  const say = (line: string, json: object) => o.log(o.json ? JSON.stringify(json) : line);
+  try {
+    if (o.once) { const r = await driver.pass(); if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
+    const dsa = o.dsa ?? new Dsa(), cursorFile = join(ledger.dir, 'drive', 'cursor');
+    await mkdir(join(ledger.dir, 'drive'), { recursive: true });
+    let cursor: string | undefined = (await readFile(cursorFile, 'utf8').catch(() => '')).trim() || undefined, limit = o.limit ?? 100;
+    const save = async (c: string) => { cursor = c; await writeFile(cursorFile, `${c}\n`); };
+    /** True when an event of this project arrived (or the cursor expired: then a pass re-derives everything). */
+    const poll = async (): Promise<boolean> => {
+      try {
+        if (cursor === undefined) { const h = await dsa.events(); if (h.outcome === 'applied') await save(h.head); return false; }
+        let wake = false;
+        for (let page = 0; page < 50; page++) {
+          const r = await dsa.events(cursor, limit);
+          if (r.outcome === 'expired') { await save(r.head); return true; }
+          if (r.outcome !== 'applied') return wake;
+          wake ||= r.events.some(e => e.labels?.owed === driver.project);
+          await save(r.head);
+          if (!r.more) break;
+        }
+        return wake;
+      } catch (e) {
+        if (!(e instanceof DsaError)) throw e;
+        limit = Math.max(1, Math.floor(limit / 2));
+        return false;
+      }
+    };
+    await poll();
+    for (;;) {
+      for (let burst = 0; burst < 20 && !driver.stopping; burst++) {
+        const r = await driver.pass();
+        if (r.idle) { say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
+        if (!r.progress) break;
+      }
+      const last = Date.now();
+      while (!driver.stopping) {
+        await sleep(o.pollMs ?? 3000, stop.signal);
+        if (driver.stopping || Date.now() - last >= (o.passMs ?? 30_000) || await poll()) break;
+      }
+      if (driver.stopping) { say('stopped', { event: 'stopped' }); return 0; }
+    }
+  } finally {
+    if (handle) { process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); }
+    o.signal?.removeEventListener('abort', onSignal);
+    await release();
+  }
+}
