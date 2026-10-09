@@ -40,7 +40,10 @@ export function verifyChain(entries: Entry[]): { ok: true } | { ok: false; seq: 
 ## src/git.ts  (leaf io)
 ```ts
 export function git(cwd: string, args: string[], opts?: { input?: string; allowFail?: boolean; env?: Record<string,string> }): Promise<{ code: number; stdout: string; stderr: string }>;  // throws OwedError('internal') on failure unless allowFail
-export function repoRoot(cwd: string): Promise<string>;
+export function repoRoot(cwd: string): Promise<string>;     // top level of the worktree containing cwd (`--show-toplevel`); only for "is cwd this slot worktree"
+export function commonDir(cwd: string): Promise<string>;    // absolute git common dir (shared by all worktrees)
+export function mainRoot(cwd: string): Promise<string>;     // main worktree root (SPEC §8, ruling #122): --show-toplevel in the main worktree; in a linked worktree dirname(commonDir) only if verified, else OwedError('usage') 'run owed from the main worktree'; every repository path (dispatch worktrees, gc, info/exclude) derives from it
+export function readAt(cwd: string, rev: string, path: string): Promise<{ commit: string; path: string; text: string }>;  // file at a commit; path relative to cwd, returned repository-relative; OwedError('usage') if outside the repo, not a commit, or missing
 export function revParse(cwd: string, rev: string): Promise<string>;   // full 40-hex OID of a commit (`^{commit}`)
 export function isAncestor(cwd: string, a: string, b: string): Promise<boolean>;
 export function isClean(worktree: string): Promise<boolean>;            // no staged/unstaged/untracked (respecting ignores)
@@ -74,12 +77,12 @@ export function genesisJobs(state: State): AttestJob[];                // invari
 export function mergeJobs(state: State, node: string, m: { facts: CandidateFacts; state: StateFacts }): AttestJob[];  // check:* on M and invariants on M whose keys lack a verdict
 export function mergeGuard(state: State, node: string, m: { facts: CandidateFacts; state: StateFacts }): MergeGuard;  // SPEC §6.4 conditions 2–4 (CAS is checked by ops)
 ```
-`validateDraft` rules (minimum): genesis only first and by owner; plan by owner/parent citing current plan sha, downgrades require owner; dispatch by parent/owner, node ready, no open slot; submit by the slot writer; obs/merge only by `executor:owed`; review by reviewer/owner, reviewer not a writer of the node, rank ∈ 1..2 for reviewers and 3 for owner, key equals the current candidate key of that obligation; waive/defer only by owner, waive key = current key, invariant obligations cannot be waived; abandon closes an open slot.
+`validateDraft` rules (minimum): genesis only first and by owner; plan by owner/parent citing current plan sha, downgrades require owner; dispatch by parent/owner, node ready, no open slot; submit by the slot writer; rebase by parent/owner or the slot writer, `from` = slot base, `base` = current trunk ≠ slot base; obs `merging` names a node with an open candidate (and its own subject for node obs); obs/merge only by `executor:owed`; review by reviewer/owner, reviewer not a writer of the node, rank ∈ 1..2 for reviewers and 3 for owner, key equals the current candidate key of that obligation; waive/defer only by owner, waive key = current key, invariant obligations cannot be waived; abandon closes an open slot.
 
 ## src/ops.ts, src/views.ts, src/cli.ts  (leaf surface)
 `ops.ts` implements SPEC §8 using the modules above (every mutation: compute outside the lock where slow, then `withLock` → `read` → `reduce` → `validateDraft` → `append`). Merge holds a second lock `merge` for the whole merge (serial queue) and the ledger lock only for guard + `advanceTrunk` + append. `views.ts` renders `StatusView`, `ReceiptCard`, `Report` as plain text (Chinese labels, as in SPEC §9) and JSON. `cli.ts` exports `main(argv: string[]): Promise<number>`.
 
-Dispatch worktrees: `<repoRoot>/.owed/wt/<node>-<attempt>`, branch `owed/<node>/<attempt>`; ops adds `.owed/` to `<git common dir>/info/exclude`. The dispatch packet (blob) is markdown: node title/brief, writes, checks (commands), red requirement, in-scope rulings, the worktree path and the rule "commit your work; do not edit files outside writes; owed will run the checks itself".
+Dispatch worktrees: `<mainRoot>/.owed/wt/<node>-<attempt>` (main worktree root, never the toplevel of the cwd, so dispatching from inside a slot worktree does not nest), branch `owed/<node>/<attempt>`; ops adds `.owed/` to `<git common dir>/info/exclude`. Dispatch refuses writes overlapping an open slot unless `allowOverlap` (ops-level check; `reducer.overlapping(state, node)` is shared with the status view). `views.ts` also owns `renderGc`. The dispatch packet (blob) is markdown: node title/brief, writes, checks (commands), red requirement, in-scope rulings, the worktree path and the rule "commit your work; do not edit files outside writes; owed will run the checks itself".
 
 ## src/extension.ts, skills/owed/SKILL.md  (leaf surface)
 Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters.

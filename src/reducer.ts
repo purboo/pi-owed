@@ -4,7 +4,7 @@ import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgra
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
-interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan> }
+interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number> }
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
@@ -26,6 +26,13 @@ function required(spec: NodeSpec, facts: CandidateFacts): string[] {
 }
 function latestRule(s: State, node: string): number {
   return Math.max(-1, ...s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node)).map(r => r.seq));
+}
+/** Two `writes` prefix lists overlap when some prefix of one starts with a prefix of the other (a path could match both). */
+export const writesOverlap = (a: string[], b: string[]): boolean => a.some(p => b.some(q => p.startsWith(q) || q.startsWith(p)));
+/** Other nodes with an open slot whose `writes` overlap those of node `id`, sorted. */
+export function overlapping(s: State, id: string): string[] {
+  const writes = nodeSpec(s, id)?.writes ?? [];
+  return s.plan.nodes.filter(x => x.id !== id && s.nodes[x.id]?.slot?.open && writesOverlap(writes, x.writes)).map(x => x.id).sort();
 }
 /** Detail of a satisfied `rulings` item when no ruling is in scope for the node (shown as "no rulings apply"). */
 export const NO_RULINGS = 'no ruling is in scope for this node';
@@ -107,7 +114,7 @@ function refresh(s: State): void {
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
 export function reduce(entries: Entry[], plans: PlanLookup): State {
   const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [] };
-  const h: History = { entries: [], plans, obsPlans: new Map() };
+  const h: History = { entries: [], plans, obsPlans: new Map(), mergeCatches: new Set() };
   Object.defineProperty(s, history, { value: h });
   for (const original of entries) {
     const e = structuredClone(original);
@@ -135,8 +142,16 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       if (!n.writers.includes(writer)) n.writers.push(writer);
     } else if (e.kind === 'submit') s.nodes[e.node]!.candidate = { ...e.facts, seq: e.seq };
     else if (e.kind === 'abandon') { s.nodes[e.node]!.slot!.open = false; s.nodes[e.node]!.candidate = undefined; }
-    else if (e.kind === 'obs') {
+    else if (e.kind === 'rebase') {
+      const n = s.nodes[e.node]!, slot = n.slot!;
+      const previous = n.candidate ? { base: n.candidate.base, commit: n.candidate.commit, submit: n.candidate.seq } : slot.rebase?.previous;
+      slot.rebase = { seq: e.seq, from: e.from, base: e.base, ...(previous ? { previous } : {}) };
+      slot.base = e.base; n.candidate = undefined;
+    } else if (e.kind === 'obs') {
       h.obsPlans.set(e.seq, s.plan);
+      // A failing merge-result invariant catches a decoy of the merging node only when
+      // the same invariant was not already debt (status D, e.g. deferred) on PRE = trunk.
+      if (e.merging && e.verdict === 'fail' && (e.subject !== 'trunk' || item(s, 'trunk', e.obligation, s.trunk.invKeys[e.obligation.slice(4)] ?? '').status === 'E')) h.mergeCatches.add(e.seq);
       const n = s.nodes[e.subject];
       if (n) {
         const matches = n.blocks.filter(b => b.kind === 'exec' && b.state === 'active' && b.obligation === e.obligation && b.key === e.key);
@@ -169,11 +184,11 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
         const at = s.decoys.findIndex(d => d.node === x.node);
         if (at >= 0 && s.decoys[at]!.commit < c.seq) continue;
         const v: DecoyView = { node: x.node, defect: x.defect, commit: c.seq, reveal: e.seq, outcome: 'pending' };
-        for (const prior of h.entries) settleDecoy(v, prior);
+        for (const prior of h.entries) settleDecoy(v, prior, h.mergeCatches);
         if (at >= 0) s.decoys[at] = v; else s.decoys.push(v);
       }
     }
-    for (const v of s.decoys) settleDecoy(v, e);
+    for (const v of s.decoys) settleDecoy(v, e, h.mergeCatches);
     h.entries.push(e); s.seq = e.seq; s.head = e.hash;
     refresh(s);
   }
@@ -254,8 +269,10 @@ export function validateDraft(s: State, d: Draft): string[] {
         const target = s.nodes[d.subject];
         if (!target) errors.push('obs node does not exist');
         if (!/^(check:.+|red:.+|strength:.+|writes)$/.test(d.obligation)) errors.push('obs can only observe execution obligations');
+        if (d.merging !== undefined && d.merging !== d.subject) errors.push('obs merging must name its node subject');
         if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.key === d.key && b.obligation === d.obligation && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
       }
+      if (d.merging !== undefined && (typeof d.merging !== 'string' || !s.nodes[d.merging]?.slot?.open || !s.nodes[d.merging]?.candidate)) errors.push('obs merging must name a node with an open candidate');
       if (!d.key) errors.push('obs is missing an obligation key');
       break;
     case 'review':
@@ -277,6 +294,13 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.items.some(i => !i.key || !s.plan.invariants.some(c => c.id === i.id))) errors.push('defer must reference valid invariants and keys');
       break;
     case 'abandon': allow('parent', 'owner'); slot(); break;
+    case 'rebase':
+      if (!['parent', 'owner'].includes(r) && d.by !== n?.slot?.writer) errors.push('rebase requires parent/owner or the slot writer');
+      slot();
+      if (d.from !== n?.slot?.base) errors.push('rebase from must be the current slot base');
+      if (d.base !== s.trunk.commit) errors.push('rebase base must be the current trunk');
+      else if (d.base === d.from) errors.push('trunk has not moved since the slot base; nothing to rebase');
+      break;
     case 'merge':
       if (d.by !== 'executor:owed') errors.push('merge may only be written by executor:owed');
       slot();
@@ -350,12 +374,13 @@ export function decoyPayloadErrors(p: unknown): string[] {
   return errors;
 }
 /**
- * A pending decoy is caught by an execution failure or review block on its node, and escapes on a merge of it.
- * A failure observed only while merging (e.g. a trunk invariant on the merge result) is not attributed yet.
+ * A pending decoy is caught by an execution failure or review block on its node, or by a failing
+ * obs appended while merging it (`merging`) on an item that was not already debt on PRE
+ * (`mergeCatches`, computed at append time); it escapes on a merge of it.
  */
-function settleDecoy(v: DecoyView, e: Entry): void {
+function settleDecoy(v: DecoyView, e: Entry, mergeCatches: Set<number>): void {
   if (v.outcome !== 'pending') return;
-  if ((e.kind === 'obs' && e.by === 'executor:owed' && e.subject === v.node && e.verdict === 'fail') || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
+  if ((e.kind === 'obs' && e.by === 'executor:owed' && e.verdict === 'fail' && (e.subject === v.node || (e.merging === v.node && mergeCatches.has(e.seq)))) || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
   else if (e.kind === 'merge' && e.node === v.node) Object.assign(v, { outcome: 'escaped', decidedBy: e.seq });
 }
 

@@ -1,11 +1,11 @@
 import { readFile, mkdir, appendFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify } from 'yaml';
 import { canonical } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
-import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, decoyDigest as digestOf, decoyPayloadErrors } from './reducer.ts';
+import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary } from './views.ts';
@@ -35,7 +35,7 @@ function inited(s: State): State { if (s.seq < 0) throw new OwedError('Not initi
 function node(s: State, id: string) { const n = inited(s).nodes[id]; if (!n) throw new OwedError(`Node ${id} does not exist`); return n; }
 function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.open || !n.candidate) throw new OwedError(`Node ${id} has no open candidate`); return n; }
 function stable(before: State, after: State, id?: string): void {
-  if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('Plan, candidate or trunk changed; retry');
+  if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.slot?.base !== after.nodes[id]?.slot?.base || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('Plan, candidate or trunk changed; retry');
 }
 async function mutate(o: Actor, make: (s: State) => Draft): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
@@ -65,28 +65,42 @@ export async function init(o: Actor & { plan: string; channel: Channel }): Promi
   const { state } = await load(ledger); const observations = await runJobs(o.cwd,ledger,state,genesisJobs(state));
   return { entry, observations, status:await status(o) };
 }
-export async function planSet(o: Actor & { plan: string }): Promise<Entry> {
+/** Reads a plan file for `owed plan`: from commit `rev` when given (path relative to cwd), else from the working tree. */
+export async function readPlan(o: Context & { path: string; rev?: string }): Promise<{ plan: string; rev?: string; path: string }> {
+  if (o.rev !== undefined) { const r = await git.readAt(o.cwd,o.rev,o.path); return { plan:r.text, rev:r.commit, path:r.path }; }
+  const file = resolve(o.cwd,o.path); let text: string;
+  try { text = await readFile(file,'utf8'); } catch (e) { throw new OwedError(`cannot read ${o.path}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`,'usage'); }
+  let path = file;
+  try { const top = await realpath(await git.repoRoot(o.cwd)), rel = relative(top,await realpath(file)); if (rel && !rel.startsWith('..') && !isAbsolute(rel)) path = rel.split(sep).join('/'); } catch { /* outside a repository: keep the absolute path */ }
+  return { plan:text, path };
+}
+export async function planSet(o: Actor & { plan: string; rev?: string; path?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan), before = (await load(ledger)).state;
-  return ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan) }; guard(state,d); return (await ledger.append([d]))[0]!; });
+  return ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}) }; guard(state,d); return (await ledger.append([d]))[0]!; });
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*' }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes })); }
-export async function dispatch(o: Actor & { node: string }): Promise<DispatchPacket> {
-  owner(o); const ledger = await Ledger.open(o.cwd);
+export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
+  // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
+  // Resolved first, so an unverifiable layout is refused before any ledger, exclude or worktree effect.
+  owner(o); const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('Node id is unsafe for a worktree path','usage');
-    const attempt = (n.slot?.attempt ?? 0)+1, branch = `owed/${o.node}/${attempt}`, root = await git.repoRoot(o.cwd);
+    // Overlapping writes of concurrent slots produce conflicts or ambiguous ownership; refuse unless explicitly allowed.
+    const overlaps = overlapping(state,o.node);
+    if (overlaps.length && !o.allowOverlap) throw new OwedError(`writes of ${o.node} overlap the open slot of ${overlaps.join(', ')}; wait for ${overlaps.length > 1 ? 'them' : 'it'} or dispatch with --allow-overlap`);
+    const attempt = (n.slot?.attempt ?? 0)+1, branch = `owed/${o.node}/${attempt}`;
     const worktree = join(root,'.owed','wt',`${o.node}-${attempt}`), rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
     const packet = [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${o.node}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${o.node}`].join('\n');
-    const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)) };
+    const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
     guard(state,d);
-    const common = resolve(o.cwd,(await git.git(o.cwd,['rev-parse','--git-common-dir'])).stdout.trim()), exclude = join(common,'info','exclude');
+    const exclude = join(await git.commonDir(o.cwd),'info','exclude');
     await mkdir(dirname(exclude),{recursive:true}); let text = ''; try { text = await readFile(exclude,'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     if (!text.split('\n').includes('.owed/')) await appendFile(exclude,'\n.owed/\n');
-    await git.addWorktree(o.cwd,worktree,branch,state.trunk.commit);
+    await git.addWorktree(root,worktree,branch,state.trunk.commit);
     let entry: Entry;
-    try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('Rulings changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
-    catch (error) { await git.git(o.cwd,['worktree','remove',worktree]); await git.git(o.cwd,['branch','-d',branch]); throw error; }
+    try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw new OwedError('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
+    catch (error) { await git.git(root,['worktree','remove',worktree]); await git.git(root,['branch','-d',branch]); throw error; }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
   },'dispatch');
 }
@@ -118,6 +132,15 @@ export async function review(o: Actor & { node: string; verdict:'ok'|'block'; ra
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel }): Promise<Entry> { return mutate(o,s => ({kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key:candidate(s,o.node).candidate!.keys[o.obligation] ?? '',reason:o.reason,accept_risk:o.accept_risk})); }
 export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items,reason:o.reason})); }
 export async function abandon(o: Actor & { node:string; reason:string }): Promise<Entry> { return mutate(o,s => ({kind:'abandon',by:by(o),channel:o.channel,node:o.node,attempt:node(s,o.node).slot?.attempt ?? 0,reason:o.reason})); }
+export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }
+/** Moves the open slot of a node onto the current trunk (parent/owner or the slot writer); the writer then rebases the same worktree and submits again. */
+export async function rebase(o: Actor & { node:string }): Promise<RebaseResult> {
+  const entry = await mutate(o,s => { const n = node(s,o.node); if (!n.slot?.open) throw new OwedError(`Node ${o.node} has no open writer slot`); return {kind:'rebase',by:by(o),channel:o.channel,node:o.node,attempt:n.slot.attempt,base:s.trunk.commit,from:n.slot.base}; });
+  if (entry.kind !== 'rebase') throw new OwedError('unexpected rebase entry','internal');
+  const { state } = await load(await Ledger.open(o.cwd)), slot = state.nodes[o.node]!.slot!, previous = slot.rebase?.seq === entry.seq ? slot.rebase.previous : undefined;
+  const packet = [`# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `In the worktree run: git rebase --onto ${entry.base} ${entry.from}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
+  return { node:o.node, attempt:entry.attempt, worktree:slot.worktree, branch:slot.branch, base:entry.base, from:entry.from, ...(previous ? { previous } : {}), packet, entry };
+}
 export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
   owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
   const ledger = await Ledger.open(o.cwd);
@@ -126,10 +149,12 @@ export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
     if (!n.accepted) throw new OwedError(`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
     if (await git.revParse(o.cwd,`refs/heads/${state.trunk.name}`) !== state.trunk.commit) throw new OwedError('trunk changed (CAS)');
     const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
-    if ('conflicts' in built) throw new OwedError('rebase needed');
+    if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
     const facts = await git.candidateFacts(o.cwd,state.plan,state.plan.nodes.find(x => x.id === o.node)!,state.trunk.commit,built.commit,n.slot!.attempt), sf = await git.stateFacts(o.cwd,state.plan,built.commit), m = {facts,state:sf};
     const observations: Draft[] = [];
-    for (const job of [...genesisJobs(state),...mergeJobs(state,o.node,m)]) observations.push(await runJob({cwd:o.cwd,ledger,plan:state.plan},job));
+    // Genesis jobs are not about this merge; merge-result jobs record the node being merged (decoy attribution).
+    for (const job of genesisJobs(state)) observations.push(await runJob({cwd:o.cwd,ledger,plan:state.plan},job));
+    for (const job of mergeJobs(state,o.node,m)) observations.push({...await runJob({cwd:o.cwd,ledger,plan:state.plan},job),merging:o.node} as Draft);
     return ledger.withLock(async () => {
       const latest = await load(ledger); stable(state,latest.state,o.node);
       // Evaluate the prospective observations without persisting them before CAS.
@@ -191,52 +216,58 @@ async function exists(path: string): Promise<boolean> { try { await stat(path); 
 export const keepRef = (node: string, attempt: number, seq: number): string => `refs/owed/keep/${node}/${attempt}/${seq}`;
 export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channel?: Channel }): Promise<GcResult> {
   const actor: Actor = { cwd: o.cwd, as: o.as ?? { role: 'parent', id: 'cli' }, channel: o.channel }, dryRun = !!o.dryRun;
-  owner(actor); const ledger = await Ledger.open(o.cwd);
+  owner(actor); if (!['owner','parent'].includes(actor.as.role)) throw new OwedError('gc requires parent/owner');
+  // Run git from the main worktree: cwd may be (inside) a worktree that gc removes. Resolved before any effect.
+  const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
   // The dispatch lock serializes gc with worktree/branch creation by dispatch.
   return ledger.withLock(async () => {
     const { state, entries } = await load(ledger); inited(state);
+    const openTrees = await Promise.all(Object.values(state.nodes).filter(n => n.slot?.open).map(n => real(n.slot!.worktree)));
     // Stale registrations (directory deleted by hand) would otherwise pin their branches.
-    if (!dryRun) await git.git(o.cwd, ['worktree', 'prune']);
-    const trees = await Promise.all((await git.listWorktrees(o.cwd)).filter(w => !w.prunable).map(async w => ({ ...w, path: await real(w.path) })));
+    if (!dryRun) await git.git(root, ['worktree', 'prune']);
+    const trees = await Promise.all((await git.listWorktrees(root)).filter(w => !w.prunable).map(async w => ({ ...w, path: await real(w.path) })));
     const removed: GcItem[] = [], kept: GcKept[] = [];
     for (const d of entries) {
       if (d.kind !== 'dispatch') continue;
       const keep = (reason: string) => { kept.push({ node: d.node, attempt: d.attempt, worktree: d.worktree, branch: d.branch, reason }); };
-      const path = await real(d.worktree), tree = trees.find(w => w.path === path), hasBranch = await git.branchExists(o.cwd, d.branch), onDisk = await exists(d.worktree);
+      const path = await real(d.worktree), tree = trees.find(w => w.path === path), hasBranch = await git.branchExists(root, d.branch), onDisk = await exists(d.worktree);
       const slot = state.nodes[d.node]?.slot;
       if (slot?.open && slot.attempt === d.attempt) { if (tree || hasBranch || onDisk) keep('open writer slot'); continue; }
       if (tree?.locked) { keep('worktree is locked'); continue; }
+      // A worktree nested by an older dispatch inside this one would be deleted with it.
+      const inner = [...openTrees, ...trees.map(w => w.path)].find(p => p !== path && p.startsWith(`${path}/`));
+      if (onDisk && inner) { keep(`contains worktree ${inner}`); continue; }
       if (tree && !await git.isClean(tree.path)) { keep('worktree is dirty (uncommitted or untracked changes)'); continue; }
       // Pin every submitted commit that trunk does not already reach, before its branch can go.
       const pins: { ref: string; commit: string }[] = []; let lost = '';
       for (const e of entries) if (e.kind === 'submit' && e.node === d.node && e.attempt === d.attempt) {
         const ref = keepRef(d.node, d.attempt, e.seq), commit = e.facts.commit;
-        if ((await git.git(o.cwd, ['rev-parse', '--verify', '--quiet', ref], { allowFail: true })).code === 0) continue;
-        if ((await git.git(o.cwd, ['cat-file', '-e', `${commit}^{commit}`], { allowFail: true })).code) { lost ||= `submitted commit ${commit} (#${e.seq}) is no longer in the repository`; continue; }
-        if (!await git.isAncestor(o.cwd, commit, state.trunk.commit)) pins.push({ ref, commit });
+        if ((await git.git(root, ['rev-parse', '--verify', '--quiet', ref], { allowFail: true })).code === 0) continue;
+        if ((await git.git(root, ['cat-file', '-e', `${commit}^{commit}`], { allowFail: true })).code) { lost ||= `submitted commit ${commit} (#${e.seq}) is no longer in the repository`; continue; }
+        if (!await git.isAncestor(root, commit, state.trunk.commit)) pins.push({ ref, commit });
       }
       if (lost) keep(lost);
       const pinned: string[] = [];
       for (const p of pins) {
-        if (!dryRun) { const r = await git.git(o.cwd, ['update-ref', p.ref, p.commit, ''], { allowFail: true }); if (r.code) { keep(`git update-ref ${p.ref} failed: ${r.stderr.trim()}`); break; } }
+        if (!dryRun) { const r = await git.git(root, ['update-ref', p.ref, p.commit, ''], { allowFail: true }); if (r.code) { keep(`git update-ref ${p.ref} failed: ${r.stderr.trim()}`); break; } }
         pinned.push(p.ref);
       }
       if (pinned.length !== pins.length) { if (pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree: null, branch: null, pinned }); continue; }
       let worktree: string | null = null, branch: string | null = null;
       if (tree) {
-        if (!dryRun) { const r = await git.git(o.cwd, ['worktree', 'remove', tree.path], { allowFail: true }); if (r.code) { keep(`git worktree remove failed: ${r.stderr.trim()}`); if (pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned }); continue; } }
+        if (!dryRun) { const r = await git.git(root, ['worktree', 'remove', tree.path], { allowFail: true }); if (r.code) { keep(`git worktree remove failed: ${r.stderr.trim()}`); if (pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned }); continue; } }
         worktree = d.worktree;
       } else if (onDisk) keep('path exists but is not a registered git worktree; left untouched');
       if (hasBranch) {
         const user = trees.find(w => w.branch === `refs/heads/${d.branch}` && w.path !== path);
         if (user) keep(`branch is checked out in ${user.path}`);
         else if (dryRun) branch = d.branch;
-        else { const r = await git.git(o.cwd, ['branch', '-D', d.branch], { allowFail: true }); if (r.code) keep(`git branch -D failed: ${r.stderr.trim()}`); else branch = d.branch; }
+        else { const r = await git.git(root, ['branch', '-D', d.branch], { allowFail: true }); if (r.code) keep(`git branch -D failed: ${r.stderr.trim()}`); else branch = d.branch; }
       }
       if (worktree || branch || pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned });
     }
     if (dryRun || !removed.length) return { dryRun, removed, kept };
-    await git.git(o.cwd, ['worktree', 'prune']);
+    await git.git(root, ['worktree', 'prune']);
     const text = `gc removed ${removed.map(i => `${i.node}#${i.attempt} (${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(r => `pinned ${r}`)].filter(Boolean).join(', ')})`).join('; ')}`;
     const entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; const d: Draft = { kind: 'note', by: by(actor), channel: actor.channel, text }; guard(current, d); return (await ledger.append([d]))[0]!; });
     return { dryRun, removed, kept, entry };

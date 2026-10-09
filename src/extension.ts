@@ -8,7 +8,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
 import { OwedError } from './errors.ts';
-import { renderBrief, renderEntry, renderReceipt, renderReport, renderStatus } from './views.ts';
+import { renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -34,11 +34,22 @@ async function readText(dir: string, file: string): Promise<string> {
   try { return await readFile(resolve(dir, file), 'utf8'); }
   catch (e) { throw new OwedError(`cannot read ${file}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`, 'usage'); }
 }
-async function actor(ctx: ExtensionContext, dir: string, value?: string, summary?: string) {
+/** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog. */
+/** Escapes C0/C1 controls, DEL, line/paragraph separators and bidi controls (U+202A–U+202E, U+2066–U+2069). */
+function oneLine(text: string): string {
+  return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => c === '\\' ? '\\\\' : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+/**
+ * Resolves the principal; an owner action needs a confirmed dialog. `summary` lines are fixed text whose
+ * interpolated values the caller passes through oneLine; free-text `fields` (note, reason, evidence) are
+ * rendered one line each after the Repository/Identity lines, so they cannot fake the dialog.
+ */
+async function actor(ctx: ExtensionContext, dir: string, value?: string, summary?: string, fields: Record<string, string | undefined> = {}) {
   const p = principal(value);
   if (p.role !== 'owner') return { cwd: dir, as: p };
   if (!ctx.hasUI) throw new OwedError('owner actions require UI confirmation; no UI is available');
-  if (!await ctx.ui.confirm('owed: confirm owner decision', `${summary ?? 'Execute action as owner'}\nRepository: ${dir}\nIdentity: owner:${p.id}\nConfirmation will be recorded as pi-confirm.`)) throw new OwedError('owner did not confirm; action canceled');
+  const free = Object.entries(fields).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}: ${oneLine(v!)}`);
+  if (!await ctx.ui.confirm('owed: confirm owner decision', [summary ?? 'Execute action as owner', `Repository: ${oneLine(dir)}`, `Identity: owner:${oneLine(p.id)}`, ...free, 'Confirmation will be recorded as pi-confirm.'].join('\n'))) throw new OwedError('owner did not confirm; action canceled');
   return { cwd: dir, as: p, channel: 'pi-confirm' as const };
 }
 function requireRole(value: string | undefined, fallback: string, roles: Role[], what: string): string {
@@ -52,12 +63,12 @@ async function currentPlan(dir: string) {
   if (!law || (law.kind !== 'plan' && law.kind !== 'genesis')) throw new OwedError('Missing plan');
   return parsePlan((await ledger.getBlob(law.plan)).toString());
 }
-function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
-function renderGc(r: ops.GcResult): string {
-  const removed = r.removed.map(i => `  ${i.node}#${i.attempt}: ${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(ref => `${r.dryRun ? 'would pin' : 'pinned'} ${ref}`)].filter(Boolean).join(', ')}`);
-  const kept = r.kept.map(i => `  ${i.node}#${i.attempt} (${i.branch}): ${i.reason}`);
-  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
+/** Writer of the open slot of node when dir is inside that slot worktree (submit and rebase infer it). */
+async function slotWriter(dir: string, id: string): Promise<string | undefined> {
+  const slot = (await ops.status({ cwd: dir })).nodes[id]?.slot;
+  return slot?.open && resolve(await git.repoRoot(dir)) === resolve(slot.worktree) ? slot.writer : undefined;
 }
+function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
 
 export default function owed(pi: ExtensionAPI): void {
   function tool<S extends TSchema>(name: string, description: string, parameters: S, run: (p: Static<S>, ctx: ExtensionContext, dir: string) => Promise<ReturnType<typeof result>>) {
@@ -79,19 +90,20 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.verify({ cwd: dir });
     return r.ok ? result(r, `Ledger verification passed: ${r.entries} entries`) : { ...result(r, `Ledger verification failed: ${r.error}`), isError: true };
   });
-  tool('dispatch', 'Dispatch a node; return the packet and arguments ready to pass to subagents.', Type.Object({ node, as, cwd }), async (p, ctx, dir) => {
-    const r = await ops.dispatch({ ...await actor(ctx, dir, p.as, `Dispatch node ${p.node}`), node: p.node });
+  tool('dispatch', 'Dispatch a node; return the packet and arguments ready to pass to subagents. Refused while its writes overlap an open slot unless allow_overlap.', Type.Object({ node, allow_overlap: Type.Optional(Type.Boolean({ description: 'Dispatch although writes overlap another open slot; recorded in the entry.' })), as, cwd }), async (p, ctx, dir) => {
+    const r = await ops.dispatch({ ...await actor(ctx, dir, p.as, `Dispatch node ${oneLine(p.node)}${p.allow_overlap ? ' (allowing overlapping writes)' : ''}`), node: p.node, allowOverlap: !!p.allow_overlap });
     const subagents = { ...r.subagent, isolation: 'none' as const };
     return result({ ...r, subagents }, `${r.packet}\n\nsubagents: ${JSON.stringify(subagents)}\n${renderStatus(await ops.status({ cwd: dir }))}`);
   });
   tool('submit', 'Submit a committed, clean writer worktree; infer the writer when cwd (or the session) is the slot worktree.', Type.Object({ node, commit: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
-    let who = p.as;
-    if (!who) {
-      const slot = (await ops.status({ cwd: dir })).nodes[p.node]?.slot;
-      if (slot && resolve(await git.repoRoot(dir)) === resolve(slot.worktree)) who = slot.writer;
-    }
-    const r = await ops.submit({ ...await actor(ctx, dir, who, `Submit node ${p.node}`), node: p.node, commit: p.commit });
+    const who = p.as ?? await slotWriter(dir, p.node);
+    const r = await ops.submit({ ...await actor(ctx, dir, who, `Submit node ${oneLine(p.node)}`), node: p.node, commit: p.commit });
     return card(dir, p.node, r);
+  });
+  tool('rebase', 'Move the open slot of a node onto the current trunk (parent/owner, or the slot writer inferred from cwd); returns the rebase packet. The open candidate is invalidated; the writer rebases the same worktree and submits again.', Type.Object({ node, as, cwd }), async (p, ctx, dir) => {
+    const who = p.as ?? await slotWriter(dir, p.node);
+    const r = await ops.rebase({ ...await actor(ctx, dir, who, `Rebase the open slot of node ${oneLine(p.node)} onto trunk`), node: p.node });
+    return result(r, `${renderEntry(r.entry)}\n${r.packet}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
   tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; as does not change executor identity.', Type.Object({ node, rerun: Type.Optional(Type.Boolean()), as, cwd }), async (p, _ctx, dir) => {
     const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun }); return result(r, renderReceipt(r.receipt));
@@ -99,12 +111,14 @@ export default function owed(pi: ExtensionAPI): void {
   tool('review', 'Independent review; explicitly specify reviewer:id (owner requires UI confirmation). Self-review is forbidden.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), cwd }), async (p, ctx, dir) => {
     if (!p.as || !['reviewer', 'owner'].includes(principal(p.as).role)) throw new OwedError('review requires an explicit reviewer:id or owner:id');
     const { cwd: _cwd, ...args } = p;
-    const r = await ops.review({ ...args, ...await actor(ctx, dir, p.as, `Review ${p.node}/${p.obligation ?? 'review'}: ${p.verdict}, rank ${p.rank}\n${p.note}`) }); return card(dir, p.node, r);
+    const r = await ops.review({ ...args, ...await actor(ctx, dir, p.as, `Review ${oneLine(p.node)}/${p.obligation ?? 'review'}: ${p.verdict}, rank ${p.rank}`, { Note: p.note }) }); return card(dir, p.node, r);
   });
-  tool('merge', 'Run the merge guard, measure the merge tree and advance trunk with CAS.', Type.Object({ node, as, cwd }), async (p, ctx, dir) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${p.node}`), node: p.node }); return card(dir, p.node, r); });
-  tool('abandon', 'Close the open writer slot of a node (parent or owner); the node can then be dispatched again.', Type.Object({ node, reason: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
+  tool('merge', 'Run the merge guard, measure the merge tree and advance trunk with CAS.', Type.Object({ node, as, cwd }), async (p, ctx, dir) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`), node: p.node }); return card(dir, p.node, r); });
+  tool('abandon', 'Close the open writer slot of a node (parent or owner); the node can then be dispatched again. note (or its older name reason) is recorded.', Type.Object({ node, note: Type.Optional(Type.String()), reason: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'abandon');
-    const r = await ops.abandon({ ...await actor(ctx, dir, who, `Abandon the open attempt of node ${p.node}\nReason: ${p.reason ?? '(none)'}`), node: p.node, reason: p.reason ?? '' });
+    if (p.note !== undefined && p.reason !== undefined) throw new OwedError('abandon takes note (or its older name reason), not both', 'usage');
+    const note = p.note ?? p.reason;
+    const r = await ops.abandon({ ...await actor(ctx, dir, who, `Abandon the open attempt of node ${oneLine(p.node)}`, { Note: note ?? '(none)' }), node: p.node, reason: note ?? '' });
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
   tool('gc', 'Reclaim worktrees and branches of merged or abandoned attempts (parent or owner); dry_run only reports.', Type.Object({ dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir) => {
@@ -113,19 +127,19 @@ export default function owed(pi: ExtensionAPI): void {
     return result(r, renderGc(r));
   });
   tool('rule', 'Record a ruling for the applicable nodes.', Type.Object({ text: reason, nodes: Type.Union([Type.Literal('*'), Type.Array(node)]), as, cwd }), async (p, ctx, dir) => {
-    const r = await ops.rule({ text: p.text, nodes: p.nodes, ...await actor(ctx, dir, p.as, `Ruling ${JSON.stringify(p.nodes)}: ${p.text}`) }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
+    const r = await ops.rule({ text: p.text, nodes: p.nodes, ...await actor(ctx, dir, p.as, `Ruling for ${JSON.stringify(p.nodes)}`, { Ruling: p.text }) }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
   });
-  tool('plan', 'Update the plan from a file; downgrades require owner UI confirmation.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir) => {
-    const text = await readText(dir, p.plan);
+  tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades require owner UI confirmation.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), as, cwd }), async (p, ctx, dir) => {
+    const read = await ops.readPlan({ cwd: dir, path: p.plan, rev: p.rev }), text = read.plan;
     const downgrades = planDowngrades(await currentPlan(dir), parsePlan(text));
     const who = p.as ?? (downgrades.length ? 'owner:human' : 'parent:pi');
     if (downgrades.length && principal(who).role !== 'owner') throw new OwedError('Only owner may confirm plan downgrades');
-    const r = await ops.planSet({ ...await actor(ctx, dir, who, `Update plan ${p.plan}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`), plan: text });
+    const r = await ops.planSet({ ...await actor(ctx, dir, who, `Update plan ${oneLine(read.path)}${read.rev ? ` at ${read.rev}` : ''}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`), ...read });
     return result(r, renderStatus(await ops.status({ cwd: dir })));
   });
   tool('waive', 'Owner waiver of a current obligation; UI confirmation is required, and accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'owner:human', ['owner'], 'waive');
-    const a = await actor(ctx, dir, who, `Waive ${p.node}/${p.obligation}\nReason: ${p.reason}\nAccepted risks (block seq): ${JSON.stringify(p.accept_risk ?? [])}\nThis obligation will be shown as waived, not a measured pass.`);
+    const a = await actor(ctx, dir, who, `Waive ${oneLine(p.node)}/${oneLine(p.obligation)}\nAccepted risks (block seq): ${JSON.stringify(p.accept_risk ?? [])}\nThis obligation will be shown as waived, not a measured pass.`, { Reason: p.reason });
     const r = await ops.waive({ node: p.node, obligation: p.obligation, reason: p.reason, accept_risk: p.accept_risk, ...a, channel: 'pi-confirm' }); return card(dir, p.node, r);
   });
   tool('defer', 'Owner deferral of prospective merge-tree invariants; debt remains and UI confirmation is required.', Type.Object({ node, items: Type.Array(node, { minItems: 1, description: 'Invariant IDs.' }), reason, as, cwd }), async (p, ctx, dir) => {
@@ -137,12 +151,12 @@ export default function owed(pi: ExtensionAPI): void {
     if ('conflicts' in m) throw new OwedError('rebase needed');
     const facts = await git.stateFacts(dir, plan, m.commit);
     const items = p.items.map(id => { const key = facts.invKeys[id]; if (!key) throw new OwedError(`Unknown invariant ${id}`); return { id, key }; });
-    const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${p.node}: ${p.items.join(', ')}\nReason: ${p.reason}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`);
+    const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${oneLine(p.node)}: ${p.items.map(oneLine).join(', ')}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`, { Reason: p.reason });
     const r = await ops.defer({ ...a, channel: 'pi-confirm', node: p.node, reason: p.reason, items }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
   });
   tool('escape', 'Record an escape: a defect found after a merge of node; merge is the seq of that merge entry (parent or owner).', Type.Object({ node, merge: Type.Integer({ minimum: 0, description: 'Seq of the merge entry of node.' }), class: Type.Union((['missing', 'false-pass', 'reuse', 'weak', 'waiver'] as const).map(c => Type.Literal(c))), note: reason, evidence: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'record escapes');
-    const a = await actor(ctx, dir, who, `Record escape for node ${p.node} (merge #${p.merge}, class ${p.class})\nNote: ${p.note}${p.evidence ? `\nEvidence: ${p.evidence}` : ''}`);
+    const a = await actor(ctx, dir, who, `Record escape for node ${oneLine(p.node)} (merge #${p.merge}, class ${p.class})`, { Note: p.note, Evidence: p.evidence });
     const r = await ops.escape({ ...a, node: p.node, merge: p.merge, class: p.class as EscapeClass, note: p.note, evidence: p.evidence });
     return result(r, renderEntry(r));
   });
@@ -151,11 +165,11 @@ export default function owed(pi: ExtensionAPI): void {
     if (p.action === 'digest') { const r = ops.decoyDigest(await readText(dir, p.file!)); return result(r, r.digest); }
     const who = requireRole(p.as, 'owner:human', ['owner'], `${p.action} decoys`);
     if (p.action === 'commit') {
-      const a = await actor(ctx, dir, who, `Commit decoy digest ${p.digest}\nThe decoy list stays hidden until it is revealed; only a reveal matching this digest can open it.`);
+      const a = await actor(ctx, dir, who, `Commit decoy digest ${oneLine(p.digest!)}\nThe decoy list stays hidden until it is revealed; only a reveal matching this digest can open it.`);
       const r = await ops.decoyCommit({ ...a, channel: 'pi-confirm', digest: p.digest! }); return result(r, renderEntry(r));
     }
     const payload = await readText(dir, p.file!), decoys = ops.decoyPayload(payload).decoys;
-    const a = await actor(ctx, dir, who, `Reveal decoys from ${p.file}: ${decoys.map(d => d.node).join(', ')}\nThe revealed list must match an earlier unrevealed commitment; outcomes become part of the escape metrics.`);
+    const a = await actor(ctx, dir, who, `Reveal decoys from ${oneLine(p.file!)}: ${decoys.map(d => oneLine(d.node)).join(', ')}\nThe revealed list must match an earlier unrevealed commitment; outcomes become part of the escape metrics.`);
     const r = await ops.decoyReveal({ ...a, channel: 'pi-confirm', payload }); return result(r, renderEntry(r));
   });
   pi.registerCommand('owed', { description: 'owed status; /owed why <node> shows the receipt card', handler: async (args, ctx) => {

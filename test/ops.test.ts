@@ -86,7 +86,7 @@ test('merge conflict is refused as rebase needed; receipt reports uncovered chan
   await commitAt(r.cwd,{'shared':'base'});
   const plan=JSON.stringify({version:1,trunk:'main',nodes:[{id:'a',writes:['shared']},{id:'b',writes:['shared']}]});
   await ops.init({cwd:r.cwd,plan,as:owner,channel:'flag'});
-  for(const id of ['a','b']) { const p=await ops.dispatch({cwd:r.cwd,node:id,as:parent}); await commitAt(p.worktree,{'shared':id}); await ops.submit({cwd:p.worktree,node:id,as:{role:'writer',id:`${id}#1`}}); await ops.attest({cwd:r.cwd,node:id}); }
+  for(const id of ['a','b']) { const p=await ops.dispatch({cwd:r.cwd,node:id,as:parent,allowOverlap:true}); await commitAt(p.worktree,{'shared':id}); await ops.submit({cwd:p.worktree,node:id,as:{role:'writer',id:`${id}#1`}}); await ops.attest({cwd:r.cwd,node:id}); }
   assert.deepEqual((await ops.why({cwd:r.cwd,node:'b'})).untested,['shared']);
   await ops.merge({cwd:r.cwd,node:'a',as:parent}); const ledger=await Ledger.open(r.cwd), before=await ledger.read();
   await assert.rejects(ops.merge({cwd:r.cwd,node:'b',as:parent}),/rebase needed/); assert.deepEqual(await ledger.read(),before);
