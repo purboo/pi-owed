@@ -129,7 +129,7 @@ All keys are sha256 hex over canonical JSON.
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer | `{node, attempt, commit}` | candidate claim (speech) |
 | `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate |
-| `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[]}` | judgment observation on review/closure-review item |
+| `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5) |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
 | `defer` | owner | `{node, items: {id, key}[], reason}` | deferral of invariant items for one merge (stays debt) |
 | `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot; `reason` is the `--note` text |
@@ -204,6 +204,10 @@ harness, materialization failure) is ⊥: no information, no block.
     by anyone with rank > r (owner = 3), or by an owner `waive` with
     `accept_risk` citing it. A same-rank ok by a different reviewer is a dissent:
     the block stays and the item goes to the owner (a4.1 ruling 5).
+    A block recorded with `needs: "parent"` carries `needs: 'parent'` on its
+    Block; it clears by the same rules. It is *resolved* (`parentRuling`) by the
+    first `rule` whose node list names its node (not `*`) with a seq above the
+    block's; until then it awaits a parent ruling (§12.5).
   - A waiver or ok on another key never clears a block (a4.1 ruling 1).
 - W ⟺ item not in E, owner `waive` on the same key, and every active block on
   (n, o) is cited in its `accept_risk`. Invariant items are never in W.
@@ -352,7 +356,7 @@ dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // create
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
 attest(o: {cwd, node, rerun?: boolean, signal?: AbortSignal}): Promise<AttestResult>   // abort: §7.8
-review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review"}): Promise<Entry>
+review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review", needs?: "parent"}): Promise<Entry>
 waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel}): Promise<Entry>
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
 abandon(o: {cwd, node, reason, as}): Promise<Entry>      // reason = the --note text
@@ -543,7 +547,8 @@ changing git or the ledger.
 ledger plan), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
 `submit <node> [--commit X]`, `rebase <node>` (parent, or the slot writer when
 run inside its worktree), `attest <node> [--rerun]`,
-`review <node> --ok|--block --rank N --as reviewer:ID [--note] [--ack-rulings]`,
+`review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings]`
+(`--needs-parent` records `needs: "parent"`; refused with `--ok`),
 `waive <node> <obligation> --reason ... [--accept-risk 12,15]`,
 `defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
 spelling `--reason`; not both), `merge <node>`, `status`,
@@ -604,7 +609,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_submit` | `node`, `commit?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
 | `owed_attest` | `node`, `rerun?`, `as` | attest |
-| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `as` | review |
+| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `needs_parent?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only) |
 | `owed_merge` | `node`, `as` | merge |
 | `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
@@ -727,6 +732,15 @@ must name the node's current open slot (node and attempt), and so must a halt.
   (`Driver launch #seq <role> <rid> (spec <sha12>)`) and send
   (`Driver send #seq <kind> (<reason>) to <rid>: <send id>`) of the open
   attempt; `--json` has `halt?` and `runs?`.
+- **Needs a parent ruling** (§12.5): `why` marks a needs-parent block on the
+  current candidate `⛔ blocked #seq <obligation> (needs a parent ruling): …`
+  until a ruling naming the node follows it, then `(ruled #<rule seq>)`; a stale
+  needs-parent block (recorded on an earlier candidate) keeps the ordinary
+  block wording. `status` lists current-candidate blocks of open attempts still
+  awaiting a ruling under `Blocked (needs a parent ruling):`
+  (`⛔ <node>: blocked #seq <obligation> (needs a parent ruling): <note>; record
+  owed rule --nodes <node> "<decision>"`; `--json` `needsRuling`, present only
+  when non-empty).
 - **Report**: `Driver halts` lists halts after `since` plus every still active
   halt, each marked `(active)` or `(cleared)` (shown only when non-empty;
   `--json` `halts`).
@@ -742,6 +756,24 @@ need owner action. One reviewer run covers all of a candidate's review
 obligations (review and closure-review); a node with `review.count` > 1 gets
 one run per required principal, each with the next attempt-global `n`
 (`nextReviewerN`), so distinct reviewer ids.
+
+Review blocks that need a parent ruling (D18, D18b). Once the candidate is
+measured (after the attest rows) and before any repair — the measured repair
+included, so no repair carries an undecided contract — if any review block on
+the current candidate has `needs: 'parent'` and no ruling naming
+the node (`--nodes` includes it; a `*` ruling is general guidance and does not
+count) has a seq above the block's, the action is a halt needing `human`:
+`review block #<seq> <obligation> needs a parent ruling: <note>; record
+\`owed rule --nodes <node> "<decision>"\`; the writer gets the ruling with the
+next repair` (one clause per such block; with a repair already outstanding the
+ruling reaches the writer with the following repair or the re-review). No repair follow-up is sent and none is
+counted. That node-named ruling also clears the halt (§12.3); the block is then
+repaired as usual, and every repair message lists, after the review notes, the
+rulings covering the node recorded after the dispatch (`Rulings since
+dispatch:` with `- #seq text`); the note of a needs-parent block quotes its
+ruling (`ruling #seq: text`), also when that ruling predates the dispatch (a
+block from an earlier attempt). The re-review acknowledges them through
+`ack_rulings` as before.
 
 ### 12.6 Review packet (D5)
 
@@ -760,7 +792,11 @@ commands
 `--ack-rulings S` with the latest in-scope ruling S when the rulings item is
 owed; a rank above 2 is owner-only and the packet says the run cannot discharge
 it), and the rules: inspect the actual diff (`git diff <base> <candidate>`), do
-not edit files, record verdicts in the ledger, reply with seqs.
+not edit files, record verdicts in the ledger, reply with seqs. Before the
+commands it says: "If the brief or plan is ambiguous or contradictory, or the
+fix needs a product or contract decision, record --block --needs-parent and
+state the decision needed; do not push a guess onto the writer." (the command
+lines themselves are unchanged).
 `reviewRuns(state, node)` = `max(review.count, 1 if closure-review is required
 else 0)` runs per candidate; with `k = n - reviewerBase(state, node)`,
 `reviewObligations(state, node, n)` = `review` while `1 ≤ k ≤ review.count`,
