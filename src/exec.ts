@@ -49,10 +49,13 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string }> {
     return new Promise(resolve => {
       let output = Buffer.alloc(0), error: string | undefined;
-      const env: NodeJS.ProcessEnv = { ...process.env, CI: '1', OWED: '1' };
+      const inherited: NodeJS.ProcessEnv = { ...process.env };
       // A nested Node test runner must not inherit the parent's IPC/reporting mode.
-      delete env.NODE_TEST_CONTEXT;
-      const p = spawn('bash', ['-lc', run], { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+      delete inherited.NODE_TEST_CONTEXT;
+      // D20: the plan's exec.env over the inherited environment, CI/OWED last; the wrapper argv prefixes bash -lc.
+      const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1' };
+      const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
+      const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
       p.stdout.on('data', collect); p.stderr.on('data', collect);
       const kill = () => { if (p.pid) { try { process.kill(-p.pid, 'SIGKILL'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
@@ -120,7 +123,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       // (missing module/export), so the runner reports a single failing test; a red run needs only a
       // recognizable failure (non-zero exit, red_expect match, not a known-format zero-test run).
       const red = job.kind === 'red';
-      // A red run must fail as a test, not because the command could not run: bash exits 126 (not executable) or 127
+      // A red run must fail as a test, not because the command could not run: bash (or the exec.wrap wrapper, D20) exits 126 (not executable) or 127
       // (not found), which red_expect may still match. That is no counterfactual: error, not pass (D15.4).
       if (red && (result.code === 126 || result.code === 127)) throw new Error(`red run command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})`);
       if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');

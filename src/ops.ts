@@ -55,7 +55,7 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
   for (const job of jobs) {
     checkAbort(signal);
     let plan = snapshot.plan;
-    // Attribution must use the original setup, closure and writes as well as the original check spec.
+    // Attribution must use the original setup, exec, closure and writes as well as the original check spec.
     if (job.attribution) {
       const h = await load(ledger);
       const block = h.entries.find(e => e.kind === 'obs' && e.subject === job.subject && e.obligation === job.obligation && e.key === job.key && e.verdict === 'fail' && !e.attribution);
