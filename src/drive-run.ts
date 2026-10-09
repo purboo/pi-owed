@@ -166,6 +166,11 @@ export class Driver {
   private readonly o: DriveOptions; readonly dsa: Dsa; private readonly owed: string[];
   private ledger?: Ledger; private root?: string; project?: string;
   stopping = false;
+  /**
+   * Aborts the in-process ops calls that run checks (ops.merge, D16a.1): the immediate stop aborts it synchronously
+   * before process.exit, so their check process groups get SIGKILL. A soft stop (`stopping`) lets the action finish.
+   */
+  readonly abort = new AbortController();
   constructor(o: DriveOptions) { this.o = o; this.dsa = o.dsa ?? new Dsa(); this.owed = o.owed ?? defaultOwed(); }
 
   private async init(): Promise<Ledger> {
@@ -300,7 +305,7 @@ export class Driver {
         case 'attest': return { report: await this.attest(s, a.node), applied: false };
         case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
         case 'merge': {
-          try { const r = await ops.merge({ cwd, as, node: a.node }); return done('merged', false, `trunk ${r.commit.slice(0, 12)}`); }
+          try { const r = await ops.merge({ cwd, as, node: a.node, signal: this.abort.signal }); return done('merged', false, `trunk ${r.commit.slice(0, 12)}`); }
           catch (e) {
             if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
             // D14.2: the refusal is acted on in this pass: rebase when trunk moved under a conflicting candidate, else halt.
@@ -404,9 +409,14 @@ export async function drive(o: DriveOptions): Promise<number> {
   // Loop: the first SIGINT/SIGTERM stops after the current action; the second stops at once (D14.8). `--once`: the
   // first stops at once (D16.3). At once = end the running dsa invocations (hold passes SIGTERM to `owed attest`) and
   // the process groups of direct attest children (attest then ends its checks, D16.2), release the lock, exit 130. The
-  // ledger stays consistent: every entry is appended whole, and attest records its own observations.
+  // ledger stays consistent: every entry is appended whole, and attest records its own observations. An in-process merge
+  // is aborted first (D16a.1: its checks get SIGKILL; a stop between advanceTrunk and the append surfaces as CAS drift).
+  // One stop request is one signal per process group (D16a.3): this path runs once (it ends in process.exit, which is
+  // synchronous), killAll signals each pid of dsa's live set once, and directChildren holds only `owed attest` children
+  // spawned by runProcess, never a dsa invocation, so the two sets are disjoint and no group is signalled twice.
   const onSignal = () => {
     if (!o.once && ++signals === 1) { onAbort(); return; }
+    driver.abort.abort();
     driver.dsa.killAll('SIGTERM');
     for (const pid of directChildren) { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
     lock.releaseSync();

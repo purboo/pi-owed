@@ -295,6 +295,9 @@ moved ref silently.
   restore the ref to a descendant of the ledger trunk). `escape` cannot name an
   adoption (it names merges only). The adopted commits are not reviewed by owed;
   the entry records that the owner took them on trunk.
+- A moved ref or ledger makes adopt record nothing, except after an abort
+  (§7.8): observations measured before it are recorded when the ledger is
+  stable and they pass the guard, without a ref check.
 
 ## 7. Executor (attest)
 
@@ -331,8 +334,10 @@ moved ref silently.
    SIGKILL, that run records nothing, no further job starts, and the operation
    rejects with `OwedError('aborted', 'aborted')`. Observations of jobs that
    completed before stay: attest/init appended them already; merge/adopt
-   append the ones they measured when the ledger did not move meanwhile (the
-   same stability check as their refusal path). An abort never moves trunk:
+   append the ones they measured when the ledger did not move meanwhile and
+   each passes the guard (the same stability check as their refusal path; no
+   trunk-ref check — they are facts about the measured tree, so an aborted
+   adopt records them even if the ref moved). An abort never moves trunk:
    merge/adopt check it last under the lock, before `git update-ref`. An
    already-aborted signal starts nothing.
 
@@ -563,8 +568,9 @@ Signals (D16). While `attest`, `merge`, `init` or `adopt` runs (after any owner
 confirmation), SIGINT, SIGTERM and SIGHUP are handled: the first aborts the
 operation (§7.8: the running check's process group is killed, nothing more
 starts), the CLI prints `Aborted: <signal>` to stderr and exits 130 (SIGINT) or
-143 (SIGTERM/SIGHUP); a second signal while aborting exits at once with the same
-code as the first. So `hold machine -- owed attest` releases the lease only after
+143 (SIGTERM/SIGHUP); signals within 1 s of the first are the same request
+(ignored), and a signal 1 s or more later while aborting exits at once with the
+same code as the first. So `hold machine -- owed attest` releases the lease only after
 the checks ended. Exit codes describe the ledger outcome (`owed drive` reads them,
 D14.3): a signal that arrives after the last abort point, when the operation
 completed, does not change the exit code — the normal result is printed, stderr
@@ -843,7 +849,14 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   the lock released, exit 130 (the ledger stays consistent; `owed attest` ends
   the checks it started, §10 Signals). `owed drive --once` stops at once like
   this on the first SIGINT/SIGTERM (D16.3). The pi tool's pass installs no
-  signal handlers.
+  signal handlers. A merge runs inside the driver: the stop at once aborts it
+  first (the driver's AbortController, D16a.1), so its checks get SIGKILL and
+  trunk does not move. Accepted window: a stop after merge's `git update-ref`
+  and before its ledger append leaves trunk ahead of the ledger; the next merge
+  or pass sees CAS drift and halts needing the owner (never silent; the owner
+  adopts the merge commit). Each process group gets one SIGTERM per stop; the
+  `owed attest` CLI treats signals within 1 s of its first as the same request
+  (hold may forward the driver's SIGTERM while the group also gets it).
 - **Surfaces.** CLI `owed drive [--once] [--max N] [--json]` (one line per
   action: `<action>: <outcome> — <detail>`; notify lines verbatim; `--json`
   JSON lines). `--once` is one pass. Pi tool `owed_drive` runs `--once` only

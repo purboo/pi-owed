@@ -233,7 +233,9 @@ export async function adoptPreview(o: Context & { commit?: string }): Promise<Ad
 /**
  * Owner adoption of trunk commits made outside owed. Measures every invariant whose key changed on the adopted
  * commit; an invariant satisfied on the prior trunk but not on the adopted commit refuses the adoption (its
- * observations are recorded). Same lock/CAS discipline as merge: a moved ref or ledger records nothing.
+ * observations are recorded). Same lock/CAS discipline as merge: a moved ref or ledger records nothing, except after an
+ * abort (D16a, SPEC §7.8): observations measured before it are recorded when the ledger is stable and they pass the
+ * guard, without a ref check (abortWith).
  */
 export async function adopt(o: Actor & { commit?: string; note: string; channel: Channel; signal?: AbortSignal }): Promise<AdoptResult> {
   owner(o); if (o.as.role !== 'owner') throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
