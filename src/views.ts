@@ -38,6 +38,7 @@ export interface Report {
   since: number | string; merges: Entry[]; blocks: ReceiptCard['blocks']; waivers: Entry[];
   downgrades: State['downgrades']; rulings: State['rules']; decisions: ItemView[];
   changes: { subject: string; obligation: string; before?: string; after: string }[];
+  /** Owner entries after `since`, except `adopt` (listed once, under `adoptions`). */
   ownerActions: Entry[];
   /** Owner adoptions of trunk commits made outside owed, after `since`. */
   adoptions: AdoptionView[];

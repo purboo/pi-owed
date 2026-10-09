@@ -92,7 +92,7 @@ test('adopt a release commit made outside owed, then dispatch and merge normally
     // Report and brief list the adoption as an owner decision.
     const report = await cli(r.cwd, ['report']);
     assert.match(report.stdout, new RegExp(`Trunk adoptions \\(owner decisions: commits made outside owed\\)\\n  #${e.seq} owner:human \\(flag weak confirmation\\) adopted ${r.s0.slice(0, 12)}\\.\\.${release.slice(0, 12)} \\(2 commits made outside owed, not reviewed by owed\\); changed: CHANGELOG.md, VERSION; note: release 0.2.0`));
-    assert.match(report.stdout, new RegExp(`#${e.seq} owner:human \\(flag weak confirmation\\) adopted trunk main ${r.s0.slice(0, 12)}\\.\\.${release.slice(0, 12)} \\(2 commits made outside owed, 2 changed paths\\): release 0.2.0`), 'owner actions');
+    assert.doesNotMatch(report.stdout, /adopted trunk main/, 'the adoption is not repeated under owner actions');
     assert.equal((await call<ops.Report>(r.cwd, ['report'])).adoptions.length, 1);
     assert.equal((await call<ops.Report>(r.cwd, ['report', '--since', String(e.seq)])).adoptions.length, 0, 'since filters adoptions');
     const brief = await cli(r.cwd, ['brief']);
@@ -292,7 +292,7 @@ test('owed_adopt asks for owner confirmation (escaped free text) and records pi-
     { const out = await declined.call({ note }); assert.equal(out.isError, true); assert.match(text(out), /did not confirm/); }
     assert.equal(declined.prompts.length, 1);
     const lines = declined.prompts[0]!.split('\n');
-    assert.deepEqual(lines, ['owed: confirm owner decision', `Adopt trunk main ${r.s0.slice(0, 12)}..${head.slice(0, 12)}: 1 commit made outside owed`, `These changes were not reviewed through owed; adopting them makes ${head.slice(0, 12)} the ledger trunk.`, `Repository: ${r.cwd}`, 'Identity: owner:human', 'Changed paths: CHANGELOG.md', 'Note: release 0.2.0\\nIdentity: owner:fake', 'Confirmation will be recorded as pi-confirm.']);
+    assert.deepEqual(lines, ['owed: confirm owner decision', `Adopt trunk main ${r.s0.slice(0, 12)}..${head.slice(0, 12)}: 1 commit made outside owed`, `These changes were not reviewed through owed; adopting them makes ${head.slice(0, 12)} the ledger trunk.`, `Repository: ${r.cwd}`, 'Identity: owner:human', 'Changed paths (1):', '  CHANGELOG.md', 'Note: release 0.2.0\\nIdentity: owner:fake', 'Confirmation will be recorded as pi-confirm.']);
     assert.deepEqual(await entries(r.cwd), before, 'refusals and a declined dialog record nothing');
     const ok = harness(r.cwd, true), out = await ok.call({ note, cwd: r.cwd });
     assert.notEqual(out.isError, true, text(out));
