@@ -732,10 +732,12 @@ must name the node's current open slot (node and attempt), and so must a halt.
   (`Driver launch #seq <role> <rid> (spec <sha12>)`) and send
   (`Driver send #seq <kind> (<reason>) to <rid>: <send id>`) of the open
   attempt; `--json` has `halt?` and `runs?`.
-- **Needs a parent ruling** (§12.5): `why` marks a needs-parent block
-  `⛔ blocked #seq <obligation> (needs a parent ruling): …` until a ruling naming
-  the node follows it, then `(ruled #<rule seq>)`. `status` lists open-attempt
-  blocks still awaiting a ruling under `Blocked (needs a parent ruling):`
+- **Needs a parent ruling** (§12.5): `why` marks a needs-parent block on the
+  current candidate `⛔ blocked #seq <obligation> (needs a parent ruling): …`
+  until a ruling naming the node follows it, then `(ruled #<rule seq>)`; a stale
+  needs-parent block (recorded on an earlier candidate) keeps the ordinary
+  block wording. `status` lists current-candidate blocks of open attempts still
+  awaiting a ruling under `Blocked (needs a parent ruling):`
   (`⛔ <node>: blocked #seq <obligation> (needs a parent ruling): <note>; record
   owed rule --nodes <node> "<decision>"`; `--json` `needsRuling`, present only
   when non-empty).
@@ -755,17 +757,22 @@ obligations (review and closure-review); a node with `review.count` > 1 gets
 one run per required principal, each with the next attempt-global `n`
 (`nextReviewerN`), so distinct reviewer ids.
 
-Review blocks that need a parent ruling (D18). Before the repair of a current
-review block, if any current block has `needs: 'parent'` and no ruling naming
+Review blocks that need a parent ruling (D18, D18b). Once the candidate is
+measured (after the attest rows) and before any repair — the measured repair
+included, so no repair carries an undecided contract — if any review block on
+the current candidate has `needs: 'parent'` and no ruling naming
 the node (`--nodes` includes it; a `*` ruling is general guidance and does not
 count) has a seq above the block's, the action is a halt needing `human`:
 `review block #<seq> <obligation> needs a parent ruling: <note>; record
-\`owed rule --nodes <node> "<decision>"\`, then the driver repairs with the
-ruling` (one clause per such block). No repair follow-up is sent and none is
+\`owed rule --nodes <node> "<decision>"\`; the writer gets the ruling with the
+next repair` (one clause per such block; with a repair already outstanding the
+ruling reaches the writer with the following repair or the re-review). No repair follow-up is sent and none is
 counted. That node-named ruling also clears the halt (§12.3); the block is then
 repaired as usual, and every repair message lists, after the review notes, the
 rulings covering the node recorded after the dispatch (`Rulings since
-dispatch:` with `- #seq text`). The re-review acknowledges them through
+dispatch:` with `- #seq text`); the note of a needs-parent block quotes its
+ruling (`ruling #seq: text`), also when that ruling predates the dispatch (a
+block from an earlier attempt). The re-review acknowledges them through
 `ack_rulings` as before.
 
 ### 12.6 Review packet (D5)

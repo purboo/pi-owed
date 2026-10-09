@@ -8,8 +8,11 @@ import { OwedError } from './errors.ts';
 export interface ReceiptCard {
   node: string; phase: NodeState['phase']; accepted: boolean;
   items: (ItemView & { observations: Entry[] })[];
-  /** `ruled`: seq of the ruling that resolved a needs-parent block (D18). */
-  blocks: (Block & { clear: string; ruled?: number })[];
+  /**
+   * `ruling` (D18/D18b.4): only on a needs-parent block recorded on the current candidate: `'needed'` while no ruling
+   * naming the node follows it, else the seq of that ruling. A stale needs-parent block has none (stale wording).
+   */
+  blocks: (Block & { clear: string; ruling?: 'needed' | number })[];
   untested: string[]; downgrades: State['downgrades']; ownerFlags: Entry[];
   /** Latest rebase of the open slot; `rangeDiff` lets a reviewer review only the conflict resolution. */
   rebase?: SlotRebase & { rangeDiff?: string };
@@ -29,7 +32,7 @@ export interface StatusView {
   halted: HaltEntry[];
   /** Driver launches of each open slot's current attempt, by node. */
   launches: Record<string, LaunchEntry[]>;
-  /** Active review blocks of open attempts that need a parent ruling and have none yet (D18), with the reviewer's note. */
+  /** Active review blocks on the current candidates of open attempts that need a parent ruling and have none yet (D18, D18b.4), with the reviewer's note. */
   needsRuling?: (Block & { note: string })[];
 }
 /** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog or terminal prompt. */
@@ -72,7 +75,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string): Rece
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   return { node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
-    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => { const r = parentRuling(s, b); return { ...b, clear: clearHint(s, entries, b), ...(r ? { ruled: r.seq } : {}) }; }),
+    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: clearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}) })),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')),
@@ -92,7 +95,7 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
   const halts = Object.keys(s.nodes).flatMap(id => halted(s, id) ?? []), launches: Record<string, LaunchEntry[]> = {};
   for (const h of halts) if (h.needs === 'owner') pending.owner!.push({ subject: h.node, obligation: 'driver-halt', key: '', status: 'D', mark: '⏸', discharger: 'owner', evidence: [h.seq], detail: `driver halted attempt ${h.attempt} (#${h.seq}): ${oneLine(h.reason)}` });
   for (const n of Object.values(s.nodes)) { const runs = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined; if (runs?.launches.length) launches[n.id] = runs.launches; }
-  const all = entriesOf(s), needsRuling = Object.values(s.nodes).filter(n => n.slot?.open).flatMap(n => n.blocks.filter(b => awaitingRuling(s, b)).map(b => { const e = all.find(x => x.seq === b.seq); return { ...b, note: e?.kind === 'review' ? e.note ?? '' : '' }; }));
+  const all = entriesOf(s), needsRuling = Object.values(s.nodes).filter(n => n.slot?.open).flatMap(n => n.blocks.filter(b => currentNeeds(s, b) && awaitingRuling(s, b)).map(b => { const e = all.find(x => x.seq === b.seq); return { ...b, note: e?.kind === 'review' ? e.note ?? '' : '' }; }));
   return { trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, launches, ...(needsRuling.length ? { needsRuling } : {}) };
 }
 const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged' };
@@ -107,8 +110,8 @@ function itemText(i: ItemView & { observations?: Entry[] }): string {
 const HALT_CLEAR = 'cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, a ruling naming it), or a new attempt';
 const haltText = (h: HaltEntry): string => `halted by driver #${h.seq} (attempt ${h.attempt}, needs ${h.needs}): ${oneLine(h.reason)}`;
 const launchText = (l: LaunchEntry): string => `#${l.seq} ${l.role} ${l.rid}`;
-/** ` (needs a parent ruling)` / ` (ruled #<seq>)` after a needs-parent block (D18.5); empty for other blocks. */
-const rulingMark = (b: Block & { ruled?: number }): string => b.needs !== 'parent' ? '' : b.ruled !== undefined ? ` (ruled #${b.ruled})` : ' (needs a parent ruling)';
+/** ` (needs a parent ruling)` / ` (ruled #<seq>)` after a current-candidate needs-parent block (D18.5, D18b.4); empty otherwise. */
+const rulingMark = (b: { ruling?: 'needed' | number }): string => b.ruling === undefined ? '' : b.ruling === 'needed' ? ' (needs a parent ruling)' : ` (ruled #${b.ruling})`;
 /** Status line of an active needs-parent block without a ruling (D18.5). */
 const needsRulingText = (b: Block & { note: string }): string => `⛔ ${b.node}: blocked #${b.seq} ${b.obligation} (needs a parent ruling): ${oneLine(b.note)}; record owed rule --nodes ${b.node} "<decision>"`;
 function runsText(r: AttemptRuns): string[] {
@@ -232,8 +235,13 @@ function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks)}`;
   if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} (the attribution rerun on the original content clears the block)`;
   const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
-  const ruling = b.needs !== 'parent' ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed rule --nodes ${b.node} "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
+  const ruling = !currentNeeds(s, b) ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed rule --nodes ${b.node} "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
   return `${after}${ruling}an ok review of ${b.node}/${b.obligation} on the current candidate by the original reviewer ${by} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it; or owner: ${waiveCommand(b.node, b.obligation, risks)}`;
+}
+/** A needs-parent block recorded on the current candidate of its node's open attempt (D18b.4: stale ones keep the stale wording). */
+function currentNeeds(s: State, b: Block): boolean {
+  const n = s.nodes[b.node];
+  return b.needs === 'parent' && b.kind === 'judgment' && !!n?.slot?.open && !!n.candidate && n.candidate.keys[b.obligation] === b.key;
 }
 /** Pure morning brief over a reduced state. `since` limits the Merged section; the other sections show current state. */
 export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now()): Brief {
