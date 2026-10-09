@@ -88,11 +88,11 @@ async function loadState(ledger: Ledger): Promise<State> {
 
 // ---------- single-driver lock (D6) ----------
 /** Start time of a process (Linux `/proc/<pid>/stat` field 22), to tell a reused pid from the lock holder; else undefined. */
-function procStart(pid: number): string | undefined {
+export function procStart(pid: number): string | undefined {
   try { const stat = readFileSync(`/proc/${pid}/stat`, 'utf8'); return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]; } catch { return undefined; }
 }
-interface LockOwner { pid: number; start?: string; host: string; at: string; token: string }
-function lockAlive(o: LockOwner): boolean {
+export interface LockOwner { pid: number; start?: string; host: string; at: string; token: string }
+export function lockAlive(o: LockOwner): boolean {
   try { process.kill(o.pid, 0); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EPERM') return false; }
   const now = procStart(o.pid);
   return o.start === undefined || now === undefined || now === o.start;
@@ -136,7 +136,7 @@ export async function acquireDriveLock(dir: string): Promise<DriveLock> {
 }
 
 // ---------- process helpers ----------
-const defaultOwed = (): string[] => [process.execPath, fileURLToPath(new URL('../bin/owed.js', import.meta.url))];
+export const defaultOwed = (): string[] => [process.execPath, fileURLToPath(new URL('../bin/owed.js', import.meta.url))];
 /** Process groups of direct `owed attest` children (no dsa), ended by a hard stop. */
 const directChildren = new Set<number>();
 function runProcess(argv: string[], cwd: string): Promise<{ exit: number | null; stdout: string; stderr: string }> {
@@ -160,6 +160,36 @@ function crashPoint(point: 'before-dsa' | 'after-dsa', kind: 'launch' | 'send'):
 // ---------- the driver ----------
 /** Busy text without hold's ages ("(exclusive, 2s)" → "(exclusive)"), which change every pass (D14.6). */
 export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?\s*(?:ms|s|m|h|d)\b/g, '').replace(/\s+\d+(?:\.\d+)?\s*(?:ms|s|m|h|d)\b(?=[,)])/g, '');
+
+/**
+ * A loop event line (`--json`: `{"event": …}`). `exit` is the last line of a `--json` loop driver (D17.2): code is the
+ * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
+ */
+export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
+export interface LoopEvent { event: 'idle' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit'; head?: string; reason?: string; error?: string; code?: number; at?: string }
+
+/**
+ * The text-mode line of a driver output object (an ActionReport or a LoopEvent): `owed drive` prints it, and the
+ * background driver's JSON log is rendered with it (D17.3). An object that is neither is shown as escaped JSON.
+ */
+export function reportText(json: object): string {
+  if ('event' in json) {
+    const e = json as LoopEvent;
+    switch (e.event) {
+      case 'idle': return 'idle: nothing open and nothing ready';
+      case 'stopped': return 'stopped';
+      case 'killed': return 'killed: second signal, stopped at once';
+      case 'cursor-reset': return e.reason !== undefined ? `events: cursor rejected (${oneLine(e.reason)}), reset${e.head ? ` to ${e.head}` : ''}` : `events: cursor expired, reset to ${e.head}`;
+      case 'events-error': return `events error: ${oneLine(e.error ?? '')}`;
+      case 'exit': return `driver exited ${e.code} (${e.reason})${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
+      default: return oneLine(JSON.stringify(json));
+    }
+  }
+  if (!('do' in json) || typeof (json as { do: unknown }).do !== 'string') return oneLine(JSON.stringify(json));
+  const r = json as ActionReport;
+  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' ? `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})` : `${r.do} ${r.node}`;
+  return r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`;
+}
 
 export class Driver {
   readonly facts = new Facts();
@@ -246,7 +276,6 @@ export class Driver {
     return { actions: reports, progress: applied || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') };
   }
 
-  private print(line: string, json: object): void { this.o.log(this.o.json ? JSON.stringify(json) : line); }
   /** Prints a report; in the loop a notify / busy line for a node only when its text (without ages) changed. */
   emit(r: ActionReport): void {
     if (!this.o.once && (r.outcome === 'notify' || r.outcome === 'busy')) {
@@ -254,8 +283,7 @@ export class Driver {
       if (this.facts.printed.get(slot) === key) return;
       this.facts.printed.set(slot, key);
     } else if (r.do === 'attest') this.facts.printed.delete(`${r.node}:busy`);
-    const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' ? `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})` : `${r.do} ${r.node}`;
-    this.print(r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`, r);
+    this.o.log(this.o.json ? JSON.stringify(r) : reportText(r));
   }
 
   private async halt(node: string, attempt: number, reason: string, needs: 'human' | 'owner' = 'human'): Promise<void> {
@@ -398,8 +426,24 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> => new Promise(re
  * `passMs`, whichever comes first. Exits 0 when idle (nothing open, nothing to dispatch) or after SIGINT/SIGTERM (or
  * `signal`) once the current action is done; a second signal exits 130 at once (with `once`, the first one does). A live driver refuses with
  * OwedError('refused').
+ * In `--json` loop mode the last line is the exit record `{"event":"exit","code","reason","at","error"?}` (D17.2):
+ * then a failure (drive threw, the lock refused) is that record plus the CLI exit code (refused 1, usage 2, else 3)
+ * instead of a throw, so a background driver's log always ends with it (unless SIGKILL or a crash).
  */
 export async function drive(o: DriveOptions): Promise<number> {
+  if (o.once || !o.json) return driveLoop(o, {});
+  const exit = (code: number, reason: ExitReason, error?: string): void => o.log(exitRecord(code, reason, error));
+  const end: { reason?: ExitReason } = {};
+  try { const code = await driveLoop(o, end); exit(code, end.reason ?? 'stopped'); return code; }
+  catch (e) {
+    const code = e instanceof OwedError ? (e.code === 'refused' ? 1 : e.code === 'usage' ? 2 : 3) : 3;
+    exit(code, 'error', e instanceof Error ? e.message : String(e));
+    return code;
+  }
+}
+const exitRecord = (code: number, reason: ExitReason, error?: string): string => JSON.stringify({ event: 'exit', code, reason, at: new Date().toISOString(), ...(error !== undefined ? { error } : {}) });
+
+async function driveLoop(o: DriveOptions, end: { reason?: ExitReason }): Promise<number> {
   const ledger = await Ledger.open(o.cwd);
   const lock = await acquireDriveLock(ledger.dir);
   const driver = new Driver(o), stop = new AbortController();
@@ -421,6 +465,7 @@ export async function drive(o: DriveOptions): Promise<number> {
     for (const pid of directChildren) { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
     lock.releaseSync();
     say(o.once ? 'killed: signal, stopped at once' : 'killed: second signal, stopped at once', { event: 'killed' });
+    if (o.json && !o.once) o.log(exitRecord(130, 'killed'));
     process.exit(130);
   };
   o.signal?.addEventListener('abort', onAbort);
@@ -470,7 +515,7 @@ export async function drive(o: DriveOptions): Promise<number> {
     for (;;) {
       for (let burst = 0; burst < 20 && !driver.stopping; burst++) {
         const r = await driver.pass();
-        if (r.idle) { say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
+        if (r.idle) { say('idle: nothing open and nothing ready', { event: 'idle' }); end.reason = 'idle'; return 0; }
         if (!r.progress) break;
       }
       const last = Date.now();
@@ -478,7 +523,7 @@ export async function drive(o: DriveOptions): Promise<number> {
         await sleep(o.pollMs ?? 3000, stop.signal);
         if (driver.stopping || Date.now() - last >= (o.passMs ?? 30_000) || await poll()) break;
       }
-      if (driver.stopping) { say('stopped', { event: 'stopped' }); return 0; }
+      if (driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     }
   } finally {
     if (handle) { process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); }
