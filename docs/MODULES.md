@@ -72,6 +72,7 @@ export function parseCounts(log: string): Counts | undefined;   // TAP, node:tes
 ```
 A job of kind `writes` computes the verdict from `git diff --name-only base commit` and the node's `writes` prefixes; `note` lists violating paths.
 Timeouts kill the whole process group (spawn `detached: true`, `process.kill(-pid)`). Log blobs keep at most the last 1 MiB plus a truncation marker.
+`min_tests` applies to every non-red run (check and invariant), never to a red run. A red run whose command exits 126/127 or cannot be spawned is `error` (SPEC §6.2).
 
 ## src/reducer.ts  (leaf core, pure: no fs/git/clock)
 ```ts
@@ -110,6 +111,7 @@ Dispatch worktrees: `<mainRoot>/.owed/wt/<node>-<attempt>` (main worktree root, 
 class Dsa { killAll(sig?); run(rid, specBytes, labels?, cwd?); send(id, to, kind, message); describe(rid): RunView; inspect(rid): {view, gen?};
   request(id): {state: applied|rejected|pending|absent, reason?}; events(since?, limit?); hold(resource, argv, {shared?, cwd?}) /* --no-wait: ran|busy|refused|signal */ }
 // src/drive.ts: decide(state, plan, runs, opts): Action[] (pure)
+// src/drive.ts also: rejectedFixed(node) / rejectedHalt(node, 'run'|'send', id, reason) (halt text of a dsa rejection, D15.1); blockText(state, candidate, block) (a block in a `stalled:` halt, D15.3)
 // src/drive-run.ts
 export function drive(o: DriveOptions): Promise<number>;   // lock, then one pass (once) or the loop; OwedError('refused') when another driver runs
 export class Driver { pass(): Promise<PassResult> }        // one pass: observe, decide, execute
@@ -117,7 +119,7 @@ export function driveOnce(o): Promise<{ lines: string[]; error?: string }>;   //
 export function acquireDriveLock(dir: string): Promise<{ release(); releaseSync() }>;   // other-host locks are never taken over
 export function liveRunLines(cwd: string, dsa?: Dsa): Promise<string[]>;   // `/owed` dsa states of live runs
 ```
-`drive-run.ts` writes every verdict (dsa rejection/conflict, merge refusal, attest error) to the ledger in the pass it happens (contract D14) and uses `ops` for every ledger write (dispatch, launch, send, halt, rebase, merge as `parent:drive`) and runs attest as a subprocess under `hold machine --shared --no-wait`. Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs the driver at that point.
+`drive-run.ts` writes every verdict (dsa rejection/conflict, merge refusal, attest error) to the ledger in the pass it happens (contract D14) and uses `ops` for every ledger write (dispatch, launch, send, halt, rebase, merge as `parent:drive`) and runs attest as a subprocess under `hold machine --shared --no-wait`. A dsa rejection halts with the abandon recovery (the attempt's request is fixed, D15.1); the transient merge refusal `Plan, candidate or trunk changed; retry` is retried next pass (D15.2). Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs the driver at that point.
 
 ## src/extension.ts, skills/owed/SKILL.md  (leaf surface)
 Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters.

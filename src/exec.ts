@@ -120,6 +120,9 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       // (missing module/export), so the runner reports a single failing test; a red run needs only a
       // recognizable failure (non-zero exit, red_expect match, not a known-format zero-test run).
       const red = job.kind === 'red';
+      // A red run must fail as a test, not because the command could not run: bash exits 126 (not executable) or 127
+      // (not found), which red_expect may still match. That is no counterfactual: error, not pass (D15.4).
+      if (red && (result.code === 126 || result.code === 127)) throw new Error(`red run command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})`);
       if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
       const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
       obs.verdict = (red ? result.code !== null && result.code !== 0 && (!spec.red_expect || new RegExp(spec.red_expect).test(result.log)) : result.code === 0) && countOK ? 'pass' : 'fail';
