@@ -146,11 +146,11 @@ export interface DecoyRevealEntry extends Base, DecoyPayload { kind: 'decoy-reve
 // ---------- driver entries (SPEC §12, D3); appended by role parent (the driver is `parent:drive`) ----------
 export type RunRole = 'writer' | 'reviewer';
 export type SendKind = 'follow-up' | 'steer';
-export type SendReason = 'submit' | 'repair' | 'interrupted' | 'fenced' | 'rebase' | 'review-missing';
+export type SendReason = 'submit' | 'repair' | 'interrupted' | 'fenced' | 'rebase' | 'review-missing' | 'ruling';
 /** Intent to start a dsa run, persisted before the dsa call. `spec` = blob hash of the exact spec JSON bytes; `rid` = runId(...); `labels` = runLabels(...). */
 export interface LaunchEntry extends Base { kind: 'launch'; node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string> }
 /** Intent to send a message to a run; `send` = `${rid}:${sendKind}:${seq of this entry}` (the dsa request id); `message` = blob hash of the exact message bytes. */
-export interface SendEntry extends Base { kind: 'send'; node: string; attempt: number; rid: string; send: string; sendKind: SendKind; message: string; reason: SendReason }
+export interface SendEntry extends Base { kind: 'send'; node: string; attempt: number; rid: string; send: string; sendKind: SendKind; message: string; reason: SendReason; /** reason `ruling` only (required there, forbidden otherwise): the highest ruling seq the message includes (D22.1). */ rulings?: number }
 /** The driver stops on this attempt until a later non-driver entry on the node or a new attempt (SPEC §12, D3). */
 export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: number; reason: string; needs: 'human' | 'owner' }
 export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry;
