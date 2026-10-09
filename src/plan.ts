@@ -30,6 +30,11 @@ export function parsePlan(text: string): Plan {
       if (c.tests !== undefined) out.tests = strings(c.tests, `${p}.tests`);
       if (out.red && !out.tests?.length) errors.push(`${p}: red requires tests`);
       if (c.red_expect !== undefined) { out.red_expect = str(c.red_expect, `${p}.red_expect`); try { new RegExp(out.red_expect); } catch { errors.push(`${p}.red_expect: invalid regex`); } }
+      if (c.mutants !== undefined) { out.mutants = strings(c.mutants, `${p}.mutants`); if (!out.mutants.length) errors.push(`${p}.mutants: expected at least one glob`); }
+      if (c.min_kill !== undefined) {
+        if (typeof c.min_kill !== 'number' || !(c.min_kill > 0 && c.min_kill <= 1)) errors.push(`${p}.min_kill: expected a number in (0, 1]`); else out.min_kill = c.min_kill;
+        if (out.mutants === undefined) errors.push(`${p}: min_kill requires mutants`);
+      }
       return out;
     });
   };
@@ -57,8 +62,18 @@ export function parsePlan(text: string): Plan {
   for (const id of ids.keys()) visit(id);
   const plan: Plan = { version: 1, trunk: str(r.trunk, 'trunk'), closure: strings(r.closure ?? [], 'closure'), invariants: checks(r.invariants, 'invariants'), nodes };
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
+  errors.push(...mutantErrors(plan));
   if (errors.length) throw new OwedError(errors.join('\n'), 'usage');
   return plan;
+}
+/** Conservative: a mutant glob lies inside the closure when, read as a path, it matches a closure glob; a `**` in it needs a closure prefix (`dir/` or `dir/**`) covering it. */
+export function globWithinClosure(glob: string, closure: string[]): boolean {
+  return closure.some(c => c === '**' || (glob.includes('**') ? (c.endsWith('/') ? glob.startsWith(c) : c.endsWith('/**') && glob.startsWith(c.slice(0, -2))) : globMatch(glob, c)));
+}
+function mutantErrors(plan: Plan): string[] {
+  const errors = plan.invariants.filter(c => c.mutants !== undefined).map(c => `invariants: ${c.id}: mutants are only supported on node checks`);
+  for (const n of plan.nodes) for (const c of n.checks) for (const g of c.mutants ?? []) if (!globWithinClosure(g, plan.closure)) errors.push(`${n.id}: check ${c.id}: mutant glob ${g} must lie inside the plan closure`);
+  return errors;
 }
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
   const out: Downgrade[] = [];
@@ -68,6 +83,8 @@ export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
       if (!n) { out.push({ node, what: `check ${c.id} removed` }); continue; }
       if (c.red && !n.red) out.push({ node, what: `check ${c.id} red disabled` });
       if ((n.min_tests ?? 0) < (c.min_tests ?? 0)) out.push({ node, what: `check ${c.id} min_tests lowered` });
+      if (c.mutants?.length && !n.mutants?.length) out.push({ node, what: `check ${c.id} mutants removed` });
+      else if (c.mutants?.length && (n.min_kill ?? 1) < (c.min_kill ?? 1)) out.push({ node, what: `check ${c.id} min_kill lowered` });
     }
   }
   compare('trunk', prev.invariants, next.invariants);

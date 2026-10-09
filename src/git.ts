@@ -48,6 +48,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
   const closure = await readsDigest(cwd, base, plan.closure), keys: Record<string,string> = {};
   for (const c of node.checks) {
     keys[`check:${c.id}`] = await checkKey(cwd, plan, c, commit, closure, 'check');
+    if (c.mutants) keys[`strength:${c.id}`] = await strengthKey(cwd, plan, c, base, commit, closure);
     if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
   keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes });
@@ -56,6 +57,14 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
   keys.review = H({ o: 'review', patch });
   keys.rulings = H({ o: 'rulings', attempt });
   return { commit, base, tree: await tree(cwd, commit), patch, changed, closureTouched, keys };
+}
+/** Mutant patch paths of `commit` (the base): matching a mutant glob and the plan closure, sorted. */
+export async function mutantPaths(cwd: string, commit: string, mutants: string[], closure: string[]): Promise<string[]> {
+  return (await files(cwd, commit)).map(([p]) => p).filter(p => matchesAny(p, mutants) && matchesAny(p, closure));
+}
+async function strengthKey(cwd: string, plan: Plan, spec: CheckSpec, base: string, commit: string, closure: string): Promise<string> {
+  const mutants = H((await files(cwd, base)).filter(([p]) => matchesAny(p, spec.mutants ?? []) && matchesAny(p, plan.closure)));
+  return H({ o: 'strength', id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, min_tests: spec.min_tests, min_kill: spec.min_kill ?? 1, closure, mutants, reads: await readsDigest(cwd, commit, spec.reads) });
 }
 export async function stateFacts(cwd: string, plan: Plan, commit: string): Promise<StateFacts> {
   commit = await revParse(cwd, commit);

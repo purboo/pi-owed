@@ -14,6 +14,8 @@ export interface CheckSpec {
   red?: boolean;
   tests?: string[];           // required when red
   red_expect?: string;
+  mutants?: string[];         // globs of mutant patch files inside the plan closure (read from the base)
+  min_kill?: number;          // fraction of mutants that must be killed, in (0,1]; default 1
 }
 export interface NodeSpec {
   id: string;
@@ -43,7 +45,7 @@ export interface CandidateFacts {
   patch: string;       // patch-id (or sha256("") for empty diff)
   changed: string[];   // git diff --name-only B C
   closureTouched: boolean;
-  keys: Record<string, string>;   // 'check:<id>', 'red:<id>', 'writes', 'closure-review', 'review', 'rulings'
+  keys: Record<string, string>;   // 'check:<id>', 'red:<id>', 'strength:<id>', 'writes', 'closure-review', 'review', 'rulings'
 }
 /** Facts about a trunk state S. invKeys: invariant id -> item key. */
 export interface StateFacts { commit: string; tree: string; invKeys: Record<string, string> }
@@ -61,7 +63,7 @@ export interface SubmitEntry extends Base { kind: 'submit'; node: string; attemp
 export interface ObsEntry extends Base {
   kind: 'obs';
   subject: string;           // node id, or 'trunk'
-  obligation: string;        // 'check:<id>' | 'red:<id>' | 'writes' | 'inv:<id>'
+  obligation: string;        // 'check:<id>' | 'red:<id>' | 'strength:<id>' | 'writes' | 'inv:<id>'
   key: string;
   verdict: Verdict;
   exit: number | null;
@@ -137,11 +139,11 @@ export interface State {
 
 // ---------- executor jobs ----------
 export interface AttestJob {
-  kind: 'check' | 'red' | 'inv' | 'writes';
+  kind: 'check' | 'red' | 'strength' | 'inv' | 'writes';
   subject: string;             // node id or 'trunk'
   obligation: string;
   key: string;
-  spec?: CheckSpec;            // for check/red/inv
+  spec?: CheckSpec;            // for check/red/strength/inv
   commit: string;              // C (or M / trunk state)
   base: string;                // B (closure source)
   attribution?: boolean;

@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { Plan, AttestJob, ObsEntry, Counts } from './types.ts';
 import type { Ledger } from './ledger.ts';
-import { git, materialize, overlay } from './git.ts';
+import { git, materialize, overlay, mutantPaths } from './git.ts';
 
 export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; signal?: AbortSignal; onProgress?(msg: string): void }
 export function parseCounts(log: string): Counts | undefined {
@@ -74,6 +74,36 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const paths = (await git(ctx.cwd, ['diff', '--no-renames', '--name-only', '-z', job.base, job.commit])).stdout.split('\0').filter(Boolean);
       const bad = paths.filter(p => !node.writes.some(prefix => p.startsWith(prefix)));
       obs.verdict = bad.length ? 'fail' : 'pass'; obs.exit = bad.length ? 1 : 0; obs.note = bad.length ? `outside writes: ${bad.join(', ')}` : 'all changed paths within writes'; capture(obs.note);
+    } else if (job.kind === 'strength') {
+      // Mutation counterfactuals: every mutant patch comes from the base B, never from the candidate.
+      const spec = job.spec; if (!spec) throw new Error('missing check spec');
+      const paths = await mutantPaths(ctx.cwd, job.base, spec.mutants ?? [], ctx.plan.closure);
+      if (!paths.length) throw new Error('no mutant patch in the base matches mutants and the closure');
+      const results: string[] = []; let killed = 0;
+      for (const path of paths) {
+        if (ctx.signal?.aborted) throw new Error('aborted');
+        capture(`\n=== mutant ${path} ===\n`);
+        const patch = (await git(ctx.cwd, ['cat-file', 'blob', `${job.base}:${path}`])).stdout;
+        work = await materialize(ctx.cwd, job.commit);
+        try {
+          await overlay(ctx.cwd, work.path, job.base, ctx.plan.closure, 'replace');
+          const applied = await git(work.path, ['apply', '--whitespace=nowarn', '-'], { input: patch, allowFail: true });
+          if (applied.code) { capture(applied.stderr); results.push(`survived ${path}: patch does not apply: ${applied.stderr.trim().split('\n')[0] ?? ''}`); continue; }
+          if (ctx.plan.setup) {
+            const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
+            if (setup.error || setup.code !== 0) throw new Error(`setup failed: ${setup.error ?? setup.code}`);
+          }
+          const result = await command(spec.run, work.path, spec.timeout_s), counts = parseCounts(result.log);
+          if (result.error && !result.error.startsWith('timeout')) throw new Error(result.error);
+          const kill = counts?.tests !== 0 && (result.code !== 0 || (counts?.fail ?? 0) > 0);
+          if (kill) killed++;
+          results.push(`${kill ? 'killed' : 'survived'} ${path}: ${result.error ?? `exit ${result.code}`}, tests ${counts?.tests ?? '?'}, fail ${counts?.fail ?? '?'}${counts?.tests === 0 ? ' (zero-test run is not a kill)' : ''}`);
+        } finally { const w = work; work = undefined; await w.dispose(); }
+      }
+      const minKill = spec.min_kill ?? 1, pass = killed >= minKill * paths.length - 1e-9;
+      obs.counts = { format: 'mutants', tests: paths.length, pass: killed, fail: paths.length - killed };
+      obs.verdict = pass ? 'pass' : 'fail'; obs.exit = pass ? 0 : 1; obs.note = `strength ${killed}/${paths.length} killed (min_kill ${minKill})`;
+      capture(`\n${['Mutants:', ...results.map(l => `- ${l}`), obs.note].join('\n')}\n`);
     } else {
       const spec = job.spec; if (!spec) throw new Error('missing check spec');
       work = await materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit);
