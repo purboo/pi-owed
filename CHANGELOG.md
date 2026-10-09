@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.1
+
+- The pi tool `owed_adopt` confirmation dialog lists up to 50 changed paths,
+  one per line; beyond that it shows the first 50 and then the exact
+  `git diff --no-renames --name-only <prior>..<commit>` command for the full
+  list.
+- `owed report` lists an adoption once, under trunk adoptions only (no longer
+  also under owner actions).
+- An adopt refusal names the observation that decides each failing invariant
+  (for example `h1 (obs #3)`), also on a repeated adopt of the same commit,
+  which measures nothing new and names the existing observation.
+- Release commits are now made through an owed node, so trunk no longer moves
+  outside owed and no adopt is needed for a release.
+
 ## 0.3.0
 
 - **`owed adopt [--commit X] --note TEXT`** (owner only, also the `owed_adopt`
