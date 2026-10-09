@@ -85,6 +85,12 @@ export interface AbandonEntry extends Base { kind: 'abandon'; node: string; atte
 export interface RebaseEntry extends Base { kind: 'rebase'; node: string; attempt: number; base: string; from: string }
 export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts }
 export interface NoteEntry extends Base { kind: 'note'; text: string }
+/**
+ * Owner adoption of trunk commits made outside owed (release commits, hotfixes): `commit` (= refs/heads/<trunk>)
+ * is a fast-forward of the ledger trunk `prior`; `changed` = paths of prior..commit, `commits` = number of commits
+ * in prior..commit; `state` = facts of the adopted commit, which becomes the ledger trunk.
+ */
+export interface AdoptEntry extends Base { kind: 'adopt'; trunk: string; prior: string; commit: string; state: StateFacts; changed: string[]; commits: number; note: string }
 /** Escape classes: missing ② missing obligation; false-pass ①a false affirmative obs; reuse ①b unsound evidence reuse; weak ①c weak oracle; waiver ③ owner waiver. */
 export type EscapeClass = 'missing' | 'false-pass' | 'reuse' | 'weak' | 'waiver';
 export interface EscapeEntry extends Base { kind: 'escape'; node: string; merge: number; class: EscapeClass; note: string; evidence?: string }
@@ -93,7 +99,7 @@ export interface Decoy { node: string; defect: string }
 export interface DecoyPayload { nonce: string; decoys: Decoy[] }
 export interface DecoyCommitEntry extends Base { kind: 'decoy-commit'; digest: string }
 export interface DecoyRevealEntry extends Base, DecoyPayload { kind: 'decoy-reveal' }
-export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry;
+export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
@@ -152,7 +158,9 @@ export interface State {
   escapes: EscapeView[];
   decoys: DecoyView[];             // revealed decoys with outcomes
   decoyCommits: { seq: number; digest: string; by: string; revealed?: number }[];
+  adoptions: AdoptionView[];       // owner adoptions of trunk commits made outside owed, in ledger order
 }
+export interface AdoptionView { seq: number; by: string; channel?: Channel; prior: string; commit: string; commits: number; changed: string[]; note: string }
 export interface EscapeView { seq: number; by: string; node: string; merge: number; class: EscapeClass; note: string; evidence?: string }
 /** caught: a block or rejecting obs on the node before any merge of it; escaped: merged with no prior block; pending: neither yet. */
 export interface DecoyView { node: string; defect: string; commit: number; reveal: number; outcome: 'caught' | 'escaped' | 'pending'; decidedBy?: number }

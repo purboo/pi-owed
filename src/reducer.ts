@@ -113,7 +113,7 @@ function refresh(s: State): void {
 
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
 export function reduce(entries: Entry[], plans: PlanLookup): State {
-  const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [] };
+  const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [], adoptions: [] };
   const h: History = { entries: [], plans, obsPlans: new Map(), mergeCatches: new Set() };
   Object.defineProperty(s, history, { value: h });
   for (const original of entries) {
@@ -174,6 +174,10 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       const n = s.nodes[e.node]!;
       n.merged = { seq: e.seq, commit: e.commit }; n.slot!.open = false;
       s.trunk = { name: s.trunk.name, ...e.state, seq: e.seq };
+    } else if (e.kind === 'adopt') {
+      // Like a merge, the adopted commit becomes the trunk state; open slots are not touched.
+      s.trunk = { name: s.trunk.name, ...e.state, seq: e.seq };
+      s.adoptions.push({ seq: e.seq, by: e.by, ...(e.channel ? { channel: e.channel } : {}), prior: e.prior, commit: e.commit, commits: e.commits, changed: [...e.changed], note: e.note });
     } else if (e.kind === 'escape') s.escapes.push({ seq: e.seq, by: e.by, node: e.node, merge: e.merge, class: e.class, note: e.note, evidence: e.evidence });
     else if (e.kind === 'decoy-commit') s.decoyCommits.push({ seq: e.seq, digest: e.digest, by: e.by });
     else if (e.kind === 'decoy-reveal') {
@@ -309,8 +313,21 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state }).reasons);
       break;
     case 'note': break;
+    case 'adopt': {
+      allow('owner');
+      if (d.trunk !== s.trunk.name) errors.push(`adopt trunk must be the ledger trunk ${s.trunk.name}`);
+      if (d.prior !== s.trunk.commit) errors.push('adopt prior must reference the current trunk');
+      if (typeof d.commit !== 'string' || !d.commit || d.commit !== d.state?.commit) errors.push('adopt commit does not match facts');
+      else if (d.commit === d.prior) errors.push('adopt commit equals the current trunk; nothing to adopt');
+      if (typeof d.note !== 'string' || !d.note.trim()) errors.push('adopt requires a note');
+      if (!Array.isArray(d.changed) || d.changed.some(p => typeof p !== 'string')) errors.push('adopt changed must be a list of paths');
+      if (!Number.isInteger(d.commits) || d.commits < 1) errors.push('adopt commits must be a positive integer');
+      if (!d.state || typeof d.state.tree !== 'string' || !d.state.invKeys || typeof d.state.invKeys !== 'object') errors.push('adopt state must be trunk state facts');
+      else errors.push(...adoptGuard(s, d.state).reasons);
+      break;
+    }
   }
-  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal') {
+  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt') {
     const extra = Object.entries(d).filter(([k, v]) => v !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS[d.kind].includes(k)).map(([k]) => k);
     if (extra.length) errors.push(`${d.kind} has unknown fields: ${extra.join(', ')}`);
   }
@@ -351,7 +368,7 @@ export function validateDraft(s: State, d: Draft): string[] {
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal', readonly string[]> = { escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt', readonly string[]> = { escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'] };
 export const ESCAPE_CLASSES: readonly EscapeClass[] = ['missing', 'false-pass', 'reuse', 'weak', 'waiver'];
 /** sha256 hex of the canonical JSON of exactly {nonce, decoys:[{node, defect}]}; other fields are ignored. */
 export function decoyDigest(p: DecoyPayload): string {
@@ -436,6 +453,34 @@ export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; stat
     if (key && !hasVerdict(s, 'trunk', `inv:${i.id}`, key)) jobs.push(job(undefined, 'trunk', `inv:${i.id}`, key, m.state.commit, m.state.commit, s.plan)!);
   }
   return jobs;
+}
+/** Invariants of the plan whose key on the adopted state `st` lacks a verdict (key changed relative to the trunk, as for merge). */
+export function adoptJobs(s: State, st: StateFacts): AttestJob[] {
+  return s.plan.invariants.flatMap(i => {
+    const key = st.invKeys[i.id];
+    if (!key || key === s.trunk.invKeys[i.id] || hasVerdict(s, 'trunk', `inv:${i.id}`, key)) return [];
+    return [job(undefined, 'trunk', `inv:${i.id}`, key, st.commit, st.commit, s.plan)!];
+  });
+}
+export interface AdoptGuard { ok: boolean; reasons: string[]; failed: string[]; invItems: ItemView[] }
+/**
+ * No new debt for an adoption (SPEC §6.6): an invariant whose key changed on the adopted state must be E there
+ * when it was E on the current trunk; debt already on the trunk (D: failing, ⊥, deferred, ⊤) does not block.
+ */
+export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
+  const reasons: string[] = [], failed: string[] = [];
+  const invItems = s.plan.invariants.map(i => {
+    const key = st.invKeys[i.id] ?? '', o = `inv:${i.id}`;
+    const v = item(s, 'trunk', o, key);
+    if (!key) reasons.push(`invariant ${i.id} missing adopt obligation key`);
+    else if (key !== s.trunk.invKeys[i.id] && v.status !== 'E' && item(s, 'trunk', o, s.trunk.invKeys[i.id] ?? '').status === 'E') {
+      failed.push(i.id);
+      reasons.push(`invariant ${i.id} new debt: satisfied on the current trunk but not on the adopted commit (${v.detail})`);
+    }
+    return v;
+  });
+  if (!s.genesisDone) reasons.push('genesis invariant initial observations are incomplete');
+  return { ok: reasons.length === 0, reasons, failed, invItems };
 }
 export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): MergeGuard {
   const reasons: string[] = [];

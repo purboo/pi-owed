@@ -59,6 +59,23 @@ export async function isAncestor(cwd: string, a: string, b: string): Promise<boo
   const r = await git(cwd, ['merge-base', '--is-ancestor', a, b], { allowFail: true });
   if (r.code > 1) throw new OwedError(r.stderr, 'internal'); return r.code === 0;
 }
+/** Number of commits in from..to. */
+export async function countCommits(cwd: string, from: string, to: string): Promise<number> { return Number((await git(cwd, ['rev-list', '--count', `${from}..${to}`])).stdout.trim()); }
+/** Paths changed between two commits (`git diff --no-renames --name-only`). */
+export async function changedPaths(cwd: string, from: string, to: string): Promise<string[]> { return (await git(cwd, ['diff', '--no-renames', '--name-only', '-z', from, to])).stdout.split('\0').filter(Boolean); }
+/** How refs/heads/<trunk> relates to the ledger trunk commit, when they differ (SPEC §9 status, merge CAS). */
+export interface TrunkDrift { ref: string; commit: string | null; ledger: string; relation: 'ahead' | 'diverged' | 'missing' | 'ledger-missing'; ahead: number; behind: number }
+export async function trunkDrift(cwd: string, trunk: string, ledger: string): Promise<TrunkDrift | undefined> {
+  const ref = `refs/heads/${trunk}`;
+  const r = await git(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], { allowFail: true });
+  if (r.code) return { ref, commit: null, ledger, relation: 'missing', ahead: 0, behind: 0 };
+  const commit = r.stdout.trim();
+  if (commit === ledger) return undefined;
+  if ((await git(cwd, ['cat-file', '-e', `${ledger}^{commit}`], { allowFail: true })).code) return { ref, commit, ledger, relation: 'ledger-missing', ahead: 0, behind: 0 };
+  const counts = await git(cwd, ['rev-list', '--left-right', '--count', `${ledger}...${commit}`], { allowFail: true });
+  const [behind, ahead] = counts.code ? [0, 0] : counts.stdout.trim().split(/\s+/).map(Number) as [number, number];
+  return { ref, commit, ledger, relation: !counts.code && behind === 0 && await isAncestor(cwd, ledger, commit) ? 'ahead' : 'diverged', ahead, behind };
+}
 export async function isClean(worktree: string, untracked = true): Promise<boolean> { return !(await git(worktree, ['status', '--porcelain', `--untracked-files=${untracked ? 'all' : 'no'}`])).stdout; }
 // [path, mode, oid]: the mode is content too (an executable bit or a symlink changes behavior).
 async function files(cwd: string, commit: string): Promise<[string, string, string][]> {

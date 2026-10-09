@@ -17,7 +17,8 @@ Start with `owed_brief` (CLI `owed brief [--since seq|ISO]`): owner decisions wi
 6. The parent inspects receipts and actual changes, then uses `owed_merge`. It checks the merge tree, invariants, and trunk CAS; neither review ok nor an accepted candidate replaces the merge guard. After merging, use `owed_report` to report evidence, waivers, and remaining debt.
 
 7. If an attempt is a dead end, the parent closes its slot with `owed_abandon` (`node`, optional `reason`); the node can then be dispatched again. Periodically run `owed_gc` (first with `dry_run: true`) to remove worktrees and branches of merged or abandoned attempts; it never removes an open slot, a dirty or locked worktree, and it pins submitted commits under `refs/owed/keep/`. Use `owed_verify` to check the ledger hash chain.
-8. A defect found after a merge is recorded with `owed_escape` (`node`, `merge` = seq of that merge entry, `class`, `note`, optional `evidence`). Decoys belong to the owner: `owed_decoy` with `action: digest` only computes a digest, while `commit` and `reveal` require human UI confirmation.
+8. If `owed_status` reports "trunk moved outside owed" (or a merge refuses the trunk CAS naming `owed adopt`), commits were made on trunk directly. Do not move refs to work around it: report it to the owner, who reviews those commits and runs `owed_adopt` (`note`, optional `commit`, UI confirmation) or `owed adopt --note TEXT`. A diverged/rewritten trunk cannot be adopted; the owner must restore it.
+9. A defect found after a merge is recorded with `owed_escape` (`node`, `merge` = seq of that merge entry, `class`, `note`, optional `evidence`). Decoys belong to the owner: `owed_decoy` with `action: digest` only computes a digest, while `commit` and `reveal` require human UI confirmation.
 
 The `owed_why` / `owed why <node>` card lists keys and evidence for each obligation: ✔ measured or reviewed, ⚠ waived, ✘ rejected, ⊥ awaiting observation, ⊤ conflict, ⏸ deferred, ⛔ blocked. E means a pass supported by evidence, W means an owner waiver, and D means remaining debt. Also inspect "Untested changes" and ΔO⁻ (weakened or removed obligations); changes without test coverage must not be described as verified.
 
@@ -27,7 +28,7 @@ Rules that must not be broken:
 
 - Do not edit closure files to make checks pass; the executor pins the check closure from base. Necessary, genuine closure changes must explicitly receive closure-review acceptance.
 - Do not self-review, disguise a writer as an independent reviewer under another name, or fabricate executor evidence.
-- Agents must never use `--i-am-owner`. `owed_waive`, `owed_defer`, `owed_decoy` commit/reveal, and downgrading `owed_plan` require human UI confirmation; without a UI, stop that decision and report it.
+- Agents must never use `--i-am-owner`. `owed_waive`, `owed_defer`, `owed_decoy` commit/reveal, `owed_adopt`, and downgrading `owed_plan` require human UI confirmation; without a UI, stop that decision and report it.
 - The parent may update the plan through a file path with `owed_plan`; only owner may confirm downgrades. Never silently weaken acceptance conditions.
 - Negative observations may only be cleared by the rules. Execution failures require attribution on the original key/commit/base: another failure clears the old block; a pass creates a conflict requiring owner to explicitly accept the risk of the corresponding seq.
 - A judgment block at rank r may only be cleared by an ok from the original reviewer at rank at least r, or another reviewer at a higher rank. Another reviewer at the same rank cannot clear it. Owner waivers must also reference `accept_risk`.

@@ -8,7 +8,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
 import { OwedError } from './errors.ts';
-import { renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
+import { oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -33,11 +33,6 @@ async function target(ctx: ExtensionContext, value?: string): Promise<string> {
 async function readText(dir: string, file: string): Promise<string> {
   try { return await readFile(resolve(dir, file), 'utf8'); }
   catch (e) { throw new OwedError(`cannot read ${file}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`, 'usage'); }
-}
-/** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog. */
-/** Escapes C0/C1 controls, DEL, line/paragraph separators and bidi controls (U+202A–U+202E, U+2066–U+2069). */
-function oneLine(text: string): string {
-  return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => c === '\\' ? '\\\\' : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 /**
  * Resolves the principal; an owner action needs a confirmed dialog. `summary` lines are fixed text whose
@@ -153,6 +148,15 @@ export default function owed(pi: ExtensionAPI): void {
     const items = p.items.map(id => { const key = facts.invKeys[id]; if (!key) throw new OwedError(`Unknown invariant ${id}`); return { id, key }; });
     const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${oneLine(p.node)}: ${p.items.map(oneLine).join(', ')}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`, { Reason: p.reason });
     const r = await ops.defer({ ...a, channel: 'pi-confirm', node: p.node, reason: p.reason, items }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
+  });
+  tool('adopt', 'Owner adoption of trunk commits made outside owed (release commits, hotfixes): commit (default refs/heads/<trunk>) must equal the trunk ref and fast-forward the ledger trunk; invariants whose key changed are measured and a new failure refuses it. UI confirmation is required.', Type.Object({ commit: Type.Optional(Type.String({ minLength: 1, description: 'Commit to adopt; must equal refs/heads/<trunk> (the default).' })), note: Type.String({ minLength: 1, description: 'Why these commits are adopted (recorded).' }), as, cwd }), async (p, ctx, dir) => {
+    const who = requireRole(p.as, 'owner:human', ['owner'], 'adopt trunk commits');
+    if (!p.note.trim()) throw new OwedError('adopt requires a note', 'usage');
+    const v = await ops.adoptPreview({ cwd: dir, commit: p.commit });
+    const shown = v.changed.length > 20 ? [...v.changed.slice(0, 20), `… (+${v.changed.length - 20} more)`] : v.changed;
+    const a = await actor(ctx, dir, who, `Adopt trunk ${oneLine(v.trunk)} ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}: ${v.commits} commit${v.commits === 1 ? '' : 's'} made outside owed\nThese changes were not reviewed through owed; adopting them makes ${v.commit.slice(0, 12)} the ledger trunk.`, { 'Changed paths': shown.join(', ') || '(none)', Note: p.note });
+    const r = await ops.adopt({ ...a, channel: 'pi-confirm', commit: v.commit, note: p.note });
+    return result(r, `${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
   });
   tool('escape', 'Record an escape: a defect found after a merge of node; merge is the seq of that merge entry (parent or owner).', Type.Object({ node, merge: Type.Integer({ minimum: 0, description: 'Seq of the merge entry of node.' }), class: Type.Union((['missing', 'false-pass', 'reuse', 'weak', 'waiver'] as const).map(c => Type.Literal(c))), note: reason, evidence: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'record escapes');
