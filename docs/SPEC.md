@@ -228,6 +228,7 @@ merge(o: {cwd, node, as}): Promise<MergeResult>          // builds M, attests M,
 status(o: {cwd}): Promise<StatusView>
 why(o: {cwd, node}): Promise<ReceiptCard>
 report(o: {cwd, since?: number | string}): Promise<Report>
+brief(o: {cwd, since?: number | string, now?: number}): Promise<Brief>
 verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
 ```
 
@@ -243,6 +244,33 @@ verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
   reviewer / executor), invariant debt on trunk.
 - **Report** (`report --since`): merges, new E/W/D, blocks, downgrades, rulings,
   owner decisions needed — written in plain language.
+- **Brief** (`brief [--since seq|ISO]`, `briefView`/`renderBrief`): a morning
+  summary, one line per item, sections in this order:
+  1. *Needs your decision* — the owner queue (node and trunk items with status D
+     and discharger `owner`), sorted by the number of transitive downstream
+     nodes of the item's node (trunk items count 0), then node id and
+     obligation; each line carries the exact command that discharges the item:
+     `owed review <node> [--obligation closure-review] --ok --rank 3 --as owner:human`
+     for `review`/`closure-review` items whose only blocks (if any) are active
+     judgment blocks, otherwise `owed waive <node> <obligation> --reason … [--accept-risk
+     <every active block seq on that obligation>]`; trunk invariants cannot be
+     waived, so their line points to `owed plan` (add a repairing node).
+  2. *Merged* — per merge entry after `since`: counts of measured (status E,
+     execution obligations: `check:*`, `red:*`, `writes`) and waived (status W)
+     obligations, reviewed obligations, deferred invariants, untested changes
+     (as in the receipt card) and the reviewers. A waived item is counted only
+     as waived, never as measured.
+  3. *Rejected or blocked* — every non-cleared block of an unmerged node: node,
+     obligation, the failing observation seq (execution blocks; the block seq
+     is the failing obs) or the blocking review (judgment blocks), and how to
+     clear it.
+  4. *In progress* — dispatched and submitted nodes with the age since dispatch
+     (and since the last submit).
+  5. *Total* — merged / accepted-unmerged / blocked (unmerged nodes with a
+     non-cleared block) / ready counts, plus nodes waiting on dependencies.
+  `since` (seq or ISO time, invalid → usage error) filters only the Merged
+  section; the other sections always show the current state. `--json` returns
+  the structured `Brief`.
 
 ## 10. CLI
 
@@ -252,7 +280,7 @@ verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
 `review <node> --ok|--block --rank N --as reviewer:ID [--note] [--ack-rulings]`,
 `waive <node> <obligation> --reason ... [--accept-risk 12,15]`,
 `defer <node> <inv-id...> --reason`, `abandon <node>`, `merge <node>`, `status`,
-`why <node>`, `report [--since seq|ISO]`, `verify`.
+`why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`.
 `--as role:id` sets the principal (default `parent:cli`; `submit` defaults to
 the slot's writer when run inside its worktree). Owner commands prompt on a TTY
 unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused

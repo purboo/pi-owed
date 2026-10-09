@@ -10,8 +10,11 @@ import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
+import { briefView } from './views.ts';
+import type { Brief } from './views.ts';
 import type { AttestJob, Channel, Draft, Entry, ItemView, Plan, Principal, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
+export type { Brief } from './views.ts';
 export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView }
 export interface DispatchPacket { node: string; attempt: number; worktree: string; branch: string; packet: string; entry: Entry; subagent: { agent: 'worker'; cwd: string; task: string } }
 export interface AttestResult { node: string; observations: Entry[]; accepted: boolean; receipt: ReceiptCard }
@@ -157,3 +160,9 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   return {since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:')),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
+/** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
+export async function brief(o: Context & {since?:number|string; now?:number}): Promise<Brief> {
+  const {state,entries} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
+  if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
+  return briefView(state,entries,since,o.now ?? Date.now());
+}

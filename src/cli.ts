@@ -6,10 +6,10 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan } from './plan.ts';
 import { OwedError } from './errors.ts';
-import { renderReceipt, renderStatus, renderReport, renderEntry } from './views.ts';
+import { renderReceipt, renderStatus, renderReport, renderEntry, renderBrief } from './views.ts';
 import type { Entry } from './types.ts';
 import type { Channel, Principal, Role } from './types.ts';
-const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arguments] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> | rule <text> --nodes a,b|*\ndispatch <node> | submit <node> [--commit X] | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--reason TEXT]\nmerge <node> | status | why <node> | report [--since seq|ISO] | verify\nowner actions require TTY confirmation or --i-am-owner (flag weak confirmation).`;
+const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arguments] [--json] [--as role:id]\ninit <plan.yaml> | plan <plan.yaml> | rule <text> --nodes a,b|*\ndispatch <node> | submit <node> [--commit X] | attest <node> [--rerun]\nreview <node> --ok|--block --rank N [--note TEXT] [--ack-rulings N] [--obligation review|closure-review]\nwaive <node> <obligation> --reason TEXT [--accept-risk 12,15]\ndefer <node> <inv-id...> --reason TEXT | abandon <node> [--reason TEXT]\nmerge <node> | status | why <node> | report [--since seq|ISO] | brief [--since seq|ISO] | verify\nowner actions require TTY confirmation or --i-am-owner (flag weak confirmation).`;
 const values = new Set(['as','commit','nodes','rank','note','ack-rulings','obligation','reason','accept-risk','since']);
 const flags = new Set(['json','i-am-owner','rerun','ok','block','help']);
 function usage(message:string): never { throw new OwedError(message,'usage'); }
@@ -19,10 +19,10 @@ export async function main(argv: string[]): Promise<number> {
     for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key)) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); } }
     if (opts.has('help')) { console.log(HELP); return 0; }
     const cmd=args.shift(); if(!cmd) usage(HELP);
-    const allowed:Record<string,string[]> = { init:[],plan:[],rule:['nodes'],dispatch:[],submit:['commit'],attest:['rerun'],review:['ok','block','rank','note','ack-rulings','obligation'],waive:['reason','accept-risk'],defer:['reason'],abandon:['reason'],merge:[],status:[],why:[],report:['since'],verify:[] };
+    const allowed:Record<string,string[]> = { init:[],plan:[],rule:['nodes'],dispatch:[],submit:['commit'],attest:['rerun'],review:['ok','block','rank','note','ack-rulings','obligation'],waive:['reason','accept-risk'],defer:['reason'],abandon:['reason'],merge:[],status:[],why:[],report:['since'],brief:['since'],verify:[] };
     if (!allowed[cmd]) usage(`Unknown command ${cmd}`);
     for (const k of opts.keys()) if (!['json','as','i-am-owner'].includes(k) && !allowed[cmd]!.includes(k)) usage(`${cmd} does not support --${k}`);
-    const count = cmd === 'waive' || cmd === 'defer' ? 2 : ['status','report','verify'].includes(cmd) ? 0 : 1;
+    const count = cmd === 'waive' || cmd === 'defer' ? 2 : ['status','report','brief','verify'].includes(cmd) ? 0 : 1;
     if(args.length < count || (cmd !== 'defer' && args.length !== count)) usage(`${cmd} wrong number of arguments`);
     const value = (key:string,required=false):string|undefined => { const v=opts.get(key); if(required && (typeof v !== 'string' || !v.trim())) usage(`Required: --${key}`); return typeof v === 'string' ? v : undefined; };
     const integer=(key:string,required=false):number|undefined => { const v=value(key,required); if(v === undefined) return undefined; if(!/^\d+$/.test(v)) usage(`--${key} must be a nonnegative integer`); return Number(v); };
@@ -52,6 +52,7 @@ export async function main(argv: string[]): Promise<number> {
       case 'status': { const r=await ops.status({cwd}); result=r; text=renderStatus(r); break; }
       case 'why': { const r=await ops.why({cwd,node}); result=r; text=renderReceipt(r); break; }
       case 'report': { const v=value('since'), r=await ops.report({cwd,since:v && /^\d+$/.test(v) ? Number(v) : v}); result=r; text=renderReport(r); break; }
+      case 'brief': { const v=value('since'), r=await ops.brief({cwd,since:v && /^\d+$/.test(v) ? Number(v) : v}); result=r; text=renderBrief(r); break; }
       case 'verify': { const r=await ops.verify({cwd}); result=r; text=r.ok ? `Ledger verification passed: ${r.entries} entries` : `Ledger verification failed:${r.error}`; exit=r.ok ? 0 : 3; break; }
     }
     if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }

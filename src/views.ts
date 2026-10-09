@@ -75,3 +75,78 @@ export function renderReport(v: Report): string {
     ...list('Owner decisions needed', v.decisions.map(itemText)),
     ...list('Owner actions', v.ownerActions.map(entryLine))].join('\n');
 }
+
+// ---------- morning brief ----------
+export interface BriefDecision { node: string; obligation: string; key: string; mark: ItemView['mark']; detail: string; blockedDownstream: number; command: string }
+export interface BriefMerged {
+  node: string; seq: number; ts: string; commit: string;
+  measured: number; waived: number; reviewed: number; deferred: number; untested: number;
+  measuredItems: string[]; waivedItems: string[]; untestedChanges: string[]; reviewers: string[];
+}
+export interface BriefBlock { seq: number; node: string; obligation: string; kind: Block['kind']; state: Block['state']; failingObs?: number; reviewer?: string; rank?: number; clear: string }
+export interface BriefProgress { node: string; phase: 'dispatched' | 'submitted'; attempt: number; dispatchSeq: number; dispatchedAt: string; ageMs: number; submitSeq?: number; submittedAt?: string; submitAgeMs?: number }
+export interface Brief {
+  since: number | string; now: string;
+  decisions: BriefDecision[]; merged: BriefMerged[]; rejected: BriefBlock[]; inProgress: BriefProgress[];
+  totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number };
+}
+const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
+const obligationFlag = (o: string): string => o === 'closure-review' ? ' --obligation closure-review' : '';
+const waiveCommand = (node: string, obligation: string, risks: number[]): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}`;
+/** The command that removes an owner-queue item from the owner's queue. */
+function decisionCommand(s: State, i: ItemView): string {
+  if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
+  const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && b.state !== 'cleared') ?? [];
+  if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as owner:human`;
+  return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq));
+}
+function clearCommand(s: State, entries: Entry[], b: Block): string {
+  const risks = (s.nodes[b.node]?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
+  if (b.state === 'flaky') return `owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks)}`;
+  if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} (the attribution rerun on the original content clears the block)`;
+  const by = entries.find(e => e.seq === b.seq)?.by ?? 'reviewer:<original>';
+  return `owed review ${b.node}${obligationFlag(b.obligation)} --ok --rank ${b.rank} --as ${by} (or a reviewer with rank > ${b.rank}), or owner: ${waiveCommand(b.node, b.obligation, risks)}`;
+}
+/** Pure morning brief over a reduced state. `since` limits the Merged section; the other sections show current state. */
+export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now()): Brief {
+  const included = (e: Entry): boolean => typeof since === 'number' ? e.seq > since : Date.parse(e.ts) > Date.parse(since);
+  const ts = (seq: number): string => entries.find(e => e.seq === seq)?.ts ?? '';
+  const nodes = Object.values(s.nodes), open = nodes.filter(n => !n.merged);
+  const decisions = [...open.flatMap(n => n.items), ...s.invariants].filter(i => i.status === 'D' && i.discharger === 'owner')
+    .map(i => ({ node: i.subject, obligation: i.obligation, key: i.key, mark: i.mark, detail: i.detail, blockedDownstream: s.nodes[i.subject]?.dependents ?? 0, command: decisionCommand(s, i) }))
+    .sort((a, b) => b.blockedDownstream - a.blockedDownstream || a.node.localeCompare(b.node) || a.obligation.localeCompare(b.obligation));
+  const merged = entries.filter((e): e is Extract<Entry, { kind: 'merge' }> => e.kind === 'merge' && included(e) && !!s.nodes[e.node]).map(e => {
+    const card = receipt(s, entries, e.node);
+    const measuredItems = card.items.filter(i => i.status === 'E' && !reviewObligation(i.obligation) && i.obligation !== 'rulings').map(i => i.obligation);
+    const waivedItems = card.items.filter(i => i.status === 'W').map(i => i.obligation);
+    const reviewers = [...new Set(card.items.filter(i => i.status === 'E' && reviewObligation(i.obligation)).flatMap(i => i.observations.flatMap(o => o.kind === 'review' && o.verdict === 'ok' ? [o.by] : [])))];
+    return { node: e.node, seq: e.seq, ts: e.ts, commit: e.commit, measured: measuredItems.length, waived: waivedItems.length,
+      reviewed: card.items.filter(i => i.status === 'E' && reviewObligation(i.obligation)).length,
+      deferred: s.deferred.filter(d => d.node === e.node).length, untested: card.untested.length,
+      measuredItems, waivedItems, untestedChanges: card.untested, reviewers };
+  });
+  const rejected = open.flatMap(n => n.blocks.filter(b => b.state !== 'cleared')).map(b => ({ seq: b.seq, node: b.node, obligation: b.obligation, kind: b.kind, state: b.state,
+    ...(b.kind === 'exec' ? { failingObs: b.seq } : { reviewer: entries.find(e => e.seq === b.seq)?.by, rank: b.rank }), clear: clearCommand(s, entries, b) }));
+  const inProgress = nodes.filter(n => (n.phase === 'dispatched' || n.phase === 'submitted') && n.slot).map(n => {
+    const at = ts(n.slot!.dispatchSeq), sub = n.phase === 'submitted' && n.candidate ? ts(n.candidate.seq) : undefined;
+    return { node: n.id, phase: n.phase as BriefProgress['phase'], attempt: n.slot!.attempt, dispatchSeq: n.slot!.dispatchSeq, dispatchedAt: at, ageMs: Math.max(0, now - Date.parse(at)),
+      ...(sub !== undefined ? { submitSeq: n.candidate!.seq, submittedAt: sub, submitAgeMs: Math.max(0, now - Date.parse(sub)) } : {}) };
+  });
+  const count = (phase: NodeState['phase']): number => nodes.filter(n => n.phase === phase).length;
+  return { since, now: new Date(now).toISOString(), decisions, merged, rejected, inProgress,
+    totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: count('blocked') } };
+}
+function age(ms: number): string {
+  const m = Math.floor(ms / 60_000), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  return d ? `${d}d${h % 24}h` : h ? `${h}h${m % 60}m` : m ? `${m}m` : `${Math.floor(ms / 1000)}s`;
+}
+export function renderBrief(v: Brief): string {
+  const section = (title: string, lines: string[]) => [`${title}${lines.length ? ` (${lines.length}):` : ': none'}`, ...lines.map(l => `  ${l}`)];
+  const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+  return [`Brief (since ${v.since === -1 ? 'start' : typeof v.since === 'number' ? `#${v.since}` : v.since})`,
+    ...section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)),
+    ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
+    ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),
+    ...section('In progress', v.inProgress.map(p => `${p.node} ${p.phase} (attempt ${p.attempt}): dispatched ${age(p.ageMs)} ago${p.submitAgeMs !== undefined ? `, submitted ${age(p.submitAgeMs)} ago` : ''}`)),
+    `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies`].join('\n');
+}
