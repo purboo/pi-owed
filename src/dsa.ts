@@ -6,15 +6,10 @@ import { accessSync, constants } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { RunState, RunView } from './types.ts';
 
-/** The subset of `describe --key <rid> --json` the driver uses (contract D1; a later node unifies this type). */
-export type RunState = 'absent' | 'queued' | 'running' | 'asking' | 'sealed' | 'pruned';
-export interface RunQuestion { qid: string; rev: number; question: string; to?: string }
-export interface RunView {
-  rid: string; state: RunState; status?: string; error?: string;
-  questions?: RunQuestion[]; lastFence?: { reason: string; at: number; exec?: string };
-  wid?: string; labels?: Record<string, string>; spec_digest?: string;
-}
+/** The subset of `describe --key <rid> --json` the driver uses (contract D1); defined once in `src/types.ts`. */
+export type { RunState, RunQuestion, RunView } from './types.ts';
 export interface DsaEvent {
   id: string; cursor: string; ts?: number; type: string; wid?: string; request?: string; labels?: Record<string, string>;
   key?: string; gen?: number; call?: string; [field: string]: unknown;
@@ -55,7 +50,8 @@ export function dsaAvailable(bin = dsaBin()): boolean {
   try { accessSync(bin, constants.X_OK); return true; } catch { return false; }
 }
 
-interface Spawned { exit: number | null; stdout: string; stderr: string; timedOut: boolean }
+/** `signal`: the child was ended by a signal that was not our timeout (exit is null then). */
+interface Spawned { exit: number | null; stdout: string; stderr: string; timedOut: boolean; signal?: NodeJS.Signals }
 const LIMIT = 16 * 1024 * 1024;
 
 export class Dsa {
@@ -86,11 +82,12 @@ export class Dsa {
       child.on('error', e => { failed = e; });
       // EPIPE when the child exits before reading stdin is reported by `close`/`exit`, not as a crash here.
       child.stdin.on('error', () => {});
-      child.on('close', code => {
+      child.on('close', (code, sig) => {
         clearTimeout(timer);
         const stdout = Buffer.concat(out).toString('utf8'), stderr = Buffer.concat(err).toString('utf8');
-        if (failed && code === null && !timedOut) { reject(new DsaError(`cannot run ${this.bin}: ${failed.message}`, { stderr, stdout })); return; }
-        resolve({ exit: code, stdout, stderr, timedOut });
+        // A spawn failure (missing binary: Node reports the negative errno, e.g. -2 for ENOENT, as the code) never ran dsa.
+        if (failed && !timedOut) { reject(new DsaError(`cannot run ${this.bin}: ${failed.message}`, { stderr, stdout })); return; }
+        resolve({ exit: code, stdout, stderr, timedOut, ...(code === null && sig && !timedOut ? { signal: sig } : {}) });
       });
       if (input !== undefined) child.stdin.end(input); else child.stdin.end();
     });
@@ -130,6 +127,7 @@ export class Dsa {
     const args = ['events', '--all', ...(since !== undefined ? ['--since', since] : []), ...(limit !== undefined ? ['--limit', String(limit)] : []), '--json', ...this.wait()];
     const r = await this.exec(args);
     if (r.timedOut) return { outcome: 'pending', reason: 'timeout' };
+    if (r.signal) return { outcome: 'pending', reason: `signal ${r.signal}` };
     const lines = jsonLines(r.stdout);
     if (r.exit === 4) {
       const e = lines.findLast(l => l.error === 'cursor-expired');
@@ -164,9 +162,13 @@ function parseWhole(stdout: string): Json | undefined {
   return jsonLines(stdout).at(-1);
 }
 
-/** run/send exit-code mapping. A timeout after spawning may have submitted: it is `pending` (retry with the same id). */
+/**
+ * run/send exit-code mapping. A timeout after spawning may have submitted: it is `pending` (retry with the same id);
+ * so is a child killed by a signal that was not our timeout (exit code null), whatever it printed before dying.
+ */
 function requestOutcome<T>(r: Spawned, applied: (reply: Json) => T): T | Rejected | Conflict | Pending {
   if (r.timedOut) return { outcome: 'pending', reason: 'timeout' };
+  if (r.signal) return { outcome: 'pending', reason: `signal ${r.signal}` };
   const reply = parseWhole(r.stdout);
   switch (r.exit) {
     case 0:

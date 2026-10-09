@@ -6,7 +6,8 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Dsa, DsaError, dsaAvailable, dsaBin, toRunView } from '../src/dsa.ts';
+import { Dsa, DsaError, dsaAvailable, dsaBin, toRunView, type RunView as DsaRunView } from '../src/dsa.ts';
+import type { RunView } from '../src/types.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url));
 const sha = (b: string | Buffer) => createHash('sha256').update(b).digest('hex');
@@ -297,4 +298,39 @@ test('toRunView maps real describe replies', () => {
   const v = toRunView('r', { state: 'asking', status: 'running', calls: [{ key: 'main', gen: 1, phase: 'running' }],
     questions: [{ qid: 'q', rev: 2, to: 'w/main', call: 'w@1/main@1', text: 'why?' }], lastFence: { at: 5, exec: 'e', reason: 'orchestrator-crash' } });
   assert.deepEqual(v, { rid: 'r', state: 'asking', questions: [{ qid: 'q', rev: 2, question: 'why?', to: 'w/main' }], lastFence: { reason: 'orchestrator-crash', at: 5, exec: 'e' } });
+});
+
+test('client (D9): a missing binary reports "cannot run … ENOENT", never "dsa exited -2"', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'owed-dsa-missing-'));
+  try {
+    const missing = new Dsa({ bin: join(root, 'nope') });
+    for (const call of [() => missing.run('r', '{}'), () => missing.send('s', 'r', 'steer', 'x'), () => missing.events('c'), () => missing.describe('r')]) {
+      await assert.rejects(call(), (e: unknown) => e instanceof DsaError && /^cannot run .*nope: .*ENOENT/.test(e.message) && !/exited/.test(e.message));
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('client (D9): a dsa child killed by a signal (not our timeout) is pending: retry the same id and bytes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'owed-dsa-signal-'));
+  try {
+    // It even prints a well-formed reply first: an exit by signal is never read as applied.
+    const killed = join(root, 'killed');
+    await writeFile(killed, '#!/bin/sh\ncat >/dev/null\necho \'{"request":"r","wid":"w","created":true,"spec_digest":"d"}\'\nkill -9 $$\n'); await chmod(killed, 0o755);
+    const d = new Dsa({ bin: killed, timeoutMs: 20_000 });
+    assert.deepEqual(await d.run('r', '{}'), { outcome: 'pending', reason: 'signal SIGKILL' });
+    assert.deepEqual(await d.send('s', 'r', 'follow-up', 'x'), { outcome: 'pending', reason: 'signal SIGKILL' });
+    assert.deepEqual(await d.events('c', 10), { outcome: 'pending', reason: 'signal SIGKILL' });
+    await assert.rejects(d.describe('r'), DsaError, 'describe has no pending outcome: it fails and the driver waits');
+    const term = join(root, 'term'); await writeFile(term, '#!/bin/sh\nkill -TERM $$\n'); await chmod(term, 0o755);
+    assert.deepEqual(await new Dsa({ bin: term }).run('r', '{}'), { outcome: 'pending', reason: 'signal SIGTERM' });
+    // A normal non-zero exit is still an error.
+    const nine = join(root, 'nine'); await writeFile(nine, '#!/bin/sh\nexit 9\n'); await chmod(nine, 0o755);
+    await assert.rejects(new Dsa({ bin: nine }).run('r', '{}'), /dsa exited 9/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('RunView has one definition (src/types.ts) re-exported by src/dsa.ts', () => {
+  const v: RunView = toRunView('r', { state: 'sealed', status: 'done', lastFence: { at: 7, reason: 'x' } });
+  const same: DsaRunView = v, back: RunView = same;
+  assert.deepEqual(back, { rid: 'r', state: 'sealed', status: 'ok', lastFence: { reason: 'x', at: 7 } });
 });

@@ -8,7 +8,7 @@ import { parsePlan, planDowngrades } from './plan.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView, escapeSummary, driftText } from './views.ts';
+import { receipt, statusView, escapeSummary, driftText, dispatchPacket } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import type { Brief } from './views.ts';
@@ -91,7 +91,7 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     if (overlaps.length && !o.allowOverlap) throw new OwedError(`writes of ${o.node} overlap the open slot of ${overlaps.join(', ')}; wait for ${overlaps.length > 1 ? 'them' : 'it'} or dispatch with --allow-overlap`);
     const attempt = (n.slot?.attempt ?? 0)+1, branch = `owed/${o.node}/${attempt}`;
     const worktree = join(root,'.owed','wt',`${o.node}-${attempt}`), rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
-    const packet = [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${o.node}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${o.node}`].join('\n');
+    const packet = dispatchPacket(spec, attempt, worktree, rules);
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
     guard(state,d);
     const exclude = join(await git.commonDir(o.cwd),'info','exclude');
