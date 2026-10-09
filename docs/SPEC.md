@@ -234,13 +234,11 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
   ledger (entries before and after the reveal):
   `caught` — an executor `obs` with verdict `fail` (execution block or
   rejecting obs) or a `review` with verdict `block` (judgment block) on the node
-  before any merge of it, or an executor `obs` with verdict `fail` recorded while
-  merging the node: an invariant or check on the merge result, subject `trunk` or
-  the node. A `trunk` obs belongs to merging node n when its commit is a merge
-  result of n — the commit of n's `merge` entry, or the commit of an executor obs
-  on n (merge-time checks run on the merge result) — and is not a trunk commit
-  (the genesis commit or a merge of another node); `decidedBy` is then the seq of
-  that failing obs even if the link is recorded after it. `escaped` — a merge of
+  before any merge of it. Current limit: a failure observed only while merging
+  the node (an invariant on the merge result, subject `trunk`) is not attributed
+  to the decoy yet, so such a decoy stays `pending` after a refused merge and
+  becomes `escaped` on a later merge (the node flow will record which merge an
+  obs belongs to). `escaped` — a merge of
   the node with no such entry before it; `pending` — neither yet. `decidedBy` is
   the deciding seq.
 - A node listed in more than one reveal counts once: the decoy of the earliest

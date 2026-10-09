@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { reduce, validateDraft } from '../src/reducer.ts';
-import { briefView, receipt, renderBrief, renderReceipt } from '../src/views.ts';
+import { briefView, escapeSummary, receipt, renderBrief, renderEscapes, renderReceipt } from '../src/views.ts';
 import { canonical, sha256 } from '../src/canon.ts';
 import type { CandidateFacts, Draft, Entry, Plan, State, StateFacts } from '../src/types.ts';
 
@@ -121,30 +121,28 @@ test('a node listed in more than one reveal counts once, and the earliest commit
   }
 });
 
-test('a failing obs on the merge result while merging a decoy node catches it, even with subject trunk', () => {
-  // (1) Owner deferral lets the merge through after its invariant failed on the merge result.
-  {
-    const r = rig();
-    r.add(commitOf({ nonce: 'merge-nonce-0123456789', decoys: [{ node: 'b', defect: 'breaks safe' }] }));
-    r.dispatch('b'); r.submit('b'); r.pass('b');
-    const failed = r.obs('trunk', 'inv:safe', 'inv-m', 'fail', 'm-b');
-    r.add({ kind: 'defer', by: 'owner:human', channel: 'tty', node: 'b', items: [{ id: 'safe', key: 'inv-m' }], reason: 'repair next' });
-    r.merge('b', 'inv-m', 'm-b');
-    r.add(reveal({ nonce: 'merge-nonce-0123456789', decoys: [{ node: 'b', defect: 'breaks safe' }] }));
-    assert.deepEqual(r.state().decoys.map(d => [d.node, d.outcome, d.decidedBy]), [['b', 'caught', failed]]);
-  }
-  // (2) A refused merge: the merge-time check on the node ran on the same merge result, so the trunk failure is b's.
-  {
-    const r = rig();
-    const p = { nonce: 'refused-nonce-0123456789', decoys: [{ node: 'b', defect: 'breaks safe' }, { node: 'c', defect: 'c defect' }] };
-    r.add(commitOf(p)); r.add(reveal(p));
-    r.dispatch('b'); r.submit('b'); r.pass('b');
-    r.obs('b', 'check:cb', 'k-b-merge', 'pass', 'm-b', 's0');
-    const failed = r.obs('trunk', 'inv:safe', 'inv-m', 'fail', 'm-b');
-    // c's candidate equals the genesis commit: a trunk failure on genesis is never attributed to c.
-    r.dispatch('c'); r.submit('c', 's0'); r.obs('trunk', 'inv:safe', 'inv0', 'fail', 's0'); r.pass('c');
-    assert.deepEqual(r.state().decoys.map(d => [d.node, d.outcome, d.decidedBy]), [['b', 'caught', failed], ['c', 'pending', undefined]]);
-  }
+test('escape metrics count a node revealed twice once; a failure seen only while merging is not a catch yet', () => {
+  const r = rig();
+  const first = { nonce: 'metric-nonce-0123456789', decoys: [{ node: 'a', defect: 'breaks safe' }, { node: 'b', defect: 'b defect' }, { node: 'c', defect: 'c defect' }] };
+  const again = { nonce: 'again-nonce-0123456789', decoys: [{ node: 'b', defect: 'b named again' }] };
+  r.add(commitOf(first)); r.add(commitOf(again));
+  // c: its node check fails before any merge: caught.
+  r.dispatch('c'); const fc = r.submit('c'); const caught = r.obs('c', 'check:cc', fc.keys['check:cc']!, 'fail', fc.commit, fc.base);
+  // b: merges cleanly: escaped (revealed twice below, counted once).
+  r.dispatch('b'); r.submit('b'); r.pass('b'); const mergedB = r.merge('b');
+  // a: the only failure is a trunk invariant on a refused merge result (fresh merge commit m1-a);
+  // after an owner defer a new merge commit m2-a lands. Current limit: not attributed, so escaped.
+  r.dispatch('a'); r.submit('a'); r.pass('a'); r.review('a', 'ok', 1, 'reviewer:r1');
+  r.add(reveal(first)); r.add(reveal(again));
+  r.obs('trunk', 'inv:safe', 'inv-m', 'fail', 'm1-a');
+  assert.equal(r.state().decoys.find(d => d.node === 'a')!.outcome, 'pending', 'a trunk failure while merging is not attributed yet');
+  r.add({ kind: 'defer', by: 'owner:human', channel: 'tty', node: 'a', items: [{ id: 'safe', key: 'inv-m' }], reason: 'repair next' });
+  const mergedA = r.merge('a', 'inv-m', 'm2-a');
+  const s = r.state(), v = escapeSummary(s);
+  assert.deepEqual(s.decoys.map(d => [d.node, d.outcome, d.decidedBy]), [['a', 'escaped', mergedA], ['b', 'escaped', mergedB], ['c', 'caught', caught]]);
+  assert.deepEqual([v.caught, v.escaped, v.pending, v.unrevealed], [1, 2, 0, 0]);
+  assert.equal(v.rate, 2 / 3);
+  assert.match(renderEscapes(v).join('\n'), /Escape rate: 66\.7% \(2 escaped \/ 3 decided\)/);
 });
 
 test('validateDraft refuses unknown fields in escape, decoy-commit and decoy-reveal entries', () => {

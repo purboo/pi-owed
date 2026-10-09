@@ -169,12 +169,12 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
         const at = s.decoys.findIndex(d => d.node === x.node);
         if (at >= 0 && s.decoys[at]!.commit < c.seq) continue;
         const v: DecoyView = { node: x.node, defect: x.defect, commit: c.seq, reveal: e.seq, outcome: 'pending' };
-        for (let i = 0; i < h.entries.length; i++) settleDecoy(v, h.entries, i);
+        for (const prior of h.entries) settleDecoy(v, prior);
         if (at >= 0) s.decoys[at] = v; else s.decoys.push(v);
       }
     }
+    for (const v of s.decoys) settleDecoy(v, e);
     h.entries.push(e); s.seq = e.seq; s.head = e.hash;
-    for (const v of s.decoys) settleDecoy(v, h.entries, h.entries.length - 1);
     refresh(s);
   }
   return s;
@@ -350,27 +350,13 @@ export function decoyPayloadErrors(p: unknown): string[] {
   return errors;
 }
 /**
- * Settles a pending decoy on entries[i] (entries before i are the history). A decoy is caught
- * by an execution failure or review block on its node, or by a failing trunk invariant on the
- * result of merging it; it escapes on a merge of it with no such entry before.
- * A trunk observation belongs to merging node n when its commit is a merge result of n: the
- * commit of a merge entry of n or of an executor obs on n (merge-time checks run on the merge
- * result). Trunk commits (genesis, merges of other nodes) are never attributed to n.
+ * A pending decoy is caught by an execution failure or review block on its node, and escapes on a merge of it.
+ * A failure observed only while merging (e.g. a trunk invariant on the merge result) is not attributed yet.
  */
-function settleDecoy(v: DecoyView, entries: Entry[], i: number): void {
+function settleDecoy(v: DecoyView, e: Entry): void {
   if (v.outcome !== 'pending') return;
-  const e = entries[i]!;
-  const failed = (x: Entry): x is ObsEntry => x.kind === 'obs' && x.by === 'executor:owed' && x.verdict === 'fail';
-  if ((failed(e) && e.subject === v.node) || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) { Object.assign(v, { outcome: 'caught', decidedBy: e.seq }); return; }
-  const own = (x: Entry): string | undefined => x.kind === 'merge' && x.node === v.node ? x.commit : x.kind === 'obs' && x.by === 'executor:owed' && x.subject === v.node ? x.commit : undefined;
-  const trunkCommit = (commit: string): boolean => entries.some((x, j) => j <= i && ((x.kind === 'genesis' && x.commit === commit) || (x.kind === 'merge' && x.node !== v.node && x.commit === commit)));
-  if (failed(e) && e.subject === 'trunk' && !trunkCommit(e.commit) && entries.some((x, j) => j < i && own(x) === e.commit)) { Object.assign(v, { outcome: 'caught', decidedBy: e.seq }); return; }
-  const commit = own(e);
-  if (commit !== undefined && !trunkCommit(commit)) {
-    const prior = entries.find((x, j) => j < i && failed(x) && x.subject === 'trunk' && x.commit === commit);
-    if (prior) { Object.assign(v, { outcome: 'caught', decidedBy: prior.seq }); return; }
-  }
-  if (e.kind === 'merge' && e.node === v.node) Object.assign(v, { outcome: 'escaped', decidedBy: e.seq });
+  if ((e.kind === 'obs' && e.by === 'executor:owed' && e.subject === v.node && e.verdict === 'fail') || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
+  else if (e.kind === 'merge' && e.node === v.node) Object.assign(v, { outcome: 'escaped', decidedBy: e.seq });
 }
 
 function job(spec: NodeSpec | undefined, subject: string, obligation: string, key: string, commit: string, base: string, plan: Plan): AttestJob | undefined {
