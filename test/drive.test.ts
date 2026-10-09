@@ -65,10 +65,26 @@ type Rig = ReturnType<typeof rig>;
 const view = (rid: string, state: RunView['state'], extra: Partial<RunView> = {}): [string, RunView] => [rid, { rid, state, ...extra }];
 const runsOf = (...vs: [string, RunView][]) => new Map(vs);
 const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: r.blobs, ...o });
-const go = (r: Rig, runs = runsOf(), o: Partial<DriveOpts> = {}): Action[] => decide(r.state(), r.state().plan, runs, optsOf(r, o));
+/**
+ * Liveness guard (D12): an open attempt with a candidate that gets no action must have an unsealed driver run (the
+ * writer or a reviewer run of the candidate). Tests of deliberate idling (halted, missing run views) pass `idle`.
+ */
+function guardLive(s: State, runs: ReadonlyMap<string, RunView>, acts: Action[]): void {
+  for (const n of Object.values(s.nodes)) {
+    if (!n.slot?.open || !n.candidate || acts.some(x => x.node === n.id)) continue;
+    const launches = n.runs.find(x => x.attempt === n.slot!.attempt)?.launches ?? [];
+    const live = launches.filter(l => l.role === 'writer' || l.seq > n.candidate!.seq).some(l => { const v = runs.get(l.rid); return !!v && v.state !== 'sealed' && v.state !== 'pruned'; });
+    assert.ok(live, `silent stall: ${n.id} has candidate #${n.candidate.seq}, no action and no unsealed driver run`);
+  }
+}
+const go = (r: Rig, runs = runsOf(), o: Partial<DriveOpts> = {}, idle = false): Action[] => {
+  const s = r.state(), acts = decide(s, s.plan, runs, optsOf(r, o));
+  if (!idle) guardLive(s, runs, acts);
+  return acts;
+};
 /** The single action of `node` in a pass (asserting at most one). */
-function act(r: Rig, runs = runsOf(), o: Partial<DriveOpts> = {}, node = 'a'): Action | undefined {
-  const mine = go(r, runs, o).filter(x => x.node === node);
+function act(r: Rig, runs = runsOf(), o: Partial<DriveOpts> = {}, node = 'a', idle = false): Action | undefined {
+  const mine = go(r, runs, o, idle).filter(x => x.node === node);
   assert.ok(mine.length <= 1, `at most one action per node: ${JSON.stringify(mine)}`);
   return mine[0];
 }
@@ -543,7 +559,7 @@ test('D11: the slot reviewer oks c2 but a stale closure-review block stays activ
   r.review('ok', 'reviewer:drive-a-1-1', 1);
   const a = act(r, runsOf(okWriter(), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r) });
   assert.ok(a?.do === 'halt' && a.needs === 'owner', JSON.stringify(a));
-  assert.equal(a.reason, `stale review block #${blk.seq} closure-review rank 2 by reviewer:drive-a-1-1 still active after every slot reviewer reviewed candidate #${r.state().nodes.a!.candidate!.seq}; the driver cannot clear it`);
+  assert.equal(a.reason, `stale review block #${blk.seq} closure-review rank 2 by reviewer:drive-a-1-1 still active and no reviewer run of candidate #${r.state().nodes.a!.candidate!.seq} is running; the driver cannot clear it`);
 });
 
 test('D11: an active rank-1 block by another principal → the slot packet asks for rank 2, and that ok clears it', () => {
@@ -581,4 +597,50 @@ test('D11: decide reads the plan from s.plan only', () => {
   const other = basePlan({ ...DRIVE, max: 1, writer: { agent: 'impostor' } }, { a: { writes: ['zzz/'] } });
   assert.deepEqual(decide(r.state(), other, runsOf(), optsOf(r)), go(r));
   assert.equal(JSON.parse((go(r)[0] as { spec: string }).spec).agent, 'worker');
+});
+
+// ---------- D12: no silent stall (review #230) ----------
+test('D12 reproduction A: count 2, a human and slot 1 satisfy review on c2, slot 2 run sealed failed → owner halt naming the stale seq', () => {
+  const r = rig(basePlan(DRIVE, { a: { review: { count: 2, min_rank: 1 } } }));
+  r.dispatch(); r.launchWriter(); r.submit('1', 'a', true); r.pass(); r.launchReviewer(1); r.launchReviewer(2);
+  r.review('ok', 'reviewer:drive-a-1-1', 1);
+  const blk = r.review('block', 'reviewer:drive-a-1-1', 2, 'closure-review');
+  const fix = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }), view(R(2), 'running')));
+  assert.ok(fix?.do === 'send' && fix.reason === 'repair', JSON.stringify(fix));
+  r.send(W(), 'repair', 'follow-up', fix.message);
+  r.submit('2'); r.pass(); r.launchReviewer(3); r.launchReviewer(4);
+  r.review('ok', 'reviewer:drive-a-1-1', 1); r.review('ok', 'reviewer:human', 1);
+  assert.equal(r.state().nodes.a!.items.find(i => i.obligation === 'review')?.status, 'E');
+  // While slot 2's run still works, wait; once it is sealed (failed, nothing to record: review is E), halt.
+  assert.equal(act(r, runsOf(okWriter(), view(R(3), 'sealed', { status: 'ok' }), view(R(4), 'running')), { applied: applied(r) }), undefined);
+  const a = act(r, runsOf(okWriter(), view(R(3), 'sealed', { status: 'ok' }), view(R(4), 'sealed', { status: 'failed', error: 'x' })), { applied: applied(r) });
+  assert.ok(a?.do === 'halt' && a.needs === 'owner' && a.reason.startsWith(`stale review block #${blk.seq} closure-review rank 2 by reviewer:drive-a-1-1 still active`), JSON.stringify(a));
+});
+
+test('D12 reproduction B: count 1, a human ok on c2 before any slot launch → owner halt naming the stale seq', () => {
+  const r = rig(); r.dispatch(); r.launchWriter(); r.submit('1', 'a', true); r.pass(); r.launchReviewer(1);
+  r.review('ok', 'reviewer:drive-a-1-1', 1);
+  const blk = r.review('block', 'reviewer:drive-a-1-1', 2, 'closure-review');
+  const fix = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })));
+  assert.ok(fix?.do === 'send' && fix.reason === 'repair');
+  r.send(W(), 'repair', 'follow-up', fix.message);
+  r.submit('2'); r.pass(); r.review('ok', 'reviewer:human', 1);
+  // D12: the stale wait counts only reviewer runs of the candidate, so a live writer does not defer the halt.
+  for (const w of [okWriter(), view(W(), 'running')]) {
+    const a = act(r, runsOf(w), { applied: applied(r) });
+    assert.ok(a?.do === 'halt' && a.needs === 'owner' && a.reason.includes(`#${blk.seq} closure-review`), JSON.stringify(a));
+  }
+});
+
+test('D12 liveness catch-all: not accepted, nothing unsealed, no other row → stalled: halt needing the owner', () => {
+  // A ruling after dispatch that the slot reviewer did not acknowledge: rulings stays D and no row covers it.
+  const r = submitted(); r.pass(); r.rule('acknowledge me'); r.launchReviewer(1); r.review('ok', 'reviewer:drive-a-1-1', 1);
+  const s = r.state();
+  assert.equal(s.nodes.a!.accepted, false);
+  assert.deepEqual(s.nodes.a!.items.filter(i => i.status !== 'E').map(i => i.obligation), ['rulings']);
+  const rulings = s.nodes.a!.items.find(i => i.obligation === 'rulings')!;
+  assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }))), { do: 'halt', node: 'a', attempt: 1, reason: `stalled: rulings ${rulings.mark} ${rulings.detail}`, needs: 'owner' });
+  // With a run still live it waits instead.
+  assert.equal(act(r, runsOf(view(W(), 'running'), view(R(1), 'sealed', { status: 'ok' }))), undefined);
+  assert.equal(act(r, runsOf(okWriter(), view(R(1), 'running'))), undefined);
 });
