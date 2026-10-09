@@ -275,7 +275,10 @@ moved ref silently.
   the adopted key must be E. An invariant that is already debt on the current
   trunk (D: failing, ⊥, ⊤ or deferred) does not block. Genesis observations must
   be finished (§6.4 rule 4). There is no owner `defer` for an adoption: the owner
-  fixes trunk and adopts again.
+  fixes trunk and adopts again. The refusal names each failing invariant with the
+  observation that decides it (`h1 (obs #3)`): the obs appended by this adopt,
+  else (a repeated adopt measures nothing new and appends nothing) the latest
+  existing trunk obs of that invariant at the adopted state's key.
 - Open slots are not touched. Their base stays; a merge builds on the adopted
   trunk as after any other trunk move (`owed rebase` when it conflicts).
 - Limits: only fast-forwards are adopted (a rewritten or reset trunk is refused;
@@ -466,7 +469,9 @@ changing git or the ledger.
   repository`); `--json` has
   `drift: {ref, commit, ledger, relation: ahead|diverged|missing|ledger-missing, ahead, behind}`.
 - **Report** (`report --since`): merges, new E/W/D, blocks, downgrades, rulings,
-  owner decisions needed — written in plain language —, trunk adoptions after
+  owner decisions needed — written in plain language —, owner actions (owner
+  entries after `since` except `adopt`, which is listed once, under the trunk
+  adoptions), trunk adoptions after
   `since` as owner decisions (seq, owner, prior..commit, commit count, changed
   paths, note; `--json` `adoptions`; the section is shown only when non-empty), and an **Escapes**
   section: escape counts by class with each escape, decoys caught / escaped /
@@ -557,7 +562,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
 | `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
-| `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted |
+| `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
 | `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
 
 Owner operations (`waive`, `defer`, `adopt`, downgrade plans, decoys, and any tool

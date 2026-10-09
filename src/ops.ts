@@ -225,7 +225,13 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel:
       const current = prospective(latest,observations), g = adoptGuard(current,sf);
       if (!g.ok) {
         const appended = observations.length ? await ledger.append(observations) : [];
-        const seqs = (id: string) => appended.filter(e => e.kind === 'obs' && e.obligation === `inv:${id}`).map(e => `#${e.seq}`);
+        // The observation that decides each failing invariant: the one just appended, else (a repeated adopt
+        // measures nothing new) the latest existing one at the adopted state's key.
+        const seqs = (id: string) => {
+          const at = (e: Entry) => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === `inv:${id}` && e.key === sf.invKeys[id];
+          const fresh = appended.filter(at), old = latest.entries.findLast(at);
+          return (fresh.length ? fresh : old ? [old] : []).map(e => `#${e.seq}`);
+        };
         throw new OwedError(`adoption refused: ${g.failed.length ? `invariant${g.failed.length > 1 ? 's' : ''} ${g.failed.map(id => `${id}${seqs(id).length ? ` (obs ${seqs(id).join(', ')})` : ''}`).join(', ')} satisfied on the ledger trunk but not on ${p.commit.slice(0,12)}; fix trunk, then run owed adopt again. ` : ''}${g.reasons.filter(x => !g.failed.some(id => x.startsWith(`invariant ${id} new debt`))).join('; ')}`.replace(/[ ;.]+$/,''));
       }
       const d: Draft = {kind:'adopt',by:by(o),channel:o.channel,trunk:p.trunk,prior:p.prior,commit:p.commit,state:sf,changed:p.changed,commits:p.commits,note:o.note}; guard(current,d);
@@ -246,7 +252,7 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const included = (e: {seq:number;ts?:string}) => typeof since === 'number' ? e.seq > since : Date.parse(e.ts ?? entries[e.seq]?.ts ?? '') > Date.parse(since);
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
-  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:')),adoptions:state.adoptions.filter(included),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */

@@ -37,13 +37,14 @@ async function readText(dir: string, file: string): Promise<string> {
 /**
  * Resolves the principal; an owner action needs a confirmed dialog. `summary` lines are fixed text whose
  * interpolated values the caller passes through oneLine; free-text `fields` (note, reason, evidence) are
- * rendered one line each after the Repository/Identity lines, so they cannot fake the dialog.
+ * rendered one line each after the Repository/Identity lines, so they cannot fake the dialog. A list field
+ * renders `Label:` and then one indented, escaped line per item, followed by its fixed `more` line.
  */
-async function actor(ctx: ExtensionContext, dir: string, value?: string, summary?: string, fields: Record<string, string | undefined> = {}) {
+async function actor(ctx: ExtensionContext, dir: string, value?: string, summary?: string, fields: Record<string, string | { items: string[]; more?: string } | undefined> = {}) {
   const p = principal(value);
   if (p.role !== 'owner') return { cwd: dir, as: p };
   if (!ctx.hasUI) throw new OwedError('owner actions require UI confirmation; no UI is available');
-  const free = Object.entries(fields).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}: ${oneLine(v!)}`);
+  const free = Object.entries(fields).flatMap(([k, v]) => v === undefined ? [] : typeof v === 'string' ? [`${k}: ${oneLine(v)}`] : [`${k}:${v.items.length ? '' : ' none'}`, ...v.items.map(i => `  ${oneLine(i)}`), ...(v.more ? [v.more] : [])]);
   if (!await ctx.ui.confirm('owed: confirm owner decision', [summary ?? 'Execute action as owner', `Repository: ${oneLine(dir)}`, `Identity: owner:${oneLine(p.id)}`, ...free, 'Confirmation will be recorded as pi-confirm.'].join('\n'))) throw new OwedError('owner did not confirm; action canceled');
   return { cwd: dir, as: p, channel: 'pi-confirm' as const };
 }
@@ -63,6 +64,8 @@ async function slotWriter(dir: string, id: string): Promise<string | undefined> 
   const slot = (await ops.status({ cwd: dir })).nodes[id]?.slot;
   return slot?.open && resolve(await git.repoRoot(dir)) === resolve(slot.worktree) ? slot.writer : undefined;
 }
+/** Changed paths listed in the owed_adopt confirmation dialog before the `git diff --name-only` line (SPEC §11). */
+const ADOPT_SHOWN = 50;
 function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
 
 export default function owed(pi: ExtensionAPI): void {
@@ -153,8 +156,9 @@ export default function owed(pi: ExtensionAPI): void {
     const who = requireRole(p.as, 'owner:human', ['owner'], 'adopt trunk commits');
     if (!p.note.trim()) throw new OwedError('adopt requires a note', 'usage');
     const v = await ops.adoptPreview({ cwd: dir, commit: p.commit });
-    const shown = v.changed.length > 20 ? [...v.changed.slice(0, 20), `… (+${v.changed.length - 20} more)`] : v.changed;
-    const a = await actor(ctx, dir, who, `Adopt trunk ${oneLine(v.trunk)} ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}: ${v.commits} commit${v.commits === 1 ? '' : 's'} made outside owed\nThese changes were not reviewed through owed; adopting them makes ${v.commit.slice(0, 12)} the ledger trunk.`, { 'Changed paths': shown.join(', ') || '(none)', Note: p.note });
+    // Up to ADOPT_SHOWN paths one per line; beyond that, the exact command that lists them all.
+    const shown = { items: v.changed.slice(0, ADOPT_SHOWN), ...(v.changed.length > ADOPT_SHOWN ? { more: `… +${v.changed.length - ADOPT_SHOWN} more paths; full list: git diff --name-only ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}` } : {}) };
+    const a = await actor(ctx, dir, who, `Adopt trunk ${oneLine(v.trunk)} ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}: ${v.commits} commit${v.commits === 1 ? '' : 's'} made outside owed\nThese changes were not reviewed through owed; adopting them makes ${v.commit.slice(0, 12)} the ledger trunk.`, { [`Changed paths (${v.changed.length})`]: shown, Note: p.note });
     const r = await ops.adopt({ ...a, channel: 'pi-confirm', commit: v.commit, note: p.note });
     return result(r, `${renderEntry(r.entry)}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
   });
