@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0
+
+- **`owed adopt [--commit X] --note TEXT`** (owner only, also the `owed_adopt`
+  pi tool). Records commits made outside owed (for example a release commit)
+  as the new ledger trunk. Only fast-forwards are accepted; the trunk
+  invariants are measured on the adopted commit and no new debt is allowed.
+  The CLI prints a preview (range, commit count, changed paths) and pins the
+  previewed commit before asking for confirmation.
+- `owed status` reports trunk drift between the ledger and the branch,
+  including a ledger trunk commit that no longer exists (`ledger-missing`).
+- `owed report` lists trunk adoptions as owner decisions.
+
+Ledgers containing `adopt` entries need pi-owed 0.3.0 or later.
+
 ## 0.2.0
 
 pi-owed 0.2.0 was developed under owed itself: every change below went through
