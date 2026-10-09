@@ -1,6 +1,6 @@
 import { ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
-import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, ItemView, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, State, StateFacts } from './types.ts';
+import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, HaltEntry, ItemView, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -16,7 +16,7 @@ const active = (b: Block): boolean => b.state !== 'cleared';
 const binding = (b: Block, spec: NodeSpec | undefined): boolean => active(b) && (b.kind === 'judgment' || !spec || spec.checks.some(c => b.obligation === `check:${c.id}` || (c.red && b.obligation === `red:${c.id}`) || (!!c.mutants && b.obligation === `strength:${c.id}`)) || b.obligation === 'writes');
 const role = (by: string): string => by.split(':')[0] ?? '';
 const blankPlan = (): Plan => ({ version: 1, trunk: '', closure: [], invariants: [], nodes: [] });
-const emptyNode = (id: string): NodeState => ({ id, phase: 'blocked', items: [], blocks: [], accepted: false, dependents: 0, writers: [] });
+const emptyNode = (id: string): NodeState => ({ id, phase: 'blocked', items: [], blocks: [], accepted: false, dependents: 0, writers: [], runs: [] });
 const nodeSpec = (s: State, id: string): NodeSpec | undefined => s.plan.nodes.find(n => n.id === id);
 const observations = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => context(s).entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === subject && e.obligation === obligation && e.key === key);
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => observations(s, subject, obligation, key).some(e => e.verdict !== 'error');
@@ -102,6 +102,7 @@ function refresh(s: State): void {
     const visit = (id: string): void => { for (const other of s.plan.nodes) if (other.deps.includes(id) && !seen.has(other.id)) { seen.add(other.id); visit(other.id); } };
     visit(n.id);
     n.dependents = seen.size;
+    if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
   }
   s.invariants = s.plan.invariants.map(i => item(s, 'trunk', `inv:${i.id}`, s.trunk.invKeys[i.id] ?? ''));
   const g = context(s).genesis;
@@ -191,13 +192,58 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
         for (const prior of h.entries) settleDecoy(v, prior, h.mergeCatches);
         if (at >= 0) s.decoys[at] = v; else s.decoys.push(v);
       }
-    }
+    } else if (e.kind === 'launch' || e.kind === 'send') {
+      const n = s.nodes[e.node]!;
+      let runs = n.runs.find(r => r.attempt === e.attempt);
+      if (!runs) { runs = { attempt: e.attempt, launches: [], sends: [] }; n.runs.push(runs); n.runs.sort((a, b) => a.attempt - b.attempt); }
+      if (e.kind === 'launch') runs.launches.push(e); else runs.sends.push(e);
+    } else if (e.kind === 'halt') s.nodes[e.node]!.halt = e;
+    for (const n of Object.values(s.nodes)) if (n.halt && clearsHalt(e, n.id)) n.halt = undefined;
     for (const v of s.decoys) settleDecoy(v, e, h.mergeCatches);
     h.entries.push(e); s.seq = e.seq; s.head = e.hash;
     refresh(s);
   }
   return s;
 }
+
+// ---------- driver (SPEC §12) ----------
+const DRIVE_KINDS: readonly string[] = ['launch', 'send', 'halt'];
+export const DRIVER = 'parent:drive';
+/**
+ * A halt is cleared by a later entry on its node by a principal other than the driver: a human, parent,
+ * writer or reviewer action (submit, review, rebase, abandon, waive, defer, escape, a ruling naming the
+ * node, dispatch), never by driver entries (launch/send/halt) or executor observations and merges (which
+ * the driver itself causes). A dispatch opens a new attempt and clears it whoever records it.
+ */
+function clearsHalt(e: Entry, node: string): boolean {
+  if (e.kind === 'dispatch' && e.node === node) return true;
+  if (DRIVE_KINDS.includes(e.kind) || e.by === DRIVER || role(e.by) === 'executor') return false;
+  return ('node' in e && e.node === node) || (e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(node));
+}
+/** The active driver halt of `node`'s current open attempt, if any. */
+export function halted(s: State, node: string): HaltEntry | undefined {
+  const n = s.nodes[node];
+  return n?.halt && n.slot?.open && n.slot.attempt === n.halt.attempt ? n.halt : undefined;
+}
+/** Stable project id of a ledger: the first 12 hex of the genesis entry hash. */
+export function projectId(s: State): string {
+  const g = context(s).genesis;
+  if (!g) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
+  return g.hash.slice(0, 12);
+}
+/** dsa run id: `owed:<project>:<node>:<attempt>:<role>[:<n>]` (`n` = 1-based reviewer index when the attempt needs more than one reviewer run). */
+export function runId(project: string, node: string, attempt: number, role: RunRole, n?: number): string {
+  return `owed:${project}:${node}:${attempt}:${role}${n === undefined ? '' : `:${n}`}`;
+}
+/** dsa labels of a run. */
+export function runLabels(project: string, node: string, attempt: number, role: RunRole): Record<string, string> {
+  return { owed: project, node, attempt: String(attempt), role };
+}
+/** Reviewer principal of the driver's n-th reviewer run of an attempt. */
+export function driveReviewer(node: string, attempt: number, n: number): string { return `reviewer:drive-${node}-${attempt}-${n}`; }
+export const SEND_KINDS: readonly SendKind[] = ['follow-up', 'steer'];
+export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing'];
+const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
 // Conservative local downgrade detection keeps this leaf independent of plan.ts.
 function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
@@ -327,7 +373,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     }
   }
-  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt') {
+  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt' || d.kind === 'launch' || d.kind === 'send' || d.kind === 'halt') {
     const extra = Object.entries(d).filter(([k, v]) => v !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS[d.kind].includes(k)).map(([k]) => k);
     if (extra.length) errors.push(`${d.kind} has unknown fields: ${extra.join(', ')}`);
   }
@@ -341,6 +387,33 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.evidence !== undefined && typeof d.evidence !== 'string') errors.push('escape evidence must be text');
       break;
     }
+    case 'launch': {
+      allow('parent'); slot();
+      if (d.role !== 'writer' && d.role !== 'reviewer') errors.push('launch role must be writer or reviewer');
+      if (!blobHash(d.spec)) errors.push('launch spec must be a blob hash (64 lowercase hex)');
+      if (!errors.length) {
+        const project = projectId(s), base = runId(project, d.node, d.attempt, d.role), tail = typeof d.rid === 'string' && d.rid.startsWith(`${base}:`) ? d.rid.slice(base.length + 1) : undefined;
+        if (d.rid !== base && !(d.role === 'reviewer' && tail !== undefined && /^[1-9][0-9]*$/.test(tail))) errors.push(`launch rid must be ${base}${d.role === 'reviewer' ? '[:<n>]' : ''}`);
+        if (!d.labels || typeof d.labels !== 'object' || Array.isArray(d.labels) || canonical(d.labels) !== canonical(runLabels(project, d.node, d.attempt, d.role))) errors.push(`launch labels must be ${canonical(runLabels(project, d.node, d.attempt, d.role))}`);
+        if (context(s).entries.some(e => e.kind === 'launch' && e.rid === d.rid)) errors.push(`launch ${d.rid} is already recorded; a re-launch reuses the stored entry`);
+      }
+      break;
+    }
+    case 'send': {
+      allow('parent'); slot();
+      if (!context(s).entries.some(e => e.kind === 'launch' && e.rid === d.rid && e.node === d.node && e.attempt === d.attempt)) errors.push('send rid must name a recorded launch of this node attempt');
+      if (!SEND_KINDS.includes(d.sendKind)) errors.push(`send sendKind must be one of ${SEND_KINDS.join(', ')}`);
+      if (!SEND_REASONS.includes(d.reason)) errors.push(`send reason must be one of ${SEND_REASONS.join(', ')}`);
+      if (!blobHash(d.message)) errors.push('send message must be a blob hash (64 lowercase hex)');
+      const seq = 'seq' in d && typeof d.seq === 'number' ? d.seq : s.seq + 1;
+      if (d.send !== `${d.rid}:${d.sendKind}:${seq}`) errors.push(`send id must be ${d.rid}:${d.sendKind}:${seq} (rid, kind, seq of this entry)`);
+      break;
+    }
+    case 'halt':
+      allow('parent'); slot();
+      if (typeof d.reason !== 'string' || !d.reason.trim()) errors.push('halt requires a reason');
+      if (d.needs !== 'human' && d.needs !== 'owner') errors.push('halt needs must be human or owner');
+      break;
     case 'decoy-commit':
       allow('owner');
       if (typeof d.digest !== 'string' || !/^[0-9a-f]{64}$/.test(d.digest)) errors.push('decoy-commit digest must be 64 lowercase hex characters (sha256)');
@@ -368,7 +441,7 @@ export function validateDraft(s: State, d: Draft): string[] {
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt', readonly string[]> = { escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt', readonly string[]> = { escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason'], halt: ['node', 'attempt', 'reason', 'needs'] };
 export const ESCAPE_CLASSES: readonly EscapeClass[] = ['missing', 'false-pass', 'reuse', 'weak', 'waiver'];
 /** sha256 hex of the canonical JSON of exactly {nonce, decoys:[{node, defect}]}; other fields are ignored. */
 export function decoyDigest(p: DecoyPayload): string {

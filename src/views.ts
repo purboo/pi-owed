@@ -1,8 +1,9 @@
-import type { AdoptionView, Block, Entry, EscapeClass, ItemView, NodeState, SlotRebase, State } from './types.ts';
+import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeState, SlotRebase, State } from './types.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
-import { NO_RULINGS, overlapping } from './reducer.ts';
+import { NO_RULINGS, overlapping, halted, driveReviewer } from './reducer.ts';
+import { OwedError } from './errors.ts';
 
 export interface ReceiptCard {
   node: string; phase: NodeState['phase']; accepted: boolean;
@@ -11,6 +12,10 @@ export interface ReceiptCard {
   untested: string[]; downgrades: State['downgrades']; ownerFlags: Entry[];
   /** Latest rebase of the open slot; `rangeDiff` lets a reviewer review only the conflict resolution. */
   rebase?: SlotRebase & { rangeDiff?: string };
+  /** Active driver halt of the open attempt (SPEC §12). */
+  halt?: HaltEntry;
+  /** Driver launches and sends of the open attempt. */
+  runs?: AttemptRuns;
 }
 export interface StatusView {
   trunk: State['trunk']; nodes: Record<string, NodeState>; groups: Record<string, string[]>;
@@ -19,6 +24,10 @@ export interface StatusView {
   overlaps: Record<string, string[]>;
   /** Present when refs/heads/<trunk> differs from the ledger trunk (commits made outside owed, or a rewritten trunk). */
   drift?: TrunkDrift;
+  /** Nodes whose open attempt the driver halted (SPEC §12); needs owner halts also appear under Pending owner. */
+  halted: HaltEntry[];
+  /** Driver launches of each open slot's current attempt, by node. */
+  launches: Record<string, LaunchEntry[]>;
 }
 /** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog or terminal prompt. */
 /** Escapes C0/C1 controls, DEL, line/paragraph separators and bidi controls (U+202A–U+202E, U+2066–U+2069). */
@@ -42,6 +51,8 @@ export interface Report {
   ownerActions: Entry[];
   /** Owner adoptions of trunk commits made outside owed, after `since`. */
   adoptions: AdoptionView[];
+  /** Driver halts after `since`, plus every still active halt (`active`). */
+  halts: (HaltEntry & { active: boolean })[];
   escapes: EscapeSummary;
 }
 /** CLI owner confirmation for adopt: full prior..commit, commit count, every changed path (one per line) and the note, escaped onto single lines. */
@@ -62,6 +73,8 @@ export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')),
+    ...(halted(s, node) ? { halt: halted(s, node) } : {}),
+    ...(n.slot?.open && n.runs.some(r => r.attempt === n.slot!.attempt) ? { runs: n.runs.find(r => r.attempt === n.slot!.attempt) } : {}),
     ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) };
 }
 export function statusView(s: State, entries: Entry[] = []): StatusView {
@@ -73,20 +86,31 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
   for (const i of [...Object.values(s.nodes).filter(n => !n.merged).flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(i);
   const ready = Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), overlaps: Record<string, string[]> = {};
   for (const id of ready) { const o = overlapping(s, id); if (o.length) overlaps[id] = o; }
-  return { trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps };
+  const halts = Object.keys(s.nodes).flatMap(id => halted(s, id) ?? []), launches: Record<string, LaunchEntry[]> = {};
+  for (const h of halts) if (h.needs === 'owner') pending.owner!.push({ subject: h.node, obligation: 'driver-halt', key: '', status: 'D', mark: '⏸', discharger: 'owner', evidence: [h.seq], detail: `driver halted attempt ${h.attempt} (#${h.seq}): ${h.reason}` });
+  for (const n of Object.values(s.nodes)) { const runs = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined; if (runs?.launches.length) launches[n.id] = runs.launches; }
+  return { trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, launches };
 }
 const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged' };
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
 function itemText(i: ItemView & { observations?: Entry[] }): string {
+  if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${HALT_CLEAR}`;
   const label = i.status === 'W' ? 'waived' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
+/** How a driver halt is cleared (SPEC §12, D3). */
+const HALT_CLEAR = 'cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, a ruling naming it), or a new attempt';
+const haltText = (h: HaltEntry): string => `halted by driver #${h.seq} (attempt ${h.attempt}, needs ${h.needs}): ${oneLine(h.reason)}`;
+const launchText = (l: LaunchEntry): string => `#${l.seq} ${l.role} ${l.rid}`;
+function runsText(r: AttemptRuns): string[] {
+  return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
+}
 export function renderReceipt(v: ReceiptCard): string {
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${HALT_CLEAR}`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
-  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -104,6 +128,9 @@ function entryLine(e: Entry): string {
     case 'review': return `${head} reviewed ${e.node}/${e.obligation ?? 'review'} ${e.verdict} rank=${e.rank}${e.note ? `: ${e.note}` : ''}`;
     case 'escape': return `${head} recorded escape ${e.node} (merge #${e.merge}, ${e.class} ${escapeLabels[e.class]}): ${e.note}${e.evidence ? ` [${e.evidence}]` : ''}`;
     case 'adopt': return `${head} adopted trunk ${e.trunk} ${e.prior.slice(0, 12)}..${e.commit.slice(0, 12)} (${plural(e.commits, 'commit')} made outside owed, ${plural(e.changed.length, 'changed path')}): ${e.note}`;
+    case 'launch': return `${head} recorded driver launch of ${e.node} attempt ${e.attempt} ${e.role} ${e.rid}`;
+    case 'send': return `${head} recorded driver ${e.sendKind} (${e.reason}) to ${e.rid}: ${e.send}`;
+    case 'halt': return `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${e.reason}`;
     case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
     case 'decoy-reveal': return `${head} revealed decoys ${e.decoys.map(d => d.node).join(', ')}`;
     default: return `${head} ${e.kind}`;
@@ -128,6 +155,7 @@ export function renderReport(v: Report): string {
     ...list('Owner decisions needed', v.decisions.map(itemText)),
     ...list('Owner actions', v.ownerActions.map(entryLine)),
     ...(v.adoptions?.length ? list('Trunk adoptions (owner decisions: commits made outside owed)', v.adoptions.map(adoptionText)) : []),
+    ...(v.halts?.length ? list('Driver halts', v.halts.map(h => `${h.node}: ${haltText(h)}${h.active ? ' (active)' : ' (cleared)'}`)) : []),
     ...renderEscapes(v.escapes)].join('\n');
 }
 
@@ -241,4 +269,55 @@ export function renderBrief(v: Brief): string {
     ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),
     ...section('In progress', v.inProgress.map(p => `${p.node} ${p.phase} (attempt ${p.attempt}): dispatched ${age(p.ageMs)} ago${p.submitAgeMs !== undefined ? `, submitted ${age(p.submitAgeMs)} ago` : ''}`)),
     `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies`].join('\n');
+}
+
+// ---------- driver review packet (SPEC §12, D5) ----------
+/** Reviewer runs the driver launches for the current candidate: one covers review and closure-review; `review.count` > 1 needs that many distinct reviewers. 0 when no review obligation exists. */
+export function reviewRuns(s: State, node: string): number {
+  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
+  if (!n?.candidate || !spec) return 0;
+  const closure = n.items.some(i => i.obligation === 'closure-review');
+  return Math.max(spec.review.count, closure ? 1 : 0);
+}
+/** Review obligations recorded by reviewer run `n` (1-based): `review` while n <= review.count, `closure-review` by run 1. */
+export function reviewObligations(s: State, node: string, n: number): ('review' | 'closure-review')[] {
+  const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
+  if (!st?.candidate || !spec) return [];
+  return [...(n <= spec.review.count ? ['review' as const] : []), ...(n === 1 && st.items.some(i => i.obligation === 'closure-review') ? ['closure-review' as const] : [])];
+}
+/**
+ * Task text of the driver's n-th reviewer run on the node's current candidate (pure): node, attempt, candidate,
+ * base, brief, writes, obligations with required count/rank, rulings in scope, the exact `owed review` commands
+ * for reviewer `reviewer:drive-<node>-<attempt>-<n>`, and the rules (inspect the diff, edit nothing, reply with seqs).
+ */
+export function reviewPacket(s: State, node: string, n = 1): string {
+  const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
+  if (!st || !spec) throw new OwedError(`Node ${node} does not exist`);
+  if (!st.slot?.open || !st.candidate) throw new OwedError(`Node ${node} has no open candidate`);
+  const runs = reviewRuns(s, node);
+  if (!Number.isInteger(n) || n < 1 || n > runs) throw new OwedError(`Node ${node} has ${runs} reviewer run(s); run ${n} does not exist`);
+  const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, n);
+  const rulings = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
+  const rulingsItem = st.items.find(i => i.obligation === 'rulings');
+  const ack = rulingsItem && rulingsItem.status === 'D' && rulings.length ? ` --ack-rulings ${Math.max(...rulings.map(r => r.seq))}` : '';
+  const rank = (o: 'review' | 'closure-review'): number => o === 'closure-review' ? 2 : Math.max(1, spec.review.min_rank);
+  const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : 'measured by owed';
+  const mine = reviewObligations(s, node, n);
+  const commands = mine.flatMap(o => rank(o) > 2 ? [`(${o} requires rank ${rank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${rank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
+  return [`# Review ${spec.title ?? node} (node ${node}, attempt ${attempt}, reviewer run ${n} of ${runs})`,
+    `Node: ${node}; attempt: ${attempt}`,
+    `Candidate: ${commit} (submit #${st.candidate.seq})`,
+    `Base: ${base}`,
+    ...(spec.brief ? ['Brief:', spec.brief.trimEnd()] : []),
+    `Allowed writes: ${spec.writes.join(', ') || 'none'}`,
+    'Obligations of the candidate:',
+    ...st.items.map(i => `- ${i.obligation}: ${required(i.obligation)} [${i.mark} ${i.detail}]${mine.includes(i.obligation as 'review') ? ' — recorded by this run' : ''}`),
+    `Rulings in scope:${rulings.length ? '' : ' none'}`,
+    ...rulings.map(r => `- #${r.seq} ${r.text}`),
+    `Your reviewer identity: ${who} (never the writer of this node).`,
+    `Inspect the actual diff: git diff ${base} ${commit}`,
+    'Do not edit files, commit or run owed submit; review only.',
+    'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',
+    ...commands.map(c => `  ${c}`),
+    'Reply with the ledger seqs of the reviews you recorded.'].join('\n');
 }

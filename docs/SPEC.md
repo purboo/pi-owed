@@ -34,6 +34,7 @@ String form `role:id` (e.g. `owner:human`, `parent:main`, `writer:auth-api#2`,
 - Writers are created by dispatch: `writer:<node>#<attempt>`.
 - The executor is owed itself; only `owed attest`/`owed merge` produce executor
   observations.
+- The driver (`owed drive`, §12) acts as `parent:drive`.
 - Owner acts require a human channel, recorded as `channel`:
   `tty` (interactive confirmation), `pi-confirm` (pi UI confirmation),
   `flag` (`--i-am-owner`, shown as weaker in every view). Agents must never use
@@ -138,6 +139,9 @@ All keys are sha256 hex over canonical JSON.
 | `escape` | parent/owner | `{node, merge, class, note, evidence?}` | defect found after a merge (§6.5); `merge` must be the seq of a merge of `node` |
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
+| `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3), unique in the ledger; `labels` = `runLabels(...)`; strict fields |
+| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing`; strict fields |
+| `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
 
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
 harness, materialization failure) is ⊥: no information, no block.
@@ -578,3 +582,129 @@ the Repository/Identity lines of the dialog. The ledger keeps the exact text. Co
 status. A skill (`skills/owed/SKILL.md`) explains the loop: status → dispatch →
 run worker with dsa → submit → attest → review (fresh reviewer, not the writer)
 → merge, and the rules agents must not break.
+
+## 12. Driver
+
+`owed drive` is a deterministic program that runs the mechanical loop
+`status → dispatch → writer → submit → attest → reviewers → merge` with dsa
+(pi-durable-subagents) as the process runner and stops only for decisions.
+Boundary: dsa never judges completion and never learns the graph; owed never
+schedules processes, slots, models or leases. The driver never answers a
+question, never waives, never changes the plan, never runs `restart --force`.
+The parent-pinned contract is `.owed/drive-contract.md` (D1–D8); this section
+records its ledger-facing parts. Implemented so far: the plan block, the ledger
+entries, the formulas, the views and the review packet; `decide`, the dsa
+client and the `owed drive` command are later work.
+
+### 12.1 Level-triggered reconcile (D1)
+
+One **pass** reads the ledger state, `describe --key`s every open launch,
+computes actions with a **pure** function `decide(state, plan, runs, opts)`
+(`src/drive.ts`), and executes them in order. Events are only a wake-up
+signal; losing the event cursor or the drive state dir is harmless because
+every pass re-derives from the ledger plus `describe`. `RunView`
+(`src/types.ts`) is the subset of `describe --key <rid> --json` the driver
+uses: `{rid, state: absent|queued|running|asking|sealed|pruned, status?,
+error?, questions?: {qid, rev, question}[], lastFence?: {reason, at}}`
+(unknown dsa states map to `running`; `pruned` is treated like `sealed`).
+
+### 12.2 Plan config (D2)
+
+```yaml
+drive:
+  max: 4                 # concurrent open attempts the driver starts (default 4, integer >= 1)
+  repairs: 2             # follow-ups after a failed check / block before halting (default 2, integer >= 0)
+  writer:   { agent: worker,   model: "sota-claude/claude-opus-5-5:high" }   # default {agent: worker}
+  reviewer: { agent: reviewer, model: "sota-claude/claude-opus-5-5:high" }   # default {agent: reviewer}
+```
+Optional; `model` is optional (agent default). `parsePlan` fills the defaults
+when the block is present (`Plan.drive`; absent block → `Plan.drive`
+undefined, `driveConfig(plan)` returns the defaults) and rejects unknown keys
+(in `drive`, `writer`, `reviewer`) and bad types. It is not an obligation:
+changing or removing `drive:` is never a downgrade (a plan change by parent).
+
+### 12.3 Ledger entries (D3)
+
+Persist before submit: an intent is appended **before** the dsa call, and every
+retry re-sends the exact stored bytes with the same id. Entry kinds `launch`,
+`send`, `halt` (§5) may be appended only by role `parent`; launch and send
+must name the node's current open slot (node and attempt), and so must a halt.
+
+- Project id `projectId(state)`: the first 12 hex of the genesis entry hash
+  (stable per ledger).
+- Run id `runId(project, node, attempt, role, n?)` =
+  `owed:<project>:<node>:<attempt>:<role>[:<n>]`, `<n>` the 1-based reviewer
+  index when the attempt needs more than one reviewer run (writers have none).
+- Labels `runLabels(project, node, attempt, role)` =
+  `{owed: <project>, node, attempt: String(attempt), role}`.
+- Driver reviewer principal: `reviewer:drive-<node>-<attempt>-<n>`
+  (`driveReviewer`).
+- `ops.launch` stores the spec bytes as a blob and is idempotent: a launch with
+  the same rid and identical content returns the recorded entry
+  (`created: false`); a different one is refused. `ops.send` stores the message
+  bytes and assigns the send id under the lock. `ops.halt` records a halt.
+- State: `NodeState.runs` lists per attempt the launches and sends
+  (`{attempt, launches, sends}`); `NodeState.halt` and the reducer's
+  `halted(state, node) → HaltEntry | undefined` give the active halt.
+- A halt blocks the driver on that attempt until a later entry on the same node
+  by a principal other than `parent:drive` — submit, review, rebase, abandon,
+  waive, defer, escape, a ruling whose node list names it (not `*`) — or a new
+  attempt (any dispatch of the node). Driver entries (`launch`, `send`, `halt`)
+  and executor entries (`obs`, `merge`, which the driver causes) never clear a
+  halt. A halt of an attempt that is no longer open is not active.
+
+### 12.4 Views
+
+- **Status**: a `Halted (driver):` section lists halted nodes with
+  `needs: human` (`⏸ <node>: halted by driver #seq (attempt N, needs human):
+  <reason>`); a halt with `needs: owner` appears instead under *Pending owner*
+  (`⏸ halted <node> — driver halted attempt N (#seq): <reason>; cleared by …`).
+  `Driver runs (open attempts):` lists the launches of each open slot's current
+  attempt (`<node> attempt N: #seq <role> <rid>`). Both sections are shown only
+  when non-empty; `--json` has `halted: HaltEntry[]` and
+  `launches: {node: LaunchEntry[]}`.
+- **Why**: the active halt with how it is cleared, then each launch
+  (`Driver launch #seq <role> <rid> (spec <sha12>)`) and send
+  (`Driver send #seq <kind> (<reason>) to <rid>: <send id>`) of the open
+  attempt; `--json` has `halt?` and `runs?`.
+- **Report**: `Driver halts` lists halts after `since` plus every still active
+  halt, each marked `(active)` or `(cleared)` (shown only when non-empty;
+  `--json` `halts`).
+
+### 12.5 Actions (D4)
+
+`decide` outputs `dispatch | launch | send | attest | rebase | merge | halt |
+notify` actions per the policy table of the contract (first matching row per
+open attempt, at most one action per node per pass; a halted attempt gets
+none). Not per slot: while open slots < `max`, ready nodes are dispatched in
+status order, skipping nodes whose writes overlap an open slot and nodes that
+need owner action. One reviewer run covers all of a candidate's review
+obligations (review and closure-review); a node with `review.count` > 1 gets
+runs `n = 1..count` with distinct reviewer ids.
+
+### 12.6 Review packet (D5)
+
+`reviewPacket(state, node, n)` (`src/views.ts`, pure) is the task of the
+driver's n-th reviewer run on the current candidate: node, attempt, candidate
+commit (and submit seq), base, the plan title/brief, writes, every obligation
+of the candidate with its required count/rank and current mark, rulings in
+scope, the reviewer identity `reviewer:drive-<node>-<attempt>-<n>`, the exact
+commands
+
+    owed review <node> --as reviewer:drive-<node>-<attempt>-<n> --ok|--block --rank R [--obligation closure-review] [--ack-rulings S] --note "..."
+
+(R = `review.min_rank`, at least 1, for `review`; 2 for `closure-review`;
+`--ack-rulings S` with the latest in-scope ruling S when the rulings item is
+owed; a rank above 2 is owner-only and the packet says the run cannot discharge
+it), and the rules: inspect the actual diff (`git diff <base> <candidate>`), do
+not edit files, record verdicts in the ledger, reply with seqs.
+`reviewRuns(state, node)` = `max(review.count, 1 if closure-review is required
+else 0)`; `reviewObligations(state, node, n)` = `review` while `n ≤
+review.count`, plus `closure-review` for run 1.
+
+### 12.7 Execution and surfaces (D6, D7)
+
+Later nodes: the dsa client (`src/dsa.ts`), action execution
+(`src/drive-run.ts`, single-driver lock `.git/owed/drive.lock`, cursor in
+`.git/owed/drive/`), CLI `owed drive [--once] [--max N] [--json]`, the pi tool
+`owed_drive` (`--once`), and `/owed` showing dsa states of live launches.

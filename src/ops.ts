@@ -5,14 +5,14 @@ import { canonical } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades } from './plan.ts';
-import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping } from './reducer.ts';
+import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import type { Brief } from './views.ts';
-import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, ItemView, Plan, Principal, State } from './types.ts';
+import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
 export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView }
@@ -252,7 +252,7 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const included = (e: {seq:number;ts?:string}) => typeof since === 'number' ? e.seq > since : Date.parse(e.ts ?? entries[e.seq]?.ts ?? '') > Date.parse(since);
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
-  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  return {escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
@@ -260,6 +260,39 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
   const {state,entries} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
   return briefView(state,entries,since,o.now ?? Date.now());
+}
+
+// ---------- driver entries (SPEC §12, D3): persisted before the dsa call ----------
+/**
+ * Records the intent to start a dsa run (role parent; the driver is `parent:drive`). `spec` is the exact spec JSON
+ * bytes, stored as a blob. Idempotent: a launch already recorded with the same rid, node, attempt, role, spec bytes
+ * and labels is returned with `created: false`; a different one is refused (a request conflict).
+ */
+export async function launch(o: Actor & { node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string> }): Promise<{ entry: LaunchEntry; created: boolean }> {
+  owner(o); const ledger = await Ledger.open(o.cwd), spec = await ledger.putBlob(o.spec);
+  return ledger.withLock(async () => {
+    const { state, entries } = await load(ledger);
+    const prior = entries.find((e): e is LaunchEntry => e.kind === 'launch' && e.rid === o.rid);
+    if (prior) {
+      if (prior.node !== o.node || prior.attempt !== o.attempt || prior.role !== o.role || prior.spec !== spec || canonical(prior.labels) !== canonical(o.labels)) throw new OwedError(`launch ${o.rid} is already recorded (#${prior.seq}) with other content`);
+      return { entry: prior, created: false };
+    }
+    const d: Draft = { kind: 'launch', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, role: o.role, rid: o.rid, spec, labels: o.labels };
+    guard(state, d); return { entry: (await ledger.append([d]))[0] as LaunchEntry, created: true };
+  });
+}
+/** Records the intent to send `message` (exact bytes, stored as a blob) to run `rid`; the send id `${rid}:${sendKind}:${seq}` is assigned under the lock. */
+export async function send(o: Actor & { node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason }): Promise<SendEntry> {
+  owner(o); const ledger = await Ledger.open(o.cwd), message = await ledger.putBlob(o.message);
+  return ledger.withLock(async () => {
+    const { state } = await load(ledger);
+    const d: Draft = { kind: 'send', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, rid: o.rid, send: `${o.rid}:${o.sendKind}:${state.seq + 1}`, sendKind: o.sendKind, message, reason: o.reason };
+    guard(state, d); return (await ledger.append([d]))[0] as SendEntry;
+  });
+}
+/** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. */
+export async function halt(o: Actor & { node: string; attempt: number; reason: string; needs: 'human' | 'owner' }): Promise<HaltEntry> {
+  return await mutate(o, () => ({ kind: 'halt', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, reason: o.reason, needs: o.needs })) as HaltEntry;
 }
 
 // ---------- escapes and decoys ----------
