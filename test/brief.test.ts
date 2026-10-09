@@ -112,7 +112,7 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     assert.equal(v.rejected.length, 2);
     assert.equal(exec.obligation, 'check:e'); assert.equal(exec.failingObs, eFail);
     assert.equal(judgment.kind, 'judgment'); assert.equal(judgment.reviewer, 'reviewer:r2'); assert.equal(judgment.rank, 2); assert.equal(judgment.failingObs, undefined);
-    assert.match(judgment.clear, /owed review b --obligation closure-review --ok --rank 2 --as reviewer:r2/);
+    assert.match(judgment.clear, /original reviewer reviewer:r2 with rank >= 2, or by any reviewer with rank > 2/); assert.doesNotMatch(judgment.clear, /--as reviewer:/);
     assert.match(judgment.clear, new RegExp(`--accept-risk ${judgment.seq}`));
     // (4) dispatched/submitted nodes with age; accepted h is not in progress.
     assert.deepEqual(v.inProgress.map(p => `${p.node}:${p.phase}`).sort(), ['b:submitted', 'd:submitted', 'e:submitted', 'f:dispatched']);

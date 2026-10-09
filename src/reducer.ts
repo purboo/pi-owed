@@ -27,6 +27,8 @@ function required(spec: NodeSpec, facts: CandidateFacts): string[] {
 function latestRule(s: State, node: string): number {
   return Math.max(-1, ...s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node)).map(r => r.seq));
 }
+/** Detail of a satisfied `rulings` item when no ruling is in scope for the node (shown as "no rulings apply"). */
+export const NO_RULINGS = 'no ruling is in scope for this node';
 function item(s: State, subject: string, obligation: string, key: string): ItemView {
   const node = s.nodes[subject];
   const spec = nodeSpec(s, subject);
@@ -49,7 +51,8 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
       out.evidence = acknowledgments.length ? acknowledgments.map(e => e.seq) : [node!.slot!.dispatchSeq];
     }
     out.discharger = 'reviewer';
-    out.detail = `rulings requires acknowledgment of applicable ruling #${latest}`;
+    out.detail = latest === -1 ? NO_RULINGS : `rulings requires acknowledgment of applicable ruling #${latest}`;
+    if (latest === -1 && out.status === 'E') return { ...out, mark: '✔', discharger: undefined };
   } else {
     const obs = observations(s, subject, obligation, key);
     const pass = obs.some(e => e.verdict === 'pass');
@@ -162,9 +165,12 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       const c = s.decoyCommits.find(c => c.digest === decoyDigest(e) && c.revealed === undefined)!;
       c.revealed = e.seq;
       for (const x of e.decoys) {
+        // A node listed in several reveals counts once: the earliest commitment wins.
+        const at = s.decoys.findIndex(d => d.node === x.node);
+        if (at >= 0 && s.decoys[at]!.commit < c.seq) continue;
         const v: DecoyView = { node: x.node, defect: x.defect, commit: c.seq, reveal: e.seq, outcome: 'pending' };
         for (const prior of h.entries) settleDecoy(v, prior);
-        s.decoys.push(v);
+        if (at >= 0) s.decoys[at] = v; else s.decoys.push(v);
       }
     }
     for (const v of s.decoys) settleDecoy(v, e);
@@ -279,6 +285,12 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state }).reasons);
       break;
     case 'note': break;
+  }
+  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal') {
+    const extra = Object.entries(d).filter(([k, v]) => v !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS[d.kind].includes(k)).map(([k]) => k);
+    if (extra.length) errors.push(`${d.kind} has unknown fields: ${extra.join(', ')}`);
+  }
+  switch (d.kind) {
     case 'escape': {
       allow('owner', 'parent');
       const m = Number.isInteger(d.merge) ? context(s).entries.find(e => e.seq === d.merge) : undefined;
@@ -312,6 +324,10 @@ export function validateDraft(s: State, d: Draft): string[] {
 }
 
 // ---------- escapes and decoys ----------
+/** Fields every entry may carry (assigned by the ledger or common to drafts). */
+const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
+/** The only kind-specific fields accepted on these entries; anything else is refused. */
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal', readonly string[]> = { escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'] };
 export const ESCAPE_CLASSES: readonly EscapeClass[] = ['missing', 'false-pass', 'reuse', 'weak', 'waiver'];
 /** sha256 hex of the canonical JSON of exactly {nonce, decoys:[{node, defect}]}; other fields are ignored. */
 export function decoyDigest(p: DecoyPayload): string {
@@ -333,7 +349,10 @@ export function decoyPayloadErrors(p: unknown): string[] {
   }
   return errors;
 }
-/** A pending decoy is caught by an execution failure or review block on its node, and escapes on a merge of it. */
+/**
+ * A pending decoy is caught by an execution failure or review block on its node, and escapes on a merge of it.
+ * A failure observed only while merging (e.g. a trunk invariant on the merge result) is not attributed yet.
+ */
 function settleDecoy(v: DecoyView, e: Entry): void {
   if (v.outcome !== 'pending') return;
   if ((e.kind === 'obs' && e.by === 'executor:owed' && e.subject === v.node && e.verdict === 'fail') || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });

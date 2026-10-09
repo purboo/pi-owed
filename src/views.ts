@@ -1,5 +1,6 @@
 import type { Block, Entry, EscapeClass, ItemView, NodeState, State } from './types.ts';
 import { matchesAny } from './plan.ts';
+import { NO_RULINGS } from './reducer.ts';
 
 export interface ReceiptCard {
   node: string; phase: NodeState['phase']; accepted: boolean;
@@ -23,7 +24,7 @@ export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   return { node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
-    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: b.state === 'flaky' ? `owner waive --accept-risk ${b.seq} explicitly accept the risk` : b.kind === 'exec' ? 'attest reruns attribution on the original key/commit/base; another failure clears the block, a pass creates a conflict' : `review ok on the current obligation key by the original reviewer with rank >= ${b.rank} or another reviewer with rank > ${b.rank}, or owner waive --accept-risk ${b.seq}` })),
+    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: clearHint(s, entries, b) })),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')) };
@@ -40,7 +41,7 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
 const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged' };
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
 function itemText(i: ItemView & { observations?: Entry[] }): string {
-  const label = i.status === 'W' ? 'waived' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? 'rulings acknowledged' : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
+  const label = i.status === 'W' ? 'waived' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
@@ -121,19 +122,31 @@ export interface Brief {
 const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
 const obligationFlag = (o: string): string => o === 'closure-review' ? ' --obligation closure-review' : '';
 const waiveCommand = (node: string, obligation: string, risks: number[]): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}`;
+/** Hint for a node without an open writer slot: nothing can be cleared on an old candidate, only on a new attempt. */
+const dispatchHint = (n: NodeState): string => n.merged ? `${n.id} is merged; no attempt can clear this` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
 /** The command that removes an owner-queue item from the owner's queue. */
 function decisionCommand(s: State, i: ItemView): string {
   if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
+  const n = s.nodes[i.subject];
+  if (n && !n.slot?.open) return dispatchHint(n);
   const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && b.state !== 'cleared') ?? [];
   if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as owner:human`;
   return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq));
 }
-function clearCommand(s: State, entries: Entry[], b: Block): string {
-  const risks = (s.nodes[b.node]?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
-  if (b.state === 'flaky') return `owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks)}`;
+/**
+ * How to clear a non-cleared block. A judgment block is described in words: printing a
+ * ready-to-run review command with `--as` of the original reviewer would invite another
+ * principal to impersonate them. Only owner commands (gated by the owner channel) are printed.
+ */
+function clearHint(s: State, entries: Entry[], b: Block): string {
+  const n = s.nodes[b.node];
+  if (n && !n.slot?.open) return dispatchHint(n);
+  const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
+  const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `;
+  if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks)}`;
   if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} (the attribution rerun on the original content clears the block)`;
-  const by = entries.find(e => e.seq === b.seq)?.by ?? 'reviewer:<original>';
-  return `owed review ${b.node}${obligationFlag(b.obligation)} --ok --rank ${b.rank} --as ${by} (or a reviewer with rank > ${b.rank}), or owner: ${waiveCommand(b.node, b.obligation, risks)}`;
+  const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
+  return `${after}an ok review of ${b.node}/${b.obligation} on the current candidate by the original reviewer ${by} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it; or owner: ${waiveCommand(b.node, b.obligation, risks)}`;
 }
 /** Pure morning brief over a reduced state. `since` limits the Merged section; the other sections show current state. */
 export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now()): Brief {
@@ -154,7 +167,7 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
       measuredItems, waivedItems, untestedChanges: card.untested, reviewers };
   });
   const rejected = open.flatMap(n => n.blocks.filter(b => b.state !== 'cleared')).map(b => ({ seq: b.seq, node: b.node, obligation: b.obligation, kind: b.kind, state: b.state,
-    ...(b.kind === 'exec' ? { failingObs: b.seq } : { reviewer: entries.find(e => e.seq === b.seq)?.by, rank: b.rank }), clear: clearCommand(s, entries, b) }));
+    ...(b.kind === 'exec' ? { failingObs: b.seq } : { reviewer: entries.find(e => e.seq === b.seq)?.by, rank: b.rank }), clear: clearHint(s, entries, b) }));
   const inProgress = nodes.filter(n => (n.phase === 'dispatched' || n.phase === 'submitted') && n.slot).map(n => {
     const at = ts(n.slot!.dispatchSeq), sub = n.phase === 'submitted' && n.candidate ? ts(n.candidate.seq) : undefined;
     return { node: n.id, phase: n.phase as BriefProgress['phase'], attempt: n.slot!.attempt, dispatchSeq: n.slot!.dispatchSeq, dispatchedAt: at, ageMs: Math.max(0, now - Date.parse(at)),
