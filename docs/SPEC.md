@@ -122,15 +122,16 @@ All keys are sha256 hex over canonical JSON.
 | kind | by | payload | effect |
 |---|---|---|---|
 | `genesis` | owner | `{trunk, commit, plan}` (plan = blob sha) | names s₀ and the plan |
-| `plan` | owner/parent | `{prior, plan}` | new plan; must cite current plan sha (CAS); downgrade needs owner |
+| `plan` | owner/parent | `{prior, plan, rev?, path?}` | new plan; must cite current plan sha (CAS); downgrade needs owner; `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
 | `rule` | owner/parent | `{text, nodes: string[] \| "*"}` | ruling; in scope for those nodes |
-| `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet |
+| `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
+| `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer | `{node, attempt, commit}` | candidate claim (speech) |
-| `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?}` | trusted observation |
+| `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate |
 | `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[]}` | judgment observation on review/closure-review item |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
 | `defer` | owner | `{node, items: {id, key}[], reason}` | deferral of invariant items for one merge (stays debt) |
-| `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot |
+| `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot; `reason` is the `--note` text |
 | `merge` | executor | `{node, attempt, prior, commit, tree}` | trunk advanced (CAS on prior) |
 | `note` | any | `{text}` | speech, no effect |
 | `escape` | parent/owner | `{node, merge, class, note, evidence?}` | defect found after a merge (§6.5); `merge` must be the seq of a merge of `node` |
@@ -147,6 +148,14 @@ harness, materialization failure) is ⊥: no information, no block.
 - `dispatch` requires ready (or a closed previous attempt) and parent/owner.
 - `submit` requires an open slot whose writer is `by`, and the commit to be a
   descendant of the slot base.
+- `rebase` requires an open slot and a trunk that moved since the slot base;
+  the slot base becomes the current trunk and the open candidate is dropped, so
+  the node is `dispatched` again in the same worktree and attempt. The writer
+  rebases (`git rebase --onto <new base> <old base>`) and submits a descendant
+  of the new base. The slot keeps the previously submitted candidate (base,
+  commit, submit seq) so the receipt can show what was reviewed before and the
+  hint `git range-diff <old base>..<old commit> <new base>..<new commit>`.
+  Blocks are unchanged: they bind the node, not the attempt.
 - Node `accepted` ⟺ current candidate has every node obligation in E ∪ W and no
   active block (§6.3). Node `merged` after a `merge` entry.
 
@@ -234,13 +243,13 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
   ledger (entries before and after the reveal):
   `caught` — an executor `obs` with verdict `fail` (execution block or
   rejecting obs) or a `review` with verdict `block` (judgment block) on the node
-  before any merge of it. Current limit: a failure observed only while merging
-  the node (an invariant on the merge result, subject `trunk`) is not attributed
-  to the decoy yet, so such a decoy stays `pending` after a refused merge and
-  becomes `escaped` on a later merge (the node flow will record which merge an
-  obs belongs to). `escaped` — a merge of
-  the node with no such entry before it; `pending` — neither yet. `decidedBy` is
-  the deciding seq.
+  before any merge of it; or a failure seen while merging it: an executor `obs`
+  with `merging: <node>` and verdict `fail` on an invariant or check whose item
+  was not already failing on PRE (the trunk item at that obs is in E — not debt,
+  deferred debt, ⊥ or missing). Pre-existing trunk debt, deferred or not, never
+  counts as a catch. This holds for a refused merge and for a later merge after
+  an owner `defer`. `escaped` — a merge of the node with no such entry before
+  it; `pending` — neither yet. `decidedBy` is the deciding seq.
 - A node listed in more than one reveal counts once: the decoy of the earliest
   commitment (lowest `decoy-commit` seq) wins, whatever the order of the reveals.
   `state.decoyCommits` lists commitments and the seq that revealed them.
@@ -280,15 +289,17 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
 
 ```ts
 init(o: {cwd, plan: string, as: Principal, channel}): Promise<InitResult>      // genesis + genesis attest of invariants
-planSet(o: {cwd, plan, as, channel?}): Promise<Entry>
+readPlan(o: {cwd, path, rev?}): Promise<{plan, rev?, path}>   // plan text from the working tree, or from commit `rev` (`git show rev:path`); path repository-relative
+planSet(o: {cwd, plan, rev?, path?, as, channel?}): Promise<Entry>   // records rev/path in the plan entry
 rule(o: {cwd, text, nodes, as}): Promise<Entry>
-dispatch(o: {cwd, node, as}): Promise<DispatchPacket>   // creates branch owed/<node>/<attempt> at trunk + worktree <repo>/.owed-wt/<node>-<attempt>
+dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates branch owed/<node>/<attempt> at trunk + worktree <main worktree root>/.owed/wt/<node>-<attempt>
+rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
 attest(o: {cwd, node, rerun?: boolean}): Promise<AttestResult>
 review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review"}): Promise<Entry>
 waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel}): Promise<Entry>
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
-abandon(o: {cwd, node, reason, as}): Promise<Entry>
+abandon(o: {cwd, node, reason, as}): Promise<Entry>      // reason = the --note text
 merge(o: {cwd, node, as}): Promise<MergeResult>          // builds M, attests M, guarded CAS
 status(o: {cwd}): Promise<StatusView>
 why(o: {cwd, node}): Promise<ReceiptCard>
@@ -301,8 +312,37 @@ decoyCommit(o: {cwd, digest, as, channel}): Promise<Entry>
 decoyReveal(o: {cwd, payload: string, as, channel}): Promise<Entry>   // payload = reveal JSON text
 ```
 
+Repository root. Every path owed derives for the repository (dispatch worktree
+paths, gc, `info/exclude`) uses the **main worktree root**: the parent directory
+of the absolute git common dir (`git rev-parse --path-format=absolute
+--git-common-dir`), never `--show-toplevel` of the cwd. So running dispatch or gc
+from inside a slot worktree (or a subdirectory) gives the same paths as from the
+main checkout, and a new worktree is never nested inside another one. Only the
+questions "is the cwd this slot's worktree" (writer inference, submit's
+dirty check) use the per-worktree top level.
+
+Dispatch refuses when the node's `writes` overlap the writes of another node
+with an open slot (path-prefix rule: `p` overlaps `q` iff one is a prefix of the
+other, as for `writes` in §6.2), naming that node; `allowOverlap`
+(`--allow-overlap`) dispatches anyway and records `overlaps: [node ids]` in the
+dispatch entry. Overlap is checked by the operation, not the reducer.
+
+`rebase` is the way to follow a moved trunk without abandoning: it requires an
+open slot and a trunk different from the slot base, and appends
+`{kind: "rebase", node, attempt, base: trunk, from: slot base}`. The writer then
+runs `git rebase --onto <base> <from>` in the same worktree and submits again;
+the old candidate cannot be submitted (it does not descend from the new base).
+A merge whose candidate conflicts with trunk refuses with
+`rebase needed: run owed rebase <node>, …`.
+
+`merge` marks every `obs` it appends for the merge result — invariants and
+checks on M, pass or fail, refused or not — with `merging: <node>` (§6.5).
+Genesis invariants that merge measures first on the current trunk are not
+merge results and carry no `merging`.
+
 `gc(o: {cwd, dryRun?, as?, channel?}): Promise<GcResult>` reclaims finished
-attempts. For every `dispatch` entry whose attempt is merged or abandoned (never
+attempts. It is a parent/owner operation (same rule as `abandon`; default
+actor `parent:cli`), refused for any other role. For every `dispatch` entry whose attempt is merged or abandoned (never
 the current open slot) it removes the slot worktree with `git worktree remove`
 (no `--force`) and deletes the branch `owed/<node>/<attempt>` with `git branch -D`,
 then runs `git worktree prune` (also run first, so a hand-deleted slot directory
@@ -317,7 +357,10 @@ submitted commit that is already missing is reported in `kept`. It runs under th
 that is locked or dirty (`git status --porcelain` shows tracked or untracked
 non-ignored changes) is kept together with its branch; a branch checked out in
 another worktree is kept; an unregistered directory at the slot path is left
-untouched. Attempts whose worktree and branch are both gone are skipped, so gc
+untouched. A finished worktree that contains another registered worktree (a
+layout left by older dispatches from inside a slot) is kept with reason
+`contains worktree <path>`, so gc never deletes an open slot nested in it.
+Attempts whose worktree and branch are both gone are skipped, so gc
 is idempotent. Result: `{dryRun, removed: {node, attempt, worktree, branch, pinned}[],
 kept: {node, attempt, worktree, branch, reason}[], entry?}`; in `removed`,
 `worktree`/`branch` is `null` for a part that was already absent, and `pinned`
@@ -347,8 +390,14 @@ changing git or the ledger.
   require the writer's submit.
   Also "Untested": obligations absent relative to the plan baseline (downgrades) and
   the node's changed files not matched by any passing check's `reads`.
+- **Receipt card after a rebase**: `Rebased #seq: slot base <from> → <base>`,
+  the previously reviewed patch (old base..old commit, submit seq) and
+  `Re-review only the resolution: git range-diff <old base>..<old commit>
+  <new base>..<new commit>` (`<new commit>` until the writer submits again);
+  `--json` has `rebase: {seq, from, base, previous?, rangeDiff?}`.
 - **Status**: trunk, nodes by state, ready list (sorted by number of transitive
-  dependents), pending queue grouped by discharger (owner / parent+writer /
+  dependents; a ready node whose writes overlap an open slot is marked
+  `(writes overlap open slot of X)`, `--json` `overlaps: {node: [ids]}`), pending queue grouped by discharger (owner / parent+writer /
   reviewer / executor), invariant debt on trunk.
 - **Report** (`report --since`): merges, new E/W/D, blocks, downgrades, rulings,
   owner decisions needed — written in plain language — and an **Escapes**
@@ -386,29 +435,62 @@ changing git or the ledger.
 ## 10. CLI
 
 `owed <command> [args] [--json]`; commands mirror §8: `init <plan.yaml>`,
-`plan <plan.yaml>`, `rule <text> --nodes a,b|*`, `dispatch <node>`,
-`submit <node> [--commit X]`, `attest <node> [--rerun]`,
+`plan <plan.yaml> [--rev <commit-ish>]` (path relative to the cwd; with
+`--rev` the file is read from that commit, so a plan kept in trunk is the
+ledger plan), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
+`submit <node> [--commit X]`, `rebase <node>` (parent, or the slot writer when
+run inside its worktree), `attest <node> [--rerun]`,
 `review <node> --ok|--block --rank N --as reviewer:ID [--note] [--ack-rulings]`,
 `waive <node> <obligation> --reason ... [--accept-risk 12,15]`,
-`defer <node> <inv-id...> --reason`, `abandon <node>`, `merge <node>`, `status`,
+`defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
+spelling `--reason`; not both), `merge <node>`, `status`,
 `why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
 `escape <node> --merge N --class missing|false-pass|reuse|weak|waiver --note T [--evidence T]`
 (parent by default, or owner), `decoy commit <digest>`, `decoy reveal <file.json>`
 (owner commands), `decoy digest <file.json>` (prints the digest to commit;
-no ledger write, no owner confirmation), and `gc [--dry-run]`.
-`--as role:id` sets the principal (default `parent:cli`; `submit` defaults to
-the slot's writer when run inside its worktree). Owner commands prompt on a TTY
+no ledger write, no owner confirmation), and `gc [--dry-run]` (parent/owner).
+`--as role:id` sets the principal (default `parent:cli`; `submit` and `rebase`
+default to the slot's writer when run inside its worktree). Owner commands prompt on a TTY
 unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused
 by a guard (message says which obligation), 2 usage error, 3 internal error.
 
 ## 11. pi extension
 
-Tools (exposure direct): `owed_status`, `owed_why`, `owed_dispatch` (returns the
-packet plus a ready-to-use `subagents` call spec: agent `worker`, cwd = slot
-worktree, isolation `none`, task = packet), `owed_attest`, `owed_review`,
-`owed_merge`, `owed_report`, `owed_rule`. Owner-only operations (`waive`,
-`defer`, downgrade plans) are tools that call `ctx.ui.confirm` and are recorded
-with `channel: "pi-confirm"`; without UI they refuse. Command `/owed` shows
+Tools (exposure direct). Every tool takes an optional `cwd`: an absolute path
+inside the target repository (the session directory when omitted; a relative
+or missing path is an error), so a session started elsewhere can drive any
+repository. Most tools also take `as` (`role:id`).
+
+| tool | parameters (besides `cwd`) | operation |
+|---|---|---|
+| `owed_status` | `as` | status view |
+| `owed_why` | `node`, `as` | receipt card |
+| `owed_report` | `since?`, `as` | report |
+| `owed_brief` | `since?` | brief |
+| `owed_verify` | — | hash chain + replay |
+| `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; returns the packet plus a ready-to-use `subagents` call spec (agent `worker`, cwd = slot worktree, isolation `none`, task = packet) |
+| `owed_submit` | `node`, `commit?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
+| `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
+| `owed_attest` | `node`, `rerun?`, `as` | attest |
+| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `as` | review |
+| `owed_merge` | `node`, `as` | merge |
+| `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
+| `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
+| `owed_rule` | `text`, `nodes`, `as` | ruling |
+| `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `as` | plan update; a downgrade needs the owner |
+| `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
+| `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
+| `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
+| `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
+
+Owner operations (`waive`, `defer`, downgrade plans, decoys, and any tool
+called with `as: owner:…`) call `ctx.ui.confirm` and are recorded with
+`channel: "pi-confirm"`; without UI they refuse. The confirmation text is the
+fixed summary, then `Repository: <dir>` and `Identity: owner:<id>`, then each
+free-text field (note, reason, ruling, evidence) as `Label: value` on one line
+with `\`, newlines, tabs and control characters escaped, then the closing
+`Confirmation will be recorded as pi-confirm.` line — so free text cannot fake
+the Repository/Identity lines of the dialog. The ledger keeps the exact text. Command `/owed` shows
 status. A skill (`skills/owed/SKILL.md`) explains the loop: status → dispatch →
 run worker with dsa → submit → attest → review (fresh reviewer, not the writer)
 → merge, and the rules agents must not break.

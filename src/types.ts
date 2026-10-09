@@ -56,9 +56,10 @@ export interface Counts { tests?: number; pass?: number; fail?: number; skip?: n
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; state: StateFacts }
-export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[] }
+/** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
+export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string }
 export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*' }
-export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number }
+export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
 export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts }
 export interface ObsEntry extends Base {
   kind: 'obs';
@@ -73,12 +74,15 @@ export interface ObsEntry extends Base {
   commit: string;            // commit the item was evaluated on
   base?: string;
   attribution?: boolean;     // rerun of an earlier failing item
+  merging?: string;          // node whose `owed merge` appended this obs (merge-result checks/invariants)
   note?: string;
 }
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number }
 export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[] }
 export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string }
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
+/** Moves the open slot of `node` from base `from` to the current trunk `base`; the open candidate is invalidated. */
+export interface RebaseEntry extends Base { kind: 'rebase'; node: string; attempt: number; base: string; from: string }
 export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts }
 export interface NoteEntry extends Base { kind: 'note'; text: string }
 /** Escape classes: missing ② missing obligation; false-pass ①a false affirmative obs; reuse ①b unsound evidence reuse; weak ①c weak oracle; waiver ③ owner waiver. */
@@ -89,7 +93,7 @@ export interface Decoy { node: string; defect: string }
 export interface DecoyPayload { nonce: string; decoys: Decoy[] }
 export interface DecoyCommitEntry extends Base { kind: 'decoy-commit'; digest: string }
 export interface DecoyRevealEntry extends Base, DecoyPayload { kind: 'decoy-reveal' }
-export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | MergeEntry | NoteEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry;
+export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
@@ -116,7 +120,9 @@ export interface Block {
   state: 'active' | 'cleared' | 'flaky';
   clearedBy?: number;
 }
-export interface Slot { attempt: number; base: string; branch: string; worktree: string; writer: string; dispatchSeq: number; rulings_seen: number; open: boolean }
+/** Latest rebase of a slot: `previous` is the last candidate submitted before a rebase (the patch reviewers already saw). */
+export interface SlotRebase { seq: number; from: string; base: string; previous?: { base: string; commit: string; submit: number } }
+export interface Slot { attempt: number; base: string; branch: string; worktree: string; writer: string; dispatchSeq: number; rulings_seen: number; open: boolean; rebase?: SlotRebase }
 export type Phase = 'blocked' | 'ready' | 'dispatched' | 'submitted' | 'accepted' | 'merged';
 export interface NodeState {
   id: string;

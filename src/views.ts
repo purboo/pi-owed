@@ -1,16 +1,21 @@
-import type { Block, Entry, EscapeClass, ItemView, NodeState, State } from './types.ts';
+import type { Block, Entry, EscapeClass, ItemView, NodeState, SlotRebase, State } from './types.ts';
+import type { GcResult } from './ops.ts';
 import { matchesAny } from './plan.ts';
-import { NO_RULINGS } from './reducer.ts';
+import { NO_RULINGS, overlapping } from './reducer.ts';
 
 export interface ReceiptCard {
   node: string; phase: NodeState['phase']; accepted: boolean;
   items: (ItemView & { observations: Entry[] })[];
   blocks: (Block & { clear: string })[];
   untested: string[]; downgrades: State['downgrades']; ownerFlags: Entry[];
+  /** Latest rebase of the open slot; `rangeDiff` lets a reviewer review only the conflict resolution. */
+  rebase?: SlotRebase & { rangeDiff?: string };
 }
 export interface StatusView {
   trunk: State['trunk']; nodes: Record<string, NodeState>; groups: Record<string, string[]>;
   ready: string[]; pending: Record<string, ItemView[]>; invariants: ItemView[]; ownerFlags: Entry[];
+  /** Ready nodes whose writes overlap a node with an open slot (dispatch refuses them without --allow-overlap). */
+  overlaps: Record<string, string[]>;
 }
 export interface Report {
   since: number | string; merges: Entry[]; blocks: ReceiptCard['blocks']; waivers: Entry[];
@@ -27,7 +32,8 @@ export function receipt(s: State, entries: Entry[], node: string): ReceiptCard {
     blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: clearHint(s, entries, b) })),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
-    downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')) };
+    downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')),
+    ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) };
 }
 export function statusView(s: State, entries: Entry[] = []): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
@@ -36,7 +42,9 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
     if (n.phase === 'ready' || n.phase === 'dispatched') pending['parent+writer']!.push({subject:n.id,obligation:n.phase === 'ready' ? 'dispatch' : 'submit',key:'',status:'D',mark:'⊥',discharger:n.phase === 'ready' ? 'parent' : 'writer',evidence:[],detail:n.phase === 'ready' ? 'parent can dispatch work' : 'writer must submit a candidate'});
   }
   for (const i of [...Object.values(s.nodes).filter(n => !n.merged).flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(i);
-  return { trunk: s.trunk, nodes: s.nodes, groups, ready: Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag') };
+  const ready = Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), overlaps: Record<string, string[]> = {};
+  for (const id of ready) { const o = overlapping(s, id); if (o.length) overlaps[id] = o; }
+  return { trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps };
 }
 const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged' };
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
@@ -46,10 +54,10 @@ function itemText(i: ItemView & { observations?: Entry[] }): string {
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
 export function renderReceipt(v: ReceiptCard): string {
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
-  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, `Ready (by dependent count): ${v.ready.join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -59,7 +67,10 @@ function entryLine(e: Entry): string {
     case 'waive': return `${head} waived ${e.node}/${e.obligation}: ${e.reason}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(x => `#${x}`).join(', ')})` : ''}`;
     case 'defer': return `${head} deferred ${e.node} post-merge invariants ${e.items.map(i => i.id).join(', ')}: ${e.reason}`;
     case 'genesis': return `${head} initialized ledger, trunk ${e.trunk} ${e.commit.slice(0, 12)}`;
-    case 'plan': return `${head} updated plan${e.downgrades.length ? `, downgrades ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ')}` : ''}`;
+    case 'dispatch': return `${head} dispatched ${e.node} attempt ${e.attempt}${e.overlaps?.length ? ` (allowed writes overlap with ${e.overlaps.join(', ')})` : ''}`;
+    case 'rebase': return `${head} rebased ${e.node} attempt ${e.attempt}: ${e.from.slice(0, 12)} → ${e.base.slice(0, 12)}`;
+    case 'abandon': return `${head} abandoned ${e.node} attempt ${e.attempt}${e.reason ? `: ${e.reason}` : ''}`;
+    case 'plan': return `${head} updated plan${e.path ? ` from ${e.path}${e.rev ? ` at ${e.rev.slice(0, 12)}` : ''}` : ''}${e.downgrades.length ? `, downgrades ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ')}` : ''}`;
     case 'rule': return `${head} ruling (${e.nodes === '*' ? 'all nodes' : e.nodes.join(', ')}): ${e.text}`;
     case 'review': return `${head} reviewed ${e.node}/${e.obligation ?? 'review'} ${e.verdict} rank=${e.rank}${e.note ? `: ${e.note}` : ''}`;
     case 'escape': return `${head} recorded escape ${e.node} (merge #${e.merge}, ${e.class} ${escapeLabels[e.class]}): ${e.note}${e.evidence ? ` [${e.evidence}]` : ''}`;
@@ -69,6 +80,12 @@ function entryLine(e: Entry): string {
   }
 }
 export function renderEntry(e: Entry): string { return `Recorded ${entryLine(e)}`; }
+/** Text of an `owed gc` result (CLI and pi tool). */
+export function renderGc(r: GcResult): string {
+  const removed = r.removed.map(i => `  ${i.node}#${i.attempt}: ${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(ref => `${r.dryRun ? 'would pin' : 'pinned'} ${ref}`)].filter(Boolean).join(', ')}`);
+  const kept = r.kept.map(i => `  ${i.node}#${i.attempt} (${i.branch}): ${i.reason}`);
+  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
+}
 export function renderReport(v: Report): string {
   const list = (title: string, lines: string[]) => [`${title}${lines.length ? '' : ': none'}`, ...lines.map(l => `  ${l}`)];
   return [`Report (since ${v.since === -1 ? 'start' : v.since})`,

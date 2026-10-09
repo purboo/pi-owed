@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { H, EMPTY_SHA, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { matchesAny } from './plan.ts';
@@ -20,7 +21,24 @@ export function git(cwd: string, args: string[], opts?: { input?: string; allowF
     p.stdin.on('error', () => {}); p.stdin.end(opts?.input);
   });
 }
+/** Top level of the worktree containing cwd (a linked worktree is its own top level). */
 export async function repoRoot(cwd: string): Promise<string> { return (await git(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim(); }
+/** Absolute git common directory shared by every worktree of the repository. */
+export async function commonDir(cwd: string): Promise<string> { return resolve(cwd, (await git(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'])).stdout.trim()); }
+/** Root of the main worktree (dirname of the common dir), the same from inside any linked worktree. */
+export async function mainRoot(cwd: string): Promise<string> { return dirname(await commonDir(cwd)); }
+/** Reads `path` (relative to cwd, or absolute inside the worktree) from commit `rev`; returns the resolved commit and repository-relative path. */
+export async function readAt(cwd: string, rev: string, path: string): Promise<{ commit: string; path: string; text: string }> {
+  const top = await realpath(await repoRoot(cwd)), abs = isAbsolute(path) ? path : resolve(await realpath(cwd), path);
+  const rel = relative(top, abs).split(sep).join('/');
+  if (!rel || rel.startsWith('../') || rel === '..' || isAbsolute(rel)) throw new OwedError(`${path} is not inside the repository`, 'usage');
+  const resolved = await git(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${rev}^{commit}`], { allowFail: true });
+  if (resolved.code) throw new OwedError(`${rev} is not a commit`, 'usage');
+  const commit = resolved.stdout.trim(), file = posix.normalize(rel);
+  const shown = await git(cwd, ['show', `${commit}:${file}`], { allowFail: true });
+  if (shown.code) throw new OwedError(`${file} does not exist in ${rev} (${commit.slice(0, 12)})`, 'usage');
+  return { commit, path: file, text: shown.stdout };
+}
 export async function revParse(cwd: string, rev: string): Promise<string> { return (await git(cwd, ['rev-parse', '--verify', '--end-of-options', `${rev}^{commit}`])).stdout.trim(); }
 export async function isAncestor(cwd: string, a: string, b: string): Promise<boolean> {
   const r = await git(cwd, ['merge-base', '--is-ancestor', a, b], { allowFail: true });
