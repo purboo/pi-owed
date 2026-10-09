@@ -139,7 +139,7 @@ All keys are sha256 hex over canonical JSON.
 | `escape` | parent/owner | `{node, merge, class, note, evidence?}` | defect found after a merge (§6.5); `merge` must be the seq of a merge of `node` |
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
-| `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3), unique in the ledger; `labels` = `runLabels(...)`; strict fields |
+| `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; strict fields |
 | `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing`; strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
 
@@ -633,8 +633,15 @@ must name the node's current open slot (node and attempt), and so must a halt.
 - Project id `projectId(state)`: the first 12 hex of the genesis entry hash
   (stable per ledger).
 - Run id `runId(project, node, attempt, role, n?)` =
-  `owed:<project>:<node>:<attempt>:<role>[:<n>]`, `<n>` the 1-based reviewer
-  index when the attempt needs more than one reviewer run (writers have none).
+  `owed:<project>:<node>:<attempt>:<role>[:<n>]`. Writer rids have no `<n>`.
+  Reviewer rids always carry `:<n>` (the ledger refuses a reviewer launch
+  without it): `n` = 1 + the reviewer launch entries already in this attempt
+  (`nextReviewerN(state, node)`), monotone across the candidates of the
+  attempt, so a resubmitted candidate gets fresh rids and reviewer ids. A
+  reviewer run belongs to the latest candidate whose submit seq is below its
+  launch entry's seq: for the current candidate, `reviewerBase(state, node)` =
+  the reviewer launches of the attempt with seq below its submit seq, and its
+  runs are `n = base+1 … base+reviewRuns` (local index `k = n - base`).
 - Labels `runLabels(project, node, attempt, role)` =
   `{owed: <project>, node, attempt: String(attempt), role}`.
 - Driver reviewer principal: `reviewer:drive-<node>-<attempt>-<n>`
@@ -680,12 +687,15 @@ none). Not per slot: while open slots < `max`, ready nodes are dispatched in
 status order, skipping nodes whose writes overlap an open slot and nodes that
 need owner action. One reviewer run covers all of a candidate's review
 obligations (review and closure-review); a node with `review.count` > 1 gets
-runs `n = 1..count` with distinct reviewer ids.
+one run per required principal, each with the next attempt-global `n`
+(`nextReviewerN`), so distinct reviewer ids.
 
 ### 12.6 Review packet (D5)
 
 `reviewPacket(state, node, n)` (`src/views.ts`, pure) is the task of the
-driver's n-th reviewer run on the current candidate: node, attempt, candidate
+driver's reviewer run `n` (attempt-global, §12.3) on the current candidate; it
+works before the launch entry for `n` exists (the driver builds the packet,
+then persists the launch): node, attempt, candidate
 commit (and submit seq), base, the plan title/brief, writes, every obligation
 of the candidate with its required count/rank and current mark, rulings in
 scope, the reviewer identity `reviewer:drive-<node>-<attempt>-<n>`, the exact
@@ -699,8 +709,10 @@ owed; a rank above 2 is owner-only and the packet says the run cannot discharge
 it), and the rules: inspect the actual diff (`git diff <base> <candidate>`), do
 not edit files, record verdicts in the ledger, reply with seqs.
 `reviewRuns(state, node)` = `max(review.count, 1 if closure-review is required
-else 0)`; `reviewObligations(state, node, n)` = `review` while `n ≤
-review.count`, plus `closure-review` for run 1.
+else 0)` runs per candidate; with `k = n - reviewerBase(state, node)`,
+`reviewObligations(state, node, n)` = `review` while `1 ≤ k ≤ review.count`,
+plus `closure-review` for `k = 1`. A run of an earlier candidate (`k < 1`) or
+beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
 
 ### 12.7 Execution and surfaces (D6, D7)
 

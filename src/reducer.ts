@@ -1,6 +1,6 @@
 import { ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
-import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, HaltEntry, ItemView, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
+import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Downgrade, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -231,9 +231,25 @@ export function projectId(s: State): string {
   if (!g) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   return g.hash.slice(0, 12);
 }
-/** dsa run id: `owed:<project>:<node>:<attempt>:<role>[:<n>]` (`n` = 1-based reviewer index when the attempt needs more than one reviewer run). */
+/**
+ * dsa run id: `owed:<project>:<node>:<attempt>:<role>[:<n>]`. Writers have no `n`; reviewer runs always carry it:
+ * `n` = 1 + the reviewer launch entries already in this attempt (`nextReviewerN`), monotone across the candidates
+ * of the attempt. A reviewer run belongs to the latest candidate whose submit seq is below its launch entry's seq.
+ */
 export function runId(project: string, node: string, attempt: number, role: RunRole, n?: number): string {
   return `owed:${project}:${node}:${attempt}:${role}${n === undefined ? '' : `:${n}`}`;
+}
+/** Reviewer launch entries of the node's current attempt, in ledger order. */
+function reviewerLaunches(s: State, node: string): LaunchEntry[] {
+  const n = s.nodes[node], attempt = n?.slot?.attempt;
+  return attempt === undefined ? [] : n!.runs.find(r => r.attempt === attempt)?.launches.filter(l => l.role === 'reviewer') ?? [];
+}
+/** The `n` of the next reviewer run of the node's current attempt: 1 + reviewer launch entries in that attempt. */
+export function nextReviewerN(s: State, node: string): number { return 1 + reviewerLaunches(s, node).length; }
+/** Reviewer launches of the current attempt recorded before the current candidate's submit (they belong to earlier candidates); the candidate's runs are n = base+1, base+2, … */
+export function reviewerBase(s: State, node: string): number {
+  const c = s.nodes[node]?.candidate;
+  return c ? reviewerLaunches(s, node).filter(l => l.seq < c.seq).length : reviewerLaunches(s, node).length;
 }
 /** dsa labels of a run. */
 export function runLabels(project: string, node: string, attempt: number, role: RunRole): Record<string, string> {
@@ -393,7 +409,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (!blobHash(d.spec)) errors.push('launch spec must be a blob hash (64 lowercase hex)');
       if (!errors.length) {
         const project = projectId(s), base = runId(project, d.node, d.attempt, d.role), tail = typeof d.rid === 'string' && d.rid.startsWith(`${base}:`) ? d.rid.slice(base.length + 1) : undefined;
-        if (d.rid !== base && !(d.role === 'reviewer' && tail !== undefined && /^[1-9][0-9]*$/.test(tail))) errors.push(`launch rid must be ${base}${d.role === 'reviewer' ? '[:<n>]' : ''}`);
+        if (d.role === 'writer' ? d.rid !== base : !(tail !== undefined && /^[1-9][0-9]*$/.test(tail))) errors.push(`launch rid must be ${base}${d.role === 'reviewer' ? ':<n> (n >= 1; reviewer runs always carry n)' : ''}`);
         if (!d.labels || typeof d.labels !== 'object' || Array.isArray(d.labels) || canonical(d.labels) !== canonical(runLabels(project, d.node, d.attempt, d.role))) errors.push(`launch labels must be ${canonical(runLabels(project, d.node, d.attempt, d.role))}`);
         if (context(s).entries.some(e => e.kind === 'launch' && e.rid === d.rid)) errors.push(`launch ${d.rid} is already recorded; a re-launch reuses the stored entry`);
       }
