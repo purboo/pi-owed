@@ -190,6 +190,11 @@ driver halts, needs the owner, a run asks a question, it is stalled, dsa events
 fail or the driver exits (merges ride along with the next message); a session
 started later follows a running driver from then on. Nobody has to poll
 `action: "status"`; `action: "stop"` stops it. The driver survives pi exiting.
+The driver carries no dsa call identity (`DSA_EXEC` and `DSA_CALL` are removed
+from its environment; `DSA_HOME` and the rest are kept). Started from inside a
+dsa call, start still works but prints `note: started from inside a dsa call; if
+that call's processes are contained, the driver may end with it — prefer
+starting it from a top-level session or systemd-run --user`.
 
 The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,

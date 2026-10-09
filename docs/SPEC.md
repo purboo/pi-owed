@@ -863,7 +863,8 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
 - **Surfaces.** CLI `owed drive [--once] [--max N] [--json]` (one line per
   action: `<action>: <outcome> — <detail>`; notify lines verbatim; `--json`
   JSON lines). `--once` is one pass. Pi tool `owed_drive` runs `--once` by
-  default (`action` start/status/stop: §12.8) and returns the output of the actions already executed also when a later
+  default (`action` start/status/stop: §12.8; the tool's abort signal stops
+  the pass after the current action) and returns the output of the actions already executed also when a later
   step throws (as a tool error);
   a long loop belongs in a terminal or a `systemd-run --user` unit (a forced
   dsa restart kills every process of the dsa call that runs it, including its
@@ -884,7 +885,11 @@ polling.
   `owed drive --json [--max N]` (`process.execPath` + `bin/owed.js`, as for
   the attest child) is spawned detached (own session and process group, stdin
   ignored, stdout and stderr appended to the log, cwd = main worktree root,
-  environment inherited without `NODE_TEST_CONTEXT`, unref'd). It waits up to
+  environment inherited without `NODE_TEST_CONTEXT`, `DSA_EXEC` and `DSA_CALL`
+  (the driver carries no dsa call identity; `DSA_HOME` stays), unref'd). When
+  the starter has `DSA_EXEC`, the output adds `note: started from inside a dsa
+  call; if that call's processes are contained, the driver may end with it —
+  prefer starting it from a top-level session or systemd-run --user`. It waits up to
   5 s until the lock names the child pid and prints `driver started: pid P,
   log <path>`. A child that exits first with an `idle`/`stopped` exit record is
   reported as started and already ended; without an exit record or with an
