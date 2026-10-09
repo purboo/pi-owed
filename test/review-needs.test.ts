@@ -29,20 +29,22 @@ function rig() {
   const state = (): State => reduce(entries, () => plan);
   const add = (d: Draft): Entry => { const seq = entries.length, e = { ...d, seq, ts: new Date(T0 + seq * 1000).toISOString(), prev: 'x', hash: `hash${seq}` } as Entry; entries.push(e); state(); return e; };
   const blob = (text: string): string => { const h = sha256(text); blobs.set(h, text); return h; };
+  const at = (): number => state().nodes.a!.slot?.attempt ?? 0;
   add({ kind: 'genesis', by: 'owner:human', channel: 'tty', plan: 'p', trunk: 'main', commit: 's0', state: { commit: 's0', tree: 't0', invKeys: {} } });
   const facts = (tag: string): CandidateFacts => ({ commit: `ac${tag}`, tree: `t${tag}`, base: 's0', patch: `p${tag}`, changed: ['a/x'], closureTouched: false,
     keys: Object.fromEntries(['check:unit', 'writes', 'rulings', 'review'].map(o => [o, `a-${o}-${tag}`])) });
   const r = {
     entries, blobs, state, add,
-    dispatch() { return add({ kind: 'dispatch', by: 'parent:drive', node: 'a', attempt: 1, base: 's0', branch: 'owed/a/1', worktree: '/repo/.owed/wt/a-1', packet: 'blob', rulings_seen: Math.max(-1, ...state().rules.map(x => x.seq)) }); },
-    launchWriter() { const a = writerLaunch(state(), 'a', P); return add({ kind: 'launch', by: 'parent:drive', node: 'a', attempt: 1, role: 'writer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
-    launchReviewer(n: number) { const a = reviewerLaunch(state(), 'a', n, P, '/repo'); return add({ kind: 'launch', by: 'parent:drive', node: 'a', attempt: 1, role: 'reviewer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
-    send(rid: string, reason: 'repair' | 'submit', message: string) { return add({ kind: 'send', by: 'parent:drive', node: 'a', attempt: 1, rid, send: `${rid}:follow-up:${entries.length}`, sendKind: 'follow-up', message: blob(message), reason }); },
-    submit(tag = '1') { return add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts: facts(tag) }); },
-    pass() { const c = state().nodes.a!.candidate!; for (const o of ['check:unit', 'writes']) add({ kind: 'obs', by: 'executor:owed', subject: 'a', obligation: o, key: c.keys[o]!, verdict: 'pass', exit: 0, durationMs: 1, commit: c.commit, base: c.base }); },
+    dispatch() { const attempt = at() + 1; return add({ kind: 'dispatch', by: 'parent:drive', node: 'a', attempt, base: 's0', branch: `owed/a/${attempt}`, worktree: `/repo/.owed/wt/a-${attempt}`, packet: 'blob', rulings_seen: Math.max(-1, ...state().rules.map(x => x.seq)) }); },
+    launchWriter() { const a = writerLaunch(state(), 'a', P); return add({ kind: 'launch', by: 'parent:drive', node: 'a', attempt: a.attempt, role: 'writer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
+    launchReviewer(n: number) { const a = reviewerLaunch(state(), 'a', n, P, '/repo'); return add({ kind: 'launch', by: 'parent:drive', node: 'a', attempt: a.attempt, role: 'reviewer', rid: a.rid, spec: blob(a.spec), labels: a.labels }); },
+    send(rid: string, reason: 'repair' | 'submit', message: string) { return add({ kind: 'send', by: 'parent:drive', node: 'a', attempt: at(), rid, send: `${rid}:follow-up:${entries.length}`, sendKind: 'follow-up', message: blob(message), reason }); },
+    submit(tag = '1') { return add({ kind: 'submit', by: `writer:a#${at()}`, node: 'a', attempt: at(), facts: facts(tag) }); },
+    obs(o: string, verdict: 'pass' | 'fail') { const c = state().nodes.a!.candidate!; return add({ kind: 'obs', by: 'executor:owed', subject: 'a', obligation: o, key: c.keys[o]!, verdict, exit: verdict === 'pass' ? 0 : 1, durationMs: 1, commit: c.commit, base: c.base }); },
+    pass() { for (const o of ['check:unit', 'writes']) r.obs(o, 'pass'); },
     review(verdict: 'ok' | 'block', o: { by?: string; rank?: number; needs?: 'parent'; note?: string } = {}) {
       const c = state().nodes.a!.candidate!;
-      return add({ kind: 'review', by: o.by ?? DRIVER, node: 'a', attempt: 1, obligation: 'review', key: c.keys.review!, verdict, rank: o.rank ?? 1, note: o.note ?? 'n', ...(o.needs ? { needs: o.needs } : {}) });
+      return add({ kind: 'review', by: o.by ?? DRIVER, node: 'a', attempt: at(), obligation: 'review', key: c.keys.review!, verdict, rank: o.rank ?? 1, note: o.note ?? 'n', ...(o.needs ? { needs: o.needs } : {}) });
     },
     rule(text: string, nodes: string[] | '*' = ['a']) { return add({ kind: 'rule', by: 'parent:main', text, nodes }); },
     halt(a: Extract<Action, { do: 'halt' }>) { return add({ kind: 'halt', by: 'parent:drive', node: a.node, attempt: a.attempt, reason: a.reason, needs: a.needs }); },
@@ -60,7 +62,7 @@ function blocked(o: { needs?: boolean; note?: string; before?: (r: Rig) => void 
   return { r, block };
 }
 const why = (s: State): string => renderReceipt(receipt(s, entriesOf(s), 'a'));
-const haltReason = (seq: number, note = 'brief says X, plan says Y: which one?') => `review block #${seq} review needs a parent ruling: ${note}; record \`owed rule --nodes a "<decision>"\`, then the driver repairs with the ruling`;
+const haltReason = (seq: number, note = 'brief says X, plan says Y: which one?') => `review block #${seq} review needs a parent ruling: ${note}; record \`owed rule --nodes a "<decision>"\`; the writer gets the ruling with the next repair`;
 
 test('reducer: a block with needs parent is copied to the Block; ok + needs is refused; old entries carry no needs', () => {
   const { r, block } = blocked();
@@ -104,7 +106,7 @@ test('a ruling naming the node after the block clears the halt and turns the blo
   assert.ok(a?.do === 'send' && a.reason === 'repair' && a.sendKind === 'follow-up' && a.rid === W, JSON.stringify(a));
   assert.equal(a.message, repairMessage(s, 'a'));
   assert.ok(a.message.includes(`Rulings since dispatch:\n- #${rule.seq} Y wins: follow the plan`), a.message);
-  assert.ok(a.message.includes(`- #${block.seq} review by ${DRIVER} rank 1 (needed a parent ruling: see #${rule.seq}): brief says X, plan says Y: which one?`), a.message);
+  assert.ok(a.message.includes(`- #${block.seq} review by ${DRIVER} rank 1 (needed a parent ruling; ruling #${rule.seq}: Y wins: follow the plan): brief says X, plan says Y: which one?`), a.message);
   // repairs 1 still allows it: the halt counted no repair.
   assert.equal(r.entries.filter(e => e.kind === 'send' && e.reason === 'repair').length, 0);
   assert.match(why(s), new RegExp(`⛔ blocked #${block.seq} review \\(ruled #${rule.seq}\\): the writer repairs with ruling #${rule.seq}`));
@@ -130,7 +132,7 @@ test('a ruling recorded before the block does not resolve it; rulings before dis
   assert.equal(parentRuling(s2, s2.nodes.a!.blocks.find(b => b.seq === b2.seq)!), undefined);
   const runs2 = new Map(runs); runs2.set(runId(P, 'a', 1, 'reviewer', 2), { rid: runId(P, 'a', 1, 'reviewer', 2), state: 'sealed', status: 'ok' });
   const h = decide(s2, s2.plan, runs2, optsOf(two.r)).find(x => x.node === 'a');
-  assert.ok(h?.do === 'halt' && h.reason === `review block #${b2.seq} review needs a parent ruling: still ambiguous; record \`owed rule --nodes a "<decision>"\`, then the driver repairs with the ruling`, JSON.stringify(h));
+  assert.ok(h?.do === 'halt' && h.reason === `review block #${b2.seq} review needs a parent ruling: still ambiguous; record \`owed rule --nodes a "<decision>"\`; the writer gets the ruling with the next repair`, JSON.stringify(h));
   // Repair message rulings: only those after the dispatch.
   const ruled = blocked({ before: x => x.rule('before dispatch') });
   const rule = ruled.r.rule('the decision');
@@ -168,6 +170,63 @@ test('views: why and status show "needs a parent ruling" until a node ruling, th
   assert.ok(why(after).includes(`⛔ blocked #${block.seq} review (ruled #${rule.seq}): `), why(after));
   assert.doesNotMatch(renderStatus(statusView(after, [...r.entries])), /needs a parent ruling/);
   assert.equal(statusView(after, [...r.entries]).needsRuling, undefined);
+});
+
+test('D18b.2: a measured failure plus an unresolved needs-parent block halts; after the ruling the repair carries it', () => {
+  const r = rig(); r.dispatch(); r.launchWriter(); r.submit(); r.obs('writes', 'pass'); const fail = r.obs('check:unit', 'fail');
+  assert.equal((act(r) as { reason?: string }).reason, 'repair', 'the measured failure alone is a repair');
+  const block = r.review('block', { needs: 'parent', note: 'which error format?' });
+  const a = act(r, { repairs: 1 });
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: haltReason(block.seq, 'which error format?'), needs: 'human' });
+  r.halt(a as Extract<Action, { do: 'halt' }>);
+  const rule = r.rule('use RFC 7807');
+  const repair = act(r, { repairs: 1 });
+  assert.ok(repair?.do === 'send' && repair.reason === 'repair', JSON.stringify(repair));
+  assert.ok(repair.message.includes(`(needed a parent ruling; ruling #${rule.seq}: use RFC 7807): which error format?`), repair.message);
+  assert.ok(repair.message.includes(`Rulings since dispatch:\n- #${rule.seq} use RFC 7807`), repair.message);
+  assert.match(repair.message, new RegExp(`⛔ blocked #${fail.seq} check:unit`));
+});
+
+test('D18b.5: a needs-parent block and a writer-fixable block on one candidate: halt first, then one repair with both notes and the ruling', () => {
+  const { r, block } = blocked();
+  const fixable = r.review('block', { by: 'reviewer:human1', note: 'typo in the error message' });
+  const a = act(r);
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: haltReason(block.seq), needs: 'human' }, 'the halt names only the needs-parent block');
+  r.halt(a as Extract<Action, { do: 'halt' }>);
+  assert.equal(act(r), undefined);
+  const rule = r.rule('follow the plan');
+  const repair = act(r, { repairs: 1 });
+  assert.ok(repair?.do === 'send' && repair.reason === 'repair', JSON.stringify(repair));
+  const lines = repair.message.split('\n');
+  assert.ok(lines.includes(`- #${block.seq} review by ${DRIVER} rank 1 (needed a parent ruling; ruling #${rule.seq}: follow the plan): brief says X, plan says Y: which one?`), repair.message);
+  assert.ok(lines.includes(`- #${fixable.seq} review by reviewer:human1 rank 1: typo in the error message`), repair.message);
+  assert.ok(repair.message.includes(`Rulings since dispatch:\n- #${rule.seq} follow the plan`), repair.message);
+  r.send(W, 'repair', repair.message);
+  assert.equal(r.entries.filter(e => e.kind === 'send').length, 1, 'one repair for both blocks');
+});
+
+test('a ruling cited by a repair note is quoted even when it predates the dispatch (block from an earlier attempt)', () => {
+  const { r, block } = blocked();
+  const rule = r.rule('decided in attempt 1');
+  r.add({ kind: 'abandon', by: 'parent:main', node: 'a', attempt: 1, reason: 'restart' });
+  r.dispatch(); r.launchWriter(); r.submit('2'); r.obs('writes', 'pass'); r.obs('check:unit', 'fail');
+  const msg = repairMessage(r.state(), 'a');
+  assert.ok(msg.includes(`- #${block.seq} review by ${DRIVER} rank 1 (needed a parent ruling; ruling #${rule.seq}: decided in attempt 1): `), msg);
+  assert.doesNotMatch(msg, /Rulings since dispatch/, 'the ruling predates the dispatch of attempt 2');
+});
+
+test('D18b.4: a stale needs-parent block keeps the stale wording in why/status and does not halt for a ruling', () => {
+  const { r, block } = blocked();
+  r.submit('2'); r.pass();
+  const s = r.state(), text = why(s);
+  assert.ok(text.split('\n').some(l => l.startsWith(`⛔ blocked #${block.seq} review: an ok review of a/review`)), text);
+  assert.doesNotMatch(text, /needs a parent ruling|ruled #/);
+  const st = statusView(s, [...r.entries]);
+  assert.equal(st.needsRuling, undefined);
+  assert.doesNotMatch(renderStatus(st), /needs a parent ruling/);
+  assert.equal(receipt(s, entriesOf(s), 'a').blocks.find(b => b.seq === block.seq)?.ruling, undefined);
+  const a = act(r);
+  assert.ok(a?.do !== 'halt' || !a.reason.includes('needs a parent ruling'), JSON.stringify(a));
 });
 
 test('reviewer packet tells reviewers to record --block --needs-parent instead of pushing a guess', () => {
