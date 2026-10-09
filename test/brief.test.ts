@@ -27,68 +27,75 @@ const plan = {
   ],
 };
 
-test('owed brief: owner decisions, merged counts, blocks, progress, totals and --since', { timeout: 300_000 }, async () => {
+async function harness() {
   const r = await repo();
-  try {
-    async function run(cwd: string, args: string[], code = 0) {
-      const out = await cli(cwd, args);
-      assert.equal(out.code, code, `${args.join(' ')}\n${out.stderr}\n${out.stdout}`);
-      assert.doesNotMatch(out.stdout + out.stderr, cjk, `${args.join(' ')} output must be English`);
-      return out.stdout;
-    }
-    const json = async <T>(cwd: string, args: string[], code = 0): Promise<T> => JSON.parse(await run(cwd, [...args, '--json'], code)) as T;
-    const brief = (args: string[] = []) => json<Brief>(r.cwd, ['brief', ...args]);
+  async function run(cwd: string, args: string[], code = 0) {
+    const out = await cli(cwd, args);
+    assert.equal(out.code, code, `${args.join(' ')}\n${out.stderr}\n${out.stdout}`);
+    assert.doesNotMatch(out.stdout + out.stderr, cjk, `${args.join(' ')} output must be English`);
+    return out.stdout;
+  }
+  const json = async <T>(cwd: string, args: string[], code = 0): Promise<T> => JSON.parse(await run(cwd, [...args, '--json'], code)) as T;
+  const brief = (args: string[] = []) => json<Brief>(r.cwd, ['brief', ...args]);
+  const init = async () => { await r.put('plan.json', JSON.stringify(plan)); await r.put('closure.txt', 'v0\n'); await r.commit(); await run(r.cwd, ['init', 'plan.json', '--i-am-owner']); };
+  return { r, run, json, brief, init };
+}
 
+/** a: waived check + review, merged; d/b: closure changes owed to the owner (b also review-blocked); e: failing check; f: dispatched; h: accepted; g: ready; c: waiting. */
+async function scenario() {
+  const h = await harness(), { r, run, json, brief } = h;
+  await h.init();
+  const dispatch = async (id: string) => (await json<{ worktree: string }>(r.cwd, ['dispatch', id])).worktree;
+  const failSeq = (obs: Obs[], obligation: string) => obs.find(o => o.kind === 'obs' && o.obligation === obligation && o.verdict === 'fail')!.seq;
+  const wa = await dispatch('a');
+  await commitAt(wa, { 'a.txt': 'bad\n' }); await run(wa, ['submit', 'a']);
+  const aFail = failSeq((await json<{ observations: Obs[] }>(r.cwd, ['attest', 'a'], 1)).observations, 'check:a');
+  {
+    const v = await brief();
+    const block = v.rejected.find(b => b.node === 'a');
+    assert.equal(block?.obligation, 'check:a'); assert.equal(block?.kind, 'exec'); assert.equal(block?.failingObs, aFail);
+    assert.match(block!.clear, /owed submit a.*owed attest a/);
+  }
+  await run(r.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:r1']);
+  await run(r.cwd, ['waive', 'a', 'check:a', '--reason', 'environment accepted', '--accept-risk', String(aFail), '--i-am-owner']);
+  const mergeSeq = (await json<{ entry: { seq: number } }>(r.cwd, ['merge', 'a'])).entry.seq;
+  for (const id of ['d', 'b']) {
+    const w = await dispatch(id);
+    await commitAt(w, { [`${id}.txt`]: 'good\n', 'closure.txt': `${id}\n` }); await run(w, ['submit', id]);
+    await run(r.cwd, ['attest', id], 1);
+  }
+  await run(r.cwd, ['review', 'b', '--obligation', 'closure-review', '--block', '--rank', '2', '--as', 'reviewer:r2', '--note', 'closure change unexplained']);
+  const we = await dispatch('e');
+  await commitAt(we, { 'e.txt': 'bad\n' }); await run(we, ['submit', 'e']);
+  const eFail = failSeq((await json<{ observations: Obs[] }>(r.cwd, ['attest', 'e'], 1)).observations, 'check:e');
+  await dispatch('f');
+  const wh = await dispatch('h');
+  await commitAt(wh, { 'h.txt': 'good\n' }); await run(wh, ['submit', 'h']); await run(r.cwd, ['attest', 'h']);
+  return { ...h, mergeSeq, eFail };
+}
+
+test('owed brief CLI surface: refused before init, empty ledger view, help and argument validation', { timeout: 120_000 }, async () => {
+  const { r, run, brief, init } = await harness();
+  try {
     const pre = await cli(r.cwd, ['brief']);
     assert.equal(pre.code, 1, `brief before init is refused, not a usage error\n${pre.stderr}`);
     assert.match(pre.stderr, /Not initialized/);
-
-    await r.put('plan.json', JSON.stringify(plan)); await r.put('closure.txt', 'v0\n'); await r.commit();
-    await run(r.cwd, ['init', 'plan.json', '--i-am-owner']);
-    assert.equal((await cli(r.cwd, ['--help'])).stdout.includes('brief [--since seq|ISO]'), true, 'help lists brief');
-
+    await init();
+    assert.ok((await cli(r.cwd, ['--help'])).stdout.includes('brief [--since seq|ISO]'), 'help lists brief');
     const empty = await brief();
     assert.deepEqual([empty.decisions, empty.merged, empty.rejected, empty.inProgress], [[], [], [], []]);
     assert.deepEqual(empty.totals, { merged: 0, acceptedUnmerged: 0, blocked: 0, ready: 6, waiting: 2 });
-    const emptyText = await run(r.cwd, ['brief']);
-    assert.match(emptyText, /Needs your decision: none\n/);
-    assert.match(emptyText, /Total: 0 merged, 0 accepted-unmerged, 0 blocked, 6 ready/);
+    const text = await run(r.cwd, ['brief']);
+    assert.match(text, /^Brief \(since start\)\nNeeds your decision: none\nMerged: none\nRejected or blocked: none\nIn progress: none\nTotal: 0 merged, 0 accepted-unmerged, 0 blocked, 6 ready, 2 waiting on dependencies\n$/);
+    for (const args of [['--since', 'yesterday-ish'], ['extra'], ['--rerun'], ['--since']]) assert.equal((await cli(r.cwd, ['brief', ...args])).code, 2, args.join(' '));
+  } finally { await r.cleanup(); }
+});
 
-    const dispatch = async (id: string) => (await json<{ worktree: string }>(r.cwd, ['dispatch', id])).worktree;
-    const failSeq = (obs: Obs[], obligation: string) => obs.find(o => o.kind === 'obs' && o.obligation === obligation && o.verdict === 'fail')!.seq;
-
-    // a: the check fails, the owner waives it with explicit risk acceptance, an independent reviewer approves, merge.
-    const wa = await dispatch('a');
-    await commitAt(wa, { 'a.txt': 'bad\n' }); await run(wa, ['submit', 'a']);
-    const aFail = failSeq((await json<{ observations: Obs[] }>(r.cwd, ['attest', 'a'], 1)).observations, 'check:a');
-    {
-      const v = await brief();
-      const block = v.rejected.find(b => b.node === 'a');
-      assert.equal(block?.obligation, 'check:a'); assert.equal(block?.kind, 'exec'); assert.equal(block?.failingObs, aFail);
-      assert.match(block!.clear, /owed submit a.*owed attest a/);
-      assert.match(await run(r.cwd, ['brief']), new RegExp(`a/check:a failing obs #${aFail} → `));
-    }
-    await run(r.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:r1']);
-    await run(r.cwd, ['waive', 'a', 'check:a', '--reason', 'environment accepted', '--accept-risk', String(aFail), '--i-am-owner']);
-    const mergeSeq = (await json<{ entry: { seq: number } }>(r.cwd, ['merge', 'a'])).entry.seq;
-
-    // d and b both touch the closure: closure-review is an owner-queue item. b has one downstream node (c), d none.
-    for (const id of ['d', 'b']) {
-      const w = await dispatch(id);
-      await commitAt(w, { [`${id}.txt`]: 'good\n', 'closure.txt': `${id}\n` }); await run(w, ['submit', id]);
-      await run(r.cwd, ['attest', id], 1);
-    }
-    await run(r.cwd, ['review', 'b', '--obligation', 'closure-review', '--block', '--rank', '2', '--as', 'reviewer:r2', '--note', 'closure change unexplained']);
-    // e fails its check; f is only dispatched; h is accepted but unmerged; g stays ready; c waits on b.
-    const we = await dispatch('e');
-    await commitAt(we, { 'e.txt': 'bad\n' }); await run(we, ['submit', 'e']);
-    const eFail = failSeq((await json<{ observations: Obs[] }>(r.cwd, ['attest', 'e'], 1)).observations, 'check:e');
-    await dispatch('f');
-    const wh = await dispatch('h');
-    await commitAt(wh, { 'h.txt': 'good\n' }); await run(wh, ['submit', 'h']); await run(r.cwd, ['attest', 'h']);
-
+test('owed brief sections: decisions by downstream impact, merged counts never show waived as measured, blocks, progress and totals', { timeout: 300_000 }, async () => {
+  const { r, run, brief, mergeSeq, eFail } = await scenario();
+  try {
     const v = await brief();
-    // (1) owner decisions sorted by blocked downstream nodes, each with a discharging command.
+    // (1) owner decisions sorted by blocked downstream nodes (plan order is d before b), each with a discharging command.
     assert.deepEqual(v.decisions.map(d => [d.node, d.obligation, d.blockedDownstream]), [['b', 'closure-review', 1], ['d', 'closure-review', 0]]);
     assert.equal(v.decisions[0]!.command, 'owed review b --obligation closure-review --ok --rank 3 --as owner:human');
     // (2) merged: a waived check is counted as waived and never as measured.
@@ -114,35 +121,37 @@ test('owed brief: owner decisions, merged counts, blocks, progress, totals and -
     assert.deepEqual(v.totals, { merged: 1, acceptedUnmerged: 1, blocked: 2, ready: 1, waiting: 1 });
 
     const text = await run(r.cwd, ['brief']);
-    const order = ['Needs your decision (2):', 'Merged (1):', 'Rejected or blocked (2):', 'In progress (4):', 'Total: 1 merged, 1 accepted-unmerged, 2 blocked, 1 ready'].map(h => text.indexOf(h));
+    const order = ['Needs your decision (2):', 'Merged (1):', 'Rejected or blocked (2):', 'In progress (4):', 'Total: 1 merged, 1 accepted-unmerged, 2 blocked, 1 ready'].map(x => text.indexOf(x));
     assert.ok(order.every(i => i >= 0), text);
     assert.deepEqual([...order].sort((x, y) => x - y), order, 'sections in order');
     const lines = text.split('\n');
-    assert.match(lines.find(l => l.includes('b/closure-review'))!, /\[1 blocked downstream\].*→ owed review b --obligation closure-review --ok --rank 3 --as owner:human$/);
+    assert.match(lines.find(l => l.includes('b/closure-review ['))!, /\[1 blocked downstream\].*→ owed review b --obligation closure-review --ok --rank 3 --as owner:human$/);
     assert.ok(lines.findIndex(l => l.includes('b/closure-review [')) < lines.findIndex(l => l.includes('d/closure-review [')));
-    const mergedLine = lines.find(l => /^ {2}a #\d+ → /.test(l))!;
-    assert.match(mergedLine, /: 1 measured, 1 waived \(check:a\), 1 reviewed, 1 untested change; reviewers: reviewer:r1$/);
+    assert.match(lines.find(l => /^ {2}a #\d+ → /.test(l))!, /: 1 measured, 1 waived \(check:a\), 1 reviewed, 1 untested change; reviewers: reviewer:r1$/);
     assert.match(text, new RegExp(`e/check:e failing obs #${eFail} → `));
     assert.match(text, /f dispatched \(attempt 1\): dispatched \d+s ago\n/);
     assert.match(text, /b submitted \(attempt 1\): dispatched \d+(s|m) ago, submitted \d+(s|m) ago/);
+  } finally { await r.cleanup(); }
+});
 
-    // --since filters merges by seq or ISO time; invalid values are usage errors.
+test('owed brief --since filters only merges by seq or ISO time, and the printed decision command discharges the item', { timeout: 300_000 }, async () => {
+  const { r, run, brief, mergeSeq } = await scenario();
+  try {
     assert.deepEqual((await brief(['--since', String(mergeSeq)])).merged, []);
     assert.deepEqual((await brief(['--since', String(mergeSeq - 1)])).merged.map(x => x.node), ['a']);
     assert.deepEqual((await brief(['--since', '2000-01-01T00:00:00Z'])).merged.map(x => x.node), ['a']);
     const later = await brief(['--since', '2999-01-01T00:00:00Z']);
-    assert.deepEqual(later.merged, []); assert.equal(later.decisions.length, 2, 'since does not hide current decisions');
+    assert.deepEqual(later.merged, []);
+    assert.equal(later.decisions.length, 2, 'since does not hide current decisions');
+    assert.equal(later.rejected.length, 2, 'since does not hide current blocks');
     assert.match(await run(r.cwd, ['brief', '--since', String(mergeSeq)]), new RegExp(`Brief \\(since #${mergeSeq}\\)\\nNeeds your decision \\(2\\):[\\s\\S]*\\nMerged: none\\n`));
-    assert.equal((await cli(r.cwd, ['brief', '--since', 'yesterday-ish'])).code, 2);
-    assert.equal((await cli(r.cwd, ['brief', 'extra'])).code, 2);
-    assert.equal((await cli(r.cwd, ['brief', '--rerun'])).code, 2);
-
-    // The printed decision command discharges the item (adding the weak flag only because the fixture has no TTY).
-    const command = v.decisions[0]!.command.split(' ');
+    // Run the printed command (adding the weak flag only because the fixture has no TTY).
+    const command = (await brief()).decisions[0]!.command.split(' ');
     assert.equal(command.shift(), 'owed');
     await run(r.cwd, [...command, '--i-am-owner']);
     const after = await brief();
     assert.deepEqual(after.decisions.map(d => d.node), ['d']);
     assert.ok(!after.rejected.some(b => b.node === 'b'), 'owner rank-3 review clears the rank-2 judgment block');
+    assert.equal(after.totals.acceptedUnmerged, 2, 'b is now accepted');
   } finally { await r.cleanup(); }
 });
