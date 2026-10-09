@@ -10,7 +10,7 @@ dependencies besides `yaml`. Errors meant for users are `OwedError` (below).
 
 ```ts
 // src/errors.ts (pinned, written by parent)
-export class OwedError extends Error { constructor(message: string, readonly code: 'refused' | 'usage' | 'internal' = 'refused') }
+export class OwedError extends Error { constructor(message: string, readonly code: 'refused' | 'usage' | 'internal' | 'aborted' = 'refused') }  // aborted: an operation's signal aborted (D16; CLI exit 130/143)
 ```
 
 ## src/plan.ts  (leaf io)
@@ -31,7 +31,7 @@ export class Ledger {
   static open(cwd: string): Promise<Ledger>;
   readonly dir: string;
   read(): Promise<Entry[]>;              // parses + verifies the hash chain; throws OwedError('internal') naming the first bad seq
-  withLock<T>(fn: () => Promise<T>, name?: string): Promise<T>;   // mkdir lock `${dir}/${name ?? 'lock'}`; stale (dead pid, same host) is broken; waits with backoff up to 60 s
+  withLock<T>(fn: () => Promise<T>, name?: string, signal?: AbortSignal): Promise<T>;   // mkdir lock `${dir}/${name ?? 'lock'}`; stale (dead pid, same host) is broken; waits with backoff up to 60 s; an abort before acquisition rejects at once with OwedError('aborted') and takes nothing (no staged dir); after acquisition fn is not interrupted
   append(drafts: Draft[]): Promise<Entry[]>;  // MUST run inside withLock(); re-reads tail, assigns seq/ts/prev/hash, appends + fsync
   putBlob(data: string | Uint8Array): Promise<string>;  // sha256, write-once into blobs/
   getBlob(sha: string): Promise<Buffer>;

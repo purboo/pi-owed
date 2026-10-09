@@ -343,7 +343,12 @@ moved ref silently.
    trunk-ref check — they are facts about the measured tree, so an aborted
    adopt records them even if the ref moved). An abort never moves trunk:
    merge/adopt check it last under the lock, before `git update-ref`. An
-   already-aborted signal starts nothing.
+   already-aborted signal starts nothing. Waiting for a ledger lock is
+   abortable (D16a.2): an abort before the lock is acquired rejects at once
+   with `OwedError('aborted')` and takes nothing; an abort after acquisition
+   is handled by the paths above, never by interrupting the locked step. The
+   only lock wait after an abort is merge/adopt recording the observations
+   they measured before it.
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
