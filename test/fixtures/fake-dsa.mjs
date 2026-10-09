@@ -5,7 +5,17 @@
 //   describe --key <rid> [--json]
 //   events --all [--since <cursor>] [--limit <n>] [--json] [--wait-ms]
 //   0 applied · 1 rejected / invalid · 3 request-conflict · 4 cursor-expired · 75 pending
+//   hold <resource> [--shared] [--no-wait] [--max-wait <s>] [--note <text>] -- <cmd> [args…]
+//   leases [--json]
 // Test hooks (not dsa commands): `fake-prune <rid>` marks a run pruned; `fake-compact <n>` drops the oldest n events.
+// Leases: $FAKE_DSA_DIR/leases.json holds other processes' tickets, [{resource, holders:[{mode,…}], waiters:[…]}]
+// (what `leases --json` prints). `hold` decides like dsa 1.0.27: a shared request is blocked by an exclusive holder or
+// waiter, an exclusive one by any; blocked with --no-wait (or --max-wait 0) → exit 75 naming the blockers, nothing
+// written; blocked without it → logged `queued: true` (a waiter was written) and then run; granted → the command runs
+// (stdio passed through) and hold exits with its status. $FAKE_DSA_DIR/old-hold makes hold reject --no-wait like dsa
+// < 1.0.27 (exit 1, `pi-durable-subagents: Error: Unknown option --no-wait`).
+// Stale describe: $FAKE_DSA_DIR/stale-describe = <n>: after the next applied follow-up, the following n describes of
+// that run return the run as it was before the follow-up (dsa's view lagging behind the applied send).
 //
 // State lives in $FAKE_DSA_DIR: state.json (requests, runs, events), specs/<id> (exact spec bytes as received),
 // messages/<id> (exact message bytes), log.jsonl (one line per decided invocation, `executed` when an agent ran).
@@ -202,7 +212,10 @@ function sendCmd(args) {
   if (!run || run.pruned) decide(1, { applied: false, reason: `unknown target ${to}` });
   else if (kind === 'follow-up') {
     if (run.state !== 'sealed') decide(1, { applied: false, reason: `${to} is not finished; use steer` });
-    else { run.gen += 1; decide(0, { applied: true, generation: run.gen, call: `${run.wid}/main` }); executed = execute(s, run, 'follow-up', text); }
+    else {
+      const staleFile = join(DIR, 'stale-describe');
+      if (existsSync(staleFile)) { s.stale = { rid, left: Number(readFileSync(staleFile, 'utf8').trim()) || 1, view: describeOf(s, rid) }; rmSync(staleFile); }
+      run.gen += 1; decide(0, { applied: true, generation: run.gen, call: `${run.wid}/main` }); executed = execute(s, run, 'follow-up', text); }
   } else if (kind === 'steer') {
     if (run.state === 'sealed') decide(1, { applied: false, reason: `${to} is finished; use follow-up` });
     else { run.steers.push(text); decide(0, { applied: true }); }
@@ -234,8 +247,47 @@ function describeOf(s, id) {
 function describeCmd(args) {
   const { values, positionals } = flags(args, { key: 'value', json: 'flag' });
   if (!values.key || positionals.length) throw new Error('describe needs --key <request id>');
-  process.stdout.write(`${JSON.stringify(describeOf(load(), values.key), null, 2)}\n`);
+  const s = load();
+  let view = describeOf(s, values.key);
+  if (s.stale?.rid === values.key && s.stale.left > 0) {
+    view = s.stale.view; s.stale.left -= 1; save(s);
+    log({ cmd: 'describe', request: values.key, stale: true });
+  }
+  process.stdout.write(`${JSON.stringify(view, null, 2)}\n`);
   return new Exit(0);
+}
+
+// ---- leases and hold (no state lock: hold runs a command that may call this fake again) ---------------------------
+function leaseState() {
+  const file = join(DIR, 'leases.json');
+  return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
+}
+function leasesCmd(args) {
+  flags(args, { json: 'flag' });
+  process.stdout.write(`${JSON.stringify(leaseState(), null, 2)}\n`);
+  return new Exit(0);
+}
+function holdCmd(args) {
+  const sep = args.indexOf('--');
+  if (sep < 0 || sep === args.length - 1) { process.stderr.write('pi-durable-subagents: Error: hold needs -- before the command\n'); return new Exit(1); }
+  const own = args.slice(0, sep), argvCmd = args.slice(sep + 1);
+  if (existsSync(join(DIR, 'old-hold')) && own.includes('--no-wait')) {
+    process.stderr.write('pi-durable-subagents: Error: Unknown option --no-wait. usage: pi-durable-subagents hold <resource> [--shared] [--max-wait <seconds>] [--note <text>] -- <command> [args…]\n');
+    log({ cmd: 'hold', exit: 1, old: true }); return new Exit(1);
+  }
+  const { values, positionals } = flags(own, { shared: 'flag', 'no-wait': 'flag', 'max-wait': 'value', note: 'value' });
+  const resource = positionals[0], mode = values.shared ? 'shared' : 'exclusive', noWait = !!values['no-wait'] || values['max-wait'] === '0';
+  const entry = leaseState().find(r => r.resource === resource) ?? { holders: [], waiters: [] };
+  const incompatible = (t) => mode === 'exclusive' || t.mode === 'exclusive';
+  const blockers = [...entry.holders.filter(incompatible).map(t => ({ ...t, state: 'holding' })), ...entry.waiters.filter(incompatible).map(t => ({ ...t, state: 'waiting' }))];
+  if (blockers.length && noWait) {
+    process.stderr.write(`hold: ${resource} is not free now (${blockers.map(t => `${t.who ?? 'pid ?'} (${t.mode}${t.state === 'waiting' ? ', waiting' : ''}, 1s)`).join(', ')}); not running the command (exit 75)\n`);
+    log({ cmd: 'hold', resource, mode, refused: true, exit: 75 }); return new Exit(75);
+  }
+  const r = spawnSync(argvCmd[0], argvCmd.slice(1), { stdio: 'inherit' });
+  const code = r.error ? 127 : r.status ?? 128;
+  log({ cmd: 'hold', resource, mode, noWait, granted: true, ...(blockers.length ? { queued: true } : {}), argv: argvCmd, exit: code });
+  return new Exit(code);
 }
 
 function eventsCmd(args) {
@@ -266,8 +318,12 @@ function hook(args) {
 }
 
 const commands = { run: runCmd, send: sendCmd, describe: describeCmd, events: eventsCmd, 'fake-prune': hook, 'fake-compact': hook };
+const unlocked = { hold: holdCmd, leases: leasesCmd };
 let result;
-if (!commands[command]) result = invalid(undefined, `fake-dsa: unsupported command ${command}`);
+if (unlocked[command]) {
+  try { result = unlocked[command](argv.slice(1)); } catch (e) { process.stderr.write(`pi-durable-subagents: Error: ${e.message}\n`); result = new Exit(1); }
+}
+else if (!commands[command]) result = invalid(undefined, `fake-dsa: unsupported command ${command}`);
 else if (!lock()) result = new Exit(75, { pending: true, reason: 'busy' });
 else {
   try { result = commands[command](argv.slice(1)); }

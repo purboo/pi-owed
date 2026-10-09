@@ -154,6 +154,27 @@ owed gc             # remove clean finished worktrees and their branches, then g
 
 The current open slot is never touched, nor a finished worktree that contains another worktree. A finished worktree with uncommitted or untracked (non-ignored) changes is kept and reported as dirty, together with its branch, so no work is lost; clean or commit it and run `gc` again. Branches of abandoned attempts are deleted even though they were never merged. Before a branch goes, every commit submitted in that attempt that trunk does not already reach is pinned under `refs/owed/keep/<node>/<attempt>/<submit-seq>`, so `git gc` cannot prune it and a later attribution rerun of an old failure still works; `gc` never deletes `refs/owed/keep/*`. Each run that removes or pins something appends a `note` entry to the ledger naming what was removed and pinned; a second run removes and pins nothing, so it appends no note. `--json` returns `{removed:[{node,attempt,worktree,branch,pinned}], kept:[{node,attempt,worktree,branch,reason}]}`, where `worktree`/`branch` in `removed` is `null` when that part was already gone and `pinned` lists the keep refs created (or, with `--dry-run`, that would be created).
 
+## Driving the loop with dsa
+
+`owed drive` runs the mechanical loop — dispatch, writer, submit, attest,
+reviewers, merge — with [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents)
+(≥ 1.0.27) as the process runner, and stops for decisions. Every intent is
+recorded in the ledger before dsa is called and retried with the same bytes and
+id, so killing the driver at any point is safe. Attest runs under
+`pi-durable-subagents hold machine --shared --no-wait` and is retried later
+while the machine is busy; with an older dsa that rejects `--no-wait` the
+attempt is halted with that error. One driver per repository
+(`.git/owed/drive.lock`).
+
+```sh
+owed drive            # until idle; run it in a terminal or a systemd-run --user unit
+owed drive --once     # one pass (also the pi tool owed_drive)
+```
+
+The driver never answers a question, waives, changes the plan or forces a dsa
+restart: questions and owner decisions are printed, and a halt (`owed status`,
+`owed why`) waits for a human action on the node.
+
 ## Development
 
 ```sh

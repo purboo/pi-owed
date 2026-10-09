@@ -104,6 +104,20 @@ export function reviewerBase(state: State, node: string): number;   // reviewer 
 
 Dispatch worktrees: `<mainRoot>/.owed/wt/<node>-<attempt>` (main worktree root, never the toplevel of the cwd, so dispatching from inside a slot worktree does not nest), branch `owed/<node>/<attempt>`; ops adds `.owed/` to `<git common dir>/info/exclude`. Dispatch refuses writes overlapping an open slot unless `allowOverlap` (ops-level check; `reducer.overlapping(state, node)` is shared with the status view). `views.ts` also owns `renderGc`. `ops.launch` (idempotent on identical content, `{entry, created}`), `ops.send`, `ops.halt` record driver entries (SPEC §12.3). `views.ts` exports `reviewPacket(state, node, n)`, `reviewRuns`, `reviewObligations` (SPEC §12.6, pure; `n` attempt-global, local k = n - reviewerBase) and renders halts/launches in status, why and report (SPEC §12.4). `src/types.ts` holds `RunView` (SPEC §12.1) for the later `src/drive.ts`. The dispatch packet (blob) is markdown: node title/brief, writes, checks (commands), red requirement, in-scope rulings, the worktree path and the rule "commit your work; do not edit files outside writes; owed will run the checks itself".
 
+## src/dsa.ts, src/drive.ts, src/drive-run.ts  (driver, SPEC §12)
+```ts
+// src/dsa.ts: the pi-durable-subagents CLI client (argv, --json, exit codes 0/1/3/4/75)
+class Dsa { run(rid, specBytes, labels?, cwd?); send(id, to, kind, message); describe(rid): RunView; inspect(rid): {view, gen?};
+  request(id): {state: applied|rejected|pending|absent, reason?}; events(since?, limit?); hold(resource, argv, {shared?, cwd?}) /* --no-wait: ran|busy|refused|signal */ }
+// src/drive.ts: decide(state, plan, runs, opts): Action[] (pure)
+// src/drive-run.ts
+export function drive(o: DriveOptions): Promise<number>;   // lock, then one pass (once) or the loop; OwedError('refused') when another driver runs
+export class Driver { pass(): Promise<PassResult> }        // one pass: observe, decide, execute
+export function acquireDriveLock(dir: string): Promise<() => Promise<void>>;
+export function liveRunLines(cwd: string, dsa?: Dsa): Promise<string[]>;   // `/owed` dsa states of live runs
+```
+`drive-run.ts` uses `ops` for every ledger write (dispatch, launch, send, halt, rebase, merge as `parent:drive`) and runs attest as a subprocess under `hold machine --shared --no-wait`. Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs the driver at that point.
+
 ## src/extension.ts, skills/owed/SKILL.md  (leaf surface)
 Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters.
 
