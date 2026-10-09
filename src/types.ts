@@ -34,11 +34,17 @@ export interface WorktreesConfig { root: string /* absolute, or relative to the 
 export interface DriveAgent { agent: string; model?: string }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
 export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent }
+/**
+ * Optional `exec:` block of the plan (SPEC §3, §7, D20): extra environment and an argv prefix for every process owed
+ * starts in a materialized tree. Parsed plans keep only non-empty fields; `exec: {}` is the same as no block.
+ */
+export interface ExecConfig { env?: Record<string, string>; wrap?: string[] }
 export interface Plan {
   version: 1;
   trunk: string;
   closure: string[];
   setup?: string;
+  exec?: ExecConfig;          // present only when env or wrap is non-empty
   invariants: CheckSpec[];
   nodes: NodeSpec[];
   drive?: DriveConfig;        // present only when the plan has a `drive:` block (filled with defaults)

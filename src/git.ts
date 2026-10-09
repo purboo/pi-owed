@@ -85,8 +85,13 @@ async function files(cwd: string, commit: string): Promise<[string, string, stri
 }
 export async function readsDigest(cwd: string, commit: string, globs: string[]): Promise<string> { return H((await files(cwd, commit)).filter(([p]) => matchesAny(p, globs))); }
 async function tree(cwd: string, commit: string): Promise<string> { return (await git(cwd, ['rev-parse', `${commit}^{tree}`])).stdout.trim(); }
+/** The `exec` part of a check/red/strength/inv key (D20): only the non-empty fields, undefined (dropped by canonical JSON) without exec. */
+export function execKey(plan: Plan): { env?: Record<string, string>; wrap?: string[] } | undefined {
+  const env = plan.exec?.env && Object.keys(plan.exec.env).length ? plan.exec.env : undefined, wrap = plan.exec?.wrap?.length ? plan.exec.wrap : undefined;
+  return env || wrap ? { env, wrap } : undefined;
+}
 async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, closure: string, o: string): Promise<string> {
-  return H({ o, id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, min_tests: spec.min_tests, closure, reads: await readsDigest(cwd, commit, spec.reads) });
+  return H({ o, id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, closure, reads: await readsDigest(cwd, commit, spec.reads) });
 }
 export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, base: string, commit: string, attempt: number): Promise<CandidateFacts> {
   base = await revParse(cwd, base); commit = await revParse(cwd, commit);
@@ -99,7 +104,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
   for (const c of node.checks) {
     keys[`check:${c.id}`] = await checkKey(cwd, plan, c, commit, closure, 'check');
     if (c.mutants) keys[`strength:${c.id}`] = await strengthKey(cwd, plan, c, base, commit, closure);
-    if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
+    if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
   keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes });
   const closureTouched = changed.some(p => matchesAny(p, plan.closure));
@@ -114,7 +119,7 @@ export async function mutantPaths(cwd: string, commit: string, mutants: string[]
 }
 async function strengthKey(cwd: string, plan: Plan, spec: CheckSpec, base: string, commit: string, closure: string): Promise<string> {
   const mutants = H((await files(cwd, base)).filter(([p]) => matchesAny(p, spec.mutants ?? []) && matchesAny(p, plan.closure)));
-  return H({ o: 'strength', id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, min_tests: spec.min_tests, min_kill: spec.min_kill ?? 1, closure, mutants, reads: await readsDigest(cwd, commit, spec.reads) });
+  return H({ o: 'strength', id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, min_kill: spec.min_kill ?? 1, closure, mutants, reads: await readsDigest(cwd, commit, spec.reads) });
 }
 export async function stateFacts(cwd: string, plan: Plan, commit: string): Promise<StateFacts> {
   commit = await revParse(cwd, commit);
