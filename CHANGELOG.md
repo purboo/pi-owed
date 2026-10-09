@@ -6,15 +6,16 @@
   `init` or `adopt` runs, the first SIGINT/SIGTERM/SIGHUP kills the running
   check's process group, records nothing for that run, starts no further job
   and exits 130 (SIGINT) or 143 (SIGTERM/SIGHUP) after printing
-  `Aborted: <signal>`; observations of jobs completed before stay, and an abort
-  never moves trunk. So `hold machine -- owed attest` releases the lease only
-  after the checks ended. 130/143 means a real abort only: a signal arriving
-  after the operation completed keeps its normal exit code (0/1) and says so on
-  stderr. Signals within 1 s of the first are the same request; a later second
-  signal exits at once (it may leave the job's temporary worktree; SPEC §10
-  says how to remove it). `owed drive --once` stops at once on the first
-  SIGINT/SIGTERM (its attest children and in-process merge checks end too),
-  exit 130. SIGKILL remains out of scope.
+  `Aborted: <signal>`; observations of jobs completed before stay (merge/adopt:
+  when the ledger did not move meanwhile), and an abort never moves trunk. So
+  `hold machine -- owed attest` releases the lease only after the checks ended.
+  130/143 means a real abort only: a signal arriving after the operation
+  completed keeps its normal exit code (0/1) and says so on stderr. Signals
+  within 1 s of the first are the same request; a later second signal exits at
+  once (it may leave the job's temporary worktree; SPEC §10 says how to remove
+  it). `owed drive --once` stops at once on the first SIGINT/SIGTERM (its
+  attest children and in-process merge checks end too), exit 130. SIGKILL
+  remains out of scope.
 - The pi tools `owed_attest`, `owed_merge` and `owed_adopt` pass the tool
   call's abort signal (aborting ends the running check; tool error
   `Aborted: aborted`); `owed_drive` (action once) stops its pass after the
@@ -25,15 +26,17 @@
 - **Background driver:** `owed drive --detach [--max N]` starts the loop
   driver as a detached process with its output in
   `.git/owed/drive/log.jsonl` (previous log kept as `log.jsonl.1`; the last
-  line is an exit record `idle|stopped|killed|error`), `owed drive --status
-  [--json]` reports it (running or not, last exit record, last 10 log lines),
-  `owed drive --stop [--now]` stops it after its current action (`--now`: at
-  once). The pi tool `owed_drive` gets `action: once|start|status|stop`
-  (default `once`, unchanged) and `now`; after `start`, and in every
-  top-level pi session opened in the repository while a driver runs, the
-  session is woken with one message when the driver halts, needs the owner, a
-  run asks a question, it is stalled, dsa events fail or it exits. No polling.
-  `/owed` shows whether a driver runs.
+  line is an exit record `idle|stopped|killed|error`, absent only after
+  SIGKILL or a crash), `owed drive --status [--json]` reports it (running or
+  not, last exit record, last 10 log lines), `owed drive --stop [--now]` stops
+  it after its current action (`--now`: at once). The pi tool `owed_drive`
+  gets `action: once|start|status|stop` (default `once`, unchanged) and `now`;
+  after `start`, and in every top-level pi session opened in the repository
+  while a driver runs, the session is woken with one message when the driver
+  halts, needs the owner, a run asks a question, it is stalled, dsa events
+  fail or it exits; the extension reads the driver's log every 2 s without a
+  model turn, so no agent has to poll `status`. `/owed` shows whether a
+  driver runs.
 - **Review blocks that need a parent ruling:** `owed review <node> --block
   --needs-parent` (pi tool `owed_review` with `needs_parent: true`) records
   `needs: "parent"` on a review block (refused on `--ok`). The driver then halts
