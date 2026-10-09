@@ -296,16 +296,24 @@ attempts. For every `dispatch` entry whose attempt is merged or abandoned (never
 the current open slot) it removes the slot worktree with `git worktree remove`
 (no `--force`) and deletes the branch `owed/<node>/<attempt>` with `git branch -D`,
 then runs `git worktree prune` (also run first, so a hand-deleted slot directory
-does not pin its branch). It runs under the `dispatch` lock. A finished worktree
+does not pin its branch). Before removing anything of a finished attempt it pins
+each commit of that attempt's `submit` entries that the ledger's trunk commit does
+not reach, with `git update-ref refs/owed/keep/<node>/<attempt>/<submit-seq>
+<commit>` (one ref per submit entry; create-only, an existing ref is left alone),
+because attribution reruns (§7) re-execute old blocks on those commits; this also
+applies when the branch is already gone but the commit still exists. gc never
+deletes `refs/owed/keep/*`. If a pin fails the worktree and branch are kept; a
+submitted commit that is already missing is reported in `kept`. It runs under the `dispatch` lock. A finished worktree
 that is locked or dirty (`git status --porcelain` shows tracked or untracked
 non-ignored changes) is kept together with its branch; a branch checked out in
 another worktree is kept; an unregistered directory at the slot path is left
 untouched. Attempts whose worktree and branch are both gone are skipped, so gc
-is idempotent. Result: `{dryRun, removed: {node, attempt, worktree, branch}[],
+is idempotent. Result: `{dryRun, removed: {node, attempt, worktree, branch, pinned}[],
 kept: {node, attempt, worktree, branch, reason}[], entry?}`; in `removed`,
-`worktree`/`branch` is `null` for a part that was already absent. When it
-removes something (not in dry-run) it appends one `note` entry (by the caller,
-default `parent:cli`) naming what was removed; there is no new entry kind and
+`worktree`/`branch` is `null` for a part that was already absent, and `pinned`
+lists the keep refs created (in dry-run: that would be created). When it
+removes or pins something (not in dry-run) it appends one `note` entry (by the caller,
+default `parent:cli`) naming what was removed and pinned; there is no new entry kind and
 the reducer is unaffected. `dryRun` reports the same classification without
 changing git or the ledger.
 

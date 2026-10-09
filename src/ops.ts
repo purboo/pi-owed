@@ -182,11 +182,13 @@ export async function decoyCommit(o: Actor & { digest:string; channel:Channel })
 export async function decoyReveal(o: Actor & { payload:string; channel:Channel }): Promise<Entry> { const p = decoyPayload(o.payload); return mutate(o,() => ({kind:'decoy-reveal',by:by(o),channel:o.channel,...p})); }
 // ---------- gc: reclaim worktrees and branches of finished attempts (SPEC §8) ----------
 import { realpath, stat } from 'node:fs/promises';
-export interface GcItem { node: string; attempt: number; worktree: string | null; branch: string | null }
+export interface GcItem { node: string; attempt: number; worktree: string | null; branch: string | null; pinned: string[] }
 export interface GcKept { node: string; attempt: number; worktree: string; branch: string; reason: string }
 export interface GcResult { dryRun: boolean; removed: GcItem[]; kept: GcKept[]; entry?: Entry }
 async function real(path: string): Promise<string> { try { return await realpath(path); } catch { return resolve(path); } }
 async function exists(path: string): Promise<boolean> { try { await stat(path); return true; } catch { return false; } }
+/** Ref that keeps the commit of submit entry `seq` reachable after its branch is deleted (attribution reruns need it). */
+export const keepRef = (node: string, attempt: number, seq: number): string => `refs/owed/keep/${node}/${attempt}/${seq}`;
 export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channel?: Channel }): Promise<GcResult> {
   const actor: Actor = { cwd: o.cwd, as: o.as ?? { role: 'parent', id: 'cli' }, channel: o.channel }, dryRun = !!o.dryRun;
   owner(actor); const ledger = await Ledger.open(o.cwd);
@@ -201,14 +203,28 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
       if (d.kind !== 'dispatch') continue;
       const keep = (reason: string) => { kept.push({ node: d.node, attempt: d.attempt, worktree: d.worktree, branch: d.branch, reason }); };
       const path = await real(d.worktree), tree = trees.find(w => w.path === path), hasBranch = await git.branchExists(o.cwd, d.branch), onDisk = await exists(d.worktree);
-      if (!tree && !hasBranch && !onDisk) continue; // already reclaimed
       const slot = state.nodes[d.node]?.slot;
-      if (slot?.open && slot.attempt === d.attempt) { keep('open writer slot'); continue; }
+      if (slot?.open && slot.attempt === d.attempt) { if (tree || hasBranch || onDisk) keep('open writer slot'); continue; }
+      if (tree?.locked) { keep('worktree is locked'); continue; }
+      if (tree && !await git.isClean(tree.path)) { keep('worktree is dirty (uncommitted or untracked changes)'); continue; }
+      // Pin every submitted commit that trunk does not already reach, before its branch can go.
+      const pins: { ref: string; commit: string }[] = []; let lost = '';
+      for (const e of entries) if (e.kind === 'submit' && e.node === d.node && e.attempt === d.attempt) {
+        const ref = keepRef(d.node, d.attempt, e.seq), commit = e.facts.commit;
+        if ((await git.git(o.cwd, ['rev-parse', '--verify', '--quiet', ref], { allowFail: true })).code === 0) continue;
+        if ((await git.git(o.cwd, ['cat-file', '-e', `${commit}^{commit}`], { allowFail: true })).code) { lost ||= `submitted commit ${commit} (#${e.seq}) is no longer in the repository`; continue; }
+        if (!await git.isAncestor(o.cwd, commit, state.trunk.commit)) pins.push({ ref, commit });
+      }
+      if (lost) keep(lost);
+      const pinned: string[] = [];
+      for (const p of pins) {
+        if (!dryRun) { const r = await git.git(o.cwd, ['update-ref', p.ref, p.commit, ''], { allowFail: true }); if (r.code) { keep(`git update-ref ${p.ref} failed: ${r.stderr.trim()}`); break; } }
+        pinned.push(p.ref);
+      }
+      if (pinned.length !== pins.length) { if (pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree: null, branch: null, pinned }); continue; }
       let worktree: string | null = null, branch: string | null = null;
       if (tree) {
-        if (tree.locked) { keep('worktree is locked'); continue; }
-        if (!await git.isClean(tree.path)) { keep('worktree is dirty (uncommitted or untracked changes)'); continue; }
-        if (!dryRun) { const r = await git.git(o.cwd, ['worktree', 'remove', tree.path], { allowFail: true }); if (r.code) { keep(`git worktree remove failed: ${r.stderr.trim()}`); continue; } }
+        if (!dryRun) { const r = await git.git(o.cwd, ['worktree', 'remove', tree.path], { allowFail: true }); if (r.code) { keep(`git worktree remove failed: ${r.stderr.trim()}`); if (pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned }); continue; } }
         worktree = d.worktree;
       } else if (onDisk) keep('path exists but is not a registered git worktree; left untouched');
       if (hasBranch) {
@@ -217,11 +233,11 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
         else if (dryRun) branch = d.branch;
         else { const r = await git.git(o.cwd, ['branch', '-D', d.branch], { allowFail: true }); if (r.code) keep(`git branch -D failed: ${r.stderr.trim()}`); else branch = d.branch; }
       }
-      if (worktree || branch) removed.push({ node: d.node, attempt: d.attempt, worktree, branch });
+      if (worktree || branch || pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned });
     }
     if (dryRun || !removed.length) return { dryRun, removed, kept };
     await git.git(o.cwd, ['worktree', 'prune']);
-    const text = `gc removed ${removed.map(i => `${i.node}#${i.attempt} (${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`].filter(Boolean).join(', ')})`).join('; ')}`;
+    const text = `gc removed ${removed.map(i => `${i.node}#${i.attempt} (${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(r => `pinned ${r}`)].filter(Boolean).join(', ')})`).join('; ')}`;
     const entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; const d: Draft = { kind: 'note', by: by(actor), channel: actor.channel, text }; guard(current, d); return (await ledger.append([d]))[0]!; });
     return { dryRun, removed, kept, entry };
   }, 'dispatch');
