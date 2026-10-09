@@ -253,7 +253,7 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     assert.equal(reviewRuns(s2, 'a'), 1, 'candidate 2 does not touch the closure: one run');
     const t2 = reviewPacket(s2, 'a', 2);
     assert.ok(t2.split('\n').includes(`Candidate: ${c2.commit} (submit #${c2.seq})`));
-    assert.ok(t2.split('\n').includes(`  owed review a --as reviewer:drive-a-1-2 --ok|--block --rank 1 --ack-rulings ${rule.seq} --note "..."`), t2);
+    assert.ok(t2.split('\n').includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --ack-rulings ${rule.seq} --note "..."`), t2);
     assert.match(t2, /reviewer run 1 of 1 for this candidate, n = 2/);
     assert.doesNotMatch(t2, /closure-review --ack/);
     assert.deepEqual(reviewObligations(s2, 'a', 2), ['review']);
@@ -263,7 +263,7 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     await ops.launch({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer', 2), spec: '{"n":2}', labels: runLabels(p, 'a', 1, 'reviewer') });
     const s3 = (await load(r.cwd)).state;
     assert.equal(nextReviewerN(s3, 'a'), 3);
-    assert.ok(reviewPacket(s3, 'a', 2).includes('--as reviewer:drive-a-1-2 '), 'the run launched after the submit belongs to candidate 2');
+    assert.ok(reviewPacket(s3, 'a', 2).includes('--as reviewer:drive-a-1-1 '), 'the run launched after the submit belongs to candidate 2');
   } finally { await r.cleanup(); }
   // Two reviews required, no closure touched, no rulings: run 2 records only review, with its own id and rank.
   const r2 = await fixture({ ...base, nodes: [base.nodes[0], { ...base.nodes[1], writes: ['b/'] }] });
@@ -286,8 +286,8 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     await ops.submit({ cwd: b.worktree, node: 'b', as: { role: 'writer', id: 'b#1' } });
     const s2 = (await load(r2.cwd)).state;
     assert.deepEqual([reviewerBase(s2, 'b'), nextReviewerN(s2, 'b'), reviewRuns(s2, 'b')], [2, 3, 2]);
-    assert.ok(reviewPacket(s2, 'b', 3).split('\n').includes('  owed review b --as reviewer:drive-b-1-3 --ok|--block --rank 2 --note "..."'));
-    assert.ok(reviewPacket(s2, 'b', 4).split('\n').includes('  owed review b --as reviewer:drive-b-1-4 --ok|--block --rank 2 --note "..."'));
+    assert.ok(reviewPacket(s2, 'b', 3).split('\n').includes('  owed review b --as reviewer:drive-b-1-1 --ok|--block --rank 2 --note "..."'));
+    assert.ok(reviewPacket(s2, 'b', 4).split('\n').includes('  owed review b --as reviewer:drive-b-1-2 --ok|--block --rank 2 --note "..."'));
     assert.match(reviewPacket(s2, 'b', 4), /reviewer run 2 of 2 for this candidate, n = 4/);
     for (const n of [1, 2, 5]) { assert.throws(() => reviewPacket(s2, 'b', n), new RegExp(`n = 3\\.\\.4\\); run ${n} does not exist`)); assert.deepEqual(reviewObligations(s2, 'b', n), []); }
     assert.deepEqual([reviewObligations(s2, 'b', 3), reviewObligations(s2, 'b', 4)], [['review'], ['review']]);

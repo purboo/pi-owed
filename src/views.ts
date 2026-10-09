@@ -2,7 +2,7 @@ import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, I
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
-import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase } from './reducer.ts';
+import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf } from './reducer.ts';
 import { OwedError } from './errors.ts';
 
 export interface ReceiptCard {
@@ -308,7 +308,10 @@ export function reviewObligations(s: State, node: string, n: number): ('review' 
  * Task text of the driver's reviewer run `n` (attempt-global, SPEC §12.3) on the node's current candidate (pure;
  * usable before the launch entry for `n` exists): node, attempt, candidate,
  * base, brief, writes, obligations with required count/rank, rulings in scope, the exact `owed review` commands
- * for reviewer `reviewer:drive-<node>-<attempt>-<n>`, and the rules (inspect the diff, edit nothing, reply with seqs).
+ * for the slot reviewer `reviewer:drive-<node>-<attempt>-<k>` (k = n − reviewerBase: the identity is per review slot,
+ * the same principal for every candidate of the attempt), and the rules (inspect the diff, edit nothing, reply with
+ * seqs). When that principal has active review blocks on the node, the packet quotes them (seq, obligation, rank, note)
+ * and asks for rank max(required rank, block rank) on the blocked obligation, so its ok clears its own block.
  */
 export function reviewPacket(s: State, node: string, n = 1): string {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
@@ -316,14 +319,19 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   if (!st.slot?.open || !st.candidate) throw new OwedError(`Node ${node} has no open candidate`);
   const runs = reviewRuns(s, node), first = reviewerBase(s, node) + 1, k = n - first + 1;
   if (!Number.isInteger(n) || k < 1 || k > runs) throw new OwedError(`Node ${node} candidate #${st.candidate.seq} has ${runs} reviewer run(s)${runs ? ` (n = ${first}${runs > 1 ? `..${first + runs - 1}` : ''})` : ''}; run ${n} does not exist for it`);
-  const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, n);
+  const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, k);
   const rulings = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
   const rulingsItem = st.items.find(i => i.obligation === 'rulings');
   const ack = rulingsItem && rulingsItem.status === 'D' && rulings.length ? ` --ack-rulings ${Math.max(...rulings.map(r => r.seq))}` : '';
   const rank = (o: 'review' | 'closure-review'): number => o === 'closure-review' ? 2 : Math.max(1, spec.review.min_rank);
+  // Active review blocks recorded by this slot's principal (on any earlier candidate of the attempt).
+  const entries = entriesOf(s), author = (seq: number) => entries.find(e => e.seq === seq);
+  const blocks = st.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && author(b.seq)?.by === who);
+  const slotRank = (o: 'review' | 'closure-review'): number => Math.max(rank(o), ...blocks.filter(b => b.obligation === o).map(b => b.rank ?? 0));
   const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : 'measured by owed';
   const mine = reviewObligations(s, node, n);
-  const commands = mine.flatMap(o => rank(o) > 2 ? [`(${o} requires rank ${rank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${rank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
+  const commands = mine.flatMap(o => slotRank(o) > 2 ? [`(${o} requires rank ${slotRank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${slotRank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
+  const quoted = blocks.map(b => { const e = author(b.seq); return `- #${b.seq} ${b.obligation} rank ${b.rank}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; });
   return [`# Review ${spec.title ?? node} (node ${node}, attempt ${attempt}, reviewer run ${k} of ${runs} for this candidate, n = ${n})`,
     `Node: ${node}; attempt: ${attempt}`,
     `Candidate: ${commit} (submit #${st.candidate.seq})`,
@@ -335,6 +343,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
     `Rulings in scope:${rulings.length ? '' : ' none'}`,
     ...rulings.map(r => `- #${r.seq} ${r.text}`),
     `Your reviewer identity: ${who} (never the writer of this node).`,
+    ...(quoted.length ? [`Your earlier review block(s) on this node, still active (check whether this candidate fixes them; an ok at the rank given below clears them):`, ...quoted] : []),
     `Inspect the actual diff: git diff ${base} ${commit}`,
     'Do not edit files, commit or run owed submit; review only.',
     'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',

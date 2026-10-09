@@ -3,7 +3,7 @@
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
-import { attestJobs, driveReviewer, entriesOf, halted, nextReviewerN, observationsOf, planAt, runId, runLabels, writesOverlap } from './reducer.ts';
+import { attestJobs, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
 import { dispatchPacket, oneLine, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, LaunchEntry, NodeState, Plan, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
 
@@ -53,7 +53,10 @@ export interface DriveOpts {
   root: string;
   /** Send request ids (`SendEntry.send`) dsa confirmed applied in this process; any other recorded send of an open attempt is re-sent. */
   applied: ReadonlySet<string>;
-  /** Run ids whose `dsa run` was rejected (exit 1) in this process, with dsa's reason: the attempt halts (D9), never re-launched. */
+  /**
+   * Request ids dsa rejected (exit 1) in this process, with dsa's reason: run ids (`dsa run`) and send ids (`dsa send`,
+   * e.g. a re-send to a pruned run). The attempt halts needing a human (D9); the request is never retried.
+   */
   rejected: ReadonlyMap<string, string>;
   /**
    * Exact stored bytes of recorded blobs, by blob hash (the launch entry's `spec`, the send entry's `message`), that the
@@ -95,12 +98,18 @@ export const WRITER_INTERRUPTED = 'You were interrupted; processes your tools st
 export const submitMessage = (node: string): string => `commit your work and run \`owed submit ${node}\``;
 export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node}\` for reviews you already recorded on this candidate, finish the rest.`;
 export const fencedMessage = (reason: string): string => `Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`;
-/** Repair follow-up: what to do, then the `owed why` card of the node. */
+/** Repair follow-up: what to do, the notes of active review blocks, then the `owed why` card of the node. */
 export function repairMessage(s: State, node: string): string {
-  const n = s.nodes[node]!, c = n.candidate!;
+  const n = s.nodes[node]!, c = n.candidate!, entries = entriesOf(s);
+  const notes = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active').map(b => {
+    const e = entries.find(x => x.seq === b.seq);
+    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
+  });
   return [`owed found problems with your candidate ${c.commit} (submit #${c.seq}) of ${node}, attempt ${n.slot!.attempt}.`,
-    `Fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself. The \`owed why ${node}\` card:`, '',
-    renderReceipt(receipt(s, entriesOf(s), node))].join('\n');
+    `Fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself.`,
+    ...(notes.length ? ['Review blocks (the reviewer\'s note):', ...notes] : []),
+    `The \`owed why ${node}\` card:`, '',
+    renderReceipt(receipt(s, entries, node))].join('\n');
 }
 /** Rebase follow-up after the slot's latest rebase (stable: it names the rebase entry's bases, not the current trunk). */
 export function rebaseMessage(s: State, node: string): string {
@@ -110,24 +119,32 @@ export function rebaseMessage(s: State, node: string): string {
 
 // ---------- owner-needed ----------
 /**
- * Why the node needs an owner decision the driver must not touch (D4), or undefined. With an open candidate: an item
- * the owner discharges (conflicting observations ⊤, a flaky block, a rank >= 2 review block; not a closure-review
- * merely awaiting a rank-2 review), or a review the plan requires at rank > 2. Otherwise: a flaky or rank >= 2 review
- * block still active on the node (a new attempt cannot clear it either).
+ * Why the node needs an owner decision the driver must not touch (D4), or undefined. Owner blocks: a flaky block, or an
+ * active review block of rank >= 2 — except one authored by a driver reviewer (`reviewer:drive-<node>-<attempt>-<k>`)
+ * of the node's current open attempt, which the driver repairs (its slot reviewer re-reviews at the block's rank;
+ * rank 3 is owner-only and never driver-authored). With an open candidate: an item with conflicting observations (⊤),
+ * an item with an owner block, or a review the plan requires at rank > 2 (a closure-review merely awaiting a rank-2
+ * review is reviewer work). Otherwise: an owner block still active on the node (a new attempt cannot clear it).
  */
 export function ownerNeeded(s: State, plan: Plan, node: string): string | undefined {
   const n = s.nodes[node], spec = plan.nodes.find(x => x.id === node);
   if (!n) return undefined;
+  const entries = entriesOf(s), attempt = n.slot?.open ? n.slot.attempt : undefined;
+  const driverAuthored = (seq: number): boolean => attempt !== undefined && driveReviewerSlot(entries.find(e => e.seq === seq)?.by ?? '', node, attempt) !== undefined;
+  const ownerBlock = n.blocks.filter(b => b.state === 'flaky' || (b.state === 'active' && b.kind === 'judgment' && (b.rank ?? 0) >= 2 && !((b.rank ?? 0) <= 2 && driverAuthored(b.seq))));
+  const text = (b: (typeof ownerBlock)[number]): string => `${b.state === 'flaky' ? 'flaky' : `rank ${b.rank} review`} block #${b.seq} on ${b.obligation} needs the owner`;
   if (n.slot?.open && n.candidate) {
     for (const i of n.items) if (i.status === 'D') {
-      if (i.discharger === 'owner' && !(i.obligation === 'closure-review' && i.mark === '⊥')) return `${i.obligation}: ${i.detail}`;
+      if (i.mark === '⊤') return `${i.obligation}: ${i.detail}`;
+      const b = ownerBlock.find(b => b.obligation === i.obligation);
+      if (b) return text(b);
       if (i.obligation === 'review' && (spec?.review.min_rank ?? 1) > 2) return `review requires rank ${spec!.review.min_rank}: only the owner can record it`;
     }
     return undefined;
   }
-  const b = n.blocks.find(b => b.state === 'flaky' || (b.state === 'active' && b.kind === 'judgment' && (b.rank ?? 0) >= 2));
-  return b ? `${b.state === 'flaky' ? 'flaky' : `rank ${b.rank} review`} block #${b.seq} on ${b.obligation} needs the owner` : undefined;
+  return ownerBlock.length ? text(ownerBlock[0]!) : undefined;
 }
+const ownerNotify = (node: string, reason: string): Action => ({ do: 'notify', node, text: `${node}: needs the owner (${oneLine(reason)}); the driver leaves it alone` });
 
 // ---------- decide ----------
 const isSealed = (v: RunView): boolean => v.state === 'sealed' || v.state === 'pruned';
@@ -150,8 +167,9 @@ export function decide(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>,
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
   const taken = open.map(n => writes(n.id));
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
-    if (taken.length >= opts.max) break;
-    if (!plan.nodes.some(x => x.id === n.id) || ownerNeeded(s, plan, n.id) || taken.some(w => writesOverlap(writes(n.id), w))) continue;
+    const owner = ownerNeeded(s, plan, n.id);
+    if (owner) { out.push(ownerNotify(n.id, owner)); continue; }
+    if (taken.length >= opts.max || !plan.nodes.some(x => x.id === n.id) || taken.some(w => writesOverlap(writes(n.id), w))) continue;
     out.push({ do: 'dispatch', node: n.id });
     taken.push(writes(n.id));
   }
@@ -164,8 +182,9 @@ function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, op
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string): Action => ({ do: 'send', node: id, attempt, rid: l.rid, sendKind, message, reason });
   // Row 1: halted.
   if (halted(s, id)) return undefined;
-  // Owner-needed nodes are never touched (they appear under Pending owner).
-  if (ownerNeeded(s, plan, id)) return undefined;
+  // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only.
+  const owner = ownerNeeded(s, plan, id);
+  if (owner) return ownerNotify(id, owner);
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
   const writer = ar.launches.find(l => l.role === 'writer');
   // Row 2: writer launch missing.
@@ -184,6 +203,8 @@ function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, op
   // Row 4: a recorded send not confirmed applied in this process: re-send the same id and bytes.
   for (const x of ar.sends) {
     if (opts.applied.has(x.send) || !live.some(l => l.rid === x.rid)) continue;
+    const refused = opts.rejected.get(x.send);
+    if (refused !== undefined) return halt(`dsa rejected send ${x.send}: ${refused}`);
     const bytes = opts.blobs?.get(x.message);
     if (bytes === undefined || sha256(bytes) !== x.message) return halt(`cannot re-send ${x.send}: the stored message bytes (blob ${x.message}) were not supplied`);
     return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send };
@@ -233,7 +254,7 @@ function slotAction(s: State, plan: Plan, runs: ReadonlyMap<string, RunView>, op
     for (const l of reviewers) {
       const v = view(l);
       if (!isSealed(v)) continue;
-      const k = reviewerN(l), who = driveReviewer(id, attempt, k);
+      const k = reviewerN(l), who = driveReviewer(id, attempt, k - reviewerBase(s, id));
       const awaiting = reviewObligations(s, id, k).filter(o => n.items.find(i => i.obligation === o)?.status === 'D' && !entries.some(e => e.kind === 'review' && e.node === id && e.by === who && e.obligation === o && e.key === c.keys[o]));
       if (!awaiting.length) continue;
       if (statusOf(v) === 'unknown' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
