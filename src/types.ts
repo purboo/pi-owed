@@ -84,7 +84,7 @@ export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | Submi
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
 // ---------- reducer views ----------
-export type Mark = '✔' | '⚠' | '✘' | '⊥' | '⊤' | '⏸' | '封';
+export type Mark = '✔' | '⚠' | '✘' | '⊥' | '⊤' | '⏸' | '⛔';
 export type Discharger = 'executor' | 'writer' | 'reviewer' | 'owner' | 'parent';
 export interface ItemView {
   subject: string;           // node id or 'trunk'

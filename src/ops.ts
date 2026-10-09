@@ -20,19 +20,19 @@ export interface VerifyResult { ok: boolean; entries: number; head?: string; err
 type Context = { cwd: string };
 type Actor = Context & { as: Principal; channel?: Channel };
 const by = (o: Actor): string => `${o.as.role}:${o.as.id}`;
-function owner(o: Actor): void { if (o.as.role === 'owner' && !['tty', 'pi-confirm', 'flag'].includes(o.channel ?? '')) throw new OwedError('owner 操作需要确认 channel'); }
-function guard(s: State, d: Draft): void { const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('；')); }
+function owner(o: Actor): void { if (o.as.role === 'owner' && !['tty', 'pi-confirm', 'flag'].includes(o.channel ?? '')) throw new OwedError('owner actions require a confirmation channel'); }
+function guard(s: State, d: Draft): void { const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('; ')); }
 async function load(ledger: Ledger, extra: string[] = []) {
   const entries = await ledger.read(), plans = new Map<string, Plan>();
   for (const sha of new Set([...entries.flatMap(e => e.kind === 'genesis' || e.kind === 'plan' ? [e.plan] : []), ...extra])) plans.set(sha, parsePlan((await ledger.getBlob(sha)).toString()));
-  const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`缺少 plan ${sha}`, 'internal'); return p; };
+  const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
   return { entries, lookup, state: reduce(entries,lookup) };
 }
-function inited(s: State): State { if (s.seq < 0) throw new OwedError('尚未 init：先运行 owed init <plan.yaml>'); return s; }
-function node(s: State, id: string) { const n = inited(s).nodes[id]; if (!n) throw new OwedError(`节点 ${id} 不存在`); return n; }
-function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.open || !n.candidate) throw new OwedError(`节点 ${id} 没有开放候选`); return n; }
+function inited(s: State): State { if (s.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first'); return s; }
+function node(s: State, id: string) { const n = inited(s).nodes[id]; if (!n) throw new OwedError(`Node ${id} does not exist`); return n; }
+function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.open || !n.candidate) throw new OwedError(`Node ${id} has no open candidate`); return n; }
 function stable(before: State, after: State, id?: string): void {
-  if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('计划、候选或 trunk 已改变，请重试');
+  if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('Plan, candidate or trunk changed; retry');
 }
 async function mutate(o: Actor, make: (s: State) => Draft): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
@@ -71,10 +71,10 @@ export async function dispatch(o: Actor & { node: string }): Promise<DispatchPac
   owner(o); const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('节点 id 不能安全用于 worktree 路径','usage');
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('Node id is unsafe for a worktree path','usage');
     const attempt = (n.slot?.attempt ?? 0)+1, branch = `owed/${o.node}/${attempt}`, root = await git.repoRoot(o.cwd);
     const worktree = join(root,'.owed','wt',`${o.node}-${attempt}`), rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
-    const packet = [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `节点：${o.node}；attempt：${attempt}`, `工作目录：${worktree}`, `允许 writes：${spec.writes.join(', ')}`, '检查由 owed 执行：', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), '适用裁决：', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `提交后执行：owed submit ${o.node}`].join('\n');
+    const packet = [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${o.node}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${o.node}`].join('\n');
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)) };
     guard(state,d);
     const common = resolve(o.cwd,(await git.git(o.cwd,['rev-parse','--git-common-dir'])).stdout.trim()), exclude = join(common,'info','exclude');
@@ -82,14 +82,14 @@ export async function dispatch(o: Actor & { node: string }): Promise<DispatchPac
     if (!text.split('\n').includes('.owed/')) await appendFile(exclude,'\n.owed/\n');
     await git.addWorktree(o.cwd,worktree,branch,state.trunk.commit);
     let entry: Entry;
-    try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('裁决已改变，请重新 dispatch'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
+    try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('Rulings changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
     catch (error) { await git.git(o.cwd,['worktree','remove',worktree]); await git.git(o.cwd,['branch','-d',branch]); throw error; }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
   },'dispatch');
 }
 export async function submit(o: Actor & { node: string; commit?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), { state } = await load(ledger), n = node(state,o.node);
-  if (!n.slot?.open) throw new OwedError('没有开放 writer slot');
+  if (!n.slot?.open) throw new OwedError('No open writer slot');
   if ((!o.commit || resolve(await git.repoRoot(o.cwd)) === resolve(n.slot.worktree)) && !await git.isClean(n.slot.worktree)) throw new OwedError('slot worktree is dirty');
   const commit = await git.revParse(o.commit ? o.cwd : n.slot.worktree,o.commit ?? 'HEAD');
   if (!await git.isAncestor(o.cwd,n.slot.base,commit)) throw new OwedError('submit commit must be a descendant of slot base');
@@ -116,11 +116,11 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
 export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items,reason:o.reason})); }
 export async function abandon(o: Actor & { node:string; reason:string }): Promise<Entry> { return mutate(o,s => ({kind:'abandon',by:by(o),channel:o.channel,node:o.node,attempt:node(s,o.node).slot?.attempt ?? 0,reason:o.reason})); }
 export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
-  owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge 需要 parent/owner');
+  owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node);
-    if (!n.accepted) throw new OwedError(`节点 ${o.node} 当前候选尚未接收：${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
+    if (!n.accepted) throw new OwedError(`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
     if (await git.revParse(o.cwd,`refs/heads/${state.trunk.name}`) !== state.trunk.commit) throw new OwedError('trunk changed (CAS)');
     const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
     if ('conflicts' in built) throw new OwedError('rebase needed');
@@ -138,7 +138,7 @@ export async function merge(o: Actor & { node:string }): Promise<MergeResult> {
         entry.hash=entryHash(entry); replay.push(entry); current=reduce(replay,latest.lookup);
       }
       const g = mergeGuard(current,o.node,m);
-      if (!g.ok) { if (observations.length) await ledger.append(observations); throw new OwedError(g.reasons.join('；')); }
+      if (!g.ok) { if (observations.length) await ledger.append(observations); throw new OwedError(g.reasons.join('; ')); }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts,state:sf}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
       const entry = (await ledger.append([...observations,d])).at(-1)!;
@@ -150,7 +150,7 @@ export async function status(o: Context): Promise<StatusView> { const {state,ent
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> { const {state,entries} = await load(await Ledger.open(o.cwd)); node(state,o.node); return receipt(state,entries,o.node); }
 export async function report(o: Context & {since?:number|string}): Promise<Report> {
   const {state,entries,lookup} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
-  if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since 必须为 seq 或 ISO 时间','usage');
+  if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
   const included = (e: {seq:number;ts?:string}) => typeof since === 'number' ? e.seq > since : Date.parse(e.ts ?? entries[e.seq]?.ts ?? '') > Date.parse(since);
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
