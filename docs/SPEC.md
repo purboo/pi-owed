@@ -217,6 +217,9 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
   waiver let it through). Refused unless `merge` is the seq of a `merge` entry
   whose node is n; `note` must be non-empty; `evidence` is optional text.
   `state.escapes` lists them in ledger order.
+- `escape`, `decoy-commit` and `decoy-reveal` entries carry exactly the fields
+  of the entry table (plus `kind`, `by`, `channel` and the ledger-assigned
+  `seq`, `ts`, `prev`, `hash`); any other field is refused.
 - **Decoys** measure what escapes when nobody knows which nodes are planted.
   The owner first records `decoy-commit {digest}` with
   `digest = sha256(canonical({nonce, decoys: [{node, defect}]}))` (§1 canonical
@@ -231,8 +234,17 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
   ledger (entries before and after the reveal):
   `caught` — an executor `obs` with verdict `fail` (execution block or
   rejecting obs) or a `review` with verdict `block` (judgment block) on the node
-  before any merge of it; `escaped` — a merge of the node with no such entry
-  before it; `pending` — neither yet. `decidedBy` is the deciding seq.
+  before any merge of it, or an executor `obs` with verdict `fail` recorded while
+  merging the node: an invariant or check on the merge result, subject `trunk` or
+  the node. A `trunk` obs belongs to merging node n when its commit is a merge
+  result of n — the commit of n's `merge` entry, or the commit of an executor obs
+  on n (merge-time checks run on the merge result) — and is not a trunk commit
+  (the genesis commit or a merge of another node); `decidedBy` is then the seq of
+  that failing obs even if the link is recorded after it. `escaped` — a merge of
+  the node with no such entry before it; `pending` — neither yet. `decidedBy` is
+  the deciding seq.
+- A node listed in more than one reveal counts once: the decoy of the earliest
+  commitment (lowest `decoy-commit` seq) wins, whatever the order of the reveals.
   `state.decoyCommits` lists commitments and the seq that revealed them.
 - Metrics (report): escape counts by class; decoys caught / escaped / pending;
   unrevealed commitments; **escape rate** = escaped / (caught + escaped), n/a
@@ -322,6 +334,19 @@ changing git or the ledger.
 - **Receipt card** (`why`): per obligation: ✔ measured (executor pass, with log
   sha, counts, duration), ✔ reviewed (reviewers), ⚠ waived (owner, reason, channel),
   ✘ rejected, ⊥ awaiting observation, ⊤ conflict, ⏸ deferred, ⛔ blocked (active blocks and how to clear them).
+  A `rulings` item satisfied while no ruling is in scope for the node reads
+  "no rulings apply" (not "acknowledged"/"satisfied"); its status is unchanged.
+- **Clearing hints** (receipt card, report blocks, brief *Rejected or blocked*)
+  never print an executable command carrying `--as` of another principal than
+  the owner. A judgment block of rank r by reviewer A is described in words:
+  an ok review on the current candidate by the original reviewer A with rank ≥ r,
+  or by any reviewer with rank > r, clears it; the owner alternative is the
+  printed `owed waive … --accept-risk` command (owner commands are gated by the
+  owner channel). A node without an open writer slot (abandoned, or never
+  dispatched) cannot clear anything on an old candidate, so its hints (blocks
+  and owner decisions) say `owed dispatch <node>` and never suggest submit or
+  attest; with an open slot but no candidate, judgment and flaky hints first
+  require the writer's submit.
   Also "Untested": obligations absent relative to the plan baseline (downgrades) and
   the node's changed files not matched by any passing check's `reads`.
 - **Status**: trunk, nodes by state, ready list (sorted by number of transitive
@@ -351,7 +376,7 @@ changing git or the ledger.
   3. *Rejected or blocked* — every non-cleared block of an unmerged node: node,
      obligation, the failing observation seq (execution blocks; the block seq
      is the failing obs) or the blocking review (judgment blocks), and how to
-     clear it.
+     clear it (clearing hints above).
   4. *In progress* — dispatched and submitted nodes with the age since dispatch
      (and since the last submit).
   5. *Total* — merged / accepted-unmerged / blocked (unmerged nodes with a
