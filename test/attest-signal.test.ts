@@ -273,13 +273,10 @@ test('D16a.3: two SIGTERMs within 1 s are one request: the normal abort path run
     pids = await pidsFrom(join(r.root, 'pid')); escaped = await escapedPid(r.root);
     const tree = (await readFile(join(r.root, 'tree'), 'utf8')).trim();
     assert.ok(existsSync(tree), tree);
-    const t0 = Date.now();
-    c.child.kill('SIGTERM');
-    // The first signal was handled (its abort killed the check's group); the second follows it within 1 s.
-    assert.ok(await gone(pids.check), 'the first signal killed the check\'s process group');
-    assert.ok(Date.now() - t0 < 900, `precondition: the second SIGTERM is sent within 1 s of the first (${Date.now() - t0} ms)`);
-    c.child.kill('SIGTERM');
+    // Back to back: owed handles both in the same or adjacent event-loop turns, so the gap it measures is ~0 under any load.
+    c.child.kill('SIGTERM'); c.child.kill('SIGTERM');
     assert.equal(await within(c.exited, 10_000), 143, c.out());
+    assert.ok(await gone(pids.check), 'the check\'s process group is gone');
     assert.match(c.stderr(), /Aborted: SIGTERM/);
     assert.ok(!existsSync(tree), 'the temp worktree was removed (normal abort path, not the immediate exit)');
     assert.ok(!(await git(r.cwd, ['worktree', 'list', '--porcelain'])).stdout.includes(tree), 'and unregistered');
