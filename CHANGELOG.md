@@ -23,7 +23,10 @@
   invariants), never to the red run, which needs only a recognizable failure
   (non-zero exit, `red_expect`, not a zero-test run); an unknown count format
   is accepted there. A red run whose command exits 126/127 (not executable /
-  not found) or cannot be spawned is now an `error` observation, not a pass.
+  not found) is now an `error` observation, not a pass. A spawn failure remains
+  an `error` observation.
+
+This release was driven end to end by `owed drive`.
 
 ## 0.3.1
 
