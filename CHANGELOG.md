@@ -31,16 +31,17 @@
   note `command exited <code> with no recognizable test count` (or `after zero
   tests`) `; last output:` followed by its last 5 non-empty output lines (ANSI
   colour removed, each at most 200 characters). Exit 126 or 127 with no count
-  stays `error` (`command could not run (exit 126: not executable)`, or `127:
-  not found`, plus the same tail): the command never ran, so it says nothing
-  about the code. An exit-0 run with an unknown count under `min_tests` stays
-  `error`, and red runs are unchanged. `owed why`/`owed_why` show each fail
-  observation's note under its item (`note #<seq>:`, then the note as recorded,
-  indented), and so does the driver's repair message to the writer, which
-  includes the `owed why` card. Check processes no longer inherit the `DSA_*`
-  variables (dsa call identity) except `DSA_HOME` (configuration), so owed
-  commands inside a check run under a dsa call are not refused as subagent
-  acts; a variable the plan's `exec.env` sets still applies.
+  is now `error` also without `min_tests` (0.5.0 recorded `fail` there):
+  `command could not run (exit 126: not executable)`, or `127: not found`, plus
+  the same tail; the command never ran, so it says nothing about the code. An
+  exit-0 run with an unknown count under `min_tests` stays `error`, and red
+  runs are unchanged. `owed why`/`owed_why` show each fail observation's note
+  under its item (`note #<seq>:`, then the note as recorded, indented), and so
+  does the driver's repair message to the writer, which includes the `owed why`
+  card. Check processes no longer inherit the `DSA_*` variables (dsa call
+  identity) except `DSA_HOME` (configuration), so owed commands inside a check
+  run under a dsa call are not refused as subagent acts; a variable the plan's
+  `exec.env` sets still applies.
 - **One wake per new fact; trunk drift is not a halt (E3).** A driver wake
   (halt, notify, rejected, conflict, refused, error) of a node carries the
   node's fact mark: the highest seq of the ledger entries naming it that the
@@ -64,11 +65,12 @@
   halt (needs human). After `owed adopt` the next pass merges with no other
   act. Owner halts use the D25.6 wording everywhere — driver output `halt
   <node> attempt <n>, needs the owner (the main agent decides; owed lists the
-  command)`, the halt rows of `owed status`, `owed why` and `owed report` — and
-  resolving commands that state a role say `--as owner:cli` (`--as owner:human`
-  under `OWED_CONFIRM=owner`). The CLI's default owner principal is now
-  `owner:cli` (channel `delegated`), matching pi's `owner:pi`; it is
-  `owner:human` only under `OWED_CONFIRM=owner`.
+  command)`, the halt rows of `owed why` and `owed report` and halt entry lines
+  (`owed status` lists owner halts under `Pending owner`) — and resolving
+  commands that state a role say `--as owner:cli` (`--as owner:human` under
+  `OWED_CONFIRM=owner`). The CLI's default owner principal is now `owner:cli`
+  (channel `delegated`), matching pi's `owner:pi`; it is `owner:human` only
+  under `OWED_CONFIRM=owner`.
 - **Rulings carried, not inferred (E4).** Launch entries and `repair` sends now
   record `rulings`: the highest in-scope ruling seq their message actually
   carried, computed from the state the message was built from, `0` when it
@@ -100,9 +102,10 @@ runs without `--session`. Halts recorded for trunk drift (`merge refused: …
 trunk changed (CAS)`) by 0.5.0 drivers stay ledger halts: clear one by adopting
 (`owed adopt --note "<why>"`) or restoring trunk, then `owed rebase <node>`;
 the driver then attests again. A non-red check that exits non-zero without a
-recognizable count, or with a zero count, is now `fail` (exit 126/127:
-`error`), so a check that used to stall on `unknown test count format with
-min_tests` now fails with its real error in the note.
+recognizable count, or with a zero count, is now `fail` (exit 126/127 with no
+count: `error`, also without `min_tests`, where 0.5.0 recorded `fail`), so a
+check that used to stall on `unknown test count format with min_tests` now
+fails with its real error in the note.
 
 **Known limitations, deferred to 0.5.2.** The loop's record of the printed
 drift notify and the follower's last trunk wake are not reset when drift
