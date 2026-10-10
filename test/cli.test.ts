@@ -6,6 +6,8 @@ import { repo } from './helpers/repo.ts';
 import { cli, commitAt, planText, seed, checkTest } from './helpers/surface.ts';
 import { revParse } from '../src/git.ts';
 import type { DispatchPacket, AttestResult, ReceiptCard, StatusView } from '../src/ops.ts';
+// D25.4: these tests exercise the owner confirmation (dialog or TTY prompt), now the opt-in gate OWED_CONFIRM=owner.
+process.env.OWED_CONFIRM = 'owner';
 
 test('CLI real processes: DAG, laundering, closure, writes, invariant defer, CAS and tamper', {timeout:120_000}, async () => {
   const r=await repo();

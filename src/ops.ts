@@ -34,7 +34,19 @@ export interface VerifyResult { ok: boolean; entries: number; head?: string; err
 type Context = { cwd: string };
 type Actor = Context & { as: Principal; channel?: Channel };
 const by = (o: Actor): string => `${o.as.role}:${o.as.id}`;
-function owner(o: Actor): void { if (o.as.role === 'owner' && !['tty', 'pi-confirm', 'flag'].includes(o.channel ?? '')) throw new OwedError('owner actions require a confirmation channel'); }
+function owner(o: Actor): void { if (o.as.role === 'owner' && !['tty', 'pi-confirm', 'flag', 'delegated'].includes(o.channel ?? '')) throw new OwedError('owner actions require a confirmation channel'); }
+/**
+ * D25.3: the environment variable naming a pi-durable-subagents call (`DSA_CALL`, else `DSA_EXEC`) when this process is
+ * one, else undefined. Such a process may not act as owner or parent (pi tools and CLI); an accident rail, not security.
+ */
+export function subagentCall(env: NodeJS.ProcessEnv = process.env): 'DSA_CALL' | 'DSA_EXEC' | undefined { return env.DSA_CALL ? 'DSA_CALL' : env.DSA_EXEC ? 'DSA_EXEC' : undefined; }
+/** D25.3 refusal when a subagent call would act as owner or parent; undefined when allowed. */
+export function subagentRefusal(role: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const v = subagentCall(env);
+  return v && (role === 'owner' || role === 'parent') ? `owner and parent acts are reserved for the main agent; this process is a subagent call (${v})` : undefined;
+}
+/** D25.4: `OWED_CONFIRM=owner` restores the owner confirmation (pi dialog / TTY prompt); otherwise owner acts are delegated. */
+export function confirmGate(env: NodeJS.ProcessEnv = process.env): boolean { return env.OWED_CONFIRM?.trim() === 'owner'; }
 function guard(s: State, d: Draft): void { const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('; ')); }
 async function load(ledger: Ledger, extra: string[] = []) {
   const entries = await ledger.read(), plans = new Map<string, Plan>();
@@ -178,9 +190,9 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
   try { const top = await realpath(await git.repoRoot(o.cwd)), rel = relative(top,await realpath(file)); if (rel && !rel.startsWith('..') && !isAbsolute(rel)) path = rel.split(sep).join('/'); } catch { /* outside a repository: keep the absolute path */ }
   return { plan:text, path };
 }
-export async function planSet(o: Actor & { plan: string; rev?: string; path?: string }): Promise<Entry> {
+export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan), before = (await load(ledger)).state;
-  return ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}) }; guard(state,d); return (await ledger.append([d]))[0]!; });
+  return ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d); return (await ledger.append([d]))[0]!; });
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*' }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes })); }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {

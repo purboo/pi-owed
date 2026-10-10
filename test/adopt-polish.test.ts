@@ -7,6 +7,8 @@ import * as ops from '../src/ops.ts';
 import type { Entry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
+// D25.4: these tests exercise the owner confirmation (dialog or TTY prompt), now the opt-in gate OWED_CONFIRM=owner.
+process.env.OWED_CONFIRM = 'owner';
 
 type Repo = Awaited<ReturnType<typeof repo>>;
 type Result = Awaited<ReturnType<ToolDefinition['execute']>> & { isError?: boolean };

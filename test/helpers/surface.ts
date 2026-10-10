@@ -4,6 +4,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { git, revParse } from '../../src/git.ts';
+// D25.3: these tests drive owed as the main agent. A writer that runs the suite inside a pi-durable-subagents call
+// inherits DSA_CALL/DSA_EXEC, which would refuse every owner and parent act; tests that need them set them explicitly.
+delete process.env.DSA_CALL; delete process.env.DSA_EXEC;
 export const identity = { GIT_AUTHOR_NAME:'test',GIT_AUTHOR_EMAIL:'test@localhost',GIT_COMMITTER_NAME:'test',GIT_COMMITTER_EMAIL:'test@localhost' };
 export async function commitAt(cwd:string, files:Record<string,string>) { for(const [path,text] of Object.entries(files)) { await mkdir(dirname(join(cwd,path)),{recursive:true}); await writeFile(join(cwd,path),text); } await git(cwd,['add','.']); await git(cwd,['commit','--allow-empty','-m','fixture'],{env:identity}); return revParse(cwd,'HEAD'); }
 export async function cli(cwd:string,args:string[]) {

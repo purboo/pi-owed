@@ -111,7 +111,7 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
   if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied${isManual(obligation) ? ' (manual)' : ''}` };
   if (subject !== 'trunk' && !obligation.startsWith('inv:')) {
     const waiver = context(s).entries.findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
-    if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : ''}` };
+    if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : waiver.channel === 'delegated' ? ' (delegated)' : ''}` };
   }
   if (subject === 'trunk') {
     const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key);
@@ -168,9 +168,9 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       s.plan = next; s.planSha = e.plan;
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
       // A parent's downgrades were accepted only because the prior plan's allowances cover them (D21.3).
-      if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}) });
+      if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       if (allowChanged) h.allowSeq = e.seq;
-    } else if (e.kind === 'rule') s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes });
+    } else if (e.kind === 'rule') s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
     else if (e.kind === 'dispatch') {
       const n = s.nodes[e.node]!;
       const writer = `writer:${e.node}#${e.attempt}`;
@@ -444,6 +444,9 @@ export function validateDraft(s: State, d: Draft): string[] {
       try { const next = context(s).plans(d.plan); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); } catch { errors.push('Cannot read new plan'); }
       // D21.3: a parent needs no owner when an allowance of the current (prior) plan covers every downgrade.
       if (downgrade && r !== 'owner' && (r !== 'parent' || gaps.length)) errors.push(`Only owner may approve a plan that reduces obligations${r === 'parent' ? `; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}` : ''}`);
+      if (d.note !== undefined && typeof d.note !== 'string') errors.push('plan note must be a string');
+      // D25.5: a delegated owner act that eases acceptance says why (waive, defer and adopt already require theirs).
+      if (downgrade && r === 'owner' && d.channel === 'delegated' && !(typeof d.note === 'string' && d.note.trim())) errors.push('a delegated owner plan update that reduces obligations requires a note saying why (owed plan --note TEXT; owed_plan note)');
       break;
     }
     case 'rule': allow('owner', 'parent'); if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node'); break;

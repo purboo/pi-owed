@@ -4,6 +4,8 @@ No receipt, not done.
 
 `owed` is an acceptance ledger for multi-agent task graphs in one Git repository. It records what was actually checked, who reviewed it, what the owner waived, and what remains owed before a merge. Version **0.1 — experimental**.
 
+The main agent is the owner (0.5, delegated owner): a human states the task in natural language and leaves; no human ever has to operate owed. Owner acts (waivers, downgrades, adoptions, approvals) run without a prompt and are recorded with channel `delegated`; every act that eases acceptance (a downgrade, waiver, deferral or adoption) carries a mandatory reason, and an approval may carry a note; `owed brief` starts with every delegated owner act, so accountability is an audit of the hash-chained ledger rather than a pre-approval. Subagent processes (pi-durable-subagents calls) can never act as owner or parent. Set `OWED_CONFIRM=owner` to restore human confirmation.
+
 It provides a CLI, a pi extension, and an agent skill. It is not an agent scheduler, a sandbox, or a replacement for code review. Your agent runner does the work; owed keeps acceptance evidence and guards the merge.
 
 ## Install
@@ -20,7 +22,7 @@ For the standalone CLI:
 npm i -g pi-owed
 ```
 
-Reload pi after installing. `/owed` shows status; `/owed why <node>` explains an acceptance decision. Tools: `owed_status`, `owed_why`, `owed_report`, `owed_brief`, `owed_verify`, `owed_dispatch`, `owed_submit`, `owed_rebase`, `owed_attest`, `owed_review`, `owed_merge`, `owed_adopt`, `owed_abandon`, `owed_gc`, `owed_rule`, `owed_plan`, `owed_waive`, `owed_defer`, `owed_escape` and `owed_decoy`; each accepts an absolute `cwd` inside the target repository, so a session started elsewhere can drive it (docs/SPEC.md §11 lists the parameters). Owner confirmation dialogs show free text (notes, reasons, rulings, evidence) after the Repository and Identity lines, escaped onto one line. The `owed` skill describes the full agent workflow. A subagents/dsa runner is a separate integration: dispatch returns a ready-to-use call specification with `agent: worker`, the slot worktree as `cwd`, and `isolation: none`.
+Reload pi after installing. `/owed` shows status; `/owed why <node>` explains an acceptance decision. Tools: `owed_status`, `owed_why`, `owed_report`, `owed_brief`, `owed_verify`, `owed_dispatch`, `owed_submit`, `owed_rebase`, `owed_attest`, `owed_review`, `owed_merge`, `owed_adopt`, `owed_abandon`, `owed_gc`, `owed_rule`, `owed_plan`, `owed_waive`, `owed_defer`, `owed_escape` and `owed_decoy`; each accepts an absolute `cwd` inside the target repository, so a session started elsewhere can drive it (docs/SPEC.md §11 lists the parameters). Owner confirmation dialogs show free text (notes, reasons, rulings, evidence) after the Repository and Identity lines, escaped onto one line. Those dialogs appear only under `OWED_CONFIRM=owner`, and wait at most `OWED_CONFIRM_TIMEOUT` seconds (default 120, `0` = no limit): a timeout records nothing (`Owner confirmation not given within N s; nothing was recorded.`). By default owner tools are delegated to the main agent (`owner:pi`, channel `delegated`, no dialog); `owed_plan` takes `note`, which a delegated downgrade requires. In a pi-durable-subagents call (`DSA_CALL`/`DSA_EXEC` set) owed refuses owner and parent acts in tools and CLI alike — an accident rail, not a security boundary. The `owed` skill describes the full agent workflow. A subagents/dsa runner is a separate integration: dispatch returns a ready-to-use call specification with `agent: worker`, the slot worktree as `cwd`, and `isolation: none`.
 
 ## Five-minute quickstart
 
@@ -44,7 +46,7 @@ nodes:
     review: {count: 1, min_rank: 1}
 ```
 
-Initialize the repository, commit the plan, and initialize the ledger as its human owner:
+Initialize the repository, commit the plan, and initialize the ledger as its owner (by default the main agent, delegated):
 
 ```sh
 mkdir owed-demo
@@ -53,13 +55,13 @@ cd owed-demo
 git init -b main
 git add plan.yaml
 git commit -m "Record acceptance plan"
-owed init plan.yaml                # Type yes at the owner confirmation prompt.
+owed init plan.yaml                # owner act, delegated (OWED_CONFIRM=owner: type yes at the prompt)
 owed status
 owed dispatch greeting
 ```
 
-In pi, the owner can instead call the `owed_init` tool (`plan`, optional `cwd`): it shows the trunk commit, plan
-sha, node count and invariants in a confirmation dialog, records genesis and measures the invariants in the
+In pi, the main agent (the owner) can instead call the `owed_init` tool (`plan`, optional `cwd`): delegated by default (under
+`OWED_CONFIRM=owner` it shows the trunk commit, plan sha, node count and invariants in a confirmation dialog), it records genesis and measures the invariants in the
 background, showing progress in `owed_status` and sending one message when done. If a genesis attest stops early
 (`Genesis attest incomplete: …`), the ledger is initialized; run `owed attest --genesis`, or let the next
 attest/merge measure the missing invariants first.
@@ -119,7 +121,7 @@ Some acceptance cannot be measured by a check: an external effect the owner must
         by: reviewer                    # reviewer (default), parent or owner; the owner always qualifies
 ```
 
-`owed approve <node> [--note TEXT] [--block]` (owner: terminal confirmation or `--i-am-owner`; pi `owed_approve`, with a dialog showing the node, candidate commit, base and number of changed files) approves the open candidate the owner was shown — if the writer submits another candidate before the confirmation lands, nothing is recorded; `--block` records an owner block that a later owner approval clears. Approval is keyed by the candidate's patch, like a review. `owed evidence <node> <id> --file <path> [--file …] --note TEXT --as reviewer:<id>` (pi `owed_evidence`) records manual evidence: owed hashes every file (sha256 and size) when it records it, and only a principal of the declared role, or the owner, who is not a writer of the node counts. `why` always shows these as manual — `✔ approved (owner:human, tty)`, `✔ evidenced (manual) by reviewer:r1` with each file as `path sha12` and the note — never as measured, and `brief` counts them as `manual`. `owed drive` runs everything else first; when only approve and/or evidence remain it halts (needs the owner for approve, a human for evidence) with the exact command.
+`owed approve <node> [--note TEXT] [--block]` (owner: delegated — the main agent approves, optionally with a note, and states it in its report; under OWED_CONFIRM=owner a terminal confirmation or `--i-am-owner`; pi `owed_approve`, under the gate with a dialog showing the node, candidate commit, base and number of changed files) approves the open candidate the owner was shown — if the writer submits another candidate before the confirmation lands, nothing is recorded; `--block` records an owner block that a later owner approval clears. Approval is keyed by the candidate's patch, like a review. `owed evidence <node> <id> --file <path> [--file …] --note TEXT --as reviewer:<id>` (pi `owed_evidence`) records manual evidence: owed hashes every file (sha256 and size) when it records it, and only a principal of the declared role, or the owner, who is not a writer of the node counts. `why` always shows these as manual — `✔ approved (owner:human, tty)`, `✔ evidenced (manual) by reviewer:r1` with each file as `path sha12` and the note — never as measured, and `brief` counts them as `manual`. `owed drive` runs everything else first; when only approve and/or evidence remain it halts (needs the owner — the main agent — for approve, a human or the named role for evidence) with the exact command.
 
 After a merge the same command records a **receipt**, informational evidence of what happened next, for example a publish:
 
@@ -225,17 +227,17 @@ When trunk moves under an open slot, there is no need to abandon and redispatch.
 
 ## Trunk commits made outside owed
 
-Trunk can move without owed: a release commit (version bump, changelog) or a human hotfix committed directly to `main`. owed does not trust a moved ref silently: `owed status` then reports `trunk moved outside owed: … ahead of the ledger trunk by N commits`, and every `owed merge` refuses the trunk CAS and names `owed adopt`. After checking those commits, the owner records them:
+Trunk can move without owed: a release commit (version bump, changelog) or a human hotfix committed directly to `main`. owed does not trust a moved ref silently: `owed status` then reports `trunk moved outside owed: … ahead of the ledger trunk by N commits`, and every `owed merge` refuses the trunk CAS and names `owed adopt`. After checking those commits, the owner (the main agent, delegated) records them with a note saying what they are:
 
 ```sh
-owed adopt --note "release 0.2.0"    # owner; confirms on the terminal (pi: owed_adopt asks in the UI)
+owed adopt --note "release 0.2.0"    # owner, delegated (under OWED_CONFIRM=owner: confirm on the terminal; pi owed_adopt asks in the UI)
 ```
 
-Before asking for confirmation (and also with `--i-am-owner`) the CLI prints the full prior..commit range, the commit count, every changed path and the note, then adopts exactly that commit: if the ref moves after you confirm, the adoption is refused. `adopt` takes exactly what `refs/heads/<trunk>` points to (`--commit X` must equal it) and only when it is a fast-forward of the ledger trunk. As for a merge there is no new debt: owed measures every invariant whose key changed on the adopted commit; if one that held on the ledger trunk fails there, the adoption is refused, the failing observation is recorded, the refusal names the observation that decides each failing invariant (`h1 (obs #3)`; a repeated adopt of the same commit measures nothing new and names the existing observation) and trunk stays unadopted — fix trunk, then adopt again. Invariant debt that already existed does not block. The `adopt` entry records the prior and adopted commits, the commit count, the changed paths and the note; `owed report` and `owed brief` list it once, as an owner decision (the report's trunk adoptions section, not its owner actions). The pi tool `owed_adopt` asks for confirmation with a dialog that lists up to 50 changed paths, one per line; beyond 50 it lists the first 50 and then `… +N more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>`. Open slots are untouched and merge onto the adopted trunk (rebase only on conflicts). Limits: a rewritten or reset trunk cannot be adopted (restore the ref to a descendant of the ledger trunk), and `owed escape` names merges, not adoptions.
+Before adopting (and before asking for confirmation under `OWED_CONFIRM=owner`) the CLI prints the full prior..commit range, the commit count, every changed path and the note, then adopts exactly that commit: if the ref moves after you confirm, the adoption is refused. `adopt` takes exactly what `refs/heads/<trunk>` points to (`--commit X` must equal it) and only when it is a fast-forward of the ledger trunk. As for a merge there is no new debt: owed measures every invariant whose key changed on the adopted commit; if one that held on the ledger trunk fails there, the adoption is refused, the failing observation is recorded, the refusal names the observation that decides each failing invariant (`h1 (obs #3)`; a repeated adopt of the same commit measures nothing new and names the existing observation) and trunk stays unadopted — fix trunk, then adopt again. Invariant debt that already existed does not block. The `adopt` entry records the prior and adopted commits, the commit count, the changed paths and the note; `owed report` and `owed brief` list it once, as an owner decision (the report's trunk adoptions section, not its owner actions). Under `OWED_CONFIRM=owner` the pi tool `owed_adopt` asks for confirmation with a dialog that lists up to 50 changed paths, one per line; beyond 50 it lists the first 50 and then `… +N more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>`. Open slots are untouched and merge onto the adopted trunk (rebase only on conflicts). Limits: a rewritten or reset trunk cannot be adopted (restore the ref to a descendant of the ledger trunk), and `owed escape` names merges, not adoptions.
 
 ## Owner allowances: easing the owner pre-authorized
 
-At night the owner is asleep, and every downgrade (a review count lowered, writes widened) or out-of-band trunk commit would stop the queue until the owner confirms it. An `allow:` block in the plan lets the owner say in advance what the parent may do alone:
+Even with a delegated owner, every downgrade (a review count lowered, writes widened) or out-of-band trunk commit is an owner act that needs a reason and is listed first in the brief. An `allow:` block in the plan lets the owner say in advance what the parent may do alone:
 
 ```yaml
 allow:
@@ -316,7 +318,8 @@ starting it from a top-level session or systemd-run --user`.
 
 The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,
-`owed why`) waits for a human action on the node. A ruling, submit, review,
+`owed why`) waits for an action on the node by the main agent (the delegated owner;
+owner halts list the command that resolves them). A ruling, submit, review,
 rebase or abandon on the node clears a halt, and the next pass resumes. A ruling recorded while a
 driver-launched writer or reviewer call is running reaches it as a steer
 (reason `ruling`, recorded) once the node has nothing else to do; sealed calls

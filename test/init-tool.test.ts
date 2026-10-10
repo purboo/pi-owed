@@ -18,6 +18,8 @@ import { repo } from './helpers/repo.ts';
 import { cli, commitAt, identity } from './helpers/surface.ts';
 import { revParse } from '../src/git.ts';
 import { OwedError } from '../src/errors.ts';
+// D25.4: these tests exercise the owner confirmation (dialog or TTY prompt), now the opt-in gate OWED_CONFIRM=owner.
+process.env.OWED_CONFIRM = 'owner';
 
 const OWED = fileURLToPath(new URL('../bin/owed.js', import.meta.url));
 const owner = { role: 'owner' as const, id: 'human' };
