@@ -1,0 +1,9 @@
+[package]
+name = "mc"
+description = "owedmc engine: a std-only explicit-state model checker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
