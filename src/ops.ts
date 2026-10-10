@@ -835,8 +835,8 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
 async function gcTrees(root: string, plan: Plan, dryRun: boolean): Promise<{ trees: GcTree[]; kept: GcTree[] }> {
   const reuse = plan.exec?.trees === 'reuse', inv = new Set(plan.invariants.map(c => git.treeId(c.id))), checks = new Set(plan.nodes.flatMap(n => n.checks.map(c => git.treeId(c.id))));
   const trees: GcTree[] = [], kept: GcTree[] = [];
-  // Reclaim tokens older than 1 h: their reclaimer crashed (SPEC §7.12).
-  for (const path of await git.staleTokens(root,dryRun)) trees.push({ path, reason:'stale lease reclaim token' });
+  // Reclaim tokens older than 1 h and take temp files older than 60 s: their process crashed (SPEC §7.12).
+  for (const path of await git.staleTokens(root,dryRun)) trees.push({ path, reason:/\.tmp-[^/]+$/.test(path) ? 'stale lease temp file' : 'stale lease reclaim token' });
   for (const t of await git.reusedTrees(root)) {
     const gone = !(t.kind === 'inv' ? inv : checks).has(t.id);
     if (reuse && !gone) continue;
