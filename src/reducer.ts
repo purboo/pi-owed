@@ -1,11 +1,12 @@
+import { matchesGlob } from 'node:path';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
-import type { AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
+import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
-interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number> }
+interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
@@ -155,6 +156,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       h.genesis = e;
       s.plan = structuredClone(plans(e.plan)); s.planSha = e.plan;
       s.trunk = { name: e.trunk, ...e.state, seq: e.seq };
+      if (s.plan.allow !== undefined) h.allowSeq = e.seq;
     } else if (e.kind === 'plan') {
       const next = structuredClone(plans(e.plan));
       const detected = downgradeDetails(s.plan, next);
@@ -162,9 +164,12 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       // obligations, setup, exec or closure changed, the writer must submit again.
       // D19.4: the node `type` only names later branches; changing it never invalidates a candidate.
       for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(withoutType(nodeSpec(s, n.id))) !== canonical(withoutType(next.nodes.find(x => x.id === n.id))) || s.plan.setup !== next.setup || execChanged(s.plan, next) || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
+      const allowChanged = canonical(s.plan.allow) !== canonical(next.allow);
       s.plan = next; s.planSha = e.plan;
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
-      if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items });
+      // A parent's downgrades were accepted only because the prior plan's allowances cover them (D21.3).
+      if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}) });
+      if (allowChanged) h.allowSeq = e.seq;
     } else if (e.kind === 'rule') s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes });
     else if (e.kind === 'dispatch') {
       const n = s.nodes[e.node]!;
@@ -210,7 +215,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     } else if (e.kind === 'adopt') {
       // Like a merge, the adopted commit becomes the trunk state; open slots are not touched.
       s.trunk = { name: s.trunk.name, ...e.state, seq: e.seq };
-      s.adoptions.push({ seq: e.seq, by: e.by, ...(e.channel ? { channel: e.channel } : {}), prior: e.prior, commit: e.commit, commits: e.commits, changed: [...e.changed], note: e.note });
+      s.adoptions.push({ seq: e.seq, by: e.by, ...(e.channel ? { channel: e.channel } : {}), prior: e.prior, commit: e.commit, commits: e.commits, changed: [...e.changed], note: e.note, ...(role(e.by) === 'parent' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}) });
     } else if (e.kind === 'escape') s.escapes.push({ seq: e.seq, by: e.by, node: e.node, merge: e.merge, class: e.class, note: e.note, evidence: e.evidence });
     else if (e.kind === 'decoy-commit') s.decoyCommits.push({ seq: e.seq, digest: e.digest, by: e.by });
     else if (e.kind === 'decoy-reveal') {
@@ -342,6 +347,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
   if (prev.setup !== next.setup || canonical(prev.closure) !== canonical(next.closure)) add('*', 'setup/closure changed; cannot prove obligations were not reduced');
   // D20.4: like setup, an exec change (env or wrapper, e.g. wrap ["true"]) can weaken every check: owner only, in ΔO⁻.
   if (execChanged(prev, next)) add('*', 'exec changed; cannot prove obligations were not reduced');
+  if (allowWidened(prev, next)) add('trunk', 'allow changed');
   checks('trunk', prev.invariants, next.invariants);
   for (const n of prev.nodes) {
     const m = next.nodes.find(x => x.id === n.id);
@@ -354,6 +360,65 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
   }
   return result;
 }
+// ---------- owner allowances (SPEC §3.4, D21) ----------
+/** `allow` changed other than by deleting whole rules: some rule of `next` deep-equals no rule of `prev` (D21.2). */
+function allowWidened(prev: Plan, next: Plan): boolean {
+  const before = new Set((prev.allow ?? []).map(r => canonical(r)));
+  return (next.allow ?? []).some(r => !before.has(canonical(r)));
+}
+/** Rules of `plan` whose node globs match node id `node` (path.matchesGlob on the id). */
+const rulesFor = (plan: Plan, node: string): AllowRule[] => (plan.allow ?? []).filter(r => r.nodes.some(g => matchesGlob(node, g)));
+/** Check-weakening items of downgradeDetails (`<id><suffix>`) and of plan.ts planDowngrades (`check <id><suffix>`). */
+const DETECTED_CHECK = [' check removed', ' red disabled', ' min_tests reduced', ' check definition changed; cannot prove obligations were not reduced', ' mutants removed or changed, or min_kill reduced'];
+const CLAIMED_CHECK = [' removed', ' red disabled', ' min_tests lowered', ' mutants removed', ' min_kill lowered'];
+/**
+ * Whether a rule of the prior plan `prev` covers downgrade `d` of the update to `next` (D21.2). Covered: review
+ * count/rank lowered to a value >= a matching rule's bound; writes widened only with prefixes under a matching rule's
+ * `writes` prefix; a check weakening whose id matches a matching rule's `checks` glob; an evidence obligation removed
+ * or weakened (D23: `evidence <id> removed|weakened`) whose evidence id matches a matching rule's `checks` glob.
+ * Everything else is never covered: trunk items (invariants, `allow changed`), `*` items (setup/closure/exec changed),
+ * `approve removed` (the owner's gate), node removed, dependency removed, and any item this function does not know.
+ */
+function covered(prev: Plan, next: Plan, d: Downgrade, claimed: boolean): boolean {
+  if (d.node === 'trunk' || d.node === '*') return false;
+  const before = prev.nodes.find(n => n.id === d.node), after = next.nodes.find(n => n.id === d.node), rules = rulesFor(prev, d.node);
+  if (!before || !after || !rules.length) return false;
+  const what = d.what;
+  if (what === 'review count/rank reduced' || what === 'review count lowered' || what === 'review rank lowered') {
+    const count = after.review.count >= before.review.count || rules.some(r => r.review_count !== undefined && after.review.count >= r.review_count);
+    const rank = after.review.min_rank >= before.review.min_rank || rules.some(r => r.review_rank !== undefined && after.review.min_rank >= r.review_rank);
+    return count && rank;
+  }
+  if (what === 'writes scope expanded' || what === 'writes widened') return after.writes.every(w => before.writes.some(p => w.startsWith(p)) || rules.some(r => r.writes?.some(p => w.startsWith(p))));
+  // Every reading of the item must be covered by a `checks` glob, and there must be one: as `<id><suffix>` naming a
+  // check of the node, and (D21.1/D23.2) as `evidence <id> removed|weakened` naming an evidence obligation of the node.
+  // An item readable both ways (e.g. check id `evidence`, evidence id `check`) is covered only if both readings are.
+  const ids = (claimed ? (what.startsWith('check ') ? CLAIMED_CHECK.filter(x => what.endsWith(x)).map(x => what.slice(6, what.length - x.length)) : []) : DETECTED_CHECK.filter(x => what.endsWith(x)).map(x => what.slice(0, what.length - x.length))).filter(id => before.checks.some(c => c.id === id));
+  const evidence = /^evidence (\S+) (?:removed|weakened)$/.exec(what)?.[1], evidenceIds = evidence !== undefined && (before.evidence ?? []).some(e => e.id === evidence) ? [evidence] : [];
+  const readings = [...ids, ...evidenceIds];
+  return readings.length > 0 && readings.every(id => rules.some(r => r.checks?.some(g => matchesGlob(id, g))));
+}
+/**
+ * Downgrades of a plan update from `prev` to `next` that no allowance of `prev` (never of `next`) covers: the detected
+ * ones and the `claimed` ones of the plan entry (D21.2). Empty = a parent may record the update without an owner.
+ */
+export function uncoveredDowngrades(prev: Plan, next: Plan, claimed: Downgrade[] = []): Downgrade[] {
+  return [...downgradeDetails(prev, next).filter(d => !covered(prev, next, d, false)), ...claimed.filter(d => !covered(prev, next, d, true))];
+}
+/** `adopt` prefixes of every rule of `plan` (D21.4). */
+export function adoptPrefixes(plan: Plan): string[] { return (plan.allow ?? []).flatMap(r => r.adopt ?? []); }
+/** The first changed path not under an `adopt` prefix of `plan`, or undefined when a parent may adopt them all (D21.4). */
+export function unadoptable(plan: Plan, changed: readonly string[]): string | undefined {
+  const prefixes = adoptPrefixes(plan);
+  return changed.find(p => !prefixes.some(x => p.startsWith(x)));
+}
+/** Whether a rule of `plan` matching node `node` lets the parent widen writes to cover every path in `paths` (D21.5). */
+export function writesAllowed(plan: Plan, node: string, paths: readonly string[]): boolean {
+  const rules = rulesFor(plan, node);
+  return paths.length > 0 && paths.every(p => rules.some(r => r.writes?.some(x => p.startsWith(x))));
+}
+/** Seq of the genesis/plan entry that last changed the `allow` block (S of `under allowance (plan #S)`, D21.3), if any. */
+export function allowanceSeq(s: State): number | undefined { return context(s).allowSeq; }
 export function validateDraft(s: State, d: Draft): string[] {
   const errors: string[] = [];
   const r = role(d.by);
@@ -375,9 +440,10 @@ export function validateDraft(s: State, d: Draft): string[] {
     case 'plan': {
       allow('owner', 'parent');
       if (d.prior !== s.planSha) errors.push('plan prior must reference the current plan sha');
-      let downgrade = d.downgrades.length > 0;
-      try { downgrade = downgradeDetails(s.plan, context(s).plans(d.plan)).length > 0 || downgrade; } catch { errors.push('Cannot read new plan'); }
-      if (downgrade && r !== 'owner') errors.push('Only owner may approve a plan that reduces obligations');
+      let downgrade = d.downgrades.length > 0, gaps: Downgrade[] = d.downgrades;
+      try { const next = context(s).plans(d.plan); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); } catch { errors.push('Cannot read new plan'); }
+      // D21.3: a parent needs no owner when an allowance of the current (prior) plan covers every downgrade.
+      if (downgrade && r !== 'owner' && (r !== 'parent' || gaps.length)) errors.push(`Only owner may approve a plan that reduces obligations${r === 'parent' ? `; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}` : ''}`);
       break;
     }
     case 'rule': allow('owner', 'parent'); if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node'); break;
@@ -446,7 +512,11 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     case 'note': break;
     case 'adopt': {
-      allow('owner');
+      // D21.4: a parent may adopt when every changed path lies under an `adopt` prefix of the current plan's rules.
+      if (r === 'parent' && adoptPrefixes(s.plan).length) {
+        const outside = Array.isArray(d.changed) ? unadoptable(s.plan, d.changed) : undefined;
+        if (outside !== undefined) errors.push(`parent adoption refused: changed path ${outside} is not under an allow adopt prefix (${adoptPrefixes(s.plan).join(', ')}); the owner must adopt it`);
+      } else allow('owner');
       if (d.trunk !== s.trunk.name) errors.push(`adopt trunk must be the ledger trunk ${s.trunk.name}`);
       if (d.prior !== s.trunk.commit) errors.push('adopt prior must reference the current trunk');
       if (typeof d.commit !== 'string' || !d.commit || d.commit !== d.state?.commit) errors.push('adopt commit does not match facts');

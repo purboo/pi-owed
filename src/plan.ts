@@ -1,7 +1,8 @@
 import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
-import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig, ExecConfig, EvidenceSpec } from './types.ts';
+import { canonical } from './canon.ts';
+import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
@@ -127,6 +128,42 @@ function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
   return out.env || out.wrap ? out : undefined;
 }
 
+/** Parses an optional `allow:` block (SPEC §3.4, D21): a list of rules; unknown keys and bad types are errors; a rule needs a permission. */
+function parseAllow(v: unknown, errors: string[]): AllowRule[] {
+  if (!Array.isArray(v)) { errors.push('allow: expected array'); return []; }
+  const keys = ['nodes', 'review_count', 'review_rank', 'writes', 'checks', 'adopt'];
+  return v.map((x, i) => {
+    const p = `allow[${i}]`, out: AllowRule = { nodes: ['*'] };
+    if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${p}: expected object`); return out; }
+    const r = x as Record<string, unknown>;
+    for (const k of Object.keys(r)) if (!keys.includes(k)) errors.push(`${p}.${k}: unknown key`);
+    const list = (y: unknown, label: string): string[] | undefined => {
+      if (y === undefined) return undefined;
+      if (!Array.isArray(y) || !y.length || y.some(s => typeof s !== 'string' || !s.trim())) { errors.push(`${label}: expected a non-empty array of non-empty strings`); return undefined; }
+      return y as string[];
+    };
+    const int = (y: unknown, label: string, min: number, max: number): number | undefined => {
+      if (y === undefined) return undefined;
+      if (typeof y !== 'number' || !Number.isInteger(y) || y < min || y > max) { errors.push(`${label}: expected integer ${max === Infinity ? `>= ${min}` : `in ${min}..${max}`}`); return undefined; }
+      return y;
+    };
+    out.nodes = list(r.nodes, `${p}.nodes`) ?? ['*'];
+    const count = int(r.review_count, `${p}.review_count`, 0, Infinity), rank = int(r.review_rank, `${p}.review_rank`, 1, 3);
+    if (count !== undefined) out.review_count = count;
+    if (rank !== undefined) out.review_rank = rank;
+    for (const k of ['writes', 'checks', 'adopt'] as const) { const l = list(r[k], `${p}.${k}`); if (l) out[k] = l; }
+    if (!['review_count', 'review_rank', 'writes', 'checks', 'adopt'].some(k => r[k] !== undefined)) errors.push(`${p}: a rule needs at least one permission (review_count, review_rank, writes, checks or adopt)`);
+    return out;
+  });
+}
+/**
+ * `allow` changed in a way other than deleting whole rules (D21.2): some rule of `next` deep-equals no rule of `prev`.
+ * Such a change is the owner-only downgrade `{node: 'trunk', what: 'allow changed'}`.
+ */
+export function allowWidened(prev: Plan, next: Plan): boolean {
+  const before = new Set((prev.allow ?? []).map(r => canonical(r)));
+  return (next.allow ?? []).some(r => !before.has(canonical(r)));
+}
 export function globMatch(path: string, glob: string): boolean {
   return glob === '**' || (glob.endsWith('/') ? path.startsWith(glob) : matchesGlob(path, glob));
 }
@@ -191,6 +228,7 @@ export function parsePlan(text: string): Plan {
   if (r.drive !== undefined) plan.drive = parseDrive(r.drive, errors);
   if (r.worktrees !== undefined) plan.worktrees = parseWorktrees(r.worktrees, errors);
   if (r.exec !== undefined) { const exec = parseExec(r.exec, errors); if (exec) plan.exec = exec; }
+  if (r.allow !== undefined) plan.allow = parseAllow(r.allow, errors);
   errors.push(...mutantErrors(plan));
   if (errors.length) throw new OwedError(errors.join('\n'), 'usage');
   return plan;
@@ -226,5 +264,6 @@ export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
     if (m.writes.some(p => !n.writes.some(old => p.startsWith(old)))) out.push({ node: n.id, what: 'writes widened' });
     out.push(...manualDowngrades(n.id, n, m));
   }
+  if (allowWidened(prev, next)) out.push({ node: 'trunk', what: 'allow changed' });
   return out;
 }

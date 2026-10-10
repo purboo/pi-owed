@@ -233,6 +233,26 @@ owed adopt --note "release 0.2.0"    # owner; confirms on the terminal (pi: owed
 
 Before asking for confirmation (and also with `--i-am-owner`) the CLI prints the full prior..commit range, the commit count, every changed path and the note, then adopts exactly that commit: if the ref moves after you confirm, the adoption is refused. `adopt` takes exactly what `refs/heads/<trunk>` points to (`--commit X` must equal it) and only when it is a fast-forward of the ledger trunk. As for a merge there is no new debt: owed measures every invariant whose key changed on the adopted commit; if one that held on the ledger trunk fails there, the adoption is refused, the failing observation is recorded, the refusal names the observation that decides each failing invariant (`h1 (obs #3)`; a repeated adopt of the same commit measures nothing new and names the existing observation) and trunk stays unadopted — fix trunk, then adopt again. Invariant debt that already existed does not block. The `adopt` entry records the prior and adopted commits, the commit count, the changed paths and the note; `owed report` and `owed brief` list it once, as an owner decision (the report's trunk adoptions section, not its owner actions). The pi tool `owed_adopt` asks for confirmation with a dialog that lists up to 50 changed paths, one per line; beyond 50 it lists the first 50 and then `… +N more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>`. Open slots are untouched and merge onto the adopted trunk (rebase only on conflicts). Limits: a rewritten or reset trunk cannot be adopted (restore the ref to a descendant of the ledger trunk), and `owed escape` names merges, not adoptions.
 
+## Owner allowances: easing the owner pre-authorized
+
+At night the owner is asleep, and every downgrade (a review count lowered, writes widened) or out-of-band trunk commit would stop the queue until the owner confirms it. An `allow:` block in the plan lets the owner say in advance what the parent may do alone:
+
+```yaml
+allow:
+  - nodes: ["phaseA-*"]          # node id globs; default ["*"]
+    review_count: 0              # the parent may lower review.count down to 0
+    review_rank: 1               # ... and review.min_rank down to 1
+    writes: ["tests/", "docs/"]  # ... widen writes with prefixes inside these
+    checks: ["ui-*"]             # ... remove or weaken node checks with these ids
+  - adopt: ["testdata/", "tasks/"]   # the parent may adopt trunk commits that only touch these paths
+```
+
+A parent plan update (`owed plan`, `owed_plan`) whose downgrades the rules of the **current** plan (the one before the update) all cover needs no owner confirmation. It is still a downgrade: it is listed in ΔO⁻ and every view labels it `by parent:<id> under allowance (plan #S)`, S being the ledger seq of the plan entry that last changed `allow`, so every easing traces to an owner act. Never covered: removing a node or a dependency, weakening trunk invariants, changing setup/closure (or exec), and changing `allow` itself — any change other than deleting whole rules is the owner-only downgrade `trunk: allow changed`. A parent's refusal lists the downgrades no rule covers.
+
+`owed adopt --note TEXT --as parent:<id>` (pi: `owed_adopt` with `as: parent:…`) adopts trunk commits without a prompt when every changed path lies under an `adopt` prefix and the usual no-new-debt guard passes; the refusal names the first path outside. Views show `adopted by parent:<id> under allowance (plan #S)`.
+
+A candidate that changes files outside its writes fails the writes item; `owed why` lists those paths (`Out-of-writes paths: …`, the first 20) and, when a rule covers them all, adds `the parent may widen writes in the plan (allowance plan #S)`. A ruling cannot accept such paths: widening writes is a plan change.
+
 ## Reclaiming worktrees
 
 Each dispatch leaves a worktree under `.owed/wt/<node>-<attempt>` of the main worktree (also when dispatched from inside another slot worktree) and a branch `owed/<node>/<attempt>` (or the configured root and branch template, see above). Once an attempt is merged or abandoned, `owed gc` (parent or owner only) reclaims them:

@@ -45,6 +45,18 @@ export interface DriveConfig { max: number; repairs: number; writer: DriveAgent;
  * starts in a materialized tree. Parsed plans keep only non-empty fields; `exec: {}` is the same as no block.
  */
 export interface ExecConfig { env?: Record<string, string>; wrap?: string[] }
+/**
+ * One rule of the optional `allow:` block (SPEC §3.4, D21): owner pre-authorized parent downgrades and adoptions.
+ * `nodes` = node id globs (default ["*"]); at least one permission is present.
+ */
+export interface AllowRule {
+  nodes: string[];
+  review_count?: number;      // parent may lower review.count down to this
+  review_rank?: number;       // parent may lower review.min_rank down to this
+  writes?: string[];          // parent may widen writes with prefixes inside these prefixes
+  checks?: string[];          // parent may remove/weaken node checks whose id matches these globs
+  adopt?: string[];           // parent may adopt trunk commits whose changed paths all lie under these prefixes
+}
 export interface Plan {
   version: 1;
   trunk: string;
@@ -55,6 +67,7 @@ export interface Plan {
   nodes: NodeSpec[];
   drive?: DriveConfig;        // present only when the plan has a `drive:` block (filled with defaults)
   worktrees?: WorktreesConfig; // D19: present only when the plan has a `worktrees:` block (filled with defaults)
+  allow?: AllowRule[];        // present only when the plan has an `allow:` block (D21)
 }
 export interface Downgrade { node: string; what: string }   // e.g. {node:'a', what:'check auth-tests removed'}
 
@@ -201,14 +214,16 @@ export interface State {
   nodes: Record<string, NodeState>;
   invariants: ItemView[];      // invariant items on the current trunk state
   rules: Rule[];
-  downgrades: { seq: number; by: string; items: Downgrade[] }[];
+  /** `allowance` (D21): set when a parent's plan update was accepted under an allowance; S = seq of the genesis/plan entry that last changed `allow`. */
+  downgrades: { seq: number; by: string; items: Downgrade[]; allowance?: number }[];
   deferred: { seq: number; node: string; id: string; key: string }[];
   escapes: EscapeView[];
   decoys: DecoyView[];             // revealed decoys with outcomes
   decoyCommits: { seq: number; digest: string; by: string; revealed?: number }[];
   adoptions: AdoptionView[];       // owner adoptions of trunk commits made outside owed, in ledger order
 }
-export interface AdoptionView { seq: number; by: string; channel?: Channel; prior: string; commit: string; commits: number; changed: string[]; note: string }
+/** `allowance` (D21): set for a parent adoption; S = seq of the genesis/plan entry that last changed `allow`. */
+export interface AdoptionView { seq: number; by: string; channel?: Channel; prior: string; commit: string; commits: number; changed: string[]; note: string; allowance?: number }
 export interface EscapeView { seq: number; by: string; node: string; merge: number; class: EscapeClass; note: string; evidence?: string }
 /** caught: a block or rejecting obs on the node before any merge of it; escaped: merged with no prior block; pending: neither yet. */
 export interface DecoyView { node: string; defect: string; commit: number; reveal: number; outcome: 'caught' | 'escaped' | 'pending'; decidedBy?: number }
