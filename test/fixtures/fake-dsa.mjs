@@ -18,6 +18,8 @@
 // an id dsa refuses (not /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/) is rejected (exit 1); without the flag an inherited
 // $DSA_SESSION is used unless DSA_CALL/DSA_EXEC is set (an unusable inherited value is ignored), as dsa does;
 // $FAKE_DSA_DIR/old-run makes run refuse --session like dsa < 1.0.31 (exit 1, reason `Unknown or repeated option --session`).
+// Forwarded follow-up: $FAKE_DSA_DIR/forward-follow-up exists → a follow-up to a running (not sealed) call is applied
+// without a new generation (reply without `generation`, events forward + delivered, text kept in runs[rid].forwards).
 // Stale describe: $FAKE_DSA_DIR/stale-describe = <n>: after the next applied follow-up, the following n describes of
 // that run return the run as it was before the follow-up (dsa's view lagging behind the applied send).
 //
@@ -218,7 +220,12 @@ function sendCmd(args) {
   let executed = false;
   if (!run || run.pruned) decide(1, { applied: false, reason: `unknown target ${to}` });
   else if (kind === 'follow-up') {
-    if (run.state !== 'sealed') decide(1, { applied: false, reason: `${to} is not finished; use steer` });
+    // $FAKE_DSA_DIR/forward-follow-up: like dsa, a follow-up to a running call is forwarded into its running
+    // generation (events forward + delivered, reply without `generation`); without the file it is refused (older fake).
+    if (run.state !== 'sealed' && existsSync(join(DIR, 'forward-follow-up'))) {
+      (run.forwards ??= []).push(text); emit(s, run, 'forward', { digest: sha(text) }); emit(s, run, 'delivered', { digest: sha(text) });
+      decide(0, { applied: true, call: `${run.wid}/main` });
+    } else if (run.state !== 'sealed') decide(1, { applied: false, reason: `${to} is not finished; use steer` });
     else {
       const staleFile = join(DIR, 'stale-describe');
       if (existsSync(staleFile)) { s.stale = { rid, left: Number(readFileSync(staleFile, 'utf8').trim()) || 1, view: describeOf(s, rid) }; rmSync(staleFile); }
