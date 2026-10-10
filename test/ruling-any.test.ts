@@ -190,6 +190,52 @@ test('L3.1: at the stalled point a clean candidate owing only `rulings` sends th
   assert.ok(hy?.do === 'halt' && hy.reason.startsWith('stalled: rulings'), JSON.stringify(hy));
 });
 
+test('L3.1 review #914 F1: a recorded ruling follow-up dsa did not apply (pending, or a crash before dsa) on an owner-needed node is re-sent with the same id; only to a sealed writer', () => {
+  const { r } = flakyNode();
+  r.rule('make the qpoint test deterministic');
+  const fu = act(r);
+  assert.ok(isSend(fu, 'ruling'), JSON.stringify(fu));
+  const e = r.record(fu) as SendEntry;
+  // Not applied in this process: rulingFollowUp no longer offers it (delivered), yet row 4 must re-send it.
+  const applied = new Set(r.entries.flatMap(x => x.kind === 'send' && x.send !== e.send ? [x.send] : []));
+  const again = act(r, sealed(), { applied });
+  assert.ok(again?.do === 'send' && again.send === e.send && again.rid === W && again.reason === 'ruling' && again.message === fu.message, JSON.stringify(again));
+  // Once applied: the notify as before.
+  assert.equal(act(r)?.do, 'notify');
+  // Nit 1: an unsealed writer of an owner-needed node keeps the notify, whether the ruling is undelivered or its
+  // follow-up is unapplied.
+  const pend = act(r, running(), { applied });
+  assert.ok(pend?.do === 'notify' && pend.text.startsWith('a: needs the owner'), JSON.stringify(pend));
+});
+
+test('L3.1 review #914 nit 1: an owner-needed node whose writer is not sealed (running, asking) keeps the owner notify despite an undelivered ruling', () => {
+  const { r } = flakyNode();
+  r.rule('make the qpoint test deterministic');
+  for (const runs of [running(), new Map([view(W, 'asking')])]) {
+    const x = act(r, runs);
+    assert.ok(x?.do === 'notify' && x.text.startsWith('a: needs the owner'), JSON.stringify(x));
+  }
+});
+
+test('L3.1 review #914 nit 3: at the stalled point a candidate with a flaky block sends the ruling to the writer, not the reviewer (defensive: ownerNeeded catches a flaky block on a candidate item first)', () => {
+  const r = started(spec({ id: 'a', checks: [check({ id: 'unit' })], review: { count: 1, min_rank: 1 } }));
+  r.submit(); r.pass(); r.record(act(r)); r.review('ok');
+  const rule = r.rule('also cover the empty registry');
+  const ok = sealed(view(R1, 'sealed', { status: 'ok' }));
+  // Clean: the reviewer gets it.
+  const clean = act(r, ok);
+  assert.ok(isSend(clean, 'ruling') && clean.rid === R1, JSON.stringify(clean));
+  // Same ledger, plus a flaky block on an obligation that is not an item of the candidate (no real ledger reaches
+  // the stalled point with a dirty candidate: rows 11 and 15 or ownerNeeded act first), so ownerNeeded stays silent.
+  const s = r.state();
+  s.nodes.a!.blocks.push({ seq: 2, node: 'a', obligation: 'check:gone', kind: 'exec', key: 'k-gone', state: 'flaky' });
+  const mine = decide(s, s.plan, ok, optsOf(r)).filter(x => x.node === 'a');
+  assert.equal(mine.length, 1);
+  const w = mine[0];
+  assert.ok(isSend(w, 'ruling') && w.rid === W && w.sendKind === 'follow-up' && w.rulings === rule.seq, JSON.stringify(w));
+  assert.ok(w.message.includes('Flaky blocks of a (an attribution rerun of the failing content passed):\n- #2 check:gone:') && w.message.endsWith('Then commit and run `owed submit a`.'), w.message);
+});
+
 // ---------- L3.2 ----------
 test('L3.2: flaky hints offer a ruling next to the waiver (why, status, brief, the owner-needed notify)', () => {
   const { r, f } = flakyNode();
@@ -207,7 +253,7 @@ test('L3.2: flaky hints offer a ruling next to the waiver (why, status, brief, t
 });
 
 // ---------- L3.3 ----------
-const LOOPED = (where: string, m: number) => `warning: ${where} runs its command in a shell loop with min_tests ${m}: min_tests counts only the last TAP (# tests) or jest/vitest (Tests:) summary in the log, i.e. one run, not the sum of the runs (only cargo "test result:" lines are added up)`;
+const LOOPED = (where: string, m: number) => `warning: ${where} runs its command in a shell loop with min_tests ${m}: min_tests counts only the last TAP (# tests), jest/vitest (Tests:) or pytest (N passed) summary in the log, i.e. one run, not the sum of the runs (only cargo "test result:" lines are added up)`;
 const warningsOf = (p: Plan): string[] => ((planMod as { planWarnings?: (p: Plan) => string[] }).planWarnings ?? planMod.checklessWarnings)(p);
 
 test('L3.3: a check that loops its command with min_tests gets a warning; without min_tests or a loop it does not', () => {

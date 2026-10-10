@@ -326,10 +326,11 @@ invalidates a candidate.
   or `seq N` in command position, as in `seq 5 | xargs …` or `$(seq 5)`):
   `warning: check <id> of node <node>` (or `invariant <id>`) `runs its command
   in a shell loop with min_tests <m>: min_tests counts only the last TAP (#
-  tests) or jest/vitest (Tests:) summary in the log, i.e. one run, not the sum of
-  the runs (only cargo "test result:" lines are added up)`. That is the actual
-  rule of `parseCounts` (§7): each later TAP `# tests`/`# pass`/`# fail` line
-  (else the last `1..N` plan) or `Tests:` summary replaces the earlier one;
+  tests), jest/vitest (Tests:) or pytest (N passed) summary in the log, i.e. one
+  run, not the sum of the runs (only cargo "test result:" lines are added up)`.
+  That is the actual rule of `parseCounts` (§7): each later TAP `# tests`/`#
+  pass`/`# fail` line (else the last `1..N` plan), `Tests:` summary or pytest
+  summary line replaces the earlier one;
   cargo `test result:` lines are summed. Nothing is refused or recorded.
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
   `changed` lies under an `adopt` prefix of a rule of the **current** plan and
