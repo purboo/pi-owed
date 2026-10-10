@@ -164,8 +164,10 @@ function itemText(i: ItemView & { observations?: Entry[] }): string {
   if (isManual(i.obligation)) return manualText(i);
   const label = i.status === 'W' ? 'waived' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
-  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
+  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${failNotes(i.observations ?? [])}`;
 }
+/** 0.5.1 (E2 ruling 3): each fail observation's note under its item, `  note #<seq>:` then the note as recorded, indented. */
+const failNotes = (obs: Entry[]): string => obs.map(e => e.kind === 'obs' && e.verdict === 'fail' && e.note ? `\n  note #${e.seq}:${e.note.split('\n').map(l => `\n    ${l}`).join('')}` : '').join('');
 /**
  * D23 items, always marked manual (never "measured"): `✔ approved (owner:<id>, <channel>)`, `✔ evidenced (manual) by
  * <who>` with files `path sha12` and the note; pending ones read `awaiting owner approval` / `awaiting manual evidence`.

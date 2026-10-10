@@ -504,6 +504,28 @@ moved ref silently.
    (TAP `# pass N`/`# tests N`, node:test, pytest `N passed`, cargo
    `test result: ok. N passed`); zero tests with a known format = fail;
    `min_tests` unmet = fail; unknown format with `min_tests` set = error.
+   cargo summaries count only at column 0 (`^test result: (ok|FAILED)\. …`,
+   as cargo prints them): a `# test result: …` TAP comment or an indented
+   TAP YAML diagnostic containing one is never a cargo count.
+   A log holding both cargo `test result:` lines and TAP (plan or summary
+   lines), e.g. `cargo test && node --test --test-reporter=tap`, sums both to
+   one count `{format: "mixed", tests, pass, fail, skip}` (TAP part as for a
+   TAP log, cargo lines summed; `pass`/`fail`/`skip` present when the TAP part
+   reports them); a single-format log keeps its format name and numbers.
+   A non-red run that exits non-zero with no recognizable count, or with a
+   zero count, is `fail` (with or without `min_tests`, never the unknown-format
+   error): the command itself failed (e.g. cargo's `package ID specification …
+   did not match any packages`, exit 101). Its note is `command exited <code>
+   with no recognizable test count; last output:` (or `after zero tests;
+   last output:`) followed by the last 5 non-empty output lines, one per
+   line, indented two spaces, ANSI colour removed, each cut to 200
+   characters. Exception: a non-red run that exits 126 or 127 with no
+   recognizable count is `error` with the note `command could not run (exit
+   126: not executable)` (or `127: not found`) plus the same `; last output:`
+   tail — the command never ran, so it says nothing about the code and must
+   not become a `fail` that later conflicts with a pass. Otherwise only an
+   exit-0 run with an unknown count and `min_tests` set stays `error`. Red
+   runs are unchanged.
 3. Red runs: materialize B, overlay candidate `tests` files, restore closure
    from B, run; pass iff exit ≠ 0 and not zero-test and `red_expect` matches;
    exit 126/127 (the command could not run) or a spawn failure is `error`.
@@ -541,8 +563,11 @@ moved ref silently.
 9. Execution environment (D20, §3.2). Every process owed starts in a
    materialized tree — `setup`, check, red, strength and invariant runs, and
    attribution reruns — gets the environment `{...process.env, ...exec.env,
-   CI: "1", OWED: "1"}` (`NODE_TEST_CONTEXT` of owed's own process is not
-   inherited) and runs as `[...exec.wrap, "bash", "-lc", <command>]` instead
+   CI: "1", OWED: "1"}` (`NODE_TEST_CONTEXT` and every `DSA_*` variable of
+   owed's own process except `DSA_HOME` — `DSA_CALL`, `DSA_EXEC`,
+   `DSA_SESSION`, … — are not inherited, so owed commands inside a check are
+   not refused as subagent acts, D25.3; `DSA_HOME` is configuration, not call
+   identity, and stays; a `DSA_*` name set in `exec.env` is passed as written) and runs as `[...exec.wrap, "bash", "-lc", <command>]` instead
    of `["bash", "-lc", <command>]`: same cwd (the materialized tree), same new
    process group, same timeout and abort handling (SIGKILL to the group, so
    the wrapper is killed with its group). Wrapper contract: run the trailing
@@ -779,6 +804,10 @@ while genesis items lack observations.
 - **Receipt card** (`why`): per obligation: ✔ measured (executor pass, with log
   sha, counts, duration), ✔ reviewed (reviewers), ⚠ waived (owner, reason, channel),
   ✘ rejected, ⊥ awaiting observation, ⊤ conflict, ⏸ deferred, ⛔ blocked (active blocks and how to clear them).
+  Under its item line, every `fail` observation with a note shows it: a line
+  `  note #<seq>:` then each line of the note as recorded, indented four
+  spaces (so the last output lines of a failed command, §7.2, reach `owed
+  why`/`owed_why` and the driver's repair message, which embeds the card).
   A `rulings` item satisfied while no ruling is in scope for the node reads
   "no rulings apply" (not "acknowledged"/"satisfied"); its status is unchanged.
   When the plan has `exec` (§3.2), the line after the node header is
