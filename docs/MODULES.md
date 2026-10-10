@@ -161,25 +161,28 @@ export function factMark(s: State, node: string): number;   // E3.1: highest seq
 export function wakeReport(r): boolean; repeatText(n): string; NEEDS_OWNER; driftNotice(name, drift): string; DRIFT_NODE;   // wake lines, D25.6 wording
 export function rebaseConflicts(cwd, base, commit): Promise<string[] | undefined>;   // G3.7: merge-tree conflicted paths ([] clean); passed as DriveOpts.conflicts when drive.ts wantsRebaseConflicts(state, node, runs)
 export function reportKey(r: {node, scope?}): string; DRIFT_KEY;   // G3.4b: print/wake record key; `scope: 'repo'` (drift) never shares a plan node's
+export function stateOf(cwd): Promise<State>; dispatchable(cwd): Promise<string[]>; ledgerHead(dir): string /* last entry hash */; IDLE_WAIT_TEXT; PassResult.head;   // H1 (SPEC §12.9): revalidation, ready hint, --stay
 ```
 `drive()` in `--json` loop mode ends with the exit record `{event:'exit', code, reason, at, error?}` and returns the CLI code instead of throwing (SPEC §12.8).
 Pi session (0.5.1 E1, SPEC §12.7): `dsa.ts` exports `startingSession(env?)` (`DSA_SESSION`, ignored under `DSA_CALL`/`DSA_EXEC`); `Dsa.session` is passed as `run --session` (dsa children never inherit `DSA_SESSION`), and a dsa that refuses the flag sets `sessionRefused`, calls `onSessionRefused(reason)` once and re-runs without it. `DriveOptions.session` (default `startingSession()`, null: none) is recorded by `acquireDriveLock(dir, session?)` as `LockOwner.session`; the fallback line is the loop event `session-unsupported`. `drive-bg.ts`: `driveStart` sets/removes `DSA_SESSION` for the detached driver (`DriveStart.session`), `DriveStatus.session`, `sessionText(session)` for `--status` and `driverLine`.
 
 ## src/drive-bg.ts  (background driver and wake-ups, SPEC §12.8)
 ```ts
-export function driveStart(o: { cwd; max?; owed?; waitMs? }): Promise<DriveStart>;   // --detach: detached `owed drive --json`, log rotated, waits for the lock
+export function driveStart(o: { cwd; max?; stay?; owed?; waitMs? }): Promise<DriveStart>;   // --detach: detached `owed drive --json`, log rotated, waits for the lock
 export function driveStatus(o: { cwd }): Promise<DriveStatus>;   // --status: lock + log (reads only)
 export function driveStop(o: { cwd; now?; waitMs? }): Promise<DriveStop>;   // --stop: SIGTERM only when pid + start time match
 export function renderDriveStart / renderDriveStatus / renderDriveStop; driverLine(cwd): Promise<string>;   // texts; `/owed` Driver line
 export function readLock(dir): LockState; driveDir(cwd); lockPath(dir); logPath(dir); classifyLine(line); logLineText(line);
-export class Follower { tick(): string | undefined; start(); stop() }   // one driver log → wake messages; per node dedupe on text + fact mark (E3.1)
-export class DriveWatch { follow(o); attach(cwd); stopAll() }          // the extension's followers (one per log)
+export class Follower { tick(): string | undefined; step(): Promise<string | undefined>; start(); stop() }   // one driver log → wake messages; per node dedupe on text + fact mark (E3.1); step: pi hooks busy/revalidate (H1.1)
+export class DriveWatch { follow(o); attach(cwd); flush(); stopAll() }          // the extension's followers (one per log); hooks {busy, revalidate(repo)}
+export function revalidator(o: { cwd; dsa? }): Revalidate; resolvedText(n); idleText(at);   // H1.1b: fact mark / describe checks; texts
+export function readyHint(cwd): Promise<string[] | undefined>; readyHintText(ready, 'cli' | 'pi');   // H1.3
 ```
 `driveDir` resolves the ledger directory like `ledgerDir` but creates nothing (session_start runs in any repository).
 `drive-run.ts` writes every verdict (dsa rejection/conflict, merge refusal, attest error) to the ledger in the pass it happens (contract D14) and uses `ops` for every ledger write (dispatch, launch, send, halt, rebase, merge as `parent:drive`) and runs attest as a subprocess under `hold machine --shared --no-wait`. A dsa rejection halts with the abandon recovery (the attempt's request is fixed, D15.1); the transient merge refusal `Plan, candidate or trunk changed; retry` is retried next pass (D15.2). Test hook: `OWED_DRIVE_TEST_KILL=<before-dsa|after-dsa>:<launch|send>` SIGKILLs the driver at that point.
 
 ## src/extension.ts, skills/owed/SKILL.md  (leaf surface)
-Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters. Registers `session_start` (follow a live background driver) and `session_shutdown` (clear the followers) when `pi.on` exists; wake-ups use `pi.sendMessage` (SPEC §12.8).
+Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters. Registers `session_start` (follow a live background driver), `agent_start`/`agent_settled` (hold wakes while the agent runs; flush at settle, H1.1) and `session_shutdown` (clear the followers) when `pi.on` exists; wake-ups use `pi.sendMessage` (SPEC §12.8).
 D25 (SPEC §2.1, §11): `actor(ctx, dir, as, summary, fields, signal)` refuses owner/parent in a dsa call (`ops.subagentRefusal`), returns `channel: 'delegated'` for an owner unless `ops.confirmGate()` (`OWED_CONFIRM=owner`), and otherwise shows the dialog with `confirmTimeout()` (`OWED_CONFIRM_TIMEOUT`, default `CONFIRM_TIMEOUT_S` = 120) and the tool's abort signal; `confirmTimeoutText(seconds)`. The CLI applies the same rules (`delegated` without a prompt unless the gate). `ops.subagentCall/subagentRefusal/confirmGate`; `planSet` takes `note`; the reducer requires a note on a delegated owner downgrade; `views.briefView` adds `delegated` (`BriefDelegated`), entry lines mark `(delegated)`, `views.ownerCommands(state, node)` lists the commands the driver's owner notifications and halts append.
 
 ## Tests
