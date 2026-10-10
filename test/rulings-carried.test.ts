@@ -203,7 +203,7 @@ test('E4.2: rulings on a launch or repair must be 0 or an in-scope ruling record
   assert.deepEqual(validateDraft(s2, send({})), [], 'absent: a 0.5.0 entry');
   assert.match(validateDraft(s2, send({ rulings: c.seq })).join('; '), /send reason repair rulings must be 0 or the seq of a ruling covering a/);
   assert.match(validateDraft(s2, send({ rulings: 1000 })).join('; '), /send reason repair rulings must be/);
-  assert.match(validateDraft(s2, send({ reason: 'submit', rulings: 0 })).join('; '), /send rulings is only allowed with reason ruling or repair/);
+  assert.match(validateDraft(s2, send({ reason: 'interrupted', rulings: 0 })).join('; '), /send rulings is only allowed with reason ruling, repair, submit or rebase/);
   assert.match(validateDraft(s2, send({ reason: 'ruling' })).join('; '), /send reason ruling requires rulings/, 'ruling sends unchanged');
   // Replay: a recorded entry naming an out-of-scope ruling makes the ledger unreadable.
   const bad = { ...send({ rulings: c.seq }), seq: seq2, ts: iso(seq2), prev: 'x', hash: `hash${seq2}` } as Entry;
@@ -240,7 +240,7 @@ test('E4 ops/executor: the driver records rulings on its launch entry; ops.send 
     // ops.send: a repair records its rulings; a bad value is refused and leaves the ledger unchanged.
     const before = (await entries()).length;
     await assert.rejects(ops.send({ cwd: r.cwd, as: parent, node: 'k', attempt: 1, rid: l.rid, sendKind: 'follow-up', message: 'm', reason: 'repair', rulings: rule.seq + 1 }), /send reason repair rulings must be 0 or the seq of a ruling covering k/);
-    await assert.rejects(ops.send({ cwd: r.cwd, as: parent, node: 'k', attempt: 1, rid: l.rid, sendKind: 'follow-up', message: 'm', reason: 'submit', rulings: 0 }), /only allowed with reason ruling or repair/);
+    await assert.rejects(ops.send({ cwd: r.cwd, as: parent, node: 'k', attempt: 1, rid: l.rid, sendKind: 'follow-up', message: 'm', reason: 'interrupted', rulings: 0 }), /only allowed with reason ruling, repair, submit or rebase/);
     assert.equal((await entries()).length, before);
     const s = await ops.send({ cwd: r.cwd, as: parent, node: 'k', attempt: 1, rid: l.rid, sendKind: 'follow-up', message: 'm', reason: 'repair', rulings: 0 });
     assert.equal(s.rulings, 0);

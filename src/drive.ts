@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
-import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
+import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
 export type Action =
@@ -20,7 +20,7 @@ export type Action =
    * Append a SendEntry then `dsa send`; `message` = exact message bytes. `send` is present only on a re-send of an
    * already recorded entry (D4 row 4): the executor appends nothing and re-sends `message` with that request id.
    */
-  | { do: 'send'; node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; send?: string; /** reason `ruling`: the highest ruling seq `message` includes (D22.1); reason `repair` (E4): the highest in-scope ruling seq it carries, 0 when none. */ rulings?: number }
+  | { do: 'send'; node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; send?: string; /** reason `ruling` (steer or K5.2 follow-up): the highest ruling seq `message` includes (D22.1); reason `repair` (E4): the highest in-scope ruling seq it carries, 0 when none; reasons `submit`/`rebase` (K5.2): that seq, present only when it carries one. */ rulings?: number }
   /** `owed attest <node>` (through `hold machine` when dsa is available, D6). */
   | { do: 'attest'; node: string }
   /** `ops.rebase` as parent:drive; the `rebase` follow-up to the writer follows from the next `decide`. */
@@ -143,10 +143,11 @@ export function repairFollowUp(s: State, node: string): { message: string; rulin
     return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${b.needs === 'parent' ? (ruled ? ` (needed a parent ruling; ruling #${ruled.seq}: ${oneLine(ruled.text)})` : ' (needs a parent ruling)') : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
   });
   const since = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq), rulings = since.map(r => `- #${r.seq} ${oneLine(r.text)}`);
-  return { rulings: carried([...since, ...quoted]), message: [`owed found problems with your candidate ${c.commit} (submit #${c.seq}) of ${node}, attempt ${n.slot!.attempt}.`,
+  // K5.2: the rulings come first.
+  return { rulings: carried([...since, ...quoted]), message: [...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
+    `owed found problems with your candidate ${c.commit} (submit #${c.seq}) of ${node}, attempt ${n.slot!.attempt}.`,
     `Fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself.`,
     ...(notes.length ? ['Review blocks (the reviewer\'s note):', ...notes] : []),
-    ...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
     `The \`owed why ${node}\` card:`, '',
     renderReceipt(receipt(s, entries, node))].join('\n') };
 }
@@ -210,6 +211,108 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
     rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
       : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
     `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
+}
+
+// ---------- repair budget, ruling follow-up, threshold hint (0.7, K5) ----------
+/** The node spec as the repair epoch compares it: canonical, without `title` and `drive` (K3); `brief` counts. */
+const epochSpec = (p: Plan, node: string): string | undefined => {
+  const n = p.nodes.find(x => x.id === node);
+  if (!n) return undefined;
+  const { title: _t, drive: _d, ...rest } = n;
+  return canonical(rest);
+};
+/**
+ * K5.1: the repair budget epoch of the node's open attempt: the latest of its dispatch, the latest ruling naming the
+ * node (`*` does not count) and the latest plan entry that changed its spec (`epochSpec`). `repairs` counts the
+ * attempt's repair sends after it; `label` is `ruling #s`, `plan #s` or `dispatch`.
+ */
+export function repairEpoch(s: State, node: string): { seq: number; label: string } {
+  let best = { seq: s.nodes[node]!.slot!.dispatchSeq, label: 'dispatch' };
+  const rule = s.rules.findLast(r => r.nodes !== '*' && r.nodes.includes(node));
+  if (rule && rule.seq > best.seq) best = { seq: rule.seq, label: `ruling #${rule.seq}` };
+  for (const e of [...entriesOf(s)].reverse()) {
+    if (e.seq <= best.seq) break;
+    if (e.kind === 'plan' && epochSpec(planAt(s, e.seq), node) !== epochSpec(planAt(s, e.seq + 1), node)) { best = { seq: e.seq, label: `plan #${e.seq}` }; break; }
+  }
+  return best;
+}
+/** K5.1: the repair sends of the attempt counted against `repairs`: those after the node's epoch. */
+const repairsSince = (s: State, node: string, ar: AttemptRuns): { count: number; label: string } => {
+  const epoch = repairEpoch(s, node);
+  return { count: ar.sends.filter(x => x.reason === 'repair' && x.seq > epoch.seq).length, label: epoch.label };
+};
+/** K5.2: the in-scope rulings the attempt's writer run `writer` has not received (`deliveredRulings`), in ledger order. */
+const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntry): Rule[] => {
+  const d = deliveredRulings(s, node, ar, writer);
+  return rulingsInScope(s, node).filter(r => r.seq > d);
+};
+/**
+ * K5.2: a writer follow-up (`submit`, `rebase`) with the undelivered in-scope rulings first; `rulings` (their highest
+ * seq) only when it carries at least one, so a follow-up without rulings stays readable by 0.6.x.
+ */
+function withRulings(s: State, node: string, ar: AttemptRuns, writer: LaunchEntry, message: string): { message: string; rulings?: number } {
+  const rules = undelivered(s, node, ar, writer);
+  return rules.length ? { message: [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`), message].join('\n'), rulings: carried(rules) } : { message };
+}
+/** One evidence line of a halt (K5.4): one line, at most 200 characters. */
+const clip = (text: string): string => { const t = oneLine(text); return t.length > 200 ? `${t.slice(0, 199)}…` : t; };
+/**
+ * K5.2: the ruling follow-up to the attempt's sealed writer, or undefined when no undelivered in-scope ruling names the
+ * node (`*` alone never triggers it): the undelivered in-scope rulings, the active blocks on the current candidate's
+ * keys (else the latest submit's) with their notes, then what to do. `rulings`: the highest seq it carries. Not a repair.
+ */
+export function rulingFollowUp(s: State, node: string): { message: string; rulings: number } | undefined {
+  const n = s.nodes[node], slot = n?.slot, ar = n?.runs.find(r => r.attempt === slot?.attempt), writer = ar?.launches.find(l => l.role === 'writer');
+  if (!n || !slot || !ar || !writer) return undefined;
+  const rules = undelivered(s, node, ar, writer);
+  if (!rules.some(r => r.nodes !== '*')) return undefined;
+  const last = lastSubmit(s, node), c = n.candidate ?? (last ? { ...last.facts, seq: last.seq } : undefined), entries = entriesOf(s);
+  const blocks = c ? n.blocks.filter(b => b.state === 'active' && b.key === c.keys[b.obligation]) : [];
+  const notes = blocks.map(b => {
+    const e = entries.find(x => x.seq === b.seq);
+    const note = e?.kind === 'review' ? e.note ?? '' : e?.kind === 'obs' ? e.note ?? `exit ${e.exit}` : '';
+    return `- #${b.seq} ${b.obligation}${b.kind === 'judgment' ? ` by ${e?.by ?? '?'} rank ${b.rank}` : ''}: ${oneLine(note)}`;
+  });
+  return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
+    ...(notes.length ? [`Active blocks on your candidate ${c!.commit} (submit #${c!.seq}):`, ...notes] : []),
+    `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`].join('\n') };
+}
+/**
+ * K5.4: the evidence of the measured items `items` for a halt: per failing observation that decides them (active
+ * execution blocks and failing evidence), `#<obs> <obligation>: <note>`, each one line of at most 200 characters.
+ */
+function execEvidence(s: State, n: NodeState, items: readonly { obligation: string; evidence: number[] }[]): string[] {
+  const entries = entriesOf(s), out: string[] = [], seen = new Set<number>();
+  for (const i of items) {
+    const seqs = [...n.blocks.filter(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation).map(b => b.seq), ...i.evidence];
+    for (const seq of seqs) {
+      const o = entries.find(e => e.seq === seq);
+      if (seen.has(seq) || o?.kind !== 'obs' || o.verdict !== 'fail') continue;
+      seen.add(seq); out.push(clip(`#${o.seq} ${o.obligation}: ${o.note ?? `exit ${o.exit}`}`));
+    }
+  }
+  return out.sort((a, b) => Number(a.slice(1, a.indexOf(' '))) - Number(b.slice(1, b.indexOf(' '))));
+}
+/**
+ * K5.3: the threshold hint for the measured items, or undefined: for a check X among them, the node's latest two
+ * failing, non-attribution observations of `check:X` both exited 0 with no failing test and counted the same number of
+ * tests, below X's current `min_tests`, and no ruling naming the node (not `*`) was recorded after the later one (after
+ * such a ruling the repair path runs).
+ */
+export function thresholdHint(s: State, node: string, obligations: readonly string[]): string | undefined {
+  const spec = s.plan.nodes.find(x => x.id === node), named = s.rules.findLast(r => r.nodes !== '*' && r.nodes.includes(node));
+  for (const o of obligations) {
+    if (!o.startsWith('check:')) continue;
+    const x = o.slice(6), m = spec?.checks.find(c => c.id === x)?.min_tests;
+    if (m === undefined) continue;
+    const fails = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === node && e.obligation === o && e.verdict === 'fail' && !e.attribution).slice(-2);
+    if (fails.length < 2 || (named && named.seq > fails[1]!.seq)) continue;
+    const [a, b] = fails as [ObsEntry, ObsEntry];
+    const tests = a.counts?.tests;
+    if (a.exit !== 0 || b.exit !== 0 || a.counts?.fail !== 0 || b.counts?.fail !== 0 || tests === undefined || b.counts.tests !== tests || tests >= m) continue;
+    return `check ${x}: ${tests} tests ran and passed twice, below min_tests ${m}; the plan's threshold may be wrong: fix the plan (owed plan) or rule (owed rule --nodes ${node} "…")`;
+  }
+  return undefined;
 }
 
 // ---------- driver reviewers ----------
@@ -317,8 +420,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   for (const x of ar.sends) {
     if (opts.applied.has(x.send) || !live.some(l => l.rid === x.rid)) continue;
     const refused = opts.rejected.get(x.send);
-    // D22.3: a rejected ruling send is never retried and never halts; its rulings travel with repairs and reviewer acks.
-    if (refused !== undefined && x.reason === 'ruling') continue;
+    // D22.3: a rejected ruling steer is never retried and never halts; its rulings travel with repairs and reviewer
+    // acks. A rejected ruling follow-up (K5.2) halts like any other send.
+    if (refused !== undefined && x.reason === 'ruling' && x.sendKind === 'steer') continue;
     if (refused !== undefined) return halt(rejectedHalt(id, 'send', x.send, refused));
     const bytes = opts.blobs?.get(x.message);
     if (bytes === undefined || sha256(bytes) !== x.message) return halt(`cannot re-send ${x.send}: the stored message bytes (blob ${x.message}) were not supplied`);
@@ -331,6 +435,34 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return { do: 'notify', node: id, text: askingText(id, l, view(l)), rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) };
   }
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
+  /**
+   * K5.2: a sealed writer lacking a ruling that names the node gets one ruling follow-up (not a repair), but never while
+   * a reviewer run of the current candidate is unsealed, and never when the current candidate has no active block or
+   * failed item: the ruling then reaches the reviewers (steer, the rulings obligation and its ack); a block's repair
+   * carries it. Only the callers below use it: the finished-without-submitting, repairs-exhausted and stalled halts, and
+   * an otherwise empty pass without a current candidate.
+   */
+  const rulingSend = (): Action | undefined => {
+    if (!wSealed) return undefined;
+    if (c && (live.some(l => l.role === 'reviewer' && !isSealed(view(l))) || !(n.items.some(i => i.mark === '✘') || n.blocks.some(b => b.state === 'active' && b.key === c.keys[b.obligation])))) return undefined;
+    const f = rulingFollowUp(s, id);
+    return f && send(writer, 'follow-up', 'ruling', f.message, f.rulings);
+  };
+  /**
+   * K5.2: in place of a halt for a sealed writer that finished without submitting (`reason`) or exhausted its repairs:
+   * the ruling follow-up when one is due; after a ruling follow-up later than `after` (the follow-up the halt names, the
+   * latest submit), the halt names that ruling follow-up instead, with `cause`.
+   */
+  const writerHalt = (reason: string, cause: string, after: number): Action => {
+    if (!wSealed) return halt(reason);
+    const f = rulingSend();
+    if (f) return f;
+    const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(after, lastSubmit(s, id)?.seq ?? -1));
+    if (!rf) return halt(reason);
+    const refused = opts.rejected.get(rf.send);
+    return halt(refused !== undefined ? rejectedHalt(id, 'send', rf.send, refused) : `writer run ${writer.rid} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
+  };
+  const writerMsg = (message: string): { message: string; rulings?: number } => withRulings(s, id, ar, writer, message);
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
   // Row 7: writer sealed non-ok.
@@ -346,15 +478,18 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const fix = resubmitBlocks(s, id);
     if (fix.length) {
       const cause = `review block ${fix.map(b => `#${b.seq} ${b.obligation}`).join(', ')}; a new candidate is needed`;
-      const done = ar.sends.filter(x => x.reason === 'repair'), outstanding = done.findLast(x => x.seq > Math.max(rb?.seq ?? slot.dispatchSeq, lastSubmit(s, id)?.seq ?? -1));
-      if (outstanding) return halt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`);
-      if (done.length >= opts.repairs) return halt(`repairs exhausted (${done.length} of ${opts.repairs}): ${cause}`);
+      const after = Math.max(rb?.seq ?? slot.dispatchSeq, lastSubmit(s, id)?.seq ?? -1);
+      const outstanding = ar.sends.findLast(x => x.reason === 'repair' && x.seq > after), budget = repairsSince(s, id, ar);
+      if (outstanding) return writerHalt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq);
+      if (budget.count >= opts.repairs) { const ex = `repairs exhausted (${budget.count} of ${opts.repairs} since ${budget.label}): ${cause}`; return writerHalt(ex, ex, after); }
       const r = resubmitFollowUp(s, id, opts.conflicts?.get(id));
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     }
-    if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) return send(writer, 'follow-up', 'rebase', rebaseMessage(s, id, opts.conflicts?.get(id)));
+    if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
     const since = rb?.seq ?? slot.dispatchSeq, nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
-    return nudge ? halt(`writer run ${writer.rid} finished without submitting a candidate after follow-up ${nudge.send}`) : send(writer, 'follow-up', 'submit', submitMessage(id));
+    if (nudge) return writerHalt(`writer run ${writer.rid} finished without submitting a candidate after follow-up ${nudge.send}`, `no candidate after follow-up ${nudge.send}`, nudge.seq);
+    const m = writerMsg(submitMessage(id));
+    return send(writer, 'follow-up', 'submit', m.message, m.rulings);
   }
   const steerRulings = (): Action | undefined => rulingSteer(s, n, ar, live, view);
   const fenced = (): Action | undefined => {
@@ -371,10 +506,11 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (jobs.some(x => x.errors.length < 2)) return { do: 'attest', node: id };
     if (jobs.length) return halt(`attest recorded no verdict twice: ${jobs.map(x => `${x.j.obligation} (${x.errors.map(o => `#${o.seq} ${o.note ?? `exit ${o.exit}`}`).join('; ')})`).join(', ')}`);
     // Repair: one follow-up per candidate, at most `repairs` per attempt; a writer that finishes it without resubmitting halts.
+    // K5.1: the budget counts the repairs since the node's epoch; K5.2: a due ruling follow-up replaces either halt.
     const repair = (cause: string): Action | undefined => {
-      const done = ar.sends.filter(x => x.reason === 'repair'), outstanding = done.findLast(x => x.seq > c.seq);
-      if (outstanding) return wSealed ? halt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`) : fenced() ?? steerRulings();
-      if (done.length >= opts.repairs) return halt(`repairs exhausted (${done.length} of ${opts.repairs}): ${cause}`);
+      const outstanding = ar.sends.findLast(x => x.reason === 'repair' && x.seq > c.seq), budget = repairsSince(s, id, ar);
+      if (outstanding) return wSealed ? writerHalt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq) : fenced() ?? steerRulings();
+      if (budget.count >= opts.repairs) { const ex = `repairs exhausted (${budget.count} of ${opts.repairs} since ${budget.label}): ${cause}`; return writerHalt(ex, ex, c.seq); }
       const r = repairFollowUp(s, id);
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     };
@@ -385,7 +521,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
     // Row 11: a measured block: an obligation of the candidate failed (✘), or an active execution block binds it.
     const measured = n.items.filter(i => i.mark === '✘' || n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation));
-    if (measured.length) return repair(`measured block ${measured.map(i => `${i.obligation} [${i.evidence.map(x => `#${x}`).join(', ')}]`).join(', ')}`);
+    if (measured.length) {
+      // K5.3: the same count below min_tests twice: the threshold may be the plan's mistake; the parent decides.
+      const hint = thresholdHint(s, id, measured.map(i => i.obligation));
+      if (hint) return halt(hint);
+      // K5.4: the halts this cause reaches cite the failing observations.
+      const evidence = execEvidence(s, n, measured);
+      return repair(`measured block ${measured.map(i => `${i.obligation} [${i.evidence.map(x => `#${x}`).join(', ')}]`).join(', ')}${evidence.length ? `; ${evidence.join('; ')}` : ''}`);
+    }
     const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
     const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
     // Row 12: review obligations awaiting and fewer reviewer runs than the candidate needs: launch the next n. G3.1:
@@ -425,16 +568,17 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       return { do: 'merge', node: id };
     }
     // Liveness (D12): a candidate that is not accepted while no driver run of the attempt is unsealed never yields
-    // "nothing to do": halt needing the owner with every non-E item and active block.
+    // "nothing to do": halt needing the owner with every non-E item and active block (K5.2: a due ruling follow-up first).
     if (wSealed && !reviewing) {
       const items = n.items.filter(i => i.status !== 'E').map(i => `${i.obligation} ${i.mark} ${i.detail}`);
       const blocks = n.blocks.filter(b => b.state === 'active').map(b => blockText(s, c, b));
-      return halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}${resolveText(s, id)}`, 'owner');
+      return rulingSend() ?? halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}${resolveText(s, id)}`, 'owner');
     }
   }
   // Row 18: the running writer was fenced after the last steer; else (D22.2a, lowest priority, only when the node
-  // would otherwise idle) a running driver run that lacks in-scope rulings gets them as a steer.
-  return fenced() ?? steerRulings();
+  // would otherwise idle) a running driver run that lacks in-scope rulings gets them as a steer; K5.2: without a current
+  // candidate, a due ruling follow-up to a sealed writer.
+  return fenced() ?? steerRulings() ?? (c ? undefined : rulingSend());
 }
 
 /**
@@ -488,8 +632,9 @@ function relaunch(s: State, opts: DriveOpts, l: LaunchEntry): Action | undefined
 }
 /**
  * The highest ruling seq covering the node that run `l` already has (E4; D22.2): the max of the `rulings` recorded on
- * its launch entry and on every `repair` and `ruling` send to it (also an unconfirmed or rejected ruling send: it is
- * never sent again under a new id), and for the writer its dispatch `rulings_seen`. Entries without the field (written
+ * its launch entry and on every send to it that records `rulings` (`repair`, `ruling`, and since 0.7 `submit` and
+ * `rebase` follow-ups; also an unconfirmed or rejected ruling send: it is never sent again under a new id), and for the
+ * writer its dispatch `rulings_seen`. Entries without the field (written
  * by 0.5.0) fall back to the 0.5.0 position rule: a reviewer launch carried the in-scope rulings recorded before it, a
  * repair send those recorded before it (its message lists the rulings since dispatch); a writer launch carried
  * `rulings_seen`.
@@ -499,7 +644,8 @@ export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: Lau
   const before = (seq: number): number => Math.max(-1, ...inScope.filter(r => r.seq < seq).map(r => r.seq));
   const sends = ar.sends.filter(x => x.rid === l.rid);
   const launch = l.rulings ?? (l.role === 'writer' ? -1 : before(l.seq));
-  const base = l.role === 'writer' ? Math.max(s.nodes[node]!.slot!.rulings_seen, launch, ...sends.filter(x => x.reason === 'repair').map(x => x.rulings ?? before(x.seq))) : launch;
+  // K5.2: every writer send that records `rulings` (submit, rebase, repair, ruling follow-ups) delivered them.
+  const base = l.role === 'writer' ? Math.max(s.nodes[node]!.slot!.rulings_seen, launch, ...sends.map(x => x.rulings ?? (x.reason === 'repair' ? before(x.seq) : -1))) : launch;
   return Math.max(base, ...sends.filter(x => x.reason === 'ruling').map(x => x.rulings ?? -1));
 }
 /** Steer message of undelivered rulings (D22.2): one line per ruling `#<seq> (<nodes>): <text>`, then what to do. */
