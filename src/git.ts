@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, mkdir, writeFile, readFile, rename, link, readdir, stat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
@@ -197,24 +197,48 @@ function alive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return (e as NodeJS.ErrnoException).code === 'EPERM'; }
 }
+/** An empty or unparsable lock older than this is dead (a crash between create and write of an older owed). */
+export const LEASE_EMPTY_DEAD_MS = 60_000;
+/** gc removes reclaim tokens (`<lock>.dead-<X>`) older than this: their reclaimer crashed. */
+export const LEASE_TOKEN_STALE_MS = 3_600_000;
+/** Whether lock content `held` (of the lock file `lock`) is dead: a dead pid, or empty/unparsable and older than 60 s. */
+async function deadContent(lock: string, held: string): Promise<boolean> {
+  const t = held.trim();
+  if (/^[1-9][0-9]*$/.test(t)) return !alive(Number(t));
+  try { return Date.now() - (await stat(lock)).mtimeMs > LEASE_EMPTY_DEAD_MS; } catch { return false; }
+}
+/** The `<X>` of a reclaim token for lock content `held`: the dead pid, else `h` + 16 hex of the content's sha256. */
+const tokenOf = (held: string): string => /^[1-9][0-9]*$/.test(held.trim()) ? held.trim() : `h${sha256(held).slice(0, 16)}`;
+/** Atomic take: the pid is written to a unique temp file which is then link()ed to `lock`, so a lock is never empty. */
+async function linkTake(lock: string): Promise<boolean> {
+  const tmp = `${lock}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+  await writeFile(tmp, `${process.pid}\n`, { flag: 'wx' });
+  try { await link(tmp, lock); return true; }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e; }
+  finally { await rm(tmp, { force: true }); }
+}
 /**
- * Takes the lease `lock` (a file created with O_EXCL holding the pid). A lease whose pid is dead is stale: it is moved
- * aside and the take retried; when what was moved is not what was judged stale (a racing reclaim), it is put back.
- * Returns false when a live process holds it.
+ * Takes the lease `lock` (it then holds this pid; created by link(), never empty). A lock whose content X is dead (a dead
+ * pid, or empty/unparsable and older than 60 s) is reclaimed under the token `<lock>.dead-<X>`, created with O_EXCL:
+ * holding it, the reclaimer re-reads the lock, unlinks it only when it still holds X, tries the normal take once, and
+ * unlinks the token. A reclaimer that loses the token, or the take, does nothing more for this lock. Returns false
+ * when the lease is not taken (held, or lost to a racing taker).
  */
 export async function takeLease(lock: string): Promise<boolean> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try { await writeFile(lock, `${process.pid}\n`, { flag: 'wx' }); return true; }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await linkTake(lock)) return true;
     let held: string;
     try { held = await readFile(lock, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw e; }
-    // A lease being written (empty) is treated as held; a pid that is alive holds it.
-    if (!held.trim() || alive(Number(held.trim()))) return false;
-    const aside = `${lock}.stale-${process.pid}-${randomBytes(4).toString('hex')}`;
-    try { await rename(lock, aside); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw e; }
-    const moved = await readFile(aside, 'utf8').catch(() => '');
-    if (moved !== held) { try { await link(aside, lock); } catch { /* a new lease exists: its holder keeps it */ } await rm(aside, { force: true }); return false; }
-    await rm(aside, { force: true });
+    if (!await deadContent(lock, held)) return false;
+    const token = `${lock}.dead-${tokenOf(held)}`;
+    try { await writeFile(token, `${process.pid}\n`, { flag: 'wx' }); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e; }
+    try {
+      let again: string | undefined;
+      try { again = await readFile(lock, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+      if (again === held) await rm(lock, { force: true });
+      return await linkTake(lock);
+    } finally { await rm(token, { force: true }); }
   }
   return false;
 }
@@ -222,9 +246,21 @@ export async function takeLease(lock: string): Promise<boolean> {
 export async function releaseLease(lock: string): Promise<void> {
   try { if ((await readFile(lock, 'utf8')).trim() === String(process.pid)) await rm(lock, { force: true }); } catch { /* already gone */ }
 }
-/** Whether a reused tree's lease is free: no lock file, or one whose pid is dead. */
+/** Whether a reused tree's lease is free: no lock file, or one whose content is dead. */
 export async function leaseFree(lock: string): Promise<boolean> {
-  try { const held = (await readFile(lock, 'utf8')).trim(); return !!held && !alive(Number(held)); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT'; }
+  try { return await deadContent(lock, await readFile(lock, 'utf8')); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT'; }
+}
+/** Removes reclaim tokens in the reuse dir older than LEASE_TOKEN_STALE_MS (unless `dryRun`); returns their paths. */
+export async function staleTokens(cwd: string, dryRun: boolean): Promise<string[]> {
+  const dir = await reuseDir(cwd), out: string[] = [];
+  let names: string[]; try { names = await readdir(dir); } catch { return []; }
+  for (const name of names.filter(n => /\.lock\.dead-[^/]+$/.test(n)).sort()) {
+    const path = join(dir, name);
+    try { if (Date.now() - (await stat(path)).mtimeMs <= LEASE_TOKEN_STALE_MS) continue; } catch { continue; }
+    if (!dryRun) await rm(path, { force: true });
+    out.push(path);
+  }
+  return out;
 }
 /** Whether `path` is a worktree of the repository of `cwd` whose top level is `path` itself. */
 async function ownTree(cwd: string, path: string): Promise<boolean> {
@@ -245,6 +281,8 @@ async function reusedTree(cwd: string, commit: string, kind: string, id: string)
     if (await ownTree(cwd, path)) {
       const co = await git(path, ['checkout', '--detach', '--force', commit], { allowFail: true });
       ready = !co.code && !(await git(path, ['clean', '-ffdx'], { allowFail: true })).code;
+      // A fresh `git worktree add` tree has empty submodule directories: deinit makes a reused one match.
+      if (ready && await stat(join(path, '.gitmodules')).then(() => true, () => false)) ready = !(await git(path, ['submodule', 'deinit', '--all', '--force'], { allowFail: true })).code;
     }
     if (!ready) {
       // Missing or broken: recreate it (-f overrides a registration whose directory is gone).
