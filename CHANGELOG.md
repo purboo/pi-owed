@@ -1,5 +1,158 @@
 # Changelog
 
+## 0.8.0
+
+The wais run of 2026-10-10 reported recovery, check-definition and ruling
+routing frictions (feedback #16-#22): L1 adds resume without an obligation
+(#16-#18), L2 supersedes blocks after a check definition changes (#19-#20),
+and L3 delivers rulings before more halts and warns about looped checks
+(#21, #22 part 3).
+
+- **Resume without an obligation (L1; wais #16-#18).** `owed resume <node>
+  [--after <node>] [--note TEXT]` (pi `owed_resume`) records a `resume` entry
+  on the node's open attempt. Only a parent or owner may resume; writers,
+  reviewers, executors and `parent:drive` are refused, as are a missing open
+  slot, an unknown `after` node or the node itself. Resume clears the halt
+  and starts a new repair epoch without changing `rulings` or any other
+  obligation. With `--after`, the node waits until that dependency merges;
+  an already merged dependency resumes it now. The latest resume replaces
+  the previous one; a resume without `after`, abandon or a new dispatch ends
+  the wait. While waiting the driver launches, sends, halts, attests and
+  merges nothing for that node; row 5 still reports asking runs. Status and
+  why show `waiting for <dep> (resume #<seq>)`, and the pass report lists
+  waiting nodes. The loop prints the quiet waiting event once per node and
+  resume; `--once` and `owed_drive` print it each pass, without a wake. Once
+  the wait ends, normal rows apply. Without `after`, the next pass can retry
+  measurement or an environmentally refused merge, or send a fresh repair
+  to a sealed writer. A repair sent before resume whose writer seals later
+  also gets a fresh repair under the new budget. Resume does not fix the
+  cause of a halt: row 7 (writer sealed non-ok) and row 14 (missing review)
+  can halt again; L3's due-ruling route below applies at row 7. The first
+  writer follow-up after resume starts with `The parent resumed this node
+  (#<seq>)[ after <dep> merged at <commit12>][: <note>]`. Use resume to retry
+  or wait without acknowledgment debt; use `owed rule --nodes <node>` for
+  guidance the writer and reviewers must follow and acknowledge. Halts and
+  wakes naming a run now include its dsa call address, when known, as
+  `to:"<wid>/<key>"`, including asking notices without a reported question.
+- **Supersede changed check definitions (L2; wais #19-#20).** Replaying a
+  plan entry marks every active or flaky execution block on `check:<id>`,
+  `red:<id>` or `strength:<id>` as `superseded` when the check definition
+  differs from the plan of its failing observation, and records
+  `supersededBy: <plan seq>`. The definition is the node's canonical
+  CheckSpec with all fields, plus `plan.setup` and `execKey(plan)`; node
+  title, brief, closure and other nodes do not count. Removing the check
+  (or node) also supersedes its blocks. A superseded block no longer blocks,
+  gets no attribution rerun, makes a queued rerun not current, and needs no
+  waiver; the current candidate must still pass the new definition. With
+  the same definition, flaky behavior is unchanged. Why and status retain
+  `#<seq> superseded by plan #<p> (check <id> definition changed)` (or
+  `check <id> removed`); report gives superseded blocks their own section.
+  Earlier waivers remain recorded. The parent or owner's recorded plan
+  accounts for the definition change; downgrades such as lowering
+  `min_tests` or removing a check still need owner authority. Checks and
+  invariants run in a fresh temporary worktree of the candidate or merge
+  tree: slot-only build outputs, caches and node_modules are absent. They
+  must prepare their own artifacts, for example through `setup`; fixing an
+  environmental failure in the check definition supersedes the old block.
+- **Rulings before halts and loop warnings (L3; wais #21, #22 part 3).** An
+  undelivered in-scope ruling naming the node can now reach a sealed writer
+  before the owner-needed notify (including flaky or rank >= 2 blocks),
+  row 7's writer-sealed-non-ok halt and the stalled halt. No reviewer run of
+  the current candidate may be unsealed, and an active needs-parent review
+  block on the current candidate's keys (else the latest submit's) keeps
+  its D18 route. Owner-needed and row 7 send the ruling to the writer. At
+  stalled, a failed item, an active block on the candidate's keys or a flaky
+  block sends it to the writer; when only `rulings` is owed, it goes to the
+  latest sealed driver reviewer of that candidate, or launches a reviewer
+  per row 12 if there is none. The reviewer re-reviews with `--ack-rulings`
+  or blocks: a writer resubmit does not discharge `rulings`. Without a
+  review or closure-review obligation, the node still stalls. Each ruling
+  follow-up records what it carried and is sent once, without spending the
+  repair budget; a remaining owner need or missing candidate or verdict
+  then notifies or halts as usual. Row 18 keeps its existing K5.2 gate.
+  At the owner-needed notify only a sealed writer gets the ruling (a running
+  or asking writer keeps the notify), and a recorded but unapplied ruling
+  follow-up is resent under the same id instead of being skipped.
+  Writer ruling messages also list the node's flaky blocks, marked flaky.
+  Flaky hints now offer `owed rule "<what the writer must change>" --nodes
+  <node>` alongside the waiver: after the writer fixes the test, the block
+  stays flaky until a plan change supersedes its definition or the owner
+  waives it once the fixed candidate passes. `owed plan` and `owed init`
+  (CLI and pi tools) warn without refusing when a check or invariant sets
+  `min_tests` and runs a shell loop (`for`, `while` or `until` with `do`, or
+  `seq N` in command position). After the check-less warnings, the warning
+  explains the actual count: only the last TAP `# tests` summary (else the
+  last `1..N` plan), jest/vitest `Tests:` or pytest summary counts, not the
+  sum of repeated runs; only cargo `test result:` lines are added up.
+
+**Compatibility.** 0.7.x cannot replay a ledger containing a `resume` entry.
+Superseded blocks change no existing entry's validity: old ledgers replay,
+including attribution observations and risk waivers that name a block now
+superseded. Validation tracks the state it would have had without supersede;
+those entries leave its visible state superseded. Upgrade the CLI, the pi
+extension and remote executors together, then restart the driver and pi.
+Wake and notice texts change: a batch containing a halt gains one resume
+hint line (with `--after` for waiting); halt reasons stored in the ledger do
+not gain that hint. Run references include `to:"<wid>/<key>"` when known,
+and flaky hints offer a ruling as well as a waiver. Driver behavior changes
+at row 7 and stalled: a due ruling can produce a writer follow-up instead
+of a halt; a stalled candidate owing only `rulings` is routed to a reviewer
+for acknowledgment under the conditions above.
+
+**Deferred.** `error_expect` for environment-precondition failures (#12): a
+check reports these today by exiting 126/127 without a count, which records
+`error`, not a failure. Per-tier model routing (#11 asked for a tier or risk
+mapping; routing remains per node). A plan warning for unknown node keys
+(typos like `drvie:` are ignored; refusing them would change which existing
+plans are accepted). Attest-busy nits: a dispatch whose ledger-lock timeout
+is followed by a failed rollback still exits 75 `retry` though leftovers
+may block a retry; `--json=x` gets no JSON error line (the CLI matches
+`--json` only). The SIGKILL limit: a stop at once SIGKILLs the dsa
+invocations' and attest children's process groups only; the checks an
+attest runs have process groups of their own, so a check whose attest was
+SIGKILLed before ending it keeps running, unrecorded, until it exits.
+K review nits not fixed: with per-node locks, parallel node attests each
+measure a pending genesis invariant (correct under D24, more CPU); lock
+owners record no process start time, so a stale attest lock whose pid was
+reused reads as busy indefinitely, and the driver retries without a halt;
+the `hold` comment in `src/dsa.ts` still says owed exits only 0..3; the
+driver's `--json` loop exit record maps a `busy` error to code 3; merge's
+abort path (`abortWith`) keeps the strict whole-plan stability rule, so an
+abort after any plan update discards the measurements; merge recomputes
+facts with git under the ledger lock when the plan changed; merge's branch
+for a node that left the plan is unreachable (removing the node invalidates
+its candidate first); the invalidation refusal says `its spec changed` also
+for `setup`, `exec` or `closure` changes; a waiver of an obligation the
+candidate does not have prints an empty key (unknown obligations are not
+refused, as before); the threshold hint reads the node's observations
+across attempts, so a new attempt's first under-count may hint at once; the
+node-models sha test recomputes the plan sha formula instead of going
+through `owed plan`, and a merge-cas test title says `without remeasuring`
+but counts only the invariant. Without dsa, an owed attest that exits 75 on
+a ledger-lock timeout is logged as `machine lease refused` (busyDetail);
+the behavior is right. While a node stays busy the log gets a `started`
+and a busy line per timed pass (0.6.x printed one busy line per busy
+period). A rejected ruling send is recognized after a driver restart
+through dsa's request record; whether that survives a dsa `prune` was not
+verified. Still open from 0.6.1: the writes hint lists node ids verbatim as
+globs and grants every listed node the union of the new prefixes; a
+concurrent dispatch can make a rollback report `rollback failed: directory
+cleanup`; a rollback that wraps a non-OwedError drops its stack and the pi
+extension returns it as a tool error; pi revalidation replays the whole
+ledger once per delivery attempt, and a failed delivery's dropped wakes
+are already marked resolved; a staying driver polls neither dsa events nor
+trunk drift while it waits. Still open from 0.6.0: a follow-up dsa retires
+because the call sealed before delivery still ends in a misleading
+`finished repair follow-up without submitting` halt (awaits dsa §49); M4
+and M6 of `owed05-big.sh` remain within 9% of the 22M-state cap. The 0.6.1
+candidates stay open: bind a reviewer's identity to its dsa call; rulings
+that uphold or overrule a named block.
+
+The formal model does not cover resume or superseded blocks. A new
+candidate that changes the flaky test itself does not clear the block;
+whether it should is deferred. Wais #22 parts 1-2 are not included: driver
+self-rebase is not needed; a merge train is deferred.
+
 ## 0.7.0
 
 The wais run of 2026-10-10 reported lock, threshold, budget, routing and
