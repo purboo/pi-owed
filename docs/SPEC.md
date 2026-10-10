@@ -261,7 +261,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
 | `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; strict fields |
-| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing`; strict fields |
+| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling`; `rulings` (reason `ruling` only, required there and forbidden otherwise) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node (§12.5.1); strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
 | `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
 
@@ -1153,6 +1153,52 @@ driver then halts again for what remains or merges. An owner block on `approve`
 is an owner decision (`ownerNeeded`: notify only). The review packet describes
 `approve` as the owner's and an evidence item by its role; for `by: reviewer`
 it gives the reviewer's `owed evidence` command.
+
+#### 12.5.1 Rulings reach running calls; run names; answer address (D22)
+
+- **Delivered rulings.** For each drive-launched run of the open attempt (the
+  writer and the reviewer runs of the current candidate), *delivered* = the
+  highest in-scope ruling seq (`--nodes` names the node, or `*`) the run already
+  has: for the writer its dispatch `rulings_seen` and, for every recorded
+  `repair` send to it, the in-scope rulings recorded before that send (the
+  repair lists the rulings since dispatch; D22.4a); for a reviewer the in-scope
+  rulings recorded before its launch entry (its review packet); for both the
+  `rulings` of every recorded `ruling` send to it, also an unconfirmed or
+  rejected one.
+- **Ruling steer (D22.2, D22.2a).** The lowest row of the table: used only where
+  the node would otherwise get no action — row 18 (`fenced` first), the wait for
+  a live reviewer run of the candidate behind a stale block, and a running
+  writer with an outstanding repair. The first run in state `running` (never
+  `asking`, `queued` or sealed; the writer, then reviewers by `n`) with an
+  in-scope ruling above *delivered* gets a `steer` with reason `ruling` and
+  `rulings` = the highest seq it lists: `New parent rulings for <node>:`, one
+  line `#<seq> (<nodes>): <text>` per undelivered ruling (text on one line),
+  then for a writer `Apply these rulings; they override your packet. If you
+  already submitted, fix and submit again.`, for a reviewer `Judge the candidate
+  against these rulings and record your review with --ack-rulings <seq>.`. Still
+  at most one action per node per pass; every other row wins, so a steer waits
+  a few passes at most. Only `fenced` steers count as the last steer of the
+  fenced row, so a ruling steer never hides a fence.
+- **Rejection (D22.3).** dsa rejecting a ruling send (e.g. the call sealed
+  meanwhile) is printed (`rejected — <reason>; not retried …`) and never halts;
+  a recorded ruling send dsa reports rejected is skipped by the re-send row and
+  never sent again under a new id. The rulings then travel as before (repair
+  messages list the rulings since dispatch; reviewers acknowledge with
+  `--ack-rulings`). An unconfirmed ruling send is re-sent like any send (same id,
+  stored bytes).
+- **Obligation unchanged (D22.4).** A steer is not an acknowledgment: the
+  `rulings` obligation still needs the reviewer's `ack_rulings`.
+- **Run names (D22.5).** New launches carry dsa's run option `name` in the spec
+  (`run --spec -` accepts it for the single-call form, pi-durable-subagents
+  1.0.27): `owed <node>#<attempt> writer` / `owed <node>#<attempt> reviewer <n>`
+  (`runName`), next to the labels. A re-launch of a recorded launch sends its
+  stored spec bytes unchanged (a launch recorded before 0.5.0 has no name).
+- **Answer address (D22.6).** The asking line (notify, drive output, wake-ups)
+  addresses each open question by dsa's call address `questions[].to`
+  (`<wid>/<key>` from `describe`), or the run id when dsa reports none, in both
+  forms: `answer in pi: subagents {action:"send", kind:"answer", to:"<to>",
+  qid:"<qid>", message:"…"}; or: pi-durable-subagents send --request <id> --to
+  <to> --kind answer --qid <qid> --rev <rev> --message @<file>`.
 
 ### 12.6 Review packet (D5)
 

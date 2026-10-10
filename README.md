@@ -317,7 +317,14 @@ starting it from a top-level session or systemd-run --user`.
 The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,
 `owed why`) waits for a human action on the node. A ruling, submit, review,
-rebase or abandon on the node clears a halt, and the next pass resumes. A halt
+rebase or abandon on the node clears a halt, and the next pass resumes. A ruling recorded while a
+driver-launched writer or reviewer call is running reaches it as a steer
+(reason `ruling`, recorded) once the node has nothing else to do; sealed calls
+get rulings with the next repair, and reviewers still acknowledge them with
+`--ack-rulings`. Calls you launched by hand stay yours to steer. Driver calls
+carry a dsa run name (`owed <node>#<attempt> writer` / `owed <node>#<attempt>
+reviewer <n>`). An asking call is printed with dsa's answer address and both
+answer forms: the pi `subagents` send call (`to`, `qid`) and the CLI command. A halt
 from dsa rejecting a run or send is the exception: that request's id and bytes
 are fixed for the attempt and dsa rejects it again, so fix the cause (plan,
 agent, model) and run `owed abandon <node>`; the driver then dispatches a new

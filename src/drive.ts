@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
-import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
+import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, Rule, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
 export type Action =
@@ -17,7 +17,7 @@ export type Action =
    * Append a SendEntry then `dsa send`; `message` = exact message bytes. `send` is present only on a re-send of an
    * already recorded entry (D4 row 4): the executor appends nothing and re-sends `message` with that request id.
    */
-  | { do: 'send'; node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; send?: string }
+  | { do: 'send'; node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; send?: string; /** reason `ruling`: the highest ruling seq `message` includes (D22.1). */ rulings?: number }
   /** `owed attest <node>` (through `hold machine` when dsa is available, D6). */
   | { do: 'attest'; node: string }
   /** `ops.rebase` as parent:drive; the `rebase` follow-up to the writer follows from the next `decide`. */
@@ -71,11 +71,14 @@ export interface DriveOpts {
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
 /**
  * Exact dsa spec bytes of a driver launch: canonical JSON (keys sorted, no whitespace) of {agent, model?, cwd,
- * isolation:"none", once:true, task}. The same inputs always give the same bytes, so a retry rebuilds them identically.
+ * isolation:"none", name?, once:true, task}. The same inputs always give the same bytes, so a retry rebuilds them identically.
+ * `name` is dsa's run name (D22.5: `runName`), shown in pi's subagent views.
  */
-export function launchSpec(o: { agent: string; model?: string; cwd: string; task: string }): string {
-  return canonical({ agent: o.agent, ...(o.model !== undefined ? { model: o.model } : {}), cwd: o.cwd, isolation: 'none', once: true, task: o.task });
+export function launchSpec(o: { agent: string; model?: string; cwd: string; task: string; name?: string }): string {
+  return canonical({ agent: o.agent, ...(o.model !== undefined ? { model: o.model } : {}), cwd: o.cwd, isolation: 'none', ...(o.name !== undefined ? { name: o.name } : {}), once: true, task: o.task });
 }
+/** dsa run name of a driver launch (D22.5): `owed <node>#<attempt> writer` / `owed <node>#<attempt> reviewer <n>`. */
+export const runName = (node: string, attempt: number, role: RunRole, n?: number): string => `owed ${node}#${attempt} ${role}${role === 'reviewer' ? ` ${n}` : ''}`;
 /** The writer task of the node's open attempt: its dispatch packet, rebuilt from dispatch-time facts (plan in force, rulings, worktree). */
 export function writerTask(s: State, node: string): string {
   const slot = s.nodes[node]?.slot;
@@ -87,12 +90,12 @@ export function writerTask(s: State, node: string): string {
 /** Launch action of the writer of the node's open attempt (spec: writer agent/model, cwd = slot worktree, task = dispatch packet). */
 export function writerLaunch(s: State, node: string, project: string): Extract<Action, { do: 'launch' }> {
   const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan).writer;
-  return { do: 'launch', node, attempt: slot.attempt, role: 'writer', rid: runId(project, node, slot.attempt, 'writer'), spec: launchSpec({ ...agent, cwd: slot.worktree, task: writerTask(s, node) }), labels: runLabels(project, node, slot.attempt, 'writer') };
+  return { do: 'launch', node, attempt: slot.attempt, role: 'writer', rid: runId(project, node, slot.attempt, 'writer'), spec: launchSpec({ ...agent, cwd: slot.worktree, task: writerTask(s, node), name: runName(node, slot.attempt, 'writer') }), labels: runLabels(project, node, slot.attempt, 'writer') };
 }
 /** Launch action of reviewer run `n` (attempt-global) on the node's current candidate (cwd = repo root, task = review packet). */
 export function reviewerLaunch(s: State, node: string, n: number, project: string, root: string): Extract<Action, { do: 'launch' }> {
   const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan).reviewer;
-  return { do: 'launch', node, attempt: slot.attempt, role: 'reviewer', n, rid: runId(project, node, slot.attempt, 'reviewer', n), spec: launchSpec({ ...agent, cwd: root, task: reviewPacket(s, node, n) }), labels: runLabels(project, node, slot.attempt, 'reviewer') };
+  return { do: 'launch', node, attempt: slot.attempt, role: 'reviewer', n, rid: runId(project, node, slot.attempt, 'reviewer', n), spec: launchSpec({ ...agent, cwd: root, task: reviewPacket(s, node, n), name: runName(node, slot.attempt, 'reviewer', n) }), labels: runLabels(project, node, slot.attempt, 'reviewer') };
 }
 export const WRITER_INTERRUPTED = 'You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.';
 export const submitMessage = (node: string): string => `commit your work and run \`owed submit ${node}\``;
@@ -231,10 +234,12 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   for (const x of ar.sends) {
     if (opts.applied.has(x.send) || !live.some(l => l.rid === x.rid)) continue;
     const refused = opts.rejected.get(x.send);
+    // D22.3: a rejected ruling send is never retried and never halts; its rulings travel with repairs and reviewer acks.
+    if (refused !== undefined && x.reason === 'ruling') continue;
     if (refused !== undefined) return halt(rejectedHalt(id, 'send', x.send, refused));
     const bytes = opts.blobs?.get(x.message);
     if (bytes === undefined || sha256(bytes) !== x.message) return halt(`cannot re-send ${x.send}: the stored message bytes (blob ${x.message}) were not supplied`);
-    return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send };
+    return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send, ...(x.rulings !== undefined ? { rulings: x.rulings } : {}) };
   }
   // Row 5: a run asking: notify (question, answer address); the driver never answers.
   for (const l of live) if (view(l).state === 'asking') return { do: 'notify', node: id, text: askingText(id, l, view(l)) };
@@ -250,10 +255,12 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const since = rb?.seq ?? slot.dispatchSeq, nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     return nudge ? halt(`writer run ${writer.rid} finished without submitting a candidate after follow-up ${nudge.send}`) : send(writer, 'follow-up', 'submit', submitMessage(id));
   }
+  const steerRulings = (): Action | undefined => rulingSteer(s, n, ar, live, view);
   const fenced = (): Action | undefined => {
     const f = w.lastFence;
     if (w.state !== 'running' || !f) return undefined;
-    const steer = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'steer');
+    // D22.2a: only a fenced steer answers a fence; a ruling steer never hides one.
+    const steer = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'steer' && x.reason === 'fenced');
     return !steer || f.at > Date.parse(steer.ts) ? send(writer, 'steer', 'fenced', fencedMessage(f.reason)) : undefined;
   };
   if (c) {
@@ -265,7 +272,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Repair: one follow-up per candidate, at most `repairs` per attempt; a writer that finishes it without resubmitting halts.
     const repair = (cause: string): Action | undefined => {
       const done = ar.sends.filter(x => x.reason === 'repair'), outstanding = done.findLast(x => x.seq > c.seq);
-      if (outstanding) return wSealed ? halt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`) : fenced();
+      if (outstanding) return wSealed ? halt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`) : fenced() ?? steerRulings();
       if (done.length >= opts.repairs) return halt(`repairs exhausted (${done.length} of ${opts.repairs}): ${cause}`);
       return send(writer, 'follow-up', 'repair', repairMessage(s, id));
     };
@@ -300,7 +307,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (current.length) return repair(`review block ${current.map(b => `#${b.seq} ${b.obligation}`).join(', ')}`);
     const reviewing = reviewers.some(l => !isSealed(view(l)));
     if (stale.length) {
-      if (reviewing) return fenced();
+      if (reviewing) return fenced() ?? steerRulings();
       return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active and no reviewer run of candidate #${c.seq} is running; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}`, 'owner');
     }
     // D23: everything but approve/evidence:* is satisfied and nothing blocks: halt for the owner (approve) or a human
@@ -321,8 +328,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       return halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}`, 'owner');
     }
   }
-  // Row 18: the running writer was fenced after the last steer.
-  return fenced();
+  // Row 18: the running writer was fenced after the last steer; else (D22.2a, lowest priority, only when the node
+  // would otherwise idle) a running driver run that lacks in-scope rulings gets them as a steer.
+  return fenced() ?? steerRulings();
 }
 
 /**
@@ -372,8 +380,51 @@ function relaunch(s: State, opts: DriveOpts, l: LaunchEntry): Action | undefined
   const stored = opts.blobs?.get(l.spec);
   return stored !== undefined && sha256(stored) === l.spec ? { ...base, spec: stored } : undefined;
 }
-function askingText(node: string, l: LaunchEntry, v: RunView): string {
+/**
+ * The highest ruling seq covering the node that run `l` already has (D22.2, D22.4a): a writer's dispatch `rulings_seen`
+ * and the in-scope rulings recorded before each `repair` send to it (its message lists the rulings since dispatch); a
+ * reviewer's packet at its launch (the in-scope rulings recorded before its launch entry); for both, the `rulings` of
+ * every recorded ruling send to it (also an unconfirmed or rejected one: a ruling send is never sent again under a new id).
+ */
+export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: LaunchEntry): number {
+  const inScope = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
+  const before = (seq: number): number => Math.max(-1, ...inScope.filter(r => r.seq < seq).map(r => r.seq));
+  const sends = ar.sends.filter(x => x.rid === l.rid);
+  const base = l.role === 'writer' ? Math.max(s.nodes[node]!.slot!.rulings_seen, ...sends.filter(x => x.reason === 'repair').map(x => before(x.seq))) : before(l.seq);
+  return Math.max(base, ...sends.filter(x => x.reason === 'ruling').map(x => x.rulings ?? -1));
+}
+/** Steer message of undelivered rulings (D22.2): one line per ruling `#<seq> (<nodes>): <text>`, then what to do. */
+export function rulingMessage(node: string, role: RunRole, rules: readonly Rule[]): string {
+  const top = Math.max(...rules.map(r => r.seq));
+  return [`New parent rulings for ${node}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
+    role === 'writer' ? 'Apply these rulings; they override your packet. If you already submitted, fix and submit again.' : `Judge the candidate against these rulings and record your review with --ack-rulings ${top}.`].join('\n');
+}
+/**
+ * The ruling steer of the node's attempt (D22.2/D22.2a), or undefined: the first `running` driver run (writer, then
+ * reviewers by n) that lacks an in-scope ruling gets every undelivered one. Never to an `asking` run.
+ */
+function rulingSteer(s: State, n: NodeState, ar: AttemptRuns, live: readonly LaunchEntry[], view: (l: LaunchEntry) => RunView): Action | undefined {
+  const inScope = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(n.id));
+  if (!inScope.length) return undefined;
+  const order = [...live].sort((a, b) => (a.role === 'writer' ? 0 : reviewerN(a)) - (b.role === 'writer' ? 0 : reviewerN(b)));
+  for (const l of order) {
+    if (view(l).state !== 'running') continue;
+    const delivered = deliveredRulings(s, n.id, ar, l), rules = inScope.filter(r => r.seq > delivered);
+    if (!rules.length) continue;
+    return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'steer', message: rulingMessage(n.id, l.role, rules), reason: 'ruling', rulings: Math.max(...rules.map(r => r.seq)) };
+  }
+  return undefined;
+}
+/**
+ * The asking line of a run (D22.6; halts, drive output and wake-up messages): one line per open question, addressed by
+ * dsa's call address `questions[].to` (`<wid>/<key>`), or the run id when dsa reports none, in both the pi `subagents`
+ * tool form and the CLI form.
+ */
+export function askingText(node: string, l: LaunchEntry, v: RunView): string {
   const qs = v.questions ?? [];
   if (!qs.length) return `${node}: ${l.role} run ${l.rid} is asking (no question reported; see pi-durable-subagents describe --key ${l.rid}); the driver never answers`;
-  return qs.map(q => `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer with: pi-durable-subagents send --request <id> --to ${l.rid} --kind answer --qid ${q.qid} --rev ${q.rev} --message @<file>`).join('\n');
+  return qs.map(q => {
+    const to = q.to ?? l.rid;
+    return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", to:${JSON.stringify(to)}, qid:${JSON.stringify(q.qid)}, message:"…"}; or: pi-durable-subagents send --request <id> --to ${to} --kind answer --qid ${q.qid} --rev ${q.rev} --message @<file>`;
+  }).join('\n');
 }

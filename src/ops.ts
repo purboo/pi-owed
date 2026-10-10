@@ -435,11 +435,11 @@ export async function launch(o: Actor & { node: string; attempt: number; role: R
   });
 }
 /** Records the intent to send `message` (exact bytes, stored as a blob) to run `rid`; the send id `${rid}:${sendKind}:${seq}` is assigned under the lock. */
-export async function send(o: Actor & { node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason }): Promise<SendEntry> {
+export async function send(o: Actor & { node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; rulings?: number }): Promise<SendEntry> {
   owner(o); const ledger = await Ledger.open(o.cwd), message = await ledger.putBlob(o.message);
   return ledger.withLock(async () => {
     const { state } = await load(ledger);
-    const d: Draft = { kind: 'send', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, rid: o.rid, send: `${o.rid}:${o.sendKind}:${state.seq + 1}`, sendKind: o.sendKind, message, reason: o.reason };
+    const d: Draft = { kind: 'send', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, rid: o.rid, send: `${o.rid}:${o.sendKind}:${state.seq + 1}`, sendKind: o.sendKind, message, reason: o.reason, ...(o.rulings !== undefined ? { rulings: o.rulings } : {}) };
     guard(state, d); return (await ledger.append([d]))[0] as SendEntry;
   });
 }
