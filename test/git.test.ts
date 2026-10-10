@@ -28,7 +28,7 @@ test('content keys reuse on merge, overlays, worktrees and trunk CAS', async () 
     try { await overlay(r.cwd, w.path, base, plan.closure, 'replace'); assert.equal(await readFile(join(w.path, 'helper'), 'utf8'), 'base'); await assert.rejects(access(join(w.path, 'extra-helper'))); } finally { await w.dispose(); }
     await assert.rejects(access(w.path));
     await git(r.cwd, ['checkout', 'main']);
-    await r.put('helper', 'dirty'); await assert.rejects(advanceTrunk(r.cwd, 'main', base, merge.commit), /dirty/);
+    await r.put('helper', 'dirty'); await assert.rejects(advanceTrunk(r.cwd, 'main', base, merge.commit), /trunk worktree .* has uncommitted changes/);
     await git(r.cwd, ['checkout', '--', 'helper']); await r.put('untracked-note', 'x'); await advanceTrunk(r.cwd, 'main', base, merge.commit); assert.equal(await revParse(r.cwd, 'main'), merge.commit);
     await assert.rejects(advanceTrunk(r.cwd, 'main', base, cand), /CAS/);
     const other = join(r.root, 'other'); await addWorktree(r.cwd, other, 'other', base); assert.equal(await revParse(other, 'HEAD'), base);

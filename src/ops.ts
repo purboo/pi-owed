@@ -1,10 +1,10 @@
 import { readFile, mkdir, appendFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify } from 'yaml';
 import { canonical } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
-import { parsePlan, planDowngrades } from './plan.ts';
+import { parsePlan, planDowngrades, worktreesConfig, expandBranch } from './plan.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
@@ -12,7 +12,7 @@ import { receipt, statusView, escapeSummary, driftText, dispatchPacket } from '.
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import type { Brief } from './views.ts';
-import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
+import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
 export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView }
@@ -111,14 +111,15 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     // Overlapping writes of concurrent slots produce conflicts or ambiguous ownership; refuse unless explicitly allowed.
     const overlaps = overlapping(state,o.node);
     if (overlaps.length && !o.allowOverlap) throw new OwedError(`writes of ${o.node} overlap the open slot of ${overlaps.join(', ')}; wait for ${overlaps.length > 1 ? 'them' : 'it'} or dispatch with --allow-overlap`);
-    const attempt = (n.slot?.attempt ?? 0)+1, branch = `owed/${o.node}/${attempt}`;
-    const worktree = join(root,'.owed','wt',`${o.node}-${attempt}`), rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
+    const attempt = (n.slot?.attempt ?? 0)+1, { branch, worktree, excludeLine } = await slotLayout(root,state.plan,spec,attempt);
+    const rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
     const packet = dispatchPacket(spec, attempt, worktree, rules);
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
     guard(state,d);
     const exclude = join(await git.commonDir(o.cwd),'info','exclude');
     await mkdir(dirname(exclude),{recursive:true}); let text = ''; try { text = await readFile(exclude,'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-    if (!text.split('\n').includes('.owed/')) await appendFile(exclude,'\n.owed/\n');
+    if (excludeLine && !text.split('\n').includes(excludeLine)) await appendFile(exclude,`\n${excludeLine}\n`);
+    await mkdir(dirname(worktree),{recursive:true});
     await git.addWorktree(root,worktree,branch,state.trunk.commit);
     let entry: Entry;
     try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw new OwedError('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
@@ -126,6 +127,30 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
   },'dispatch');
 }
+/** `path` with its deepest existing ancestor resolved through symlinks (the rest need not exist yet). */
+async function physical(path: string): Promise<string> {
+  try { return await realpath(path); } catch { const up = dirname(path); return up === path ? path : join(await physical(up), basename(path)); }
+}
+/**
+ * D19: branch and worktree of attempt `attempt` of node `spec` under the plan's `worktrees:` block (defaults: root
+ * `.owed/wt`, branch `owed/{node}/{attempt}`), and the info/exclude line: `.owed/` for the default root (as in 0.4.1),
+ * `/<repository-relative root>/` (glob metacharacters escaped) for another root inside the main worktree, none for a
+ * root outside it. The worktree path is physical (the root's deepest existing ancestor resolved through symlinks), so
+ * it equals git's toplevel inside the slot and writer inference matches it. Refuses (usage) an invalid branch name or a
+ * root equal to the main worktree root, before any effect.
+ */
+async function slotLayout(root: string, plan: Plan, spec: NodeSpec, attempt: number): Promise<{ branch: string; worktree: string; excludeLine?: string }> {
+  const cfg = worktreesConfig(plan), branch = expandBranch(cfg.branch, spec, attempt);
+  if ((await git.git(root,['check-ref-format','--branch',branch],{allowFail:true})).code) throw new OwedError(`branch name ${branch} (from worktrees.branch "${cfg.branch}") is not a valid git branch name`,'usage');
+  const base = await physical(resolve(root,cfg.root)), worktree = join(base,`${spec.id}-${attempt}`);
+  const rel = relative(await physical(root),base);
+  if (!rel) throw new OwedError(`worktrees.root ${cfg.root} is the main worktree root; use a directory inside or outside it`,'usage');
+  if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { branch, worktree };
+  const path = rel.split(sep).join('/');
+  return { branch, worktree, excludeLine: path === '.owed/wt' ? '.owed/' : `/${ignoreLiteral(path)}/` };
+}
+/** `text` as a literal gitignore pattern: `\`, `*`, `?` and `[` escaped, and a leading `!` or `#`. */
+export function ignoreLiteral(text: string): string { return text.replace(/[\\*?[]/g,'\\$&').replace(/^[!#]/,'\\$&'); }
 export async function submit(o: Actor & { node: string; commit?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), { state } = await load(ledger), n = node(state,o.node);
   if (!n.slot?.open) throw new OwedError('No open writer slot');
@@ -279,8 +304,8 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel:
 }
 export async function status(o: Context): Promise<StatusView> {
   const {state,entries} = await load(await Ledger.open(o.cwd)), view = statusView(inited(state),entries);
-  const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
-  return drift ? {...view,drift} : view;
+  const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit), trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
+  return {...view,...(drift ? {drift} : {}),...(trunkWorktree ? {trunkWorktree} : {})};
 }
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> { const {state,entries} = await load(await Ledger.open(o.cwd)); node(state,o.node); return receipt(state,entries,o.node); }
 export async function report(o: Context & {since?:number|string}): Promise<Report> {

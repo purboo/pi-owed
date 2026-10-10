@@ -25,7 +25,11 @@ export interface NodeSpec {
   checks: CheckSpec[];
   review: { count: number; min_rank: number };   // default {count:0,min_rank:1}
   brief?: string;
+  /** D19: fills `{type}` of the worktree branch template only (default `feat`); never an obligation. */
+  type?: string;
 }
+/** D19: optional `worktrees:` block of the plan; never an obligation, read by later dispatches only. */
+export interface WorktreesConfig { root: string /* absolute, or relative to the main worktree root */; branch: string /* template with {node}, {attempt}, optional {type} */ }
 /** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
 export interface DriveAgent { agent: string; model?: string }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
@@ -38,6 +42,7 @@ export interface Plan {
   invariants: CheckSpec[];
   nodes: NodeSpec[];
   drive?: DriveConfig;        // present only when the plan has a `drive:` block (filled with defaults)
+  worktrees?: WorktreesConfig; // D19: present only when the plan has a `worktrees:` block (filled with defaults)
 }
 export interface Downgrade { node: string; what: string }   // e.g. {node:'a', what:'check auth-tests removed'}
 
