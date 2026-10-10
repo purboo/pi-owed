@@ -16,7 +16,7 @@ entries, which never ease acceptance within the bounds) needs no change.
   whose commit starts with it: `candidate changed: you named <given>, the open
   candidate is #<seq> <commit12>; nothing recorded` (or `…, node <node> has no
   open candidate; nothing recorded`, which also refuses `--candidate` on a
-  merged node's receipt). Without the flag nothing changes, and the ledger
+  merged node's receipt). Without the flag no commit is checked, and the ledger
   records nothing new. Under `OWED_CONFIRM=owner` the waive and owner-review
   confirmations (pi dialog; CLI, unless `--i-am-owner`, printed before the TTY
   prompt) show the candidate — commit, submit seq, base and number of changed
@@ -34,13 +34,13 @@ entries, which never ease acceptance within the bounds) needs no change.
   and the `owed` skill say to pass the commit actually read.
 - **Judgment rails (G2; F3, F4, F5).** Inside a pi-durable-subagents call
   (`DSA_CALL` or `DSA_EXEC` set) owed refuses `review` and `evidence` on a node
-  when a working directory of the process (the CLI's directory; for pi tools
+  when a working directory of the process (the process's own directory; for pi tools
   also the `cwd` parameter and the session's directory), symlinks resolved, lies
   inside that node's open slot worktree: `a writer worktree cannot record a
   review or evidence for its own node; run the review from the repository root
   or another directory`. Driver reviewer runs start in the main worktree and are
   unaffected. Like the D25.3 rail it guards against accidents and instructions,
-  not deliberate evasion (SPEC §1). The review count of an obligation and the
+  not deliberate evasion (SPEC threat model). The review count of an obligation and the
   rulings acknowledgment now exclude every principal the append-time recusal
   excludes: any role whose id equals that of a writer of the node, in any
   attempt (0.5.1 excluded only the exact writer principal). `parent:drive` is
@@ -75,8 +75,9 @@ entries, which never ease acceptance within the bounds) needs no change.
   follow-up never went out); a follow-up to a sealed call still waits for the
   next generation. The rebase follow-up (and the rebasing repair) lists the
   files that conflict between the previous candidate and the new base (`git
-  merge-tree --write-tree --name-only -z`, computed only when that follow-up is
-  due), `none` when it merges cleanly, omitted when git fails. Trunk drift (0.5.1 deferrals): when a pass after a drift finds
+  merge-tree --write-tree --name-only -z`, computed only in passes where that
+  follow-up can be due), `none` when it merges cleanly, omitted when the previous
+  commit is unknown or git fails. Trunk drift (0.5.1 deferrals): when a pass after a drift finds
   trunk equal to the ledger trunk again, the driver forgets the drift notify's
   print and wake records and logs the quiet event `drift-cleared`, on which the
   follower forgets its own, so an identical later drift prints and wakes again;
@@ -89,7 +90,8 @@ entries, which never ease acceptance within the bounds) needs no change.
   trunk.
 - **Plan and worktree hygiene (G4; 0.5.0 deferrals).** A new plan (`owed init`,
   `owed plan`) is refused when `worktrees.root` or `worktrees.branch` contains a
-  control character (below 0x20, 0x7f, U+2028, U+2029; 0.5.1 refused only NUL),
+  control character (below 0x20, 0x7f, U+2028, U+2029; 0.5.1 refused only NUL, and only in
+  `worktrees.root`),
   or when the branch template could render two (node, attempt) pairs as the same
   name: `{node}` must occur exactly once, and each `{attempt}` or `{type}` must
   be separated from it by a character that cannot occur in that value (such as
@@ -113,8 +115,8 @@ entries, which never ease acceptance within the bounds) needs no change.
 pi-owed 0.5.1 can read a ledger written by 0.6.0. G2's recusal can change
 replayed views of existing ledgers: a review by `reviewer:X#n` no longer counts
 once `writer:X#n` exists. Replays of the pi-owed and wais ledgers passed `owed
-verify`, and their status, report and why outputs were byte-identical before and
-after. Replay now refuses an entry by `parent:drive` of a kind the driver never
+verify`, and their status, report and why outputs were byte-identical with and
+without the recusal change. Replay now refuses an entry by `parent:drive` of a kind the driver never
 writes, and `--as parent:drive` is refused. A subagent's review or evidence from
 inside the node's slot worktree is refused; this is a rail, not a security
 boundary: nothing prevents a `cd` to the repository root. Upgrade the `owed` CLI
@@ -122,12 +124,16 @@ on PATH together with the driver and the pi extension: 0.6.0 review packets and
 suggested commands pass `--candidate`, which a 0.5.1 CLI rejects as an unknown
 option.
 
-**Deferred.** `owed plan --probe` (a dry run of check commands; 0.5.1 already
+**Deferred.** `owed plan --probe` (heuristic resolution of check commands; 0.5.1 already
 reports exit 127 with the failing lines) and a plan warning for a check mixing
 cargo and TAP. To 0.6.1: a dispatch rollback continues after a failing step
 (worktree remove, branch deletion); node ids differing only in case on
 case-insensitive filesystems; caps for `formal/run-a3-big.sh`; M4 and M6 are
-within 9% of the 22M-state cap.
+within 9% of the 22M-state cap; a follow-up forwarded into running work that
+dsa retires because the call sealed before delivery ends in a misleading
+`finished repair follow-up without submitting` halt. 0.7 candidates: bind a
+reviewer's identity to its dsa call; rulings that uphold or overrule a named
+block.
 
 ## 0.5.1
 
