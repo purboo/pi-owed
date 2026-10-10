@@ -329,14 +329,13 @@ test('D24 ruling #392: a node attest completes while a genesis attest runs (gene
     assert.equal(out.accepted, true);
     assert.deepEqual(out.observations.map(e => e.kind === 'obs' && e.obligation), ['inv:inv', 'check:quick', 'writes']);
     assert.equal((await ops.status({ cwd: r.cwd })).genesis, undefined, 'the node attest observed the genesis item');
-    // A second genesis attest waits for the first one's lock (it does not overlap it).
-    const second = ops.attestGenesis({ cwd: r.cwd });
-    second.catch(() => {});
-    assert.equal(await within(second, 1000), 'pending', 'the second genesis attest waits for the genesis lock');
+    // A second genesis attest does not overlap the first one: 0.7 (K1.2) refuses it at once as busy (it waited before).
+    const second = await within(ops.attestGenesis({ cwd: r.cwd }).catch((e: unknown) => e), 10_000);
+    assert.ok(second instanceof OwedError && second.code === 'busy' && /^attest --genesis is already running \(pid \d+ on /.test(second.message), `the second genesis attest is busy: ${String(second)}`);
     await open(r.root, 'inv');
     const g = await genesis;
     assert.equal(g.complete, true); assert.equal(g.observations.length, 1, 'its observation is recorded too (a fact about the same key)');
-    const g2 = await second;
+    const g2 = await ops.attestGenesis({ cwd: r.cwd });
     assert.equal(g2.complete, true); assert.equal(g2.observations.length, 0, 'nothing left to measure');
     assert.equal(obsOf(await entries(r.cwd), 'inv:inv').length, 2);
     assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
