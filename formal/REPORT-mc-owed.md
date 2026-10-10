@@ -312,3 +312,28 @@ a merge needs an owner defer (new invariant debt), and it would hold only under 
   (content, trunk) otherwise.
 - Engine: formal/mc unchanged. Memory per distinct state is ~300 B at these sizes, because the full frontier states
   carry Vec fields; the default-budget exhaustive run therefore does not fit the 14 GB cap (nor today's 8 GB cap, §4).
+
+## 9. 0.7 merge CAS
+
+0.7 (node merge-cas) narrows ops.merge's final check from `stable()` (whole plan sha) to a node-scoped CAS
+(src/ops.ts:71 `nodeStable`: ledger trunk, the node's slot and candidate, then the trunk ref at :391). The claim of §1
+and §8, that the model's split of merge into measurement and append steps is a superset of the code, still holds; the
+model is unchanged. Checked against formal/models/src/owed05.rs:
+- The model's driver appends each merge-result observation as its own step, in any state where the candidate is
+  accepted and the job is in `merge_jobs` (owed05.rs:1207–1215; ops path :1012 and :1022). `merge_jobs` (:698) yields
+  only keys under the current plan that lack a verdict, pass or fail (`(cp | cf) & bit == 0`), like `mergeJobs` with
+  `hasVerdict` (reducer.ts:785, :26). Plan updates and other processes' entries interleave freely between these steps.
+  A plan change to the node's spec (or exec) drops the candidate (:894), and the code's CAS then refuses with nothing
+  recorded.
+- The code keeps a measured observation only if its job is still a merge or genesis job of the latest state, with
+  the facts recomputed under the latest plan (ops.ts:396 and `mergeCurrent`, :425). Each appended observation is
+  therefore one model step at the latest state. The code drops the others, and measuring has no ledger effect.
+- The merge entry is appended only when `mergeGuard` holds on the latest state plus the kept observations, and no job
+  of that state is left unmeasured (ops.ts:400–406). In the model this is the `Merge` step, enabled when `merge_jobs`
+  is empty (:1209–1211), with `merge_guard` (:674) evaluated in `validate` (:861) on that state. The merge key is
+  taken under the plan in force at that step (`merge_check_key`, :624). Errors are outside the model (§8): an `error`
+  observation is measured again by the next merge.
+- One gap is unchanged from 0.6. On a guard refusal the kept observations are appended even when the node is no
+  longer accepted at the append, for example after a reviewer block or a new ruling. The tools-mode ops path does not
+  have this step: `ops_diff` requires `accepted`. Forge mode covers it: the forger appends truthful executor
+  observations, with or without `merging`, in any state, and safety S HOLDS there (M4, M4b).

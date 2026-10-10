@@ -482,6 +482,36 @@ For node n with accepted candidate C, trunk PRE, merge commit M (tree from
    `defer` for this node (then it stays in D, shown as deferred).
 4. Genesis observation finished: every invariant has a non-⊥ obs on s₀'s key.
 The merge entry is appended in the same locked step as the guard evaluation.
+
+**Measurement and node-scoped CAS (0.7).** Under the `merge` lock, merge
+measures the genesis jobs and the merge-result jobs (`check:*` on M, invariants
+on M) whose (subject, obligation, key) lacks a verdict in the state it loaded:
+a pass or a fail on the same key is reused (same key, same fact), an `error` is
+measured again. Then, under the ledger lock, it compares only what it measured
+from with the latest state: the ledger trunk commit, refs/heads/<trunk>, n's
+slot (dispatch seq, attempt, base, open) and n's candidate (submit seq, commit).
+If one moved, it refuses and records nothing:
+- a changed slot (abandon, rebase, a new dispatch): `slot of <n> changed
+  (#<seq> <kind>); nothing recorded`;
+- a candidate a plan entry invalidated (n's spec, `setup`, `exec` or
+  `closure` changed, §3): `candidate
+  #<S> <commit12> of <n> was invalidated by plan #<N> (its spec changed); the
+  writer submits again, then merge`;
+- the trunk ref moved: `trunk changed (CAS): …` (below);
+- otherwise (a new submit, the ledger trunk moved): `Plan, candidate or trunk
+  changed; retry`.
+
+Other entries (a plan update that keeps C, entries of other nodes) do not
+refuse by themselves. When the plan changed, merge recomputes M's facts and
+keys under the latest plan; it keeps each measured observation whose job is
+still a genesis or merge-result job of the latest state (same subject,
+obligation and key, still lacking a verdict; D24.1) and drops the others. The
+guard is evaluated on the latest state plus the kept observations. A job of the
+latest state this run did not measure (a key the plan update introduced)
+refuses with `not measured: <subject>/<obligation> (key <key12>), … (the plan
+changed while merge measured); run owed merge again: it measures only what
+lacks a verdict`. On any guard refusal the kept observations are appended and
+nothing else; a retry measures only the jobs still lacking a verdict.
 Conflicts in merge-tree → the merge is refused with a `writer` debt
 "rebase needed".
 
@@ -1555,8 +1585,9 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   signal or a timeout halts needing a human in the same pass.
 - **Merge** refusals are acted on in the same pass: `rebase needed` →
   `ops.rebase` (the writer's `rebase` follow-up comes from a later `decide`);
-  the transient `Plan, candidate or trunk changed; retry` (the ledger moved
-  while merge measured; merge recorded nothing) → retried next pass, no halt,
+  the transient `Plan, candidate or trunk changed; retry` (a new submit of the
+  node or a ledger trunk move while merge measured, §6.4; a plan update alone no
+  longer causes it since 0.7; merge recorded nothing) → retried next pass, no halt,
   not progress; trunk CAS drift (the ref moved during the merge) → the trunk
   drift notify below, retried next pass, no halt; any other → halt needing a
   human.
