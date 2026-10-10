@@ -176,6 +176,13 @@ memory cap. The full frontier states cost about 300 B per distinct state. At 14 
 (exit 134, no verdicts; log 101727, an earlier source sha). A first uncapped forge run (MAIN=2 FORGE=2) reached 23.8 GB
 RSS and I killed it (log 101145, cut off). M1 and M2 split those budgets exhaustively, and S1/S2 sample far larger ones.
 
+Caps since 0.6.0 (node formal-nits): every script in `models/scripts` runs under `ulimit -v` 8 GB and passes
+`--max-states` and `--timeout` to every owedmc run; `owed05-big.sh` caps exhaustive runs at 22M distinct states. Rerun
+of the whole script under these caps (log formal-nits-1-111216): M1-M6, S1 and S2 all complete with the same states,
+depths and verdicts as the table (max RSS 5.0 GB, M1). The default budgets above now stop cleanly at max-states
+(22.0M states, 6.7 GB RSS, 23 s, no verdicts, exit 1) instead of aborting. `explore.sh` and `traces.sh` rerun under
+their caps (8 GB, 20M states, 240 s) reproduce §5 and §6.
+
 ## 5. Ablations (each guard removed, same configuration; `scripts/explore.sh`, log 103217)
 
 | ablation (code removed) | property | baseline | ablated |
@@ -293,7 +300,10 @@ a merge needs an owner defer (new invariant debt), and it would hold only under 
   - CAS and trunk drift, locks and `stable()`: steps are atomic; merge and adopt are split into measurement and append
     steps (a superset);
   - channels tty and flag (the gate uses pi-confirm), and OWED_CONFIRM_TIMEOUT (a timeout records nothing, so it is
-    the same as no step).
+    the same as no step);
+  - `error` observations (an executor run that produced no verdict): the model's verdicts are pass/fail only. In the
+    code an `error` observation is no verdict (`hasVerdict`), never opens an exec block, and its attribution is skipped,
+    so it neither clears nor marks flaky an active exec block (reducer.ts `obs` case).
 - The forger never claims the owner, because a forged owner entry is indistinguishable from a real one by design
   (SPEC §1). Its observation verdicts are truthful.
 - Process-level properties trust the process ghost. NoSubagentAuthority does not cover the forger: SPEC §1 calls
@@ -301,4 +311,4 @@ a merge needs an owner defer (new invariant debt), and it would hold only under 
 - The model's merge keys assume the merge tree equals the candidate tree when trunk = base, and equals
   (content, trunk) otherwise.
 - Engine: formal/mc unchanged. Memory per distinct state is ~300 B at these sizes, because the full frontier states
-  carry Vec fields; the default-budget exhaustive run therefore does not fit the 14 GB cap.
+  carry Vec fields; the default-budget exhaustive run therefore does not fit the 14 GB cap (nor today's 8 GB cap, §4).
