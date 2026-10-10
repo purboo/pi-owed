@@ -107,9 +107,10 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
         // D21.3: a parent's downgrades accepted under an allowance are labelled with it.
         if(e.kind === 'plan' && !e.by.startsWith('owner:')) { const d=(await ops.report({cwd,since:e.seq-1})).downgrades.find(x => x.seq === e.seq); if(d?.allowance !== undefined) text+=`\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`; }
         const pending=await ops.genesisPending({cwd}); if(pending.length) { const w=`Warning: genesis attest pending for ${pending.join(', ')}`; if(opts.has('json')) io.error(w); else text=`${text}\n${w}`; }
-        text+=warnings.map(w => `\n${w}`).join('');
-        // H1.3: dispatchable ready nodes and no driver: one hint line, last (JSON: ready, driver false); nothing starts.
+        // H1.3: dispatchable ready nodes and no driver: one hint line before the H2.2 warnings, which end the text
+        // (JSON: ready, driver false); nothing starts.
         const ready=await readyHint(cwd); if(ready) { result={...e,warnings,ready,driver:false}; text=`${text}\n${readyHintText(ready,'cli')}`; }
+        text+=warnings.map(w => `\n${w}`).join('');
         break;
       }
       case 'rule': { const nodes=value('nodes',true)!; result=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(',')}); break; }

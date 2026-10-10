@@ -378,12 +378,12 @@ test('H1.3 CLI owed plan: a ready hint when nodes are dispatchable and no driver
     const r = await f.cli(['plan', 'p2.json']);
     assert.equal(r.code, 0, r.stderr);
     // The driver's order (more dependents first, then id); c waits for b.
-    assert.match(r.stdout, /\nready: b, a \(2\); no driver is running: owed drive --detach --stay\n$/);
+    assert.match(r.stdout, /\nready: b, a \(2\); no driver is running: owed drive --detach --stay\n(?:warning: [^\n]*\n)*$/, 'the hint precedes the H2.2 warnings, which end the text');
     await f.put('p3.json', JSON.stringify(nodes('a', 'b', 'c', 'd')));
     const out = JSON.parse((await f.cli(['plan', 'p3.json', '--json'])).stdout) as Json;
     assert.deepEqual(out.ready, ['b', 'a', 'd']); assert.equal(out.driver, false); assert.equal(out.kind, 'plan');
     assert.ok(Array.isArray(out.warnings) && (out.warnings as unknown[]).length > 0, 'H2.2 warnings stay alongside the hint');
-    assert.match(r.stdout, /\n(?:.*\n)*.*check.*\n(?:.*\n)*ready: /i, 'the check-less warnings come before the hint line');
+    assert.match(r.stdout, /\nready: [^\n]*\nwarning: node \w+ has no checks/, 'the check-less warnings follow the hint line');
     liveLock(f.lock);
     await f.put('p4.json', JSON.stringify(nodes('a', 'b', 'c', 'd', 'e')));
     const live = await f.cli(['plan', 'p4.json', '--json']);
@@ -397,7 +397,7 @@ test('H1.3 CLI owed plan: a ready hint when nodes are dispatchable and no driver
     writeFileSync(f.lock, JSON.stringify({ pid: 2 ** 22 + 7, host: hostname(), at: 'x', token: 'stale' }));
     await f.put('p6.json', JSON.stringify(nodes('a', 'b', 'c', 'd', 'e', 'g', 'k')));
     // drive.max (default 4) bounds what the driver would dispatch.
-    assert.match((await f.cli(['plan', 'p6.json'])).stdout, /\nready: b, a, d, e \(4\); no driver is running: owed drive --detach --stay\n$/, 'a stale lock is no driver');
+    assert.match((await f.cli(['plan', 'p6.json'])).stdout, /\nready: b, a, d, e \(4\); no driver is running: owed drive --detach --stay\n(?:warning: [^\n]*\n)*$/, 'a stale lock is no driver');
     rmSync(f.lock, { force: true });
     // Nothing dispatchable (drive.max open attempts): no hint.
     for (const id of ['a', 'b', 'd', 'e']) await ops.dispatch({ cwd: f.cwd, as: parent, node: id });
@@ -414,7 +414,7 @@ test('H1.3 pi owed_plan: the hint names owed_drive start stay:true; details read
     await f.put('p.json', JSON.stringify(planOf(node('a'))));
     const r = await h.call('plan', { plan: 'p.json' });
     assert.notEqual(r.isError, true, r.text);
-    assert.match(r.text, /\nready: a \(1\); no driver is running: owed_drive \{action:"start", stay:true\}$/);
+    assert.match(r.text, /\nready: a \(1\); no driver is running: owed_drive \{action:"start", stay:true\}(?:\nwarning: [^\n]*)*$/);
     assert.deepEqual(r.details.ready, ['a']); assert.equal(r.details.driver, false);
     liveLock(f.lock);
     await f.put('p2.json', JSON.stringify(planOf(node('a'), node('b'))));
