@@ -380,6 +380,8 @@ export const resolvedText = (n: number): string => `(${n} wake(s) resolved befor
  * revalidated; dropped lines are counted in a last line `(<n> wake(s) resolved before delivery)`, and a batch with no
  * wake line left is not delivered (merges and repeats keep riding along).
  */
+/** The record of the last wake taken for one reportKey (E3.1); `resolved`: that wake was dropped at delivery (H1.1b). */
+type Rec = { base: string; facts: number; n: number; resolved?: boolean };
 export class Follower {
   private readonly o: FollowerOptions;
   private offset: number;
@@ -387,9 +389,9 @@ export class Follower {
   private file?: { dev: number; ino: number };
   private timer?: NodeJS.Timeout;
   /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed or held delivery. */
-  private pending: { text: string; wake: boolean; repeatOf?: string; check?: WakeCheck }[] = [];
+  private pending: { text: string; wake: boolean; repeatOf?: string; key?: string; rec?: Rec; check?: WakeCheck }[] = [];
   /** reportKey → the last wake taken for delivery (text without the repeat suffix, fact mark) and its repeats since (E3.1). */
-  private readonly last = new Map<string, { base: string; facts: number; n: number }>();
+  private readonly last = new Map<string, Rec>();
   /** A terminal line (or the pid-gone notice) is pending: stop once it is delivered. */
   private ended = false;
   /** A `step` is revalidating / delivering: another one waits for the next tick. */
@@ -447,15 +449,17 @@ export class Follower {
       if (c.fact) {
         const f = c.fact, prior = this.last.get(f.key);
         if (prior && prior.base === f.base && f.facts <= prior.facts) {
-          // A repeat: no wake; only the latest repeat of the node rides along.
+          // A repeat: no wake; only the latest repeat of the node rides along. A repeat of a wake dropped as resolved
+          // (H1.1b) is as stale as that wake: it does not ride along.
           prior.n++;
+          if (prior.resolved) continue;
           this.pending = this.pending.filter(p => p.repeatOf !== f.key);
           this.pending.push({ text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.key });
           continue;
         }
         this.last.set(f.key, { base: f.base, facts: f.facts, n: 0 });
       }
-      this.pending.push({ text: c.text, wake: true, ...(c.check ? { check: c.check } : {}) });
+      this.pending.push({ text: c.text, wake: true, ...(c.fact ? { key: c.fact.key, rec: this.last.get(c.fact.key)! } : {}), ...(c.check ? { check: c.check } : {}) });
       if (c.kind === 'terminal') this.ended = true;
     }
     if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true }); }
@@ -496,7 +500,11 @@ export class Follower {
     const dropped = new Set(wakes.filter((_, i) => keep[i] === false));
     // Nothing reads while a step runs (one step at a time); anything appended after the snapshot stays pending.
     const rest = this.pending.slice(batch.length);
-    const left = batch.filter(p => !dropped.has(p));
+    // A dropped wake that is still its key's current record also drops that record's repeat ride-alongs, and later
+    // repeats of it are skipped; a newer wake of the same key (another text or mark) keeps its own repeats.
+    const resolvedKeys = new Set<string>();
+    for (const p of dropped) if (p.key !== undefined && p.rec && this.last.get(p.key) === p.rec) { p.rec.resolved = true; resolvedKeys.add(p.key); }
+    const left = batch.filter(p => !dropped.has(p) && !(p.repeatOf !== undefined && resolvedKeys.has(p.repeatOf)));
     if (!left.some(p => p.wake)) { this.pending = [...left, ...rest]; return undefined; }
     const message = this.message(left, dropped.size);
     try { this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick

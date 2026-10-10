@@ -140,7 +140,11 @@ export function factMark(s: State, node: string): number {
 }
 /** Suffix of a repeated wake line (E3.1). */
 export const repeatText = (n: number): string => ` (repeat ${n}, no new ledger entries)`;
-export interface PassResult { actions: ActionReport[]; progress: boolean; idle: boolean }
+export interface PassResult {
+  actions: ActionReport[]; progress: boolean; idle: boolean;
+  /** The ledger head (hash of the last entry) the pass decided on (H1.2: a staying driver's idle baseline). */
+  head: string;
+}
 
 /**
  * Caches of dsa's own answers this process may reuse across passes (D14: they never carry a verdict): send ids dsa
@@ -175,14 +179,28 @@ export async function dispatchable(cwd: string): Promise<string[]> {
   const actions = decide(s, s.plan, new Map(), { max: cfg.max, repairs: cfg.repairs, project: projectId(s), root: await git.mainRoot(cwd), applied: new Set(), rejected: new Map() });
   return actions.filter(a => a.do === 'dispatch').map(a => a.node);
 }
-/** The last line of `<dir>/ledger.jsonl` (its head entry), read from the file's end; '' when there is none (H1.2). */
+/**
+ * The ledger head of `<dir>/ledger.jsonl`: the `hash` of its last complete entry (comparable with `State.head`), read
+ * from the file's end (the whole file only when the last entry is longer than the tail); '' when there is none (H1.2).
+ */
 export function ledgerHead(dir: string): string {
   let fd: number;
   try { fd = openSync(join(dir, 'ledger.jsonl'), 'r'); } catch { return ''; }
+  const hashOf = (line: string | undefined): string | undefined => {
+    if (!line) return undefined;
+    try { const h = (JSON.parse(line) as { hash?: unknown }).hash; return typeof h === 'string' ? h : undefined; } catch { return undefined; }
+  };
   try {
-    const size = fstatSync(fd).size, from = Math.max(0, size - 64 * 1024), buf = Buffer.alloc(size - from);
-    const n = readSync(fd, buf, 0, buf.length, from), lines = buf.subarray(0, n).toString('utf8').split('\n').filter(l => l.trim());
-    return `${size}:${lines.at(-1) ?? ''}`;
+    const size = fstatSync(fd).size;
+    for (const tail of [64 * 1024, size]) {
+      const from = Math.max(0, size - tail), buf = Buffer.alloc(size - from);
+      const n = readSync(fd, buf, 0, buf.length, from), text = buf.subarray(0, n).toString('utf8');
+      // Only complete lines: an entry being appended (no newline yet) is not the head.
+      const lines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n').filter(l => l.trim());
+      const h = hashOf(lines.at(-1));
+      if (h !== undefined || from === 0) return h ?? '';
+    }
+    return '';
   } finally { closeSync(fd); }
 }
 
@@ -420,7 +438,7 @@ export class Driver {
     }
     const head = (await ledger.read()).at(-1)?.hash;
     const open = Object.values(s.nodes).some(n => n.slot?.open);
-    return { actions: reports, progress: applied || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') };
+    return { actions: reports, progress: applied || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch'), head: s.head };
   }
 
   /**
@@ -697,21 +715,22 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
     /** H1.2: start of the current idle period of a staying driver (one `idle-wait` line per period). */
     let idleAt: string | undefined;
     for (;;) {
-      let idle = false;
+      /** H1.2: the ledger head the idle pass decided on; undefined when the last pass was not idle. */
+      let idle: string | undefined;
       for (let burst = 0; burst < 20 && !driver.stopping; burst++) {
         const r = await driver.pass();
         if (r.idle && !o.stay) { say('idle: nothing open and nothing ready', { event: 'idle' }); end.reason = 'idle'; return 0; }
-        if (r.idle) { idle = true; break; }
+        if (r.idle) { idle = r.head; break; }
         idleAt = undefined;
         if (!r.progress) break;
       }
-      if (idle && !driver.stopping) {
-        // Stay: keep the lock and wait for the ledger head to change (a plan update, a ruling, an abandon…), then pass.
+      if (idle !== undefined && !driver.stopping) {
+        // Stay: keep the lock and wait for the ledger head to differ from the head the idle pass decided on (a plan
+        // update, a ruling, an abandon…), then pass. An entry appended during that pass is already a change: no wait.
         if (idleAt === undefined) { idleAt = new Date().toISOString(); say(IDLE_WAIT_TEXT, { event: 'idle-wait', at: idleAt }); }
-        const head = ledgerHead(ledger.dir);
-        while (!driver.stopping) {
+        const head = idle;
+        while (!driver.stopping && ledgerHead(ledger.dir) === head) {
           await sleep(o.pollMs ?? 3000, stop.signal);
-          if (driver.stopping || ledgerHead(ledger.dir) !== head) break;
         }
       } else {
         const last = Date.now();
