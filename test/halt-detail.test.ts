@@ -9,6 +9,7 @@ import { parsePlan } from '../src/plan.ts';
 import { Ledger } from '../src/ledger.ts';
 import { runJob } from '../src/exec.ts';
 import * as ops from '../src/ops.ts';
+import * as views from '../src/views.ts';
 import type { AttestJob, ObsEntry } from '../src/types.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -169,5 +170,45 @@ test('K2.3: waivers say what they mean and their true scope; why shows a waived 
     assert.doesNotMatch(meaningC, /flaky/);
     await ops.attest({ cwd: x.cwd, node: 'c' });
     assert.equal((await ops.why({ cwd: x.cwd, node: 'c' })).items.find(i => i.obligation === 'check:unit')?.status, 'E');
+  } finally { await x.cleanup(); }
+});
+
+test('K2.2: a shown note is cut by whole code points and whole escapes, at most 200 characters', () => {
+  assert.equal(typeof views.shortNote, 'function');
+  const short = views.shortNote;
+  assert.equal(short('ok'), 'ok');
+  assert.equal(short('x'.repeat(200)), 'x'.repeat(200));
+  // An emoji (a surrogate pair) at the cut is dropped whole, never split.
+  assert.equal(short(`${'x'.repeat(198)}😀${'y'.repeat(10)}`), `${'x'.repeat(198)}…`);
+  assert.equal(short(`${'x'.repeat(197)}😀${'y'.repeat(10)}`), `${'x'.repeat(197)}😀…`);
+  // An escaped control character (\u0001, six characters once escaped) or newline is not cut in half.
+  assert.equal(short(`${'x'.repeat(197)}\u0001${'y'.repeat(10)}`), `${'x'.repeat(197)}…`);
+  assert.equal(short(`${'x'.repeat(197)}\n${'y'.repeat(10)}`), `${'x'.repeat(197)}\\n…`);
+  for (const n of [195, 196, 197, 198, 199]) assert.ok(short(`${'x'.repeat(n)}\u0001\n😀${'z'.repeat(300)}`).length <= 200, String(n));
+});
+
+test('K2.3: the waive text comes from the ledger at the waiver; a later attempt with the same key keeps the waiver', { timeout: 300_000 }, async () => {
+  assert.equal(typeof ops.waiverMeaning, 'function');
+  const { x, slots } = await fixture();
+  try {
+    const parent = { role: 'parent' as const, id: 'main' };
+    const first = (await ops.status({ cwd: x.cwd })).nodes.c!.candidate!, keyC = first.keys['check:unit']!;
+    const w = await ops.waive({ cwd: x.cwd, node: 'c', obligation: 'check:unit', reason: 'later', as: { role: 'owner', id: 'pi' }, channel: 'delegated' });
+    // A later submit with other content: the item is owed again under its new key ...
+    await commitAt(slots.c!, { 'src/c': 'c2\n' });
+    await ops.submit({ cwd: slots.c!, node: 'c', as: { role: 'writer', id: 'c#1' } });
+    const next = (await ops.status({ cwd: x.cwd })).nodes.c!.candidate!;
+    assert.notEqual(next.seq, first.seq); assert.notEqual(next.keys['check:unit'], keyC);
+    // ... but the waiver's text still names the candidate and the state it was recorded on.
+    const meaning = await ops.waiverMeaning({ cwd: x.cwd, entry: w });
+    assert.ok(meaning.startsWith(`waived check:unit for candidate #${first.seq} ${first.commit.slice(0, 12)} (key ${keyC.slice(0, 12)}): in effect now; `), meaning);
+    assert.doesNotMatch(meaning, new RegExp(`#${next.seq} `));
+    // A later attempt whose candidate has the waived key: the waiver is in effect again, as the text says.
+    await ops.abandon({ cwd: x.cwd, as: parent, node: 'c', reason: 'retry' });
+    const d = await ops.dispatch({ cwd: x.cwd, node: 'c', as: parent });
+    await commitAt(d.worktree, { 'src/c': 'c\n' });
+    await ops.submit({ cwd: d.worktree, node: 'c', as: { role: 'writer', id: 'c#2' } });
+    const item = (await ops.why({ cwd: x.cwd, node: 'c' })).items.find(i => i.obligation === 'check:unit')!;
+    assert.equal(item.key, keyC); assert.equal(item.status, 'W'); assert.ok(item.evidence.includes(w.seq));
   } finally { await x.cleanup(); }
 });
