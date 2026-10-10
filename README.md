@@ -323,7 +323,7 @@ A node `drive` is not an obligation: changing it is never a downgrade, keeps
 the submitted candidate and affects only later launches (a re-launch resends
 the recorded bytes). `owed why <node>` shows
 `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` for a node that
-sets it. A plan using a node `drive` needs owed ≥ 0.7.0.
+sets it. owed 0.6.x ignores a node's `drive` and launches with the plan's drive.
 
 `--detach` refuses while a driver holds the lock (naming pid, host, start and
 log). Otherwise it keeps the previous log as `.git/owed/drive/log.jsonl.1`,
