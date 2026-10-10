@@ -69,6 +69,11 @@ export interface DriveOpts {
   blobs?: ReadonlyMap<string, string>;
   /** Merges refused in this process, by node. */
   merges?: ReadonlyMap<string, MergeRefusal>;
+  /**
+   * G3.7: by node, the paths that conflict between the previous candidate of the slot's latest rebase and its new base
+   * (`git merge-tree --write-tree --name-only`; empty: merges cleanly). Absent when unknown (no previous commit, git failed).
+   */
+  conflicts?: ReadonlyMap<string, readonly string[]>;
 }
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
@@ -142,10 +147,15 @@ export function repairFollowUp(s: State, node: string): { message: string; rulin
     `The \`owed why ${node}\` card:`, '',
     renderReceipt(receipt(s, entries, node))].join('\n') };
 }
-/** Rebase follow-up after the slot's latest rebase (stable: it names the rebase entry's bases, not the current trunk). */
-export function rebaseMessage(s: State, node: string): string {
+/** G3.7: the conflicting-files clause of a rebase instruction; empty when the list is unknown. */
+const conflictText = (conflicts?: readonly string[]): string => conflicts ? ` (files that conflict with your previous candidate: ${conflicts.length ? conflicts.join(', ') : 'none'})` : '';
+/**
+ * Rebase follow-up after the slot's latest rebase (stable: it names the rebase entry's bases, not the current trunk).
+ * `conflicts` (G3.7): the paths that conflict between the previous candidate and the new base, when known.
+ */
+export function rebaseMessage(s: State, node: string, conflicts?: readonly string[]): string {
   const slot = s.nodes[node]!.slot!, r = slot.rebase!;
-  return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): in ${slot.worktree} run \`git rebase --onto ${r.base} ${r.from}\`, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
+  return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): in ${slot.worktree} run \`git rebase --onto ${r.base} ${r.from}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
 }
 /** The latest submit of the node's open attempt (also one a plan change or rebase no longer counts as the candidate). */
 const lastSubmit = (s: State, node: string): SubmitEntry | undefined => {
@@ -168,7 +178,7 @@ export function resubmitBlocks(s: State, node: string): Block[] {
  * notes, why a new candidate is needed (plan changed, or trunk moved with the rebase instructions), then commit and
  * submit. `rulings` (E4): the highest seq it carries, 0 when none.
  */
-export function resubmitFollowUp(s: State, node: string): { message: string; rulings: number } {
+export function resubmitFollowUp(s: State, node: string, conflicts?: readonly string[]): { message: string; rulings: number } {
   const n = s.nodes[node]!, slot = n.slot!, last = lastSubmit(s, node)!, entries = entriesOf(s), quoted: Rule[] = [];
   const notes = resubmitBlocks(s, node).map(b => {
     const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
@@ -181,7 +191,7 @@ export function resubmitFollowUp(s: State, node: string): { message: string; rul
   return { rulings: carried(rules), message: [
     ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`)] : []),
     `Review blocks on your candidate ${last.facts.commit} (submit #${last.seq}) of ${node}, attempt ${slot.attempt} (the reviewer's note):`, ...notes,
-    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\` and resolve conflicts within the allowed writes.`
+    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
       : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
     `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
 }
@@ -315,10 +325,10 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const done = ar.sends.filter(x => x.reason === 'repair'), outstanding = done.findLast(x => x.seq > Math.max(rb?.seq ?? slot.dispatchSeq, lastSubmit(s, id)?.seq ?? -1));
       if (outstanding) return halt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`);
       if (done.length >= opts.repairs) return halt(`repairs exhausted (${done.length} of ${opts.repairs}): ${cause}`);
-      const r = resubmitFollowUp(s, id);
+      const r = resubmitFollowUp(s, id, opts.conflicts?.get(id));
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     }
-    if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) return send(writer, 'follow-up', 'rebase', rebaseMessage(s, id));
+    if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) return send(writer, 'follow-up', 'rebase', rebaseMessage(s, id, opts.conflicts?.get(id)));
     const since = rb?.seq ?? slot.dispatchSeq, nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     return nudge ? halt(`writer run ${writer.rid} finished without submitting a candidate after follow-up ${nudge.send}`) : send(writer, 'follow-up', 'submit', submitMessage(id));
   }

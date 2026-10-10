@@ -9,6 +9,7 @@ import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFile } from 'node:child_process';
 import { sha256 } from '../src/canon.ts';
 import * as drv from '../src/drive.ts';
 import { decide, reviewerLaunch, writerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
@@ -337,4 +338,117 @@ test('G3.4a: when drift clears, an identical later drift prints again in the loo
     assert.equal(got.length, 2, got.join('\n---\n'));
     assert.equal(classifyLine(lines.find(l => /drift-cleared/.test(l))!).kind, 'quiet');
   } finally { rmSync(tmp, { recursive: true, force: true }); await r.cleanup(); }
+});
+
+// ---------- G3.7: the rebase instruction lists the conflicting files ----------
+test('G3.7: the rebase follow-up and the rebasing repair list the conflicting files (none when clean; omitted when unknown)', () => {
+  const rebased = (block: boolean) => {
+    const r = rig(); r.dispatch(); r.launchWriter(); r.submit(); r.pass();
+    if (block) r.review('block', { by: 'reviewer:human', note: 'rename it' });
+    r.add({ kind: 'adopt', by: 'owner:human', channel: 'tty', trunk: 'main', prior: 's0', commit: 's1', state: { commit: 's1', tree: 't1', invKeys: {} }, changed: ['x'], commits: 1, note: 'moved' });
+    r.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, base: 's1', from: 's0' });
+    return r;
+  };
+  const r = rebased(false), runs = runsOf(sealed(W()));
+  const msg = (o: Partial<DriveOpts>) => { const a = act(r, runs, o); assert.ok(a?.do === 'send' && a.reason === 'rebase', JSON.stringify(a)); return a.message; };
+  assert.equal(msg({ conflicts: new Map([['a', ['a/x', 'a/y']]]) }), 'trunk moved; rebase your worktree onto main (s1): in /repo/.owed/wt/a-1 run `git rebase --onto s1 s0` (files that conflict with your previous candidate: a/x, a/y), resolve conflicts within the allowed writes, rerun checks, commit, then `owed submit a`');
+  assert.match(msg({ conflicts: new Map([['a', []]]) }), /`git rebase --onto s1 s0` \(files that conflict with your previous candidate: none\), resolve/);
+  assert.equal(msg({}), drv.rebaseMessage(r.state(), 'a'));
+  assert.doesNotMatch(msg({ conflicts: new Map([['b', ['b/x']]]) }), /conflict with your previous candidate/, 'another node\'s list');
+  const q = rebased(true), b = act(q, runs, { conflicts: new Map([['a', ['a/x']]]) });
+  assert.ok(b?.do === 'send' && b.reason === 'repair', JSON.stringify(b));
+  assert.match(b.message, /git rebase --onto s1 s0` \(files that conflict with your previous candidate: a\/x\) and resolve/);
+});
+
+test('G3.7: rebaseConflicts runs git merge-tree: conflicted paths only, [] when clean, undefined when git fails', async () => {
+  const r = await repo();
+  try {
+    const env = identity;
+    await r.put('README', 'x\n'); await r.put('k.txt', 'k\n'); await r.put('j.txt', 'j\n'); const base = await r.commit();
+    await git(r.cwd, ['checkout', '-qb', 'side'], { env });
+    await r.put('k.txt', 'side\n'); await r.put('j.txt', 'side j\n'); await r.put('new.txt', 'n\n'); const side = await r.commit();
+    await git(r.cwd, ['checkout', '-q', 'main'], { env });
+    await r.put('k.txt', 'main\n'); const moved = await r.commit();
+    const conflicts = NEW.run.rebaseConflicts as (cwd: string, base: string, commit: string) => Promise<string[] | undefined>;
+    assert.deepEqual(await conflicts(r.cwd, moved, side), ['k.txt']);
+    assert.deepEqual(await conflicts(r.cwd, base, side), []);
+    assert.equal(await conflicts(r.cwd, moved, 'f'.repeat(40)), undefined);
+  } finally { await r.cleanup(); }
+});
+
+// ---------- G3.6: a follow-up forwarded into running work is not a new generation ----------
+async function genRig(nodeSpec: object) {
+  const r = await repo();
+  const dir = join(r.root, 'dsa'), bin = join(r.root, 'bin'), agents = join(dir, 'agents');
+  await mkdir(agents, { recursive: true }); await mkdir(bin);
+  await writeFile(join(bin, 'owed'), `#!/bin/sh\nexec "${process.execPath}" "${OWED}" "$@"\n`); await chmod(join(bin, 'owed'), 0o755);
+  const env = { FAKE_DSA_DIR: dir, PATH: `${bin}:${process.env.PATH}`, ...identity };
+  const plan = { version: 1, trunk: 'main', closure: [], invariants: [], nodes: [nodeSpec] };
+  await r.put('README', 'x\n'); await r.commit();
+  await ops.init({ cwd: r.cwd, as: { role: 'owner', id: 'pi' }, channel: 'delegated', plan: JSON.stringify(plan) });
+  const entries = async (): Promise<Entry[]> => (await Ledger.open(r.cwd)).read();
+  const fake = async () => JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
+  const lines: string[] = [];
+  const driver = (dsa: Dsa) => new run.Driver({ cwd: r.cwd, log: (l: string) => lines.push(l), dsa, session: null });
+  /** Passes of one driver process (its generation facts persist) until `until` holds; at most n. */
+  const passes = async (d: run.Driver, until: (es: Entry[]) => boolean, n = 10) => { for (let i = 0; i < n && !until(await entries()); i++) await d.pass(); return entries(); };
+  return { ...r, dir, agents, env, entries, fake, lines, driver, passes };
+}
+const sendsOf = (es: Entry[], reason?: string) => es.filter((e): e is SendEntry => e.kind === 'send' && (!reason || e.reason === reason));
+
+test('G3.6 regression (wais #283): a repair forwarded into the running writer (no generation) does not hide its seal; row 8 sends the rebase follow-up', { timeout: 300_000 }, async () => {
+  const f = await genRig({ id: 'k', writes: ['k.txt'], checks: [{ id: 'good', run: 'grep -q good k.txt', reads: ['k.txt'] }], review: { count: 0, min_rank: 1 } });
+  try {
+    await writeFile(join(f.agents, 'k-writer-1.sh'), 'set -e\necho bad > k.txt; git add k.txt; git commit -qm bad; owed submit k\necho RUNNING\n');
+    await writeFile(join(f.dir, 'forward-follow-up'), '');
+    const d = f.driver(new Dsa({ bin: FAKE, env: f.env, timeoutMs: 120_000 }));
+    let es = await f.passes(d, x => sendsOf(x, 'repair').length > 0);
+    const repair = sendsOf(es, 'repair')[0];
+    assert.ok(repair, f.lines.join('\n'));
+    let st = (await f.fake()).runs[repair.rid];
+    assert.equal(st.state, 'running'); assert.equal(st.gen, 1, 'forwarded into generation 1');
+    assert.equal(st.forwards.length, 1);
+    // The writer (still generation 1) fixes, resubmits and its call seals at generation 1.
+    const wt = (await ops.status({ cwd: f.cwd })).nodes.k!.slot!.worktree;
+    await writeFile(join(wt, 'k.txt'), 'good\n');
+    await git(wt, ['add', 'k.txt'], { env: identity }); await git(wt, ['commit', '-qm', 'good'], { env: identity });
+    await new Promise<void>((resolve, reject) => execFile(process.execPath, [OWED, 'submit', 'k'], { cwd: wt, env: { ...process.env, ...identity } }, e => e ? reject(e) : resolve()));
+    const p = join(f.dir, 'state.json'), raw = JSON.parse(await readFile(p, 'utf8'));
+    Object.assign(raw.runs[repair.rid], { state: 'sealed', status: 'ok' }); await writeFile(p, JSON.stringify(raw));
+    // Trunk moves with a conflicting k.txt (adopted), so the merge is refused and the driver rebases.
+    await f.put('k.txt', 'trunk\n'); await f.commit();
+    await ops.adopt({ cwd: f.cwd, as: { role: 'owner', id: 'pi' }, channel: 'delegated', note: 'conflicting trunk change' });
+    es = await f.passes(d, x => sendsOf(x, 'rebase').length > 0);
+    assert.ok(es.some(e => e.kind === 'rebase'), f.lines.join('\n'));
+    const rebase = sendsOf(es, 'rebase')[0];
+    assert.ok(rebase, `the sealed writer gets the rebase follow-up:\n${f.lines.join('\n')}`);
+    assert.equal(es.filter(e => e.kind === 'halt').length, 0, f.lines.join('\n'));
+    // G3.7 through the executor: the follow-up names the conflicting file.
+    const text = await readFile(join(f.dir, 'messages', rebase.send), 'utf8');
+    assert.match(text, /\(files that conflict with your previous candidate: k\.txt\)/, text);
+    st = (await f.fake()).runs[repair.rid];
+    assert.equal(st.gen, 2, 'the rebase follow-up to the sealed call opened generation 2');
+  } finally { await f.cleanup(); }
+});
+
+test('G3.6: a follow-up to a sealed call without a generation in the reply still waits for generation g+1', { timeout: 300_000 }, async () => {
+  const f = await genRig({ id: 'm', writes: ['m.txt'], checks: [], review: { count: 0, min_rank: 1 } });
+  try {
+    await writeFile(join(f.agents, 'm-writer-1.sh'), 'set -e\necho m > m.txt; git add m.txt; git commit -qm m\necho "STATUS: unknown"\n');
+    await writeFile(join(f.agents, 'm-writer-2.sh'), 'owed submit m\n');
+    await writeFile(join(f.dir, 'stale-describe'), '3');
+    /** A dsa whose replies omit `generation` (as for a forwarded follow-up). */
+    class NoGeneration extends Dsa {
+      override async send(...args: Parameters<Dsa['send']>): ReturnType<Dsa['send']> {
+        const r = await super.send(...args);
+        if (r.outcome === 'applied') delete (r as { generation?: number }).generation;
+        return r;
+      }
+    }
+    const d = f.driver(new NoGeneration({ bin: FAKE, env: f.env, timeoutMs: 120_000 }));
+    const es = await f.passes(d, x => x.some(e => e.kind === 'merge'), 12);
+    assert.ok(es.some(e => e.kind === 'merge'), f.lines.join('\n'));
+    assert.deepEqual(sendsOf(es).map(x => x.reason), ['interrupted'], `the stale sealed views of generation 1 are not answered again:\n${f.lines.join('\n')}`);
+    assert.equal(es.filter(e => e.kind === 'halt').length, 0);
+  } finally { await f.cleanup(); }
 });

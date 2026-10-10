@@ -48,6 +48,17 @@ const driftReport = (s: State, d: git.TrunkDrift): ActionReport => ({ do: 'notif
 export const reportKey = (r: { node?: unknown; scope?: unknown }): string => `${r.scope === 'repo' ? 'repo' : 'node'}\u0000${String(r.node)}`;
 /** The key of the drift notify's records. */
 export const DRIFT_KEY = reportKey({ node: DRIFT_NODE, scope: 'repo' });
+/**
+ * G3.7: the paths that conflict when `commit` (a previous candidate) is merged onto `base`: `git merge-tree --write-tree
+ * --name-only --no-messages` (exit 0: clean, []; exit 1: the conflicted paths after the tree line); undefined on failure.
+ */
+export async function rebaseConflicts(cwd: string, base: string, commit: string): Promise<string[] | undefined> {
+  const r = await git.git(cwd, ['merge-tree', '--write-tree', '--name-only', '--no-messages', base, commit], { allowFail: true }).catch(() => undefined);
+  if (!r || (r.code !== 0 && r.code !== 1)) return undefined;
+  const lines = r.stdout.split('\n').filter(Boolean);
+  if (!lines.length || !/^[0-9a-f]{40,64}$/.test(lines[0]!)) return undefined;
+  return r.code === 0 ? [] : [...new Set(lines.slice(1))];
+}
 /** The transient merge refusal of `ops` (the plan, the candidate or trunk changed while merge measured). */
 const MERGE_TRANSIENT = 'Plan, candidate or trunk changed; retry';
 
@@ -134,6 +145,8 @@ class Facts {
   readonly expectGen = new Map<string, number>();
   /** rid → latest generation describe reported. */
   readonly lastGen = new Map<string, number>();
+  /** rid → state of the latest view describe reported in this process (G3.6). */
+  readonly lastState = new Map<string, RunView['state']>();
   /** `<reportKey>:<kind>` → last printed text key (notify, machine busy): the loop prints a line only when it changed. */
   readonly printed = new Map<string, string>();
   /** reportKey → the last wake printed for it (text without the repeat suffix, fact mark) and how often it repeated (E3.1). */
@@ -293,13 +306,16 @@ export class Driver {
    * Describe the live runs of every open, not halted attempt; ask dsa about recorded sends not yet confirmed; read the
    * stored bytes `decide` may need for retries. `rejected`: sends dsa reports rejected (this pass only).
    */
-  private async observe(s: State): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string> }> {
-    const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>();
+  private async observe(s: State): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]> }> {
+    const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
       if (!n.slot?.open || halted(s, n.id)) continue;
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
       if (!ar) continue;
+      // G3.7: a rebased slot without a candidate gets a rebase instruction: the files its previous candidate conflicts on.
+      const rb = n.slot.rebase;
+      if (!c && rb?.previous) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
       for (const l of ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq))) {
         try {
           const { view, gen } = await this.dsa.inspect(l.rid);
@@ -319,7 +335,7 @@ export class Driver {
         await blob(x.message);
       }
     }
-    return { runs, blobs, rejected };
+    return { runs, blobs, rejected, conflicts };
   }
 
   /**
@@ -328,6 +344,7 @@ export class Driver {
    */
   private current(view: RunView, gen: number | undefined): RunView {
     if (gen !== undefined) this.facts.lastGen.set(view.rid, gen);
+    this.facts.lastState.set(view.rid, view.state);
     const want = this.facts.expectGen.get(view.rid);
     if (want === undefined || gen === undefined) return view;
     if (gen >= want) { this.facts.expectGen.delete(view.rid); return view; }
@@ -343,8 +360,8 @@ export class Driver {
   async pass(): Promise<PassResult> {
     const ledger = await this.init(), s = await loadState(ledger), cfg = driveConfig(s.plan);
     this.project = projectId(s);
-    const { runs, blobs, rejected } = await this.observe(s);
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs });
+    const { runs, blobs, rejected, conflicts } = await this.observe(s);
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts });
     const reports: ActionReport[] = []; let applied = false;
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
     // (every other action continues) and emit the repo-level owner notify (the loop prints it once per change).
@@ -431,7 +448,11 @@ export class Driver {
           if (r.outcome === 'applied') {
             this.facts.applied.add(id);
             if (a.sendKind === 'follow-up') {
-              const last = this.facts.lastGen.get(a.rid), gen = r.generation ?? (last !== undefined ? last + 1 : undefined);
+              // G3.6: dsa opens generation g+1 only for a follow-up to a sealed call (the reply carries it); one to a
+              // running call is forwarded into the running generation (no `generation`): then nothing new is expected.
+              const last = this.facts.lastGen.get(a.rid), seen = this.facts.lastState.get(a.rid);
+              const forwarded = r.generation === undefined && (seen === 'running' || seen === 'asking' || seen === 'queued');
+              const gen = r.generation ?? (!forwarded && last !== undefined ? last + 1 : undefined);
               if (gen !== undefined) this.facts.expectGen.set(a.rid, gen);
             }
             return done('applied', true, a.send ? 're-sent' : undefined, x);
