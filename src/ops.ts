@@ -4,7 +4,7 @@ import { stringify } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
-import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors } from './plan.ts';
+import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors } from './plan.ts';
 import { genesisProgress, jobCurrent } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
@@ -92,9 +92,12 @@ async function writerTree(s: State, id: string, dirs: string[], env: NodeJS.Proc
   const tree = await physical(resolve(slot.worktree)), inside = (d: string) => d === tree || d.startsWith(tree.endsWith(sep) ? tree : tree + sep);
   for (const d of dirs) if (inside(await physical(resolve(d)))) throw new OwedError('a writer worktree cannot record a review or evidence for its own node; run the review from the repository root or another directory');
 }
-/** The plan blob bytes and sha stored for a plan text (canonical YAML); refuses a `worktrees:` block a new plan must not have (G4). */
+/**
+ * The plan blob bytes and sha stored for a plan text (canonical YAML); refuses a `worktrees:` block a new plan must
+ * not have (G4) and node ids equal ignoring case.
+ */
 function planBlob(text: string) {
-  const plan = parsePlan(text), hygiene = plan.worktrees ? worktreesErrors(plan.worktrees) : [];
+  const plan = parsePlan(text), hygiene = [...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan)];
   if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
   const data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
 }
@@ -247,13 +250,32 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     if (excludeLine && !text.split('\n').includes(excludeLine)) await appendFile(exclude,`\n${excludeLine}\n`);
     // The first directory mkdir created (undefined when the parent existed): a rollback removes what it created.
     const made = await mkdir(dirname(worktree),{recursive:true});
-    const unmake = async () => { if (made) for (let p = dirname(worktree); ; p = dirname(p)) { try { await rmdir(p); } catch { break; } if (p === made || dirname(p) === p) break; } };
-    try { await git.addWorktree(root,worktree,branch,state.trunk.commit); } catch (error) { await unmake(); throw error; }
+    // Removes the directories up to `made`; the failed rmdir is a rollback failure (they were all created here).
+    const unmake = async (): Promise<string | undefined> => {
+      if (made) for (let p = dirname(worktree); ; p = dirname(p)) { try { await rmdir(p); } catch (e) { return `rmdir ${p}: ${(e as NodeJS.ErrnoException).code ?? String(e)}`; } if (p === made || dirname(p) === p) break; }
+      return undefined;
+    };
+    try { await git.addWorktree(root,worktree,branch,state.trunk.commit); } catch (error) { throw await rolledBack(error,[['directory cleanup',unmake]]); }
     let entry: Entry;
     try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw new OwedError('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
-    catch (error) { await git.git(root,['worktree','remove',worktree]); await git.git(root,['branch','-d',branch]); await unmake(); throw error; }
+    catch (error) {
+      const run = (args: string[]) => async () => { const r = await git.git(root,args,{allowFail:true}); return r.code ? r.stderr.trim().split('\n').join(' ') || `exit ${r.code}` : undefined; };
+      throw await rolledBack(error,[['git worktree remove',run(['worktree','remove',worktree])],['git branch -d',run(['branch','-d',branch])],['directory cleanup',unmake]]);
+    }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
   },'dispatch');
+}
+/**
+ * Runs every rollback step of a failed dispatch, even after an earlier step failed; a step returns its failure text
+ * or undefined. Returns `error` itself when every step succeeded, otherwise an error of the same code naming the
+ * original failure and each failed step.
+ */
+async function rolledBack(error: unknown, steps: [string, () => Promise<string | undefined>][]): Promise<unknown> {
+  const failed: string[] = [];
+  for (const [name, step] of steps) { try { const f = await step(); if (f !== undefined) failed.push(`${name}: ${f}`); } catch (e) { failed.push(`${name}: ${e instanceof Error ? e.message : String(e)}`); } }
+  if (!failed.length) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  return new OwedError(`${message}\nrollback failed: ${failed.join('; ')}`, error instanceof OwedError ? error.code : 'internal');
 }
 /** `path` with its deepest existing ancestor resolved through symlinks (the rest need not exist yet). */
 async function physical(path: string): Promise<string> {

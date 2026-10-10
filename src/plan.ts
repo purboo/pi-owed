@@ -79,6 +79,19 @@ export function worktreesErrors(cfg: WorktreesConfig): string[] {
   if (CONTROL.test(cfg.branch)) errors.push('worktrees.branch: must not contain control characters');
   return [...errors, ...branchAmbiguityErrors(cfg.branch, 'worktrees.branch')];
 }
+/**
+ * Errors of a new plan whose node ids are distinct but equal ignoring case (checked when a plan is recorded, not on
+ * replay): on a case-insensitive filesystem such nodes would share a branch ref and a worktree directory.
+ */
+export function nodeIdCaseErrors(plan: Pick<Plan, 'nodes'>): string[] {
+  const seen = new Map<string, string>(), errors: string[] = [];
+  for (const { id } of plan.nodes) {
+    const key = id.toUpperCase().toLowerCase(), first = seen.get(key);
+    if (first === undefined) seen.set(key, id);
+    else if (first !== id) errors.push(`node ids ${first} and ${id} differ only in case: on a case-insensitive filesystem they would share a branch ref and a worktree directory`);
+  }
+  return errors;
+}
 /** Expands a (valid) branch template for attempt `attempt` of node `spec`; `{type}` defaults to `feat`. */
 export function expandBranch(template: string, spec: Pick<NodeSpec, 'id' | 'type'>, attempt: number): string {
   const values: Record<string, string> = { node: spec.id, attempt: String(attempt), type: spec.type ?? DEFAULT_NODE_TYPE };
