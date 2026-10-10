@@ -1828,7 +1828,8 @@ polling.
   new state has nodes the driver would dispatch now (the `dispatch` actions of
   `decide` on that state: readiness, `drive.max`, writes overlap, owner-needed)
   and no driver holds the repository's lock (a live lock or a lock of another
-  host counts as a driver; a stale one does not), the output adds one line:
+  host counts as a driver; a stale one does not), the output adds one line
+  (before the H2.2 check-less warnings, which end the text):
   CLI `ready: <ids> (<n>); no driver is running: owed drive --detach --stay`,
   pi `ready: <ids> (<n>); no driver is running: owed_drive {action:"start",
   stay:true}`. `--json` output and the tool details gain `ready: string[]` and
