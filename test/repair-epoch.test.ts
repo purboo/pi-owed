@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sha256 } from '../src/canon.ts';
 import * as driveMod from '../src/drive.ts';
+import { SKIP_ATTEST } from '../src/views.ts';
 import { decide, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
 import type { CandidateFacts, CheckSpec, Counts, Draft, Entry, NodeSpec, Plan, RunView, SendEntry, State } from '../src/types.ts';
@@ -79,6 +80,8 @@ function act(r: Rig, runs: Map<string, RunView> = sealed(), o: Partial<DriveOpts
 const isSend = (x: Action | undefined, reason: string): x is Extract<Action, { do: 'send' }> => x?.do === 'send' && x.reason === reason;
 /** Dispatched and the writer launched. */
 function started(a: NodeSpec = A0): Rig { const r = rig(a); r.dispatch(); r.record(act(r, new Map())); return r; }
+/** K1.3: each `owed attest <node>` in a writer message is followed by the skip clause (or none occurs). */
+const attestAdvice = (message: string): boolean => [...message.matchAll(/owed attest \S+( \(skip[^)]*\))?/g)].every(m => m[1] === ` ${SKIP_ATTEST}`);
 const UNDER = { tests: 100, pass: 100, fail: 0, skip: 0, format: 'cargo' } satisfies Counts;
 const NOTE = 'min_tests unmet: counted 100 (100 pass, 0 fail) < min_tests 200; exit 0';
 
@@ -144,6 +147,10 @@ test('K5.1: repairs exhausted names the epoch; a brief change restarts the budge
   // A title-only change invalidates the candidate (row 8 asks for a submit) but keeps the epoch.
   r.plan({ ...A0, title: 'Renamed' });
   assert.deepEqual(driveMod.repairEpoch(r.state(), 'a'), { seq: r.state().nodes.a!.slot!.dispatchSeq, label: 'dispatch' });
+  // K3: a node `drive` change (another writer/reviewer model) keeps it too.
+  r.plan({ ...A0, title: 'Renamed', drive: { writer: { agent: 'worker', model: 'm/x' }, reviewer: { model: 'm/y' } } });
+  assert.equal(r.state().plan.nodes.find(x => x.id === 'a')!.drive?.writer?.model, 'm/x');
+  assert.deepEqual(driveMod.repairEpoch(r.state(), 'a'), { seq: r.state().nodes.a!.slot!.dispatchSeq, label: 'dispatch' });
   // A brief change (the parent fixed the task) restarts it.
   const fixed = r.plan({ ...A0, title: 'Renamed', brief: 'Do A, as fixed.' });
   assert.deepEqual(driveMod.repairEpoch(r.state(), 'a'), { seq: fixed.seq, label: `plan #${fixed.seq}` });
@@ -160,7 +167,11 @@ test('K5.1: repairs exhausted names the epoch; a brief change restarts the budge
 test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node → one ruling follow-up, not a second halt; then the halt names it', () => {
   const r = started();
   r.submit(); const fail = r.obs('check:unit', 'fail', { note: 'not ok 7 - registry scan' }); r.pass('check:unit');
-  r.record(act(r));
+  const rep = act(r);
+  assert.ok(isSend(rep, 'repair'), JSON.stringify(rep));
+  // K1.3: every `owed attest` the repair suggests to the driver's writer says to skip it while the driver runs.
+  assert.ok(rep.message.includes(`owed attest a ${SKIP_ATTEST}`) && attestAdvice(rep.message), rep.message);
+  r.record(rep);
   const h = act(r);
   assert.ok(h?.do === 'halt' && h.reason.includes(`(measured block check:unit [#${fail.seq}]; #${fail.seq} check:unit: not ok 7 - registry scan)`), JSON.stringify(h));
   r.halt(h);
@@ -171,6 +182,7 @@ test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node
     'New parent rulings for a:', `#${rule.seq} (a): the brief was wrong: writes now include cli/wais.mjs`,
     `Active blocks on your candidate ac1 (submit #${r.state().nodes.a!.candidate!.seq}):`, `- #${fail.seq} check:unit: not ok 7 - registry scan`,
     'Apply these rulings; they override your packet. Then commit and run `owed submit a`.'].join('\n') });
+  assert.ok(attestAdvice(f.message), 'K1.3: no bare owed attest');
   const sent = r.record(f) as SendEntry;
   // Not a repair: the budget is untouched; the writer works on it.
   assert.equal(r.state().nodes.a!.runs[0]!.sends.filter(x => x.reason === 'repair').length, 1);
@@ -301,6 +313,7 @@ test('K5.2: a rebase follow-up carries undelivered rulings first; replay accepts
   const x = r.rule('keep the API'), c = r.rule('for c only', ['c']);
   const rb = act(r);
   assert.ok(isSend(rb, 'rebase') && rb.rulings === x.seq, JSON.stringify(rb));
+  assert.ok(attestAdvice(rb.message) && attestAdvice(plain.message));
   assert.ok(rb.message.startsWith(`Parent rulings for a (apply them; they override your packet):\n- #${x.seq} keep the API\ntrunk moved; rebase your worktree`), rb.message);
   const e = r.record(rb) as SendEntry;
   assert.equal(e.rulings, x.seq, 'replay accepts it');

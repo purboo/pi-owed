@@ -216,7 +216,7 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
 // ---------- repair budget, ruling follow-up, threshold hint (0.7, K5) ----------
 /** The node spec as the repair epoch compares it: canonical, without `title` and `drive` (K3); `brief` counts. */
 const epochSpec = (p: Plan, node: string): string | undefined => {
-  const n = p.nodes.find(x => x.id === node) as (NodeSpec & { drive?: unknown }) | undefined;
+  const n = p.nodes.find(x => x.id === node);
   if (!n) return undefined;
   const { title: _t, drive: _d, ...rest } = n;
   return canonical(rest);
