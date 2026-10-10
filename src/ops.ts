@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { Ledger, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors } from './plan.ts';
-import { genesisProgress, jobCurrent } from './reducer.ts';
+import { genesisProgress, jobCurrent, invalidates, carryable } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
@@ -14,7 +14,7 @@ import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
 import type { Brief } from './views.ts';
-import type { AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
+import type { AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
 /** An item a job measured: its observation was not recorded because the item was no longer current (D24.1). */
@@ -300,7 +300,37 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
 }
 export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan), before = (await load(ledger)).state;
-  return ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d); return (await ledger.append([d]))[0]!; });
+  return ledger.withLock(async () => { const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d); return (await ledger.append(await withCarries(o.cwd,latest,d,p.plan)))[0]!; });
+}
+/**
+ * N1: the plan draft `d` followed by one carry submit (by executor:owed) per open candidate it invalidates whose node
+ * spec changed only in checks, writes, type or drive: the same commit at the same slot base, facts recomputed under
+ * `next` (manual keys as for a normal submit). A carry whose facts cannot be computed or that validation refuses is
+ * left out: that candidate stays invalidated, as in 0.9.
+ */
+async function withCarries(cwd: string, latest: Awaited<ReturnType<typeof load>>, d: Draft, next: Plan): Promise<Draft[]> {
+  const s = latest.state, drafts: Draft[] = [d], replay = [...latest.entries];
+  const push = (x: Draft): State => { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); return reduce(replay,latest.lookup); };
+  let current = push(d);
+  for (const n of Object.values(s.nodes)) {
+    const c = n.candidate, slot = n.slot, spec = next.nodes.find(x => x.id === n.id);
+    if (!c || !slot?.open || !spec || !invalidates(s.plan,next,n.id) || !carryable(s.plan,next,n.id)) continue;
+    let carry: Draft;
+    try {
+      const facts = await git.candidateFacts(cwd,next,spec,slot.base,c.commit,slot.attempt);
+      Object.assign(facts.keys,manualKeys(spec,facts.patch));
+      carry = { kind:'submit', by:'executor:owed', node:n.id, attempt:slot.attempt, facts, carry:c.seq };
+    } catch { continue; }
+    if (validateDraft(current,carry).length) continue;
+    drafts.push(carry); current = push(carry);
+  }
+  return drafts;
+}
+/** N1: the carry submits recorded right after plan entry `plan` (one per carried node), in ledger order. */
+export async function carriedBy(o: Context & { plan: number }): Promise<SubmitEntry[]> {
+  const out: SubmitEntry[] = [];
+  for (const e of (await (await Ledger.open(o.cwd)).read()).filter(e => e.seq > o.plan)) { if (e.kind !== 'submit' || e.carry === undefined) break; out.push(e); }
+  return out;
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*' }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes })); }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {

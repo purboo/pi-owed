@@ -172,7 +172,8 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       // obligations, setup, exec or closure changed, the writer must submit again.
       // D19.4: the node `type` only names later branches; changing it never invalidates a candidate.
       // K3: the node `drive` only chooses later launches' agents and models; changing it never invalidates a candidate.
-      for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(withoutType(nodeSpec(s, n.id))) !== canonical(withoutType(next.nodes.find(x => x.id === n.id))) || s.plan.setup !== next.setup || execChanged(s.plan, next) || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
+      // N1 (0.10): a carry submit by executor:owed may follow the plan entry and restore the same commit as candidate.
+      for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && invalidates(s.plan, next, n.id)) n.candidate = undefined;
       const allowChanged = canonical(s.plan.allow) !== canonical(next.allow);
       supersede(s, h, e.seq, next);
       s.plan = next; s.planSha = e.plan;
@@ -187,7 +188,11 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       n.slot = { attempt: e.attempt, base: e.base, branch: e.branch, worktree: e.worktree, writer, dispatchSeq: e.seq, rulings_seen: e.rulings_seen, open: true };
       n.candidate = undefined;
       if (!n.writers.includes(writer)) n.writers.push(writer);
-    } else if (e.kind === 'submit') s.nodes[e.node]!.candidate = { ...e.facts, seq: e.seq };
+    } else if (e.kind === 'submit') {
+      // N1: a carry submit names the plan entry that carried it (the latest one before it) and the submit it carried.
+      const plan = e.carry !== undefined ? h.entries.findLast(x => x.kind === 'plan')?.seq : undefined;
+      s.nodes[e.node]!.candidate = { ...e.facts, seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
+    }
     else if (e.kind === 'abandon') { s.nodes[e.node]!.slot!.open = false; s.nodes[e.node]!.candidate = undefined; }
     else if (e.kind === 'rebase') {
       const n = s.nodes[e.node]!, slot = n.slot!;
@@ -258,6 +263,33 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
   return s;
 }
 
+/**
+ * Whether a plan change from `prev` to `next` invalidates an open candidate of node `id`: its node spec (without `type`
+ * and `drive`), or the plan's setup, exec or closure changed.
+ */
+export function invalidates(prev: Plan, next: Plan, id: string): boolean {
+  return canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure);
+}
+/** N1: the node spec fields whose change still lets owed carry a candidate (its facts are recomputed). */
+export const CARRY_FIELDS: readonly string[] = ['checks', 'writes', 'type', 'drive'];
+/**
+ * N1: whether an open candidate of node `id`, invalidated by the change from `prev` to `next`, is carried: the node
+ * exists in both plans and its spec differs only in `CARRY_FIELDS` (plan-wide setup, exec and closure never prevent it).
+ */
+export function carryable(prev: Plan, next: Plan, id: string): boolean {
+  const a = prev.nodes.find(x => x.id === id), b = next.nodes.find(x => x.id === id);
+  const rest = (n: NodeSpec): Record<string, unknown> => Object.fromEntries(Object.entries(n).filter(([k]) => !CARRY_FIELDS.includes(k)));
+  return !!a && !!b && canonical(rest(a)) === canonical(rest(b));
+}
+/**
+ * N1.4: what a plan change from `prev` to `next` changed for node `id`: the node spec fields that differ (not `type` and
+ * `drive`, which never invalidate a candidate), then `setup`, `exec` and `closure` when the plan-wide ones differ.
+ */
+export function specChanges(prev: Plan, next: Plan, id: string): string[] {
+  const a = (prev.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>, b = (next.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>;
+  const fields = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => k !== 'type' && k !== 'drive' && canonical(a[k]) !== canonical(b[k]));
+  return [...fields, ...(prev.setup !== next.setup ? ['setup'] : []), ...(execChanged(prev, next) ? ['exec'] : []), ...(canonical(prev.closure) !== canonical(next.closure) ? ['closure'] : [])];
+}
 /**
  * L2: the definition of check `id` of node `node` in `plan`: the canonical CheckSpec with all its fields, plus
  * `plan.setup` and `execKey(plan)` (not title, brief, closure or other nodes). Undefined when the check is absent.
@@ -545,7 +577,12 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (!Number.isInteger(d.rulings_seen) || d.rulings_seen < -1 || d.rulings_seen > Math.max(0, ...s.rules.map(x => x.seq))) errors.push('rulings_seen must not reference a ruling that does not yet exist');
       break;
     case 'submit':
-      slot(); if (d.by !== n?.slot?.writer) errors.push('submit must be performed by the slot writer');
+      slot();
+      if (d.by === 'executor:owed') errors.push(...carryErrors(s, d, n));
+      else {
+        if (d.by !== n?.slot?.writer) errors.push('submit must be performed by the slot writer');
+        if (d.carry !== undefined) errors.push('a writer submit never has carry');
+      }
       if (d.facts.base !== n?.slot?.base) errors.push('submit base must match slot base');
       if (spec && required(spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit is missing required obligation keys');
       if (spec && Object.entries(manualKeys(spec, d.facts.patch)).some(([o, k]) => d.facts.keys[o] !== k)) errors.push('submit approve/evidence keys must be derived from the candidate patch');
@@ -702,6 +739,25 @@ export function validateDraft(s: State, d: Draft): string[] {
   return errors;
 }
 
+/**
+ * N1.2: a submit by executor:owed is a carry: `carry` names the latest submit of the open attempt, which has the same
+ * commit and base; the slot is open, the node has no current candidate, and the slot base is that submit's base (no
+ * rebase since). The checks of a normal submit (required and manual keys, base) apply as well.
+ */
+function carryErrors(s: State, d: Extract<Draft, { kind: 'submit' }>, n: NodeState | undefined): string[] {
+  if (d.carry === undefined) return ['a submit by executor:owed must carry a submit (carry: <seq>)'];
+  const errors: string[] = [], slot = n?.slot;
+  const latest = slot ? context(s).entries.findLast((e): e is Extract<Entry, { kind: 'submit' }> => e.kind === 'submit' && e.node === d.node && e.attempt === slot.attempt && e.seq > slot.dispatchSeq) : undefined;
+  if (!Number.isInteger(d.carry) || !latest || d.carry !== latest.seq) errors.push(`carry must name the latest submit of the open attempt${latest ? ` (#${latest.seq})` : ''}`);
+  else {
+    if (latest.facts.commit !== d.facts.commit) errors.push(`carry submit commit must be the commit of submit #${latest.seq}`);
+    if (latest.facts.base !== d.facts.base) errors.push(`carry submit base must be the base of submit #${latest.seq}`);
+    if (slot!.base !== latest.facts.base) errors.push(`slot base moved since submit #${latest.seq} (a rebase); nothing to carry`);
+  }
+  if (!slot?.open) errors.push('carry requires an open slot');
+  if (n?.candidate) errors.push(`carry requires no current candidate; #${n.candidate.seq} is current`);
+  return errors;
+}
 /**
  * E4: `rulings` on a launch or repair send = the highest in-scope ruling seq the message carried: an integer, at most
  * the entry's own seq, and 0 (carried none) or the seq of a recorded ruling covering the node.

@@ -3,7 +3,7 @@
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
-import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, writesOverlap } from './reducer.ts';
+import { attestJobs, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -123,6 +123,20 @@ export function reviewerLaunch(s: State, node: string, n: number, project: strin
 }
 export const WRITER_INTERRUPTED = 'You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.';
 export const submitMessage = (node: string): string => `commit your work and run \`owed submit ${node}\``;
+/** N1.4: the submit follow-up after plan entry `plan` invalidated the latest submit of the attempt (`fields` changed). */
+export const planChangedMessage = (node: string, plan: number, fields: readonly string[]): string => `plan #${plan} changed this node's spec (${fields.join(', ') || 'spec'}); resubmit (re-run checks if needed, then \`owed submit ${node}\`)`;
+/**
+ * N1.4: the first plan entry after submit `after` that invalidated a candidate of `node` (its spec, setup, exec or
+ * closure changed), with the changed fields (`specChanges`); undefined when none did.
+ */
+export function planInvalidated(s: State, node: string, after: number): { plan: number; fields: string[] } | undefined {
+  for (const e of entriesOf(s)) {
+    if (e.seq <= after || e.kind !== 'plan') continue;
+    const prev = planAt(s, e.seq), next = planAt(s, e.seq + 1);
+    if (invalidates(prev, next, node)) return { plan: e.seq, fields: specChanges(prev, next, node) };
+  }
+  return undefined;
+}
 export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node}\` for reviews you already recorded on this candidate, finish the rest.`;
 /**
  * Ending of a halt for a request dsa rejected (D15.1): the id and bytes of a recorded run or send are fixed for the
@@ -553,10 +567,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const r = resubmitFollowUp(s, id, opts.conflicts?.get(id));
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     }
-    if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
-    const since = Math.max(rb?.seq ?? slot.dispatchSeq, resumed), nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
+    // N1.4: a rebase follow-up only while no submit of this attempt came after the rebase; otherwise a submit that a
+    // later plan entry invalidated gets a submit follow-up naming that plan entry (wais #1375).
+    const last = lastSubmit(s, id), rebased = !!rb && (!last || last.seq < rb.seq);
+    if (rebased && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb!.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
+    const changed = !rebased && last ? planInvalidated(s, id, last.seq) : undefined;
+    const since = Math.max(rb?.seq ?? slot.dispatchSeq, resumed, changed?.plan ?? -1), nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     if (nudge) return writerHalt(`writer run ${at(writer)} finished without submitting a candidate after follow-up ${nudge.send}`, `no candidate after follow-up ${nudge.send}`, nudge.seq);
-    const m = writerMsg(submitMessage(id));
+    const m = writerMsg(changed ? planChangedMessage(id, changed.plan, changed.fields) : submitMessage(id));
     return send(writer, 'follow-up', 'submit', m.message, m.rulings);
   }
   const steerRulings = (): Action | undefined => rulingSteer(s, n, ar, live, view);
