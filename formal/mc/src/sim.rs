@@ -80,7 +80,7 @@ pub(crate) fn run<M: Model>(
             for (j, &(_, p, q)) in sel.leads.iter().enumerate() {
                 if q(m, s) {
                     pending[j] = false;
-                } else if p(m, s) {
+                } else if p.map_or(d == 0, |p| p(m, s)) {
                     pending[j] = true;
                 }
             }

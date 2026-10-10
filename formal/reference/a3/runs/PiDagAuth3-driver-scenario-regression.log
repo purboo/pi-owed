@@ -1,0 +1,191 @@
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3
++ props='AllSafety P:GoodProgress P:Finished NothingMerged NothingDeferredMerged NothingParentWaived'
++ consts='Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-scenario-regression
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AllSafety
++ case $p in
++ base=runs/PiDagAuth3-a3-AllSafety-scenario-regression
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AllSafety'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-AllSafety-scenario-regression.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 df8345c7226cca403d4d97d9fea8cda309bff8fdea5c2460e48b2500c6b55209'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T22:13:14+08:00'
++ timeout 60 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-AllSafety-scenario-regression.states -config runs/PiDagAuth3-a3-AllSafety-scenario-regression.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-AllSafety-scenario-regression.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-AllSafety-scenario-regression.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-AllSafety-scenario-regression.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 AllSafety HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodProgress
++ case $p in
++ kind=PROPERTY
++ name=GoodProgress
++ base=runs/PiDagAuth3-a3-GoodProgress-scenario-regression
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodProgress'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-GoodProgress-scenario-regression.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 e920e7cf835b0bda83b9cad9285961f4bcda7c40601f6a322ff95adb99d60603'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T22:13:16+08:00'
++ timeout 60 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-GoodProgress-scenario-regression.states -config runs/PiDagAuth3-a3-GoodProgress-scenario-regression.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-GoodProgress-scenario-regression.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-GoodProgress-scenario-regression.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-GoodProgress-scenario-regression.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 GoodProgress HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=P:Finished
++ case $p in
++ kind=PROPERTY
++ name=Finished
++ base=runs/PiDagAuth3-a3-Finished-scenario-regression
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY Finished'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-Finished-scenario-regression.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 6e4a89a68bfbfd9924de38a33a85d96c58c2efa48b5c78a956ece4e725171bb9'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T22:13:17+08:00'
++ timeout 60 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-Finished-scenario-regression.states -config runs/PiDagAuth3-a3-Finished-scenario-regression.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-Finished-scenario-regression.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-Finished-scenario-regression.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-Finished-scenario-regression.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 Finished HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingMerged-scenario-regression
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-NothingMerged-scenario-regression.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 7ee75847b86290abc558fa819ed5459f0e8ac21e6318d6d196ff3aef1ce4a42b'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T22:13:19+08:00'
++ timeout 60 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-NothingMerged-scenario-regression.states -config runs/PiDagAuth3-a3-NothingMerged-scenario-regression.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-NothingMerged-scenario-regression.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingMerged-scenario-regression.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-NothingMerged-scenario-regression.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingMerged-scenario-regression.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingMerged VIOLATED '196 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingDeferredMerged
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingDeferredMerged'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c0bfb14378629e828e288541c237d3ad2651bf57d94d89fd548c438278bf49da'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T22:13:20+08:00'
++ timeout 60 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.states -config runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingDeferredMerged VIOLATED '328 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingParentWaived
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "scenarios"; MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingParentWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 56636c227d104f4d4f77216b1c05b503433ae3ce0e1b59025054e7da17297bbd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T22:13:21+08:00'
++ timeout 60 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression.states -config runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingParentWaived-scenario-regression.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingParentWaived VIOLATED '360 distinct states found'
++ exit 0

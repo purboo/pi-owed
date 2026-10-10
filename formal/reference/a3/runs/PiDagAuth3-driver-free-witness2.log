@@ -1,0 +1,45 @@
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3
++ props=NothingMerged
++ consts='Scope = "free"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-free-witness2
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingMerged-free-witness2
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "free"; MaxLog = 2; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ cut -c1-64
+++ sha256sum PiDagAuth3.tla
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-NothingMerged-free-witness2.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 2f444d7ede8e23c94fd6235fae854a7121fcd2d900a47c1223d489d5dfe23567'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T22:14:09+08:00'
++ timeout 60 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -metadir runs/PiDagAuth3-a3-NothingMerged-free-witness2.states -config runs/PiDagAuth3-a3-NothingMerged-free-witness2.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-NothingMerged-free-witness2.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingMerged-free-witness2.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-NothingMerged-free-witness2.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingMerged-free-witness2.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingMerged VIOLATED '31492 distinct states found'
++ exit 0
