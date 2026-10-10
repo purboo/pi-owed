@@ -269,7 +269,9 @@ function requestOutcome<T>(r: Spawned, applied: (reply: Json) => T): T | Rejecte
  *  generation's call status (first non-ok when a run has several calls), else the workflow's. */
 export function toRunView(rid: string, d: Json): RunView {
   const wfStatus = (s: unknown): string | undefined => typeof s !== 'string' ? undefined : s === 'done' ? 'ok' : s;
-  const base = { rid, ...(typeof d.wid === 'string' ? { wid: d.wid } : {}), ...(typeof d.spec_digest === 'string' ? { spec_digest: d.spec_digest } : {}),
+  // 0.8 (L1.4): the call address `<wid>/<key>` of the latest call (the last one describe lists), when both are reported.
+  const key = Array.isArray(d.calls) ? (d.calls as Json[]).map(c => c?.key).findLast((k): k is string => typeof k === 'string' && k !== '') : undefined;
+  const base = { rid, ...(typeof d.wid === 'string' ? { wid: d.wid } : {}), ...(typeof d.wid === 'string' && d.wid && key !== undefined ? { to: `${d.wid}/${key}` } : {}), ...(typeof d.spec_digest === 'string' ? { spec_digest: d.spec_digest } : {}),
     ...(d.labels && typeof d.labels === 'object' ? { labels: d.labels as Record<string, string> } : {}) };
   const raw = str(d.state);
   if (raw === 'absent') return { ...base, state: 'absent' };

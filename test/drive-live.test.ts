@@ -150,7 +150,7 @@ test('H1.1a-c pi: a question read while the agent runs is held; answered before 
       await until(() => h.messages.length >= 1, 8000, 'the later wake');
       const m = h.messages[0]!;
       assert.deepEqual(m.options, { triggerTurn: true, deliverAs: 'followUp' });
-      assert.deepEqual(m.message.content.split('\n').slice(1), ['halt zz attempt 1 (needs human): halted — later', 'Next: owed status / owed why <node>']);
+      assert.deepEqual(m.message.content.split('\n').slice(1), ['halt zz attempt 1 (needs human): halted — later', bg.haltHintText, 'Next: owed status / owed why <node>']);
       // ctx.isIdle() false (no agent_start seen): held too; delivered at the next tick once idle.
       h.state.idle = false;
       line({ do: 'halt', node: 'zz', outcome: 'halted', attempt: 1, needs: 'human', detail: 'while streaming' });
@@ -186,7 +186,7 @@ test('H1.1b/c revalidation: a fact-advanced halt is dropped; an open question, d
     state.busy = false;
     const m = await fo.step();
     assert.deepEqual(m?.split('\n'), ['owed drive (/r):', 'merge m: merged — trunk 1', 'q: writer run rid-q asks (qid q1-1, rev 1): which port?', 'trunk main moved outside owed',
-      'halt h attempt 1 (needs human): halted — older driver, no mark', IDLE_WAIT, 'Next: owed status / owed why <node>', '(1 wake(s) resolved before delivery)']);
+      'halt h attempt 1 (needs human): halted — older driver, no mark', IDLE_WAIT, bg.haltHintText, 'Next: owed status / owed why <node>', '(1 wake(s) resolved before delivery)']);
     assert.equal(got.length, 1);
     // Only dropped lines left: nothing is delivered; a merge read with them rides along with the next message.
     line({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail: 'stale again', facts: mark });
@@ -255,16 +255,16 @@ test('H1.1b a dropped wake also drops its repeat ride-along and later repeats of
     line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'unrelated' });
     state.busy = false;
     const m = await fo.step();
-    assert.deepEqual(m?.split('\n'), ['owed drive (/r):', 'halt k attempt 1 (needs human): halted — unrelated', 'Next: owed status / owed why <node>', '(1 wake(s) resolved before delivery)'],
+    assert.deepEqual(m?.split('\n'), ['owed drive (/r):', 'halt k attempt 1 (needs human): halted — unrelated', bg.haltHintText, 'Next: owed status / owed why <node>', '(1 wake(s) resolved before delivery)'],
       'the resolved wake of h and its repeat ride-along are gone');
     line(halt(mark, 'other'));        // a later repeat of the resolved wake: does not ride along
     line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'next' });
     const n = await fo.step();
-    assert.deepEqual(n?.split('\n'), ['owed drive (/r):', 'halt k attempt 1 (needs human): halted — next', 'Next: owed status / owed why <node>']);
+    assert.deepEqual(n?.split('\n'), ['owed drive (/r):', 'halt k attempt 1 (needs human): halted — next', bg.haltHintText, 'Next: owed status / owed why <node>']);
     // The driver's next pass reports h with the new mark: a new fact, delivered.
     const now = run.factMark(await run.stateOf(f.cwd), 'h');
     line(halt(now));
-    assert.match(await fo.step() ?? '', /halted — stuck\nNext: /, 'a new fact of h wakes');
+    assert.match(await fo.step() ?? '', /halted — stuck\nTo clear a halt without an obligation: [^\n]*\nNext: /, 'a new fact of h wakes');
     fo.stop();
   } finally { await f.done(); }
 });

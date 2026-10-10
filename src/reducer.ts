@@ -2,7 +2,7 @@ import { matchesGlob } from 'node:path';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
-import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
+import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -285,6 +285,23 @@ export function halted(s: State, node: string): HaltEntry | undefined {
   const n = s.nodes[node];
   return n?.halt && n.slot?.open && n.slot.attempt === n.halt.attempt ? n.halt : undefined;
 }
+/**
+ * 0.8 (L1): the latest `resume` of `node`'s open attempt (recorded after its dispatch), if any. A later resume replaces
+ * an earlier one; an abandon or a new dispatch ends it (the slot closes or the attempt changes).
+ */
+export function resumeOf(s: State, node: string): ResumeEntry | undefined {
+  const slot = s.nodes[node]?.slot;
+  if (!slot?.open) return undefined;
+  return context(s).entries.findLast((e): e is ResumeEntry => e.kind === 'resume' && e.node === node && e.attempt === slot.attempt && e.seq > slot.dispatchSeq);
+}
+/**
+ * 0.8 (L1.2): the node is waiting while the latest resume of its open attempt names `after` and that node is not
+ * merged; the driver leaves it alone (except asking notices). Undefined otherwise.
+ */
+export function waitingFor(s: State, node: string): { after: string; resume: number } | undefined {
+  const r = resumeOf(s, node);
+  return r?.after !== undefined && !s.nodes[r.after]?.merged ? { after: r.after, resume: r.seq } : undefined;
+}
 /** Stable project id of a ledger: the first 12 hex of the genesis entry hash. */
 export function projectId(s: State): string {
   const g = context(s).genesis;
@@ -563,7 +580,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     }
   }
-  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt' || d.kind === 'launch' || d.kind === 'send' || d.kind === 'halt' || d.kind === 'evidence') {
+  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt' || d.kind === 'launch' || d.kind === 'send' || d.kind === 'halt' || d.kind === 'evidence' || d.kind === 'resume') {
     const extra = Object.entries(d).filter(([k, v]) => v !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS[d.kind].includes(k)).map(([k]) => k);
     if (extra.length) errors.push(`${d.kind} has unknown fields: ${extra.join(', ')}`);
   }
@@ -609,6 +626,15 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     }
     case 'evidence': errors.push(...evidenceErrors(d, n, spec)); break;
+    case 'resume':
+      // 0.8 (L1.1): parent or owner only; the driver (parent:drive) is refused above (DRIVER_WRITES).
+      allow('parent', 'owner');
+      if (n && !n.slot?.open) errors.push(`resume requires an open slot of ${d.node}; ${d.node} has none`);
+      else slot();
+      if (d.after !== undefined && (typeof d.after !== 'string' || !nodeSpec(s, d.after))) errors.push(`resume after names an unknown node: ${String(d.after)}`);
+      else if (d.after === d.node) errors.push('resume after must name another node, not the node itself');
+      if (d.note !== undefined && typeof d.note !== 'string') errors.push('resume note must be a string');
+      break;
     case 'halt':
       allow('parent'); slot();
       if (typeof d.reason !== 'string' || !d.reason.trim()) errors.push('halt requires a reason');
@@ -652,7 +678,7 @@ function carriedErrors(s: State, d: Draft & { node: string; rulings?: number }, 
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence', readonly string[]> = { evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume', readonly string[]> = { resume: ['node', 'attempt', 'after', 'note'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on

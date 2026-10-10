@@ -14,7 +14,7 @@ import { repeatText, reportKey, wakeReport } from './drive-run.ts';
 import { Dsa } from './dsa.ts';
 import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
-import { oneLine } from './views.ts';
+import { oneLine, resumeCommands } from './views.ts';
 import { startingSession } from './dsa.ts';
 
 /** The exit record a `--json` loop driver writes last (D17.2). */
@@ -312,7 +312,7 @@ const TERMINAL = new Set(['exit', 'killed', 'stopped', 'idle']);
  * (H1.2), terminal lines and any line that is not a JSON object. A merge only rides along with the next wake; everything else (dispatch, launch, send applied,
  * attest, busy, pending, cursor-reset) is quiet.
  */
-export function classifyLine(line: string): { kind: LineKind; text: string; fact?: { node: string; key: string; base: string; facts: number }; clears?: string; check?: WakeCheck } {
+export function classifyLine(line: string): { kind: LineKind; text: string; fact?: { node: string; key: string; base: string; facts: number }; clears?: string; check?: WakeCheck; /** 0.8 (L1.5): a driver halt line. */ halt?: true } {
   const j = parseObject(line);
   if (!j) return { kind: 'wake', text: oneLine(line) };
   const text = reportText(j);
@@ -330,7 +330,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
     ...(node !== undefined && typeof j.facts === 'number' ? { node, facts: j.facts } : {}),
     ...(j.do === 'notify' && typeof j.rid === 'string' && typeof j.qid === 'string' && typeof j.rev === 'number' ? { rid: j.rid, qid: j.qid, rev: j.rev } : {}),
   };
-  const checked = check.node !== undefined || check.qid !== undefined ? { check } : {};
+  const checked = { ...(check.node !== undefined || check.qid !== undefined ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
   // E3.1: a node-scoped wake with a fact mark is compared per node by its text without the repeat suffix.
   // G3.4b: keyed by `reportKey`, so the repo-level drift notify and a plan node named `trunk` keep separate records.
   if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, key: reportKey(j), base: reportText({ ...j, repeat: undefined }), facts: j.facts }, ...checked };
@@ -390,6 +390,8 @@ export interface FollowerOptions {
   /** pi (H1.1b): revalidates the batch's wake lines at delivery time. Absent: every wake line is delivered. */
   revalidate?: Revalidate;
 }
+/** 0.8 (L1.5): the line a wake message with at least one halt line carries before `Next:`. */
+export const haltHintText = `To clear a halt without an obligation: ${resumeCommands()}`;
 /** Suffix line of a pi delivery after dropping resolved wake lines (H1.1c). */
 export const resolvedText = (n: number): string => `(${n} wake(s) resolved before delivery)`;
 /**
@@ -415,7 +417,7 @@ export class Follower {
   private file?: { dev: number; ino: number };
   private timer?: NodeJS.Timeout;
   /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed or held delivery. */
-  private pending: { text: string; wake: boolean; repeatOf?: string; key?: string; rec?: Rec; check?: WakeCheck }[] = [];
+  private pending: { text: string; wake: boolean; repeatOf?: string; key?: string; rec?: Rec; check?: WakeCheck; halt?: true }[] = [];
   /** reportKey → the last wake taken for delivery (text without the repeat suffix, fact mark) and its repeats since (E3.1). */
   private readonly last = new Map<string, Rec>();
   /** A terminal line (or the pid-gone notice) is pending: stop once it is delivered. */
@@ -485,13 +487,13 @@ export class Follower {
         }
         this.last.set(f.key, { base: f.base, facts: f.facts, n: 0 });
       }
-      this.pending.push({ text: c.text, wake: true, ...(c.fact ? { key: c.fact.key, rec: this.last.get(c.fact.key)! } : {}), ...(c.check ? { check: c.check } : {}) });
+      this.pending.push({ text: c.text, wake: true, ...(c.fact ? { key: c.fact.key, rec: this.last.get(c.fact.key)! } : {}), ...(c.check ? { check: c.check } : {}), ...(c.halt ? { halt: c.halt } : {}) });
       if (c.kind === 'terminal') this.ended = true;
     }
     if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true }); }
   }
-  private message(lines: readonly { text: string }[], resolved = 0): string {
-    return [`owed drive (${this.o.repo}):`, ...lines.map(p => p.text), 'Next: owed status / owed why <node>', ...(resolved ? [resolvedText(resolved)] : [])].join('\n');
+  private message(lines: readonly { text: string; wake?: boolean; halt?: true }[], resolved = 0): string {
+    return [`owed drive (${this.o.repo}):`, ...lines.map(p => p.text), ...(lines.some(p => p.wake && p.halt) ? [haltHintText] : []), 'Next: owed status / owed why <node>', ...(resolved ? [resolvedText(resolved)] : [])].join('\n');
   }
   /** One poll without the pi hooks (CLI-era behavior, D17.7); returns the message delivered, if any. */
   tick(): string | undefined {
