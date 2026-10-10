@@ -576,21 +576,20 @@ test('D11: the slot reviewer oks c2 but a stale closure-review block stays activ
 
 test('D11: an active rank-1 block by another principal → the slot packet asks for rank 2, and that ok clears it', () => {
   const r = submitted(); r.pass(); const h = r.review('block', 'reviewer:human', 1);
-  const a = act(r, runsOf(okWriter()));
+  // G3.1 (0.6.0): the block is on the current candidate's key, so it is repaired before any reviewer run of c1.
+  const fix = act(r, runsOf(okWriter()));
+  assert.ok(fix?.do === 'send' && fix.reason === 'repair', JSON.stringify(fix));
+  // Resubmitted; the slot reviewer of c2 is asked for rank 2 and its ok clears the human block.
+  r.send(W(), 'repair', 'follow-up', fix.message); r.submit('2'); r.pass();
+  const a = act(r, runsOf(okWriter()), { applied: applied(r) });
   assert.ok(a?.do === 'launch' && a.role === 'reviewer', JSON.stringify(a));
   const lines = JSON.parse(a.spec).task.split('\n');
   assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 2 --candidate ${r.state().nodes.a!.candidate!.commit.slice(0, 12)} --note "..."`), lines.join('\n'));
   assert.ok(lines.includes(`- #${h.seq} review rank 1 by reviewer:human: n`));
-  // Repaired (current block), resubmitted; the slot reviewer of c2 is asked for rank 2 again and its ok clears the human block.
-  r.launchReviewer(1);
-  const fix = act(r, runsOf(okWriter(), view(R(1), 'running')));
-  assert.ok(fix?.do === 'send' && fix.reason === 'repair');
-  r.send(W(), 'repair', 'follow-up', fix.message); r.submit('2'); r.pass();
-  assert.equal(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), { applied: applied(r) })?.do, 'launch');
-  assert.match(reviewPacket(r.state(), 'a', 2), /--as reviewer:drive-a-1-1 --ok\|--block --rank 2 /);
-  r.launchReviewer(2); r.review('ok', 'reviewer:drive-a-1-1', 2);
+  assert.match(reviewPacket(r.state(), 'a', 1), /--as reviewer:drive-a-1-1 --ok\|--block --rank 2 /);
+  r.launchReviewer(1); r.review('ok', 'reviewer:drive-a-1-1', 2);
   assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === h.seq)?.state, 'cleared');
-  assert.deepEqual(act(r, runsOf(okWriter(), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r) }), { do: 'merge', node: 'a' });
+  assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), { applied: applied(r) }), { do: 'merge', node: 'a' });
 });
 
 test('D11: reviewer:drive-<node>-<attempt>-<k> with k outside 1..count is not a driver reviewer', () => {

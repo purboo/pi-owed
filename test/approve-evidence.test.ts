@@ -281,14 +281,14 @@ test('driver: halts (needs owner for approve, human for evidence) with the exact
   assert.deepEqual(go(), ['launch']);
   add({ kind: 'review', by: 'reviewer:x', node: 'a', attempt: 1, obligation: 'review', key: 'k-review', verdict: 'ok', rank: 1, note: 'fine' });
   // Only approve and evidence remain: halt needing the owner, naming both commands; also while the writer still runs.
-  const both = 'halt owner: awaiting owner approval of candidate c1: owed approve a [--note TEXT] (owner); awaiting manual evidence evidence:ui (looked at the page) by reviewer: owed evidence a ui --file <path> --note "<what was checked>" --as reviewer:<id>';
+  const both = 'halt owner: awaiting owner approval of candidate c1: owed approve a --candidate c1 [--note TEXT] (owner); awaiting manual evidence evidence:ui (looked at the page) by reviewer: owed evidence a ui --file <path> --note "<what was checked>" --as reviewer:<id> --candidate c1';
   assert.deepEqual(go(), [both]);
   assert.deepEqual(go(running), [both]);
   // A recorded halt stops the driver until a non-driver entry on the node: the owner's approval clears it.
   add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason: both.slice(12), needs: 'owner' });
   assert.deepEqual(go(), []);
   add({ kind: 'review', by: 'owner:human', channel: 'tty', node: 'a', attempt: 1, obligation: 'approve', key: facts.keys.approve!, verdict: 'ok', rank: 3, note: '' });
-  assert.deepEqual(go(), ['halt human: awaiting manual evidence evidence:ui (looked at the page) by reviewer: owed evidence a ui --file <path> --note "<what was checked>" --as reviewer:<id>']);
+  assert.deepEqual(go(), ['halt human: awaiting manual evidence evidence:ui (looked at the page) by reviewer: owed evidence a ui --file <path> --note "<what was checked>" --as reviewer:<id> --candidate c1']);
   add({ kind: 'evidence', by: 'reviewer:y', node: 'a', attempt: 1, key: facts.keys['evidence:ui']!, id: 'ui', files: [{ path: 'shot.png', sha256: sha256('x'), bytes: 1 }], note: 'seen' });
   assert.equal(st().nodes.a!.accepted, true);
   assert.deepEqual(go(), ['merge']);

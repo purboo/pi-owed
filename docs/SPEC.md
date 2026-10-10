@@ -1337,15 +1337,39 @@ ruling (`ruling #seq: text`), also when that ruling predates the dispatch (a
 block from an earlier attempt). The re-review acknowledges them through
 `ack_rulings` as before.
 
+Repair before re-review; one message to the writer (0.6.0, G3). While a
+review block is active on the current candidate's key (and the node does not
+need the owner), the driver sends its repair before launching any reviewer run
+of that candidate: the reviewer-launch row does not fire, so no reviewer judges
+content the repair replaces (the attest rows, the needs-parent halt and the
+measured repair keep their order before it). When the writer is sealed without
+a current candidate (a plan change invalidated it, or a rebase) and an active
+review block recorded in this attempt on the key of its latest submit does not
+await a parent ruling, the driver sends one follow-up instead of the `submit` /
+`rebase` one: reason `repair` (counted against `repairs`; exhausted → halt),
+the rulings in scope since dispatch (and those quoted by needs-parent blocks)
+first, then the blocks with their notes, then why a new candidate is needed
+(`The plan changed since that candidate…`, or `Trunk moved…` with the `git
+rebase --onto` instructions), then `commit, and run owed submit <node>`. Its
+`rulings` records what it carries, so no separate ruling steer follows. A writer
+that finishes it without submitting halts. Identical content resubmitted keeps
+the block current: a second repair (or the exhausted halt), never a reviewer
+run. Before all of this (review #680), when an active block on the key of
+that latest submit still awaits a parent ruling, row 8 halts with the
+needs-parent halt text (also when no block is repairable): a repair, rebase or
+submit follow-up would make the unruled block stale and let a re-review bypass
+the parent question. Without any such block row 8 is unchanged.
+
 Owner approval and manual evidence (D23). After the rows above (attest, needs
 a parent ruling, measured repair, reviewer launches, review-missing, review
 blocks), when every unsatisfied item of the candidate is `approve` or
 `evidence:<id>` and the node has no active or flaky block, the action is a halt
 needing `owner` while `approve` is pending, else `human`, with one clause per
 item: `awaiting owner approval of candidate <commit12>: owed approve <node>
-[--note TEXT] (owner)`, `awaiting manual evidence evidence:<id> (<what>) by
-<role>: owed evidence <node> <id> --file <path> --note "<what was checked>" --as
-<role>:<id>`. It also halts while the writer still runs; it never halts for them
+--candidate <commit12> [--note TEXT] (owner)`, `awaiting manual evidence
+evidence:<id> (<what>) by <role>: owed evidence <node> <id> --file <path> --note
+"<what was checked>" --as <role>:<id> --candidate <commit12>` (0.6.0: the open
+candidate's commit, G1.3). It also halts while the writer still runs; it never halts for them
 earlier. The owner's approval or an evidence entry clears the halt (§12.3); the
 driver then halts again for what remains or merges. An owner block on `approve`
 is an owner decision (`ownerNeeded`: notify only). The review packet describes
@@ -1481,7 +1505,22 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   generation it started; until `describe` reports that generation (highest
   `calls[].gen`), a sealed view of the run is the previous generation's and is
   presented to `decide` as `running`, so a lagging describe never causes a
-  second follow-up or a halt.
+  second follow-up or a halt. dsa opens a generation only for a follow-up to a
+  sealed call (the reply carries `generation`); one to a running call is
+  forwarded into the running generation (no `generation` in the reply). When
+  the reply has none (0.6.0, G3.6): if the run's last view observed in this
+  process was running, asking or queued, no new generation is expected (the
+  sealed view that follows is the follow-up's outcome); otherwise the driver
+  expects the last observed generation + 1.
+- **Conflicting files** (0.6.0, G3.7). For a rebased slot without a candidate
+  whose rebase recorded a previous candidate, the driver computes `git
+  merge-tree --write-tree --name-only -z <new base> <previous commit>` while
+  observing, only when row 8 can use it (writer sealed ok, rebase after the
+  latest submit, no rebase or repair follow-up since; `wantsRebaseConflicts`),
+  and passes the conflicted paths to `decide` (`DriveOpts.conflicts`).
+  The rebase follow-up and the rebasing repair of §12.5 then add `(files that
+  conflict with your previous candidate: <paths>|none)` after the `git rebase
+  --onto` command; the clause is omitted when git fails.
 - **Attest** runs `pi-durable-subagents hold machine --shared --no-wait --
   owed attest <node>` in the main worktree when dsa is available (else `owed
   attest <node>` directly); the driver's own process never holds a lease.
@@ -1510,8 +1549,19 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   resolves it with: owed adopt --note "<why>"` when the ref fast-forwards the
   ledger trunk, otherwise `trunk <name> was rewound or rewritten (<ledger12> →
   <ref12|missing>); restore it: git update-ref refs/heads/<name> <ledger>
-  <ref>` (full commits; `""` for a missing ref). The loop prints it once per
-  change and the follower wakes once per change. After `owed adopt` the next
+  <ref>` (full commits; `""` for a missing ref). When the ledger's trunk commit
+  itself is absent (0.6.0): `trunk <name>: the ledger's trunk commit
+  <ledger12> is absent from the repository, so git update-ref cannot restore it
+  and owed adopt cannot check a fast-forward from it; bring the commit back (git
+  fetch <remote> <ledger> from any remote or clone that has it), then restore
+  trunk (git update-ref …) or adopt the current ref (owed adopt --commit
+  <ref12> --note "<why>")`. The report carries `scope: "repo"`; its print and
+  wake records are keyed apart from any plan node (a node named `trunk` keeps
+  its own). The loop prints it once per change and the follower wakes once per
+  change; when a pass finds trunk equal to the ledger trunk again, the driver
+  forgets the drift's print and wake records and logs the quiet event
+  `{"event":"drift-cleared"}`, on which the follower forgets its record, so an
+  identical later drift prints and wakes again. After `owed adopt` the next
   pass merges with no other act. A halt recorded for drift by a 0.5.0 driver
   (`merge refused: trunk changed (CAS)…`, needs owner) stays a ledger halt:
   adopt (or restore) trunk, then clear it with `owed rebase <node>` (the

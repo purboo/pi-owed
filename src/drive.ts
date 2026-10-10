@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
-import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, Rule, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
+import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
 export type Action =
@@ -69,6 +69,11 @@ export interface DriveOpts {
   blobs?: ReadonlyMap<string, string>;
   /** Merges refused in this process, by node. */
   merges?: ReadonlyMap<string, MergeRefusal>;
+  /**
+   * G3.7: by node, the paths that conflict between the previous candidate of the slot's latest rebase and its new base
+   * (`git merge-tree --write-tree --name-only`; empty: merges cleanly). Absent when unknown (no previous commit, git failed).
+   */
+  conflicts?: ReadonlyMap<string, readonly string[]>;
 }
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
@@ -142,10 +147,66 @@ export function repairFollowUp(s: State, node: string): { message: string; rulin
     `The \`owed why ${node}\` card:`, '',
     renderReceipt(receipt(s, entries, node))].join('\n') };
 }
-/** Rebase follow-up after the slot's latest rebase (stable: it names the rebase entry's bases, not the current trunk). */
-export function rebaseMessage(s: State, node: string): string {
+/** G3.7: the conflicting-files clause of a rebase instruction; empty when the list is unknown. */
+const conflictText = (conflicts?: readonly string[]): string => conflicts ? ` (files that conflict with your previous candidate: ${conflicts.length ? conflicts.join(', ') : 'none'})` : '';
+/**
+ * Rebase follow-up after the slot's latest rebase (stable: it names the rebase entry's bases, not the current trunk).
+ * `conflicts` (G3.7): the paths that conflict between the previous candidate and the new base, when known.
+ */
+export function rebaseMessage(s: State, node: string, conflicts?: readonly string[]): string {
   const slot = s.nodes[node]!.slot!, r = slot.rebase!;
-  return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): in ${slot.worktree} run \`git rebase --onto ${r.base} ${r.from}\`, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
+  return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): in ${slot.worktree} run \`git rebase --onto ${r.base} ${r.from}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
+}
+/** The latest submit of the node's open attempt (also one a plan change or rebase no longer counts as the candidate). */
+const lastSubmit = (s: State, node: string): SubmitEntry | undefined => {
+  const attempt = s.nodes[node]!.slot!.attempt;
+  return entriesOf(s).findLast((e): e is SubmitEntry => e.kind === 'submit' && e.node === node && e.attempt === attempt);
+};
+/**
+ * G3.2: the active review blocks the driver would repair when it must ask the writer for a new candidate (row 8: no
+ * current candidate after a plan change or a rebase): recorded in this attempt on the key of its latest submit, and not
+ * awaiting a parent ruling. Owner blocks never reach row 8 (`ownerNeeded` notifies first).
+ */
+export function resubmitBlocks(s: State, node: string): Block[] { return submitBlocks(s, node).filter(b => !awaitingRuling(s, b)); }
+/** Active judgment blocks recorded in this attempt on the key of its latest submit. */
+function submitBlocks(s: State, node: string): Block[] {
+  const n = s.nodes[node]!, last = lastSubmit(s, node);
+  if (!last) return [];
+  return n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && b.seq > n.slot!.dispatchSeq && b.key === last.facts.keys[b.obligation]);
+}
+/**
+ * G3.7 / review #680 (b): whether row 8 can use the conflict list of `node` this pass (so the executor computes it only
+ * then): the slot was rebased after its latest submit and recorded a previous candidate, no current candidate, the
+ * writer run is sealed ok, and no rebase or repair follow-up was sent after the rebase entry.
+ */
+export function wantsRebaseConflicts(s: State, node: string, runs: ReadonlyMap<string, RunView>): boolean {
+  const n = s.nodes[node], slot = n?.slot, rb = slot?.rebase;
+  if (!n || !slot?.open || n.candidate || !rb?.previous || rb.seq < (lastSubmit(s, node)?.seq ?? -1)) return false;
+  const ar = n.runs.find(r => r.attempt === slot.attempt), writer = ar?.launches.find(l => l.role === 'writer'), w = writer && runs.get(writer.rid);
+  return !!w && isSealed(w) && statusOf(w) === 'ok' && !ar!.sends.some(x => (x.reason === 'rebase' || x.reason === 'repair') && x.seq > rb.seq);
+}
+/**
+ * G3.2: the one follow-up (reason `repair`) that replaces row 8's `submit` / `rebase` follow-up while `resubmitBlocks`
+ * is not empty: the rulings in scope since dispatch (and those quoted by needs-parent blocks), the blocks with their
+ * notes, why a new candidate is needed (plan changed, or trunk moved with the rebase instructions), then commit and
+ * submit. `rulings` (E4): the highest seq it carries, 0 when none.
+ */
+export function resubmitFollowUp(s: State, node: string, conflicts?: readonly string[]): { message: string; rulings: number } {
+  const n = s.nodes[node]!, slot = n.slot!, last = lastSubmit(s, node)!, entries = entriesOf(s), quoted: Rule[] = [];
+  const notes = resubmitBlocks(s, node).map(b => {
+    const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
+    if (ruled) quoted.push(ruled);
+    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${ruled ? ` (needed a parent ruling; ruling #${ruled.seq})` : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
+  });
+  const since = rulingsInScope(s, node).filter(r => r.seq > slot.dispatchSeq);
+  const rules = [...since, ...quoted.filter(q => !since.some(r => r.seq === q.seq))].sort((a, b) => a.seq - b.seq);
+  const rb = slot.rebase && slot.rebase.seq > last.seq ? slot.rebase : undefined;
+  return { rulings: carried(rules), message: [
+    ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`)] : []),
+    `Review blocks on your candidate ${last.facts.commit} (submit #${last.seq}) of ${node}, attempt ${slot.attempt} (the reviewer's note):`, ...notes,
+    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
+      : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
+    `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
 }
 
 // ---------- driver reviewers ----------
@@ -270,7 +331,21 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 8: writer done without a current candidate (after a rebase: the rebase follow-up first).
   if (wSealed && !c) {
     const rb = slot.rebase;
-    if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) return send(writer, 'follow-up', 'rebase', rebaseMessage(s, id));
+    // Review #680 (a): an active block on the latest submit's key still awaiting a parent ruling halts first (D18), with
+    // or without repairable blocks: a repair, rebase or submit follow-up would let new content bypass the parent question.
+    const unruled = submitBlocks(s, id).filter(b => awaitingRuling(s, b));
+    if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
+    // G3.2: with a block the driver would repair, one repair follow-up replaces the submit / rebase follow-up.
+    const fix = resubmitBlocks(s, id);
+    if (fix.length) {
+      const cause = `review block ${fix.map(b => `#${b.seq} ${b.obligation}`).join(', ')}; a new candidate is needed`;
+      const done = ar.sends.filter(x => x.reason === 'repair'), outstanding = done.findLast(x => x.seq > Math.max(rb?.seq ?? slot.dispatchSeq, lastSubmit(s, id)?.seq ?? -1));
+      if (outstanding) return halt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`);
+      if (done.length >= opts.repairs) return halt(`repairs exhausted (${done.length} of ${opts.repairs}): ${cause}`);
+      const r = resubmitFollowUp(s, id, opts.conflicts?.get(id));
+      return send(writer, 'follow-up', 'repair', r.message, r.rulings);
+    }
+    if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) return send(writer, 'follow-up', 'rebase', rebaseMessage(s, id, opts.conflicts?.get(id)));
     const since = rb?.seq ?? slot.dispatchSeq, nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     return nudge ? halt(`writer run ${writer.rid} finished without submitting a candidate after follow-up ${nudge.send}`) : send(writer, 'follow-up', 'submit', submitMessage(id));
   }
@@ -304,9 +379,13 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Row 11: a measured block: an obligation of the candidate failed (✘), or an active execution block binds it.
     const measured = n.items.filter(i => i.mark === '✘' || n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation));
     if (measured.length) return repair(`measured block ${measured.map(i => `${i.obligation} [${i.evidence.map(x => `#${x}`).join(', ')}]`).join(', ')}`);
-    // Row 12: review obligations awaiting and fewer reviewer runs than the candidate needs: launch the next n.
+    const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
+    const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
+    // Row 12: review obligations awaiting and fewer reviewer runs than the candidate needs: launch the next n. G3.1:
+    // never while a review block is active on the candidate's key: row 15 repairs it first (a reviewer would judge
+    // content the repair replaces).
     const reviewers = live.filter(l => l.role === 'reviewer');
-    if (n.items.some(i => (i.obligation === 'review' || i.obligation === 'closure-review') && i.status === 'D') && reviewers.length < reviewRuns(s, id))
+    if (!current.length && n.items.some(i => (i.obligation === 'review' || i.obligation === 'closure-review') && i.status === 'D') && reviewers.length < reviewRuns(s, id))
       return reviewerLaunch(s, id, nextReviewerN(s, id), opts.project, opts.root);
     // Rows 13-14: a sealed reviewer run whose obligations are still awaiting (it recorded no review on them).
     const entries = entriesOf(s);
@@ -322,8 +401,6 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale
     // block (recorded on an earlier candidate) is left to the slot re-review: wait only while a reviewer run of this
     // candidate is unsealed (row 12 already launched any needed run); otherwise halt needing the owner.
-    const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
-    const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
     if (current.length) return repair(`review block ${current.map(b => `#${b.seq} ${b.obligation}`).join(', ')}`);
     const reviewing = reviewers.some(l => !isSealed(view(l)));
     if (stale.length) {
@@ -364,9 +441,11 @@ export function manualHalt(s: State, node: string): { reason: string; needs: 'hu
   const pending = n.items.filter(i => i.status === 'D');
   if (!pending.length || !pending.every(i => i.obligation === 'approve' || i.obligation.startsWith('evidence:'))) return undefined;
   const parts = pending.map(i => {
-    if (i.obligation === 'approve') return `awaiting owner approval of candidate ${n.candidate!.commit.slice(0, 12)}: owed approve ${node} [--note TEXT] (owner)`;
+    // G1.3 (bind): candidate-bound acts name the open candidate they judge.
+    const c12 = n.candidate!.commit.slice(0, 12);
+    if (i.obligation === 'approve') return `awaiting owner approval of candidate ${c12}: owed approve ${node} --candidate ${c12} [--note TEXT] (owner)`;
     const ev = spec.evidence?.find(e => `evidence:${e.id}` === i.obligation);
-    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`)}`;
+    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`, c12)}`;
   });
   return { reason: parts.join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
 }
