@@ -1,7 +1,7 @@
 import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
-import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig } from './types.ts';
+import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig, ExecConfig } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
@@ -62,6 +62,37 @@ function parseWorktrees(v: unknown, errors: string[]): WorktreesConfig {
     else { const e = branchTemplateErrors(r.branch, 'worktrees.branch'); errors.push(...e); if (!e.length) out.branch = r.branch; }
   }
   return out;
+}
+
+/** Environment names owed sets itself; `exec.env` may not override them (D20). */
+const RESERVED_ENV = ['CI', 'OWED'];
+/**
+ * Parses an optional `exec:` block (D20); unknown keys and bad types are errors. Returns undefined when neither
+ * `env` nor `wrap` is non-empty, so `exec: {}` equals no block (plan blob, keys and views as without it).
+ */
+function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('exec: expected object'); return undefined; }
+  const r = v as Record<string, unknown>, out: ExecConfig = {};
+  for (const k of Object.keys(r)) if (k !== 'env' && k !== 'wrap') errors.push(`exec.${k}: unknown key`);
+  if (r.env !== undefined) {
+    if (!r.env || typeof r.env !== 'object' || Array.isArray(r.env)) errors.push('exec.env: expected object');
+    else {
+      const env: Record<string, string> = {};
+      for (const [name, value] of Object.entries(r.env as Record<string, unknown>)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) errors.push(`exec.env.${name}: invalid variable name`);
+        else if (RESERVED_ENV.includes(name)) errors.push(`exec.env.${name}: reserved (owed sets ${RESERVED_ENV.join(' and ')})`);
+        else if (typeof value !== 'string') errors.push(`exec.env.${name}: expected string`);
+        else env[name] = value;
+      }
+      if (Object.keys(env).length) out.env = env;
+    }
+  }
+  if (r.wrap !== undefined) {
+    if (!Array.isArray(r.wrap) || !r.wrap.length) errors.push('exec.wrap: expected non-empty array of strings');
+    else if (r.wrap.some(x => typeof x !== 'string' || !x)) errors.push('exec.wrap: expected non-empty strings');
+    else out.wrap = [...r.wrap] as string[];
+  }
+  return out.env || out.wrap ? out : undefined;
 }
 
 export function globMatch(path: string, glob: string): boolean {
@@ -126,6 +157,7 @@ export function parsePlan(text: string): Plan {
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
   if (r.drive !== undefined) plan.drive = parseDrive(r.drive, errors);
   if (r.worktrees !== undefined) plan.worktrees = parseWorktrees(r.worktrees, errors);
+  if (r.exec !== undefined) { const exec = parseExec(r.exec, errors); if (exec) plan.exec = exec; }
   errors.push(...mutantErrors(plan));
   if (errors.length) throw new OwedError(errors.join('\n'), 'usage');
   return plan;

@@ -119,6 +119,49 @@ owed decoy reveal decoys.json            # owner; later, when the outcome should
 
 A decoy is **caught** if its node received an execution failure or a review block before any merge, or if a merge of it observed a failure (every observation appended by `owed merge <node>` records `merging: <node>`) on an invariant or check that was not already failing on trunk — pre-existing trunk debt, deferred or not, never counts — whether the merge was refused or later went through after an owner deferral. It is **escaped** if it merged without any of these, and **pending** otherwise. `owed report` ends with an Escapes section: counts by class, decoy outcomes and the escape rate, escaped / (caught + escaped).
 
+## Execution environment: env and wrapper
+
+A plan may give every process owed starts in a materialized tree — `setup`, checks, red runs, strength runs, invariants and attribution reruns — extra environment variables and a wrapper:
+
+```yaml
+exec:
+  env: { CARGO_TARGET_DIR: /abs/shared/target }   # strings, used verbatim (no $VAR expansion); not CI or OWED
+  wrap: ["/abs/tmp/qa/heavy.sh"]                   # argv prefix: owed runs [...wrap, "bash", "-lc", <command>]
+```
+
+The environment is owed's own plus `exec.env`, then `CI=1 OWED=1`. The wrapper runs in the materialized tree with that environment, in the same process group, under the same timeout and abort handling: owed kills the whole group, wrapper included. **Wrapper contract:** run the trailing argv to completion in the given directory and environment, pass stdout and stderr through, and exit with the command's exit code. When the wrapper cannot run the command (transport, mirror or lease failure) it must exit **126 or 127**: owed reads those as "could not run" (a red run is then `error`), while every other non-zero code counts as a test failure — a red pass unless the check sets `red_expect`. Use `red_expect` on red checks run through a wrapper. A relative `wrap[0]` containing a slash resolves against the materialized tree, not the main worktree; use absolute paths (a bare name is looked up in `PATH`). `exec` is part of every check, red, strength and invariant key, so changing it means fresh evidence; `exec: {}` is the same as no block. Because a wrapper can weaken every check (`wrap: ["true"]` passes everything), changing `exec` is owner-only and shows as a downgrade in ΔO⁻, like `setup`: set it once. `owed why` prints `Exec: wrap <argv> · env <NAMES>` (names, never values).
+
+Recipes (sketches; adapt paths):
+
+- **Slot limiter** — at most 5 heavy runs at once on this machine, `wrap: ["/abs/tmp/qa/heavy.sh"]`:
+  ```bash
+  #!/bin/bash
+  # heavy.sh: hold one of $SLOTS flock slots while the command runs; the lock dies with the process group.
+  slots=${SLOTS:-5}; dir=/tmp/qa-slots; mkdir -p "$dir" || exit 127   # cannot run: 127, never a test failure
+  while :; do
+    for i in $(seq 1 "$slots"); do
+      exec 9>"$dir/$i"
+      if flock -n 9; then "$@"; exit $?; fi
+    done
+    sleep 1
+  done
+  ```
+  A single slot is just `wrap: ["flock", "/tmp/qa.lock"]`.
+- **dsa machine lease** — share the lease that `pi-durable-subagents` uses for its own heavy work: `wrap: ["pi-durable-subagents", "hold", "machine", "--shared", "--"]`. If `hold` fails before it runs the command, owed sees its exit code: unless that is 126/127, wrap it in a script that maps a lease failure to 127.
+- **Shared build cache** — every materialized tree starts without build output; point the build at a shared cache through `env`, e.g. `env: { CARGO_TARGET_DIR: /abs/shared/target }` (or `npm_config_cache`, `GOCACHE`). A cache is a trust input: a poisoned cache can make a check pass, so keep it per user and machine.
+- **Remote host** — run checks on another machine:
+  ```bash
+  #!/bin/bash
+  # remote.sh <host> bash -lc <command>: mirror the tree to <host> and run there.
+  host=$1; shift; dir=/tmp/owed-remote/$(basename "$PWD")
+  rsync -a --delete --exclude .git ./ "$host:$dir/" || exit 127      # mirror failed: could not run
+  ssh "$host" "cd $(printf %q "$dir") && export CI=1 OWED=1 && timeout 900 $(printf '%q ' "$@")"
+  rc=$?; [ "$rc" -eq 255 ] && exit 127                                  # ssh transport failure: could not run
+  exit "$rc"
+  ```
+  A remote `timeout` exits 124, which owed reads as a test failure (a red pass unless `red_expect` is set); a command that itself exits 255 is indistinguishable from an ssh failure here and becomes 127.
+  With `wrap: ["/abs/remote.sh", "ipc"]` the key names the host (the wrapper argv), but owed cannot verify where the command ran, which environment it had or that the remote tree matched. owed only kills the local process group: the wrapper must bound the remote command itself (`timeout`), and it must forward the variables it needs (`exec.env` is not sent over ssh by itself). The mirror has no `.git`, so checks must not need Git.
+
 ## Trust boundary and storage
 
 The ledger lives under the Git common directory in `owed/`, shared by the repository's worktrees. Dispatch worktrees live under `.owed/wt/` and are locally excluded from Git. `OWED_DIR` overrides ledger storage for isolated tests.

@@ -109,6 +109,29 @@ record it), never invalidates a submitted candidate (the candidate-invalidation
 comparison ignores `type`), and affects only later dispatches; an open slot keeps
 the branch and worktree recorded in its dispatch entry (§8.1).
 
+### 3.2 Execution environment: `exec` (D20)
+
+```yaml
+exec:                            # optional; unknown keys and bad types are errors
+  env: { CARGO_TARGET_DIR: /abs/shared/target }   # string values, no expansion
+  wrap: ["/abs/tmp/qa/heavy.sh"]                  # non-empty argv prefix of non-empty strings
+```
+
+`env` names match `^[A-Za-z_][A-Za-z0-9_]*$` and may not be `CI` or `OWED`;
+values are strings used verbatim (no `$VAR` or `~` expansion). The parsed plan
+keeps only non-empty fields: `exec: {}` and `exec: {env: {}}` are the same as
+no block (same plan blob, keys and views). `wrap: []` is an error.
+
+A change of `exec` is treated like a change of `setup`: it invalidates the
+submitted candidates (§3), attribution reruns of older blocks use the exec of
+the plan in force when the block was recorded (§7, step 1), and because a wrapper
+can weaken every check (`wrap: ["true"]` passes everything) the reducer records
+it as `{node: "*", what: "exec changed; cannot prove obligations were not
+reduced"}` in ΔO⁻: only the owner may change `exec`, so set it once. The
+recorded `downgrades` field of the plan entry (and the confirmation list of
+`owed_plan`) does not list it, as for `setup`. Plans without `exec` behave
+exactly as in 0.4.1; a plan with `exec` needs owed ≥ 0.5.0 to replay.
+
 ## 4. Items and keys
 
 An item is `(subject, obligation, key)`; status is evaluated per item.
@@ -137,6 +160,15 @@ All keys are sha256 hex over canonical JSON.
 - Check ids may contain `:`; an obligation name splits only at its first colon.
 - Rulings item: `H({o:"rulings", attempt})` (§5.6).
 - Invariant item on trunk state S: `H({o:"inv", id, run, timeout_s, setup, min_tests, closure: closureDigest(S), reads: readsDigest(S, reads)})`.
+
+### 4.1 `exec` in keys (D20)
+
+When the plan's `exec` has a non-empty `env` or `wrap`, every check, red,
+strength and invariant key above also contains `exec: {env?, wrap?}` (only the
+non-empty fields). Otherwise the field is absent and keys are byte-identical
+to 0.4.1 (`exec: {}` = no block). Writes, closure-review, review and rulings
+keys never contain it. The key names the wrapper argv, not where the wrapper
+ran: a remote-host wrapper is trusted by its argv.
 
 ## 5. Ledger entry kinds
 
@@ -330,8 +362,8 @@ moved ref silently.
    (attribution) using the commit/base recorded in the failing obs.
 2. Materialize C clean: `git worktree add --detach <tmp> <C>`; restore closure
    globs from B (files in B overwrite; closure files only in C are deleted);
-   run `setup`; run each check with `bash -lc`, a timeout (kill process group),
-   env `CI=1 OWED=1`; capture combined output to a blob; parse test counts
+   run `setup`; run each check with `bash -lc` (prefixed by `exec.wrap`, §7.9),
+   a timeout (kill process group), env `CI=1 OWED=1` (plus `exec.env`, §7.9); capture combined output to a blob; parse test counts
    (TAP `# pass N`/`# tests N`, node:test, pytest `N passed`, cargo
    `test result: ok. N passed`); zero tests with a known format = fail;
    `min_tests` unmet = fail; unknown format with `min_tests` set = error.
@@ -369,6 +401,25 @@ moved ref silently.
    is handled by the paths above, never by interrupting the locked step. The
    only lock wait after an abort is merge/adopt recording the observations
    they measured before it.
+9. Execution environment (D20, §3.2). Every process owed starts in a
+   materialized tree — `setup`, check, red, strength and invariant runs, and
+   attribution reruns — gets the environment `{...process.env, ...exec.env,
+   CI: "1", OWED: "1"}` (`NODE_TEST_CONTEXT` of owed's own process is not
+   inherited) and runs as `[...exec.wrap, "bash", "-lc", <command>]` instead
+   of `["bash", "-lc", <command>]`: same cwd (the materialized tree), same new
+   process group, same timeout and abort handling (SIGKILL to the group, so
+   the wrapper is killed with its group). Wrapper contract: run the trailing
+   argv to completion in the given cwd and environment, pass stdout and stderr
+   through, and exit with its exit code; when the wrapper cannot run the
+   command (transport, mirror or lease failure) it must exit 126 or 127. A
+   wrapper that runs the command elsewhere (ssh) must bound it there itself,
+   because owed can only kill the local process group. The red-run 126/127
+   rule (step 3) applies to the wrapper's exit code: 126/127 is `error`, any
+   other non-zero code is read as a test failure — so a wrapper failure with
+   another code, or a remote `timeout`'s 124, is a red pass unless `red_expect`
+   is set (use `red_expect` with wrappers). A wrapper that cannot be started is
+   an `error`. A relative `wrap[0]` containing a slash resolves against the
+   materialized tree (the cwd); a bare name is looked up in `PATH`.
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
@@ -527,6 +578,10 @@ directories created for a dispatch that fails are left in place.
   ✘ rejected, ⊥ awaiting observation, ⊤ conflict, ⏸ deferred, ⛔ blocked (active blocks and how to clear them).
   A `rulings` item satisfied while no ruling is in scope for the node reads
   "no rulings apply" (not "acknowledged"/"satisfied"); its status is unchanged.
+  When the plan has `exec` (§3.2), the line after the node header is
+  `Exec: wrap <argv> · env <NAMES>` (present parts only; argv words with blanks
+  or quotes JSON-quoted; env names sorted, values never shown); `--json` has
+  `exec` with that line.
 - **Clearing hints** (receipt card, report blocks, brief *Rejected or blocked*)
   never print an executable command carrying `--as` of another principal than
   the owner. A judgment block of rank r by reviewer A is described in words:
