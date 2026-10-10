@@ -448,10 +448,15 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const live = ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq));
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   if (waitingFor(s, id)) { for (const l of live) { const v = runs.get(l.rid); if (v?.state === 'asking') return asking(l, v); } return undefined; }
-  // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only. 0.8 (L3.1): unless an undelivered
-  // ruling names the node and its writer was launched; the rows below then run up to `rulingFirst` (after row 5).
+  // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only. 0.8 (L3.1): unless the writer run
+  // is sealed and an undelivered ruling names the node, or a ruling send to the writer is recorded but not applied in
+  // this process (review #914 F1: dsa pending, or a crash before dsa; row 4 re-sends it with the same id); the rows
+  // below then run up to `rulingFirst` (after row 5).
   const owner = ownerNeeded(s, id), writer = ar.launches.find(l => l.role === 'writer');
-  if (owner && !(writer && rulingFollowUp(s, id, opts.rejected))) return ownerNotify(s, id, owner);
+  const writerView = writer && runs.get(writer.rid);
+  const rulingDue = (): boolean => !!writer && !!writerView && isSealed(writerView)
+    && (!!rulingFollowUp(s, id, opts.rejected) || ar.sends.some(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up' && !opts.applied.has(x.send)));
+  if (owner && !rulingDue()) return ownerNotify(s, id, owner);
   // Row 2: writer launch missing.
   if (!writer) return writerLaunch(s, id, opts.project);
   if (live.some(l => !runs.has(l.rid))) return undefined;
