@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, utimes, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -21,14 +21,14 @@ const show = (m: ReturnType<typeof compare>): string => m ? `${m.what} at prefix
 test('differential: fuzz ledgers give the same validateDraft decisions, states, queries and views as 0.10', { timeout: 600_000 }, () => {
   let kinds = new Set<string>();
   for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
-    const { entries, lookup, mismatch } = fuzzLedger(seed, 260);
+    const { entries, lookup, mismatch } = fuzzLedger(seed, 300);
     assert.equal(mismatch, undefined, show(mismatch));
-    kinds = new Set([...kinds, ...entries.map(e => e.kind)]);
+    kinds = new Set([...kinds, ...entries.map(e => e.kind === 'submit' && e.carry !== undefined ? 'carry submit' : e.kind)]);
     const m = compare(entries, lookup, 3);
     assert.equal(m, undefined, show(m));
   }
   // The fuzz reaches the entry kinds whose refresh shortcuts matter.
-  for (const k of ['plan', 'rule', 'merge', 'review', 'waive', 'obs', 'submit', 'rebase', 'abandon', 'halt', 'adopt']) assert.ok(kinds.has(k), `fuzz never appended ${k}: ${[...kinds].join(', ')}`);
+  for (const k of ['plan', 'rule', 'merge', 'review', 'waive', 'obs', 'submit', 'rebase', 'abandon', 'halt', 'adopt', 'evidence', 'defer', 'launch', 'send', 'resume', 'escape', 'carry submit']) assert.ok(kinds.has(k), `fuzz never appended ${k}: ${[...kinds].join(', ')}`);
 });
 
 test('differential: a synthetic ledger (waves, plan changes, rulings, merges) at every 25th prefix', { timeout: 600_000 }, () => {
@@ -91,6 +91,27 @@ test('plan cache: written on the first parse, then read instead of the YAML; ver
   } finally { await r.cleanup(); }
 });
 
+test('plan cache: verify rewrites an entry of another version silently, reports a corrupt one or one of this version with other content', { timeout: 120_000 }, async () => {
+  const { r, sha, file } = await inited();
+  try {
+    const verify = async () => (await call<{ ok: boolean; cacheMismatch?: string[] }>(r.cwd, ['verify']));
+    const stored = async () => JSON.parse(await readFile(file, 'utf8')) as { v: string; sha: string; plan: Plan };
+    // Only v differs (an entry of another owed release): stale, rewritten without a report.
+    await writeFile(file, JSON.stringify({ ...await stored(), v: 'plan-cache/0 owed/0.0.1' }));
+    let v = await verify(); assert.equal(v.ok, true); assert.equal(v.cacheMismatch, undefined);
+    assert.equal((await stored()).v, PLAN_CACHE_VERSION);
+    // Another version with other content is stale too: rewritten silently.
+    await tampered(file, { v: 'plan-cache/0 owed/0.0.1' });
+    v = await verify(); assert.equal(v.cacheMismatch, undefined); assert.deepEqual((await stored()).plan, parsePlan(planText));
+    // This version, other plan content or another sha field: reported, then rewritten.
+    await tampered(file); v = await verify(); assert.deepEqual(v.cacheMismatch, [sha]); assert.deepEqual((await stored()).plan, parsePlan(planText));
+    await writeFile(file, JSON.stringify({ ...await stored(), sha: 'f'.repeat(64) })); v = await verify(); assert.deepEqual(v.cacheMismatch, [sha]); assert.equal((await stored()).sha, sha);
+    // A corrupt file: reported, then rewritten.
+    await writeFile(file, '{"v": trunc'); v = await verify(); assert.equal(v.ok, true); assert.deepEqual(v.cacheMismatch, [sha]); assert.equal((await stored()).v, PLAN_CACHE_VERSION);
+    assert.equal((await verify()).cacheMismatch, undefined);
+  } finally { await r.cleanup(); }
+});
+
 test('plan cache: a corrupt entry, another version or another sha is ignored and rewritten; an unwritable cache never fails an op', { timeout: 120_000 }, async () => {
   const { r, dir, file } = await inited();
   try {
@@ -114,6 +135,10 @@ test('plan cache: gc removes entries and temp files whose sha the ledger no long
     const plans = join(dir, 'cache', 'plans'), stale = `${'e'.repeat(64)}.json`, temp = `.${'e'.repeat(64)}.x.tmp`;
     await mkdir(plans, { recursive: true }); await writeFile(join(plans, stale), '{}'); await writeFile(join(plans, temp), '');
     const lines = async () => (await readFile(join(dir, 'ledger.jsonl'), 'utf8')).split('\n').filter(Boolean).length, before = await lines();
+    // A fresh temp file may be a write in progress: kept until it is older than 60 s.
+    const fresh = await call<{ planCache?: string[] }>(r.cwd, ['gc', '--dry-run']);
+    assert.deepEqual(fresh.planCache, [stale]);
+    const old = new Date(Date.now() - 120_000); await utimes(join(plans, temp), old, old);
     const dry = await call<{ planCache?: string[] }>(r.cwd, ['gc', '--dry-run']);
     assert.deepEqual(dry.planCache, [temp, stale]);
     assert.ok(existsSync(join(plans, stale)));

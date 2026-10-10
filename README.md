@@ -212,7 +212,7 @@ Recipes (sketches; adapt paths):
 
 The ledger lives under the Git common directory in `owed/`, shared by the repository's worktrees. Dispatch worktrees live under `.owed/wt/` and are locally excluded from Git. `OWED_DIR` overrides ledger storage for isolated tests.
 
-Parsed plans are cached in `owed/cache/plans/<sha>.json` (0.10), so a status call does not parse every plan version's YAML again. The cache is derived: a damaged, stale or foreign-version entry is ignored and rewritten, `owed verify` checks every entry against its YAML blob (reporting `cacheMismatch` in `--json`) and `owed gc` removes entries for plans the ledger no longer names. Deleting the directory is always safe.
+Parsed plans are cached in `owed/cache/plans/<sha>.json` (0.10), so a status call does not parse every plan version's YAML again. The cache is derived: a damaged, stale or foreign-version entry is ignored and rewritten. `owed verify` parses every plan from YAML and checks each cache entry against it: an entry from another owed version is rewritten silently, while a corrupt entry or one whose content differs is reported in `cacheMismatch` (`--json`) and rewritten; and `owed gc` removes entries for plans the ledger no longer names. Deleting the directory is always safe.
 
 ### Worktree location and branch names
 

@@ -116,9 +116,25 @@ export function fuzzLedger(seed: number, steps: number): { entries: Entry[]; loo
     const keyOf = (o: string): string => r() < 0.85 ? cand?.keys[o] ?? `k-${o}` : `stale-${o}`;
     const obligations = cand ? Object.keys(cand.keys) : ['writes', `check:${id}`];
     const block = n?.blocks.length ? pick(n.blocks) : undefined;
+    const pending = Object.values(s.nodes).flatMap(x => x.slot?.open && x.candidate ? x.items.filter(i => i.status === 'D').map(i => ({ n: x, i })) : []);
+    const helpful = (): Draft | undefined => {
+      if (!pending.length || r() < 0.4) return undefined;
+      const { n: x, i } = pick(pending);
+      if (/^(check|red):|^writes$/.test(i.obligation)) return { kind: 'obs', by: 'executor:owed', subject: x.id, obligation: i.obligation, key: i.key, verdict: r() < 0.9 ? 'pass' : 'fail', exit: 0, durationMs: 1, commit: x.candidate!.commit, base: x.slot!.base };
+      if (i.obligation === 'review' || i.obligation === 'closure-review' || i.obligation === 'rulings') { const o = i.obligation === 'rulings' ? 'review' : i.obligation; return { kind: 'review', by: pick(['reviewer:r1', 'reviewer:r2', 'reviewer:r3']), node: x.id, attempt: x.slot!.attempt, obligation: o, key: x.candidate!.keys[o] ?? '', verdict: 'ok', rank: 2, ...(latest >= 0 ? { ack_rulings: latest } : {}) }; }
+      if (i.obligation === 'approve') return { kind: 'review', by: 'owner:human', node: x.id, attempt: x.slot!.attempt, obligation: 'approve', key: i.key, verdict: 'ok', rank: 3 };
+      if (i.obligation.startsWith('evidence:')) return { kind: 'evidence', by: 'reviewer:e', node: x.id, attempt: x.slot!.attempt, key: i.key, id: i.obligation.slice(9), files: [{ path: 'shot.png', sha256: 'c'.repeat(64), bytes: 3 }], note: 'seen' };
+      return undefined;
+    };
     const makers: (() => Draft)[] = [
-      () => ({ kind: 'dispatch', by: pick(['parent:main', 'parent:drive']), node: id, attempt: (slot?.attempt ?? 0) + (r() < 0.9 ? 1 : 2), base: r() < 0.9 ? s.trunk.commit : 'old', branch: `b-${id}`, worktree: `/wt/${id}`, packet: 'p', rulings_seen: r() < 0.8 ? latest : -1 }),
+      () => { const t = Object.values(s.nodes).find(x => x.phase === 'ready' && r() < 0.7) ?? n; return { kind: 'dispatch', by: pick(['parent:main', 'parent:drive']), node: t?.id ?? id, attempt: (t?.slot?.attempt ?? 0) + (r() < 0.9 ? 1 : 2), base: r() < 0.9 ? s.trunk.commit : 'old', branch: `b-${id}`, worktree: `/wt/${id}`, packet: 'p', rulings_seen: r() < 0.8 ? latest : -1 }; },
       () => ({ kind: 'submit', by: r() < 0.9 ? slot?.writer ?? 'writer:x' : 'writer:y#1', node: id, attempt: slot?.attempt ?? 1, facts: facts(pick(tags)) }),
+      () => {
+        // A carry targets a node whose open candidate a plan entry just invalidated, when there is one.
+        const t = Object.values(s.nodes).find(x => x.slot?.open && !x.candidate && entries.some(e => e.kind === 'submit' && e.node === x.id && e.attempt === x.slot!.attempt && e.seq > x.slot!.dispatchSeq))?.id ?? id;
+        const last = [...entries].reverse().find(e => e.kind === 'submit' && e.node === t), tspec = s.plan.nodes.find(x => x.id === t);
+        return { kind: 'submit', by: 'executor:owed', node: t, attempt: s.nodes[t]?.slot?.attempt ?? 1, facts: last?.kind === 'submit' ? { ...last.facts, keys: { ...last.facts.keys, ...(tspec ? BASE.r.manualKeys(tspec, last.facts.patch) : {}) } } : facts('1'), carry: last?.seq ?? 0 } as Draft;
+      },
       () => { const last = [...entries].reverse().find(e => e.kind === 'submit' && e.node === id); return { kind: 'submit', by: 'executor:owed', node: id, attempt: slot?.attempt ?? 1, facts: last?.kind === 'submit' ? { ...last.facts, keys: { ...last.facts.keys, ...(spec ? BASE.r.manualKeys(spec, last.facts.patch) : {}) } } : facts('1'), carry: last?.seq ?? 0 }; },
       () => { const o = pick(obligations.filter(x => /^(check|red|writes)/.test(x)).concat(['writes'])); const src = block && r() < 0.3 ? entries[block.seq] : undefined; return src?.kind === 'obs' ? { kind: 'obs', by: 'executor:owed', subject: src.subject, obligation: src.obligation, key: src.key, verdict: pick(['fail', 'fail', 'pass', 'error'] as const), exit: 1, durationMs: 1, commit: src.commit, base: src.base, attribution: true } : { kind: 'obs', by: 'executor:owed', subject: id, obligation: o, key: keyOf(o), verdict: pick(['pass', 'pass', 'pass', 'fail', 'error'] as const), exit: 0, durationMs: 1, commit: cand?.commit ?? 'x', base: slot?.base, ...(r() < 0.1 ? { merging: id } : {}) }; },
       () => ({ kind: 'obs', by: 'executor:owed', subject: 'trunk', obligation: 'inv:safe', key: r() < 0.7 ? s.trunk.invKeys.safe ?? 'inv0' : `inv${trunkN + 1}`, verdict: pick(['pass', 'pass', 'fail', 'error'] as const), exit: 0, durationMs: 1, commit: s.trunk.commit, base: s.trunk.commit, ...(r() < 0.2 ? { merging: id } : {}) }),
@@ -126,8 +142,8 @@ export function fuzzLedger(seed: number, steps: number): { entries: Entry[]; loo
       () => { const o = block?.obligation ?? pick(obligations); return { kind: 'waive', by: 'owner:human', channel: 'delegated', node: id, obligation: o, key: keyOf(o), reason: 'risk', accept_risk: block ? [block.seq] : [] }; },
       () => ({ kind: 'defer', by: 'owner:human', node: id, items: [{ id: 'safe', key: `inv${trunkN + 1}` }], reason: 'later' }),
       () => ({ kind: 'abandon', by: 'parent:main', node: id, attempt: slot?.attempt ?? 1, reason: 'retry' }),
-      () => ({ kind: 'rebase', by: 'parent:main', node: id, attempt: slot?.attempt ?? 1, from: slot?.base ?? 'x', base: s.trunk.commit }),
-      () => { trunkN++; const commit = `m${trunkN}`; return { kind: 'merge', by: 'executor:owed', node: id, attempt: slot?.attempt ?? 1, prior: s.trunk.commit, commit, facts: { ...(cand ?? facts('1')), commit, tree: `mt${trunkN}`, base: s.trunk.commit }, state: { commit, tree: `mt${trunkN}`, invKeys: { safe: r() < 0.7 ? s.trunk.invKeys.safe ?? 'inv0' : `inv${trunkN}` } } }; },
+      () => { const t = Object.values(s.nodes).find(x => x.slot?.open && x.slot.base !== s.trunk.commit && r() < 0.8)?.id ?? id, ts = s.nodes[t]?.slot; return { kind: 'rebase', by: pick(['parent:main', ts?.writer ?? 'writer:x']), node: t, attempt: ts?.attempt ?? 1, from: ts?.base ?? 'x', base: s.trunk.commit }; },
+      () => { trunkN++; const commit = `m${trunkN}`, t = Object.values(s.nodes).find(x => x.accepted && x.slot?.open && r() < 0.9), tn = t ?? n, tc = t?.candidate ?? cand; return { kind: 'merge', by: 'executor:owed', node: tn?.id ?? id, attempt: tn?.slot?.attempt ?? 1, prior: s.trunk.commit, commit, facts: { ...(tc ?? facts('1')), commit, tree: `mt${trunkN}`, base: s.trunk.commit }, state: { commit, tree: `mt${trunkN}`, invKeys: { safe: r() < 0.7 ? s.trunk.invKeys.safe ?? 'inv0' : `inv${trunkN}` } } }; },
       () => ({ kind: 'rule', by: 'parent:main', text: 'ruling', nodes: r() < 0.4 ? '*' : [id === 'ghost' ? 'a' : id] }),
       () => ({ kind: 'plan', by: r() < 0.8 ? 'owner:human' : 'parent:main', prior: s.planSha, plan: pick(shas), downgrades: [] }),
       () => ({ kind: 'note', by: 'parent:main', text: 'note' }),
@@ -135,15 +151,15 @@ export function fuzzLedger(seed: number, steps: number): { entries: Entry[]; loo
       () => ({ kind: 'resume', by: 'parent:main', node: id, attempt: slot?.attempt ?? 1, ...(r() < 0.5 ? { after: pick(['a', 'b', 'c']) } : {}) }),
       () => { const role = pick(['writer', 'reviewer'] as const), b = BASE.r.runId(project, id, slot?.attempt ?? 1, role); return { kind: 'launch', by: 'parent:drive', node: id, attempt: slot?.attempt ?? 1, role, rid: role === 'writer' ? b : `${b}:${BASE.r.nextReviewerN(s, id)}`, spec: 'a'.repeat(64), labels: BASE.r.runLabels(project, id, slot?.attempt ?? 1, role) }; },
       () => { const l = [...entries].reverse().find(e => e.kind === 'launch' && e.node === id); const rid = l?.kind === 'launch' ? l.rid : 'none'; return { kind: 'send', by: 'parent:drive', node: id, attempt: slot?.attempt ?? 1, rid, send: `${rid}:steer:${entries.length}`, sendKind: 'steer', message: 'b'.repeat(64), reason: 'review-missing' }; },
-      () => ({ kind: 'evidence', by: pick(['reviewer:e', 'owner:human']), node: id, ...(n?.merged && r() < 0.5 ? { merge: n.merged.seq } : { attempt: slot?.attempt ?? 1, key: keyOf('evidence:shot') }), id: 'shot', files: [{ path: 'shot.png', sha256: 'c'.repeat(64), bytes: 3 }], note: 'seen' }),
+      () => { const b = s.nodes.b, key = b?.candidate?.keys['evidence:shot']; return { kind: 'evidence', by: pick(['reviewer:e', 'owner:human']), node: r() < 0.8 ? 'b' : id, ...(b?.merged && (r() < 0.5 || !b.slot?.open) ? { merge: b.merged.seq } : { attempt: b?.slot?.attempt ?? 1, key: r() < 0.9 ? key ?? 'k' : 'stale' }), id: 'shot', files: [{ path: 'shot.png', sha256: 'c'.repeat(64), bytes: 3 }], note: 'seen' }; },
       () => { trunkN++; return { kind: 'adopt', by: 'owner:human', trunk: 'main', prior: s.trunk.commit, commit: `ad${trunkN}`, state: { commit: `ad${trunkN}`, tree: `adt${trunkN}`, invKeys: { safe: r() < 0.7 ? s.trunk.invKeys.safe ?? 'inv0' : `inv${trunkN}` } }, changed: ['README'], commits: 1, note: 'release' }; },
-      () => { const m = [...entries].reverse().find(e => e.kind === 'merge' && e.node === id); return { kind: 'escape', by: 'parent:main', node: id, merge: m?.seq ?? 0, class: 'missing', note: 'escaped' }; },
+      () => { const m = [...entries].reverse().find(e => e.kind === 'merge' && (r() < 0.8 || e.node === id)); return { kind: 'escape', by: 'parent:main', node: m?.kind === 'merge' ? m.node : id, merge: m?.seq ?? 0, class: pick(['missing', 'weak', 'waiver'] as const), note: 'escaped' }; },
       () => (r() < 0.5 ? { kind: 'decoy-commit', by: 'owner:human', digest: BASE.r.decoyDigest(payload) } : { kind: 'decoy-reveal', by: 'owner:human', ...payload }),
     ];
     // Progress-heavy weights: obs, reviews and submits most, plan changes and odd kinds rarely.
-    const weights = [6, 6, 1, 14, 3, 8, 2, 1, 1, 1, 5, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], total = weights.reduce((a, b) => a + b, 0);
+    const weights = [6, 6, 3, 1, 14, 3, 8, 2, 1, 1, 1, 5, 1, 2, 1, 1, 1, 1, 1, 3, 1, 2, 1], total = weights.reduce((a, b) => a + b, 0);
     let x = r() * total, i = 0; while (x >= weights[i]!) { x -= weights[i]!; i++; }
-    const d = makers[i]!();
+    const d = (i === 4 || i === 6 ? helpful() : undefined) ?? makers[i]!();
     const eb = BASE.r.validateDraft(s, d), ec = CUR.r.validateDraft(sc, d);
     if (canonical(eb) !== canonical(ec)) return { entries, lookup, mismatch: { at: entries.length, what: `validateDraft ${canonical(d)}`, base: canonical(eb), cur: canonical(ec) } };
     if (!eb.length) append(d);

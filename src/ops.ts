@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
-import { Ledger, entryHash, type LockOwner } from './ledger.ts';
+import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors } from './plan.ts';
 import { genesisProgress, jobCurrent, invalidates, carryable } from './reducer.ts';
@@ -821,16 +821,21 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
 }
 /**
  * Verifies the hash chain and replays the ledger. N4: never reads the plan caches; every plan is parsed from its YAML
- * blob, and a persistent cache entry that disagrees with it (or is unreadable or of another version) is reported in
- * `cacheMismatch` (not a failure) and rewritten.
+ * blob and reads each persistent cache entry raw: one of another version is rewritten silently; one of this version
+ * whose sha or plan disagrees with the blob, or an unreadable or non-JSON file, is reported in `cacheMismatch` (not a
+ * failure) and rewritten.
  */
 export async function verify(o: Context): Promise<VerifyResult> {
   try {
-    const ledger = await Ledger.open(o.cwd), entries = await ledger.read(), plans = new Map<string, Plan>(), cacheMismatch: string[] = [], files = new Set(await ledger.planCacheFiles());
+    const ledger = await Ledger.open(o.cwd), entries = await ledger.read(), plans = new Map<string, Plan>(), cacheMismatch: string[] = [];
     for (const sha of planShas(entries)) {
-      const p = parsePlan((await ledger.getBlob(sha)).toString());
+      const p = parsePlan((await ledger.getBlob(sha)).toString()), c = await ledger.rawPlanCache(sha);
       plans.set(sha, p);
-      if (files.has(`${sha}.json`) && canonical(await ledger.readPlanCache(sha)) !== canonical(p)) { cacheMismatch.push(sha); await ledger.writePlanCache(sha, p); }
+      if (c.state === 'missing') continue;
+      // Another version is a stale entry (rewritten silently); corruption or other content under this version is reported.
+      const report = c.state === 'corrupt' || (c.v === PLAN_CACHE_VERSION && (c.sha !== sha || canonical(c.plan) !== canonical(p)));
+      if (report) cacheMismatch.push(sha);
+      if (report || c.v !== PLAN_CACHE_VERSION) await ledger.writePlanCache(sha, p);
     }
     const state = reduce(entries, sha => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; });
     return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}) };
@@ -1055,7 +1060,9 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
       if (worktree || branch || pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned });
     }
     // N4: plan cache entries (and stray temp files) whose sha the ledger no longer names; nothing is recorded for them.
-    const named = new Set(planShas(entries).map(sha => `${sha}.json`)), planCache = (await ledger.planCacheFiles()).filter(f => !named.has(f));
+    // Temp files only once older than 60 s: a younger one may be a write in progress.
+    const named = new Set(planShas(entries).map(sha => `${sha}.json`)), now = Date.now(), planCache: string[] = [];
+    for (const f of await ledger.planCacheFiles()) if (!named.has(f) && (!f.endsWith('.tmp') || now - (await ledger.planCacheMtime(f) ?? now) > 60_000)) planCache.push(f);
     if (!dryRun) for (const f of planCache) await ledger.removePlanCache(f);
     const t = await gcTrees(root,state.plan,dryRun), extra = { ...(t.trees.length ? { trees:t.trees } : {}), ...(t.kept.length ? { treesKept:t.kept } : {}), ...(planCache.length ? { planCache } : {}) };
     if (dryRun || !removed.length) return { dryRun, removed, kept, ...extra };
