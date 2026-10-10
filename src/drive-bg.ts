@@ -9,8 +9,10 @@ import { join, resolve } from 'node:path';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
-import { defaultOwed, lockAlive, procStart, reportText } from './drive-run.ts';
-import { DRIFT_KEY, repeatText, reportKey, wakeReport } from './drive-run.ts';
+import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
+import { repeatText, reportKey, wakeReport } from './drive-run.ts';
+import { Dsa } from './dsa.ts';
+import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
 import { oneLine } from './views.ts';
 import { startingSession } from './dsa.ts';
@@ -111,7 +113,7 @@ export const FROM_DSA_NOTE = 'note: started from inside a dsa call; if that call
  * first with no exit record or with an error record refuses with the log tail; one that has not taken the lock after
  * `waitMs` (30 s) is sent SIGTERM (pid and start time checked) and the start refuses with the log tail.
  */
-export async function driveStart(o: { cwd: string; max?: number; owed?: string[]; waitMs?: number }): Promise<DriveStart> {
+export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number }): Promise<DriveStart> {
   const ledger = await Ledger.open(o.cwd), dir = ledger.dir, repo = await git.mainRoot(o.cwd);
   if (!(await ledger.read()).length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   return ledger.withLock(async () => {
@@ -120,7 +122,8 @@ export async function driveStart(o: { cwd: string; max?: number; owed?: string[]
     if (held.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${held.owner.pid} on host ${held.owner.host} (since ${held.owner.at}); a lock of another host is never taken over: check that host, and if no driver runs there remove the lock by hand; log ${log}`);
     mkdirSync(join(dir, 'drive'), { recursive: true });
     try { renameSync(log, `${log}.1`); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-    const argv = [...(o.owed ?? defaultOwed()), 'drive', '--json', ...(o.max !== undefined ? ['--max', String(o.max)] : [])];
+    // H1.2: `--stay` is passed to the driver; the lock does not record it (status reads the log).
+    const argv = [...(o.owed ?? defaultOwed()), 'drive', '--json', ...(o.max !== undefined ? ['--max', String(o.max)] : []), ...(o.stay ? ['--stay'] : [])];
     // A relative $OWED_DIR resolves against cwd: pass the resolved ledger dir, since the driver runs at the root.
     // The driver is an independent long-lived process: no dsa call identity (DSA_EXEC, DSA_CALL); DSA_HOME and the rest stay.
     const env: NodeJS.ProcessEnv = { ...process.env, ...(process.env.OWED_DIR ? { OWED_DIR: dir } : {}) }; delete env.NODE_TEST_CONTEXT; delete env.DSA_EXEC; delete env.DSA_CALL;
@@ -178,7 +181,25 @@ export interface DriveStatus {
   tail: string[];
   /** The pi session the lock records for a running (or another host's) driver (E1); absent when none. */
   session?: string;
+  /** A running staying driver is idle, waiting for ledger changes since this time (H1.2: its last `idle-wait`). */
+  idleSince?: string;
 }
+/**
+ * H1.2: `at` of the last `idle-wait` line of the current driver's output (after the last exit record) when no action
+ * other than a notify follows it (an idle pass prints notifies only); else undefined.
+ */
+function idleSinceOf(lines: string[]): string | undefined {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const j = parseObject(lines[i]!);
+    if (!j) continue;
+    if (j.event === 'exit') return undefined;
+    if (j.event === 'idle-wait') return typeof j.at === 'string' ? j.at : undefined;
+    if (typeof j.do === 'string' && j.do !== 'notify') return undefined;
+  }
+  return undefined;
+}
+/** The idle text of status, `/owed` and owed_drive status (H1.2). */
+export const idleText = (at: string): string => `idle, waiting for ledger changes since ${at}`;
 /** Where the runs of a running driver are listed (E1.3). */
 export const sessionText = (session: string | undefined): string => session !== undefined ? `runs are listed in pi session ${session}` : 'no pi session: runs show only in pi-durable-subagents status / the CLI';
 /** `owed drive --status` (D17.3). Reads only; creates nothing. */
@@ -190,6 +211,7 @@ export async function driveStatus(o: { cwd: string }): Promise<DriveStatus> {
     if (typeof lock.owner.session === 'string' && lock.owner.session) r.session = lock.owner.session;
   }
   if (lock.state === 'foreign') r.foreign = true;
+  if (lock.state === 'live' && lines) { const at = idleSinceOf(lines); if (at !== undefined) r.idleSince = at; }
   const exit = lines ? lastExit(lines) : undefined;
   if (exit) r.exit = exit;
   else if (lines?.length && lock.state !== 'live' && lock.state !== 'foreign') r.noExitRecord = true;
@@ -200,7 +222,7 @@ const exitText = (e: ExitRecord): string => `${e.reason} (exit ${e.code}) at ${e
 export function renderDriveStatus(r: DriveStatus): string {
   const out: string[] = [];
   if (r.foreign) out.push(`driver lock held by pid ${r.pid} on host ${r.host} since ${r.since} (another host: not checked from here)`);
-  else if (r.running) out.push(`driver running: pid ${r.pid} on ${r.host} since ${r.since}`);
+  else if (r.running) out.push(`driver running: pid ${r.pid} on ${r.host} since ${r.since}`, ...(r.idleSince !== undefined ? [idleText(r.idleSince)] : []));
   else out.push(r.noExitRecord ? 'driver not running; it ended without an exit record (killed or crashed)' : 'driver not running');
   if (r.running || r.foreign) out.push(sessionText(r.session));
   if (r.exit) out.push(`last exit: ${exitText(r.exit)}`);
@@ -213,7 +235,7 @@ export function renderDriveStatus(r: DriveStatus): string {
 export async function driverLine(cwd: string): Promise<string> {
   const r = await driveStatus({ cwd });
   if (r.foreign) return `Driver: lock held by pid ${r.pid} on host ${r.host} since ${r.since}; ${sessionText(r.session)}`;
-  if (r.running) return `Driver: running pid ${r.pid} since ${r.since}; ${sessionText(r.session)}`;
+  if (r.running) return `Driver: running pid ${r.pid} since ${r.since}; ${r.idleSince !== undefined ? `${idleText(r.idleSince)}; ` : ''}${sessionText(r.session)}`;
   if (r.exit) return `Driver: not running (last exit ${r.exit.reason} at ${r.exit.at})`;
   return r.noExitRecord ? 'Driver: not running (ended without an exit record)' : r.noOutput ? 'Driver: not running (no driver output yet)' : 'Driver: not running';
 }
@@ -260,24 +282,71 @@ type LineKind = 'wake' | 'terminal' | 'merge' | 'quiet';
 const TERMINAL = new Set(['exit', 'killed', 'stopped', 'idle']);
 /**
  * Which log lines wake the session (D17.7): halts, notifies (questions, owner-needed, stalled), rejected / conflicting
- * dsa requests, refused merges and errors (both halt or need a look), events errors, terminal lines and any line that
- * is not a JSON object. A merge only rides along with the next wake; everything else (dispatch, launch, send applied,
+ * dsa requests, refused merges and errors (both halt or need a look), events errors, a staying driver's `idle-wait`
+ * (H1.2), terminal lines and any line that is not a JSON object. A merge only rides along with the next wake; everything else (dispatch, launch, send applied,
  * attest, busy, pending, cursor-reset) is quiet.
  */
-export function classifyLine(line: string): { kind: LineKind; text: string; fact?: { node: string; key: string; base: string; facts: number }; clears?: string } {
+export function classifyLine(line: string): { kind: LineKind; text: string; fact?: { node: string; key: string; base: string; facts: number }; clears?: string; check?: WakeCheck } {
   const j = parseObject(line);
   if (!j) return { kind: 'wake', text: oneLine(line) };
   const text = reportText(j);
   // G3.4a: trunk drift cleared: quiet, and the drift notify's record is forgotten (an identical later drift wakes).
   if (j.event === 'drift-cleared') return { kind: 'quiet', text, clears: DRIFT_KEY };
-  if (typeof j.event === 'string') return { kind: TERMINAL.has(j.event) ? 'terminal' : j.event === 'events-error' ? 'wake' : 'quiet', text };
+  // H1.2: a staying driver's `idle-wait` wakes; it is not terminal (the driver keeps running).
+  if (typeof j.event === 'string') return { kind: TERMINAL.has(j.event) ? 'terminal' : j.event === 'events-error' || j.event === 'idle-wait' ? 'wake' : 'quiet', text };
   if (typeof j.do !== 'string') return { kind: 'wake', text };
   if (j.do === 'merge' && j.outcome === 'merged') return { kind: 'merge', text };
   if (!wakeReport(j)) return { kind: 'quiet', text };
+  // H1.1b: what a pi delivery revalidates. Drift lines (`scope: 'repo'`; node `trunk` from an older driver) are
+  // repository facts: never dropped.
+  const node = typeof j.node === 'string' && j.scope !== 'repo' && !(j.scope === undefined && j.node === DRIFT_NODE) ? j.node : undefined;
+  const check: WakeCheck = {
+    ...(node !== undefined && typeof j.facts === 'number' ? { node, facts: j.facts } : {}),
+    ...(j.do === 'notify' && typeof j.rid === 'string' && typeof j.qid === 'string' && typeof j.rev === 'number' ? { rid: j.rid, qid: j.qid, rev: j.rev } : {}),
+  };
+  const checked = check.node !== undefined || check.qid !== undefined ? { check } : {};
   // E3.1: a node-scoped wake with a fact mark is compared per node by its text without the repeat suffix.
   // G3.4b: keyed by `reportKey`, so the repo-level drift notify and a plan node named `trunk` keep separate records.
-  if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, key: reportKey(j), base: reportText({ ...j, repeat: undefined }), facts: j.facts } };
-  return { kind: 'wake', text };
+  if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, key: reportKey(j), base: reportText({ ...j, repeat: undefined }), facts: j.facts }, ...checked };
+  return { kind: 'wake', text, ...checked };
+}
+
+/**
+ * What a pi delivery revalidates of one wake line (H1.1b): `node`/`facts` (a node-scoped line with a fact mark, not a
+ * drift line) and `rid`/`qid`/`rev` (an asking notify naming its first open question). Terminal lines, drift lines and
+ * lines without a fact mark or question carry none and are never dropped.
+ */
+export interface WakeCheck { node?: string; facts?: number; rid?: string; qid?: string; rev?: number }
+/** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
+export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
+/**
+ * The revalidation of a pi delivery (H1.1b), against the ledger of `cwd` and dsa. A line is dropped when the node's
+ * current fact mark (`factMark`, the function that produced the mark) is higher than the line's (someone acted on the
+ * node; a condition that still holds is reported again by the driver's next pass with the new mark), or when dsa
+ * describe of the line's run no longer lists its qid/rev as an open question. A failed ledger read or describe keeps
+ * the line. The ledger is read and each run described at most once per delivery.
+ */
+export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
+  return async checks => {
+    let state: Promise<State | undefined> | undefined;
+    const views = new Map<string, Promise<{ qid: string; rev: number }[] | undefined>>();
+    const dsa = (): Dsa => o.dsa ?? new Dsa({ timeoutMs: 10_000 });
+    let client: Dsa | undefined;
+    return Promise.all(checks.map(async c => {
+      if (c.node !== undefined && c.facts !== undefined) {
+        state ??= stateOf(o.cwd).catch(() => undefined);
+        const s = await state;
+        if (s?.nodes[c.node] && factMark(s, c.node) > c.facts) return false;
+      }
+      if (c.rid !== undefined && c.qid !== undefined) {
+        const rid = c.rid;
+        if (!views.has(rid)) { client ??= dsa(); const d = client; views.set(rid, d.describe(rid).then(v => (v.questions ?? []).map(q => ({ qid: q.qid, rev: q.rev })), () => undefined)); }
+        const open = await views.get(rid)!;
+        if (open && !open.some(q => q.qid === c.qid && q.rev === c.rev)) return false;
+      }
+      return true;
+    }));
+  };
 }
 
 export interface FollowerOptions {
@@ -287,7 +356,16 @@ export interface FollowerOptions {
   deliver: (content: string) => void;
   intervalMs?: number;
   onStop?: () => void;
+  /**
+   * pi (H1.1a): the session's agent is running. While true the follower keeps reading and holds the batch; it is
+   * delivered at the next tick while idle, or on `flush` (agent_settled). Absent (CLI, plain followers): never busy.
+   */
+  busy?: () => boolean;
+  /** pi (H1.1b): revalidates the batch's wake lines at delivery time. Absent: every wake line is delivered. */
+  revalidate?: Revalidate;
 }
+/** Suffix line of a pi delivery after dropping resolved wake lines (H1.1c). */
+export const resolvedText = (n: number): string => `(${n} wake(s) resolved before delivery)`;
 /**
  * Follows one driver's log: every `intervalMs` (unref'd timer) reads the complete lines appended since the last read and
  * delivers one message for all wake lines of that read (D17.7): `owed drive (<repo>):`, the merges since the last
@@ -298,6 +376,9 @@ export interface FollowerOptions {
  * latest repeat per node). Lines without a fact mark (an older driver, non-JSON) wake as before. A log replaced by rotation (other dev/ino, or shorter than the
  * offset) is read from its start (D17a.4). If `deliver` throws, the batch is kept and retried on the next tick
  * (D17a.8). It stops after delivering a terminal line, or the notice that the driver pid is gone without one.
+ * With the pi hooks (H1.1) the timer runs `step`: the batch is held while `busy()`, and at delivery its wake lines are
+ * revalidated; dropped lines are counted in a last line `(<n> wake(s) resolved before delivery)`, and a batch with no
+ * wake line left is not delivered (merges and repeats keep riding along).
  */
 export class Follower {
   private readonly o: FollowerOptions;
@@ -305,12 +386,14 @@ export class Follower {
   /** Identity of the file the offset belongs to. */
   private file?: { dev: number; ino: number };
   private timer?: NodeJS.Timeout;
-  /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed delivery. */
-  private pending: { text: string; wake: boolean; repeatOf?: string }[] = [];
+  /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed or held delivery. */
+  private pending: { text: string; wake: boolean; repeatOf?: string; check?: WakeCheck }[] = [];
   /** reportKey → the last wake taken for delivery (text without the repeat suffix, fact mark) and its repeats since (E3.1). */
   private readonly last = new Map<string, { base: string; facts: number; n: number }>();
   /** A terminal line (or the pid-gone notice) is pending: stop once it is delivered. */
   private ended = false;
+  /** A `step` is revalidating / delivering: another one waits for the next tick. */
+  private stepping?: Promise<string | undefined>;
   stopped = false;
   constructor(o: FollowerOptions) {
     this.o = o;
@@ -319,8 +402,13 @@ export class Follower {
     this.offset = o.from ?? size;
   }
   get pid(): number { return this.o.pid; }
+  /** The follower runs with the pi hooks (H1.1): the timer calls `step`. */
+  private get live(): boolean { return this.o.busy !== undefined || this.o.revalidate !== undefined; }
   start(): this {
-    if (!this.stopped && !this.timer) { this.timer = setInterval(() => { try { this.tick(); } catch { /* next tick */ } }, this.o.intervalMs ?? 2000); this.timer.unref(); }
+    if (!this.stopped && !this.timer) {
+      this.timer = setInterval(() => { if (this.live) void this.step().catch(() => undefined); else { try { this.tick(); } catch { /* next tick */ } } }, this.o.intervalMs ?? 2000);
+      this.timer.unref();
+    }
     return this;
   }
   stop(): void {
@@ -344,58 +432,99 @@ export class Follower {
       return buf.subarray(0, end).toString('utf8').split('\n').filter(l => l.trim());
     } finally { closeSync(fd); }
   }
-  /** One poll; returns the message delivered, if any. */
+  /** Reads the lines appended since the last read into the pending batch (E3.1 repeats, terminal and pid-gone notice). */
+  private collect(): void {
+    if (this.ended) return;
+    // Liveness first: a driver found gone has written everything it ever will before the read below.
+    const alive = pidAlive(this.o.pid, this.o.start), seen = new Set<string>();
+    for (const line of this.read()) {
+      const c = classifyLine(line);
+      if (c.clears !== undefined) { this.last.delete(c.clears); this.pending = this.pending.filter(p => p.repeatOf !== c.clears); }
+      if (c.kind === 'quiet') continue;
+      if (c.kind === 'merge') { this.pending.push({ text: c.text, wake: false }); continue; }
+      if (seen.has(c.text)) continue;
+      seen.add(c.text);
+      if (c.fact) {
+        const f = c.fact, prior = this.last.get(f.key);
+        if (prior && prior.base === f.base && f.facts <= prior.facts) {
+          // A repeat: no wake; only the latest repeat of the node rides along.
+          prior.n++;
+          this.pending = this.pending.filter(p => p.repeatOf !== f.key);
+          this.pending.push({ text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.key });
+          continue;
+        }
+        this.last.set(f.key, { base: f.base, facts: f.facts, n: 0 });
+      }
+      this.pending.push({ text: c.text, wake: true, ...(c.check ? { check: c.check } : {}) });
+      if (c.kind === 'terminal') this.ended = true;
+    }
+    if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true }); }
+  }
+  private message(lines: readonly { text: string }[], resolved = 0): string {
+    return [`owed drive (${this.o.repo}):`, ...lines.map(p => p.text), 'Next: owed status / owed why <node>', ...(resolved ? [resolvedText(resolved)] : [])].join('\n');
+  }
+  /** One poll without the pi hooks (CLI-era behavior, D17.7); returns the message delivered, if any. */
   tick(): string | undefined {
     if (this.stopped) return undefined;
-    if (!this.ended) {
-      // Liveness first: a driver found gone has written everything it ever will before the read below.
-      const alive = pidAlive(this.o.pid, this.o.start), seen = new Set<string>();
-      for (const line of this.read()) {
-        const c = classifyLine(line);
-        if (c.clears !== undefined) { this.last.delete(c.clears); this.pending = this.pending.filter(p => p.repeatOf !== c.clears); }
-        if (c.kind === 'quiet') continue;
-        if (c.kind === 'merge') { this.pending.push({ text: c.text, wake: false }); continue; }
-        if (seen.has(c.text)) continue;
-        seen.add(c.text);
-        if (c.fact) {
-          const f = c.fact, prior = this.last.get(f.key);
-          if (prior && prior.base === f.base && f.facts <= prior.facts) {
-            // A repeat: no wake; only the latest repeat of the node rides along.
-            prior.n++;
-            this.pending = this.pending.filter(p => p.repeatOf !== f.key);
-            this.pending.push({ text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.key });
-            continue;
-          }
-          this.last.set(f.key, { base: f.base, facts: f.facts, n: 0 });
-        }
-        this.pending.push({ text: c.text, wake: true });
-        if (c.kind === 'terminal') this.ended = true;
-      }
-      if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true }); }
-    }
+    this.collect();
     if (!this.pending.some(p => p.wake)) return undefined;
-    const message = [`owed drive (${this.o.repo}):`, ...this.pending.map(p => p.text), 'Next: owed status / owed why <node>'].join('\n');
+    const message = this.message(this.pending);
     try { this.o.deliver(message); } catch { return undefined; }   // kept: retried next tick
     this.pending = [];
     if (this.ended) this.stop();
     return message;
   }
+  /**
+   * One poll with the pi hooks (H1.1): read; hold while `busy()`; else revalidate the wake lines, drop the resolved ones
+   * and deliver what is left (nothing when no wake line is left). Busy again after the revalidation: held, revalidated
+   * again at the next delivery. A failed delivery keeps the whole batch. Returns the message delivered, if any.
+   */
+  step(): Promise<string | undefined> {
+    if (this.stepping) return this.stepping.then(() => undefined);
+    const run = this.stepOnce().finally(() => { this.stepping = undefined; });
+    this.stepping = run;
+    return run;
+  }
+  private async stepOnce(): Promise<string | undefined> {
+    if (this.stopped) return undefined;
+    this.collect();
+    if (this.o.busy?.() || !this.pending.some(p => p.wake)) return undefined;
+    const batch = this.pending.slice(), wakes = batch.filter(p => p.wake && p.check);
+    let keep: boolean[] = wakes.map(() => true);
+    if (wakes.length && this.o.revalidate) { try { keep = await this.o.revalidate(wakes.map(p => p.check!)); } catch { /* keep all */ } }
+    if (this.stopped || this.o.busy?.()) return undefined;
+    const dropped = new Set(wakes.filter((_, i) => keep[i] === false));
+    // Nothing reads while a step runs (one step at a time); anything appended after the snapshot stays pending.
+    const rest = this.pending.slice(batch.length);
+    const left = batch.filter(p => !dropped.has(p));
+    if (!left.some(p => p.wake)) { this.pending = [...left, ...rest]; return undefined; }
+    const message = this.message(left, dropped.size);
+    try { this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick
+    this.pending = rest;
+    if (this.ended) this.stop();
+    return message;
+  }
 }
 
+/** pi hooks of a DriveWatch (H1.1): see FollowerOptions.busy / revalidate (built per repository). */
+export interface WatchHooks { busy: () => boolean; revalidate: (repo: string) => Revalidate }
 /**
  * The followers of one pi extension instance: one per driver log (= per repository) (D17.7). `follow` replaces the
  * follower of that log; `attach` (session_start) follows the live driver of cwd's repository from the log's current
- * size; `stopAll` (session_shutdown) clears every timer, the drivers keep running.
+ * size; `flush` (agent_settled) delivers what the followers hold; `stopAll` (session_shutdown) clears every timer, the
+ * drivers keep running.
  */
 export class DriveWatch {
   private readonly followers = new Map<string, Follower>();
   private readonly deliver: (content: string) => void;
   private readonly intervalMs?: number;
-  constructor(deliver: (content: string) => void, intervalMs?: number) { this.deliver = deliver; this.intervalMs = intervalMs; }
+  private readonly hooks?: WatchHooks;
+  constructor(deliver: (content: string) => void, intervalMs?: number, hooks?: WatchHooks) { this.deliver = deliver; this.intervalMs = intervalMs; if (hooks) this.hooks = hooks; }
   get size(): number { return this.followers.size; }
   follow(o: { log: string; repo: string; pid: number; start?: string; from?: number }): Follower {
     this.followers.get(o.log)?.stop();
-    const f: Follower = new Follower({ ...o, deliver: this.deliver, ...(this.intervalMs !== undefined ? { intervalMs: this.intervalMs } : {}), onStop: () => { if (this.followers.get(o.log) === f) this.followers.delete(o.log); } });
+    const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo) } : {};
+    const f: Follower = new Follower({ ...o, deliver: this.deliver, ...hooks, ...(this.intervalMs !== undefined ? { intervalMs: this.intervalMs } : {}), onStop: () => { if (this.followers.get(o.log) === f) this.followers.delete(o.log); } });
     this.followers.set(o.log, f);
     return f.start();
   }
@@ -409,5 +538,27 @@ export class DriveWatch {
     const repo = await git.mainRoot(cwd).catch(() => cwd);
     return this.follow({ log, repo, pid: lock.owner.pid, ...(lock.owner.start ? { start: lock.owner.start } : {}) });
   }
+  /** One step of every follower now (agent_settled, H1.1a); the messages delivered. */
+  async flush(): Promise<string[]> {
+    const out = await Promise.all([...this.followers.values()].map(f => f.step().catch(() => undefined)));
+    return out.filter((m): m is string => m !== undefined);
+  }
   stopAll(): void { for (const f of [...this.followers.values()]) f.stop(); this.followers.clear(); }
 }
+
+// ---------- ready hint (H1.3) ----------
+/**
+ * After a successful plan update: the nodes the driver would dispatch now, when there are any and no driver holds the
+ * repository's lock (a live lock, or a lock of another host, counts as a driver; a stale one does not); else undefined.
+ * Never throws: a failure to compute it adds no hint.
+ */
+export async function readyHint(cwd: string): Promise<string[] | undefined> {
+  try {
+    const lock = readLock(await driveDir(cwd));
+    if (lock.state === 'live' || lock.state === 'foreign') return undefined;
+    const ready = await dispatchable(cwd);
+    return ready.length ? ready : undefined;
+  } catch { return undefined; }
+}
+/** The hint line: CLI `owed drive --detach --stay`, pi `owed_drive {action:"start", stay:true}`. */
+export const readyHintText = (ready: readonly string[], surface: 'cli' | 'pi'): string => `ready: ${ready.join(', ')} (${ready.length}); no driver is running: ${surface === 'cli' ? 'owed drive --detach --stay' : 'owed_drive {action:"start", stay:true}'}`;

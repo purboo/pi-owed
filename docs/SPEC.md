@@ -1160,7 +1160,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
 | `owed_adopt` | `commit?`, `note`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`) | adopt trunk commits made outside owed (owner; `as: parent:…` under an `adopt` allowance, §3.4); under the gate the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
 | `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
-| `owed_drive` | `action?` (`once` default, `start`, `status`, `stop`), `max?` (once/start), `now?` (stop) | the driver (§12.7, §12.8): one pass, or start/report/stop the background driver; start makes this session follow its log for wake-ups |
+| `owed_drive` | `action?` (`once` default, `start`, `status`, `stop`), `max?` (once/start), `now?` (stop), `stay?` (start; §12.9) | the driver (§12.7, §12.8): one pass, or start/report/stop the background driver; start makes this session follow its log for wake-ups |
 
 `owed_attest`, `owed_merge` and `owed_adopt` pass the tool call's abort signal
 to the operation (§7.8, D16.4): aborting the call ends the running check; the
@@ -1712,7 +1712,7 @@ polling.
   SIGTERM 1 s later if the lock is still held (D14.8: stop at once). Waits up
   to 10 s for the lock to be released: `stopped`, else `stopping: pid P exits
   after its current action`. Exit 0.
-- **Flags.** `--detach`, `--status`, `--stop` and `--once` exclude each other;
+- **Flags.** `--stay` (§12.9) only with the loop or `--detach`. `--detach`, `--status`, `--stop` and `--once` exclude each other;
   `--now` only with `--stop`; `--max` not with `--status`/`--stop` (it stays
   valid with `--once`); `--json` with any. The tool refuses `now` without
   `stop` and `max` with `status`/`stop` (usage).
@@ -1762,3 +1762,71 @@ polling.
   (last exit R at T)`, `Driver: not running (ended without an exit record)`,
   `Driver: not running (no driver output yet)`, `Driver: not running`, or for another host `Driver: lock held by pid P on
   host H since T`.
+
+### 12.9 Live wakes, staying driver and ready hint (0.6.1, H1)
+
+- **Live wakes (H1.1).** Cause (wais, 2026-10-10): the parent read a question
+  from the drive log and answered it; the follower had already handed its wake
+  to pi as a `followUp` while the agent was busy, and pi delivered it after the
+  answer. Rules:
+  - (a) The pi extension tracks the session's agent (`agent_start` …
+    `agent_settled`, and `ctx.isIdle()` of the latest event context). While it
+    runs, the follower keeps reading and holds the batch; it never hands a wake
+    to pi then. At `agent_settled` (every follower steps at once) or at the next
+    tick while idle, it revalidates the batch and delivers what is left with
+    `triggerTurn` as before. If the agent became busy again during the
+    revalidation, the batch stays held (revalidated again at the next delivery).
+  - (b) Revalidation runs on every pi delivery (also for a batch read while
+    idle), on wake lines only; merges and repeat ride-alongs stay pending. The
+    asking notify of the driver carries the structured fields `rid` (the launch
+    rid), `qid` and `rev` of the run's FIRST listed open question (fields of the
+    log line, not ledger fields; the text is unchanged, it may list several
+    questions). Such a line is dropped when `describe --key <rid>` no longer
+    lists that qid/rev as an open question; a failed describe keeps it. Using
+    the first question is sound because the loop prints a notify again when its
+    text changes: when the first of two questions is answered, the held line is
+    dropped and the next pass prints the line of the remaining question, which
+    is delivered. An asking line without a reported question carries `rid` only
+    and is never dropped by describe. A node-scoped line with a fact mark is
+    dropped when the node's current fact mark (`factMark`) is higher: someone
+    acted on the node, and a condition that still holds is reported again by
+    the driver's next pass with the new mark. A failed ledger read keeps it.
+    Terminal lines, drift lines (node `trunk`), `idle-wait` and lines without a
+    fact mark are never dropped. The ledger is read and each run described at
+    most once per delivery.
+  - (c) If lines were dropped, the delivered message ends with a last line
+    `(<n> wake(s) resolved before delivery)` (after `Next: …`), counting only
+    that delivery's drops; the count is not carried over. If no wake line is
+    left, nothing is delivered and the session is not woken; merges and repeats
+    ride along with the next message as before. A failed `sendMessage` keeps
+    the whole batch (revalidated again next tick).
+  - (d) CLI mode and a follower without the pi hooks are unchanged (`tick`).
+- **Stay (H1.2).** `owed drive --stay` (loop, or with `--detach`; not with
+  `--once`, `--status`, `--stop`: usage error) and `owed_drive` action start
+  `stay: true` (refused with other actions) are opt-in. When a pass is idle a
+  staying driver logs `{"event":"idle-wait","at":ISO}` once per idle period
+  (text `idle: nothing open and nothing ready; staying until the ledger
+  changes (owed drive --stop ends it)`); an idle period ends with a pass that
+  is not idle. `idle-wait` wakes the session; it is not terminal. The driver
+  keeps the lock and waits until the ledger head (the last line of
+  `ledger.jsonl`, read from the file's end every `pollMs`) differs from the
+  head at idle, then resumes passes; a ledger change that leaves it idle
+  starts no new period (no second line). A stop or signal ends it as before
+  (exit record `stopped`). `--detach --stay` passes `--stay` to the detached
+  driver; the lock does not record it. `owed drive --status` adds after its
+  first line `idle, waiting for ledger changes since <at>` (`--json`:
+  `idleSince`), `/owed` adds `idle, waiting for ledger changes since <at>; `
+  before the session text, and `owed_drive` status shows the status text:
+  while the driver runs and its log (after the last exit record) has an
+  `idle-wait` followed by no action line other than a notify. Without
+  `--stay` an idle pass exits `idle` as before.
+- **Ready hint (H1.3).** After a successful `owed plan` / `owed_plan`, when the
+  new state has nodes the driver would dispatch now (the `dispatch` actions of
+  `decide` on that state: readiness, `drive.max`, writes overlap, owner-needed)
+  and no driver holds the repository's lock (a live lock or a lock of another
+  host counts as a driver; a stale one does not), the output adds one line:
+  CLI `ready: <ids> (<n>); no driver is running: owed drive --detach --stay`,
+  pi `ready: <ids> (<n>); no driver is running: owed_drive {action:"start",
+  stay:true}`. `--json` output and the tool details gain `ready: string[]` and
+  `driver: false` only together with the line. Nothing starts automatically; a
+  failure computing the hint adds nothing.
