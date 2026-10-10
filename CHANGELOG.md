@@ -22,7 +22,8 @@ The wais run of 2026-10-10 reported four driver and planning frictions
   of that run no longer lists that qid/rev as open; a failed describe keeps it.
   Checking only the first question is enough: once it is answered the notify
   text changes, and the next pass prints the line of the remaining question,
-  which is delivered. A node-scoped line with a fact mark is dropped when the
+  which is delivered; a line whose first question is still open is delivered
+  even if a later one was answered. A node-scoped line with a fact mark is dropped when the
   node's current fact mark (`factMark`) is higher: someone acted on the node,
   and a condition that still holds is reported again by the driver's next pass
   with the new mark; a failed ledger read keeps it. Terminal lines, drift lines,
@@ -80,7 +81,8 @@ The wais run of 2026-10-10 reported four driver and planning frictions
   ["app/src/entry/", "package.json"]}]`; a writer's writes question then costs
   one parent plan update and no owner step. A parent plan update refused only
   for widened writes (every uncovered downgrade is `writes widened` or `writes
-  scope expanded`) adds, in the CLI and in `owed_plan`, one line with a
+  scope expanded`) adds, when there are new prefixes, in the CLI and in
+  `owed_plan`, one line with a
   ready-to-paste rule for the next plan: `hint: an allow rule {nodes: ["KB4"],
   writes: ["<new prefixes>"]} in the prior plan would cover this`, the new
   prefixes being those under neither the node's prior writes nor a matching
@@ -99,8 +101,8 @@ The wais run of 2026-10-10 reported four driver and planning frictions
   node's goal as its title and brief state it, not only that the writer's report
   or evidence is accurate; if the candidate or the writer's report says the goal
   is not met, record `--block` (`--needs-parent` when the goal itself is in
-  question). The driver does not parse review notes. The `owed` skill says the
-  same.
+  question). The driver does not parse review notes. The `owed` skill states
+  the same meaning of an ok review.
 - **0.6.0 deferrals (H3).** Every step of a dispatch rollback (`git worktree
   remove`, `git branch -d`, directory cleanup) runs even when an earlier one
   fails; the error then names the original failure and each failed step
@@ -109,10 +111,11 @@ The wais run of 2026-10-10 reported four driver and planning frictions
   before. A new plan (`owed init`, `owed plan`) is refused when two node ids are
   equal ignoring case (`KB4` and `kb4`), since on a case-insensitive filesystem
   they would share a branch ref and a worktree directory; replay is unaffected.
-  `formal/run-a3-big.sh` caps every run like `formal/models/scripts`: `ulimit -v
-  8000000`, explicit state caps (exhaustive 22M distinct states; simulations 2e9
+  `formal/run-a3-big.sh` caps its runs like `formal/models/scripts`: `ulimit -v
+  8000000` for every run, and for the `owedmc check` runs explicit state caps (exhaustive 22M distinct states; simulations 2e9
   sampled states, so the walk count stays the bound), the model checker's
-  `--timeout` and a wall-clock `timeout` 120 s above it (`a3_compare`: 3600 s).
+  `--timeout` and a wall-clock `timeout` 120 s above it; `a3_compare`, which has
+  no state cap of its own, runs under the memory cap and a 3600 s wall clock.
   Rerun on ipc with the caps, no cap stopped any configuration and every
   published a3 verdict and state count is unchanged
   (`formal/REPORT-mc-port.md`).
@@ -135,13 +138,17 @@ every listed node the union of all new prefixes (broader than needed, still
 covering the update); a concurrent dispatch whose worktree lies in a parent
 directory this dispatch created makes the rollback report `rollback failed:
 directory cleanup` (ENOTEMPTY) although only empty directories are removed; a
-rollback that wraps a non-OwedError drops its stack; and a staying driver polls
+rollback that wraps a non-OwedError drops its stack, and the pi extension then
+returns it as a tool error instead of rethrowing it; in pi, revalidating a
+batch replays the whole ledger once per delivery attempt, and when delivery
+fails the kept batch's dropped wakes are already marked resolved; and a staying driver polls
 neither dsa events nor trunk drift while it waits (only the ledger head). Still
 open from 0.6.0: a follow-up forwarded into running work that dsa retires
 because the call sealed before delivery still ends in a misleading `finished
 repair follow-up without submitting` halt; the fix awaits dsa §49. 0.7
 candidates: bind a reviewer's identity to its dsa call; rulings that uphold or
-overrule a named block.
+overrule a named block. M4 and M6 of `owed05-big.sh` remain within 9% of the
+22M-state cap (a larger model stops at the cap with exit 1 and no verdict).
 
 ## 0.6.0
 
