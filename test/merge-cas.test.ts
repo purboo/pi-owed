@@ -61,12 +61,14 @@ test('K4.1 wais #14: a plan update to another node during a slow merge measureme
   } finally { await r.cleanup(); }
 });
 
-test('K4.1: a plan update that changes this node\'s check invalidates the candidate: refused with that cause, nothing recorded', { timeout: 120_000 }, async () => {
+// 0.10 (N1): a check-only change carries the candidate; a brief change still invalidates it.
+test('K4.1: a plan update that changes this node\'s spec (brief) invalidates the candidate: refused with that cause, nothing recorded', { timeout: 120_000 }, async () => {
   const r = await repo();
   try {
     await setup(r, planOf([inv(r, 'wait', true)]));
     const ledger = await Ledger.open(r.cwd), before = await ledger.read(), cand = (await ops.status({ cwd: r.cwd })).nodes.a!.candidate!;
-    const res = await mergeWith(r, () => ops.planSet({ cwd: r.cwd, plan: JSON.stringify(planOf([inv(r, 'wait', true)], check('ca', '; true'))), as: owner, channel: 'flag' }));
+    const briefed = planOf([inv(r, 'wait', true)]); (briefed.nodes[0] as { brief?: string }).brief = 'changed brief';
+    const res = await mergeWith(r, () => ops.planSet({ cwd: r.cwd, plan: JSON.stringify(briefed), as: owner, channel: 'flag' }));
     const after = await ledger.read(), plan = after.at(-1)!;
     assert.equal(plan.kind, 'plan');
     assert.equal(String(res.error), `OwedError: candidate #${cand.seq} ${cand.commit.slice(0, 12)} of a was invalidated by plan #${plan.seq} (its spec changed); the writer submits again, then merge`);

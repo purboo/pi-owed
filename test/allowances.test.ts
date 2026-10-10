@@ -281,10 +281,9 @@ test('why lists out-of-writes paths of a failing writes item, says when an allow
     assert.equal((await ops.why({ cwd: r.cwd, node: 'q' })).items.find(i => i.obligation === 'writes')?.mark, '✔');
     assert.equal((await ops.why({ cwd: r.cwd, node: 'q' })).outOfWrites, undefined);
     assert.doesNotMatch((await cli(r.cwd, ['why', 'q'])).stdout, /Out-of-writes/);
-    // The parent widens w's writes under the allowance; the writer resubmits the same commit and it passes.
+    // The parent widens w's writes under the allowance; 0.10 (N1): owed carries the same commit and it passes.
     await setPlan(r.cwd, edit(base(), 'w', n => { n.writes = ['w.txt', 'docs/']; }));
-    assert.equal((await state(r.cwd)).nodes.w!.candidate, undefined, 'the plan change invalidated the candidate');
-    await ops.submit({ cwd: w.d.worktree, node: 'w', as: { role: 'writer', id: 'w#1' } });
+    assert.ok((await state(r.cwd)).nodes.w!.candidate?.carried, 'the writes-only change carried the candidate');
     assert.equal((await ops.attest({ cwd: r.cwd, node: 'w' })).accepted, true);
     assert.equal((await ops.why({ cwd: r.cwd, node: 'w' })).outOfWrites, undefined);
   } finally { await r.cleanup(); }

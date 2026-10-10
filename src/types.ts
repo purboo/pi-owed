@@ -105,7 +105,11 @@ export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; com
 export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*' }
 export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
-export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts }
+/**
+ * N1 (0.10): `carry` = the seq of the submit this entry carries across a plan entry that changed only the node's checks,
+ * writes, type or drive. Only a submit by executor:owed has it (the same commit at the same base, facts recomputed).
+ */
+export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts; carry?: number }
 export interface ObsEntry extends Base {
   kind: 'obs';
   subject: string;           // node id, or 'trunk'
@@ -208,7 +212,8 @@ export interface NodeState {
   id: string;
   phase: Phase;
   slot?: Slot;
-  candidate?: CandidateFacts & { seq: number };
+  /** N1: `carried` when the candidate is a carry submit: the plan entry that carried it and the submit it carried. */
+  candidate?: CandidateFacts & { seq: number; carried?: { plan: number; submit: number } };
   items: ItemView[];          // obligations on the current candidate (empty before submit)
   blocks: Block[];
   accepted: boolean;

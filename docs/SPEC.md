@@ -161,10 +161,30 @@ nodes:
       reviewer: { model: "example/model-small:high" }   # default: the plan's drive.reviewer
 ```
 
-A plan change that alters a node's spec, `setup` or `closure` invalidates that
-node's submitted candidate: the writer must submit again so keys are recomputed.
+A plan change that alters a node's spec, `setup`, `exec` or `closure` invalidates
+that node's submitted candidate: its keys were computed under the old plan.
 The node fields `type` (§3.1) and `drive` (§12.2) are not obligations: changing
 them invalidates no candidate and is never a downgrade.
+
+**Carry (0.10, N1, wais #24).** When the invalidated candidate's node spec differs
+from the new one only in `checks`, `writes`, `type` and `drive` (plan-wide
+`setup`, `exec` and `closure` changes do not matter), the same `owed plan` call
+appends, inside the same ledger lock and right after the plan entry, a *carry
+submit*: a `submit` by `executor:owed` with `carry: <seq>` = the carried submit,
+for the same commit at the same slot base, its facts recomputed with
+`candidateFacts` under the new plan (manual keys as for a normal submit). So
+evidence on unchanged keys (reviews, approve, evidence, measured checks whose key
+did not change) still counts, and the next attest measures only the changed keys.
+The candidate stays the writer's own commit: writer-only rules (no self-review,
+decoys) treat it exactly like the original. A change to any other node field
+(`brief`, `deps`, `review`, `title`, `approve`, `evidence`, …) never carries: the
+writer must see it and submit again, as in 0.9. A carry whose facts cannot be
+computed, or that validation would refuse, is left out (the plan is still
+recorded and the candidate stays invalidated), never silently: `owed plan` (and
+`owed_plan`) print `Not carried <node>: <reason>; the writer submits again`, and
+JSON has `notCarried: [{node, reason}]`. `owed why` and `owed status` show `candidate #C carried by plan #P
+from submit #S`, and `owed plan` prints one `Carried <node>: …` line per carried
+node. The formal model does not cover carry (Deferred).
 Invariants removed by the owner no longer need their genesis observation.
 
 **Checks prepare their own artifacts** (0.8, L2.5, wais #19). owed measures every
@@ -399,7 +419,7 @@ never part of a key.
 | `rule` | owner/parent | `{text, nodes: string[] \| "*"}` | ruling; in scope for those nodes |
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
-| `submit` | writer | `{node, attempt, commit}` | candidate claim (speech) |
+| `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
 | `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate |
 | `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5); on obligation `approve` (D23, §6.2 item 8) only by the owner (rank 3) |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
@@ -426,7 +446,8 @@ harness, materialization failure) is ⊥: no information, no block.
 - `ready` ⟺ every dep has a `merge` entry, node not merged, no open slot.
 - `dispatch` requires ready (or a closed previous attempt) and parent/owner.
 - `submit` requires an open slot whose writer is `by`, and the commit to be a
-  descendant of the slot base.
+  descendant of the slot base; a carry submit (§3, 0.10 N1) is by
+  `executor:owed` instead and restores the carried submit's commit as candidate.
 - `rebase` requires an open slot and a trunk that moved since the slot base;
   the slot base becomes the current trunk and the open candidate is dropped, so
   the node is `dispatched` again in the same worktree and attempt. The writer
@@ -1699,6 +1720,18 @@ that latest submit still awaits a parent ruling, row 8 halts with the
 needs-parent halt text (also when no block is repairable): a repair, rebase or
 submit follow-up would make the unruled block stale and let a re-review bypass
 the parent question. Without any such block row 8 is unchanged.
+
+Rebase or resubmit in row 8 (0.10, N1.4, wais #1375). Without a current
+candidate, the `rebase` follow-up is sent only when the slot has a rebase and no
+submit of this attempt came after it. Otherwise, when a later plan entry
+invalidated the latest submit of the attempt (its spec, `setup`, `exec` or
+`closure` changed and it was not carried), the `submit` follow-up names that plan
+entry: `plan #P changed this node's spec (<fields>); resubmit (re-run checks if
+needed, then \`owed submit <node>\`)`, with `<fields>` the changed node fields
+(not `type`/`drive`) and then `setup`, `exec`, `closure`. A writer that finishes
+it without submitting halts as for any submit follow-up (counted from the plan
+entry). Before 0.10 a writer that had rebased and submitted got a second
+`rebase` follow-up after such a plan change.
 
 Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
 - **Budget epoch.** `repairs` counts the attempt's `repair` sends after the
