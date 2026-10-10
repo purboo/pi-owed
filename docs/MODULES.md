@@ -44,6 +44,7 @@ export function expandBranch(template: string, spec: Pick<NodeSpec, 'id' | 'type
 `parsePlan` also parses the optional `allow:` block (SPEC §3.4, D21; `nodes` default `["*"]`, a rule needs a permission); `planDowngrades` adds `{node: 'trunk', what: 'allow changed'}` when `allow` changes other than by deleting whole rules (`allowWidened(prev, next)`).
 
 ## src/ledger.ts  (leaf io)
+0.10 (N4): `PLAN_CACHE_VERSION`; `Ledger.readPlanCache(sha)` (undefined on any error or mismatch), `writePlanCache(sha, plan)` (atomic, never throws), `planCacheFiles()`, `removePlanCache(file)`. `ops.load` reads plans through an in-process cache (deep-frozen, keyed by owed dir + sha), then this cache, then the YAML blob; `ops.verify` bypasses both (`VerifyResult.cacheMismatch`), `ops.gc` prunes stale entries (`GcResult.planCache`).
 ```ts
 export function ledgerDir(cwd: string): Promise<string>;  // OWED_DIR env, else `${git common dir}/owed`; creates it
 export class Ledger {
@@ -103,6 +104,7 @@ Every process (setup, check, red, strength, invariant, attribution reruns) runs 
 `min_tests` applies to every non-red run (check and invariant), never to a red run. A non-red run that exits non-zero with an unknown or zero count is `fail` with the last 5 output lines in the note; exit 126/127 with no count is `error` (`command could not run …`, same tail) (SPEC §7.2). cargo `test result:` lines count only at column 0. A red run whose command exits 126/127 or cannot be spawned is `error` (SPEC §6.2).
 
 ## src/reducer.ts  (leaf core, pure: no fs/git/clock)
+0.10 (N4): replay indexes in History (`record`), per-entry dirty refresh (`touched`), `dependents` per plan, frozen lookup plans shared (`own`); equivalence with the frozen copy `test/fixtures/reducer-0.10-base.ts` (+ `views-0.10-base.ts`) is tested in `test/perf.test.ts` (helpers `test/helpers/differential.ts`, `synth.ts`; benchmark `test/helpers/perf-bench.ts`/`.sh`).
 ```ts
 export type PlanLookup = (sha: string) => Plan;
 export function reduce(entries: Entry[], plans: PlanLookup): State;

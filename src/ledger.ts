@@ -1,4 +1,5 @@
-import { mkdir, readFile, open, rm, link, rename, writeFile, stat } from 'node:fs/promises';
+import { mkdir, readFile, open, rm, link, rename, writeFile, stat, readdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -8,6 +9,11 @@ import { git } from './git.ts';
 import { OwedError } from './errors.ts';
 import type { Entry, Draft } from './types.ts';
 
+/**
+ * N4: the plan cache format and parser version: the cache format number and the owed package version, so an entry
+ * written by another release (whose parsePlan may differ) is ignored.
+ */
+export const PLAN_CACHE_VERSION = `plan-cache/1 owed/${(() => { try { return String((JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: unknown }).version); } catch { return 'unknown'; } })()}`;
 export async function ledgerDir(cwd: string): Promise<string> {
   const dir = process.env.OWED_DIR ? resolve(cwd, process.env.OWED_DIR) : join(resolve(cwd, (await git(cwd, ['rev-parse', '--git-common-dir'])).stdout.trim()), 'owed');
   await mkdir(join(dir, 'blobs'), { recursive: true }); return dir;
@@ -164,6 +170,32 @@ export class Ledger {
     } finally { await rm(temp, { force: true }); }
     return sha;
   }
+  /**
+   * N4 (0.10): the persistent parsed-plan cache `<owed dir>/cache/plans/<blob sha>.json` = `{v, sha, plan}`. A read
+   * returns undefined on any error (missing, unreadable, invalid JSON, other `v` or `sha`); the caller parses the YAML.
+   */
+  async readPlanCache(sha: string): Promise<unknown> {
+    if (!/^[a-f0-9]{64}$/.test(sha)) return undefined;
+    try {
+      const c = JSON.parse(await readFile(join(this.dir, 'cache', 'plans', `${sha}.json`), 'utf8')) as { v?: unknown; sha?: unknown; plan?: unknown };
+      return c && typeof c === 'object' && c.v === PLAN_CACHE_VERSION && c.sha === sha && c.plan && typeof c.plan === 'object' ? c.plan : undefined;
+    } catch { return undefined; }
+  }
+  /** Writes a cache entry atomically (temp file, then rename); never throws (the cache never fails an op). */
+  async writePlanCache(sha: string, plan: unknown): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(sha)) return;
+    const dir = join(this.dir, 'cache', 'plans'), temp = join(dir, `.${sha}.${randomUUID()}.tmp`);
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(temp, JSON.stringify({ v: PLAN_CACHE_VERSION, sha, plan }));
+      await rename(temp, join(dir, `${sha}.json`));
+    } catch { await rm(temp, { force: true }).catch(() => undefined); }
+  }
+  /** File names in the plan cache directory (entries `<sha>.json` and stray temp files); empty when there is none. */
+  async planCacheFiles(): Promise<string[]> {
+    try { return (await readdir(join(this.dir, 'cache', 'plans'))).sort(); } catch { return []; }
+  }
+  async removePlanCache(file: string): Promise<void> { if (!file.includes('/')) await rm(join(this.dir, 'cache', 'plans', file), { force: true }); }
   async getBlob(sha: string): Promise<Buffer> {
     if (!/^[a-f0-9]{64}$/.test(sha)) throw new OwedError('invalid blob hash', 'usage');
     const data = await readFile(join(this.dir, 'blobs', sha));
