@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { access, readFile, stat, writeFile, mkdir, readdir, utimes } from 'node:fs/promises';
+import { access, readFile, stat, writeFile, mkdir, readdir, utimes, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import * as git from '../src/git.ts';
@@ -403,5 +403,70 @@ test('M2: a lock is never empty while taken; an empty lock is held for 60 s, the
     const aged = await git.materialize(r.cwd, c, { kind: 'inv', id: 'e' });
     assert.equal(aged.path, join(dir, 'inv-e-0'), 'an empty lock older than 60 s is dead and reclaimed');
     await aged.dispose();
+  } finally { await r.cleanup(); }
+});
+
+// ---------- review #944 ----------
+
+test('M2: reuse empties submodule dirs in the reused tree and leaves the main worktree submodules and .git/config alone', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    const id = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'protocol.file.allow=always'];
+    const src = join(r.root, 'subsrc'); await mkdir(src);
+    await git.git(src, ['init', '-q', '-b', 'main']); await writeFile(join(src, 'inner'), 'in\n');
+    await git.git(src, ['add', '.']); await git.git(src, [...id, 'commit', '-qm', 's']);
+    await commitAt(r.cwd, { f: '1' });
+    await git.git(r.cwd, [...id, 'submodule', 'add', '-q', src, 'sub']);
+    await git.git(r.cwd, [...id, 'commit', '-qm', 'add sub']);
+    const c = await git.revParse(r.cwd, 'HEAD'), config = join(await git.commonDir(r.cwd), 'config');
+    const status0 = (await git.git(r.cwd, ['submodule', 'status'])).stdout, config0 = await readFile(config, 'utf8');
+    assert.match(status0, /^ [0-9a-f]{40} sub/m, 'the main worktree submodule is initialized');
+    const t1 = await git.materialize(r.cwd, c, { kind: 'check', id: 'sm' });
+    assert.equal(t1.path, join(await treesDir(r), 'check-sm-0'));
+    // Populate the reused tree's submodule dir as an initialized one would be, then prepare again.
+    await writeFile(join(t1.path, 'sub', '.git'), 'gitdir: ../../modules/sub\n'); await writeFile(join(t1.path, 'sub', 'inner'), 'in\n');
+    await mkdir(join(t1.path, 'sub', 'deep')); await writeFile(join(t1.path, 'sub', 'deep', 'x'), 'x');
+    await t1.dispose();
+    const t2 = await git.materialize(r.cwd, c, { kind: 'check', id: 'sm' });
+    assert.equal(t2.path, t1.path, 'the same tree');
+    assert.equal((await stat(join(t2.path, 'sub'))).isDirectory(), true, 'the submodule dir is kept');
+    assert.deepEqual(await readdir(join(t2.path, 'sub')), [], 'and empty');
+    assert.equal(await readFile(join(t2.path, 'f'), 'utf8'), '1');
+    await t2.dispose();
+    assert.equal((await git.git(r.cwd, ['submodule', 'status'])).stdout, status0, 'main worktree submodule status unchanged');
+    assert.equal(await readFile(config, 'utf8'), config0, '.git/config unchanged');
+    assert.equal(await readFile(join(r.cwd, 'sub', 'inner'), 'utf8'), 'in\n', 'the main worktree submodule keeps its files');
+  } finally { await r.cleanup(); }
+});
+
+test('M2: a take removes its lock temp files older than 60 s and a dead-pid token older than 1 h; gc removes both kinds', { timeout: 60_000 }, async () => {
+  const r = await repo();
+  try {
+    const c = await commitAt(r.cwd, { f: '1' }), dir = await treesDir(r);
+    await mkdir(dir, { recursive: true });
+    const age = async (p: string, ms: number) => { const t = new Date(Date.now() - ms); await utimes(p, t, t); };
+    const dead = await new Promise<number>(res => { const p = spawn('true'); p.on('exit', () => res(p.pid!)); });
+    const lock = join(dir, 'inv-n-0.lock');
+    await writeFile(`${lock}.tmp-1-old`, '1\n'); await age(`${lock}.tmp-1-old`, 120_000);
+    await writeFile(`${lock}.tmp-2-young`, '2\n');
+    await writeFile(lock, `${dead}\n`);
+    await writeFile(`${lock}.dead-${dead}`, '1\n'); await age(`${lock}.dead-${dead}`, 2 * 3_600_000);
+    const t = await git.materialize(r.cwd, c, { kind: 'inv', id: 'n' });
+    assert.equal(t.path, join(dir, 'inv-n-0'), 'the old token does not block the reclaim');
+    await t.dispose();
+    const left = (await readdir(dir)).filter(n => n.startsWith('inv-n-0.lock.')).sort();
+    assert.deepEqual(left, ['inv-n-0.lock.tmp-2-young'], 'old temp and old token removed; a young temp stays');
+    // A young token still blocks (its reclaimer is working).
+    await writeFile(lock, `${dead}\n`); await writeFile(`${lock}.dead-${dead}`, '1\n');
+    const u = await git.materialize(r.cwd, c, { kind: 'inv', id: 'n' });
+    assert.equal(u.path, join(dir, 'inv-n-1')); await u.dispose();
+    // gc: an old token and an old temp of another lock.
+    await rm(lock, { force: true }); await age(`${lock}.dead-${dead}`, 2 * 3_600_000);
+    await writeFile(join(dir, 'inv-m-0.lock.tmp-9-x'), '9\n'); await age(join(dir, 'inv-m-0.lock.tmp-9-x'), 120_000);
+    await ok('init', () => ops.init({ cwd: r.cwd, plan: JSON.stringify(planOf([{ id: 'n', reads: ['f'], run: PASS }], { trees: 'reuse' })), as: owner, channel: 'flag', measure: false }));
+    const g = await ops.gc({ cwd: r.cwd, as: parent });
+    assert.deepEqual(g.trees?.map(x => x.path).sort(), [`${lock}.dead-${dead}`, join(dir, 'inv-m-0.lock.tmp-9-x')].sort());
+    assert.equal(await exists(`${lock}.dead-${dead}`), false);
+    assert.equal(await exists(`${lock}.tmp-2-young`), true, 'gc keeps a young temp');
   } finally { await r.cleanup(); }
 });

@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { H, EMPTY_SHA, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
@@ -225,6 +225,7 @@ async function linkTake(lock: string): Promise<boolean> {
  * when the lease is not taken (held, or lost to a racing taker).
  */
 export async function takeLease(lock: string): Promise<boolean> {
+  await staleTemps(dirname(lock), lock);
   for (let attempt = 0; attempt < 3; attempt++) {
     if (await linkTake(lock)) return true;
     let held: string;
@@ -232,7 +233,12 @@ export async function takeLease(lock: string): Promise<boolean> {
     if (!await deadContent(lock, held)) return false;
     const token = `${lock}.dead-${tokenOf(held)}`;
     try { await writeFile(token, `${process.pid}\n`, { flag: 'wx' }); }
-    catch (e) { if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false; throw e; }
+    catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      // A token older than 1 h belongs to a crashed reclaimer: remove it and try again; a younger one wins.
+      if (await olderThan(token, LEASE_TOKEN_STALE_MS)) { await rm(token, { force: true }); continue; }
+      return false;
+    }
     try {
       let again: string | undefined;
       try { again = await readFile(lock, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
@@ -250,17 +256,46 @@ export async function releaseLease(lock: string): Promise<void> {
 export async function leaseFree(lock: string): Promise<boolean> {
   try { return await deadContent(lock, await readFile(lock, 'utf8')); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT'; }
 }
+/**
+ * Empties the directory of every gitlink (mode 160000) of the index of the tree `path`: its contents (a `.git` file
+ * included) are removed and the empty directory kept, as a fresh `git worktree add` leaves it. Touches nothing outside
+ * the tree (no config, no modules dir).
+ */
+async function emptyGitlinks(path: string): Promise<void> {
+  const entries = (await git(path, ['ls-files', '-s', '-z'])).stdout.split('\0').filter(l => l.startsWith('160000 '));
+  for (const line of entries) {
+    const dir = join(path, line.slice(line.indexOf('\t') + 1));
+    let isDir = false; try { isDir = (await lstat(dir)).isDirectory(); } catch { /* missing */ }
+    if (!isDir) { await rm(dir, { recursive: true, force: true }); await mkdir(dir, { recursive: true }); continue; }
+    for (const name of await readdir(dir)) await rm(join(dir, name), { recursive: true, force: true });
+  }
+}
+/** Removes `<lock>.tmp-*` files of crashed takers older than 60 s in the directory of `lock` (`lock` undefined: of every lock); returns them. */
+async function staleTemps(dir: string, lock: string | undefined, dryRun = false): Promise<string[]> {
+  const out: string[] = [], prefix = lock === undefined ? undefined : `${basename(lock)}.tmp-`;
+  let names: string[]; try { names = await readdir(dir); } catch { return []; }
+  for (const name of names.filter(n => prefix ? n.startsWith(prefix) : /\.lock\.tmp-[^/]+$/.test(n)).sort()) {
+    const p = join(dir, name);
+    try { if (Date.now() - (await stat(p)).mtimeMs <= LEASE_EMPTY_DEAD_MS) continue; } catch { continue; }
+    if (!dryRun) await rm(p, { force: true });
+    out.push(p);
+  }
+  return out;
+}
+/** Whether the file at `path` is older than `ms` (false when it is gone). */
+async function olderThan(path: string, ms: number): Promise<boolean> { try { return Date.now() - (await stat(path)).mtimeMs > ms; } catch { return false; } }
 /** Removes reclaim tokens in the reuse dir older than LEASE_TOKEN_STALE_MS (unless `dryRun`); returns their paths. */
 export async function staleTokens(cwd: string, dryRun: boolean): Promise<string[]> {
   const dir = await reuseDir(cwd), out: string[] = [];
   let names: string[]; try { names = await readdir(dir); } catch { return []; }
   for (const name of names.filter(n => /\.lock\.dead-[^/]+$/.test(n)).sort()) {
     const path = join(dir, name);
-    try { if (Date.now() - (await stat(path)).mtimeMs <= LEASE_TOKEN_STALE_MS) continue; } catch { continue; }
+    if (!await olderThan(path, LEASE_TOKEN_STALE_MS)) continue;
     if (!dryRun) await rm(path, { force: true });
     out.push(path);
   }
-  return out;
+  // Temp files of crashed takers (link-based take) older than 60 s.
+  return [...out, ...await staleTemps(dir, undefined, dryRun)];
 }
 /** Whether `path` is a worktree of the repository of `cwd` whose top level is `path` itself. */
 async function ownTree(cwd: string, path: string): Promise<boolean> {
@@ -281,8 +316,9 @@ async function reusedTree(cwd: string, commit: string, kind: string, id: string)
     if (await ownTree(cwd, path)) {
       const co = await git(path, ['checkout', '--detach', '--force', commit], { allowFail: true });
       ready = !co.code && !(await git(path, ['clean', '-ffdx'], { allowFail: true })).code;
-      // A fresh `git worktree add` tree has empty submodule directories: deinit makes a reused one match.
-      if (ready && await stat(join(path, '.gitmodules')).then(() => true, () => false)) ready = !(await git(path, ['submodule', 'deinit', '--all', '--force'], { allowFail: true })).code;
+      // A fresh `git worktree add` tree has empty submodule directories: empty each gitlink dir (never a `git submodule`
+      // command: it would edit the shared config and de-initialize the user's submodules).
+      if (ready) await emptyGitlinks(path);
     }
     if (!ready) {
       // Missing or broken: recreate it (-f overrides a registration whose directory is gone).

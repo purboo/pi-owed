@@ -838,13 +838,19 @@ changed; retry`): they decide a trunk move on what they measured.
   only when it still holds X, tries the normal take once (moving on to the next
   k when it loses) and unlinks the token; a reclaimer that cannot create the
   token does nothing for that k. Concurrent measurements of one check therefore
-  get different trees, and a stale lock ends with exactly one holder. `owed gc`
-  removes tokens older than 1 h (a crashed reclaimer).
+  get different trees, and a stale lock ends with exactly one holder. A token
+  older than 1 h (a crashed reclaimer) is removed by the taker that meets it and
+  by `owed gc`; temporary `<tree>.lock.tmp-*` files older than 60 s (a crashed
+  taker) are removed by every take of that lock and by `owed gc`.
   Preparing a reused tree for a commit: `git checkout --detach --force
   <commit>`, then `git clean -ffdx` (no untracked or ignored file survives),
-  then, when `.gitmodules` exists, `git submodule deinit --all --force` (a fresh
-  `git worktree add` tree has empty submodule directories, so a reused one must
-  too): the content equals a fresh tree. Then the overlays as for a fresh tree. What
+  then every gitlink directory (mode 160000 in `git ls-files -s`) inside the
+  tree is emptied — its contents, a `.git` file included, are removed and the
+  empty directory kept — as a fresh `git worktree add` tree has empty
+  submodule directories: the content equals a fresh tree. owed never runs a
+  `git submodule` command and never changes the shared config or a modules
+  directory, so the user's initialized submodules are untouched. Then the
+  overlays as for a fresh tree. What
   survives is the path and the mtimes of files the checkout did not change, so a
   build cache outside the tree (a shared `CARGO_TARGET_DIR`) builds
   incrementally; a cache inside the tree (an ignored `target/`) does not
