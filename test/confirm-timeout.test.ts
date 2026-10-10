@@ -98,7 +98,7 @@ test('CLI: --as owner:x without a TTY records delegated (no prompt, no --i-am-ow
     const decoy = await cli(r.cwd, ['decoy', 'commit', digest]);
     assert.equal(decoy.code, 0, decoy.stderr);
     last = (await entries(r.cwd)).at(-1)!;
-    assert.ok(last.kind === 'decoy-commit' && last.by === 'owner:human' && last.channel === 'delegated', 'an owner-default command is delegated too');
+    assert.ok(last.kind === 'decoy-commit' && last.by === 'owner:cli' && last.channel === 'delegated', 'an owner-default command is delegated too');
     const bare = await cli(r.cwd, ['plan', 'eased.json', '--as', 'owner:x']);
     assert.equal(bare.code, 1); assert.match(bare.stderr, /requires a note saying why/);
     const eased = await cli(r.cwd, ['plan', 'eased.json', '--as', 'owner:x', '--note', 'generated file']);

@@ -10,6 +10,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
 import { defaultOwed, lockAlive, procStart, reportText } from './drive-run.ts';
+import { repeatText, wakeReport } from './drive-run.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
 import { oneLine } from './views.ts';
 import { startingSession } from './dsa.ts';
@@ -263,15 +264,17 @@ const TERMINAL = new Set(['exit', 'killed', 'stopped', 'idle']);
  * is not a JSON object. A merge only rides along with the next wake; everything else (dispatch, launch, send applied,
  * attest, busy, pending, cursor-reset) is quiet.
  */
-export function classifyLine(line: string): { kind: LineKind; text: string } {
+export function classifyLine(line: string): { kind: LineKind; text: string; fact?: { node: string; base: string; facts: number } } {
   const j = parseObject(line);
   if (!j) return { kind: 'wake', text: oneLine(line) };
   const text = reportText(j);
   if (typeof j.event === 'string') return { kind: TERMINAL.has(j.event) ? 'terminal' : j.event === 'events-error' ? 'wake' : 'quiet', text };
   if (typeof j.do !== 'string') return { kind: 'wake', text };
   if (j.do === 'merge' && j.outcome === 'merged') return { kind: 'merge', text };
-  if (j.do === 'halt' || j.do === 'notify' || ['rejected', 'conflict', 'refused', 'error'].includes(String(j.outcome))) return { kind: 'wake', text };
-  return { kind: 'quiet', text };
+  if (!wakeReport(j)) return { kind: 'quiet', text };
+  // E3.1: a node-scoped wake with a fact mark is compared per node by its text without the repeat suffix.
+  if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, base: reportText({ ...j, repeat: undefined }), facts: j.facts } };
+  return { kind: 'wake', text };
 }
 
 export interface FollowerOptions {
@@ -286,8 +289,10 @@ export interface FollowerOptions {
  * Follows one driver's log: every `intervalMs` (unref'd timer) reads the complete lines appended since the last read and
  * delivers one message for all wake lines of that read (D17.7): `owed drive (<repo>):`, the merges since the last
  * message and the wake lines in log order, `Next: owed status / owed why <node>`. Identical wake lines within one read
- * collapse; across reads every wake line wakes again (D17a.5: each halt line is a new ledger halt; the loop driver
- * already prints a notify/busy text once per change). A log replaced by rotation (other dev/ino, or shorter than the
+ * collapse. Across reads (E3.1) a node-scoped wake line with a fact mark wakes only when its text differs from the last
+ * one delivered for that node or its fact mark is higher (the ledger gained entries for the node); otherwise it is a
+ * repeat: it does not wake and rides along with the next message as `<text> (repeat n, no new ledger entries)` (the
+ * latest repeat per node). Lines without a fact mark (an older driver, non-JSON) wake as before. A log replaced by rotation (other dev/ino, or shorter than the
  * offset) is read from its start (D17a.4). If `deliver` throws, the batch is kept and retried on the next tick
  * (D17a.8). It stops after delivering a terminal line, or the notice that the driver pid is gone without one.
  */
@@ -297,8 +302,10 @@ export class Follower {
   /** Identity of the file the offset belongs to. */
   private file?: { dev: number; ino: number };
   private timer?: NodeJS.Timeout;
-  /** Lines read but not delivered yet: merges riding along, and wake lines of a failed delivery. */
-  private pending: { text: string; wake: boolean }[] = [];
+  /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed delivery. */
+  private pending: { text: string; wake: boolean; repeatOf?: string }[] = [];
+  /** node → the last wake taken for delivery (text without the repeat suffix, fact mark) and its repeats since (E3.1). */
+  private readonly last = new Map<string, { base: string; facts: number; n: number }>();
   /** A terminal line (or the pid-gone notice) is pending: stop once it is delivered. */
   private ended = false;
   stopped = false;
@@ -345,7 +352,19 @@ export class Follower {
         if (c.kind === 'quiet') continue;
         if (c.kind === 'merge') { this.pending.push({ text: c.text, wake: false }); continue; }
         if (seen.has(c.text)) continue;
-        seen.add(c.text); this.pending.push({ text: c.text, wake: true });
+        seen.add(c.text);
+        if (c.fact) {
+          const f = c.fact, prior = this.last.get(f.node);
+          if (prior && prior.base === f.base && f.facts <= prior.facts) {
+            // A repeat: no wake; only the latest repeat of the node rides along.
+            prior.n++;
+            this.pending = this.pending.filter(p => p.repeatOf !== f.node);
+            this.pending.push({ text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.node });
+            continue;
+          }
+          this.last.set(f.node, { base: f.base, facts: f.facts, n: 0 });
+        }
+        this.pending.push({ text: c.text, wake: true });
         if (c.kind === 'terminal') this.ended = true;
       }
       if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true }); }

@@ -152,6 +152,8 @@ export function acquireDriveLock(dir: string): Promise<{ release(); releaseSync(
 export function liveRunLines(cwd: string, dsa?: Dsa): Promise<string[]>;   // `/owed` dsa states of live runs
 export function reportText(json: object): string;   // text-mode line of an ActionReport or a LoopEvent (SPEC §12.8)
 export function procStart(pid); lockAlive(owner: LockOwner); defaultOwed(): string[];   // shared with drive-bg.ts
+export function factMark(s: State, node: string): number;   // E3.1: highest seq of non-driver entries naming the node
+export function wakeReport(r): boolean; repeatText(n): string; NEEDS_OWNER; driftNotice(name, drift): string; DRIFT_NODE;   // wake lines, D25.6 wording
 ```
 `drive()` in `--json` loop mode ends with the exit record `{event:'exit', code, reason, at, error?}` and returns the CLI code instead of throwing (SPEC §12.8).
 Pi session (0.5.1 E1, SPEC §12.7): `dsa.ts` exports `startingSession(env?)` (`DSA_SESSION`, ignored under `DSA_CALL`/`DSA_EXEC`); `Dsa.session` is passed as `run --session` (dsa children never inherit `DSA_SESSION`), and a dsa that refuses the flag sets `sessionRefused`, calls `onSessionRefused(reason)` once and re-runs without it. `DriveOptions.session` (default `startingSession()`, null: none) is recorded by `acquireDriveLock(dir, session?)` as `LockOwner.session`; the fallback line is the loop event `session-unsupported`. `drive-bg.ts`: `driveStart` sets/removes `DSA_SESSION` for the detached driver (`DriveStart.session`), `DriveStatus.session`, `sessionText(session)` for `--status` and `driverLine`.
@@ -163,7 +165,7 @@ export function driveStatus(o: { cwd }): Promise<DriveStatus>;   // --status: lo
 export function driveStop(o: { cwd; now?; waitMs? }): Promise<DriveStop>;   // --stop: SIGTERM only when pid + start time match
 export function renderDriveStart / renderDriveStatus / renderDriveStop; driverLine(cwd): Promise<string>;   // texts; `/owed` Driver line
 export function readLock(dir): LockState; driveDir(cwd); lockPath(dir); logPath(dir); classifyLine(line); logLineText(line);
-export class Follower { tick(): string | undefined; start(); stop() }   // one driver log → wake messages
+export class Follower { tick(): string | undefined; start(); stop() }   // one driver log → wake messages; per node dedupe on text + fact mark (E3.1)
 export class DriveWatch { follow(o); attach(cwd); stopAll() }          // the extension's followers (one per log)
 ```
 `driveDir` resolves the ledger directory like `ledgerDir` but creates nothing (session_start runs in any repository).
