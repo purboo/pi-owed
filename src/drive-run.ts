@@ -16,6 +16,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, driveConfig } from './plan.ts';
 import { reduce, halted, projectId } from './reducer.ts';
+import { DRIVER, entriesOf } from './reducer.ts';
 import { decide, rejectedHalt } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
@@ -23,6 +24,21 @@ import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
 import type { Plan, Principal, RunView, State } from './types.ts';
 
+/**
+ * Trunk drift (review ruling #559, option c): the trunk ref no longer equals the ledger trunk. It is a repository fact,
+ * not a node fact: never a ledger halt. The text of the repo-level owner notify: a fast-forward is adopted, anything
+ * else (rewound, rewritten, missing) is restored.
+ */
+export function driftNotice(name: string, d: git.TrunkDrift): string {
+  const ledger = d.ledger.slice(0, 12), ref = d.commit ? d.commit.slice(0, 12) : 'missing';
+  return d.relation === 'ahead'
+    ? `trunk ${name} moved outside owed (${ledger} → ${ref}); the main agent resolves it with: owed adopt --note "<why>"`
+    : `trunk ${name} was rewound or rewritten (${ledger} → ${ref}); restore it: git update-ref refs/heads/${name} ${d.ledger} ${d.commit ?? '""'}`;
+}
+/** The node name of the repo-level drift notify (no plan node is named `trunk`: it is the subject of invariants). */
+export const DRIFT_NODE = 'trunk';
+/** The drift notify report; `facts` = the ledger trunk's seq, so it prints and wakes once per change. */
+const driftReport = (s: State, d: git.TrunkDrift): ActionReport => ({ do: 'notify', node: DRIFT_NODE, outcome: 'notify', text: driftNotice(s.trunk.name, d), facts: s.trunk.seq });
 /** The transient merge refusal of `ops` (the plan, the candidate or trunk changed while merge measured). */
 const MERGE_TRANSIENT = 'Plan, candidate or trunk changed; retry';
 
@@ -64,7 +80,36 @@ export interface DriveOptions {
 export interface ActionReport {
   do: Action['do']; node: string; outcome: string; detail?: string;
   attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
+  /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
+  facts?: number;
+  /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
+  repeat?: number;
 }
+
+/** D25.6: how a halt or refusal that needs the owner is worded in the driver's output. */
+export const NEEDS_OWNER = 'needs the owner (the main agent decides; owed lists the command)';
+/**
+ * Reports that wake a following session (D17.7): halts, notifies (questions, owner-needed, describe failures) and the
+ * outcomes rejected, conflict, refused and error.
+ */
+export const wakeReport = (r: { do?: unknown; outcome?: unknown }): boolean => r.do === 'halt' || r.do === 'notify' || ['rejected', 'conflict', 'refused', 'error'].includes(String(r.outcome));
+/**
+ * The fact mark of a node (E3.1): the highest seq of the ledger entries naming it (`node`, an observation's `subject`,
+ * a ruling listing it) not written by the driver (`parent:drive`: its launches, sends, halts, dispatches, rebases and
+ * merges are consequences, not new facts); 0 when there is none. Writer, parent, reviewer and owner entries and
+ * executor observations count. A wake whose text and mark equal the last one delivered for the node brings nothing new.
+ */
+export function factMark(s: State, node: string): number {
+  let mark = 0;
+  for (const e of entriesOf(s)) {
+    if (e.by === DRIVER) continue;
+    const names = e.kind === 'obs' ? e.subject === node : e.kind === 'rule' ? e.nodes !== '*' && e.nodes.includes(node) : 'node' in e && e.node === node;
+    if (names && e.seq > mark) mark = e.seq;
+  }
+  return mark;
+}
+/** Suffix of a repeated wake line (E3.1). */
+export const repeatText = (n: number): string => ` (repeat ${n}, no new ledger entries)`;
 export interface PassResult { actions: ActionReport[]; progress: boolean; idle: boolean }
 
 /**
@@ -80,6 +125,8 @@ class Facts {
   readonly lastGen = new Map<string, number>();
   /** `<node>:<kind>` → last printed text key (notify, machine busy): the loop prints a line only when it changed. */
   readonly printed = new Map<string, string>();
+  /** node → the last wake printed for it (text without the repeat suffix, fact mark) and how often it repeated (E3.1). */
+  readonly wakes = new Map<string, { text: string; facts: number; n: number }>();
 }
 
 // ---------- ledger state ----------
@@ -194,8 +241,9 @@ export function reportText(json: object): string {
   }
   if (!('do' in json) || typeof (json as { do: unknown }).do !== 'string') return oneLine(JSON.stringify(json));
   const r = json as ActionReport;
-  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' ? `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})` : `${r.do} ${r.node}`;
-  return r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`;
+  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})`) : `${r.do} ${r.node}`;
+  const repeat = typeof r.repeat === 'number' && r.repeat > 0 ? repeatText(r.repeat) : '';
+  return `${r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`}${repeat}`;
 }
 
 export class Driver {
@@ -243,7 +291,7 @@ export class Driver {
           const { view, gen } = await this.dsa.inspect(l.rid);
           runs.set(l.rid, this.current(view, gen));
           if (view.state === 'absent') await blob(l.spec);
-        } catch (e) { this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }); }
+        } catch (e) { this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }, s); }
       }
       // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a
       // crash after the call); only an undecided one is re-sent (with the stored bytes and the same id, D13.1).
@@ -282,26 +330,45 @@ export class Driver {
     const ledger = await this.init(), s = await loadState(ledger), cfg = driveConfig(s.plan);
     this.project = projectId(s);
     const { runs, blobs, rejected } = await this.observe(s);
-    const actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs });
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs });
     const reports: ActionReport[] = []; let applied = false;
+    // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
+    // (every other action continues) and emit the repo-level owner notify (the loop prints it once per change).
+    const drift = await git.trunkDrift(this.root!, s.trunk.name, s.trunk.commit).catch(() => undefined);
+    if (drift) {
+      const r = driftReport(s, drift);
+      reports.push(r); this.emit(r, s);
+      actions = actions.filter(a => a.do !== 'merge');
+    }
     for (const a of actions) {
       if (this.stopping) break;
       const r = await this.execute(s, a);
       reports.push(r.report); applied ||= r.applied;
-      this.emit(r.report);
+      this.emit(r.report, s);
     }
     const head = (await ledger.read()).at(-1)?.hash;
     const open = Object.values(s.nodes).some(n => n.slot?.open);
     return { actions: reports, progress: applied || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') };
   }
 
-  /** Prints a report; in the loop a notify / busy line for a node only when its text (without ages) changed. */
-  emit(r: ActionReport): void {
+  /**
+   * Prints a report. A wake report of a node in `s` carries the node's fact mark (E3.1). In the loop a notify / busy
+   * line for a node is printed only when its text (without ages) or, for a notify, the fact mark changed; any other
+   * wake with the text and fact mark of the node's last printed wake is marked `repeat: n` (text: `(repeat n, no new
+   * ledger entries)`), and the follower does not wake for it.
+   */
+  emit(r: ActionReport, s?: State): void {
+    if (s && wakeReport(r) && s.nodes[r.node]) r.facts = factMark(s, r.node);
     if (!this.o.once && (r.outcome === 'notify' || r.outcome === 'busy')) {
-      const key = busyKey(r.text ?? r.detail ?? ''), slot = `${r.node}:${r.outcome}`;
+      const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${r.node}:${r.outcome}`;
       if (this.facts.printed.get(slot) === key) return;
       this.facts.printed.set(slot, key);
     } else if (r.do === 'attest') this.facts.printed.delete(`${r.node}:busy`);
+    if (!this.o.once && r.facts !== undefined) {
+      const text = reportText({ ...r, repeat: undefined }), last = this.facts.wakes.get(r.node);
+      if (last && last.text === text && last.facts === r.facts) r.repeat = ++last.n;
+      else this.facts.wakes.set(r.node, { text, facts: r.facts, n: 0 });
+    }
     this.o.log(this.o.json ? JSON.stringify(r) : reportText(r));
   }
 
@@ -365,9 +432,13 @@ export class Driver {
               const r = await ops.rebase({ cwd, as, node: a.node });
               return done('rebased', false, `merge refused (${e.message}); slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`);
             }
-            const owner = /trunk changed \(CAS\)/.test(e.message);
-            await this.halt(a.node, attempt, `merge refused: ${e.message}`, owner ? 'owner' : 'human');
-            return done('refused', false, `${e.message}; halted (needs ${owner ? 'owner' : 'human'})`);
+            // Ruling #559 (c): a CAS failure (trunk moved during the merge) is the drift notify, never a halt; retried next pass.
+            if (/trunk changed \(CAS\)/.test(e.message)) {
+              const now = await loadState(this.ledger!), d = await git.trunkDrift(this.root!, now.trunk.name, now.trunk.commit).catch(() => undefined);
+              return d ? { report: driftReport(now, d), applied: false } : done('retry', false, `merge refused (${e.message}); retry next pass`);
+            }
+            await this.halt(a.node, attempt, `merge refused: ${e.message}`);
+            return done('refused', false, `${e.message}; halted (needs human)`);
           }
         }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });

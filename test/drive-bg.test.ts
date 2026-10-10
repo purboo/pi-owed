@@ -266,7 +266,7 @@ test('D17.2/3: a --json loop ends with an exit record (stopped; error for a refu
     assert.equal(reportText({ event: 'exit', code: 1, reason: 'error', error: 'locked' }), 'driver exited 1 (error): locked');
     assert.equal(reportText({ do: 'launch', node: 'a', outcome: 'applied', role: 'writer', rid: 'r1', detail: 'created' }), 'launch a writer r1: applied — created');
     assert.equal(reportText({ do: 'notify', node: 'a', outcome: 'notify', text: 'a asks' }), 'a asks');
-    assert.equal(reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'why' }), 'halt a attempt 2 (needs owner): halted — why');
+    assert.equal(reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'why' }), 'halt a attempt 2, needs the owner (the main agent decides; owed lists the command): halted — why');
     // A refused lock is an exit record with the refusal text and exit code 1, not a throw.
     liveLock(f.lock);
     const refused: string[] = [];
@@ -391,7 +391,7 @@ test('D17.7/8: session_start follows a live driver without replaying old lines; 
     line({ do: 'halt', node: 's', outcome: 'halted', attempt: 1, needs: 'owner', detail: 'new reason' });
     await until(() => h.messages.length >= 1, 8000, 'the wake for the new line');
     const c = h.messages[0]!.message.content;
-    assert.match(c, /halt s attempt 1 \(needs owner\): halted — new reason/);
+    assert.match(c, /halt s attempt 1, needs the owner \(the main agent decides; owed lists the command\): halted — new reason/);
     assert.doesNotMatch(c, /old question/, 'lines before the attach are not replayed');
     // A second session_start for the same driver keeps the one follower (no duplicate message).
     await topLevelStart(h);
@@ -616,7 +616,7 @@ test('D17a.4: a log replaced by rotation (new dev/ino, not shorter) is read from
     const fresh = [JSON.stringify({ do: 'halt', node: 'rot', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'after rotation' }), ...[4, 5, 6, 7, 8, 9].map(quiet)].join('\n') + '\n';
     writeFileSync(log, fresh);
     assert.ok(fresh.length > readFileSync(`${log}.1`, 'utf8').length);
-    assert.match(f.tick() ?? '', /halt rot attempt 2 \(needs owner\): halted — after rotation/);
+    assert.match(f.tick() ?? '', /halt rot attempt 2, needs the owner \(the main agent decides; owed lists the command\): halted — after rotation/);
     assert.equal(got.length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

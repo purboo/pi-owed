@@ -329,7 +329,7 @@ test('status, why and report show halts and live launches', async () => {
     const report = await ops.report({ cwd: r.cwd });
     assert.deepEqual(report.halts.map(h => [h.node, h.active]), [['a', true], ['b', false]]);
     const rt = renderReport(report);
-    assert.match(rt, new RegExp(`Driver halts\\n  a: halted by driver #${ha.seq} \\(attempt 1, needs human\\): writer run failed \\(active\\)\\n  b: halted by driver #${hb.seq} \\(attempt 1, needs owner\\): request conflict \\(cleared\\)`));
+    assert.match(rt, new RegExp(`Driver halts\\n  a: halted by driver #${ha.seq} \\(attempt 1, needs human\\): writer run failed \\(active\\)\\n  b: halted by driver #${hb.seq} \\(attempt 1\\), needs the owner \\(the main agent decides; owed lists the command\\): request conflict \\(cleared\\)`));
     // Window: a cleared halt before `since` is omitted, an active one is still listed.
     const later = await ops.report({ cwd: r.cwd, since: hb.seq });
     assert.deepEqual(later.halts.map(h => h.node), ['a']);
