@@ -385,8 +385,11 @@ export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interru
 const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
 // Conservative local downgrade detection keeps this leaf independent of plan.ts.
-/** Whether the `exec` block differs (D20); `exec: {}` and no block are the same (the parser drops empty fields). */
-function execChanged(prev: Plan, next: Plan): boolean { return canonical(prev.exec ?? {}) !== canonical(next.exec ?? {}); }
+/**
+ * Whether the `exec` block differs (D20) in what reaches the keys (`env`, `wrap`); `exec: {}` and no block are the same.
+ * 0.9: `parallel` and `trees` only schedule measurement: changing them invalidates and downgrades nothing.
+ */
+function execChanged(prev: Plan, next: Plan): boolean { return canonical(execKey(prev) ?? {}) !== canonical(execKey(next) ?? {}); }
 function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
   const result: Downgrade[] = [];
   const add = (node: string, what: string): void => { result.push({ node, what }); };
