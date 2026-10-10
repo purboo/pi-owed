@@ -313,7 +313,7 @@ export class Driver {
         }
         case 'send': {
           const extra = { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason };
-          const id = a.send ?? (await ops.send({ cwd, as, node: a.node, attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, message: a.message, reason: a.reason })).send;
+          const id = a.send ?? (await ops.send({ cwd, as, node: a.node, attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, message: a.message, reason: a.reason, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}) })).send;
           crashPoint('before-dsa', 'send');
           const r = await this.dsa.send(id, a.rid, a.sendKind, a.message);
           crashPoint('after-dsa', 'send');
@@ -326,6 +326,8 @@ export class Driver {
             }
             return done('applied', true, a.send ? 're-sent' : undefined, x);
           }
+          // D22.3: a rejected ruling steer (e.g. the call sealed meanwhile) is logged only: no halt, never retried.
+          if (r.outcome === 'rejected' && a.reason === 'ruling') return done('rejected', false, `${r.reason}; not retried (the rulings travel with the next repair and reviewer acks)`, x);
           if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'send', id, r.reason)); return done('rejected', false, `${r.reason}; halted`, x); }
           if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on send ${id}; never retried with other bytes`); return done('conflict', false, 'halted', x); }
           return done('pending', false, r.reason ?? 'retry next pass', x);

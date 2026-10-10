@@ -111,8 +111,8 @@ test('row 2: writer launch missing → launch writer (agent/model from drive:, s
   assert.deepEqual({ ...a, spec: undefined }, { do: 'launch', node: 'a', attempt: 1, role: 'writer', rid: W(), spec: undefined, labels: runLabels(P, 'a', 1, 'writer') });
   assert.equal(a.n, undefined, 'writers have no n');
   const parsed = JSON.parse(a.spec);
-  assert.deepEqual(Object.keys(parsed), ['agent', 'cwd', 'isolation', 'model', 'once', 'task']);
-  assert.deepEqual({ ...parsed, task: undefined }, { agent: 'worker', model: 'example/x:high', cwd: '/repo/.owed/wt/a-1', isolation: 'none', once: true, task: undefined });
+  assert.deepEqual(Object.keys(parsed), ['agent', 'cwd', 'isolation', 'model', 'name', 'once', 'task']);
+  assert.deepEqual({ ...parsed, task: undefined }, { agent: 'worker', model: 'example/x:high', cwd: '/repo/.owed/wt/a-1', isolation: 'none', name: 'owed a#1 writer', once: true, task: undefined });
   const s = r.state(), rules = s.rules.filter(x => x.text === 'before dispatch');
   assert.equal(parsed.task, dispatchPacket(s.plan.nodes[0]!, 1, '/repo/.owed/wt/a-1', rules), 'task = the dispatch packet, with the rulings seen at dispatch only');
   assert.match(parsed.task, /Node: a; attempt: 1\nWorking directory: \/repo\/\.owed\/wt\/a-1/);
@@ -121,7 +121,7 @@ test('row 2: writer launch missing → launch writer (agent/model from drive:, s
   const plain = rig(basePlan()); plain.dispatch();
   const b = act(plain);
   assert.ok(b?.do === 'launch');
-  assert.deepEqual(Object.keys(JSON.parse(b.spec)), ['agent', 'cwd', 'isolation', 'once', 'task']);
+  assert.deepEqual(Object.keys(JSON.parse(b.spec)), ['agent', 'cwd', 'isolation', 'name', 'once', 'task']);
   assert.equal(JSON.parse(b.spec).agent, 'worker');
 });
 
@@ -166,7 +166,7 @@ test('row 5: writer asking → notify with the question and answer address; the 
   const r = submitted();
   const a = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q1', rev: 3, question: 'Which API?\nline two' }], lastFence: { reason: 'x', at: T0 } })));
   assert.ok(a?.do === 'notify', 'outranks attest and fenced');
-  assert.match(a.text, /^a: writer run owed:hash0:a:1:writer asks \(qid q1, rev 3\): Which API\?\\nline two — the driver never answers; answer with: pi-durable-subagents send --request <id> --to owed:hash0:a:1:writer --kind answer --qid q1 --rev 3/);
+  assert.match(a.text, /^a: writer run owed:hash0:a:1:writer asks \(qid q1, rev 3\): Which API\?\\nline two — the driver never answers; answer in pi: subagents \{action:"send", kind:"answer", to:"owed:hash0:a:1:writer", qid:"q1", message:"…"\}; or: pi-durable-subagents send --request <id> --to owed:hash0:a:1:writer --kind answer --qid q1 --rev 3/);
   // A reviewer run of the current candidate asking is notified too.
   const q = submitted(); q.pass(); q.launchReviewer(1);
   const b = act(q, runsOf(okWriter(), view(R(1), 'asking', { questions: [{ qid: 'r', rev: 1, question: 'scope?' }] })));
@@ -257,7 +257,7 @@ test('row 12: review awaiting → launch reviewer n (reviewer agent, repo root, 
   const a = act(r, runsOf(okWriter()));
   assert.ok(a?.do === 'launch');
   assert.deepEqual({ ...a, spec: undefined }, { do: 'launch', node: 'a', attempt: 1, role: 'reviewer', n: 1, rid: R(1), spec: undefined, labels: runLabels(P, 'a', 1, 'reviewer') });
-  assert.equal(a.spec, launchSpec({ agent: 'reviewer', cwd: '/repo', task: reviewPacket(r.state(), 'a', 1) }));
+  assert.equal(a.spec, launchSpec({ agent: 'reviewer', cwd: '/repo', task: reviewPacket(r.state(), 'a', 1), name: 'owed a#1 reviewer 1' }));
   assert.deepEqual(JSON.parse(a.spec).isolation, 'none'); assert.equal(JSON.parse(a.spec).once, true);
   r.launchReviewer(1);
   assert.equal(act(r, runsOf(okWriter(), view(R(1), 'running'))), undefined, 'one run covers the candidate');
@@ -641,8 +641,9 @@ test('D12 liveness catch-all: not accepted, nothing unsealed, no other row → s
   assert.deepEqual(s.nodes.a!.items.filter(i => i.status !== 'E').map(i => i.obligation), ['rulings']);
   const rulings = s.nodes.a!.items.find(i => i.obligation === 'rulings')!;
   assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }))), { do: 'halt', node: 'a', attempt: 1, reason: `stalled: rulings ${rulings.mark} ${rulings.detail}`, needs: 'owner' });
-  // With a run still live it waits instead.
-  assert.equal(act(r, runsOf(view(W(), 'running'), view(R(1), 'sealed', { status: 'ok' }))), undefined);
+  // With a run still live it does not halt; the running writer lacks the ruling, so it gets it as a steer (D22.2a).
+  const live = act(r, runsOf(view(W(), 'running'), view(R(1), 'sealed', { status: 'ok' })));
+  assert.ok(live?.do === 'send' && live.reason === 'ruling' && live.sendKind === 'steer', JSON.stringify(live));
   assert.equal(act(r, runsOf(okWriter(), view(R(1), 'running'))), undefined);
 });
 
