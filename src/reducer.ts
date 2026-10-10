@@ -409,6 +409,21 @@ export function uncoveredDowngrades(prev: Plan, next: Plan, claimed: Downgrade[]
   // Each downgrade once (G4): a claimed item is left out when its detected wording is already listed.
   return [...detected, ...claimed.filter(d => !covered(prev, next, d, true) && !detectedWordings(d.what).some(w => seen.has(`${d.node}\n${w}`)))].filter((d, i, all) => all.findIndex(x => x.node === d.node && x.what === d.what) === i);
 }
+/**
+ * H2.1: the hint line of a refused parent plan update whose only uncovered downgrades (`gaps`, from uncoveredDowngrades)
+ * widen writes: a ready-to-paste allow rule naming those nodes and their new prefixes (those under neither the node's
+ * prior writes nor a matching rule of `prev`). Undefined when any gap is something else, or there is none.
+ */
+export function writesHint(prev: Plan, next: Plan, gaps: Downgrade[]): string | undefined {
+  if (!gaps.length || !gaps.every(g => g.what === 'writes widened' || g.what === 'writes scope expanded')) return undefined;
+  const nodes = [...new Set(gaps.map(g => g.node))], writes = [...new Set(nodes.flatMap(id => {
+    const before = prev.nodes.find(n => n.id === id), after = next.nodes.find(n => n.id === id), rules = rulesFor(prev, id);
+    return before && after ? after.writes.filter(w => !before.writes.some(p => w.startsWith(p)) && !rules.some(r => r.writes?.some(p => w.startsWith(p)))) : [];
+  }))];
+  if (!writes.length) return undefined;
+  const list = (xs: string[]): string => `[${xs.map(x => JSON.stringify(x)).join(', ')}]`;
+  return `hint: an allow rule {nodes: ${list(nodes)}, writes: ${list(writes)}} in the prior plan would cover this`;
+}
 /** The downgradeDetails wordings a planDowngrades item (plan.ts) may have; the item itself when the wording is shared. */
 function detectedWordings(what: string): string[] {
   if (what === 'review count lowered' || what === 'review rank lowered') return ['review count/rank reduced'];
@@ -455,10 +470,10 @@ export function validateDraft(s: State, d: Draft): string[] {
     case 'plan': {
       allow('owner', 'parent');
       if (d.prior !== s.planSha) errors.push('plan prior must reference the current plan sha');
-      let downgrade = d.downgrades.length > 0, gaps: Downgrade[] = d.downgrades;
-      try { const next = context(s).plans(d.plan); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); } catch { errors.push('Cannot read new plan'); }
+      let downgrade = d.downgrades.length > 0, gaps: Downgrade[] = d.downgrades, hint: string | undefined;
+      try { const next = context(s).plans(d.plan); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); hint = writesHint(s.plan, next, gaps); } catch { errors.push('Cannot read new plan'); }
       // D21.3: a parent needs no owner when an allowance of the current (prior) plan covers every downgrade.
-      if (downgrade && r !== 'owner' && (r !== 'parent' || gaps.length)) errors.push(`Only owner may approve a plan that reduces obligations${r === 'parent' ? `; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}` : ''}`);
+      if (downgrade && r !== 'owner' && (r !== 'parent' || gaps.length)) errors.push(`Only owner may approve a plan that reduces obligations${r === 'parent' ? `; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}${hint ? `\n${hint}` : ''}` : ''}`);
       if (d.note !== undefined && typeof d.note !== 'string') errors.push('plan note must be a string');
       // D25.5: a delegated owner act that eases acceptance says why (waive, defer and adopt already require theirs).
       if (downgrade && r === 'owner' && d.channel === 'delegated' && !(typeof d.note === 'string' && d.note.trim())) errors.push('a delegated owner plan update that reduces obligations requires a note saying why (owed plan --note TEXT; owed_plan note)');

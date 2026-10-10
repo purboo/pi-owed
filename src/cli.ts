@@ -6,7 +6,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { drive } from './drive-run.ts';
 import { driveStart, driveStatus, driveStop, renderDriveStart, renderDriveStatus, renderDriveStop } from './drive-bg.ts';
-import { parsePlan } from './plan.ts';
+import { checklessWarnings, parsePlan } from './plan.ts';
 import { OwedError } from './errors.ts';
 import { renderReceipt, renderStatus, renderReport, renderEntry, renderBrief, renderGc, renderAdoptPreview, oneLine, allowanceLabel } from './views.ts';
 import type { Entry } from './types.ts';
@@ -98,12 +98,14 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     }
     switch(cmd) {
       // D24.3: once genesis is recorded init succeeds; an incomplete genesis attest is reported, never as "retry".
-      case 'init': { const r=await ops.init({...actor,channel:channel!,signal,plan:await readFile(resolve(cwd,node),'utf8')}); result=r; text=`${renderEntry(r.entry)}\nInitial observations: ${r.observations.length}${r.genesis.complete ? '' : `${r.genesis.error ? `\nGenesis attest stopped: ${r.genesis.error}` : ''}\n${ops.genesisIncompleteText(r.entry.seq,r.genesis)}`}\n${renderStatus(r.status)}`; break; }
+      // H2.2: warnings for check-less nodes of the new plan, printed after the result (JSON: `warnings`).
+      case 'init': { const plan=await readFile(resolve(cwd,node),'utf8'), r=await ops.init({...actor,channel:channel!,signal,plan}), warnings=checklessWarnings(parsePlan(plan)); result={...r,warnings}; text=`${renderEntry(r.entry)}\nInitial observations: ${r.observations.length}${r.genesis.complete ? '' : `${r.genesis.error ? `\nGenesis attest stopped: ${r.genesis.error}` : ''}\n${ops.genesisIncompleteText(r.entry.seq,r.genesis)}`}\n${renderStatus(r.status)}${warnings.map(w => `\n${w}`).join('')}`; break; }
       case 'plan': {
-        const note=value('note'), e=await ops.planSet({...actor,...await ops.readPlan({cwd,path:node,rev:value('rev')}),...(note !== undefined ? {note} : {})}); result=e; text=renderEntry(e);
+        const note=value('note'), read=await ops.readPlan({cwd,path:node,rev:value('rev')}), e=await ops.planSet({...actor,...read,...(note !== undefined ? {note} : {})}), warnings=checklessWarnings(parsePlan(read.plan)); result={...e,warnings}; text=renderEntry(e);
         // D21.3: a parent's downgrades accepted under an allowance are labelled with it.
         if(e.kind === 'plan' && !e.by.startsWith('owner:')) { const d=(await ops.report({cwd,since:e.seq-1})).downgrades.find(x => x.seq === e.seq); if(d?.allowance !== undefined) text+=`\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`; }
         const pending=await ops.genesisPending({cwd}); if(pending.length) { const w=`Warning: genesis attest pending for ${pending.join(', ')}`; if(opts.has('json')) io.error(w); else text=`${text}\n${w}`; }
+        text+=warnings.map(w => `\n${w}`).join('');
         break;
       }
       case 'rule': { const nodes=value('nodes',true)!; result=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(',')}); break; }
