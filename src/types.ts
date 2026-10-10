@@ -161,7 +161,12 @@ export interface LaunchEntry extends Base { kind: 'launch'; node: string; attemp
 export interface SendEntry extends Base { kind: 'send'; node: string; attempt: number; rid: string; send: string; sendKind: SendKind; message: string; reason: SendReason; /** reason `ruling` (required): the highest ruling seq the message includes (D22.1); reason `repair` (E4, 0.5.1; absent on 0.5.0 entries): the highest in-scope ruling seq it carried, 0 when none; reasons `submit` and `rebase` (0.7, K5.2): the same, written only when it carried a ruling; forbidden otherwise. */ rulings?: number }
 /** The driver stops on this attempt until a later non-driver entry on the node or a new attempt (SPEC §12, D3). */
 export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: number; reason: string; needs: 'human' | 'owner' }
-export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry;
+/**
+ * 0.8 (L1): the parent or owner clears the node's driver halt without an obligation and starts a new repair epoch;
+ * `after`: the node waits until that node merges. Strict fields.
+ */
+export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string; note?: string }
+export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
@@ -255,6 +260,8 @@ export interface RunView {
   questions?: RunQuestion[];
   lastFence?: { reason: string; at: number; exec?: string };
   wid?: string;
+  /** 0.8 (L1.4): dsa's call address `<wid>/<key>` of the run's (latest) call, when describe reports both. */
+  to?: string;
   labels?: Record<string, string>;
   spec_digest?: string;
 }

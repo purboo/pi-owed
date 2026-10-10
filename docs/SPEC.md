@@ -380,6 +380,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels, rulings?: number}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; `rulings` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the task carried, 0 when none: an integer ≤ the entry's seq, 0 or the seq of a recorded ruling covering the node (§12.5.1); strict fields |
 | `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling`; `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; reasons `submit` and `rebase` (0.7) the same, written only when the message carried a ruling; forbidden for other reasons (§12.5.1); strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
+| `resume` | parent/owner (never `parent:drive`) | `{node, attempt, after?, note?}` | 0.8: clears the node's driver halt without an obligation and starts a new repair epoch (§12.3); `attempt` = the node's open slot; `after` = another plan node: the node waits until it merges; strict fields. owed 0.7.x cannot replay a ledger with a `resume` entry |
 | `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
 
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
@@ -1128,7 +1129,11 @@ run inside its worktree), `attest <node> [--rerun]`,
 (`review`, `waive`, `approve` and `evidence` also take `--candidate COMMIT`,
 §8 act binding),
 `defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
-spelling `--reason`; not both), `merge <node>`, `status`,
+spelling `--reason`; not both), `resume <node> [--after <node>] [--note TEXT]`
+(parent/owner, §12.3; prints `Recorded #<seq> <by> resumed <node>[ after
+<dep>]`, then `<node> waits for <dep> (resume #<seq>); the driver acts again
+when <dep> merges`, or `<dep> is already merged: <node> resumes now`; `--json`
+the entry), `merge <node>`, `status`,
 `why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
 `adopt [--commit X] --note TEXT` (owner; `--as parent:ID` under an `adopt`
 allowance, §3.4, with no prompt and no preview; before the TTY prompt, and also with
@@ -1231,6 +1236,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `as` | merge |
 | `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
+| `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_rule` | `text`, `nodes`, `as` | ruling |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
@@ -1411,10 +1417,38 @@ must name the node's current open slot (node and attempt), and so must a halt.
   `halted(state, node) → HaltEntry | undefined` give the active halt.
 - A halt blocks the driver on that attempt until a later entry on the same node
   by a principal other than `parent:drive` — submit, review, rebase, abandon,
-  waive, defer, escape, a ruling whose node list names it (not `*`) — or a new
+  waive, defer, escape, resume, a ruling whose node list names it (not `*`) — or a new
   attempt (any dispatch of the node). Driver entries (`launch`, `send`, `halt`)
   and executor entries (`obs`, `merge`, which the driver causes) never clear a
   halt. A halt of an attempt that is no longer open is not active.
+- **Resume** (0.8, L1). `owed resume <node> [--after <dep>] [--note TEXT]`
+  (pi `owed_resume`) records `{kind: "resume", node, attempt, after?, note?}`
+  by a parent or the owner (writer, reviewer, executor and `parent:drive` are
+  refused), on the node's open slot (refused without one; `attempt` must be
+  the open attempt); `after` must name another node of the plan. It adds no
+  obligation (the `rulings` item and every other item are unchanged) and:
+  - clears the node's halt (as any non-driver entry on the node does);
+  - starts a new repair epoch: `repairEpoch` takes the latest resume of the
+    open attempt (`resume #<seq>`) alongside dispatch, rulings naming the node
+    and plan changes of its spec, so the repair budget starts again; what the
+    driver waits for after a resume counts from it too (a repair or submit
+    follow-up sent before the resume to a sealed writer, `error` observations
+    for "attest recorded no verdict twice"), so the driver acts on its next
+    pass — e.g. retries a merge refused for an environmental reason, sends a
+    sealed writer a fresh repair or submit follow-up, measures again;
+  - with `after`: the node is **waiting** while the latest resume of the open
+    attempt has `after` and that node is not merged (`waitingFor(state,
+    node) → {after, resume} | undefined`). A later resume replaces an earlier
+    one (one without `after` ends the wait); an abandon or a new dispatch ends
+    it. A waiting node is skipped like a halted one (no launch, send, halt,
+    attest or merge); only asking runs are still reported (row 5).
+  The first writer follow-up the driver sends after a resume (any reason;
+  `resumeLine`) starts with the line `The parent resumed this node
+  (#<seq>)[ after <dep> merged at <commit12>][: <note>]` (the note on one line).
+  When to use which: `owed resume` says "go on" (measure again, retry, wait for
+  another node) and creates nothing to acknowledge; `owed rule --nodes <node>`
+  gives the writer and reviewers guidance they must follow and acknowledge (the
+  `rulings` item becomes owed again).
 
 ### 12.4 Views
 
@@ -1425,11 +1459,19 @@ must name the node's current open slot (node and attempt), and so must a halt.
   `Driver runs (open attempts):` lists the launches of each open slot's current
   attempt (`<node> attempt N: #seq <role> <rid>`). Both sections are shown only
   when non-empty; `--json` has `halted: HaltEntry[]` and
-  `launches: {node: LaunchEntry[]}`.
+  `launches: {node: LaunchEntry[]}`. Under the halted nodes one line
+  `  to clear it without an obligation: owed resume <node> --note "<why>" (add
+  --after <node> to wait until that node merges); owed rule gives the writer
+  and reviewers guidance they must acknowledge` (0.8). `Waiting (resume):`
+  lists waiting nodes (`⏳ <node>: waiting for <dep> (resume #<seq>)`; `--json`
+  `waiting: {node, after, resume}[]`, present only when non-empty).
 - **Why**: when the node sets `drive` (§12.2), the line
   `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` with the
   effective values of its later launches (`(<model>)` only when a model is
-  set; `--json` `drive`); the active halt with how it is cleared, then each launch
+  set; `--json` `drive`); the active halt with how it is cleared (including
+  `owed resume <node> --note "<why>"`, 0.8), a waiting node's `⏳ waiting for
+  <dep> (resume #<seq>); the driver acts again when <dep> merges or after
+  another resume` (`--json` `waiting`), then each launch
   (`Driver launch #seq <role> <rid> (spec <sha12>)`) and send
   (`Driver send #seq <kind> (<reason>) to <rid>: <send id>`) of the open
   attempt; `--json` has `halt?` and `runs?`.
@@ -1634,6 +1676,21 @@ it gives the reviewer's `owed evidence` command.
   forms: `answer in pi: subagents {action:"send", kind:"answer", to:"<to>",
   qid:"<qid>", message:"…"}; or: pi-durable-subagents send --request <id> --to
   <to> --kind answer --qid <qid> --rev <rev> --message @<file>`.
+- **Call address in halts (0.8, L1.4, wais #16).** `RunView.to` is dsa's call
+  address `<wid>/<key>` of the run's call (the latest one when describe lists
+  several), present only when describe reports both a wid and a call key
+  (never a bare wid). Every halt reason that names a writer or reviewer run
+  (`writer run <rid> sealed …`, `… finished … without submitting …`,
+  `review-missing: reviewer run <rid> …`, `dsa rejected run|send <id> …`,
+  `cannot re-launch|re-send …`, a send request-conflict) adds ` (to:"<wid>/<key>")`
+  after the run or send id when it is known, the same `to:"…"` form as the
+  asking notice (`toArg`); an asking question without its own `to` falls back
+  to it, then to the run id.
+- **Waiting (0.8, L1.5).** Each pass logs, per waiting node (§12.3 Resume), the
+  quiet line `waiting: <node> waits for <dep> (resume #<seq>)` (`--json`:
+  `{"event":"waiting","node","after","resume"}`; `PassResult.waiting`); the
+  loop prints it once per node and resume, `--once` and `owed_drive` every
+  pass. It never wakes a session.
 
 ### 12.6 Review packet (D5)
 
@@ -2000,7 +2057,11 @@ polling.
   alone and is listed in the next message. All wake lines of one read form one
   `pi.sendMessage({customType: "owed-drive", display: true, content},
   {triggerTurn: true, deliverAs: "followUp"})`, content = `owed drive
-  (<repo>):`, the carried merges and wake lines in log order, `Next: owed
+  (<repo>):`, the carried merges and wake lines in log order, (0.8) when at
+  least one wake line is a halt the line `To clear a halt without an
+  obligation: owed resume <node> --note "<why>" (add --after <node> to wait
+  until that node merges); owed rule gives the writer and reviewers guidance
+  they must acknowledge`, then `Next: owed
   status / owed why <node>`. Identical wake lines within one read collapse.
   One wake per new fact (E3.1, replacing D17a.5's "every halt line wakes"):
   the driver adds to every node-scoped wake line (halt, notify, describe

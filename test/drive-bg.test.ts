@@ -14,7 +14,7 @@ import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
 import { drive, procStart, reportText } from '../src/drive-run.ts';
-import { Follower, classifyLine, driveStart, driveStop, renderDriveStart } from '../src/drive-bg.ts';
+import { Follower, classifyLine, driveStart, driveStop, haltHintText, renderDriveStart } from '../src/drive-bg.ts';
 import type { Entry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { identity } from './helpers/surface.ts';
@@ -634,7 +634,7 @@ test('D17a.8: a failing sendMessage keeps the batch for the next tick; the follo
     assert.equal(f.tick(), undefined, 'delivery failed');
     put({ do: 'notify', node: 'c', outcome: 'notify', text: 'c asks' });
     fail = false;
-    assert.deepEqual(f.tick()!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1 (needs human): halted — first', 'c asks', 'Next: owed status / owed why <node>']);
+    assert.deepEqual(f.tick()!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1 (needs human): halted — first', 'c asks', haltHintText, 'Next: owed status / owed why <node>']);
     put({ event: 'stopped' }); put({ event: 'exit', code: 0, reason: 'stopped', at: 'T' });
     fail = true;
     assert.equal(f.tick(), undefined);

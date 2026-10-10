@@ -15,9 +15,9 @@ import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, driveConfig, measureCap } from './plan.ts';
-import { reduce, halted, projectId } from './reducer.ts';
+import { reduce, halted, projectId, waitingFor } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
-import { decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
+import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
@@ -149,6 +149,8 @@ export interface PassResult {
   actions: ActionReport[]; progress: boolean; idle: boolean;
   /** The ledger head (hash of the last entry) the pass decided on (H1.2: a staying driver's idle baseline). */
   head: string;
+  /** 0.8 (L1.5): open attempts waiting for another node to merge (a resume with `after`), in status order. */
+  waiting: { node: string; after: string; resume: number }[];
 }
 
 /**
@@ -166,6 +168,8 @@ class Facts {
   readonly lastGen = new Map<string, number>();
   /** rid → state of the latest view describe reported in this process (G3.6). */
   readonly lastState = new Map<string, RunView['state']>();
+  /** rid → dsa's call address `<wid>/<key>` the latest view describe reported in this process (0.8, L1.4). */
+  readonly lastTo = new Map<string, string>();
   /** `<reportKey>:<kind>` → last printed text key (notify, machine busy): the loop prints a line only when it changed. */
   readonly printed = new Map<string, string>();
   /** reportKey → the last wake printed for it (text without the repeat suffix, fact mark) and how often it repeated (E3.1). */
@@ -320,7 +324,9 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string }
+export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number }
+/** 0.8 (L1.5): text of a `waiting` loop event. */
+export const waitingText = (node: string, after: string, resume: number): string => `waiting: ${node} waits for ${after} (resume #${resume})`;
 /** Text of the `idle-wait` line of a staying driver (H1.2). */
 export const IDLE_WAIT_TEXT = 'idle: nothing open and nothing ready; staying until the ledger changes (owed drive --stop ends it)';
 
@@ -340,6 +346,7 @@ export function reportText(json: object): string {
       case 'events-error': return `events error: ${oneLine(e.error ?? '')}`;
       case 'exit': return `driver exited ${e.code} (${e.reason})${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
       case 'drift-cleared': return 'trunk drift cleared: trunk equals the ledger trunk again';
+      case 'waiting': return waitingText(oneLine(e.node ?? '?'), oneLine(e.after ?? '?'), e.resume ?? -1);
       case 'session-unsupported': return `dsa does not accept --session (older than pi-durable-subagents 1.0.31): runs start without it and are not listed in pi session ${e.session ?? '?'}${e.reason ? ` (${oneLine(e.reason)})` : ''}`;
       default: return oneLine(JSON.stringify(json));
     }
@@ -444,11 +451,12 @@ export class Driver {
   private current(view: RunView, gen: number | undefined): RunView {
     if (gen !== undefined) this.facts.lastGen.set(view.rid, gen);
     this.facts.lastState.set(view.rid, view.state);
+    if (view.to) this.facts.lastTo.set(view.rid, view.to);
     const want = this.facts.expectGen.get(view.rid);
     if (want === undefined || gen === undefined) return view;
     if (gen >= want) { this.facts.expectGen.delete(view.rid); return view; }
     if (view.state !== 'sealed' && view.state !== 'pruned') return view;
-    return { rid: view.rid, state: 'running', ...(view.wid ? { wid: view.wid } : {}), ...(view.labels ? { labels: view.labels } : {}) };
+    return { rid: view.rid, state: 'running', ...(view.wid ? { wid: view.wid } : {}), ...(view.to ? { to: view.to } : {}), ...(view.labels ? { labels: view.labels } : {}) };
   }
 
   /**
@@ -502,9 +510,17 @@ export class Driver {
       reports.push(r.report); applied ||= r.applied;
       this.emit(r.report, s);
     }
+    // 0.8 (L1.5): the waiting nodes, one quiet line each (the loop prints a node's line once per resume).
+    const waiting = Object.keys(s.nodes).sort().flatMap(id => { const w = waitingFor(s, id); return w ? [{ node: id, ...w }] : []; });
+    for (const w of waiting) {
+      const e: LoopEvent = { event: 'waiting', node: w.node, after: w.after, resume: w.resume }, slot = `${w.node}:waiting`, key = String(w.resume);
+      if (!this.o.once && this.facts.printed.get(slot) === key) continue;
+      this.facts.printed.set(slot, key);
+      this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
+    }
     const head = (await ledger.read()).at(-1)?.hash;
     const open = Object.values(s.nodes).some(n => n.slot?.open);
-    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head };
+    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting };
   }
 
   // ---------- measurements in flight (K6) ----------
@@ -651,8 +667,10 @@ export class Driver {
           // or ruling) carries its rulings; reviewers get them through the rulings obligation. A rejected ruling
           // follow-up halts like any other send (as decide would on the next pass).
           if (r.outcome === 'rejected' && a.reason === 'ruling' && a.sendKind === 'steer') return done('rejected', false, `${r.reason}; not retried as a steer (the writer's next follow-up carries these rulings; reviewers get them through the rulings obligation)`, x);
-          if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'send', id, r.reason)); return done('rejected', false, `${r.reason}; halted`, x); }
-          if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on send ${id}; never retried with other bytes`); return done('conflict', false, 'halted', x); }
+          // 0.8 (L1.4): the halt names the run's call address when describe reported one.
+          const to = callAt({ rid: a.rid, state: 'running', ...(this.facts.lastTo.has(a.rid) ? { to: this.facts.lastTo.get(a.rid)! } : {}) });
+          if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'send', `${id}${to}`, r.reason)); return done('rejected', false, `${r.reason}; halted`, x); }
+          if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on send ${id}${to}; never retried with other bytes`); return done('conflict', false, 'halted', x); }
           return done('pending', false, r.reason ?? 'retry next pass', x);
         }
         // K6: attest and merge are started by `pass` (`start`), never executed inline.

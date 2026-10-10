@@ -387,7 +387,7 @@ The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,
 `owed why`) waits for an action on the node by the main agent (the delegated owner;
 owner halts list the command that resolves them). A ruling, submit, review,
-rebase or abandon on the node clears a halt, and the next pass resumes. A ruling recorded while a
+rebase, abandon or resume on the node clears a halt, and the next pass resumes. A ruling recorded while a
 driver-launched writer or reviewer call is running reaches it as a steer
 (reason `ruling`, recorded) once the node has nothing else to do; sealed calls
 get rulings with the next follow-up (submit, rebase and repair follow-ups list
@@ -409,7 +409,23 @@ answer forms: the pi `subagents` send call (`to`, `qid`) and the CLI command. A 
 from dsa rejecting a run or send is the exception: that request's id and bytes
 are fixed for the attempt and dsa rejects it again, so fix the cause (plan,
 agent, model) and run `owed abandon <node>`; the driver then dispatches a new
-attempt.
+attempt. Halts that name a driver run also give dsa's call address
+(`to:"<wid>/<key>"`) when dsa reported one, so you can steer or inspect the call.
+
+### Resume or rule? (0.8)
+
+`owed resume <node> --note "<why>"` (pi `owed_resume`, parent or owner) clears a
+halt without creating anything to acknowledge, and gives the attempt a fresh
+repair budget: use it for "measure again", "retry the merge, the disk was full",
+"go on". `owed resume <node> --after <other> --note "<why>"` makes the node wait
+(`owed status`: `waiting for <other> (resume #<seq>)`; the driver leaves it alone
+except for questions) until `<other>` merges; then the driver carries on, and the
+writer's next follow-up starts with `The parent resumed this node (#<seq>) after
+<other> merged at <commit>: <why>`. Use `owed rule --nodes <node> "<decision>"`
+instead when the writer and reviewers must follow and acknowledge a decision (a
+changed requirement, a contract answer): a ruling is an obligation, a resume is
+not. owed 0.7.x cannot read a ledger with a `resume` entry: upgrade the CLI, the
+pi extension and every driver together.
 
 ## Development
 
