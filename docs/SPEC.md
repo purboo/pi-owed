@@ -304,8 +304,8 @@ ran: a remote-host wrapper is trusted by its argv.
 | `escape` | parent/owner | `{node, merge, class, note, evidence?}` | defect found after a merge (§6.5); `merge` must be the seq of a merge of `node` |
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
-| `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; strict fields |
-| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling`; `rulings` (reason `ruling` only, required there and forbidden otherwise) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node (§12.5.1); strict fields |
+| `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels, rulings?: number}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; `rulings` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the task carried, 0 when none: an integer ≤ the entry's seq, 0 or the seq of a recorded ruling covering the node (§12.5.1); strict fields |
+| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling`; `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; forbidden for other reasons (§12.5.1); strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
 | `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
 
@@ -1229,15 +1229,26 @@ it gives the reviewer's `owed evidence` command.
 
 #### 12.5.1 Rulings reach running calls; run names; answer address (D22)
 
+- **Rulings carried (E4, 0.5.1).** The driver computes `rulings` while it
+  builds a message, from the same state, and records it on the entry: a writer
+  launch the in-scope rulings of its dispatch packet (recorded before the
+  dispatch), a reviewer launch every in-scope ruling (its review packet), a
+  `repair` send the rulings since dispatch and the rulings quoted by
+  needs-parent block notes; the highest seq, 0 when none. A re-launch copies the
+  recorded value. So a ruling recorded between `decide` and the append is not
+  counted as carried and is steered afterwards. Replay refuses a value that is
+  not an integer ≤ the entry's seq naming 0 or a ruling covering the node. A
+  0.5.0 reducer refuses these entries (unknown `rulings` on a launch, `rulings`
+  on a repair): a ledger written by 0.5.1's driver needs owed ≥ 0.5.1.
 - **Delivered rulings.** For each drive-launched run of the open attempt (the
   writer and the reviewer runs of the current candidate), *delivered* = the
   highest in-scope ruling seq (`--nodes` names the node, or `*`) the run already
-  has: for the writer its dispatch `rulings_seen` and, for every recorded
-  `repair` send to it, the in-scope rulings recorded before that send (the
-  repair lists the rulings since dispatch; D22.4a); for a reviewer the in-scope
-  rulings recorded before its launch entry (its review packet); for both the
-  `rulings` of every recorded `ruling` send to it, also an unconfirmed or
-  rejected one.
+  has: the max of `rulings` on its launch entry and on every `repair` and
+  `ruling` send to it (also an unconfirmed or rejected ruling send), and for the
+  writer its dispatch `rulings_seen`. Entries without the field (written by
+  0.5.0) fall back to the 0.5.0 position rule: a reviewer launch carried the
+  in-scope rulings recorded before its entry, a `repair` send those recorded
+  before it (D22.4a), a writer launch `rulings_seen`.
 - **Ruling steer (D22.2, D22.2a).** The lowest row of the table: used only where
   the node would otherwise get no action — row 18 (`fenced` first), the wait for
   a live reviewer run of the candidate behind a stale block, and a running
