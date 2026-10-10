@@ -226,6 +226,8 @@ the branch and worktree recorded in its dispatch entry (§8.1).
 exec:                            # optional; unknown keys and bad types are errors
   env: { CARGO_TARGET_DIR: /abs/shared/target }   # string values, no expansion
   wrap: ["/abs/tmp/qa/heavy.sh"]                  # non-empty argv prefix of non-empty strings
+  parallel: 4                    # 0.9: jobs one merge/adopt/genesis attest measures at once (integer >= 1, default 1)
+  trees: reuse                   # 0.9: fresh (default) | reuse: stable measurement worktrees (§7.12)
 ```
 
 `env` names match `^[A-Za-z_][A-Za-z0-9_]*$` and may not be `CI` or `OWED`;
@@ -242,6 +244,17 @@ reduced"}` in ΔO⁻: only the owner may change `exec`, so set it once. The
 recorded `downgrades` field of the plan entry (and the confirmation list of
 `owed_plan`) does not list it, as for `setup`. Plans without `exec` behave
 exactly as in 0.4.1; a plan with `exec` needs owed ≥ 0.5.0 to replay.
+
+`parallel` and `trees` (0.9) only schedule measurement: they are not part of
+`execKey` (§4.1), of any check key or of the L2 check definition, and the
+comparison above (candidate invalidation, the `exec changed` ΔO⁻ item) looks at
+`env` and `wrap` only. Changing them therefore supersedes nothing, re-measures
+nothing and needs no owner authority (a parent may set them). An `exec:` block
+holding only `parallel` and/or `trees` is valid; the parsed plan keeps each of
+them only when it is set (`parallel: 1` and `trees: fresh` written explicitly
+are kept, and change the plan blob, not any key). A plan setting them needs owed
+≥ 0.9.0 to replay. `parallel` must be an integer ≥ 1; `trees` is `fresh` or
+`reuse`.
 
 ### 3.3 Owner approval and manual evidence (D23)
 
@@ -374,7 +387,8 @@ strength and invariant key above also contains `exec: {env?, wrap?}` (only the
 non-empty fields). Otherwise the field is absent and keys are byte-identical
 to 0.4.1 (`exec: {}` = no block). Writes, closure-review, review and rulings
 keys never contain it. The key names the wrapper argv, not where the wrapper
-ran: a remote-host wrapper is trusted by its argv.
+ran: a remote-host wrapper is trusted by its argv. `exec.parallel` and `exec.trees` (0.9, §7.12) are
+never part of a key.
 
 ## 5. Ledger entry kinds
 
@@ -715,7 +729,10 @@ moved ref silently.
    with `OwedError('aborted')` and takes nothing; an abort after acquisition
    is handled by the paths above, never by interrupting the locked step. The
    only lock wait after an abort is merge/adopt recording the observations
-   they measured before it.
+   they measured before it (and a parallel genesis attest, §7.12).
+   Under `exec.parallel` > 1 (§7.12) every running job is killed; the
+   observations kept are those of the jobs that completed before the abort,
+   in job order (not necessarily a prefix of the job list).
 9. Execution environment (D20, §3.2). Every process owed starts in a
    materialized tree — `setup`, check, red, strength and invariant runs, and
    attribution reruns — gets the environment `{...process.env, ...exec.env,
@@ -786,6 +803,50 @@ changed; retry`): they decide a trunk move on what they measured.
   waited for.
 - The CLI exits 75 for `busy` (§10); pi tools return the message as a tool error
   (`Busy: <message>`, details `{code: "busy", reason}`).
+
+### 7.12 Merge speed: `exec.parallel` and `exec.trees` (0.9)
+
+- `exec.parallel` = N (default 1): one `owed merge` measures up to N of its jobs
+  at once — the genesis/invariant jobs and the merge-result jobs in one queue,
+  started in job order. The same applies to `owed adopt` and to the genesis
+  attest (`init`, `attest --genesis`). Node attests stay serial: the driver
+  already runs attests of different nodes in parallel (§7.11). Observations go
+  into the ledger in job order whatever order the jobs finish in (merge/adopt
+  append them together; the genesis attest records each in job order as soon as
+  its predecessors are recorded). With N = 1 the behavior is exactly that of
+  0.8. An abort (§7, step 8) kills every running job and starts no further one.
+  Parallel jobs share the machine: cargo builds that share one
+  `CARGO_TARGET_DIR` serialize on cargo's build-directory lock, so give heavy
+  invariants separate target dirs (e.g. through their own `run` or wrapper) or
+  accept that they wait for each other.
+- `exec.trees: fresh` (default): every run materializes a new detached worktree
+  under a fresh `/tmp/owed-run-*/tree` and removes it afterwards. Nothing
+  survives; build tools that fingerprint the path or file mtimes rebuild from
+  scratch.
+- `exec.trees: reuse`: check, red, strength and invariant runs use a stable
+  detached worktree `<git common dir>/owed/trees/<kind>-<check id>-<k>`
+  (`<kind>` = `inv`/`check`/`red`/`strength`; a check id that is not path-safe,
+  `^[A-Za-z0-9][A-Za-z0-9._-]*$`, is replaced by `h` + 16 hex of its sha256),
+  with `<k>` the lowest index whose lease is free. The lease is the file
+  `<tree>.lock`, created with O_EXCL and holding the pid; a lease whose pid is
+  dead is stale and reclaimed (moved aside, put back if a racing reclaim moved a
+  live one), so concurrent measurements of one check get different trees.
+  Preparing a reused tree for a commit: `git checkout --detach --force
+  <commit>`, then `git clean -ffdx` (no untracked or ignored file survives: the
+  content equals a fresh tree), then the overlays as for a fresh tree. What
+  survives is the path and the mtimes of files the checkout did not change, so a
+  build cache outside the tree (a shared `CARGO_TARGET_DIR`) builds
+  incrementally; a cache inside the tree (an ignored `target/`) does not
+  survive. A missing or broken tree is recreated (`git worktree add -f
+  --detach`); a failure to prepare one falls back to a fresh tree with a
+  one-line note in the observation log and never fails the measurement. The end
+  of a run releases the lease and keeps the tree. Each strength mutant prepares
+  the tree again. Reuse trees are not slots: `owed gc`, `dispatch`, the D19
+  trunk-worktree report and the slot reports ignore them; `owed gc` deletes
+  those whose lease is free when the plan no longer sets `trees: reuse` or when
+  their check id is gone (an `inv` tree: no invariant of that id; other kinds:
+  no node check of that id), and reports them (`trees`, and `treesKept` for a
+  held lease) — `--dry-run` only reports.
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
@@ -935,8 +996,13 @@ untouched. A finished worktree that contains another registered worktree (a
 layout left by older dispatches from inside a slot) is kept with reason
 `contains worktree <path>`, so gc never deletes an open slot nested in it.
 Attempts whose worktree and branch are both gone are skipped, so gc
-is idempotent. Result: `{dryRun, removed: {node, attempt, worktree, branch, pinned}[],
-kept: {node, attempt, worktree, branch, reason}[], entry?}`; in `removed`,
+is idempotent. Reused measurement trees (§7.12) are never treated as slots
+(never in `removed` or `kept`); gc removes those whose lease is free when the
+plan does not set `exec.trees: reuse` or their check id is gone, listing them in
+`trees: {path, reason}[]` and trees whose lease a live process holds in
+`treesKept` (both present only when non-empty; dry-run removes nothing; no
+ledger entry is appended for them). Result: `{dryRun, removed: {node, attempt, worktree, branch, pinned}[],
+kept: {node, attempt, worktree, branch, reason}[], trees?, treesKept?, entry?}`; in `removed`,
 `worktree`/`branch` is `null` for a part that was already absent, and `pinned`
 lists the keep refs created (in dry-run: that would be created). When it
 removes or pins something (not in dry-run) it appends one `note` entry (by the caller,
