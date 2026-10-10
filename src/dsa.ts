@@ -41,6 +41,21 @@ export interface DsaOptions {
   timeoutMs?: number;
   /** Working directory of the child process (not the run's cwd). */
   cwd?: string;
+  /** The pi session every `run` names with `--session` (dsa >= 1.0.31, E1); none: no flag. */
+  session?: string;
+}
+
+/** A pi session id as dsa 1.0.31 accepts it for `--session`. */
+const SESSION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+/**
+ * The pi session a driver started in (E1, dsa 1.0.31): `$DSA_SESSION`, which pi exports to the processes it starts.
+ * Ignored inside a pi-durable-subagents call (`DSA_CALL` or `DSA_EXEC` set: a subagent), exactly as dsa ignores it, and
+ * when it is not a session id dsa accepts.
+ */
+export function startingSession(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.DSA_CALL || env.DSA_EXEC) return undefined;
+  const s = env.DSA_SESSION;
+  return s && SESSION_ID.test(s) ? s : undefined;
 }
 
 export function dsaBin(env: NodeJS.ProcessEnv = process.env): string {
@@ -60,7 +75,13 @@ export class Dsa {
   private readonly live = new Set<number>();
   /** Ends every running invocation's process group (hold forwards it to its command): the driver's hard stop. */
   killAll(sig: NodeJS.Signals = 'SIGTERM'): void { for (const pid of this.live) { try { process.kill(-pid, sig); } catch { /* gone */ } } }
-  constructor(opts: DsaOptions = {}) { this.opts = opts; this.bin = opts.bin ?? dsaBin({ ...process.env, ...opts.env }); }
+  constructor(opts: DsaOptions = {}) { this.opts = opts; this.bin = opts.bin ?? dsaBin({ ...process.env, ...opts.env }); this.session = opts.session; }
+  /** The pi session `run` passes as `--session <id>` (E1); undefined: no flag. */
+  session?: string;
+  /** Called once when this dsa refuses `--session` (older than 1.0.31); `run` drops the flag from then on. */
+  onSessionRefused?: (reason: string) => void;
+  /** This dsa refused `--session` once: never passed again by this client. */
+  sessionRefused = false;
 
   private timeout(): number { return this.opts.timeoutMs ?? (this.opts.waitMs ?? 60_000) + 30_000; }
   private wait(): string[] { return this.opts.waitMs === undefined ? [] : ['--wait-ms', String(this.opts.waitMs)]; }
@@ -101,8 +122,12 @@ export class Dsa {
 
   /** `run --request <rid> --spec - --labels <json> --cwd <dir> --json`; specBytes go to stdin exactly as given. */
   async run(rid: string, specBytes: string | Uint8Array, labels?: Record<string, string>, cwd?: string): Promise<RunResult> {
-    const args = ['run', '--request', rid, '--spec', '-', ...(labels ? ['--labels', JSON.stringify(labels)] : []), ...(cwd ? ['--cwd', cwd] : []), '--json', ...this.wait()];
+    const session = this.sessionRefused ? undefined : this.session;
+    const args = ['run', '--request', rid, '--spec', '-', ...(labels ? ['--labels', JSON.stringify(labels)] : []), ...(cwd ? ['--cwd', cwd] : []), ...(session !== undefined ? ['--session', session] : []), '--json', ...this.wait()];
     const r = await this.exec(args, specBytes);
+    // E1.2: a dsa older than 1.0.31 refuses the unknown flag before it records anything: drop it and run again.
+    const refused = session !== undefined ? sessionRefusal(r) : undefined;
+    if (refused !== undefined) { this.sessionRefused = true; this.onSessionRefused?.(refused); return this.run(rid, specBytes, labels, cwd); }
     return requestOutcome(r, reply => ({ outcome: 'applied', wid: str(reply.wid), created: reply.created === true, spec_digest: str(reply.spec_digest) }));
   }
 
@@ -205,6 +230,17 @@ function jsonLines(stdout: string): Json[] {
 function parseWhole(stdout: string): Json | undefined {
   try { const v = JSON.parse(stdout); if (v && typeof v === 'object' && !Array.isArray(v)) return v as Json; } catch { /* fall through */ }
   return jsonLines(stdout).at(-1);
+}
+
+/**
+ * The refusal text when dsa rejected `run` for not knowing `--session` (dsa < 1.0.31: `Unknown or repeated option
+ * --session`, as a JSON reply's reason or on stderr), else undefined. Nothing was recorded then (argument parsing
+ * precedes the request).
+ */
+function sessionRefusal(r: Spawned): string | undefined {
+  if (r.timedOut || r.signal || r.exit === 0 || r.exit === 75 || r.exit === 3) return undefined;
+  const text = `${str(parseWhole(r.stdout)?.reason)}\n${r.stderr}`;
+  return /\b(?:unknown|unrecognized|unexpected)\b[^\n]*--session\b/i.test(text) ? tail(text) : undefined;
 }
 
 /**
