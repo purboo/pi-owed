@@ -186,7 +186,7 @@ function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote
 /** K2.2: the note of an exec block's failing observation on one line, at most 200 characters. */
 export interface BlockNote { seq: number; note: string }
 const NOTE_SHOWN = 200;
-const shortNote = (note: string): string => {
+export const shortNote = (note: string): string => {
   const t = oneLine(note); if (t.length <= NOTE_SHOWN) return t;
   // Cut whole code points of the raw note, each escaped as oneLine does, so no surrogate pair or \uXXXX escape is split.
   let out = ''; for (const cp of note) { const x = oneLine(cp); if (out.length + x.length > NOTE_SHOWN - 1) break; out += x; }
