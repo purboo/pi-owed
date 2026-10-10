@@ -215,6 +215,12 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.abandon({ ...await actor(ctx, dir, who, `Abandon the open attempt of node ${oneLine(p.node)}`, { Note: note ?? '(none)' }, signal), node: p.node, reason: note ?? '' });
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
+  tool('resume', 'Clear a driver halt on the open attempt of a node without an obligation (parent or owner; never the driver): the driver acts on its next pass and the repair budget starts again. after: wait until that node merges first (the driver leaves the node alone meanwhile, except asking notices). note: why (the writer gets it with the next follow-up). Use owed_rule instead for guidance the writer and reviewers must acknowledge.', Type.Object({ node, after: Type.Optional(Type.String({ minLength: 1, description: 'Wait until this node merges.' })), note: Type.Optional(Type.String({ description: 'Why (recorded; quoted to the writer).' })), as, cwd }), async (p, ctx, dir, signal) => {
+    const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'resume');
+    const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(p.node)}${p.after !== undefined ? ` after ${oneLine(p.after)}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.note !== undefined ? { note: p.note } : {}) });
+    const tail = p.after === undefined ? '' : r.merged ? `\n${p.after} is already merged: ${p.node} resumes now` : `\n${p.node} waits for ${p.after} (resume #${r.entry.seq}); the driver acts again when ${p.after} merges`;
+    return result(r.entry, `${renderEntry(r.entry)}${tail}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
+  });
   tool('gc', 'Reclaim worktrees and branches of merged or abandoned attempts (parent or owner); dry_run only reports.', Type.Object({ dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'run gc');
     const r = await ops.gc({ ...await actor(ctx, dir, who, `${p.dry_run ? 'Report' : 'Remove'} worktrees and branches of finished attempts`, {}, signal), dryRun: !!p.dry_run });

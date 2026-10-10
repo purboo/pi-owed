@@ -587,6 +587,22 @@ export async function send(o: Actor & { node: string; attempt: number; rid: stri
     guard(state, d); return (await ledger.append([d]))[0] as SendEntry;
   });
 }
+/**
+ * 0.8 (L1): records `resume` on the open attempt of `node` (parent or owner): it clears a driver halt without an
+ * obligation and starts a new repair epoch; with `after` the node waits until that node merges. `merged`: `after` is
+ * already merged (the node resumes now).
+ */
+export async function resume(o: Actor & { node: string; after?: string; note?: string }): Promise<{ entry: Entry; merged?: boolean }> {
+  if (o.as.role !== 'parent' && o.as.role !== 'owner') throw new OwedError(`resume insufficient permissions; requires parent/owner (got ${o.as.role})`);
+  let merged = false;
+  const entry = await mutate(o, s => {
+    const n = node(s, o.node);
+    if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
+    merged = o.after !== undefined && !!s.nodes[o.after]?.merged;
+    return { kind: 'resume', by: by(o), channel: o.channel, node: o.node, attempt: n.slot.attempt, ...(o.after !== undefined ? { after: o.after } : {}), ...(o.note !== undefined && o.note !== '' ? { note: o.note } : {}) };
+  });
+  return { entry, ...(merged ? { merged: true } : {}) };
+}
 /** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. */
 export async function halt(o: Actor & { node: string; attempt: number; reason: string; needs: 'human' | 'owner' }): Promise<HaltEntry> {
   return await mutate(o, () => ({ kind: 'halt', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, reason: o.reason, needs: o.needs })) as HaltEntry;
