@@ -556,6 +556,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (!d.labels || typeof d.labels !== 'object' || Array.isArray(d.labels) || canonical(d.labels) !== canonical(runLabels(project, d.node, d.attempt, d.role))) errors.push(`launch labels must be ${canonical(runLabels(project, d.node, d.attempt, d.role))}`);
         if (context(s).entries.some(e => e.kind === 'launch' && e.rid === d.rid)) errors.push(`launch ${d.rid} is already recorded; a re-launch reuses the stored entry`);
       }
+      if (d.rulings !== undefined) errors.push(...carriedErrors(s, d, 'launch'));
       break;
     }
     case 'send': {
@@ -569,7 +570,10 @@ export function validateDraft(s: State, d: Draft): string[] {
       // D22.1: `rulings` = the highest ruling seq a `ruling` send includes; required for reason ruling, forbidden otherwise.
       if (d.reason === 'ruling') {
         if (!Number.isInteger(d.rulings) || !s.rules.some(r => r.seq === d.rulings && (r.nodes === '*' || r.nodes.includes(d.node)))) errors.push(`send reason ruling requires rulings = the seq of a recorded ruling covering ${d.node}`);
-      } else if (d.rulings !== undefined) errors.push('send rulings is only allowed with reason ruling');
+      } else if (d.reason === 'repair') {
+        // E4: a repair records the highest in-scope ruling seq its message carried (0 when none); absent on 0.5.0 entries.
+        if (d.rulings !== undefined) errors.push(...carriedErrors(s, d, 'send reason repair'));
+      } else if (d.rulings !== undefined) errors.push('send rulings is only allowed with reason ruling or repair');
       break;
     }
     case 'evidence': errors.push(...evidenceErrors(d, n, spec)); break;
@@ -601,11 +605,22 @@ export function validateDraft(s: State, d: Draft): string[] {
   return errors;
 }
 
+/**
+ * E4: `rulings` on a launch or repair send = the highest in-scope ruling seq the message carried: an integer, at most
+ * the entry's own seq, and 0 (carried none) or the seq of a recorded ruling covering the node.
+ */
+function carriedErrors(s: State, d: Draft & { node: string; rulings?: number }, what: string): string[] {
+  const own = 'seq' in d && typeof d.seq === 'number' ? d.seq : s.seq + 1, v = d.rulings;
+  if (!Number.isInteger(v) || v! < 0 || v! > own || (v !== 0 && !s.rules.some(r => r.seq === v && (r.nodes === '*' || r.nodes.includes(d.node)))))
+    return [`${what} rulings must be 0 or the seq of a ruling covering ${d.node} recorded before this entry`];
+  return [];
+}
+
 // ---------- escapes and decoys ----------
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence', readonly string[]> = { evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence', readonly string[]> = { evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
