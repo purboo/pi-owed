@@ -4,16 +4,30 @@ import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths } from './git.ts';
 
 export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; signal?: AbortSignal; onProgress?(msg: string): void }
-export function parseCounts(log: string): Counts | undefined {
+function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
   for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
     const key = m[1] === 'skipped' ? 'skip' : m[1] as 'tests' | 'pass' | 'fail' | 'skip'; tap[key] = Number(m[2]);
   }
   if (Object.keys(tap).length > 1) { tap.tests ??= (tap.pass ?? 0) + (tap.fail ?? 0) + (tap.skip ?? 0); return tap; }
   const tapPlan = [...log.matchAll(/^1\.\.(\d+)(?:\s+#.*)?\s*$/gm)].at(-1);
-  if (tapPlan) return { format: 'tap', tests: Number(tapPlan[1]) };
+  return tapPlan ? { format: 'tap', tests: Number(tapPlan[1]) } : undefined;
+}
+function cargoCounts(log: string): Counts | undefined {
   const cargo = [...log.matchAll(/test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/g)];
-  if (cargo.length) return cargo.reduce<Counts>((c, m) => ({ format: 'cargo', tests: (c.tests ?? 0) + Number(m[1]) + Number(m[2]) + Number(m[3]), pass: (c.pass ?? 0) + Number(m[1]), fail: (c.fail ?? 0) + Number(m[2]), skip: (c.skip ?? 0) + Number(m[3]) }), {});
+  return cargo.length ? cargo.reduce<Counts>((c, m) => ({ format: 'cargo', tests: (c.tests ?? 0) + Number(m[1]) + Number(m[2]) + Number(m[3]), pass: (c.pass ?? 0) + Number(m[1]), fail: (c.fail ?? 0) + Number(m[2]), skip: (c.skip ?? 0) + Number(m[3]) }), {}) : undefined;
+}
+export function parseCounts(log: string): Counts | undefined {
+  const tap = tapCounts(log), cargo = cargoCounts(log);
+  // E2.1: cargo `test result:` lines and TAP in one log (e.g. `cargo test && node --test --test-reporter=tap`) sum to one
+  // `mixed` count. A field the TAP part does not report (a bare `1..N` plan) stays absent rather than undercounted.
+  if (tap && cargo) {
+    const mixed: Counts = { format: 'mixed', tests: (tap.tests ?? 0) + (cargo.tests ?? 0) };
+    for (const k of ['pass', 'fail', 'skip'] as const) if (tap[k] !== undefined) mixed[k] = tap[k] + (cargo[k] ?? 0);
+    return mixed;
+  }
+  if (tap) return tap;
+  if (cargo) return cargo;
   const summary = [...log.matchAll(/^\s*Tests:?\s+(.+)$/gm)].at(-1)?.[1];
   if (summary) {
     const c: Counts = { format: 'jest/vitest', tests: 0 };
@@ -37,6 +51,10 @@ export function parseCounts(log: string): Counts | undefined {
   return undefined;
 }
 const LIMIT = 1024 * 1024;
+/** E2.2: the last `n` non-empty output lines (ANSI colour removed, trailing blanks trimmed), each at most 200 characters. */
+export function lastLines(log: string, n = 5): string[] {
+  return log.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').split(/\r?\n|\r/).map(l => l.trimEnd()).filter(l => l.trim()).slice(-n).map(l => l.slice(0, 200));
+}
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   const start = Date.now();
   const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
@@ -52,6 +70,9 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const inherited: NodeJS.ProcessEnv = { ...process.env };
       // A nested Node test runner must not inherit the parent's IPC/reporting mode.
       delete inherited.NODE_TEST_CONTEXT;
+      // E2.3: no dsa identity (DSA_CALL, DSA_EXEC, DSA_SESSION, …) leaks into a check, so owed commands inside it are not
+      // refused as subagent acts; a variable the plan's exec.env sets explicitly still applies.
+      for (const name of Object.keys(inherited)) if (name.startsWith('DSA_')) delete inherited[name];
       // D20: the plan's exec.env over the inherited environment, CI/OWED last; the wrapper argv prefixes bash -lc.
       const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1' };
       const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
@@ -126,10 +147,18 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       // A red run must fail as a test, not because the command could not run: bash (or the exec.wrap wrapper, D20) exits 126 (not executable) or 127
       // (not found), which red_expect may still match. That is no counterfactual: error, not pass (D15.4).
       if (red && (result.code === 126 || result.code === 127)) throw new Error(`red run command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})`);
-      if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
-      const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
-      obs.verdict = (red ? result.code !== null && result.code !== 0 && (!spec.red_expect || new RegExp(spec.red_expect).test(result.log)) : result.code === 0) && countOK ? 'pass' : 'fail';
-      if (!countOK) obs.note = red ? 'zero tests' : 'zero tests or min_tests unmet';
+      // E2.2: a non-red command that exits non-zero without running a recognizable test (unknown count or zero) is a
+      // failed command, not an unparseable log: fail, with its last output lines as the note.
+      if (!red && result.code !== 0 && (!obs.counts || obs.counts.tests === 0)) {
+        const tail = lastLines(result.log);
+        obs.verdict = 'fail';
+        obs.note = `command exited ${result.code} ${obs.counts ? 'after zero tests' : 'with no recognizable test count'}; last output:${tail.length ? tail.map(l => `\n  ${l}`).join('') : ' (none)'}`;
+      } else {
+        if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
+        const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
+        obs.verdict = (red ? result.code !== null && result.code !== 0 && (!spec.red_expect || new RegExp(spec.red_expect).test(result.log)) : result.code === 0) && countOK ? 'pass' : 'fail';
+        if (!countOK) obs.note = red ? 'zero tests' : 'zero tests or min_tests unmet';
+      }
     }
   } catch (e) { obs.verdict = 'error'; obs.note = e instanceof Error ? e.message : String(e); capture(`\n${obs.note}\n`); }
   finally {
