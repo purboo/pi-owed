@@ -334,6 +334,21 @@ function mutantErrors(plan: Plan): string[] {
 export function checklessWarnings(plan: Plan): string[] {
   return plan.nodes.filter(n => !n.checks.length && !n.evidence?.length).map(n => `warning: node ${n.id} has no checks: its acceptance rests on review alone`);
 }
+/** 0.8 (L3.3): a shell loop (`for|while|until … do`) or `seq N` in command position (`seq 5 | xargs …`, `$(seq 5)`). */
+const SHELL_LOOP = /(?:^|[\s;&|(`'"])(?:for|while|until)\s[\s\S]*?[;\n]\s*do(?:\s|$)|(?:^|[;&|(`]|\$\()\s*seq(?:\s+-?\d+){1,3}(?:\s|$|[;&|)`])/;
+/**
+ * 0.8 (L3.3, wais #22): one warning per check (or invariant) that sets `min_tests` and repeats its command in a shell
+ * loop. exec.ts (`parseCounts`) does not add up repeated TAP or jest/vitest runs: each later `# tests`/`# pass`/`# fail`
+ * line (else `1..N` plan) or `Tests:` summary replaces the earlier one, so min_tests sees one run's count; only cargo
+ * `test result:` lines are summed. `owed plan` / `owed init` print it with the H2.2 warnings; nothing is refused.
+ */
+export function loopWarnings(plan: Plan): string[] {
+  const one = (where: string, c: CheckSpec): string[] => c.min_tests !== undefined && SHELL_LOOP.test(c.run)
+    ? [`warning: ${where} runs its command in a shell loop with min_tests ${c.min_tests}: min_tests counts only the last TAP (# tests) or jest/vitest (Tests:) summary in the log, i.e. one run, not the sum of the runs (only cargo "test result:" lines are added up)`] : [];
+  return [...plan.invariants.flatMap(c => one(`invariant ${c.id}`, c)), ...plan.nodes.flatMap(n => n.checks.flatMap(c => one(`check ${c.id} of node ${n.id}`, c)))];
+}
+/** The warnings `owed plan` / `owed init` print after the result: check-less nodes (H2.2), then looped checks (L3.3). */
+export const planWarnings = (plan: Plan): string[] => [...checklessWarnings(plan), ...loopWarnings(plan)];
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
   const out: Downgrade[] = [];
   function compare(node: string, before: CheckSpec[], after: CheckSpec[]): void {

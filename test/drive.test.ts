@@ -389,10 +389,12 @@ test('owner-needed nodes are never touched: open slot with ⊤ items, ready node
   // D25.6 (pre-review #3): without an open candidate the commands are executable in order — dispatch first, then the
   // waiver once a candidate exists (owed waive needs one), as the brief's dispatchHint/clearHint say; "needs the owner" once.
   const blk = f.state().nodes.a!.blocks.find(x => x.state === 'flaky')!;
-  assert.deepEqual(ownerCommands(f.state(), 'a'), ['owed dispatch a', `after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq}`]);
+  // 0.8 (L3.2): a flaky block also offers a ruling, once, after the waivers.
+  const ruleHint = 'or owed rule "<what the writer must change>" --nodes a when the check or test itself must change (the writer fixes it; then the block is cleared by a new candidate\'s rerun, or superseded by a plan entry that changes the check\'s definition, see owed why)';
+  assert.deepEqual(ownerCommands(f.state(), 'a'), ['owed dispatch a', `after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq}`, ruleHint]);
   const fn = go(f).find(x => x.node === 'a');
   assert.ok(fn?.do === 'notify', JSON.stringify(fn));
-  assert.equal(fn.text, `a: needs the owner (the main agent decides; owed lists the command): flaky block #${blk.seq} on check:unit; the driver leaves it alone; the main agent resolves it with: owed dispatch a | after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq}`);
+  assert.equal(fn.text, `a: needs the owner (the main agent decides; owed lists the command): flaky block #${blk.seq} on check:unit; the driver leaves it alone; the main agent resolves it with: owed dispatch a | after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq} | ${ruleHint}`);
   assert.equal(fn.text.match(/needs the owner/g)!.length, 1);
   // A review the plan requires at rank 3: only the owner can record it.
   const o = submitted(basePlan(DRIVE, { a: { review: { count: 1, min_rank: 3 } } })); o.pass();

@@ -282,14 +282,36 @@ export function rulingFollowUp(s: State, node: string, refused?: Refused): { mes
   if (!rules.some(r => r.nodes !== '*')) return undefined;
   const last = lastSubmit(s, node), c = n.candidate ?? (last ? { ...last.facts, seq: last.seq } : undefined), entries = entriesOf(s);
   const blocks = c ? n.blocks.filter(b => b.state === 'active' && b.key === c.keys[b.obligation]) : [];
-  const notes = blocks.map(b => {
+  const line = (b: Block): string => {
     const e = entries.find(x => x.seq === b.seq);
     const note = e?.kind === 'review' ? e.note ?? '' : e?.kind === 'obs' ? e.note ?? `exit ${e.exit}` : '';
     return `- #${b.seq} ${b.obligation}${b.kind === 'judgment' ? ` by ${e?.by ?? '?'} rank ${b.rank}` : ''}: ${oneLine(note)}`;
-  });
+  };
+  // 0.8 (L3.1): the node's flaky blocks too (whatever candidate they came from): the ruling may ask to fix the test.
+  const notes = blocks.map(line), flaky = n.blocks.filter(b => b.state === 'flaky').map(line);
   return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
     ...(notes.length ? [`Active blocks on your candidate ${c!.commit} (submit #${c!.seq}):`, ...notes] : []),
+    ...(flaky.length ? [`Flaky blocks of ${node} (an attribution rerun of the failing content passed):`, ...flaky] : []),
     `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`].join('\n') };
+}
+/**
+ * 0.8 (L3.1): at the stalled point of a candidate whose only debt is `rulings` (every reviewer run of it sealed), the
+ * undelivered in-scope rulings go to a reviewer, whose ok review with --ack-rulings discharges `rulings`: a `ruling`
+ * follow-up to the latest driver reviewer run of the candidate (`reviewers`), or, when there is none, a reviewer launch
+ * (row 12; its packet lists every ruling in scope). Undefined when a ruling naming the node is not undelivered to that
+ * run (sent once), or the candidate has no review obligation an ack could be recorded on.
+ */
+function reviewerRuling(s: State, n: NodeState, ar: AttemptRuns, reviewers: readonly LaunchEntry[], opts: DriveOpts): Action | undefined {
+  const c = n.candidate!, inScope = rulingsInScope(s, n.id);
+  if (!n.items.some(i => i.obligation === 'review' || i.obligation === 'closure-review')) return undefined;
+  const l = reviewers.at(-1);
+  const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
+  if (!l) return inScope.some(r => r.nodes !== '*' && r.seq > acked) ? reviewerLaunch(s, n.id, nextReviewerN(s, n.id), opts.project, opts.root) : undefined;
+  const delivered = deliveredRulings(s, n.id, ar, l, opts.rejected), rules = inScope.filter(r => r.seq > delivered);
+  if (!rules.some(r => r.nodes !== '*')) return undefined;
+  const top = carried(rules);
+  return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'follow-up', reason: 'ruling', rulings: top, message: [`New parent rulings for ${n.id}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
+    `Re-review the current candidate ${c.commit} (submit #${c.seq}) in their light and record your verdict with --ack-rulings ${top}; block if the writer must change something.`].join('\n') };
 }
 /**
  * K5.4: the evidence of the measured items `items` for a halt: per failing observation that decides them (active
@@ -426,10 +448,10 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const live = ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq));
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   if (waitingFor(s, id)) { for (const l of live) { const v = runs.get(l.rid); if (v?.state === 'asking') return asking(l, v); } return undefined; }
-  // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only.
-  const owner = ownerNeeded(s, id);
-  if (owner) return ownerNotify(s, id, owner);
-  const writer = ar.launches.find(l => l.role === 'writer');
+  // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only. 0.8 (L3.1): unless an undelivered
+  // ruling names the node and its writer was launched; the rows below then run up to `rulingFirst` (after row 5).
+  const owner = ownerNeeded(s, id), writer = ar.launches.find(l => l.role === 'writer');
+  if (owner && !(writer && rulingFollowUp(s, id, opts.rejected))) return ownerNotify(s, id, owner);
   // Row 2: writer launch missing.
   if (!writer) return writerLaunch(s, id, opts.project);
   if (live.some(l => !runs.has(l.rid))) return undefined;
@@ -488,11 +510,26 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const refused = opts.rejected.get(rf.send);
     return halt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
   };
+  /**
+   * 0.8 (L3.1, wais #21): the ruling follow-up before a halt whatever its cause (owner-needed, row 7, the stalled halt
+   * of a candidate with a failed item, an active block on its keys or a flaky block): the writer is sealed, no reviewer run of the current
+   * candidate is unsealed, an undelivered ruling names the node, and no needs-parent review block sits on the keys of
+   * the current candidate (else the latest submit), which keeps its D18 route. Sent once (`deliveredRulings`).
+   */
+  const rulingFirst = (): Action | undefined => {
+    if (!wSealed || (c && live.some(l => l.role === 'reviewer' && !isSealed(view(l))))) return undefined;
+    const last = lastSubmit(s, id), keys = c?.keys ?? last?.facts.keys;
+    if (keys && n.blocks.some(b => b.needs === 'parent' && b.state === 'active' && b.key === keys[b.obligation])) return undefined;
+    const f = rulingFollowUp(s, id, opts.rejected);
+    return f && send(writer, 'follow-up', 'ruling', f.message, f.rulings);
+  };
+  // 0.8 (L3.1): an owner-needed node with a due ruling follow-up gets it first; then the notify as before.
+  if (owner) return rulingFirst() ?? ownerNotify(s, id, owner);
   const writerMsg = (message: string): { message: string; rulings?: number } => withRulings(s, id, ar, writer, message, opts.rejected);
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
-  // Row 7: writer sealed non-ok.
-  if (wSealed && wStatus !== 'ok') return halt(`writer run ${at(writer)} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
+  // Row 7: writer sealed non-ok (0.8, L3.1: a due ruling follow-up first).
+  if (wSealed && wStatus !== 'ok') return rulingFirst() ?? halt(`writer run ${at(writer)} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
   // Row 8: writer done without a current candidate (after a rebase: the rebase follow-up first).
   if (wSealed && !c) {
     const rb = slot.rebase;
@@ -596,10 +633,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     }
     // Liveness (D12): a candidate that is not accepted while no driver run of the attempt is unsealed never yields
     // "nothing to do": halt needing the owner with every non-E item and active block (K5.2: a due ruling follow-up first).
+    // 0.8 (L3.1): to the writer when the candidate has a failed item, an active block on its keys or a flaky block; when its
+    // only debt is `rulings`, to a reviewer (`reviewerRuling`), which discharges it with --ack-rulings.
     if (wSealed && !reviewing) {
       const items = n.items.filter(i => i.status !== 'E').map(i => `${i.obligation} ${i.mark} ${i.detail}`);
       const blocks = n.blocks.filter(b => b.state === 'active').map(b => blockText(s, c, b));
-      return rulingSend() ?? halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}${resolveText(s, id)}`, 'owner');
+      const dirty = n.items.some(i => i.mark === '✘') || n.blocks.some(b => b.state === 'flaky' || (b.state === 'active' && b.key === c.keys[b.obligation]));
+      const rulingsOwed = n.items.some(i => i.obligation === 'rulings' && i.status === 'D');
+      return (dirty ? rulingFirst() : rulingsOwed ? reviewerRuling(s, n, ar, reviewers, opts) : undefined) ?? halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}${resolveText(s, id)}`, 'owner');
     }
   }
   // Row 18: the running writer was fenced after the last steer; else (D22.2a, lowest priority, only when the node

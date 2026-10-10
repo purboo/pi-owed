@@ -6,7 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
-import { checklessWarnings, parsePlan, planDowngrades } from './plan.ts';
+import { parsePlan, planDowngrades, planWarnings } from './plan.ts';
 import { adoptPrefixes, uncoveredDowngrades, writesHint } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
@@ -241,7 +241,7 @@ export default function owed(pi: ExtensionAPI): void {
     const warning = pending.length ? `Warning: genesis attest pending for ${pending.join(', ')}\n` : '';
     const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.seq - 1 })).downgrades.find(x => x.seq === r.seq);
     // H2.2: warnings for check-less nodes of the new plan, after the result.
-    const warnings = checklessWarnings(next);
+    const warnings = planWarnings(next);
     // H1.3: dispatchable ready nodes and no driver: one hint line before the H2.2 warnings, which end the text (the
     // parent decides; nothing starts automatically).
     const ready = await readyHint(dir);
@@ -263,7 +263,7 @@ export default function owed(pi: ExtensionAPI): void {
         async (e: unknown) => ac.signal.aborted ? undefined : end(`owed init: genesis attest of ${oneLine(dir)} stopped (${oneLine(e instanceof Error ? e.message : String(e))})`, await ops.genesisReport({ cwd: dir }).catch(() => ({ recorded: [], failed: [], missing: r.genesis.missing }))),
       ).then(content => { if (content) pi.sendMessage({ customType: 'owed-init', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }); }).catch(() => undefined).finally(() => { genesisRuns.delete(ac); });
     }
-    const warnings = checklessWarnings(parsePlan(read.plan));
+    const warnings = planWarnings(parsePlan(read.plan));
     return result({ entry: r.entry, genesis: r.entry.seq, measuring: n, warnings }, `${renderEntry(r.entry)}\nInitialized (genesis #${r.entry.seq}). ${n ? `Measuring ${n} genesis invariant${n === 1 ? '' : 's'} in the background in this session; owed_status shows progress and this session gets one message when it ends.` : 'No invariants to measure.'}${warnings.map(w => `\n${w}`).join('')}`);
   });
   tool('waive', 'Owner waiver of a current obligation (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner); reason says why; accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), candidate: candidateParam, as, cwd }), async (p, ctx, dir, signal) => {
