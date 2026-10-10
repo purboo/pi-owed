@@ -32,7 +32,13 @@ export interface NodeSpec {
   approve?: 'owner';
   /** D23: manual evidence obligations `evidence:<id>`, discharged by an `evidence` entry. Absent = none. */
   evidence?: EvidenceSpec[];
+  /** K3: per-node driver agents/models; never an obligation, read by later launches only. Absent = the plan's `drive`. */
+  drive?: NodeDrive;
 }
+/** K3: a node's `drive` override of one role: at least one of `agent` / `model` (an empty object is dropped by the parser). */
+export interface NodeDriveAgent { agent?: string; model?: string }
+/** K3: optional node field `drive`; only roles that set something are present (`drive: {}` is dropped by the parser). */
+export interface NodeDrive { writer?: NodeDriveAgent; reviewer?: NodeDriveAgent }
 /** D19: optional `worktrees:` block of the plan; never an obligation, read by later dispatches only. */
 export interface WorktreesConfig { root: string /* absolute, or relative to the main worktree root */; branch: string /* template with {node}, {attempt}, optional {type} */ }
 /** D23: one manual evidence obligation of a node; `by` (default reviewer) is the role that may record it (the owner always may). */
