@@ -376,7 +376,9 @@ export function renderGc(r: GcResult): string {
   const kept = r.kept.map(i => `  ${i.node}#${i.attempt} (${i.branch}): ${i.reason}`);
   // M2: reused measurement trees, only when there are any.
   const trees = [...(r.trees?.length ? [`Reused measurement trees ${r.dryRun ? 'that would be removed' : 'removed'}:`, ...r.trees.map(t => `  ${t.path}: ${t.reason}`)] : []), ...(r.treesKept?.length ? ['Reused measurement trees kept:', ...r.treesKept.map(t => `  ${t.path}: ${t.reason}`)] : [])];
-  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...trees, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
+  // N4: stale plan cache files, only when there are any.
+  const cache = r.planCache?.length ? [`Plan cache files ${r.dryRun ? 'that would be removed' : 'removed'} (sha no longer in the ledger): ${r.planCache.length}`] : [];
+  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...trees, ...cache, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
 }
 export function renderReport(v: Report): string {
   const list = (title: string, lines: string[]) => [`${title}${lines.length ? '' : ': none'}`, ...lines.map(l => `  ${l}`)];
