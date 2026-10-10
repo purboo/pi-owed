@@ -421,6 +421,26 @@ moved ref silently.
    an `error`. A relative `wrap[0]` containing a slash resolves against the
    materialized tree (the cwd); a bare name is looked up in `PATH`.
 
+### 7.10 Observations are facts about keys (D24)
+
+`attest` and the genesis attest (`init`, `attestGenesis`) do not refuse when the
+ledger moves while they measure (a plan edit, a ruling, another node's entry).
+Under the ledger lock each observation is appended iff its item is still current
+(`jobCurrent`, src/reducer.ts): a node job while the node's open candidate still
+has that key for that obligation, or — an attribution rerun — while an active
+execution block still has that obligation and key and its failing observation the
+job's commit and base (a block replaced by one on another commit supersedes the
+rerun instead of refusing it); a trunk job while its key is
+still the genesis key or the current trunk key of an invariant of the plan.
+Otherwise the observation is dropped as **superseded** and the run goes on with
+the next job. `AttestResult.superseded` (and the genesis results) list the
+dropped items `{subject, obligation, key}`; the CLI and `owed_attest` print them after the card as
+`Superseded (not recorded; the item changed while it was measured): …`. A plan
+edit that changes a node's spec (a brief included) invalidates its candidate, so
+that node's observations are superseded; an edit elsewhere interrupts nothing.
+`merge` and `adopt` keep their strict stability rule (`Plan, candidate or trunk
+changed; retry`): they decide a trunk move on what they measured.
+
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
 ```ts
@@ -571,6 +591,37 @@ Limitations: an ambiguous template (e.g. `{node}{attempt}`) can expand to the sa
 name for two attempts (dispatch then fails in `git worktree add`), and parent
 directories created for a dispatch that fails are left in place.
 
+### 8.2 Init and genesis attest (D24)
+
+```ts
+init(o: {cwd, plan, as, channel, signal?, measure?: boolean /* default true */, commit?: string}): Promise<InitResult>
+initPreview(o: {cwd, plan}): Promise<InitPreview>   // {trunk, commit, planSha, nodes, invariants}; refuses an initialized ledger; no effect
+attestGenesis(o: {cwd, signal?}): Promise<AttestGenesisResult>   // measures the genesis items still lacking an observation
+genesisPending(o: {cwd}): Promise<string[]>; genesisReport(o: {cwd}): Promise<{recorded, failed, missing}>
+genesisIncompleteText(seq, {recorded, missing}): string
+```
+Genesis items are the invariants of the current plan that have a genesis key; an
+item is observed when it has a non-error executor observation at that key.
+`GenesisAttest = {complete, recorded, failed, missing, superseded, error?}`
+(`recorded`: observed ids, `failed` those of them that failed, `missing`: the
+rest). `InitResult` gains `genesis: GenesisAttest`. Once genesis is appended,
+`init` succeeds even when its genesis attest does not observe every item (an
+error verdict, or an exception — `error` holds its message). A genesis job is
+superseded only when its invariant left the plan, which is then no longer a
+genesis item, so superseded jobs never make it incomplete. With
+`measure: false` it measures nothing. An abort after genesis rejects with
+`OwedError('aborted')` whose message is the incomplete text (§10.1); an abort
+before genesis keeps the message `aborted`. `commit` pins the trunk commit the
+owner confirmed: a different refs/heads/<trunk> refuses before any effect.
+`attestGenesis` runs under its own `genesis` lock: two genesis attests do not
+overlap, and node attests (which measure missing genesis items first) are never
+blocked by it — both record as in §7.10, so concurrent observations of one item
+are each a fact about its key. It is abortable like attest (§7.8). It registers
+itself synchronously when called (before its first await) until it ends; while
+registered, `status` in that process marks the genesis progress `measuring` (§10.1).
+`StatusView.genesis = {observed, total, pending, measuring?}` is present only
+while genesis items lack observations.
+
 ## 9. Views
 
 - **Receipt card** (`why`): per obligation: ✔ measured (executor pass, with log
@@ -711,6 +762,29 @@ worktree (`owed-run-*/tree` under the temp directory): `git worktree remove --fo
 <path>` removes it; once the directory is gone (deleted, or by the temp cleaner),
 `git worktree prune` (also run by `owed gc`) drops its registration.
 
+### 10.1 Init, attest --genesis and the genesis warnings (D24)
+
+- `owed init` exits 0 once genesis is recorded. When its genesis attest did not
+  observe every genesis item (an error verdict, an exception) it prints, after the
+  initial observations count (and `Genesis attest stopped: <error>` for an
+  exception), `Initialized (genesis #<seq>). Genesis attest incomplete: recorded
+  <ids>; missing <ids>: run owed attest --genesis, or the next attest/merge
+  measures them first.` (`none` for an empty list) — never "retry". Aborted by a
+  signal it prints the same line, then `Aborted: <signal>`, and exits 130/143.
+- `owed attest --genesis` (no node; not with `--rerun`; abortable like attest)
+  measures the genesis items still lacking an observation and prints `Genesis
+  attest: N observation(s) recorded; observed <ids> [(failed <ids>)]; missing
+  <ids>`; exit 0 when no item is missing, else 1.
+- `owed plan` while genesis items lack observations succeeds and adds the line
+  `Warning: genesis attest pending for <ids>` (stdout; stderr with `--json`).
+- `owed status` (and `owed_status`, `/owed`) shows, after the trunk line while
+  genesis items lack observations, `Genesis: <k>/<n> invariants observed` then
+  `(measuring in this session)` in the process running the genesis attest, else
+  `— run owed attest --genesis (or the next attest/merge measures them)`,
+  then `; pending: <ids>`.
+- Signals: an `init` aborted after genesis was appended prints the incomplete line
+  above before `Aborted: <signal>` (exit 130/143).
+
 ## 11. pi extension
 
 Tools (exposure direct). Every tool takes an optional `cwd`: an absolute path
@@ -735,6 +809,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_rule` | `text`, `nodes`, `as` | ruling |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `as` | plan update; a downgrade needs the owner |
+| `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:human`, owner only) | initialize the ledger (§11.1) |
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
 | `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
@@ -761,6 +836,28 @@ the Repository/Identity lines of the dialog. The ledger keeps the exact text. Co
 status. A skill (`skills/owed/SKILL.md`) explains the loop: status → dispatch →
 run worker with dsa → submit → attest → review (fresh reviewer, not the writer)
 → merge, and the rules agents must not break.
+
+### 11.1 `owed_init` (D24)
+
+`owed_init {plan, cwd?, as?}` is owner only. It reads and parses the plan,
+resolves refs/heads/<trunk>, refuses an initialized ledger (`Already
+initialized …`, before any dialog), then shows the owner dialog: the fixed summary
+`Initialize the owed ledger`, `Trunk: <name> at <commit12>`, `Plan: <path>
+(sha256 <sha12>)` (the sha of the stored plan blob that genesis records),
+`Nodes: <n>`, then Repository/Identity and the list field `Invariants:` (one id
+per line); recorded with channel `pi-confirm`. It appends genesis for exactly the
+confirmed commit (`init` with `measure: false`, `commit` pinned), starts
+`attestGenesis` in the background in-process (an AbortController aborted on
+`session_shutdown`) and returns at once: details `{entry, genesis: <seq>,
+measuring: <n>}`, text `Initialized (genesis #<seq>). Measuring <n> genesis
+invariants in the background …` (`No invariants to measure.` when none, and then
+nothing runs). When the background attest ends the session gets one message
+(customType `owed-init`, display, `triggerTurn`, `deliverAs: followUp`, as D17.7):
+`owed init: genesis attest of <dir> finished: recorded <ids>; failed <ids>;
+missing <ids>` (or `stopped (<error>)`, with the `owed attest --genesis` hint
+when items are missing). After `session_shutdown` aborted it no message is sent.
+`owed_plan` adds `Warning: genesis attest pending for <ids>` as the first line
+(details `warning`) while genesis items lack observations.
 
 ## 12. Driver
 

@@ -73,12 +73,14 @@ function result(details: unknown, text: string) { return { content: [{ type: 'te
 export default function owed(pi: ExtensionAPI): void {
   // Wake-ups of the background driver (D17.7): one follower per driver log; the session gets one follow-up message per
   // poll that saw a halt, a question, a refusal or the driver's end. session_shutdown clears the timers only.
+  // Background genesis attests started by owed_init in this session (D24.4); session_shutdown aborts them.
+  const genesisRuns = new Set<AbortController>();
   const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }));
   if (typeof pi.on === 'function') {
     // D17a.1: auto-attach only in a session that is not inside a dsa call (dsa writers and reviewers run in worktrees of
     // the same repository and must not be woken by its driver); every top-level session in the repository is woken.
     pi.on('session_start', async (_event, ctx) => { if (process.env.DSA_EXEC || process.env.DSA_CALL) return; await watch.attach(ctx.cwd).catch(() => undefined); });
-    pi.on('session_shutdown', () => { watch.stopAll(); });
+    pi.on('session_shutdown', () => { watch.stopAll(); for (const c of genesisRuns) c.abort(); });
   }
   // `signal`: the tool call's abort signal; attest, merge and adopt pass it to ops, which then end their checks (D16.4);
   // drive's single pass stops after the current action.
@@ -117,7 +119,7 @@ export default function owed(pi: ExtensionAPI): void {
     return result(r, `${renderEntry(r.entry)}\n${r.packet}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
   tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; as does not change executor identity.', Type.Object({ node, rerun: Type.Optional(Type.Boolean()), as, cwd }), async (p, _ctx, dir, signal) => {
-    const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal }); return result(r, renderReceipt(r.receipt));
+    const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal }); return result(r, `${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}`);
   });
   tool('review', 'Independent review; explicitly specify reviewer:id (owner requires UI confirmation). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), cwd }), async (p, ctx, dir) => {
     if (!p.as || !['reviewer', 'owner'].includes(principal(p.as).role)) throw new OwedError('review requires an explicit reviewer:id or owner:id');
@@ -146,7 +148,26 @@ export default function owed(pi: ExtensionAPI): void {
     const who = p.as ?? (downgrades.length ? 'owner:human' : 'parent:pi');
     if (downgrades.length && principal(who).role !== 'owner') throw new OwedError('Only owner may confirm plan downgrades');
     const r = await ops.planSet({ ...await actor(ctx, dir, who, `Update plan ${oneLine(read.path)}${read.rev ? ` at ${read.rev}` : ''}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`), ...read });
-    return result(r, renderStatus(await ops.status({ cwd: dir })));
+    const pending = await ops.genesisPending({ cwd: dir });
+    const warning = pending.length ? `Warning: genesis attest pending for ${pending.join(', ')}\n` : '';
+    return result(pending.length ? { ...r, warning: warning.trim() } : r, `${warning}${renderStatus(await ops.status({ cwd: dir }))}`);
+  });
+  tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), after a UI confirmation showing the trunk commit, plan sha, node count and invariants. Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir) => {
+    const who = requireRole(p.as, 'owner:human', ['owner'], 'initialize the ledger');
+    const read = await ops.readPlan({ cwd: dir, path: p.plan }), v = await ops.initPreview({ cwd: dir, plan: read.plan });
+    const a = await actor(ctx, dir, who, `Initialize the owed ledger\nTrunk: ${oneLine(v.trunk)} at ${v.commit.slice(0, 12)}\nPlan: ${oneLine(read.path)} (sha256 ${v.planSha.slice(0, 12)})\nNodes: ${v.nodes}`, { Invariants: { items: v.invariants } });
+    const r = await ops.init({ ...a, channel: 'pi-confirm', plan: read.plan, commit: v.commit, measure: false });
+    const n = r.genesis.missing.length;
+    if (n) {
+      const ac = new AbortController(); genesisRuns.add(ac);
+      const end = (head: string, g: Pick<ops.GenesisAttest, 'recorded' | 'failed' | 'missing'>) => `${head}: recorded ${g.recorded.join(', ') || 'none'}; failed ${g.failed.join(', ') || 'none'}; missing ${g.missing.join(', ') || 'none'}${g.missing.length ? '; run owed attest --genesis, or the next attest/merge measures them first' : ''}`;
+      // One wake-up when it ends (D17.7 style); none after session_shutdown aborted it (the session is gone).
+      void ops.attestGenesis({ cwd: dir, signal: ac.signal }).then(
+        g => end(`owed init: genesis attest of ${oneLine(dir)} finished`, g),
+        async (e: unknown) => ac.signal.aborted ? undefined : end(`owed init: genesis attest of ${oneLine(dir)} stopped (${oneLine(e instanceof Error ? e.message : String(e))})`, await ops.genesisReport({ cwd: dir }).catch(() => ({ recorded: [], failed: [], missing: r.genesis.missing }))),
+      ).then(content => { if (content) pi.sendMessage({ customType: 'owed-init', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }); }).catch(() => undefined).finally(() => { genesisRuns.delete(ac); });
+    }
+    return result({ entry: r.entry, genesis: r.entry.seq, measuring: n }, `${renderEntry(r.entry)}\nInitialized (genesis #${r.entry.seq}). ${n ? `Measuring ${n} genesis invariant${n === 1 ? '' : 's'} in the background in this session; owed_status shows progress and this session gets one message when it ends.` : 'No invariants to measure.'}`);
   });
   tool('waive', 'Owner waiver of a current obligation; UI confirmation is required, and accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'owner:human', ['owner'], 'waive');

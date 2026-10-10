@@ -567,6 +567,35 @@ export function genesisJobs(s: State): AttestJob[] {
     return [job(undefined, 'trunk', `inv:${i.id}`, key, g.commit, g.commit, s.plan)!];
   });
 }
+/**
+ * Genesis items (D24): invariants of the current plan that have a genesis key. `observed` have a non-error executor
+ * observation at that key (`failed` among them have a failing one); `pending` still lack one.
+ */
+export function genesisProgress(s: State): { ids: string[]; observed: string[]; failed: string[]; pending: string[] } {
+  const g = context(s).genesis;
+  const ids = g ? s.plan.invariants.filter(i => !!g.state.invKeys[i.id]).map(i => i.id) : [];
+  const at = (id: string) => observations(s, 'trunk', `inv:${id}`, g!.state.invKeys[id]!);
+  const observed = ids.filter(id => at(id).some(e => e.verdict !== 'error'));
+  return { ids, observed, failed: observed.filter(id => at(id).some(e => e.verdict === 'fail')), pending: ids.filter(id => !observed.includes(id)) };
+}
+/**
+ * Whether an observation of `j` is still about a current item (D24.1): a trunk job while its key is the genesis key
+ * or the current trunk key of an invariant of the plan; a node job while the node's open candidate has that key for
+ * the obligation, or (attribution rerun) while an active execution block has that obligation, key, commit and base.
+ */
+export function jobCurrent(s: State, j: AttestJob): boolean {
+  if (j.subject === 'trunk') {
+    const id = j.obligation.slice(4);
+    if (!j.obligation.startsWith('inv:') || !s.plan.invariants.some(i => i.id === id)) return false;
+    return context(s).genesis?.state.invKeys[id] === j.key || s.trunk.invKeys[id] === j.key;
+  }
+  const n = s.nodes[j.subject];
+  if (!n || !nodeSpec(s, j.subject)) return false;
+  // An attribution rerun is current only for an active block whose failing obs has the job's key, commit and base (the
+  // condition validateDraft applies), so a block replaced by one on another commit supersedes it instead of refusing.
+  if (j.attribution) return n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === j.obligation && b.key === j.key && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === j.commit && e.base === j.base));
+  return !!n.slot?.open && !!n.candidate && n.candidate.keys[j.obligation] === j.key;
+}
 export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): AttestJob[] {
   const spec = nodeSpec(s, id);
   if (!spec || !s.nodes[id]?.candidate) throw new OwedError(`Node ${id} has no current candidate`);
