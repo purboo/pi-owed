@@ -359,7 +359,7 @@ function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
   const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);
   if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks, flag)}`;
-  if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} (the attribution rerun on the original content clears the block)`;
+  if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} ${SKIP_ATTEST} (the attribution rerun on the original content clears the block)`;
   if (b.obligation === 'approve') return `${after}a later owner approval of the current candidate clears it: owed approve ${b.node}${flag}`;
   const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
   const ruling = !currentNeeds(s, b) ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed rule --nodes ${b.node} "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
@@ -442,10 +442,20 @@ export function renderBrief(v: Brief): string {
 // ---------- dispatch packet ----------
 /**
  * Task text of attempt `attempt` of node `spec` in `worktree` (pure): the packet `owed dispatch` stores and the driver's
- * writer task. `rules` are the rulings in scope at dispatch time, in ledger order.
+ * writer task. `rules` are the rulings in scope at dispatch time, in ledger order. `driver` (K1.3): the writer is
+ * launched by `owed drive`, which measures the candidate itself; the packet then says not to run owed attest. It
+ * defaults to true for the driver's writer task (drive.ts writerTask); `owed dispatch` passes false unless the
+ * driver dispatches, so a manual dispatch stores the packet without the line.
  */
-export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[]): string {
-  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`].join('\n');
+export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], driver = true): string {
+  return [...dispatchLines(spec, attempt, worktree, rules), ...(driver ? [DRIVER_ATTESTS] : [])].join('\n');
+}
+/** K1.3: the line of a driver-launched writer's packet. */
+export const DRIVER_ATTESTS = 'the driver measures your candidate; do not run owed attest';
+/** K1.3: the clause after every `owed attest <node>` owed suggests to a writer. */
+export const SKIP_ATTEST = '(skip this when owed drive is running: the driver attests)';
+function dispatchLines(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[]): string[] {
+  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`];
 }
 
 // ---------- driver review packet (SPEC §12, D5) ----------

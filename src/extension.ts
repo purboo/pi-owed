@@ -151,7 +151,7 @@ export default function owed(pi: ExtensionAPI): void {
         }
         catch (e) {
           if (!(e instanceof OwedError)) throw e;
-          return { ...result({ code: e.code, reason: e.message }, `${e.code === 'aborted' ? 'Aborted' : 'Refused'}: ${e.message}`), isError: true };
+          return { ...result({ code: e.code, reason: e.message }, `${e.code === 'aborted' ? 'Aborted' : e.code === 'busy' ? 'Busy' : 'Refused'}: ${e.message}`), isError: true };
         }
       } });
   }
