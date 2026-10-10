@@ -128,11 +128,12 @@ test('K2.3: waivers say what they mean and their true scope; why shows a waived 
     assert.equal(waived.code, 0, waived.stderr);
     const json = JSON.parse(waived.stdout) as { kind: string; meaning: string; seq: number };
     assert.equal(json.kind, 'waive');
-    const meaningA = `waived check:unit for candidate #${candA.seq} ${candA.commit.slice(0, 12)} (key ${keyA.slice(0, 12)}): owed counts it as waived, not measured, for every candidate of a whose check:unit key is ${keyA.slice(0, 12)}, in this or a later attempt; a change to the check definition, setup, exec, closure or the content of its reads changes the key, and owed measures it again; the flaky block #${fa.seq} stays recorded as accepted risk`;
+    const k12 = keyA.slice(0, 12);
+    const meaningA = `waived check:unit for candidate #${candA.seq} ${candA.commit.slice(0, 12)} (key ${k12}): in effect now; owed counts check:unit as waived, not measured, for every candidate of a whose check:unit key is ${k12}, in this or a later attempt, while no unaccepted active block remains on check:unit; a later block suspends the waiver and clearing that block restores it; a change to the check definition, setup, exec, closure or the content of its reads changes the key, and owed measures it again; the flaky block #${fa.seq} stays recorded as accepted risk`;
     assert.equal(json.meaning, meaningA);
     // K2.3 why: the waived item.
     const whyW = (await cli(x.cwd, ['why', 'a'])).stdout;
-    assert.ok(whyW.split('\n').some(l => l.startsWith('⚠ a/check:unit waived (not measured for this candidate) by owner:cli (delegated): flaky runner')), whyW);
+    assert.ok(whyW.split('\n').some(l => l.startsWith('⚠ a/check:unit waived (not measured for this candidate) by owner:cli: flaky runner (delegated)')), whyW);
     // The stated scope holds: a new candidate that leaves the check's reads alone keeps the waiver ...
     await commitAt(slots.a!, { 'doc/a': 'docs\n' });
     await ops.submit({ cwd: slots.a!, node: 'a', as: { role: 'writer', id: 'a#1' } });
@@ -144,10 +145,18 @@ test('K2.3: waivers say what they mean and their true scope; why shows a waived 
     item = (await ops.why({ cwd: x.cwd, node: 'a' })).items.find(i => i.obligation === 'check:unit')!;
     assert.notEqual(item.key, keyA); assert.equal(item.status, 'D'); assert.equal(item.mark, '⊥');
 
-    // A waiver that does not accept the active block is recorded but does not take effect, and says so (CLI text).
-    const notWaived = await cli(x.cwd, ['waive', 'b', 'check:unit', '--reason', 'r']);
-    assert.equal(notWaived.code, 0, notWaived.stderr);
-    assert.match(notWaived.stdout, new RegExp(`^recorded waiver #\\d+ of check:unit for candidate #\\d+ [0-9a-f]{12} \\(key [0-9a-f]{12}\\), but check:unit is not waived: check:unit still blocked: #${fb.seq}; a waiver takes effect only when it accepts every active block of check:unit as a risk \\(accept-risk\\)$`, 'm'), notWaived.stdout);
+    // Review #781 probe: a waiver that does not accept the active block is recorded for its key and says when it takes
+    // effect; the attribution rerun that confirms the failure clears the block, and the waiver is then in effect.
+    const pending = await cli(x.cwd, ['waive', 'b', 'check:unit', '--reason', 'r']);
+    assert.equal(pending.code, 0, pending.stderr);
+    const line = pending.stdout.split('\n').find(l => l.startsWith('waived check:unit for candidate #')) ?? '';
+    assert.match(line, new RegExp(`^waived check:unit for candidate #\\d+ [0-9a-f]{12} \\(key [0-9a-f]{12}\\): not in effect yet: active block #${fb.seq} is not accepted; it takes effect as soon as no unaccepted active block remains on check:unit, for example after an attribution rerun \\(owed attest\\) that confirms the failure clears #${fb.seq}; if the rerun passes, #${fb.seq} stays as a flaky block that only a waiver with --accept-risk accepts; --accept-risk accepts the current flaky or active blocks at once; owed counts check:unit as waived, not measured, for every candidate of b whose check:unit key is [0-9a-f]{12}, in this or a later attempt, while no unaccepted active block remains on check:unit; a later block suspends the waiver and clearing that block restores it; `), pending.stdout);
+    assert.doesNotMatch(pending.stdout, /is not waived/);
+    assert.equal((await ops.why({ cwd: x.cwd, node: 'b' })).items.find(i => i.obligation === 'check:unit')?.status, 'D');
+    await ops.attest({ cwd: x.cwd, node: 'b' });
+    const cardB = await ops.why({ cwd: x.cwd, node: 'b' });
+    assert.equal(cardB.items.find(i => i.obligation === 'check:unit')?.status, 'W');
+    assert.equal(cardB.blocks.some(b => b.seq === fb.seq), false, 'the rerun cleared the block');
 
     // A key without an observation is still measured: the waiver says so (pi tool text and details).
     const tools = new Map<string, ToolDefinition>();
@@ -156,7 +165,7 @@ test('K2.3: waivers say what they mean and their true scope; why shows a waived 
     assert.notEqual(res.isError, true, JSON.stringify(res.content));
     const text = (res.content[0] as { text: string }).text, meaningC = (res.details as { meaning: string }).meaning;
     assert.equal(text.split('\n')[0], meaningC);
-    assert.match(meaningC, /^waived check:unit for candidate #\d+ [0-9a-f]{12} \(key [0-9a-f]{12}\): owed counts it as waived, not measured, for every candidate of c whose check:unit key is [0-9a-f]{12}, in this or a later attempt; .*; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail blocks it again$/, meaningC);
+    assert.match(meaningC, /^waived check:unit for candidate #\d+ [0-9a-f]{12} \(key [0-9a-f]{12}\): in effect now; owed counts check:unit as waived, not measured, for every candidate of c whose check:unit key is [0-9a-f]{12}, in this or a later attempt, while no unaccepted active block remains on check:unit; .*; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail adds a block that suspends the waiver until it clears$/, meaningC);
     assert.doesNotMatch(meaningC, /flaky/);
     await ops.attest({ cwd: x.cwd, node: 'c' });
     assert.equal((await ops.why({ cwd: x.cwd, node: 'c' })).items.find(i => i.obligation === 'check:unit')?.status, 'E');
