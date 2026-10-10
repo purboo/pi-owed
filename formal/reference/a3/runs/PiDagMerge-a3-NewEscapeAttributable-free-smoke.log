@@ -1,0 +1,23 @@
+# module sha256 d38bdf07fb4cd1b02fc7c0e42f01ecfb5e5fb3b867e1a46d9a3aca9f487e81c8
+# cfg    sha256 0451d79495dda8981521c2e189c18242324cb06f6a654315d82a2c8743f41bd6
+# flags  <deadlock checked> -simulate num=100 -depth 20 2026-10-08T21:22:42+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running Random Simulation with seed -2731091837347010507 with 4 workers on 20 cores with 910MB heap and 64MB offheap memory [pid: 3431794] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagMerge.tla
+Parsing file /tmp/tlc-18407307574360412709/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-18407307574360412709/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-18407307574360412709/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-18407307574360412709/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagMerge
+Linting of module PiDagMerge
+Starting... (2026-10-08 21:22:44)
+Computed 16 initial states...
+Finished computing initial states: 16 distinct state generated at 2026-10-08 21:22:44.
+Progress: 101623 states checked, 400 traces generated (trace length: mean=12, var(x)=65, sd=8)
+The number of states generated: 101623
+Simulation using seed -2731091837347010507 and aril 0
+Finished in 03s at (2026-10-08 21:22:46)

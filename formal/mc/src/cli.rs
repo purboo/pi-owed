@@ -9,10 +9,13 @@ usage: owedmc list
        owedmc check <model> [--mode M] [--prop P]... [--all] [--const K=V]... [--workers N] [--deadlock]
                     [--simulate traces=N,depth=D,seed=S] [--max-states N] [--timeout S] [--trace] [--json]
 One line per property: <model> <mode> <prop> <HOLDS|VIOLATED|HOLDS-SIM|TIMEOUT|ERROR> <N distinct states>.
-Exit status: number of ERROR/TIMEOUT results (64 = usage error).";
+Exit status: number of ERROR/TIMEOUT results, at most 255 (64 = usage error).";
 
 /// Exit status for usage errors.
 pub const EXIT_USAGE: i32 = 64;
+
+/// Exit statuses are capped here (a process exit status is one byte; larger counts must not wrap to 0).
+pub const MAX_EXIT: usize = 255;
 
 #[derive(Debug, Default)]
 struct Args {
@@ -240,7 +243,7 @@ fn run_check(reg: &Registry, a: &Args, out: &mut dyn Write) -> i32 {
         };
         fields.push(("errors", errors.to_string()));
         let _ = writeln!(out, "{}", json::object(&fields));
-        return errors as i32;
+        return errors.min(MAX_EXIT) as i32;
     }
 
     let _ = writeln!(out, "# engine {engine}");
@@ -286,7 +289,7 @@ fn run_check(reg: &Registry, a: &Args, out: &mut dyn Write) -> i32 {
                     }
                 }
             }
-            error_count(&r) as i32
+            error_count(&r).min(MAX_EXIT) as i32
         }
     }
 }

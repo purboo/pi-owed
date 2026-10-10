@@ -9,7 +9,8 @@ formal/
   mc/                 the engine (library): Model trait, BFS, liveness, simulation, CLI, sha256
   mc/tests/           engine tests on toy models
   models/             one module per model + the `owedmc` binary (src/main.rs); registry in src/lib.rs
-  reference/          copied sources the ports are checked against (added by the porting nodes)
+  reference/          copied sources the ports are checked against (reference/a3: the a3 TLA+ models, reports,
+                      TLC cfg/logs and tlc-runs.tsv extracted from them)
   REPORT-<node>.md    results of each node
 ```
 
@@ -37,11 +38,14 @@ owedmc check <model> [--mode M] [--prop P]... [--all] [--const K=V]... [--worker
   (simulation: `<N states sampled>`), a `# stats` line (distinct, generated, depth, time, states/s, estimated
   fingerprint-collision probability), then for each violation its length — the full trace with `--trace`.
 - `--json`: one summary object instead (traces included with `--trace`).
-- Exit status: the number of ERROR/TIMEOUT results (a violation is a result, not an error); 64 = usage error.
+- Exit status: the number of ERROR/TIMEOUT results, capped at 255 (a violation is a result, not an error); 64 =
+  usage error.
 
-Attribution: `# engine` is the crate version plus `git describe --always --dirty` of the checkout the binary was
-built from (on ipc that is the mirror's own commit, so the source sha256 is the stable attribution); `sha256` is
-the SHA-256 of the model's source file as compiled in (`include_str!`).
+Attribution: `# engine owedmc <version> (git <describe>, src sha256 <hex>)` is recorded at build time by
+`mc/build.rs`: `git describe --always --dirty --tags` of the checkout the binary was built from (on ipc that is the
+mirror's own commit) and the SHA-256 of the engine sources `mc/src/*.rs` (file name, NUL, length, NUL, contents,
+in name order; the stable attribution of the engine). `sha256` on the `# model` line is the SHA-256 of the
+model's source file as compiled in (`include_str!`).
 
 ## Semantics
 
@@ -79,8 +83,15 @@ nondeterministic model makes replay fail (ERROR), it does not produce a wrong tr
   starts at the shallowest such P /\ ~Q state (ties: smallest fingerprint), takes a shortest ~Q path to a fair
   component and then a cycle in it that covers each class that must be taken or disabled; `-- back to state i
   (loop) --` or `-- stuttering forever at state i --` closes it.
-- When every selected safety property (invariant, action, deadlock) is violated and no LeadsTo is selected, the
-  search stops after the current level.
+- `Eventually` (`<>Q` from the initial states, e.g. TLA+ `Finished == <>Done`): violated iff an initial ~Q state
+  has a ~Q path to a fair ~Q cycle (stuttering at a ~Q deadlock/terminal state included). Internally it is
+  `P ~> Q` with P = "is an initial state" (BFS level 0), which is exactly `<>Q` for behaviors that start in an
+  initial state; `Init ~> Q` with Init as a state predicate is different when an initial *value* recurs later
+  (tests/followups.rs). Lasso and trace as for LeadsTo.
+- When every selected safety property (invariant, action, deadlock) is violated and no LeadsTo/Eventually is
+  selected, the search stops after the current level.
+- `Stats::levels` lists the new states per BFS level (`levels[0]` = initial states); the number of levels is TLC's
+  "depth of the complete state graph search".
 
 **Simulation** (`--simulate traces=N,depth=D,seed=S`): N random walks of at most D steps from a random initial
 state, choosing a random successor each step (xoshiro256** seeded by splitmix64 from the seed and the walk number,
@@ -123,9 +134,23 @@ impl Model for Spec {
 | `INVARIANT Inv` | `Property::Invariant` |
 | `PROPERTY [][A]_vars` | `Property::Action` (check `s = t` yourself if A must allow stuttering) |
 | `PROPERTY P ~> Q` | `Property::LeadsTo` |
+| `PROPERTY <>Q` | `Property::Eventually` (not `LeadsTo` with an Init predicate, see above) |
 | `WF_vars(A)` | `fairness(a) = Some("A")` for the actions of A (one class per WF conjunct; `WF_vars(Next)` = one class for all) |
-| `SYMMETRY` / `VIEW` | `canonical()` (a representative of the symmetry class / the view) |
-| deadlock checking | `--deadlock`; `terminal()` marks intended end states (TLC: an explicit stutter disjunct) |
+| `SYMMETRY` / `VIEW` | `canonical()` (a representative of the symmetry class / the view); see the liveness caveat below |
+| deadlock checking | always pass `--deadlock` when reproducing TLC: TLC (and the old `check.sh`, unless `NODEADLOCK=1`) checks deadlock by default; `terminal()` marks intended end states (TLC: an explicit stutter disjunct) |
+
+**Symmetry and liveness.** `canonical()` with LeadsTo/Eventually is unsupported unless the fairness classes are
+symmetric too (a permutation maps every class to itself, e.g. one class for all actions): the graph is built on
+representatives, and per-process WF classes (`WF(Inc(1))`, `WF(Inc(2))`) are not preserved by a permutation, so the
+fair-cycle test can be wrong (TLC warns about the same). The engine does not detect it; do not combine them.
+
+**Comparing counts with TLC.** Exhaustive HOLDS runs: the distinct-state count and the number of BFS levels match
+TLC's directly. TLC's "states generated" counts a transition once per true disjunct of each conjunct on its path
+(TLC explores `A /\ (B \/ C) /\ ...` as separate branches), so it can exceed the engine's `generated`; the a3 ports
+reproduce TLC's number by weighting transitions (`tlc_branches` in models/src/a3). A violated run of TLC stops at
+the first violating *state* with the states found so far (one worker: deterministic; several: schedule-dependent),
+while the engine stops at a level boundary; `models::a3::tlc::tlc_order` re-explores in TLC's order (initial states
+in order, FIFO, successors in `next` order) for an exact comparison with one-worker TLC.
 
 Register the model in `models/src/lib.rs` with a `ModelInfo` (`name`, `about`, `modes`, documented `consts`,
 `source_file: file!()`, `source: include_str!("<file>.rs")`, `build`). `build(mode, consts)` reads constants with

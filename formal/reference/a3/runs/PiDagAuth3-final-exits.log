@@ -1,0 +1,1707 @@
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes='a3 a22'
++ props='AuthoritySound DecisionAuthority NoWriterJudge NoAuthorJudge RelevantInvalidates UnrelatedPreserves StateRemainsDebt ConflictDebt SamePrincipalSupersedes RetroHonored FuturePreserves P:GoodProgress P:Finished NothingMerged NothingDeferredMerged NothingParentWaived NothingCrossWaived NothingSpeechWaived NothingRevivedWaived'
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AuthoritySound
++ case $p in
++ base=runs/PiDagAuth3-a3-AuthoritySound
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AuthoritySound'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-AuthoritySound.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 b61d97049a8733b0ffa9b66e5ea54d314a2b0210e086ca55d6ee05767d3ffef0'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:34+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-AuthoritySound.states -config runs/PiDagAuth3-a3-AuthoritySound.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-AuthoritySound.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-AuthoritySound.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-AuthoritySound.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 AuthoritySound HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=DecisionAuthority
++ case $p in
++ base=runs/PiDagAuth3-a3-DecisionAuthority
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DecisionAuthority'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ cut -c1-64
+++ sha256sum runs/PiDagAuth3-a3-DecisionAuthority.cfg
++ echo '# cfg    sha256 f87dc433021ec7fce4309eab983b4c5ea9decb524a43b5a8d0b76d97e72356b5'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:36+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-DecisionAuthority.states -config runs/PiDagAuth3-a3-DecisionAuthority.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-DecisionAuthority.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-DecisionAuthority.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-DecisionAuthority.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 DecisionAuthority HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NoWriterJudge
++ case $p in
++ base=runs/PiDagAuth3-a3-NoWriterJudge
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoWriterJudge'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ cut -c1-64
+++ sha256sum runs/PiDagAuth3-a3-NoWriterJudge.cfg
++ echo '# cfg    sha256 1aa97af19cce7e5a8512fdfa90b44b9c7312dd81156b9cdb28fdb5f0dfda2ed3'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:36+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NoWriterJudge.states -config runs/PiDagAuth3-a3-NoWriterJudge.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-NoWriterJudge.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NoWriterJudge.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NoWriterJudge.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NoWriterJudge HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NoAuthorJudge
++ case $p in
++ base=runs/PiDagAuth3-a3-NoAuthorJudge
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ tr ';' '\n'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoAuthorJudge'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-NoAuthorJudge.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 de8c2eda74a2b03cb79324f0b7a23480e9a769354cfa184c78d6cbc4a5e4f2ac'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:37+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NoAuthorJudge.states -config runs/PiDagAuth3-a3-NoAuthorJudge.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-NoAuthorJudge.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NoAuthorJudge.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NoAuthorJudge.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NoAuthorJudge HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=RelevantInvalidates
++ case $p in
++ base=runs/PiDagAuth3-a3-RelevantInvalidates
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT RelevantInvalidates'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ cut -c1-64
+++ sha256sum runs/PiDagAuth3-a3-RelevantInvalidates.cfg
++ echo '# cfg    sha256 d3961c8a397ed12a55cf814b34d673508bc3542ec35e50dc31926f77b6316564'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:38+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-RelevantInvalidates.states -config runs/PiDagAuth3-a3-RelevantInvalidates.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-RelevantInvalidates.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-RelevantInvalidates.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-RelevantInvalidates.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 RelevantInvalidates HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=UnrelatedPreserves
++ case $p in
++ base=runs/PiDagAuth3-a3-UnrelatedPreserves
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT UnrelatedPreserves'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-UnrelatedPreserves.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 3985627ee0d17fc33ba0a355905043ca56f5aef5a74dd381497fb05ca0f67afe'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:39+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-UnrelatedPreserves.states -config runs/PiDagAuth3-a3-UnrelatedPreserves.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-UnrelatedPreserves.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-UnrelatedPreserves.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-UnrelatedPreserves.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 UnrelatedPreserves HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=StateRemainsDebt
++ case $p in
++ base=runs/PiDagAuth3-a3-StateRemainsDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateRemainsDebt'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-StateRemainsDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 951c2d88612ed71be9ecc9ebc7edee6defd55c4b0f568f4daf47de9f08161fca'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:40+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-StateRemainsDebt.states -config runs/PiDagAuth3-a3-StateRemainsDebt.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-StateRemainsDebt.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-StateRemainsDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-StateRemainsDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 StateRemainsDebt HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=ConflictDebt
++ case $p in
++ base=runs/PiDagAuth3-a3-ConflictDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT ConflictDebt'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-ConflictDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 8882389a67e8bd746b404524cad65ddfad074237434d01cdd8625b6e52e3f20a'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:41+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-ConflictDebt.states -config runs/PiDagAuth3-a3-ConflictDebt.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-ConflictDebt.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-ConflictDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-ConflictDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 ConflictDebt HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=SamePrincipalSupersedes
++ case $p in
++ base=runs/PiDagAuth3-a3-SamePrincipalSupersedes
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ tr ';' '\n'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT SamePrincipalSupersedes'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-SamePrincipalSupersedes.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c2e15e97585495c5cd13752740bdd9bf376280077c2a8baa5b4f7f3a2ed6ab91'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:42+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-SamePrincipalSupersedes.states -config runs/PiDagAuth3-a3-SamePrincipalSupersedes.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-SamePrincipalSupersedes.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-SamePrincipalSupersedes.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-SamePrincipalSupersedes.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 SamePrincipalSupersedes HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=RetroHonored
++ case $p in
++ base=runs/PiDagAuth3-a3-RetroHonored
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT RetroHonored'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ cut -c1-64
+++ sha256sum runs/PiDagAuth3-a3-RetroHonored.cfg
++ echo '# cfg    sha256 e4d743a163e23aa12163713a4e385695c2abbb865874fc472b64cbec91512b97'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:43+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-RetroHonored.states -config runs/PiDagAuth3-a3-RetroHonored.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-RetroHonored.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-RetroHonored.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-RetroHonored.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 RetroHonored HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=FuturePreserves
++ case $p in
++ base=runs/PiDagAuth3-a3-FuturePreserves
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FuturePreserves'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-FuturePreserves.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 19ecf0b0a602414607d25dfd1bd9230710346ea02d1a88a830124a4dd801a149'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:44+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-FuturePreserves.states -config runs/PiDagAuth3-a3-FuturePreserves.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-FuturePreserves.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-FuturePreserves.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-FuturePreserves.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 FuturePreserves HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodProgress
++ case $p in
++ kind=PROPERTY
++ name=GoodProgress
++ base=runs/PiDagAuth3-a3-GoodProgress
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodProgress'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-GoodProgress.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 21723ce103956d20041ab6d92b4c426ea5625ae96667785392f97a21b49edb4b'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:45+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-GoodProgress.states -config runs/PiDagAuth3-a3-GoodProgress.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-GoodProgress.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-GoodProgress.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-GoodProgress.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 GoodProgress HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=P:Finished
++ case $p in
++ kind=PROPERTY
++ name=Finished
++ base=runs/PiDagAuth3-a3-Finished
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY Finished'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-Finished.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 992277e1b7c233b64f17d864ff74e15d13b6737cef812767359730e39d2d1f86'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:46+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-Finished.states -config runs/PiDagAuth3-a3-Finished.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-Finished.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-Finished.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-Finished.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 Finished HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingMerged
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-NothingMerged.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 6d33b20ce312ecd78f79f09a03ec4e93248543eab3a391dd38bf42f3ef7737dc'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:47+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NothingMerged.states -config runs/PiDagAuth3-a3-NothingMerged.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-NothingMerged.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingMerged.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-NothingMerged.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingMerged.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingMerged VIOLATED '141 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingDeferredMerged
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingDeferredMerged
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingDeferredMerged'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-NothingDeferredMerged.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9e613526d50551ed08c09100e13db4e27e1be388158cdc30f242a6318c42dbe1'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:48+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NothingDeferredMerged.states -config runs/PiDagAuth3-a3-NothingDeferredMerged.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-NothingDeferredMerged.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingDeferredMerged.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-NothingDeferredMerged.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingDeferredMerged.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingDeferredMerged VIOLATED '338 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingParentWaived
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingParentWaived
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingParentWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-NothingParentWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 d290456dbadf75ea9876e9de85723231ee3888c2040b17c117f1354ed3d37649'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:49+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NothingParentWaived.states -config runs/PiDagAuth3-a3-NothingParentWaived.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-NothingParentWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingParentWaived.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-NothingParentWaived.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingParentWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingParentWaived VIOLATED '248 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingCrossWaived
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingCrossWaived
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingCrossWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-NothingCrossWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 979c5caa3819bd13e3c43c44bd088d2bec7677b11b5f048b038e3f4ce53c2037'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:50+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NothingCrossWaived.states -config runs/PiDagAuth3-a3-NothingCrossWaived.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-NothingCrossWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingCrossWaived.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingCrossWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingCrossWaived HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingSpeechWaived
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingSpeechWaived
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingSpeechWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-NothingSpeechWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 1f3380976bb9ed67275226070c47c52e132c0a4e4bcc81475eb1b436880fce4f'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:51+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NothingSpeechWaived.states -config runs/PiDagAuth3-a3-NothingSpeechWaived.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-NothingSpeechWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingSpeechWaived.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingSpeechWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingSpeechWaived HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingRevivedWaived
++ case $p in
++ base=runs/PiDagAuth3-a3-NothingRevivedWaived
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingRevivedWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-NothingRevivedWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 ba975542d727878424035a39dde427b50e1a5ffaead41b90b5b6c6ced22447b6'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:51+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-NothingRevivedWaived.states -config runs/PiDagAuth3-a3-NothingRevivedWaived.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a3-NothingRevivedWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-NothingRevivedWaived.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-NothingRevivedWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 NothingRevivedWaived HOLDS '1019 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AuthoritySound
++ case $p in
++ base=runs/PiDagAuth3-a22-AuthoritySound
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AuthoritySound'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-AuthoritySound.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 3882b29f48ce5cedd015039eb6e895d084cc6eecbfd47cce74981f1b1fd00d6f'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:52+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-AuthoritySound.states -config runs/PiDagAuth3-a22-AuthoritySound.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-AuthoritySound.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-AuthoritySound.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-AuthoritySound.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-AuthoritySound.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 AuthoritySound VIOLATED '76 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=DecisionAuthority
++ case $p in
++ base=runs/PiDagAuth3-a22-DecisionAuthority
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DecisionAuthority'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-DecisionAuthority.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 5460e172eeb2cfd3d1903384ea7c98d3c058cec2e1bcfb92119be601846475e7'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:53+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-DecisionAuthority.states -config runs/PiDagAuth3-a22-DecisionAuthority.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-DecisionAuthority.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-DecisionAuthority.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-DecisionAuthority.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-DecisionAuthority.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 DecisionAuthority VIOLATED '203 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NoWriterJudge
++ case $p in
++ base=runs/PiDagAuth3-a22-NoWriterJudge
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoWriterJudge'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NoWriterJudge.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 11416d3530a1ed6d5988209e4db2b7c2e7a3e27814daf1fbb870c3555fec02b9'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:54+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NoWriterJudge.states -config runs/PiDagAuth3-a22-NoWriterJudge.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NoWriterJudge.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NoWriterJudge.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NoWriterJudge.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NoWriterJudge.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NoWriterJudge VIOLATED '125 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NoAuthorJudge
++ case $p in
++ base=runs/PiDagAuth3-a22-NoAuthorJudge
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoAuthorJudge'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NoAuthorJudge.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 abdd1834b4b07f54c4fcdc819a61a2129494bbb0c79d2fa6d80ba8f2047b62b5'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:55+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NoAuthorJudge.states -config runs/PiDagAuth3-a22-NoAuthorJudge.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NoAuthorJudge.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NoAuthorJudge.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NoAuthorJudge.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NoAuthorJudge.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NoAuthorJudge VIOLATED '236 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=RelevantInvalidates
++ case $p in
++ base=runs/PiDagAuth3-a22-RelevantInvalidates
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT RelevantInvalidates'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-RelevantInvalidates.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 2352da74865345a7672c8ad18c66c1b50d564c3bdd7d4d55cedeaca24851fa8d'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:55+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-RelevantInvalidates.states -config runs/PiDagAuth3-a22-RelevantInvalidates.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-RelevantInvalidates.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-RelevantInvalidates.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-RelevantInvalidates.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-RelevantInvalidates.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 RelevantInvalidates VIOLATED '336 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=UnrelatedPreserves
++ case $p in
++ base=runs/PiDagAuth3-a22-UnrelatedPreserves
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT UnrelatedPreserves'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-UnrelatedPreserves.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 b5a324f313173c6e65b6ccc747e22ed36cfedaa5560f7ce55eab3518336c4ab3'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:56+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-UnrelatedPreserves.states -config runs/PiDagAuth3-a22-UnrelatedPreserves.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-UnrelatedPreserves.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-UnrelatedPreserves.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-UnrelatedPreserves.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-UnrelatedPreserves.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 UnrelatedPreserves VIOLATED '297 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=StateRemainsDebt
++ case $p in
++ base=runs/PiDagAuth3-a22-StateRemainsDebt
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateRemainsDebt'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-StateRemainsDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 54ba858661dbbe21549fe0d374ff3ff944b1aeab08f38b302abd3655c80651a7'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:57+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-StateRemainsDebt.states -config runs/PiDagAuth3-a22-StateRemainsDebt.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-StateRemainsDebt.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-StateRemainsDebt.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-StateRemainsDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-StateRemainsDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 StateRemainsDebt VIOLATED '137 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=ConflictDebt
++ case $p in
++ base=runs/PiDagAuth3-a22-ConflictDebt
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT ConflictDebt'
+++ cut -c1-64
+++ sha256sum PiDagAuth3.tla
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-ConflictDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c437d9b505bccd8ddcad49f7ac77fe2245682b5ed94d02b3f9246949aa56b083'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:58+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-ConflictDebt.states -config runs/PiDagAuth3-a22-ConflictDebt.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-ConflictDebt.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-ConflictDebt.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-ConflictDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-ConflictDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 ConflictDebt VIOLATED '685 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=SamePrincipalSupersedes
++ case $p in
++ base=runs/PiDagAuth3-a22-SamePrincipalSupersedes
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT SamePrincipalSupersedes'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-SamePrincipalSupersedes.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 6aa620e631eea1477cca952cfd52571cfb2fcb8b385b810b69b328a778608fa0'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:03:59+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-SamePrincipalSupersedes.states -config runs/PiDagAuth3-a22-SamePrincipalSupersedes.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a22-SamePrincipalSupersedes.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-SamePrincipalSupersedes.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-SamePrincipalSupersedes.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 SamePrincipalSupersedes HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=RetroHonored
++ case $p in
++ base=runs/PiDagAuth3-a22-RetroHonored
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT RetroHonored'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-RetroHonored.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 3fe780cc8fd790ba74260c34dc34d4c0663f9bfcc9a5261b131fd6a4a8645138'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:00+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-RetroHonored.states -config runs/PiDagAuth3-a22-RetroHonored.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a22-RetroHonored.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-RetroHonored.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-RetroHonored.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 RetroHonored HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=FuturePreserves
++ case $p in
++ base=runs/PiDagAuth3-a22-FuturePreserves
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FuturePreserves'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-FuturePreserves.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 35f11f5a7616f4063ec6536732fbec4ff5c49d620443f0486630523e3112b186'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:01+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-FuturePreserves.states -config runs/PiDagAuth3-a22-FuturePreserves.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a22-FuturePreserves.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-FuturePreserves.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-FuturePreserves.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 FuturePreserves HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodProgress
++ case $p in
++ kind=PROPERTY
++ name=GoodProgress
++ base=runs/PiDagAuth3-a22-GoodProgress
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodProgress'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-GoodProgress.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 a111398ec81f01cef8532bdf1260bfbf8833a83a32b33b035713797574cdd629'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:02+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-GoodProgress.states -config runs/PiDagAuth3-a22-GoodProgress.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a22-GoodProgress.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-GoodProgress.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-GoodProgress.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 GoodProgress HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=P:Finished
++ case $p in
++ kind=PROPERTY
++ name=Finished
++ base=runs/PiDagAuth3-a22-Finished
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY Finished'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-Finished.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 abf2e3b8642040454f4855608756b31f94a088e8c7cae45133911682b54006ee'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:03+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-Finished.states -config runs/PiDagAuth3-a22-Finished.cfg PiDagAuth3.tla
++ rc=0
++ rm -rf runs/PiDagAuth3-a22-Finished.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-Finished.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-Finished.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 Finished HOLDS '1019 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagAuth3-a22-NothingMerged
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NothingMerged.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 5b202f1a95b57f0d44d484d32c0967c7fe740841f567ed935725b854d28f0e48'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:04+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NothingMerged.states -config runs/PiDagAuth3-a22-NothingMerged.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NothingMerged.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NothingMerged.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NothingMerged.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NothingMerged.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NothingMerged VIOLATED '142 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingDeferredMerged
++ case $p in
++ base=runs/PiDagAuth3-a22-NothingDeferredMerged
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingDeferredMerged'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NothingDeferredMerged.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 a255eb853d605979eddd9ecb7c76ee0e2446b27bf86307d330be77953e97a57a'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:05+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NothingDeferredMerged.states -config runs/PiDagAuth3-a22-NothingDeferredMerged.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NothingDeferredMerged.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NothingDeferredMerged.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NothingDeferredMerged.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NothingDeferredMerged.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NothingDeferredMerged VIOLATED '293 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingParentWaived
++ case $p in
++ base=runs/PiDagAuth3-a22-NothingParentWaived
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingParentWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NothingParentWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 76ef9f448a92c521ec1f5f05696d1d616160126464b72a00ffcb6bd24db7ba06'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:06+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NothingParentWaived.states -config runs/PiDagAuth3-a22-NothingParentWaived.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NothingParentWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NothingParentWaived.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NothingParentWaived.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NothingParentWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NothingParentWaived VIOLATED '212 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingCrossWaived
++ case $p in
++ base=runs/PiDagAuth3-a22-NothingCrossWaived
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingCrossWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NothingCrossWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 ff70f39c20f3fb35627f2862e68489db7d3e4373ef3d73fda86fd1a6e2864ba0'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:07+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NothingCrossWaived.states -config runs/PiDagAuth3-a22-NothingCrossWaived.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NothingCrossWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NothingCrossWaived.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NothingCrossWaived.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NothingCrossWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NothingCrossWaived VIOLATED '124 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingSpeechWaived
++ case $p in
++ base=runs/PiDagAuth3-a22-NothingSpeechWaived
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingSpeechWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NothingSpeechWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9d9142330bf759221b47b24b25796be07c1fc6911a82cd819770dc8e9092766e'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:08+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NothingSpeechWaived.states -config runs/PiDagAuth3-a22-NothingSpeechWaived.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NothingSpeechWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NothingSpeechWaived.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NothingSpeechWaived.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NothingSpeechWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NothingSpeechWaived VIOLATED '342 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingRevivedWaived
++ case $p in
++ base=runs/PiDagAuth3-a22-NothingRevivedWaived
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingRevivedWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a22-NothingRevivedWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 a2afeeb42efc5f500f255878d097f2f67c1b2fb5d495121b299faee6ee2f15b6'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:08+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a22-NothingRevivedWaived.states -config runs/PiDagAuth3-a22-NothingRevivedWaived.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a22-NothingRevivedWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a22-NothingRevivedWaived.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a22-NothingRevivedWaived.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a22-NothingRevivedWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a22 NothingRevivedWaived VIOLATED '1019 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-issue
++ props=AuthoritySound
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AuthoritySound
++ case $p in
++ base=runs/PiDagAuth3-a3-issue-AuthoritySound
++ echo CONSTANTS
++ echo '  Mode = "a3-issue"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AuthoritySound'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-issue-AuthoritySound.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 caa4d0db391c5b699226fcde2a53063924eb12a4d17f3dc8d35df506bd357a9a'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:09+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-issue-AuthoritySound.states -config runs/PiDagAuth3-a3-issue-AuthoritySound.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-issue-AuthoritySound.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-issue-AuthoritySound.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-issue-AuthoritySound.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-issue-AuthoritySound.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-issue AuthoritySound VIOLATED '76 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-scope
++ props=AuthoritySound
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AuthoritySound
++ case $p in
++ base=runs/PiDagAuth3-a3-scope-AuthoritySound
++ echo CONSTANTS
++ echo '  Mode = "a3-scope"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AuthoritySound'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-scope-AuthoritySound.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 8f5ed0a8e5fd66fb115d3703ea4eddf6c9cf580bbb8b329406966b251fd0988e'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:10+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-scope-AuthoritySound.states -config runs/PiDagAuth3-a3-scope-AuthoritySound.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-scope-AuthoritySound.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-scope-AuthoritySound.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-scope-AuthoritySound.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-scope-AuthoritySound.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-scope AuthoritySound VIOLATED '83 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-continuous
++ props='AuthoritySound NothingRevivedWaived'
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AuthoritySound
++ case $p in
++ base=runs/PiDagAuth3-a3-continuous-AuthoritySound
++ echo CONSTANTS
++ echo '  Mode = "a3-continuous"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AuthoritySound'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-continuous-AuthoritySound.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 830bb6af2fa5970d002de91e5b5061c95924665d9baf8d675c9e223c8b644148'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:11+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-continuous-AuthoritySound.states -config runs/PiDagAuth3-a3-continuous-AuthoritySound.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-continuous-AuthoritySound.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-continuous-AuthoritySound.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-continuous-AuthoritySound.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-continuous-AuthoritySound.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-continuous AuthoritySound VIOLATED '552 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingRevivedWaived
++ case $p in
++ base=runs/PiDagAuth3-a3-continuous-NothingRevivedWaived
++ echo CONSTANTS
++ echo '  Mode = "a3-continuous"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingRevivedWaived'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-continuous-NothingRevivedWaived.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 668c6ed3040b9a89ae182a2e07affe3c5c7ad35018736c6f731ac967cab13f6a'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:12+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-continuous-NothingRevivedWaived.states -config runs/PiDagAuth3-a3-continuous-NothingRevivedWaived.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-continuous-NothingRevivedWaived.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-continuous-NothingRevivedWaived.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-continuous-NothingRevivedWaived.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-continuous-NothingRevivedWaived.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-continuous NothingRevivedWaived VIOLATED '1019 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-writers
++ props=NoWriterJudge
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoWriterJudge
++ case $p in
++ base=runs/PiDagAuth3-a3-writers-NoWriterJudge
++ echo CONSTANTS
++ echo '  Mode = "a3-writers"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoWriterJudge'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-writers-NoWriterJudge.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 ee5633df3c62415e0c6e436aba61cb6c1d7d150e5e62f0add411f92b39dfffb0'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:13+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-writers-NoWriterJudge.states -config runs/PiDagAuth3-a3-writers-NoWriterJudge.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-writers-NoWriterJudge.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-writers-NoWriterJudge.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-writers-NoWriterJudge.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-writers-NoWriterJudge.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-writers NoWriterJudge VIOLATED '125 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-past
++ props=NoWriterJudge
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoWriterJudge
++ case $p in
++ base=runs/PiDagAuth3-a3-past-NoWriterJudge
++ echo CONSTANTS
++ echo '  Mode = "a3-past"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoWriterJudge'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-past-NoWriterJudge.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 082145bf1371dab71b9e9156c39dad12a0d91493773438f7256651282f9a20c2'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:14+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-past-NoWriterJudge.states -config runs/PiDagAuth3-a3-past-NoWriterJudge.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-past-NoWriterJudge.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-past-NoWriterJudge.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-past-NoWriterJudge.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-past-NoWriterJudge.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-past NoWriterJudge VIOLATED '334 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-author
++ props=NoAuthorJudge
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoAuthorJudge
++ case $p in
++ base=runs/PiDagAuth3-a3-author-NoAuthorJudge
++ echo CONSTANTS
++ echo '  Mode = "a3-author"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoAuthorJudge'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-author-NoAuthorJudge.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 264ad4f79be3cec19534f62360769427faef07f60c17f0fa7fe759c03bb76985'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:15+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-author-NoAuthorJudge.states -config runs/PiDagAuth3-a3-author-NoAuthorJudge.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-author-NoAuthorJudge.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-author-NoAuthorJudge.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-author-NoAuthorJudge.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-author-NoAuthorJudge.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-author NoAuthorJudge VIOLATED '110 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-permission
++ props=DecisionAuthority
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=DecisionAuthority
++ case $p in
++ base=runs/PiDagAuth3-a3-permission-DecisionAuthority
++ echo CONSTANTS
++ echo '  Mode = "a3-permission"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DecisionAuthority'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-permission-DecisionAuthority.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 d495e687975d907985e57384f4a27cddbf805716a9b49fd70e4faae32f5e84a6'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:16+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-permission-DecisionAuthority.states -config runs/PiDagAuth3-a3-permission-DecisionAuthority.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-permission-DecisionAuthority.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-permission-DecisionAuthority.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-permission-DecisionAuthority.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-permission-DecisionAuthority.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-permission DecisionAuthority VIOLATED '251 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-key
++ props='RelevantInvalidates UnrelatedPreserves'
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=RelevantInvalidates
++ case $p in
++ base=runs/PiDagAuth3-a3-key-RelevantInvalidates
++ echo CONSTANTS
++ echo '  Mode = "a3-key"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT RelevantInvalidates'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-key-RelevantInvalidates.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 569db70d996a7fda7c7fdc35fac21879a202f664236112c64a5532cad4332303'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:16+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-key-RelevantInvalidates.states -config runs/PiDagAuth3-a3-key-RelevantInvalidates.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-key-RelevantInvalidates.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-key-RelevantInvalidates.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-key-RelevantInvalidates.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-key-RelevantInvalidates.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-key RelevantInvalidates VIOLATED '292 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=UnrelatedPreserves
++ case $p in
++ base=runs/PiDagAuth3-a3-key-UnrelatedPreserves
++ echo CONSTANTS
++ echo '  Mode = "a3-key"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT UnrelatedPreserves'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-key-UnrelatedPreserves.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9a4807a625d207ec2b720a854197c4bb21f71d96420ccd8b2e532b9a46f6d262'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:17+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-key-UnrelatedPreserves.states -config runs/PiDagAuth3-a3-key-UnrelatedPreserves.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-key-UnrelatedPreserves.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-key-UnrelatedPreserves.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-key-UnrelatedPreserves.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-key-UnrelatedPreserves.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-key UnrelatedPreserves VIOLATED '340 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-state
++ props=StateRemainsDebt
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=StateRemainsDebt
++ case $p in
++ base=runs/PiDagAuth3-a3-state-StateRemainsDebt
++ echo CONSTANTS
++ echo '  Mode = "a3-state"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateRemainsDebt'
+++ cut -c1-64
+++ sha256sum PiDagAuth3.tla
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-state-StateRemainsDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 dfe5291e73f44c6a71e15a1e2954c17e31c3b747751cd83262bcd733fa0cf494'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:18+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-state-StateRemainsDebt.states -config runs/PiDagAuth3-a3-state-StateRemainsDebt.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-state-StateRemainsDebt.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-state-StateRemainsDebt.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-state-StateRemainsDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-state-StateRemainsDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-state StateRemainsDebt VIOLATED '126 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-conflict
++ props=ConflictDebt
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=ConflictDebt
++ case $p in
++ base=runs/PiDagAuth3-a3-conflict-ConflictDebt
++ echo CONSTANTS
++ echo '  Mode = "a3-conflict"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT ConflictDebt'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-conflict-ConflictDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 0ae9c1705abe594eba7eccd91b1973d687c357823569b53ca8bb07022e75813e'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:19+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-conflict-ConflictDebt.states -config runs/PiDagAuth3-a3-conflict-ConflictDebt.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-conflict-ConflictDebt.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-conflict-ConflictDebt.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-conflict-ConflictDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-conflict-ConflictDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-conflict ConflictDebt VIOLATED '686 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-same
++ props=SamePrincipalSupersedes
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=SamePrincipalSupersedes
++ case $p in
++ base=runs/PiDagAuth3-a3-same-SamePrincipalSupersedes
++ echo CONSTANTS
++ echo '  Mode = "a3-same"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT SamePrincipalSupersedes'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-same-SamePrincipalSupersedes.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 8349c7af39fe0a8b0314a72986a04475ebc44cce9e74deb3db193c0436a38df6'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:20+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-same-SamePrincipalSupersedes.states -config runs/PiDagAuth3-a3-same-SamePrincipalSupersedes.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-same-SamePrincipalSupersedes.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-same-SamePrincipalSupersedes.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-same-SamePrincipalSupersedes.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-same-SamePrincipalSupersedes.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-same SamePrincipalSupersedes VIOLATED '347 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-retro
++ props=RetroHonored
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=RetroHonored
++ case $p in
++ base=runs/PiDagAuth3-a3-retro-RetroHonored
++ echo CONSTANTS
++ echo '  Mode = "a3-retro"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT RetroHonored'
+++ cut -c1-64
+++ sha256sum PiDagAuth3.tla
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-retro-RetroHonored.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9dba5fed83f33129a72a7b9cdcfb2430d793c8423180758fc6aece6c6b006b10'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:21+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-retro-RetroHonored.states -config runs/PiDagAuth3-a3-retro-RetroHonored.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-retro-RetroHonored.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-retro-RetroHonored.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-retro-RetroHonored.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-retro-RetroHonored.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-retro RetroHonored VIOLATED '729 distinct states found'
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3-future
++ props=FuturePreserves
++ consts='MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=
++ dl=
++ '[' 0 = 1 ']'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=FuturePreserves
++ case $p in
++ base=runs/PiDagAuth3-a3-future-FuturePreserves
++ echo CONSTANTS
++ echo '  Mode = "a3-future"'
++ echo 'MaxLog = 5; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT FuturePreserves'
+++ sha256sum PiDagAuth3.tla
+++ cut -c1-64
++ echo '# module sha256 32122309e3974da393da1888fe9d461d4a16704bb89535bf2d007fca9b0ce526'
+++ sha256sum runs/PiDagAuth3-a3-future-FuturePreserves.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c9294f902108d01d18e032701384033dbc83e991552f6968522bcf10a8e9da28'
+++ date -Is
++ echo '# flags  <deadlock checked> 2026-10-08T21:04:22+08:00'
++ timeout 120 java -Xmx1g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 2 -metadir runs/PiDagAuth3-a3-future-FuturePreserves.states -config runs/PiDagAuth3-a3-future-FuturePreserves.cfg PiDagAuth3.tla
++ rc=12
++ rm -rf runs/PiDagAuth3-a3-future-FuturePreserves.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-future-FuturePreserves.log
++ grep -qE 'is violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-future-FuturePreserves.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-future-FuturePreserves.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3-future FuturePreserves VIOLATED '1019 distinct states found'
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0
+check.sh exit=0

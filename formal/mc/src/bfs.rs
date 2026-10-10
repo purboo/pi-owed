@@ -307,7 +307,8 @@ impl<M: Model> Ctx<'_, M> {
         if self.live {
             let mut pq = 0u64;
             for (j, &(_, p, q)) in self.sel.leads.iter().enumerate() {
-                if p(m, s) {
+                // Eventually (p = None): P holds exactly at the initial states (BFS depth 0).
+                if p.map_or(depth == 0, |p| p(m, s)) {
                     pq |= 1 << (2 * j);
                 }
                 if q(m, s) {
@@ -348,6 +349,7 @@ pub(crate) fn run<M: Model>(
         let fp = fingerprint(&m.canonical(&s));
         ctx.insert(fp, NONE, [i as u64, 0], s);
     }
+    let mut levels: Vec<u64> = vec![ctx.distinct.load(Relaxed)];
     let mut found: Vec<Option<Cand>> = vec![None; nslots];
     let mut nodes: Vec<NodeRec> = Vec::new();
     let mut edges: Vec<Vec<EdgeRec>> = Vec::new();
@@ -376,6 +378,11 @@ pub(crate) fn run<M: Model>(
             hs.into_iter().map(|h| h.join().unwrap_or_else(|e| resume_unwind(e))).collect()
         });
         drop(frontier);
+        let total: u64 = levels.iter().sum();
+        let now = ctx.distinct.load(Relaxed);
+        if now > total {
+            levels.push(now - total);
+        }
         for loc in locals {
             generated += loc.generated;
             for (k, c) in loc.cands.iter().enumerate() {
@@ -416,6 +423,7 @@ pub(crate) fn run<M: Model>(
         simulated: false,
         complete: exhausted,
         limit: limit.clone(),
+        levels,
         ..Stats::default()
     };
 

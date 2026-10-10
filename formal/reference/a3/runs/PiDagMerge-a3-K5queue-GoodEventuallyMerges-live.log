@@ -1,0 +1,320 @@
+# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310
+# cfg    sha256 244de22a59dcd41a387939e0965807abd97c2907518e201a76c05be254c96a62
+# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:20+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 4 and seed 6344107945208958306 with 1 worker on 20 cores with 477MB heap and 64MB offheap memory [pid: 3456353] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagMerge.tla
+Parsing file /tmp/tlc-12188505254424692123/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-12188505254424692123/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-12188505254424692123/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-12188505254424692123/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagMerge
+Linting of module PiDagMerge
+Starting... (2026-10-08 21:49:21)
+Implied-temporal checking--satisfiability problem has 1 branches.
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 21:49:21.
+Progress(7) at 2026-10-08 21:49:21: 57 states generated, 24 distinct states found, 0 states left on queue.
+Checking temporal properties for the complete state space with 24 total distinct states at (2026-10-08 21:49:21)
+Error: Temporal property GoodEventuallyMerges was violated.
+
+Error: The following behavior constitutes a counter-example:
+
+State 1: <Initial predicate>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "genesis",
+  obs |-> (k0 :> {} @@ k1 :> {}),
+  genesis |-> FALSE,
+  head |-> 0,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 2: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "start",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> FALSE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 3: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "prepare",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> TRUE,
+  leaseUsed |-> TRUE,
+  conflictMerge |-> FALSE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 4: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "prepare",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> TRUE,
+  lease |-> TRUE,
+  leaseUsed |-> TRUE,
+  conflictMerge |-> TRUE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 5: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "prepare",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> TRUE,
+  lease |-> FALSE,
+  leaseUsed |-> TRUE,
+  conflictMerge |-> TRUE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 6: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "validate",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> TRUE,
+  conflictMerge |-> TRUE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 7: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "ready",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> FALSE,
+  lease |-> FALSE,
+  leaseUsed |-> TRUE,
+  conflictMerge |-> TRUE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 8: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "ready",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> TRUE,
+  lease |-> FALSE,
+  leaseUsed |-> TRUE,
+  conflictMerge |-> TRUE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+State 9: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+/\ f = [unused |-> TRUE]
+/\ x = [ key |-> k0,
+  rank |-> 0,
+  truth |-> TRUE,
+  phase |-> "prepare",
+  obs |-> (k0 :> {"pass"} @@ k1 :> {}),
+  genesis |-> TRUE,
+  head |-> 1,
+  snap |-> 0,
+  sealed |-> FALSE,
+  conflict |-> FALSE,
+  accurateSeen |-> FALSE,
+  original |-> {},
+  rerunDone |-> FALSE,
+  merged |-> FALSE,
+  badMerged |-> FALSE,
+  freshBlockMerged |-> FALSE,
+  unobservedMerged |-> FALSE,
+  waivedStateMerged |-> FALSE,
+  deferred |-> FALSE,
+  waiver |-> FALSE,
+  stateWaiver |-> FALSE,
+  debtAfter |-> FALSE,
+  lateBlock |-> FALSE,
+  invalidated |-> TRUE,
+  lease |-> FALSE,
+  leaseUsed |-> TRUE,
+  conflictMerge |-> TRUE,
+  unrelated |-> FALSE,
+  hist |-> <<>> ]
+
+Back to state 4: <Next line 303, col 9 to line 305, col 38 of module PiDagMerge>
+
+Finished checking temporal properties in 00s at 2026-10-08 21:49:21
+57 states generated, 24 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 7.
+Finished in 00s at (2026-10-08 21:49:21)
