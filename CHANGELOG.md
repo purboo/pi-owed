@@ -1,5 +1,141 @@
 # Changelog
 
+## 0.9.0
+
+A wais merge took 13.3 min (feedback #23): the sum of its merge-tree checks
+run one after another (node checks 47+46+11 s, invariants 36, 86, 318, 16,
+103 and 83 s). Each run also measured in a fresh /tmp/owed-run-*/tree path;
+cargo fingerprints include that path and every file mtime was new, so every
+run rebuilt from scratch and incremental builds never helped. M1 measures a
+merge's jobs in parallel, M2 reuses measurement trees, and M3 documents both.
+
+- **Parallel merge-tree measurement (M1; wais #23).** The new plan field
+  `exec.parallel` (integer >= 1, default 1) is the number of jobs one `owed
+  merge` measures at once: its genesis/invariant jobs and its merge-result
+  jobs share one queue started in job order. The same applies to `owed
+  adopt` and to the genesis attest (`init`, `attest --genesis`). Node
+  attests stay serial, because the driver already runs attests of different
+  nodes in parallel. Observations enter the ledger in job order whatever
+  order the jobs finish in; with `parallel: 1` behavior is exactly that of
+  0.8. An abort (D16) kills every running job and starts no further one.
+  Merge and adopt keep the observations of the jobs that completed before
+  the abort, through `abortWith` as before; the kept set is in job order
+  but need not be a prefix of the job list. The genesis attest records
+  each observation once its predecessors are recorded, also after an
+  abort; a failure to record one starts no further job, waits for the
+  running ones and then fails. A job that throws likewise stops new starts.
+- **Reused measurement trees (M2; wais #23).** The new plan field `exec.trees`
+  is `fresh` (default: a new temporary worktree per run, removed afterwards) or
+  `reuse`. With `reuse`, check, red, strength and invariant runs use a stable
+  detached worktree `<git common dir>/owed/trees/<kind>-<check id>-<k>`
+  (`<kind>` is inv, check, red or strength; an id that is not path-safe becomes
+  `h` + 16 hex of its sha256), with `<k>` the lowest index whose lease is free.
+  The lease is `<tree>.lock` holding the pid, taken atomically by writing the
+  pid to a unique temporary file and link()ing it to the lock path, so a lock
+  file is never empty. A lock whose content X is dead (a dead pid, or empty or
+  unparsable and older than 60 s) is reclaimed under the token
+  `<tree>.lock.dead-<X>`, created with O_EXCL: the holder re-reads the lock,
+  unlinks it only if it still holds X, tries the normal take once (moving to the
+  next k if it loses) and unlinks the token; a reclaimer that cannot create the
+  token does nothing for that k. Concurrent measurements of one check therefore
+  get different trees, and a stale lock ends with exactly one holder. Taking a
+  lease also removes that lock's temporary files older than 60 s and dead-pid
+  tokens older than 1 h. A reused tree is prepared with `git checkout --detach
+  --force <commit>` and `git clean -ffdx`; then each gitlink (submodule)
+  directory of the commit is emptied inside that tree, as a fresh `git worktree
+  add` tree leaves it. No `git submodule` command runs and no config or modules
+  directory changes. The overlays follow as before, so the content equals a
+  fresh tree. What survives is the path and the mtimes of files the checkout did
+  not change: a build cache outside the tree (a shared `CARGO_TARGET_DIR`)
+  builds incrementally; an ignored `target/` inside the tree does not survive. A
+  missing or broken tree is recreated; a failure to prepare one falls back to a
+  fresh tree with a one-line note in the observation log and never fails the
+  measurement. The end of a run releases the lease and keeps the tree; each
+  strength mutant prepares the tree again. Reuse trees are not slots: gc's slot
+  handling, dispatch, the D19 trunk-worktree report and the slot reports ignore
+  them. `owed gc` removes those whose lease is free when the plan no longer sets
+  `trees: reuse` or their check id is gone (listed as `trees`, held ones as
+  `treesKept`; `--dry-run` only reports), plus lock temporary files older than
+  60 s and reclaim tokens older than 1 h. It appends no ledger entry for them.
+- **Scheduling fields are not keys.** `exec.parallel` and `exec.trees` are
+  not part of `execKey`, any check key or the L2 check definition, and the
+  exec comparison (`execChanged`, now over `execKey`) looks at `env` and
+  `wrap` only. Changing them supersedes nothing, invalidates no candidate,
+  re-measures nothing, records no `exec changed` downgrade and needs no
+  owner authority; changing `env` or `wrap` works as before. An `exec:`
+  block holding only `parallel` and/or `trees` is valid; parsed plans keep
+  each field only when it is set. The `Exec:` view line shows them.
+- **Docs (M3).** SPEC (§3.2, §4.1, §7 step 8, new §7.12, gc), README,
+  SKILL and MODULES describe both fields and the measurement environment.
+  Advice: parallel cargo builds sharing one `CARGO_TARGET_DIR` serialize on
+  cargo's build-directory lock, so give heavy invariants separate target
+  dirs or accept that they wait for each other.
+
+**Compatibility.** 0.8.x parses `exec.parallel` and `exec.trees` as unknown
+exec keys and refuses the plan (`exec.<key>: unknown key`), so upgrade the
+CLI, the pi extension and remote executors together before setting them.
+Ledger entries and keys are unchanged; plans without the new fields behave
+exactly as in 0.8.0. A ledger whose plan sets them needs owed >= 0.9.0 to
+replay.
+
+**Deferred.** Per-check "measure on the candidate merged with the current
+trunk" (#23; wais: low priority). Reading dsa 1.0.34 `delivery:
+"forwarded"` directly. Review #950 nit: two reclaimers that both remove the
+same dead-pid token older than 1 h can, in a narrow window, end with two
+holders of one reuse tree (rename the old token to a unique name before
+removing it). Still open from 0.8.0: `error_expect` for
+environment-precondition failures (#12): a check reports these today by
+exiting 126/127 without a count, which records `error`, not a failure.
+Per-tier model routing (#11 asked for a tier or risk mapping; routing
+remains per node). A plan warning for unknown node keys (typos like
+`drvie:` are ignored; refusing them would change which existing plans are
+accepted). Attest-busy nits: a dispatch whose ledger-lock timeout is
+followed by a failed rollback still exits 75 `retry` though leftovers may
+block a retry; `--json=x` gets no JSON error line (the CLI matches `--json`
+only). The SIGKILL limit: a stop at once SIGKILLs the dsa invocations' and
+attest children's process groups only; the checks an attest runs have
+process groups of their own, so a check whose attest was SIGKILLed before
+ending it keeps running, unrecorded, until it exits. K review nits not
+fixed: with per-node locks, parallel node attests each measure a pending
+genesis invariant (correct under D24, more CPU); lock owners record no
+process start time, so a stale attest lock whose pid was reused reads as
+busy indefinitely, and the driver retries without a halt; the `hold`
+comment in `src/dsa.ts` still says owed exits only 0..3; the driver's
+`--json` loop exit record maps a `busy` error to code 3; merge's abort path
+(`abortWith`) keeps the strict whole-plan stability rule, so an abort after
+any plan update discards the measurements; merge recomputes facts with git
+under the ledger lock when the plan changed; merge's branch for a node that
+left the plan is unreachable (removing the node invalidates its candidate
+first); the invalidation refusal says `its spec changed` also for `setup`,
+`exec` or `closure` changes; a waiver of an obligation the candidate does
+not have prints an empty key (unknown obligations are not refused, as
+before); the threshold hint reads the node's observations across attempts,
+so a new attempt's first under-count may hint at once; the node-models sha
+test recomputes the plan sha formula instead of going through `owed plan`,
+and a merge-cas test title says `without remeasuring` but counts only the
+invariant. Without dsa, an owed attest that exits 75 on a ledger-lock
+timeout is logged as `machine lease refused` (busyDetail); the behavior is
+right. While a node stays busy the log gets a `started` and a busy line per
+timed pass (0.6.x printed one busy line per busy period). A rejected ruling
+send is recognized after a driver restart through dsa's request record;
+whether that survives a dsa `prune` was not verified. Still open from
+0.6.1: the writes hint lists node ids verbatim as globs and grants every
+listed node the union of the new prefixes; a concurrent dispatch can make a
+rollback report `rollback failed: directory cleanup`; a rollback that wraps
+a non-OwedError drops its stack and the pi extension returns it as a tool
+error; pi revalidation replays the whole ledger once per delivery attempt,
+and a failed delivery's dropped wakes are already marked resolved; a
+staying driver polls neither dsa events nor trunk drift while it waits.
+Still open from 0.6.0: a follow-up dsa retires because the call sealed
+before delivery still ends in a misleading `finished repair follow-up
+without submitting` halt (awaits dsa §49); M4 and M6 of `owed05-big.sh`
+remain within 9% of the 22M-state cap. The 0.6.1 candidates stay open:
+bind a reviewer's identity to its dsa call; rulings that uphold or overrule
+a named block. The formal model does not cover resume, superseded blocks,
+parallel measurement or reused trees. A new candidate that changes the
+flaky test itself does not clear the block; whether it should is deferred.
+Wais #22 parts 1-2: a merge train is deferred.
+
 ## 0.8.0
 
 The wais run of 2026-10-10 reported recovery, check-definition and ruling
