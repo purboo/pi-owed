@@ -158,7 +158,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string): Rece
 /** One line naming the plan's wrapper argv and env names (D20.5); argv words with blanks or quotes are JSON-quoted. */
 export function execText(plan: Plan): string {
   const word = (w: string): string => /^[^\s"'\\]+$/.test(w) ? w : JSON.stringify(w);
-  const parts = [...(plan.exec?.wrap?.length ? [`wrap ${plan.exec.wrap.map(w => oneLine(word(w))).join(' ')}`] : []), ...(plan.exec?.env && Object.keys(plan.exec.env).length ? [`env ${Object.keys(plan.exec.env).sort().join(', ')}`] : [])];
+  const parts = [...(plan.exec?.wrap?.length ? [`wrap ${plan.exec.wrap.map(w => oneLine(word(w))).join(' ')}`] : []), ...(plan.exec?.env && Object.keys(plan.exec.env).length ? [`env ${Object.keys(plan.exec.env).sort().join(', ')}`] : []), ...(plan.exec?.parallel !== undefined ? [`parallel ${plan.exec.parallel}`] : []), ...(plan.exec?.trees !== undefined ? [`trees ${plan.exec.trees}`] : [])];
   return `Exec: ${parts.join(' · ')}`;
 }
 /** K3: the effective writer and reviewer of a node's later driver launches; `(<model>)` only when a model is set. */
@@ -352,7 +352,9 @@ export function renderEntry(e: Entry): string { return `Recorded ${entryLine(e)}
 export function renderGc(r: GcResult): string {
   const removed = r.removed.map(i => `  ${i.node}#${i.attempt}: ${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(ref => `${r.dryRun ? 'would pin' : 'pinned'} ${ref}`)].filter(Boolean).join(', ')}`);
   const kept = r.kept.map(i => `  ${i.node}#${i.attempt} (${i.branch}): ${i.reason}`);
-  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
+  // M2: reused measurement trees, only when there are any.
+  const trees = [...(r.trees?.length ? [`Reused measurement trees ${r.dryRun ? 'that would be removed' : 'removed'}:`, ...r.trees.map(t => `  ${t.path}: ${t.reason}`)] : []), ...(r.treesKept?.length ? ['Reused measurement trees kept:', ...r.treesKept.map(t => `  ${t.path}: ${t.reason}`)] : [])];
+  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...trees, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
 }
 export function renderReport(v: Report): string {
   const list = (title: string, lines: string[]) => [`${title}${lines.length ? '' : ': none'}`, ...lines.map(l => `  ${l}`)];

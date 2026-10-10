@@ -75,6 +75,8 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
     if (bytes.length > LIMIT) { truncated = true; bytes = bytes.subarray(bytes.length - LIMIT); }
   }
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
+  // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
+  const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, note: (line: string) => capture(`${line}\n`) } : undefined;
   async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string }> {
     return new Promise(resolve => {
       let output = Buffer.alloc(0), error: string | undefined;
@@ -120,7 +122,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (ctx.signal?.aborted) throw new Error('aborted');
         capture(`\n=== mutant ${path} ===\n`);
         const patch = (await git(ctx.cwd, ['cat-file', 'blob', `${job.base}:${path}`])).stdout;
-        work = await materialize(ctx.cwd, job.commit);
+        work = await materialize(ctx.cwd, job.commit, reuse);
         try {
           await overlay(ctx.cwd, work.path, job.base, ctx.plan.closure, 'replace');
           const applied = await git(work.path, ['apply', '--whitespace=nowarn', '-'], { input: patch, allowFail: true });
@@ -142,7 +144,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       capture(`\n${['Mutants:', ...results.map(l => `- ${l}`), obs.note].join('\n')}\n`);
     } else {
       const spec = job.spec; if (!spec) throw new Error('missing check spec');
-      work = await materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit);
+      work = await materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit, reuse);
       if (job.kind === 'red') await overlay(ctx.cwd, work.path, job.commit, spec.tests ?? [], 'add');
       await overlay(ctx.cwd, work.path, job.kind === 'inv' ? job.commit : job.base, ctx.plan.closure, 'replace');
       if (ctx.plan.setup) {
