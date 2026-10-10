@@ -465,7 +465,7 @@ function blockCycle(rank: 1 | 2) {
   const task: string = JSON.parse(launch.spec).task, lines = task.split('\n');
   assert.ok(lines.includes('Your reviewer identity: reviewer:drive-a-1-1 (never the writer of this node).'), task);
   assert.ok(lines.includes(`- #${blk.seq} review rank ${rank}: n`), task);
-  assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank ${rank} --note "..."`), task);
+  assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank ${rank} --candidate ${r.state().nodes.a!.candidate!.commit.slice(0, 12)} --note "..."`), task);
   assert.equal(task, reviewPacket(r.state(), 'a', 2));
   r.launchReviewer(2);
   r.review('ok', 'reviewer:drive-a-1-1', rank);
@@ -513,7 +513,8 @@ test('review packet without blocks keeps its text (slot identity k = n − base)
     'Do not edit files, commit or run owed submit; review only.',
     'If the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, record --block --needs-parent and state the decision needed; do not push a guess onto the writer.',
     'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',
-    '  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --note "..."',
+    '  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --candidate ac1 --note "..."',
+    '--candidate ac1 names the candidate you reviewed: if the writer submits again while you review, recording is refused ("candidate changed", nothing recorded); then re-read owed why a and review the new candidate.',
     'Reply with the ledger seqs of the reviews you recorded.'].join('\n'));
 });
 
@@ -578,7 +579,7 @@ test('D11: an active rank-1 block by another principal → the slot packet asks 
   const a = act(r, runsOf(okWriter()));
   assert.ok(a?.do === 'launch' && a.role === 'reviewer', JSON.stringify(a));
   const lines = JSON.parse(a.spec).task.split('\n');
-  assert.ok(lines.includes('  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 2 --note "..."'), lines.join('\n'));
+  assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 2 --candidate ${r.state().nodes.a!.candidate!.commit.slice(0, 12)} --note "..."`), lines.join('\n'));
   assert.ok(lines.includes(`- #${h.seq} review rank 1 by reviewer:human: n`));
   // Repaired (current block), resubmitted; the slot reviewer of c2 is asked for rank 2 again and its ok clears the human block.
   r.launchReviewer(1);

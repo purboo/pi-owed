@@ -197,9 +197,10 @@ test('halt clearing: driver entries, notes and executor observations do not clea
     assert.equal(await isHalted(), h3.seq, 'executor observations do not clear');
     await ops.review({ cwd: r.cwd, as: { role: 'reviewer', id: 'r1' }, node: 'a', verdict: 'block', rank: 1, note: 'needs work' });
     assert.equal(await isHalted(), undefined, 'a review clears');
-    // A rebase or abandon by the driver itself does not clear, but a closed attempt is never halted; a new attempt is free.
+    // A closed attempt is never halted; a new attempt is free. (0.6.0 G2.3: the driver never abandons; parent:drive cannot.)
     await ops.halt({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, reason: 'fourth', needs: 'human' });
-    await ops.abandon({ cwd: r.cwd, as: drive, node: 'a', reason: 'retry' });
+    await refused(r.cwd, () => ops.abandon({ cwd: r.cwd, as: drive, node: 'a', reason: 'retry' }), /abandon by parent:drive/);
+    await ops.abandon({ cwd: r.cwd, as: { role: 'parent', id: 'main' }, node: 'a', reason: 'retry' });
     const st = (await load(r.cwd)).state;
     assert.equal(halted(st, 'a'), undefined, 'no open attempt, no halt');
     await ops.dispatch({ cwd: r.cwd, node: 'a', as: drive });
@@ -229,8 +230,9 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     assert.ok(lines.includes('Allowed writes: a/, closure/'));
     assert.ok(lines.includes(`Inspect the actual diff: git diff ${n.slot!.base} ${n.candidate!.commit}`));
     assert.ok(lines.includes(`- #${rule.seq} keep it small`));
-    assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --ack-rulings ${rule.seq} --note "..."`), text);
-    assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 2 --obligation closure-review --ack-rulings ${rule.seq} --note "..."`), text);
+    const c12 = n.candidate!.commit.slice(0, 12);
+    assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --ack-rulings ${rule.seq} --candidate ${c12} --note "..."`), text);
+    assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 2 --obligation closure-review --ack-rulings ${rule.seq} --candidate ${c12} --note "..."`), text);
     assert.ok(lines.some(l => /^- review: 1 non-writer review\(s\) by distinct reviewers, rank >= 1/.test(l)));
     assert.ok(lines.some(l => /^- closure-review: 1 non-writer review, rank >= 2/.test(l)));
     assert.match(text, /Do not edit files/);
@@ -253,7 +255,7 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     assert.equal(reviewRuns(s2, 'a'), 1, 'candidate 2 does not touch the closure: one run');
     const t2 = reviewPacket(s2, 'a', 2);
     assert.ok(t2.split('\n').includes(`Candidate: ${c2.commit} (submit #${c2.seq})`));
-    assert.ok(t2.split('\n').includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --ack-rulings ${rule.seq} --note "..."`), t2);
+    assert.ok(t2.split('\n').includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --ack-rulings ${rule.seq} --candidate ${c2.commit.slice(0, 12)} --note "..."`), t2);
     assert.match(t2, /reviewer run 1 of 1 for this candidate, n = 2/);
     assert.doesNotMatch(t2, /closure-review --ack/);
     assert.deepEqual(reviewObligations(s2, 'a', 2), ['review']);
@@ -274,8 +276,9 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     const { state } = await load(r2.cwd);
     assert.equal(reviewRuns(state, 'b'), 2);
     const one = reviewPacket(state, 'b', 1), two = reviewPacket(state, 'b', 2);
-    assert.ok(one.split('\n').includes('  owed review b --as reviewer:drive-b-1-1 --ok|--block --rank 2 --note "..."'), one);
-    assert.ok(two.split('\n').includes('  owed review b --as reviewer:drive-b-1-2 --ok|--block --rank 2 --note "..."'), two);
+    const b12 = state.nodes.b!.candidate!.commit.slice(0, 12);
+    assert.ok(one.split('\n').includes(`  owed review b --as reviewer:drive-b-1-1 --ok|--block --rank 2 --candidate ${b12} --note "..."`), one);
+    assert.ok(two.split('\n').includes(`  owed review b --as reviewer:drive-b-1-2 --ok|--block --rank 2 --candidate ${b12} --note "..."`), two);
     assert.doesNotMatch(one + two, /closure-review|--ack-rulings/);
     assert.match(two, /reviewer run 2 of 2/);
     assert.match(one, /Rulings in scope: none/);
@@ -286,8 +289,9 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     await ops.submit({ cwd: b.worktree, node: 'b', as: { role: 'writer', id: 'b#1' } });
     const s2 = (await load(r2.cwd)).state;
     assert.deepEqual([reviewerBase(s2, 'b'), nextReviewerN(s2, 'b'), reviewRuns(s2, 'b')], [2, 3, 2]);
-    assert.ok(reviewPacket(s2, 'b', 3).split('\n').includes('  owed review b --as reviewer:drive-b-1-1 --ok|--block --rank 2 --note "..."'));
-    assert.ok(reviewPacket(s2, 'b', 4).split('\n').includes('  owed review b --as reviewer:drive-b-1-2 --ok|--block --rank 2 --note "..."'));
+    const b2 = s2.nodes.b!.candidate!.commit.slice(0, 12);
+    assert.ok(reviewPacket(s2, 'b', 3).split('\n').includes(`  owed review b --as reviewer:drive-b-1-1 --ok|--block --rank 2 --candidate ${b2} --note "..."`));
+    assert.ok(reviewPacket(s2, 'b', 4).split('\n').includes(`  owed review b --as reviewer:drive-b-1-2 --ok|--block --rank 2 --candidate ${b2} --note "..."`));
     assert.match(reviewPacket(s2, 'b', 4), /reviewer run 2 of 2 for this candidate, n = 4/);
     for (const n of [1, 2, 5]) { assert.throws(() => reviewPacket(s2, 'b', n), new RegExp(`n = 3\\.\\.4\\); run ${n} does not exist`)); assert.deepEqual(reviewObligations(s2, 'b', n), []); }
     assert.deepEqual([reviewObligations(s2, 'b', 3), reviewObligations(s2, 'b', 4)], [['review'], ['review']]);
