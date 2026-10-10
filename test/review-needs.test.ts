@@ -233,7 +233,7 @@ test('reviewer packet tells reviewers to record --block --needs-parent instead o
   const r = rig(); r.dispatch(); r.launchWriter(); r.submit(); r.pass();
   const lines = reviewPacket(r.state(), 'a', 1).split('\n');
   assert.ok(lines.includes('If the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, record --block --needs-parent and state the decision needed; do not push a guess onto the writer.'), lines.join('\n'));
-  assert.ok(lines.includes('  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --note "..."'), 'command lines unchanged');
+  assert.ok(lines.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --candidate ${r.state().nodes.a!.candidate!.commit.slice(0, 12)} --note "..."`), 'command lines unchanged but for --candidate (0.6.0 G1.3)');
 });
 
 // ---------- surfaces on a real repository ----------

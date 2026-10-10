@@ -19,9 +19,13 @@ const cwd = Type.Optional(Type.String({ minLength: 1, description: 'Absolute pat
 const node = Type.String({ minLength: 1 });
 const reason = Type.String({ minLength: 1 });
 const since = Type.Optional(Type.Union([Type.Integer(), Type.String()], { description: 'Ledger seq or ISO timestamp.' }));
+/** G1: the candidate the caller judged; the act is recorded only while it is the open candidate. */
+const candidateParam = Type.Optional(Type.String({ description: 'Commit (40 hex, or a prefix of at least 7) of the candidate you judged; the act is refused, nothing recorded, unless it is still the open candidate.' }));
 function principal(value?: string, fallback = 'parent:pi'): Principal {
   const m = /^(owner|parent|writer|reviewer|executor):(.+)$/.exec(value ?? fallback);
   if (!m) throw new OwedError('as must be role:id', 'usage');
+  // G2.3 (F5): the driver records as parent:drive internally; no tool call may claim it.
+  if (m[1] === 'parent' && m[2] === 'drive') throw new OwedError(ops.DRIVER_CLAIM);
   return { role: m[1] as Role, id: m[2]! };
 }
 /** Directory the tool operates on: the optional `cwd` argument (absolute, existing directory) or ctx.cwd. */
@@ -109,6 +113,8 @@ async function slotWriter(dir: string, id: string): Promise<string | undefined> 
 }
 /** Changed paths listed in the owed_adopt confirmation dialog before the `git diff --no-renames --name-only` line (SPEC §11). */
 const ADOPT_SHOWN = 50;
+/** Candidate lines of an owner confirmation dialog (approve, and under the gate waive and owner review; G1.2). */
+const candidateLines = (v: { seq: number; commit: string; base: string; changed: number }): string => `Candidate: ${v.commit} (submit #${v.seq})\nBase: ${v.base}\nChanged files: ${v.changed}`;
 function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
 
 export default function owed(pi: ExtensionAPI): void {
@@ -128,7 +134,11 @@ export default function owed(pi: ExtensionAPI): void {
   function tool<S extends TSchema>(name: string, description: string, parameters: S, run: (p: Static<S>, ctx: ExtensionContext, dir: string, signal?: AbortSignal) => Promise<ReturnType<typeof result>>) {
     pi.registerTool({ name: `owed_${name}`, label: `owed ${name}`, description, parameters, exposure: 'direct', executionMode: 'sequential',
       async execute(_id, p, signal, _update, ctx) {
-        try { return await run(p, ctx, await target(ctx, (p as { cwd?: string }).cwd), signal); }
+        try {
+          // G2.3 (F5): refused everywhere, reads included.
+          if ((p as { as?: unknown }).as === 'parent:drive') throw new OwedError(ops.DRIVER_CLAIM);
+          return await run(p, ctx, await target(ctx, (p as { cwd?: string }).cwd), signal);
+        }
         catch (e) {
           if (!(e instanceof OwedError)) throw e;
           return { ...result({ code: e.code, reason: e.message }, `${e.code === 'aborted' ? 'Aborted' : 'Refused'}: ${e.message}`), isError: true };
@@ -162,19 +172,21 @@ export default function owed(pi: ExtensionAPI): void {
   tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; as does not change executor identity.', Type.Object({ node, rerun: Type.Optional(Type.Boolean()), as, cwd }), async (p, _ctx, dir, signal) => {
     const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal }); return result(r, `${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}`);
   });
-  tool('review', 'Independent review; explicitly specify reviewer:id (or owner:id: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), cwd }), async (p, ctx, dir, signal) => {
+  tool('review', 'Independent review; explicitly specify reviewer:id (or owner:id: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), candidate: candidateParam, cwd }), async (p, ctx, dir, signal) => {
     if (!p.as || !['reviewer', 'owner'].includes(principal(p.as).role)) throw new OwedError('review requires an explicit reviewer:id or owner:id');
-    const { cwd: _cwd, needs_parent, ...args } = p;
-    const r = await ops.review({ ...args, ...(needs_parent ? { needs: 'parent' as const } : {}), ...await actor(ctx, dir, p.as, `Review ${oneLine(p.node)}/${p.obligation ?? 'review'}: ${p.verdict}${needs_parent ? ' (needs a parent ruling)' : ''}, rank ${p.rank}`, { Note: p.note }, signal) }); return card(dir, p.node, r);
+    const { cwd: _cwd, needs_parent, candidate, ...args } = p;
+    // G1.2: under the gate the owner's dialog shows the candidate the review lands on, and pins it.
+    const v = principal(p.as).role === 'owner' && ops.confirmGate() ? await ops.candidatePreview({ cwd: dir, node: p.node }) : undefined;
+    const r = await ops.review({ ...args, ...(needs_parent ? { needs: 'parent' as const } : {}), named: candidate, from: [ctx.cwd], ...(v ? { pin: { seq: v.seq, commit: v.commit } } : {}), ...await actor(ctx, dir, p.as, `Review ${oneLine(p.node)}/${p.obligation ?? 'review'}: ${p.verdict}${needs_parent ? ' (needs a parent ruling)' : ''}, rank ${p.rank}${v ? `\n${candidateLines(v)}` : ''}`, { Note: p.note }, signal) }); return card(dir, p.node, r);
   });
-  tool('approve', 'Owner approval of the open candidate of a node with `approve: owner` (D23), e.g. before a publish or push; block records an owner block instead (cleared by a later owner approval). the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner; the dialog shows the node, candidate commit, base and the number of changed files.', Type.Object({ node, note: Type.Optional(Type.String()), block: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
+  tool('approve', 'Owner approval of the open candidate of a node with `approve: owner` (D23), e.g. before a publish or push; block records an owner block instead (cleared by a later owner approval). the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner; the dialog shows the node, candidate commit, base and the number of changed files.', Type.Object({ node, note: Type.Optional(Type.String()), block: Type.Optional(Type.Boolean()), candidate: candidateParam, as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'approve');
     const v = await ops.approvePreview({ cwd: dir, node: p.node });
-    const a = await actor(ctx, dir, who, `${p.block ? 'Block approval of' : 'Approve'} node ${oneLine(v.node)}\nCandidate: ${v.commit} (submit #${v.seq})\nBase: ${v.base}\nChanged files: ${v.changed}`, { Note: p.note }, signal);
+    const a = await actor(ctx, dir, who, `${p.block ? 'Block approval of' : 'Approve'} node ${oneLine(v.node)}\n${candidateLines(v)}`, { Note: p.note }, signal);
     // The confirmed candidate is the one approved: a resubmit during the dialog refuses (review ruling #389).
-    const r = await ops.approve({ ...a, channel: a.channel!, node: p.node, note: p.note, block: !!p.block, candidate: { seq: v.seq, commit: v.commit } }); return card(dir, p.node, r);
+    const r = await ops.approve({ ...a, channel: a.channel!, node: p.node, note: p.note, block: !!p.block, candidate: { seq: v.seq, commit: v.commit }, named: p.candidate }); return card(dir, p.node, r);
   });
-  tool('evidence', 'Manual evidence (D23): on a node with an open candidate it discharges evidence:<id> (files required; recorded by the role the plan names, or the owner; never a writer); on a merged node it records an informational receipt (e.g. version, dist-tag, tarball). Files (relative to cwd) are hashed when recorded. Always shown as manual, never as measured. As owner: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner.', Type.Object({ node, id: Type.String({ minLength: 1 }), files: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: 'Evidence files, relative to cwd.' })), note: reason, as: Type.String({ pattern: '^(owner|parent|reviewer):.+$', description: 'Principal role:id (reviewer, parent or owner).' }), cwd }), async (p, ctx, dir, signal) => {
+  tool('evidence', 'Manual evidence (D23): on a node with an open candidate it discharges evidence:<id> (files required; recorded by the role the plan names, or the owner; never a writer); on a merged node it records an informational receipt (e.g. version, dist-tag, tarball). Files (relative to cwd) are hashed when recorded. Always shown as manual, never as measured. As owner: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner.', Type.Object({ node, id: Type.String({ minLength: 1 }), files: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: 'Evidence files, relative to cwd.' })), note: reason, as: Type.String({ pattern: '^(owner|parent|reviewer):.+$', description: 'Principal role:id (reviewer, parent or owner).' }), candidate: candidateParam, cwd }), async (p, ctx, dir, signal) => {
     const files = p.files ?? [];
     // The owner confirms the files as hashed now; ops refuses when they changed before recording.
     const expect = principal(p.as).role === 'owner' ? await ops.evidenceFiles({ cwd: dir, files }) : undefined;
@@ -182,7 +194,7 @@ export default function owed(pi: ExtensionAPI): void {
     const at = expect ? await ops.evidencePreview({ cwd: dir, node: p.node }) : undefined;
     const target = at?.candidate ? `Candidate: ${at.candidate.commit} (submit #${at.candidate.seq})\nBase: ${at.candidate.base}` : at?.merge !== undefined ? `Receipt on merge #${at.merge}` : 'No open candidate and no merge';
     const a = expect ? await actor(ctx, dir, p.as, `Record manual evidence ${oneLine(p.node)}/${oneLine(p.id)}\n${target}\nManual evidence is shown as manual, never as measured.`, { [`Files (${expect.length})`]: { items: expect.map(f => `${f.path} ${f.sha256.slice(0, 12)} (${f.bytes} bytes)`) }, Note: p.note }, signal) : await actor(ctx, dir, p.as, undefined, {}, signal);
-    const r = await ops.evidence({ ...a, node: p.node, id: p.id, files, note: p.note, ...(expect ? { expect } : {}), ...(at?.candidate ? { candidate: { seq: at.candidate.seq, commit: at.candidate.commit } } : {}) });
+    const r = await ops.evidence({ ...a, node: p.node, id: p.id, files, note: p.note, named: p.candidate, from: [ctx.cwd], ...(expect ? { expect } : {}), ...(at?.candidate ? { candidate: { seq: at.candidate.seq, commit: at.candidate.commit } } : {}) });
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
   tool('merge', 'Run the merge guard, measure the merge tree and advance trunk with CAS.', Type.Object({ node, as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`, {}, signal), node: p.node, signal }); return card(dir, p.node, r); });
@@ -231,10 +243,12 @@ export default function owed(pi: ExtensionAPI): void {
     }
     return result({ entry: r.entry, genesis: r.entry.seq, measuring: n }, `${renderEntry(r.entry)}\nInitialized (genesis #${r.entry.seq}). ${n ? `Measuring ${n} genesis invariant${n === 1 ? '' : 's'} in the background in this session; owed_status shows progress and this session gets one message when it ends.` : 'No invariants to measure.'}`);
   });
-  tool('waive', 'Owner waiver of a current obligation (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner); reason says why; accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), as, cwd }), async (p, ctx, dir, signal) => {
+  tool('waive', 'Owner waiver of a current obligation (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner); reason says why; accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), candidate: candidateParam, as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'waive');
-    const a = await actor(ctx, dir, who, `Waive ${oneLine(p.node)}/${oneLine(p.obligation)}\nAccepted risks (block seq): ${JSON.stringify(p.accept_risk ?? [])}\nThis obligation will be shown as waived, not a measured pass.`, { Reason: p.reason }, signal);
-    const r = await ops.waive({ node: p.node, obligation: p.obligation, reason: p.reason, accept_risk: p.accept_risk, ...a, channel: a.channel! }); return card(dir, p.node, r);
+    // G1.2: under the gate the dialog shows the candidate the waiver lands on, and pins it.
+    const v = ops.confirmGate() ? await ops.candidatePreview({ cwd: dir, node: p.node }) : undefined;
+    const a = await actor(ctx, dir, who, `Waive ${oneLine(p.node)}/${oneLine(p.obligation)}\n${v ? `${candidateLines(v)}\n` : ''}Accepted risks (block seq): ${JSON.stringify(p.accept_risk ?? [])}\nThis obligation will be shown as waived, not a measured pass.`, { Reason: p.reason }, signal);
+    const r = await ops.waive({ node: p.node, obligation: p.obligation, reason: p.reason, accept_risk: p.accept_risk, named: p.candidate, ...(v ? { pin: { seq: v.seq, commit: v.commit } } : {}), ...a, channel: a.channel! }); return card(dir, p.node, r);
   });
   tool('defer', 'Owner deferral of prospective merge-tree invariants; debt remains (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner).', Type.Object({ node, items: Type.Array(node, { minItems: 1, description: 'Invariant IDs.' }), reason, as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'defer');

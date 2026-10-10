@@ -63,14 +63,14 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
   if (obligation === 'review' || obligation === 'closure-review') {
     const rank = obligation === 'closure-review' ? 2 : spec?.review.min_rank ?? 1;
     const count = obligation === 'closure-review' ? 1 : spec?.review.count ?? 1;
-    const reviews = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.obligation === obligation && e.key === key && e.verdict === 'ok' && e.rank >= rank && !node?.writers.includes(e.by));
+    const reviews = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.obligation === obligation && e.key === key && e.verdict === 'ok' && e.rank >= rank && !isWriter(node, e.by));
     out.evidence = reviews.map(e => e.seq);
     out.discharger = obligation === 'closure-review' ? 'owner' : 'reviewer';
     out.detail = `${obligation} requires ${count} non-writer reviews with rank at least ${rank}`;
     if (new Set(reviews.map(e => e.by)).size >= count) out.status = 'E';
   } else if (obligation === 'rulings') {
     const latest = latestRule(s, subject);
-    const acknowledgments = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.attempt === node?.slot?.attempt && e.seq > (node?.slot?.dispatchSeq ?? -1) && e.verdict === 'ok' && e.rank >= 1 && (e.ack_rulings ?? -1) >= latest && !node?.writers.includes(e.by) && e.key === node?.candidate?.keys[e.obligation]);
+    const acknowledgments = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.attempt === node?.slot?.attempt && e.seq > (node?.slot?.dispatchSeq ?? -1) && e.verdict === 'ok' && e.rank >= 1 && (e.ack_rulings ?? -1) >= latest && !isWriter(node, e.by) && e.key === node?.candidate?.keys[e.obligation]);
     if ((node?.slot?.rulings_seen ?? -1) >= latest || acknowledgments.length) {
       out.status = 'E';
       out.evidence = acknowledgments.length ? acknowledgments.map(e => e.seq) : [node!.slot!.dispatchSeq];
@@ -246,6 +246,8 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
 // ---------- driver (SPEC §12) ----------
 const DRIVE_KINDS: readonly string[] = ['launch', 'send', 'halt'];
 export const DRIVER = 'parent:drive';
+/** The entry kinds the driver records as DRIVER (drive-run.ts); validateDraft refuses any other kind by it (G2.3). */
+const DRIVER_WRITES: readonly string[] = ['dispatch', 'launch', 'send', 'halt', 'rebase'];
 /**
  * A halt is cleared by a later entry on its node by a principal other than the driver: a human, parent,
  * writer or reviewer action (submit, review, rebase, abandon, waive, defer, escape, a ruling naming the
@@ -435,6 +437,8 @@ export function validateDraft(s: State, d: Draft): string[] {
   const r = role(d.by);
   const allow = (...roles: string[]): void => { if (!roles.includes(r)) errors.push(`${d.kind} insufficient permissions; requires ${roles.join('/')}`); };
   if (!/^(owner|parent|writer|reviewer|executor):.+$/.test(d.by)) errors.push('Invalid identity format');
+  // G2.3 (F5): parent:drive is the driver's name only; it records nothing the driver never writes (append and replay).
+  if (d.by === DRIVER && !DRIVER_WRITES.includes(d.kind)) errors.push(`${d.kind} by ${DRIVER}: the driver records only ${DRIVER_WRITES.join(', ')}`);
   if (d.kind === 'genesis') {
     allow('owner');
     if (s.seq !== -1) errors.push('genesis must be the first entry');
