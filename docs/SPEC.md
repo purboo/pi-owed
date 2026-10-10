@@ -1500,7 +1500,20 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   generation it started; until `describe` reports that generation (highest
   `calls[].gen`), a sealed view of the run is the previous generation's and is
   presented to `decide` as `running`, so a lagging describe never causes a
-  second follow-up or a halt.
+  second follow-up or a halt. dsa opens a generation only for a follow-up to a
+  sealed call (the reply carries `generation`); one to a running call is
+  forwarded into the running generation (no `generation` in the reply). When
+  the reply has none (0.6.0, G3.6): if the run's last view observed in this
+  process was running, asking or queued, no new generation is expected (the
+  sealed view that follows is the follow-up's outcome); otherwise the driver
+  expects the last observed generation + 1.
+- **Conflicting files** (0.6.0, G3.7). For a rebased slot without a candidate
+  whose rebase recorded a previous candidate, the driver computes `git
+  merge-tree --write-tree --name-only <new base> <previous commit>` while
+  observing and passes the conflicted paths to `decide` (`DriveOpts.conflicts`).
+  The rebase follow-up and the rebasing repair of §12.5 then add `(files that
+  conflict with your previous candidate: <paths>|none)` after the `git rebase
+  --onto` command; the clause is omitted when git fails.
 - **Attest** runs `pi-durable-subagents hold machine --shared --no-wait --
   owed attest <node>` in the main worktree when dsa is available (else `owed
   attest <node>` directly); the driver's own process never holds a lease.
