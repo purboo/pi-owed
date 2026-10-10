@@ -110,7 +110,7 @@ test('row 2: writer launch missing → launch writer (agent/model from drive:, s
   const r = rig(); r.rule('before dispatch'); r.dispatch(); r.rule('after dispatch');
   const a = act(r, runsOf(), { rejected: new Map([[W(), 'ignored: no launch yet']]) });
   assert.ok(a?.do === 'launch');
-  assert.deepEqual({ ...a, spec: undefined }, { do: 'launch', node: 'a', attempt: 1, role: 'writer', rid: W(), spec: undefined, labels: runLabels(P, 'a', 1, 'writer') });
+  assert.deepEqual({ ...a, spec: undefined }, { do: 'launch', node: 'a', attempt: 1, role: 'writer', rid: W(), spec: undefined, labels: runLabels(P, 'a', 1, 'writer'), rulings: r.state().rules[0]!.seq }, 'rulings: the ruling the dispatch packet carried (E4), not the later one');
   assert.equal(a.n, undefined, 'writers have no n');
   const parsed = JSON.parse(a.spec);
   assert.deepEqual(Object.keys(parsed), ['agent', 'cwd', 'isolation', 'model', 'name', 'once', 'task']);
@@ -258,7 +258,7 @@ test('row 12: review awaiting → launch reviewer n (reviewer agent, repo root, 
   const r = submitted(); r.pass();
   const a = act(r, runsOf(okWriter()));
   assert.ok(a?.do === 'launch');
-  assert.deepEqual({ ...a, spec: undefined }, { do: 'launch', node: 'a', attempt: 1, role: 'reviewer', n: 1, rid: R(1), spec: undefined, labels: runLabels(P, 'a', 1, 'reviewer') });
+  assert.deepEqual({ ...a, spec: undefined }, { do: 'launch', node: 'a', attempt: 1, role: 'reviewer', n: 1, rid: R(1), spec: undefined, labels: runLabels(P, 'a', 1, 'reviewer'), rulings: 0 });
   assert.equal(a.spec, launchSpec({ agent: 'reviewer', cwd: '/repo', task: reviewPacket(r.state(), 'a', 1), name: 'owed a#1 reviewer 1' }));
   assert.deepEqual(JSON.parse(a.spec).isolation, 'none'); assert.equal(JSON.parse(a.spec).once, true);
   r.launchReviewer(1);

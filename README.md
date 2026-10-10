@@ -324,7 +324,9 @@ rebase or abandon on the node clears a halt, and the next pass resumes. A ruling
 driver-launched writer or reviewer call is running reaches it as a steer
 (reason `ruling`, recorded) once the node has nothing else to do; sealed calls
 get rulings with the next repair, and reviewers still acknowledge them with
-`--ack-rulings`. Calls you launched by hand stay yours to steer. Driver calls
+`--ack-rulings`. Launch entries and repair follow-ups record the rulings their
+message carried, so a ruling recorded while one is being sent is steered
+afterwards. Calls you launched by hand stay yours to steer. Driver calls
 carry a dsa run name (`owed <node>#<attempt> writer` / `owed <node>#<attempt>
 reviewer <n>`). An asking call is printed with dsa's answer address and both
 answer forms: the pi `subagents` send call (`to`, `qid`) and the CLI command. A halt

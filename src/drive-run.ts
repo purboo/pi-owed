@@ -300,7 +300,7 @@ export class Driver {
         case 'dispatch': { const r = await ops.dispatch({ cwd, as, node: a.node }); return done('done', false, `attempt ${r.attempt} in ${r.worktree}`); }
         case 'launch': {
           const extra = { attempt: a.attempt, role: a.role, rid: a.rid };
-          await ops.launch({ cwd, as, node: a.node, attempt: a.attempt, role: a.role, rid: a.rid, spec: a.spec, labels: a.labels });
+          await ops.launch({ cwd, as, node: a.node, attempt: a.attempt, role: a.role, rid: a.rid, spec: a.spec, labels: a.labels, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}) });
           crashPoint('before-dsa', 'launch');
           const r = await this.dsa.run(a.rid, a.spec, a.labels);
           crashPoint('after-dsa', 'launch');
