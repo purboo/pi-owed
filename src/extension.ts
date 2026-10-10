@@ -11,7 +11,7 @@ import { adoptPrefixes, uncoveredDowngrades, writesHint } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
-import { allowanceLabel, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
+import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -251,6 +251,16 @@ export default function owed(pi: ExtensionAPI): void {
     const carried = await ops.carriedBy({ cwd: dir, plan: r.seq }), carriedText = [...carried.map(carryLine), ...notCarried.map(notCarriedLine)].map(l => `${l}\n`).join('');
     const data = { ...r, ...(pending.length ? { warning: warning.trim() } : {}), warnings, ...(carried.length ? { carried } : {}), ...(notCarried.length ? { notCarried } : {}), ...(ready ? { ready, driver: false } : {}) };
     return result(data, `${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(state)}${ready ? `\n${readyHintText(ready, 'pi')}` : ''}${warnings.map(w => `\n${w}`).join('')}`);
+  });
+  tool('amend', "Widen one node's writes (N3): appends the paths to the node's writes in the plan file (plan, else the latest plan entry's path; comments and layout kept), records it as owed_plan would (same authority: widening is a downgrade, so the owner or an `allow` rule of the current plan) and, in the same lock, a ruling naming the node with the limit, which the writer receives and reviewers acknowledge. Refused, with nothing recorded and the file unchanged, when the file has unrecorded edits.", Type.Object({ node, writes: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: 'Paths to add, each prefixed with + (e.g. "+src/x.ts"); removal is not offered.' }), note: Type.String({ minLength: 1, description: 'The limit of the widening (recorded in the ruling and the plan note).' }), plan: Type.Optional(Type.String({ minLength: 1, description: "Plan file, relative to cwd; defaults to the latest plan entry's path." })), as, cwd }), async (p, ctx, dir, signal) => {
+    const args = { cwd: dir, node: p.node, writes: p.writes, note: p.note, ...(p.plan !== undefined ? { plan: p.plan } : {}) };
+    // As owed_plan: downgrades an allowance of the current plan covers need no owner; otherwise the owner is the default.
+    const e = await ops.amendPreview(args), downgrades = planDowngrades(e.prior, e.plan), gaps = downgrades.length ? uncoveredDowngrades(e.prior, e.plan, downgrades) : [];
+    const who = p.as ?? (gaps.length ? ownerDefault() : 'parent:pi');
+    if (gaps.length && principal(who).role !== 'owner') { const hint = writesHint(e.prior, e.plan, gaps); throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}${hint ? `\n${hint}` : ''}`); }
+    const r = await ops.amend({ ...await actor(ctx, dir, who, `Amend plan ${oneLine(e.path)}: widen writes of ${oneLine(p.node)}\nAdded writes: ${JSON.stringify(e.added)}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`, { Limit: p.note }, signal), ...args });
+    const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.plan.seq - 1 })).downgrades.find(x => x.seq === r.plan.seq);
+    return result(r, `${amendLines(r).join('\n')}${d?.allowance !== undefined ? `\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}` : ''}\n${renderStatus(await ops.status({ cwd: dir }))}`);
   });
   tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'initialize the ledger');
