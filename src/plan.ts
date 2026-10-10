@@ -185,12 +185,13 @@ export function manualDowngrades(node: string, prev: NodeSpec, next: NodeSpec): 
 const RESERVED_ENV = ['CI', 'OWED'];
 /**
  * Parses an optional `exec:` block (D20); unknown keys and bad types are errors. Returns undefined when neither
- * `env` nor `wrap` is non-empty, so `exec: {}` equals no block (plan blob, keys and views as without it).
+ * `env` nor `wrap` is non-empty and neither `parallel` nor `trees` is set, so `exec: {}` equals no block (plan blob,
+ * keys and views as without it). 0.9: `parallel` is an integer >= 1, `trees` is `fresh` or `reuse`.
  */
 function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('exec: expected object'); return undefined; }
   const r = v as Record<string, unknown>, out: ExecConfig = {};
-  for (const k of Object.keys(r)) if (k !== 'env' && k !== 'wrap') errors.push(`exec.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (!['env', 'wrap', 'parallel', 'trees'].includes(k)) errors.push(`exec.${k}: unknown key`);
   if (r.env !== undefined) {
     if (!r.env || typeof r.env !== 'object' || Array.isArray(r.env)) errors.push('exec.env: expected object');
     else {
@@ -209,7 +210,15 @@ function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
     else if (r.wrap.some(x => typeof x !== 'string' || !x)) errors.push('exec.wrap: expected non-empty strings');
     else out.wrap = [...r.wrap] as string[];
   }
-  return out.env || out.wrap ? out : undefined;
+  if (r.parallel !== undefined) {
+    if (typeof r.parallel !== 'number' || !Number.isInteger(r.parallel) || r.parallel < 1) errors.push('exec.parallel: expected an integer >= 1');
+    else out.parallel = r.parallel;
+  }
+  if (r.trees !== undefined) {
+    if (r.trees !== 'fresh' && r.trees !== 'reuse') errors.push('exec.trees: expected fresh or reuse');
+    else out.trees = r.trees;
+  }
+  return out.env || out.wrap || out.parallel !== undefined || out.trees !== undefined ? out : undefined;
 }
 
 /** Parses an optional `allow:` block (SPEC §3.4, D21): a list of rules; unknown keys and bad types are errors; a rule needs a permission. */

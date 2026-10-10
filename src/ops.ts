@@ -132,28 +132,79 @@ function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) throw abo
  * moved ledger alone refuses nothing. On abort (D16) the running check's process group is killed (src/exec.ts), its
  * observation is not recorded, no further job starts, and this rejects with OwedError('aborted'); observations
  * appended before stay. `done` (if given) receives each recorded or superseded result as it happens.
+ * `parallel` > 1 (M1, genesis attest only; node attests stay serial): up to that many jobs at once, recorded in job
+ * order; on abort the observations of jobs that completed are still recorded.
  */
-async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: AttestJob[], signal?: AbortSignal, done?: { recorded: Entry[]; superseded: JobRef[] }): Promise<{ recorded: Entry[]; superseded: JobRef[] }> {
+async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: AttestJob[], signal?: AbortSignal, done?: { recorded: Entry[]; superseded: JobRef[] }, parallel = 1): Promise<{ recorded: Entry[]; superseded: JobRef[] }> {
   const out = done ?? { recorded: [], superseded: [] }, result = out.recorded;
+  // Records one observation under the lock when its item is still current (D24.1).
+  const record = async (job: AttestJob, obs: Draft, lockSignal?: AbortSignal) => ledger.withLock(async () => {
+    const { state } = await load(ledger);
+    if (!jobCurrent(state,job)) { out.superseded.push({ subject:job.subject, obligation:job.obligation, key:job.key }); return; }
+    guard(state,obs); result.push(...await ledger.append([obs]));
+  },undefined,lockSignal);
+  if (parallel > 1) {
+    // M1 (exec.parallel): up to `parallel` jobs at once; observations are recorded in job order. On abort every running
+    // job is killed and none starts; the completed ones are recorded (without the signal, as abortWith), then rejects.
+    checkAbort(signal);
+    const ready = jobs.map(() => { let settle!: (v: Draft | undefined) => void; const p = new Promise<Draft | undefined>(r => { settle = r; }); return { p, settle }; });
+    let failure: { error: unknown } | undefined;
+    const measuring = measureAll(jobs,parallel,signal,async job => runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), signal },job),(i,obs) => ready[i]!.settle(obs)).catch(error => { failure = { error }; for (const r of ready) r.settle(undefined); });
+    // A failed record still waits for the running jobs, so none outlives the run (and its lock).
+    try {
+      for (let i = 0; i < jobs.length; i++) {
+        const obs = await ready[i]!.p;
+        if (obs) await record(jobs[i]!,obs,signal?.aborted ? undefined : signal);
+      }
+    } finally { await measuring; }
+    if (failure) throw failure.error;
+    checkAbort(signal);
+    return out;
+  }
   for (const job of jobs) {
     checkAbort(signal);
-    let plan = snapshot.plan;
-    // Attribution must use the original setup, exec, closure and writes as well as the original check spec.
-    if (job.attribution) {
-      const h = await load(ledger);
-      const block = h.entries.find(e => e.kind === 'obs' && e.subject === job.subject && e.obligation === job.obligation && e.key === job.key && e.verdict === 'fail' && !e.attribution);
-      const law = h.entries.filter(e => e.seq <= (block?.seq ?? -1) && (e.kind === 'plan' || e.kind === 'genesis')).at(-1);
-      if (law && (law.kind === 'plan' || law.kind === 'genesis')) plan = h.lookup(law.plan);
-    }
-    const obs = await runJob({ cwd, ledger, plan, signal }, job);
+    // Attribution must use the original setup, exec, closure and writes as well as the original check spec (jobPlan).
+    const obs = await runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), signal }, job);
     checkAbort(signal);
-    await ledger.withLock(async () => {
-      const { state } = await load(ledger);
-      if (!jobCurrent(state,job)) { out.superseded.push({ subject:job.subject, obligation:job.obligation, key:job.key }); return; }
-      guard(state,obs); result.push(...await ledger.append([obs]));
-    },undefined,signal);
+    await record(job,obs,signal);
   }
   return out;
+}
+/**
+ * The plan a job runs under: the snapshot's, or for an attribution rerun the plan its block was recorded under (the
+ * original setup, exec, closure and writes as well as the original check spec).
+ */
+async function jobPlan(ledger: Ledger, snapshot: State, job: AttestJob): Promise<Plan> {
+  if (!job.attribution) return snapshot.plan;
+  const h = await load(ledger);
+  const block = h.entries.find(e => e.kind === 'obs' && e.subject === job.subject && e.obligation === job.obligation && e.key === job.key && e.verdict === 'fail' && !e.attribution);
+  const law = h.entries.filter(e => e.seq <= (block?.seq ?? -1) && (e.kind === 'plan' || e.kind === 'genesis')).at(-1);
+  return law && (law.kind === 'plan' || law.kind === 'genesis') ? h.lookup(law.plan) : snapshot.plan;
+}
+/** M1: `exec.parallel` of a plan (default 1). */
+export const parallelOf = (plan: Plan): number => plan.exec?.parallel ?? 1;
+/**
+ * M1: measures `jobs` with at most `width` at once, in job order of start. `settled(i, obs)` (if given) receives each
+ * job's observation as it completes, or undefined when it was not measured (abort). On abort (D16) running jobs are
+ * killed by the signal (src/exec.ts), no further job starts, and the observation of a job that returns after the abort
+ * is dropped. Returns the observations by job index (undefined = not measured) and whether the signal aborted. An
+ * exception stops further starts and rejects once the running jobs return.
+ */
+export async function measureAll<T>(jobs: T[], width: number, signal: AbortSignal | undefined, run: (job: T, i: number) => Promise<Draft>, settled?: (i: number, obs: Draft | undefined) => void): Promise<{ observations: (Draft | undefined)[]; aborted: boolean }> {
+  const observations: (Draft | undefined)[] = jobs.map(() => undefined);
+  let next = 0, failed: { error: unknown } | undefined;
+  const worker = async (): Promise<void> => {
+    while (next < jobs.length && !signal?.aborted && !failed) {
+      const i = next++;
+      try { const obs = await run(jobs[i]!,i); if (!signal?.aborted) observations[i] = obs; }
+      catch (error) { failed ??= { error }; }
+      settled?.(i,observations[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1,Math.min(width,jobs.length)) },worker));
+  for (let i = next; i < jobs.length; i++) settled?.(i,undefined);
+  if (failed) throw failed.error;
+  return { observations, aborted: !!signal?.aborted };
 }
 /**
  * Records the observations a merge or adopt measured before an abort (valid evidence) when the ledger did not move
@@ -187,7 +238,7 @@ export async function init(o: Actor & { plan: string; channel: Channel; signal?:
   const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
   let error: string | undefined;
   if (o.measure !== false) {
-    try { const { state } = await load(ledger); await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal,done); }
+    try { const { state } = await load(ledger); await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal,done,parallelOf(state.plan)); }
     catch (e) {
       if (e instanceof OwedError && e.code === 'aborted') { const g = await genesisOutcome(ledger,done.superseded); throw new OwedError(genesisIncompleteText(entry.seq,g),'aborted'); }
       error = e instanceof Error ? e.message : String(e);
@@ -228,7 +279,7 @@ export async function attestGenesis(o: Context & { signal?: AbortSignal }): Prom
     const ledger = await opened;
     inited((await load(ledger)).state);
     return await ledger.withLock(async () => {
-      const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal);
+      const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal,undefined,parallelOf(state.plan));
       return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
     },'genesis',o.signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` });
   } finally { genesisRuns.delete(run); }
@@ -391,12 +442,13 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal }): P
     const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
     if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
     const m = await mergeFacts(o.cwd,state,o.node,built.commit);
-    const observations: Draft[] = [];
-    // An aborted run (D16) is not measured: undefined, and the merge stops before trunk moves.
-    const measure = async (job: AttestJob) => { if (o.signal?.aborted) return undefined; const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); return o.signal?.aborted ? undefined : obs; };
     // Genesis jobs are not about this merge; merge-result jobs record the node being merged (decoy attribution).
-    for (const job of genesisJobs(state)) { const obs = await measure(job); if (!obs) return abortWith(ledger,state,observations,o.node); observations.push(obs); }
-    for (const job of mergeJobs(state,o.node,m)) { const obs = await measure(job); if (!obs) return abortWith(ledger,state,observations,o.node); observations.push({...obs,merging:o.node} as Draft); }
+    // M1: up to exec.parallel jobs at once, observations in job order. An aborted run (D16) is not measured, no further
+    // job starts, and the merge stops before trunk moves, keeping the completed observations (abortWith).
+    const jobs = [...genesisJobs(state).map(job => ({ job, merging: false })),...mergeJobs(state,o.node,m).map(job => ({ job, merging: true }))];
+    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); return merging ? {...obs,merging:o.node} as Draft : obs; });
+    const observations = run.observations.filter((x): x is Draft => x !== undefined);
+    if (run.aborted) return abortWith(ledger,state,observations,o.node);
     return ledger.withLock(async () => {
       // K4.1: node-scoped CAS (ledger trunk, this node's slot and candidate) and the trunk ref; a moved one records nothing.
       const latest = await load(ledger); nodeStable(state,latest,o.node);
@@ -504,13 +556,10 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel?
     const p = await adoptable(o.cwd,state,o.commit);
     if (o.as.role === 'parent') { const outside = unadoptable(state.plan,p.changed); if (outside !== undefined) throw new OwedError(`parent adoption refused: changed path ${outside} is not under an allow adopt prefix (${adoptPrefixes(state.plan).join(', ') || 'none'}); the owner must adopt it`); }
     const sf = await git.stateFacts(o.cwd,state.plan,p.commit);
-    const observations: Draft[] = [];
-    for (const job of [...genesisJobs(state),...adoptJobs(state,sf)]) {
-      if (o.signal?.aborted) return abortWith(ledger,state,observations);
-      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job);
-      if (o.signal?.aborted) return abortWith(ledger,state,observations);
-      observations.push(obs);
-    }
+    // M1: up to exec.parallel jobs at once, observations in job order; an abort keeps the completed ones (abortWith).
+    const run = await measureAll([...genesisJobs(state),...adoptJobs(state,sf)],parallelOf(state.plan),o.signal,job => runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job));
+    const observations = run.observations.filter((x): x is Draft => x !== undefined);
+    if (run.aborted) return abortWith(ledger,state,observations);
     return ledger.withLock(async () => {
       const latest = await load(ledger); stable(state,latest.state);
       const now = await git.git(o.cwd,['rev-parse','--verify','--quiet','--end-of-options',`refs/heads/${p.trunk}^{commit}`],{allowFail:true});
@@ -703,7 +752,10 @@ export async function decoyReveal(o: Actor & { payload:string; channel:Channel }
 import { realpath, stat } from 'node:fs/promises';
 export interface GcItem { node: string; attempt: number; worktree: string | null; branch: string | null; pinned: string[] }
 export interface GcKept { node: string; attempt: number; worktree: string; branch: string; reason: string }
-export interface GcResult { dryRun: boolean; removed: GcItem[]; kept: GcKept[]; entry?: Entry }
+/** M2: a reused measurement tree gc removed (or, with dry run, would remove), or kept, and why. */
+export interface GcTree { path: string; reason: string }
+/** `trees`/`treesKept` (M2): reused measurement trees removed and kept; present only when non-empty. */
+export interface GcResult { dryRun: boolean; removed: GcItem[]; kept: GcKept[]; trees?: GcTree[]; treesKept?: GcTree[]; entry?: Entry }
 async function real(path: string): Promise<string> { try { return await realpath(path); } catch { return resolve(path); } }
 async function exists(path: string): Promise<boolean> { try { await stat(path); return true; } catch { return false; } }
 /** Ref that keeps the commit of submit entry `seq` reachable after its branch is deleted (attribution reruns need it). */
@@ -719,7 +771,9 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
     const openTrees = await Promise.all(Object.values(state.nodes).filter(n => n.slot?.open).map(n => real(n.slot!.worktree)));
     // Stale registrations (directory deleted by hand) would otherwise pin their branches.
     if (!dryRun) await git.git(root, ['worktree', 'prune']);
-    const trees = await Promise.all((await git.listWorktrees(root)).filter(w => !w.prunable).map(async w => ({ ...w, path: await real(w.path) })));
+    // M2: reused measurement trees are never slots; they are handled after the attempts below.
+    const reuseRoot = await real(await git.reuseDir(root)), reused = (p: string) => p.startsWith(`${reuseRoot}${sep}`);
+    const trees = (await Promise.all((await git.listWorktrees(root)).filter(w => !w.prunable).map(async w => ({ ...w, path: await real(w.path) })))).filter(w => !reused(w.path));
     const removed: GcItem[] = [], kept: GcKept[] = [];
     for (const d of entries) {
       if (d.kind !== 'dispatch') continue;
@@ -764,10 +818,28 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
       }
       if (worktree || branch || pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned });
     }
-    if (dryRun || !removed.length) return { dryRun, removed, kept };
+    const t = await gcTrees(root,state.plan,dryRun), extra = { ...(t.trees.length ? { trees:t.trees } : {}), ...(t.kept.length ? { treesKept:t.kept } : {}) };
+    if (dryRun || !removed.length) return { dryRun, removed, kept, ...extra };
     await git.git(root, ['worktree', 'prune']);
     const text = `gc removed ${removed.map(i => `${i.node}#${i.attempt} (${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(r => `pinned ${r}`)].filter(Boolean).join(', ')})`).join('; ')}`;
     const entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; const d: Draft = { kind: 'note', by: by(actor), channel: actor.channel, text }; guard(current, d); return (await ledger.append([d]))[0]!; });
-    return { dryRun, removed, kept, entry };
+    return { dryRun, removed, kept, ...extra, entry };
   }, 'dispatch');
+}
+/**
+ * M2: reused measurement trees gc removes: those whose lease is free when the plan no longer sets `exec.trees: reuse`,
+ * or when their check id is gone (an `inv` tree: no invariant of that id; other kinds: no node check of that id). A
+ * tree whose lease a live process holds is kept. `dryRun` only reports.
+ */
+async function gcTrees(root: string, plan: Plan, dryRun: boolean): Promise<{ trees: GcTree[]; kept: GcTree[] }> {
+  const reuse = plan.exec?.trees === 'reuse', inv = new Set(plan.invariants.map(c => git.treeId(c.id))), checks = new Set(plan.nodes.flatMap(n => n.checks.map(c => git.treeId(c.id))));
+  const trees: GcTree[] = [], kept: GcTree[] = [];
+  for (const t of await git.reusedTrees(root)) {
+    const gone = !(t.kind === 'inv' ? inv : checks).has(t.id);
+    if (reuse && !gone) continue;
+    const reason = !reuse ? 'the plan does not set exec.trees: reuse' : `${t.kind === 'inv' ? 'invariant' : 'check'} ${t.id} is gone`;
+    if (!t.free || (!dryRun && !await git.removeReusedTree(root,t.path))) { kept.push({ path:t.path, reason:'lease held by a running measurement' }); continue; }
+    trees.push({ path:t.path, reason });
+  }
+  return { trees, kept };
 }
