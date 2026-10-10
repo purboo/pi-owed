@@ -167,10 +167,23 @@ const lastSubmit = (s: State, node: string): SubmitEntry | undefined => {
  * current candidate after a plan change or a rebase): recorded in this attempt on the key of its latest submit, and not
  * awaiting a parent ruling. Owner blocks never reach row 8 (`ownerNeeded` notifies first).
  */
-export function resubmitBlocks(s: State, node: string): Block[] {
+export function resubmitBlocks(s: State, node: string): Block[] { return submitBlocks(s, node).filter(b => !awaitingRuling(s, b)); }
+/** Active judgment blocks recorded in this attempt on the key of its latest submit. */
+function submitBlocks(s: State, node: string): Block[] {
   const n = s.nodes[node]!, last = lastSubmit(s, node);
   if (!last) return [];
-  return n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && b.seq > n.slot!.dispatchSeq && b.key === last.facts.keys[b.obligation] && !awaitingRuling(s, b));
+  return n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && b.seq > n.slot!.dispatchSeq && b.key === last.facts.keys[b.obligation]);
+}
+/**
+ * G3.7 / review #680 (b): whether row 8 can use the conflict list of `node` this pass (so the executor computes it only
+ * then): the slot was rebased after its latest submit and recorded a previous candidate, no current candidate, the
+ * writer run is sealed ok, and no rebase or repair follow-up was sent after the rebase entry.
+ */
+export function wantsRebaseConflicts(s: State, node: string, runs: ReadonlyMap<string, RunView>): boolean {
+  const n = s.nodes[node], slot = n?.slot, rb = slot?.rebase;
+  if (!n || !slot?.open || n.candidate || !rb?.previous || rb.seq < (lastSubmit(s, node)?.seq ?? -1)) return false;
+  const ar = n.runs.find(r => r.attempt === slot.attempt), writer = ar?.launches.find(l => l.role === 'writer'), w = writer && runs.get(writer.rid);
+  return !!w && isSealed(w) && statusOf(w) === 'ok' && !ar!.sends.some(x => (x.reason === 'rebase' || x.reason === 'repair') && x.seq > rb.seq);
 }
 /**
  * G3.2: the one follow-up (reason `repair`) that replaces row 8's `submit` / `rebase` follow-up while `resubmitBlocks`
@@ -318,6 +331,10 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 8: writer done without a current candidate (after a rebase: the rebase follow-up first).
   if (wSealed && !c) {
     const rb = slot.rebase;
+    // Review #680 (a): an active block on the latest submit's key still awaiting a parent ruling halts first (D18), with
+    // or without repairable blocks: a repair, rebase or submit follow-up would let new content bypass the parent question.
+    const unruled = submitBlocks(s, id).filter(b => awaitingRuling(s, b));
+    if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
     // G3.2: with a block the driver would repair, one repair follow-up replaces the submit / rebase follow-up.
     const fix = resubmitBlocks(s, id);
     if (fix.length) {
@@ -424,9 +441,11 @@ export function manualHalt(s: State, node: string): { reason: string; needs: 'hu
   const pending = n.items.filter(i => i.status === 'D');
   if (!pending.length || !pending.every(i => i.obligation === 'approve' || i.obligation.startsWith('evidence:'))) return undefined;
   const parts = pending.map(i => {
-    if (i.obligation === 'approve') return `awaiting owner approval of candidate ${n.candidate!.commit.slice(0, 12)}: owed approve ${node} [--note TEXT] (owner)`;
+    // G1.3 (bind): candidate-bound acts name the open candidate they judge.
+    const c12 = n.candidate!.commit.slice(0, 12);
+    if (i.obligation === 'approve') return `awaiting owner approval of candidate ${c12}: owed approve ${node} --candidate ${c12} [--note TEXT] (owner)`;
     const ev = spec.evidence?.find(e => `evidence:${e.id}` === i.obligation);
-    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`)}`;
+    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`, c12)}`;
   });
   return { reason: parts.join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
 }

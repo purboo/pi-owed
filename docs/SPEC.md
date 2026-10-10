@@ -1354,7 +1354,11 @@ rebase --onto` instructions), then `commit, and run owed submit <node>`. Its
 `rulings` records what it carries, so no separate ruling steer follows. A writer
 that finishes it without submitting halts. Identical content resubmitted keeps
 the block current: a second repair (or the exhausted halt), never a reviewer
-run. Without such a block row 8 is unchanged.
+run. Before all of this (review #680), when an active block on the key of
+that latest submit still awaits a parent ruling, row 8 halts with the
+needs-parent halt text (also when no block is repairable): a repair, rebase or
+submit follow-up would make the unruled block stale and let a re-review bypass
+the parent question. Without any such block row 8 is unchanged.
 
 Owner approval and manual evidence (D23). After the rows above (attest, needs
 a parent ruling, measured repair, reviewer launches, review-missing, review
@@ -1362,9 +1366,10 @@ blocks), when every unsatisfied item of the candidate is `approve` or
 `evidence:<id>` and the node has no active or flaky block, the action is a halt
 needing `owner` while `approve` is pending, else `human`, with one clause per
 item: `awaiting owner approval of candidate <commit12>: owed approve <node>
-[--note TEXT] (owner)`, `awaiting manual evidence evidence:<id> (<what>) by
-<role>: owed evidence <node> <id> --file <path> --note "<what was checked>" --as
-<role>:<id>`. It also halts while the writer still runs; it never halts for them
+--candidate <commit12> [--note TEXT] (owner)`, `awaiting manual evidence
+evidence:<id> (<what>) by <role>: owed evidence <node> <id> --file <path> --note
+"<what was checked>" --as <role>:<id> --candidate <commit12>` (0.6.0: the open
+candidate's commit, G1.3). It also halts while the writer still runs; it never halts for them
 earlier. The owner's approval or an evidence entry clears the halt (§12.3); the
 driver then halts again for what remains or merges. An owner block on `approve`
 is an owner decision (`ownerNeeded`: notify only). The review packet describes
@@ -1509,8 +1514,10 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   expects the last observed generation + 1.
 - **Conflicting files** (0.6.0, G3.7). For a rebased slot without a candidate
   whose rebase recorded a previous candidate, the driver computes `git
-  merge-tree --write-tree --name-only <new base> <previous commit>` while
-  observing and passes the conflicted paths to `decide` (`DriveOpts.conflicts`).
+  merge-tree --write-tree --name-only -z <new base> <previous commit>` while
+  observing, only when row 8 can use it (writer sealed ok, rebase after the
+  latest submit, no rebase or repair follow-up since; `wantsRebaseConflicts`),
+  and passes the conflicted paths to `decide` (`DriveOpts.conflicts`).
   The rebase follow-up and the rebasing repair of §12.5 then add `(files that
   conflict with your previous candidate: <paths>|none)` after the `git rebase
   --onto` command; the clause is omitted when git fails.

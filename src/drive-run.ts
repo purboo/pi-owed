@@ -17,7 +17,7 @@ import { Ledger } from './ledger.ts';
 import { parsePlan, driveConfig } from './plan.ts';
 import { reduce, halted, projectId } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
-import { decide, rejectedHalt } from './drive.ts';
+import { decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
@@ -50,12 +50,13 @@ export const reportKey = (r: { node?: unknown; scope?: unknown }): string => `${
 export const DRIFT_KEY = reportKey({ node: DRIFT_NODE, scope: 'repo' });
 /**
  * G3.7: the paths that conflict when `commit` (a previous candidate) is merged onto `base`: `git merge-tree --write-tree
- * --name-only --no-messages` (exit 0: clean, []; exit 1: the conflicted paths after the tree line); undefined on failure.
+ * --name-only --no-messages -z` (exit 0: clean, []; exit 1: the conflicted paths after the tree line); undefined on failure.
  */
 export async function rebaseConflicts(cwd: string, base: string, commit: string): Promise<string[] | undefined> {
-  const r = await git.git(cwd, ['merge-tree', '--write-tree', '--name-only', '--no-messages', base, commit], { allowFail: true }).catch(() => undefined);
+  // -z: NUL-terminated, paths neither quoted nor escaped (review #680 b).
+  const r = await git.git(cwd, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', base, commit], { allowFail: true }).catch(() => undefined);
   if (!r || (r.code !== 0 && r.code !== 1)) return undefined;
-  const lines = r.stdout.split('\n').filter(Boolean);
+  const lines = r.stdout.split('\0').filter(Boolean);
   if (!lines.length || !/^[0-9a-f]{40,64}$/.test(lines[0]!)) return undefined;
   return r.code === 0 ? [] : [...new Set(lines.slice(1))];
 }
@@ -313,9 +314,6 @@ export class Driver {
       if (!n.slot?.open || halted(s, n.id)) continue;
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
       if (!ar) continue;
-      // G3.7: a rebased slot without a candidate gets a rebase instruction: the files its previous candidate conflicts on.
-      const rb = n.slot.rebase;
-      if (!c && rb?.previous) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
       for (const l of ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq))) {
         try {
           const { view, gen } = await this.dsa.inspect(l.rid);
@@ -323,6 +321,9 @@ export class Driver {
           if (view.state === 'absent') await blob(l.spec);
         } catch (e) { this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }, s); }
       }
+      // G3.7: the files the previous candidate conflicts on, only when row 8 sends a rebase instruction (review #680 b).
+      const rb = n.slot.rebase;
+      if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
       // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a
       // crash after the call); only an undecided one is re-sent (with the stored bytes and the same id, D13.1).
       for (const x of ar.sends) {
