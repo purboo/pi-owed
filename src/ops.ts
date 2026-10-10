@@ -6,7 +6,7 @@ import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch } from './plan.ts';
 import { genesisProgress, jobCurrent } from './reducer.ts';
-import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys } from './reducer.ts';
+import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket } from './views.ts';
@@ -319,7 +319,8 @@ function prospective(latest: Awaited<ReturnType<typeof load>>, observations: Dra
 
 // ---------- adopt: trunk commits made outside owed (SPEC §6.6) ----------
 export interface AdoptPreview { trunk: string; prior: string; commit: string; commits: number; changed: string[] }
-export interface AdoptResult extends AdoptPreview { entry: Entry; observations: Entry[] }
+/** `allowance` (D21.4): for a parent adoption, S of `under allowance (plan #S)`. */
+export interface AdoptResult extends AdoptPreview { entry: Entry; observations: Entry[]; allowance?: number }
 /** Preconditions of an adoption, checked before any ledger effect: commit = refs/heads/<trunk> ≠ ledger trunk, a fast-forward of it. */
 async function adoptable(cwd: string, s: State, commit?: string): Promise<AdoptPreview> {
   const ref = `refs/heads/${s.trunk.name}`, prior = s.trunk.commit;
@@ -348,14 +349,18 @@ export async function adoptPreview(o: Context & { commit?: string }): Promise<Ad
  * abort (D16a, SPEC §7.8): observations measured before it are recorded when the ledger is stable and they pass the
  * guard, without a ref check (abortWith).
  */
-export async function adopt(o: Actor & { commit?: string; note: string; channel: Channel; signal?: AbortSignal }): Promise<AdoptResult> {
-  owner(o); if (o.as.role !== 'owner') throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
+export async function adopt(o: Actor & { commit?: string; note: string; channel?: Channel; signal?: AbortSignal }): Promise<AdoptResult> {
+  owner(o);
+  // D21.4: a parent may adopt only under an `adopt` allowance of the current plan (paths checked below, before any effect).
+  if (o.as.role !== 'owner' && !(o.as.role === 'parent' && adoptPrefixes((await load(await Ledger.open(o.cwd))).state.plan).length)) throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('adopt requires a note','usage');
   checkAbort(o.signal);
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger); inited(state);
-    const p = await adoptable(o.cwd,state,o.commit), sf = await git.stateFacts(o.cwd,state.plan,p.commit);
+    const p = await adoptable(o.cwd,state,o.commit);
+    if (o.as.role === 'parent') { const outside = unadoptable(state.plan,p.changed); if (outside !== undefined) throw new OwedError(`parent adoption refused: changed path ${outside} is not under an allow adopt prefix (${adoptPrefixes(state.plan).join(', ') || 'none'}); the owner must adopt it`); }
+    const sf = await git.stateFacts(o.cwd,state.plan,p.commit);
     const observations: Draft[] = [];
     for (const job of [...genesisJobs(state),...adoptJobs(state,sf)]) {
       if (o.signal?.aborted) return abortWith(ledger,state,observations);
@@ -381,8 +386,8 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel:
         throw new OwedError(`adoption refused: ${g.failed.length ? `invariant${g.failed.length > 1 ? 's' : ''} ${g.failed.map(id => `${id}${seqs(id).length ? ` (obs ${seqs(id).join(', ')})` : ''}`).join(', ')} satisfied on the ledger trunk but not on ${p.commit.slice(0,12)}; fix trunk, then run owed adopt again. ` : ''}${g.reasons.filter(x => !g.failed.some(id => x.startsWith(`invariant ${id} new debt`))).join('; ')}`.replace(/[ ;.]+$/,''));
       }
       const d: Draft = {kind:'adopt',by:by(o),channel:o.channel,trunk:p.trunk,prior:p.prior,commit:p.commit,state:sf,changed:p.changed,commits:p.commits,note:o.note}; guard(current,d);
-      const appended = await ledger.append([...observations,d]);
-      return {...p,entry:appended.at(-1)!,observations:appended.slice(0,-1)};
+      const appended = await ledger.append([...observations,d]), allowance = o.as.role === 'parent' ? allowanceSeq(latest.state) : undefined;
+      return {...p,entry:appended.at(-1)!,observations:appended.slice(0,-1),...(allowance !== undefined ? { allowance } : {})};
     },undefined,o.signal);
   },'merge',o.signal);
 }
