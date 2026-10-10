@@ -1337,6 +1337,25 @@ ruling (`ruling #seq: text`), also when that ruling predates the dispatch (a
 block from an earlier attempt). The re-review acknowledges them through
 `ack_rulings` as before.
 
+Repair before re-review; one message to the writer (0.6.0, G3). While a
+review block is active on the current candidate's key (and the node does not
+need the owner), the driver sends its repair before launching any reviewer run
+of that candidate: the reviewer-launch row does not fire, so no reviewer judges
+content the repair replaces (the attest rows, the needs-parent halt and the
+measured repair keep their order before it). When the writer is sealed without
+a current candidate (a plan change invalidated it, or a rebase) and an active
+review block recorded in this attempt on the key of its latest submit does not
+await a parent ruling, the driver sends one follow-up instead of the `submit` /
+`rebase` one: reason `repair` (counted against `repairs`; exhausted → halt),
+the rulings in scope since dispatch (and those quoted by needs-parent blocks)
+first, then the blocks with their notes, then why a new candidate is needed
+(`The plan changed since that candidate…`, or `Trunk moved…` with the `git
+rebase --onto` instructions), then `commit, and run owed submit <node>`. Its
+`rulings` records what it carries, so no separate ruling steer follows. A writer
+that finishes it without submitting halts. Identical content resubmitted keeps
+the block current: a second repair (or the exhausted halt), never a reviewer
+run. Without such a block row 8 is unchanged.
+
 Owner approval and manual evidence (D23). After the rows above (attest, needs
 a parent ruling, measured repair, reviewer launches, review-missing, review
 blocks), when every unsatisfied item of the candidate is `approve` or
@@ -1510,8 +1529,19 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   resolves it with: owed adopt --note "<why>"` when the ref fast-forwards the
   ledger trunk, otherwise `trunk <name> was rewound or rewritten (<ledger12> →
   <ref12|missing>); restore it: git update-ref refs/heads/<name> <ledger>
-  <ref>` (full commits; `""` for a missing ref). The loop prints it once per
-  change and the follower wakes once per change. After `owed adopt` the next
+  <ref>` (full commits; `""` for a missing ref). When the ledger's trunk commit
+  itself is absent (0.6.0): `trunk <name>: the ledger's trunk commit
+  <ledger12> is absent from the repository, so git update-ref cannot restore it
+  and owed adopt cannot check a fast-forward from it; bring the commit back (git
+  fetch <remote> <ledger> from any remote or clone that has it), then restore
+  trunk (git update-ref …) or adopt the current ref (owed adopt --commit
+  <ref12> --note "<why>")`. The report carries `scope: "repo"`; its print and
+  wake records are keyed apart from any plan node (a node named `trunk` keeps
+  its own). The loop prints it once per change and the follower wakes once per
+  change; when a pass finds trunk equal to the ledger trunk again, the driver
+  forgets the drift's print and wake records and logs the quiet event
+  `{"event":"drift-cleared"}`, on which the follower forgets its record, so an
+  identical later drift prints and wakes again. After `owed adopt` the next
   pass merges with no other act. A halt recorded for drift by a 0.5.0 driver
   (`merge refused: trunk changed (CAS)…`, needs owner) stays a ledger halt:
   adopt (or restore) trunk, then clear it with `owed rebase <node>` (the

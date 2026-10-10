@@ -31,14 +31,23 @@ import type { Plan, Principal, RunView, State } from './types.ts';
  */
 export function driftNotice(name: string, d: git.TrunkDrift): string {
   const ledger = d.ledger.slice(0, 12), ref = d.commit ? d.commit.slice(0, 12) : 'missing';
+  // G3.4c: the ledger's trunk commit is gone, so neither update-ref nor adopt (it checks a fast-forward from it) works yet.
+  if (d.relation === 'ledger-missing') return `trunk ${name}: the ledger's trunk commit ${ledger} is absent from the repository, so git update-ref cannot restore it and owed adopt cannot check a fast-forward from it; bring the commit back (git fetch <remote> ${d.ledger} from any remote or clone that has it), then restore trunk (git update-ref refs/heads/${name} ${d.ledger} ${d.commit ?? '""'}) or adopt the current ref (owed adopt --commit ${ref} --note "<why>")`;
   return d.relation === 'ahead'
     ? `trunk ${name} moved outside owed (${ledger} → ${ref}); the main agent resolves it with: owed adopt --note "<why>"`
     : `trunk ${name} was rewound or rewritten (${ledger} → ${ref}); restore it: git update-ref refs/heads/${name} ${d.ledger} ${d.commit ?? '""'}`;
 }
-/** The node name of the repo-level drift notify (no plan node is named `trunk`: it is the subject of invariants). */
+/**
+ * The node name of the repo-level drift notify. A plan node may also be named `trunk`: the drift report carries
+ * `scope: 'repo'`, and its print and wake records are keyed apart from the node's (`reportKey`, G3.4b).
+ */
 export const DRIFT_NODE = 'trunk';
 /** The drift notify report; `facts` = the ledger trunk's seq, so it prints and wakes once per change. */
-const driftReport = (s: State, d: git.TrunkDrift): ActionReport => ({ do: 'notify', node: DRIFT_NODE, outcome: 'notify', text: driftNotice(s.trunk.name, d), facts: s.trunk.seq });
+const driftReport = (s: State, d: git.TrunkDrift): ActionReport => ({ do: 'notify', node: DRIFT_NODE, scope: 'repo', outcome: 'notify', text: driftNotice(s.trunk.name, d), facts: s.trunk.seq });
+/** The key of a report's print and wake records (G3.4b): repo-level reports never share one with a plan node of the same name. */
+export const reportKey = (r: { node?: unknown; scope?: unknown }): string => `${r.scope === 'repo' ? 'repo' : 'node'}\u0000${String(r.node)}`;
+/** The key of the drift notify's records. */
+export const DRIFT_KEY = reportKey({ node: DRIFT_NODE, scope: 'repo' });
 /** The transient merge refusal of `ops` (the plan, the candidate or trunk changed while merge measured). */
 const MERGE_TRANSIENT = 'Plan, candidate or trunk changed; retry';
 
@@ -79,6 +88,8 @@ export interface DriveOptions {
 /** One executed action as printed (`--json`: one object per line). */
 export interface ActionReport {
   do: Action['do']; node: string; outcome: string; detail?: string;
+  /** `repo`: a repository-level report (the trunk drift notify), not about the plan node named `node`. */
+  scope?: 'repo';
   attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
   /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
   facts?: number;
@@ -123,10 +134,12 @@ class Facts {
   readonly expectGen = new Map<string, number>();
   /** rid → latest generation describe reported. */
   readonly lastGen = new Map<string, number>();
-  /** `<node>:<kind>` → last printed text key (notify, machine busy): the loop prints a line only when it changed. */
+  /** `<reportKey>:<kind>` → last printed text key (notify, machine busy): the loop prints a line only when it changed. */
   readonly printed = new Map<string, string>();
-  /** node → the last wake printed for it (text without the repeat suffix, fact mark) and how often it repeated (E3.1). */
+  /** reportKey → the last wake printed for it (text without the repeat suffix, fact mark) and how often it repeated (E3.1). */
   readonly wakes = new Map<string, { text: string; facts: number; n: number }>();
+  /** A drift notify was emitted and no pass has seen trunk equal to the ledger trunk since (G3.4a). */
+  drift = false;
 }
 
 // ---------- ledger state ----------
@@ -219,7 +232,7 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string }
+export interface LoopEvent { event: 'idle' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string }
 
 /**
  * The text-mode line of a driver output object (an ActionReport or a LoopEvent): `owed drive` prints it, and the
@@ -235,6 +248,7 @@ export function reportText(json: object): string {
       case 'cursor-reset': return e.reason !== undefined ? `events: cursor rejected (${oneLine(e.reason)}), reset${e.head ? ` to ${e.head}` : ''}` : `events: cursor expired, reset to ${e.head}`;
       case 'events-error': return `events error: ${oneLine(e.error ?? '')}`;
       case 'exit': return `driver exited ${e.code} (${e.reason})${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
+      case 'drift-cleared': return 'trunk drift cleared: trunk equals the ledger trunk again';
       case 'session-unsupported': return `dsa does not accept --session (older than pi-durable-subagents 1.0.31): runs start without it and are not listed in pi session ${e.session ?? '?'}${e.reason ? ` (${oneLine(e.reason)})` : ''}`;
       default: return oneLine(JSON.stringify(json));
     }
@@ -334,11 +348,19 @@ export class Driver {
     const reports: ActionReport[] = []; let applied = false;
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
     // (every other action continues) and emit the repo-level owner notify (the loop prints it once per change).
-    const drift = await git.trunkDrift(this.root!, s.trunk.name, s.trunk.commit).catch(() => undefined);
+    let checked = true;
+    const drift = await git.trunkDrift(this.root!, s.trunk.name, s.trunk.commit).catch(() => { checked = false; return undefined; });
     if (drift) {
       const r = driftReport(s, drift);
       reports.push(r); this.emit(r, s);
       actions = actions.filter(a => a.do !== 'merge');
+    } else if (checked && this.facts.drift) {
+      // G3.4a: drift cleared: forget its print and wake records (an identical later drift prints and wakes again) and
+      // log a quiet event the follower resets its own record on.
+      this.facts.drift = false;
+      this.facts.printed.delete(`${DRIFT_KEY}:notify`); this.facts.wakes.delete(DRIFT_KEY);
+      const e: LoopEvent = { event: 'drift-cleared' };
+      this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
     }
     for (const a of actions) {
       if (this.stopping) break;
@@ -358,16 +380,18 @@ export class Driver {
    * ledger entries)`), and the follower does not wake for it.
    */
   emit(r: ActionReport, s?: State): void {
-    if (s && wakeReport(r) && s.nodes[r.node]) r.facts = factMark(s, r.node);
+    if (s && wakeReport(r) && r.scope !== 'repo' && s.nodes[r.node]) r.facts = factMark(s, r.node);
+    if (r.scope === 'repo' && r.do === 'notify') this.facts.drift = true;
+    const rk = reportKey(r);
     if (!this.o.once && (r.outcome === 'notify' || r.outcome === 'busy')) {
-      const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${r.node}:${r.outcome}`;
+      const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${rk}:${r.outcome}`;
       if (this.facts.printed.get(slot) === key) return;
       this.facts.printed.set(slot, key);
-    } else if (r.do === 'attest') this.facts.printed.delete(`${r.node}:busy`);
+    } else if (r.do === 'attest') this.facts.printed.delete(`${rk}:busy`);
     if (!this.o.once && r.facts !== undefined) {
-      const text = reportText({ ...r, repeat: undefined }), last = this.facts.wakes.get(r.node);
+      const text = reportText({ ...r, repeat: undefined }), last = this.facts.wakes.get(rk);
       if (last && last.text === text && last.facts === r.facts) r.repeat = ++last.n;
-      else this.facts.wakes.set(r.node, { text, facts: r.facts, n: 0 });
+      else this.facts.wakes.set(rk, { text, facts: r.facts, n: 0 });
     }
     this.o.log(this.o.json ? JSON.stringify(r) : reportText(r));
   }

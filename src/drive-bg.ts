@@ -10,7 +10,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
 import { defaultOwed, lockAlive, procStart, reportText } from './drive-run.ts';
-import { repeatText, wakeReport } from './drive-run.ts';
+import { DRIFT_KEY, repeatText, reportKey, wakeReport } from './drive-run.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
 import { oneLine } from './views.ts';
 import { startingSession } from './dsa.ts';
@@ -264,16 +264,19 @@ const TERMINAL = new Set(['exit', 'killed', 'stopped', 'idle']);
  * is not a JSON object. A merge only rides along with the next wake; everything else (dispatch, launch, send applied,
  * attest, busy, pending, cursor-reset) is quiet.
  */
-export function classifyLine(line: string): { kind: LineKind; text: string; fact?: { node: string; base: string; facts: number } } {
+export function classifyLine(line: string): { kind: LineKind; text: string; fact?: { node: string; key: string; base: string; facts: number }; clears?: string } {
   const j = parseObject(line);
   if (!j) return { kind: 'wake', text: oneLine(line) };
   const text = reportText(j);
+  // G3.4a: trunk drift cleared: quiet, and the drift notify's record is forgotten (an identical later drift wakes).
+  if (j.event === 'drift-cleared') return { kind: 'quiet', text, clears: DRIFT_KEY };
   if (typeof j.event === 'string') return { kind: TERMINAL.has(j.event) ? 'terminal' : j.event === 'events-error' ? 'wake' : 'quiet', text };
   if (typeof j.do !== 'string') return { kind: 'wake', text };
   if (j.do === 'merge' && j.outcome === 'merged') return { kind: 'merge', text };
   if (!wakeReport(j)) return { kind: 'quiet', text };
   // E3.1: a node-scoped wake with a fact mark is compared per node by its text without the repeat suffix.
-  if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, base: reportText({ ...j, repeat: undefined }), facts: j.facts } };
+  // G3.4b: keyed by `reportKey`, so the repo-level drift notify and a plan node named `trunk` keep separate records.
+  if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, key: reportKey(j), base: reportText({ ...j, repeat: undefined }), facts: j.facts } };
   return { kind: 'wake', text };
 }
 
@@ -304,7 +307,7 @@ export class Follower {
   private timer?: NodeJS.Timeout;
   /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed delivery. */
   private pending: { text: string; wake: boolean; repeatOf?: string }[] = [];
-  /** node → the last wake taken for delivery (text without the repeat suffix, fact mark) and its repeats since (E3.1). */
+  /** reportKey → the last wake taken for delivery (text without the repeat suffix, fact mark) and its repeats since (E3.1). */
   private readonly last = new Map<string, { base: string; facts: number; n: number }>();
   /** A terminal line (or the pid-gone notice) is pending: stop once it is delivered. */
   private ended = false;
@@ -349,20 +352,21 @@ export class Follower {
       const alive = pidAlive(this.o.pid, this.o.start), seen = new Set<string>();
       for (const line of this.read()) {
         const c = classifyLine(line);
+        if (c.clears !== undefined) { this.last.delete(c.clears); this.pending = this.pending.filter(p => p.repeatOf !== c.clears); }
         if (c.kind === 'quiet') continue;
         if (c.kind === 'merge') { this.pending.push({ text: c.text, wake: false }); continue; }
         if (seen.has(c.text)) continue;
         seen.add(c.text);
         if (c.fact) {
-          const f = c.fact, prior = this.last.get(f.node);
+          const f = c.fact, prior = this.last.get(f.key);
           if (prior && prior.base === f.base && f.facts <= prior.facts) {
             // A repeat: no wake; only the latest repeat of the node rides along.
             prior.n++;
-            this.pending = this.pending.filter(p => p.repeatOf !== f.node);
-            this.pending.push({ text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.node });
+            this.pending = this.pending.filter(p => p.repeatOf !== f.key);
+            this.pending.push({ text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.key });
             continue;
           }
-          this.last.set(f.node, { base: f.base, facts: f.facts, n: 0 });
+          this.last.set(f.key, { base: f.base, facts: f.facts, n: 0 });
         }
         this.pending.push({ text: c.text, wake: true });
         if (c.kind === 'terminal') this.ended = true;
