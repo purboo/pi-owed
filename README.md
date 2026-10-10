@@ -296,6 +296,7 @@ file by hand. A first Ctrl-C stops after the current action, a second at once.
 owed drive            # until idle; run it in a terminal or a systemd-run --user unit
 owed drive --once     # one pass (also the pi tool owed_drive)
 owed drive --detach   # the same loop as a detached background process; prints its pid and log
+owed drive --detach --stay   # when idle, keep running and wait for ledger changes (a growing plan)
 owed drive --status   # running (pid, host, since) or not, its last exit record, the last 10 log lines
 owed drive --stop     # stop it after its current action (--now: at once)
 ```
@@ -333,6 +334,20 @@ from its environment; `DSA_HOME` and the rest are kept). Started from inside a
 dsa call, start still works but prints `note: started from inside a dsa call; if
 that call's processes are contained, the driver may end with it — prefer
 starting it from a top-level session or systemd-run --user`.
+
+In pi a wake is never handed to the session while its agent is running: the
+follower holds it until the agent settles, then drops what was resolved
+meanwhile (a question no longer open in dsa, a node line whose node gained
+ledger entries) and delivers the rest, ending with `(<n> wake(s) resolved before
+delivery)`; if nothing is left the session is not woken. With `--stay`
+(`owed_drive` `stay: true`) an idle driver does not exit: it wakes the session
+once (`idle: nothing open and nothing ready; staying until the ledger changes
+(owed drive --stop ends it)`), keeps the lock and resumes when the ledger
+changes (a plan update, a ruling); `--status` then says `idle, waiting for
+ledger changes since <at>`. After `owed plan` / `owed_plan`, when nodes are
+ready to dispatch and no driver runs, the output adds `ready: <ids> (<n>); no
+driver is running: owed drive --detach --stay` (pi: `owed_drive
+{action:"start", stay:true}`); nothing starts automatically.
 
 With pi-durable-subagents ≥ 1.0.31 the driver's runs are listed in the pi
 session that started it: owed reads `DSA_SESSION` (ignored inside a dsa call),

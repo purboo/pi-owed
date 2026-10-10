@@ -6,7 +6,7 @@
 // so losing it (a crash, a restart) is harmless: the ledger plus `describe` re-derive the state.
 import { spawn } from 'node:child_process';
 import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { readFileSync, rmSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -73,6 +73,11 @@ export interface DriveOptions {
   once?: boolean;
   /** Overrides `drive.max` of the plan. */
   max?: number;
+  /**
+   * Loop only (H1.2, `--stay`): an idle pass does not exit; the driver logs `idle-wait` once per idle period, keeps the
+   * lock and waits (polling every `pollMs`) until the ledger head changes, then resumes passes.
+   */
+  stay?: boolean;
   /** JSON lines instead of text lines. */
   json?: boolean;
   /** One output line (an action, a notify, a halt, idle). */
@@ -103,6 +108,8 @@ export interface ActionReport {
   /** `repo`: a repository-level report (the trunk drift notify), not about the plan node named `node`. */
   scope?: 'repo';
   attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
+  /** An asking notify (H1.1b): the first open question of run `rid`; fields of the log line, not of the ledger. */
+  qid?: string; rev?: number;
   /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
   facts?: number;
   /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
@@ -133,7 +140,11 @@ export function factMark(s: State, node: string): number {
 }
 /** Suffix of a repeated wake line (E3.1). */
 export const repeatText = (n: number): string => ` (repeat ${n}, no new ledger entries)`;
-export interface PassResult { actions: ActionReport[]; progress: boolean; idle: boolean }
+export interface PassResult {
+  actions: ActionReport[]; progress: boolean; idle: boolean;
+  /** The ledger head (hash of the last entry) the pass decided on (H1.2: a staying driver's idle baseline). */
+  head: string;
+}
 
 /**
  * Caches of dsa's own answers this process may reuse across passes (D14: they never carry a verdict): send ids dsa
@@ -157,6 +168,42 @@ class Facts {
 }
 
 // ---------- ledger state ----------
+/** The ledger state of the repository of `cwd` (wake revalidation, ready hint). */
+export async function stateOf(cwd: string): Promise<State> { return loadState(await Ledger.open(cwd)); }
+/**
+ * Nodes the driver would dispatch now (H1.3): the `dispatch` actions of `decide` on the current state (same readiness,
+ * `drive.max`, writes overlap and owner-needed rules), with no run views (open attempts get no action from them).
+ */
+export async function dispatchable(cwd: string): Promise<string[]> {
+  const s = await stateOf(cwd), cfg = driveConfig(s.plan);
+  const actions = decide(s, s.plan, new Map(), { max: cfg.max, repairs: cfg.repairs, project: projectId(s), root: await git.mainRoot(cwd), applied: new Set(), rejected: new Map() });
+  return actions.filter(a => a.do === 'dispatch').map(a => a.node);
+}
+/**
+ * The ledger head of `<dir>/ledger.jsonl`: the `hash` of its last complete entry (comparable with `State.head`), read
+ * from the file's end (the whole file only when the last entry is longer than the tail); '' when there is none (H1.2).
+ */
+export function ledgerHead(dir: string): string {
+  let fd: number;
+  try { fd = openSync(join(dir, 'ledger.jsonl'), 'r'); } catch { return ''; }
+  const hashOf = (line: string | undefined): string | undefined => {
+    if (!line) return undefined;
+    try { const h = (JSON.parse(line) as { hash?: unknown }).hash; return typeof h === 'string' ? h : undefined; } catch { return undefined; }
+  };
+  try {
+    const size = fstatSync(fd).size;
+    for (const tail of [64 * 1024, size]) {
+      const from = Math.max(0, size - tail), buf = Buffer.alloc(size - from);
+      const n = readSync(fd, buf, 0, buf.length, from), text = buf.subarray(0, n).toString('utf8');
+      // Only complete lines: an entry being appended (no newline yet) is not the head.
+      const lines = text.slice(0, text.lastIndexOf('\n') + 1).split('\n').filter(l => l.trim());
+      const h = hashOf(lines.at(-1));
+      if (h !== undefined || from === 0) return h ?? '';
+    }
+    return '';
+  } finally { closeSync(fd); }
+}
+
 async function loadState(ledger: Ledger): Promise<State> {
   const entries = await ledger.read(), plans = new Map<string, Plan>();
   for (const e of entries) if ((e.kind === 'genesis' || e.kind === 'plan') && !plans.has(e.plan)) plans.set(e.plan, parsePlan((await ledger.getBlob(e.plan)).toString()));
@@ -246,7 +293,9 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string }
+export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string }
+/** Text of the `idle-wait` line of a staying driver (H1.2). */
+export const IDLE_WAIT_TEXT = 'idle: nothing open and nothing ready; staying until the ledger changes (owed drive --stop ends it)';
 
 /**
  * The text-mode line of a driver output object (an ActionReport or a LoopEvent): `owed drive` prints it, and the
@@ -257,6 +306,7 @@ export function reportText(json: object): string {
     const e = json as LoopEvent;
     switch (e.event) {
       case 'idle': return 'idle: nothing open and nothing ready';
+      case 'idle-wait': return IDLE_WAIT_TEXT;
       case 'stopped': return 'stopped';
       case 'killed': return 'killed: second signal, stopped at once';
       case 'cursor-reset': return e.reason !== undefined ? `events: cursor rejected (${oneLine(e.reason)}), reset${e.head ? ` to ${e.head}` : ''}` : `events: cursor expired, reset to ${e.head}`;
@@ -388,7 +438,7 @@ export class Driver {
     }
     const head = (await ledger.read()).at(-1)?.hash;
     const open = Object.values(s.nodes).some(n => n.slot?.open);
-    return { actions: reports, progress: applied || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') };
+    return { actions: reports, progress: applied || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch'), head: s.head };
   }
 
   /**
@@ -488,7 +538,7 @@ export class Driver {
           }
         }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
-        case 'notify': return { report: { ...base, outcome: 'notify', text: a.text }, applied: false };
+        case 'notify': return { report: { ...base, outcome: 'notify', text: a.text, ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
       if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message);
@@ -562,7 +612,9 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> => new Promise(re
  * `owed drive`: takes the single-driver lock, then one pass (`once`), or the loop: passes back to back while they make
  * progress (at most 20), then wait for an `events --all` event labeled with this project (polled every `pollMs`) or
  * `passMs`, whichever comes first. Exits 0 when idle (nothing open, nothing to dispatch) or after SIGINT/SIGTERM (or
- * `signal`) once the current action is done; a second signal exits 130 at once (with `once`, the first one does). A live driver refuses with
+ * `signal`) once the current action is done; a second signal exits 130 at once (with `once`, the first one does). With
+ * `stay` (H1.2) an idle pass does not exit: one `idle-wait` line per idle period, then the driver waits (keeping the
+ * lock) until the ledger head changes and resumes passes; a stop exits `stopped`. A live driver refuses with
  * OwedError('refused').
  * In `--json` loop mode the last line is the exit record `{"event":"exit","code","reason","at","error"?}` (D17.2),
  * written before the lock is released (D17a.2), so a released lock means the record is in the log. A failure (drive
@@ -660,16 +712,32 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
       }
     };
     await poll();
+    /** H1.2: start of the current idle period of a staying driver (one `idle-wait` line per period). */
+    let idleAt: string | undefined;
     for (;;) {
+      /** H1.2: the ledger head the idle pass decided on; undefined when the last pass was not idle. */
+      let idle: string | undefined;
       for (let burst = 0; burst < 20 && !driver.stopping; burst++) {
         const r = await driver.pass();
-        if (r.idle) { say('idle: nothing open and nothing ready', { event: 'idle' }); end.reason = 'idle'; return 0; }
+        if (r.idle && !o.stay) { say('idle: nothing open and nothing ready', { event: 'idle' }); end.reason = 'idle'; return 0; }
+        if (r.idle) { idle = r.head; break; }
+        idleAt = undefined;
         if (!r.progress) break;
       }
-      const last = Date.now();
-      while (!driver.stopping) {
-        await sleep(o.pollMs ?? 3000, stop.signal);
-        if (driver.stopping || Date.now() - last >= (o.passMs ?? 30_000) || await poll()) break;
+      if (idle !== undefined && !driver.stopping) {
+        // Stay: keep the lock and wait for the ledger head to differ from the head the idle pass decided on (a plan
+        // update, a ruling, an abandon…), then pass. An entry appended during that pass is already a change: no wait.
+        if (idleAt === undefined) { idleAt = new Date().toISOString(); say(IDLE_WAIT_TEXT, { event: 'idle-wait', at: idleAt }); }
+        const head = idle;
+        while (!driver.stopping && ledgerHead(ledger.dir) === head) {
+          await sleep(o.pollMs ?? 3000, stop.signal);
+        }
+      } else {
+        const last = Date.now();
+        while (!driver.stopping) {
+          await sleep(o.pollMs ?? 3000, stop.signal);
+          if (driver.stopping || Date.now() - last >= (o.passMs ?? 30_000) || await poll()) break;
+        }
       }
       if (driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     }

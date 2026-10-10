@@ -27,8 +27,11 @@ export type Action =
   | { do: 'rebase'; node: string }
   | { do: 'merge'; node: string }
   | { do: 'halt'; node: string; attempt: number; reason: string; needs: 'human' | 'owner' }
-  /** Printed only (asking questions); no ledger write. */
-  | { do: 'notify'; node: string; text: string };
+  /**
+   * Printed only (asking questions); no ledger write. An asking notify (H1.1b) also names the run (`rid`) and its first
+   * open question (`qid`, `rev`; absent when dsa reports none), so a wake can be revalidated at delivery time.
+   */
+  | { do: 'notify'; node: string; text: string; rid?: string; qid?: string; rev?: number };
 
 /** A merge of the node's candidate `candidate` (submit seq) that this process saw refused. */
 export interface MergeRefusal {
@@ -322,7 +325,11 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send, ...(x.rulings !== undefined ? { rulings: x.rulings } : {}) };
   }
   // Row 5: a run asking: notify (question, answer address); the driver never answers.
-  for (const l of live) if (view(l).state === 'asking') return { do: 'notify', node: id, text: askingText(id, l, view(l)) };
+  // H1.1b: the report carries rid and the first question's qid/rev; its text is askingText as before.
+  for (const l of live) if (view(l).state === 'asking') {
+    const q = view(l).questions?.[0];
+    return { do: 'notify', node: id, text: askingText(id, l, view(l)), rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) };
+  }
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
