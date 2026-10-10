@@ -13,6 +13,9 @@ import { decide, planChangedMessage, rebaseMessage, writerLaunch, type Action, t
 import { receipt, renderReceipt, renderStatus, statusView } from '../src/views.ts';
 import type { CandidateFacts, Draft, Entry, NodeSpec, Plan, RunView, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
+import owed from '../src/extension.ts';
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { git } from '../src/git.ts';
 import { cli, commitAt, planText, seed, checkTest } from './helpers/surface.ts';
 
 const owner = { role: 'owner', id: 'pi' } as const, parent = { role: 'parent', id: 'test' } as const;
@@ -90,6 +93,55 @@ test('N1: a writes-only widening carries the candidate and re-measures writes', 
     assert.deepEqual(measured.observations.map(e => e.kind === 'obs' ? e.obligation : e.kind), ['writes']);
     card = await ops.why({ cwd: r.cwd, node: 'a' });
     assert.equal(item(card, 'writes').status, 'E');
+  } finally { await r.cleanup(); }
+});
+
+test('N1 (23:4x): a carry owed cannot compute is not silent: `Not carried <node>: <reason>` (CLI text and JSON notCarried, owed_plan)', { timeout: 120_000 }, async () => {
+  const { r, a, sub } = await submitted();
+  try {
+    // The submitted commit disappears from the repository (the writer reset its branch; the object was pruned).
+    await git(a.worktree, ['reset', '-q', '--hard', sub.facts.base]);
+    await git(r.cwd, ['reflog', 'expire', '--expire=now', '--all']);
+    await git(r.cwd, ['gc', '-q', '--prune=now']);
+    const next = base(); next.nodes[0].checks[0].run += ' --test-concurrency=1';
+    await writeFile(join(r.root, 'plan.json'), JSON.stringify(next));
+    const res = await cli(r.cwd, ['plan', join(r.root, 'plan.json'), '--as', 'owner:pi', '--note', 'check fix']);
+    assert.equal(res.code, 0, res.stderr);
+    assert.match(res.stdout, /^Not carried a: facts of [0-9a-f]{12} cannot be computed: .+; the writer submits again$/m, res.stdout);
+    const es = await entriesOf(r.cwd);
+    assert.equal(es.at(-1)!.kind, 'plan', 'the plan is recorded, no carry');
+    assert.equal((await ops.status({ cwd: r.cwd })).nodes.a!.candidate, undefined, 'the candidate stays invalidated');
+    // JSON: notCarried; and the owed_plan pi tool shows the line too (another check change, the candidate still gone).
+    next.nodes[0].checks[0].run += ' --test-reporter=tap';
+    await writeFile(join(r.root, 'plan.json'), JSON.stringify(next));
+    // Resubmit the same lost content is impossible; recreate a candidate, then lose it again.
+    await commitAt(a.worktree, { 'test/a.cjs': 'module.exports=1;', 'test/a.test.cjs': checkTest('a', 1) });
+    const sub2 = await ops.submit({ cwd: a.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    if (sub2.kind !== 'submit') throw Error('submit');
+    await git(a.worktree, ['reset', '-q', '--hard', sub2.facts.base]);
+    await git(r.cwd, ['reflog', 'expire', '--expire=now', '--all']);
+    await git(r.cwd, ['gc', '-q', '--prune=now']);
+    const json = await cli(r.cwd, ['plan', join(r.root, 'plan.json'), '--as', 'owner:pi', '--note', 'again', '--json']);
+    assert.equal(json.code, 0, json.stderr);
+    const out = JSON.parse(json.stdout) as { notCarried?: { node: string; reason: string }[]; carried?: unknown };
+    assert.equal(out.notCarried?.length, 1); assert.equal(out.notCarried![0]!.node, 'a');
+    assert.match(out.notCarried![0]!.reason, /cannot be computed/);
+    assert.equal(out.carried, undefined);
+    // owed_plan: a third check change after a third lost candidate.
+    await commitAt(a.worktree, { 'test/a.cjs': 'module.exports=1;', 'test/a.test.cjs': checkTest('a', 1) });
+    const sub3 = await ops.submit({ cwd: a.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    if (sub3.kind !== 'submit') throw Error('submit');
+    await git(a.worktree, ['reset', '-q', '--hard', sub3.facts.base]);
+    await git(r.cwd, ['reflog', 'expire', '--expire=now', '--all']);
+    await git(r.cwd, ['gc', '-q', '--prune=now']);
+    next.nodes[0].checks[0].timeout_s = 601;
+    await writeFile(join(r.root, 'plan.json'), JSON.stringify(next));
+    const tools = new Map<string, ToolDefinition>();
+    owed({ registerTool(t: ToolDefinition) { tools.set(t.name, t); }, registerCommand() {}, on() {} } as unknown as ExtensionAPI);
+    const ctx = { cwd: r.cwd, hasUI: false, ui: { async confirm() { return true; }, notify() {} } } as unknown as ExtensionContext;
+    const tr = await tools.get('owed_plan')!.execute('test', { plan: join(r.root, 'plan.json'), as: 'owner:pi', note: 'pi' }, undefined, undefined, ctx as Parameters<ToolDefinition['execute']>[4]) as { content: { type: string; text?: string }[]; details?: { notCarried?: unknown[] } };
+    const text = tr.content.map(c => c.text ?? '').join('\n');
+    assert.match(text, /^Not carried a: facts of [0-9a-f]{12} cannot be computed/m, text);
   } finally { await r.cleanup(); }
 });
 
