@@ -206,9 +206,10 @@ test('operations: exec: {} is no change; an exec change needs the owner, is in Î
     assert.notEqual(second.facts.keys['check:unit'], first.facts.keys['check:unit'], 'the new exec changes the key');
     const a2 = await ops.attest({ cwd: r.cwd, node: 's' });
     const unit = a2.observations.filter((e): e is Extract<Entry, { kind: 'obs' }> => e.kind === 'obs' && e.obligation === 'check:unit');
-    // Attribution reruns the old key with the old (empty) exec: it fails again (deterministic), so the block clears;
-    // with the new exec it would pass and the block would count as flaky.
-    assert.ok(unit.some(e => e.attribution && e.key === first.facts.keys['check:unit'] && e.verdict === 'fail'), JSON.stringify(unit));
+    // L2 (0.8.0): the exec change is part of the check definition, so the plan entry superseded the old block: no
+    // attribution rerun of the old key (before 0.8.0 one ran with the old, empty exec and cleared it).
+    assert.ok(!unit.some(e => e.attribution), JSON.stringify(unit));
+    assert.ok(a2.receipt.superseded?.some(b => b.obligation === 'check:unit' && b.supersededBy !== undefined), JSON.stringify(a2.receipt.superseded));
     assert.ok(unit.some(e => !e.attribution && e.key === second.facts.keys['check:unit'] && e.verdict === 'pass'), JSON.stringify(unit));
     assert.equal(a2.accepted, true, JSON.stringify(a2.receipt.items.map(i => [i.obligation, i.detail])));
   } finally { await r.cleanup(); }

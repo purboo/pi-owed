@@ -2,6 +2,7 @@ import { matchesGlob } from 'node:path';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
+import { execKey } from './git.ts';
 import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, Rule, RunRole, SendKind, SendReason, State, StateFacts } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
@@ -13,7 +14,8 @@ function context(state: State): History {
   if (!value) throw new OwedError('State lacks replay metadata; use the state returned by reduce', 'internal');
   return value;
 }
-const active = (b: Block): boolean => b.state !== 'cleared';
+/** A block that still counts: active or flaky. Cleared and superseded (L2) blocks do not. */
+const active = (b: Block): boolean => b.state === 'active' || b.state === 'flaky';
 /** Blocks that still bind the node: judgment blocks always; execution blocks only while their obligation exists (removing it is an owner-only, visible downgrade). */
 const binding = (b: Block, spec: NodeSpec | undefined): boolean => active(b) && (b.kind === 'judgment' || !spec || spec.checks.some(c => b.obligation === `check:${c.id}` || (c.red && b.obligation === `red:${c.id}`) || (!!c.mutants && b.obligation === `strength:${c.id}`)) || b.obligation === 'writes');
 const role = (by: string): string => by.split(':')[0] ?? '';
@@ -166,6 +168,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       // K3: the node `drive` only chooses later launches' agents and models; changing it never invalidates a candidate.
       for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(withoutType(nodeSpec(s, n.id))) !== canonical(withoutType(next.nodes.find(x => x.id === n.id))) || s.plan.setup !== next.setup || execChanged(s.plan, next) || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
       const allowChanged = canonical(s.plan.allow) !== canonical(next.allow);
+      supersede(s, h, e.seq, next);
       s.plan = next; s.planSha = e.plan;
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
       // A parent's downgrades were accepted only because the prior plan's allowances cover them (D21.3).
@@ -242,6 +245,28 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     refresh(s);
   }
   return s;
+}
+
+/**
+ * L2: the definition of check `id` of node `node` in `plan`: the canonical CheckSpec with all its fields, plus
+ * `plan.setup` and `execKey(plan)` (not title, brief, closure or other nodes). Undefined when the check is absent.
+ */
+export function checkDefinition(plan: Plan, node: string, id: string): string | undefined {
+  const c = plan.nodes.find(x => x.id === node)?.checks.find(x => x.id === id);
+  return c ? canonical({ check: c, setup: plan.setup, exec: execKey(plan) }) : undefined;
+}
+/** The check id of an execution obligation `check:<id>`, `red:<id>` or `strength:<id>`; undefined for others. */
+export function checkOf(obligation: string): string | undefined { return /^(?:check|red|strength):(.+)$/.exec(obligation)?.[1]; }
+/**
+ * L2: a plan entry `seq` replacing the plan with `next` supersedes every active or flaky execution block whose check
+ * definition differs between the plan of its failing observation and `next` (a removed check differs too).
+ */
+function supersede(s: State, h: History, seq: number, next: Plan): void {
+  for (const n of Object.values(s.nodes)) for (const b of n.blocks) {
+    const id = checkOf(b.obligation), old = h.obsPlans.get(b.seq);
+    if (b.kind !== 'exec' || !active(b) || id === undefined || !old) continue;
+    if (checkDefinition(old, n.id, id) !== checkDefinition(next, n.id, id)) { b.state = 'superseded'; b.supersededBy = seq; }
+  }
 }
 
 // ---------- driver (SPEC §12) ----------

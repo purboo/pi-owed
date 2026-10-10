@@ -615,7 +615,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
  */
 export function manualHalt(s: State, node: string): { reason: string; needs: 'human' | 'owner' } | undefined {
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
-  if (!n?.candidate || !spec || n.blocks.some(b => b.state !== 'cleared')) return undefined;
+  if (!n?.candidate || !spec || n.blocks.some(b => b.state === 'active' || b.state === 'flaky')) return undefined;
   const pending = n.items.filter(i => i.status === 'D');
   if (!pending.length || !pending.every(i => i.obligation === 'approve' || i.obligation.startsWith('evidence:'))) return undefined;
   const parts = pending.map(i => {
