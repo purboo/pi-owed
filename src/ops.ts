@@ -45,6 +45,8 @@ export function subagentRefusal(role: string, env: NodeJS.ProcessEnv = process.e
   const v = subagentCall(env);
   return v && (role === 'owner' || role === 'parent') ? `owner and parent acts are reserved for the main agent; this process is a subagent call (${v})` : undefined;
 }
+/** G2.3 (F5): refusal of a claimed `parent:drive` (CLI `--as`, pi `as`); only the driver records as it, internally. */
+export const DRIVER_CLAIM = "parent:drive is the driver's identity: only owed drive records as it; it cannot be claimed with --as or as";
 /** D25.4: `OWED_CONFIRM=owner` restores the owner confirmation (pi dialog / TTY prompt); otherwise owner acts are delegated. */
 export function confirmGate(env: NodeJS.ProcessEnv = process.env): boolean { return env.OWED_CONFIRM?.trim() === 'owner'; }
 function guard(s: State, d: Draft): void { const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('; ')); }
@@ -60,9 +62,35 @@ function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.op
 function stable(before: State, after: State, id?: string): void {
   if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.slot?.base !== after.nodes[id]?.slot?.base || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('Plan, candidate or trunk changed; retry');
 }
-async function mutate(o: Actor, make: (s: State) => Draft): Promise<Entry> {
+async function mutate(o: Actor, make: (s: State) => Draft | Promise<Draft>): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
-  return ledger.withLock(async () => { const { state } = await load(ledger); const d = make(state); guard(state,d); return (await ledger.append([d]))[0]!; });
+  return ledger.withLock(async () => { const { state } = await load(ledger); const d = await make(state); guard(state,d); return (await ledger.append([d]))[0]!; });
+}
+/**
+ * G1: the candidate a caller names (`--candidate`, pi `candidate`): 40 hex or a prefix of at least 7 hex (usage error
+ * otherwise), lowercased; undefined when not given.
+ */
+export function candidateArg(v: string | undefined): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string' || !/^[0-9a-fA-F]{7,40}$/.test(v)) throw new OwedError(`candidate must be a commit (40 hex) or a prefix of at least 7 hex: ${String(v)}`,'usage');
+  return v.toLowerCase();
+}
+/** G1: refuses (under the lock, at append time) unless node `id` has an open candidate whose commit starts with `given`. */
+function named(s: State, id: string, given?: string): void {
+  if (given === undefined) return;
+  const n = s.nodes[id], c = n?.slot?.open ? n.candidate : undefined;
+  if (!c) throw new OwedError(`candidate changed: you named ${given}, node ${id} has no open candidate; nothing recorded`);
+  if (!c.commit.startsWith(given)) throw new OwedError(`candidate changed: you named ${given}, the open candidate is #${c.seq} ${c.commit.slice(0,12)}; nothing recorded`);
+}
+/**
+ * G2.1 (F3): in a pi-durable-subagents call, refuses a review or evidence on node `id` when one of `dirs` (the
+ * process's working directories) lies inside the node's open slot worktree. An accident rail like D25.3, not security.
+ */
+async function writerTree(s: State, id: string, dirs: string[], env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const slot = s.nodes[id]?.slot;
+  if (!subagentCall(env) || !slot?.open) return;
+  const tree = await physical(resolve(slot.worktree)), inside = (d: string) => d === tree || d.startsWith(tree.endsWith(sep) ? tree : tree + sep);
+  for (const d of dirs) if (inside(await physical(resolve(d)))) throw new OwedError('a writer worktree cannot record a review or evidence for its own node; run the review from the repository root or another directory');
 }
 /** The plan blob bytes and sha stored for a plan text (canonical YAML). */
 function planBlob(text: string) { const plan = parsePlan(text), data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) }; }
@@ -270,10 +298,17 @@ export async function attest(o: Context & { node: string; rerun?: boolean; signa
   },'attest',o.signal);
 }
 /** `needs: 'parent'` marks a block that needs a parent ruling (D18); the ledger refuses it on an ok verdict. */
-export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent' }): Promise<Entry> {
-  return mutate(o,s => { const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings,...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
+/**
+ * `named` (G1): the candidate the caller judged (commit or prefix); `pin`: the candidate an owner confirmation showed;
+ * either refuses at append time when the open candidate differs. `from`: further working directories of the calling
+ * process for the writer-worktree rail (G2.1; o.cwd and process.cwd() are always checked).
+ */
+export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[] }): Promise<Entry> {
+  const given = candidateArg(o.named);
+  return mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings,...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
 }
-export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel }): Promise<Entry> { return mutate(o,s => ({kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key:candidate(s,o.node).candidate!.keys[o.obligation] ?? '',reason:o.reason,accept_risk:o.accept_risk})); }
+/** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
+export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<Entry> { const given = candidateArg(o.named); return mutate(o,s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); return {kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key:candidate(s,o.node).candidate!.keys[o.obligation] ?? '',reason:o.reason,accept_risk:o.accept_risk}; }); }
 export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items,reason:o.reason})); }
 export async function abandon(o: Actor & { node:string; reason:string }): Promise<Entry> { return mutate(o,s => ({kind:'abandon',by:by(o),channel:o.channel,node:o.node,attempt:node(s,o.node).slot?.attempt ?? 0,reason:o.reason})); }
 export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }
@@ -470,6 +505,11 @@ function pinned(s: State, id: string, pin?: CandidatePin): void {
   if (pin && (c?.seq !== pin.seq || c.commit !== pin.commit)) throw new OwedError('candidate changed since confirmation; nothing recorded');
 }
 /** What the owner approves: the open candidate of `node` (for confirmation dialogs and prompts; no effect). */
+/** The open candidate of `node` (submit seq, commit, base, changed-file count) for owner confirmation dialogs (G1.2; no effect). */
+export async function candidatePreview(o: Context & { node: string }): Promise<{ node: string; seq: number; commit: string; base: string; changed: number }> {
+  const { state } = await load(await Ledger.open(o.cwd)), n = candidate(state,o.node);
+  return { node:o.node, seq:n.candidate!.seq, commit:n.candidate!.commit, base:n.slot!.base, changed:n.candidate!.changed.length };
+}
 export async function approvePreview(o: Context & { node: string }): Promise<{ node: string; seq: number; commit: string; base: string; changed: number }> {
   const { state } = await load(await Ledger.open(o.cwd)), n = candidate(state,o.node);
   if (!state.plan.nodes.find(x => x.id === o.node)?.approve) throw new OwedError(`Node ${o.node} has no approve obligation`);
@@ -477,11 +517,14 @@ export async function approvePreview(o: Context & { node: string }): Promise<{ n
 }
 /**
  * Owner approval (`block`: an owner block) of the open candidate: a `review` entry on obligation `approve`, rank 3.
- * `candidate` (the one the owner confirmed) refuses at append time when the current candidate differs.
+ * `candidate` (the one the owner confirmed) and `named` (G1: the commit the caller names) refuse at append time when
+ * the current candidate differs.
  */
-export async function approve(o: Actor & { node: string; note?: string; block?: boolean; candidate?: CandidatePin }): Promise<Entry> {
+export async function approve(o: Actor & { node: string; note?: string; block?: boolean; candidate?: CandidatePin; named?: string }): Promise<Entry> {
   if (o.as.role !== 'owner') throw new OwedError('approve requires owner');
+  const given = candidateArg(o.named);
   return mutate(o,s => {
+    node(s,o.node); named(s,o.node,given);
     const n = candidate(s,o.node);
     pinned(s,o.node,o.candidate);
     if (!s.plan.nodes.find(x => x.id === o.node)?.approve) throw new OwedError(`Node ${o.node} has no approve obligation`);
@@ -511,15 +554,19 @@ export async function evidencePreview(o: Context & { node: string }): Promise<{ 
  * Manual evidence (D23): on a node with an open candidate it records evidence for `evidence:<id>` (files required);
  * on a merged node a receipt citing its latest merge (files optional). Files are hashed now; `expect` (the files a
  * confirmation dialog showed) refuses when they changed since; `candidate` (the candidate it showed) refuses when the
- * current open candidate differs.
+ * current open candidate differs. `named` (G1) records only on an open candidate whose commit starts with it. `from`:
+ * further working directories of the calling process for the writer-worktree rail (G2.1, as for review).
  */
-export async function evidence(o: Actor & { node: string; id: string; files: string[]; note: string; expect?: EvidenceFile[]; candidate?: CandidatePin }): Promise<EvidenceEntry> {
+export async function evidence(o: Actor & { node: string; id: string; files: string[]; note: string; expect?: EvidenceFile[]; candidate?: CandidatePin; named?: string; from?: string[] }): Promise<EvidenceEntry> {
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('evidence requires a note','usage');
+  const given = candidateArg(o.named);
   const files = await evidenceFiles({ cwd:o.cwd, files:o.files });
   if (o.expect && canonical(o.expect) !== canonical(files)) throw new OwedError('evidence files changed since they were confirmed; nothing was recorded');
-  return await mutate(o,s => {
+  return await mutate(o,async s => {
     const n = node(s,o.node);
+    named(s,o.node,given);
     pinned(s,o.node,o.candidate);
+    await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]);
     if (n.merged && !n.slot?.open) return { kind:'evidence',by:by(o),channel:o.channel,node:o.node,merge:n.merged.seq,id:o.id,files,note:o.note };
     const c = candidate(s,o.node);
     return { kind:'evidence',by:by(o),channel:o.channel,node:o.node,attempt:c.slot!.attempt,key:c.candidate!.keys[`evidence:${o.id}`] ?? '',id:o.id,files,note:o.note };

@@ -141,13 +141,13 @@ test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --
   r.add({ kind: 'obs', by: 'executor:owed', subject: 'a', obligation: 'writes', key: 'w1', verdict: 'pass', exit: 0, durationMs: 1, commit: 'c1', base: 's0' });
   r.add({ kind: 'review', by: 'reviewer:r2', node: 'a', attempt: 1, obligation: 'review', key: 'rv1', verdict: 'block', rank: 2, note: 'no' });
   const s = r.state(), brief = briefView(s, r.entries, -1, 0);
-  assert.equal(brief.decisions.find(x => x.node === 'a')!.command, 'owed review a --ok --rank 3 --as owner:cli');
+  assert.equal(brief.decisions.find(x => x.node === 'a')!.command, 'owed review a --ok --rank 3 --as owner:cli --candidate c1');
   const text = `${renderBrief(brief)}\n${ownerCommands(s, 'a').join('\n')}`;
   assert.doesNotMatch(text, /owner:human/, text);
   assert.deepEqual([...new Set([...text.matchAll(/--as (\S+)/g)].map(x => x[1]))], ['owner:cli'], text);
   // Under the confirmation gate the role a command states is owner:human (ruling #559 nit).
   const prior = process.env.OWED_CONFIRM; process.env.OWED_CONFIRM = 'owner';
-  try { assert.equal(briefView(s, r.entries, -1, 0).decisions.find(x => x.node === 'a')!.command, 'owed review a --ok --rank 3 --as owner:human'); }
+  try { assert.equal(briefView(s, r.entries, -1, 0).decisions.find(x => x.node === 'a')!.command, 'owed review a --ok --rank 3 --as owner:human --candidate c1'); }
   finally { if (prior === undefined) delete process.env.OWED_CONFIRM; else process.env.OWED_CONFIRM = prior; }
   // Halt rows of the views use the D25.6 wording (ruling #559 nit).
   r.add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason: 'stalled: x', needs: 'owner' });

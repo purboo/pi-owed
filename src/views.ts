@@ -294,11 +294,14 @@ export interface Brief {
 }
 const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
 const obligationFlag = (o: string): string => o === 'closure-review' ? ' --obligation closure-review' : '';
-const waiveCommand = (node: string, obligation: string, risks: number[]): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}`;
+/** G1.3: ` --candidate <commit12>` of the node's open candidate (candidate-bound acts name what they judged), else empty. */
+const candidate12 = (s: State, node: string): string | undefined => { const n = s.nodes[node]; return n?.slot?.open && n.candidate ? n.candidate.commit.slice(0, 12) : undefined; };
+const candidateFlag = (s: State, node: string): string => { const c = candidate12(s, node); return c ? ` --candidate ${c}` : ''; };
+const waiveCommand = (node: string, obligation: string, risks: number[], flag = ''): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}${flag}`;
 /** Hint for a node without an open writer slot: nothing can be cleared on an old candidate, only on a new attempt. */
 const dispatchHint = (n: NodeState): string => n.merged ? `${n.id} is merged; no attempt can clear this` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
-/** D23: the command that records manual evidence `id` of `node` as principal `as`. */
-export const evidenceCommand = (node: string, id: string, as: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}`;
+/** D23: the command that records manual evidence `id` of `node` as principal `as`; `candidate` (G1.3): the commit (prefix) it names. */
+export const evidenceCommand = (node: string, id: string, as: string, candidate?: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}${candidate ? ` --candidate ${candidate}` : ''}`;
 /**
  * D25.6: commands the main agent (the delegated owner) can run, in order, to resolve an owner halt or notification of
  * `node`. With an open candidate: the brief's command for each owner item still owed, a waiver for every other item
@@ -315,8 +318,9 @@ export function ownerCommands(s: State, node: string): string[] {
   const items = live ? n.items.filter(i => i.status === 'D') : [];
   const later = live ? '' : 'after the writer submits a candidate: ';
   const out = n.slot?.open ? [] : [`owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
-  out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i) : waiveCommand(node, i.obligation, blocks(i.obligation))));
-  for (const b of n.blocks.filter(b => b.state !== 'cleared' && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation))}`);
+  const flag = candidateFlag(s, node);
+  out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i) : waiveCommand(node, i.obligation, blocks(i.obligation), flag)));
+  for (const b of n.blocks.filter(b => b.state !== 'cleared' && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
   if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
   return [...new Set(out)];
 }
@@ -330,11 +334,12 @@ function decisionCommand(s: State, i: ItemView): string {
   if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
   const n = s.nodes[i.subject];
   if (n && !n.slot?.open) return dispatchHint(n);
-  if (i.obligation === 'approve') return `owed approve ${i.subject} [--note TEXT] (owner)`;
-  if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), ownerAs());
+  const flag = candidateFlag(s, i.subject);
+  if (i.obligation === 'approve') return `owed approve ${i.subject}${flag} [--note TEXT] (owner)`;
+  if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), ownerAs(), candidate12(s, i.subject));
   const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && b.state !== 'cleared') ?? [];
-  if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}`;
-  return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq));
+  if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}${flag}`;
+  return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag);
 }
 /**
  * How to clear a non-cleared block. A judgment block is described in words: printing a
@@ -345,13 +350,13 @@ function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
-  const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `;
-  if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks)}`;
+  const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);
+  if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks, flag)}`;
   if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} (the attribution rerun on the original content clears the block)`;
-  if (b.obligation === 'approve') return `${after}a later owner approval of the current candidate clears it: owed approve ${b.node}`;
+  if (b.obligation === 'approve') return `${after}a later owner approval of the current candidate clears it: owed approve ${b.node}${flag}`;
   const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
   const ruling = !currentNeeds(s, b) ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed rule --nodes ${b.node} "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
-  return `${after}${ruling}an ok review of ${b.node}/${b.obligation} on the current candidate by the original reviewer ${by} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it; or owner: ${waiveCommand(b.node, b.obligation, risks)}`;
+  return `${after}${ruling}an ok review of ${b.node}/${b.obligation} on the current candidate by the original reviewer ${by} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it; or owner: ${waiveCommand(b.node, b.obligation, risks, flag)}`;
 }
 /** A needs-parent block recorded on the current candidate of its node's open attempt (D18b.4: stale ones keep the stale wording). */
 function currentNeeds(s: State, b: Block): boolean {
@@ -470,10 +475,10 @@ export function reviewObligations(s: State, node: string, n: number): ('review' 
  * blocks are quoted too.
  */
 /** D23 line of a review packet: approve is the owner's; evidence names its role and, when this reviewer may record it, the command. */
-function manualRequired(spec: NodeSpec, o: string, who: string): string {
+function manualRequired(spec: NodeSpec, o: string, who: string, candidate?: string): string {
   if (o === 'approve') return 'owner approval (owed approve), not recorded by reviewers';
   const ev = spec.evidence?.find(e => `evidence:${e.id}` === o);
-  return `manual evidence by ${ev?.by ?? 'reviewer'}${ev ? `: ${oneLine(ev.what)}` : ''}${ev?.by === 'reviewer' ? ` (if you checked it yourself: ${evidenceCommand(spec.id, ev.id, who)})` : ''}`;
+  return `manual evidence by ${ev?.by ?? 'reviewer'}${ev ? `: ${oneLine(ev.what)}` : ''}${ev?.by === 'reviewer' ? ` (if you checked it yourself: ${evidenceCommand(spec.id, ev.id, who, candidate)})` : ''}`;
 }
 export function reviewPacket(s: State, node: string, n = 1): string {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
@@ -481,7 +486,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   if (!st.slot?.open || !st.candidate) throw new OwedError(`Node ${node} has no open candidate`);
   const runs = reviewRuns(s, node), first = reviewerBase(s, node) + 1, k = n - first + 1;
   if (!Number.isInteger(n) || k < 1 || k > runs) throw new OwedError(`Node ${node} candidate #${st.candidate.seq} has ${runs} reviewer run(s)${runs ? ` (n = ${first}${runs > 1 ? `..${first + runs - 1}` : ''})` : ''}; run ${n} does not exist for it`);
-  const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, k);
+  const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, k), c12 = commit.slice(0, 12);
   const rulings = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
   const rulingsItem = st.items.find(i => i.obligation === 'rulings');
   const ack = rulingsItem && rulingsItem.status === 'D' && rulings.length ? ` --ack-rulings ${Math.max(...rulings.map(r => r.seq))}` : '';
@@ -491,9 +496,9 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   const judged = st.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
   const blocks = judged.filter(b => author(b.seq)?.by === who), others = judged.filter(b => author(b.seq)?.by !== who && b.rank === 1);
   const slotRank = (o: 'review' | 'closure-review'): number => Math.max(rank(o), ...blocks.filter(b => b.obligation === o).map(b => b.rank ?? 0), ...others.filter(b => b.obligation === o).map(b => (b.rank ?? 0) + 1));
-  const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : isManual(o) ? manualRequired(spec, o, who) : 'measured by owed';
+  const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : isManual(o) ? manualRequired(spec, o, who, c12) : 'measured by owed';
   const mine = reviewObligations(s, node, n);
-  const commands = mine.flatMap(o => slotRank(o) > 2 ? [`(${o} requires rank ${slotRank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${slotRank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
+  const commands = mine.flatMap(o => slotRank(o) > 2 ? [`(${o} requires rank ${slotRank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${slotRank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --candidate ${c12} --note "..."`]);
   const quote = (b: Block): string => { const e = author(b.seq); return `- #${b.seq} ${b.obligation} rank ${b.rank}${author(b.seq)?.by === who ? '' : ` by ${e?.by ?? '?'}`}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; };
   const quoted = blocks.map(quote), otherQuoted = others.filter(b => mine.includes(b.obligation as 'review')).map(quote);
   return [`# Review ${spec.title ?? node} (node ${node}, attempt ${attempt}, reviewer run ${k} of ${runs} for this candidate, n = ${n})`,
@@ -514,5 +519,6 @@ export function reviewPacket(s: State, node: string, n = 1): string {
     'If the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, record --block --needs-parent and state the decision needed; do not push a guess onto the writer.',
     'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',
     ...commands.map(c => `  ${c}`),
+    `--candidate ${c12} names the candidate you reviewed: if the writer submits again while you review, recording is refused ("candidate changed", nothing recorded); then re-read owed why ${node} and review the new candidate.`,
     'Reply with the ledger seqs of the reviews you recorded.'].join('\n');
 }

@@ -53,7 +53,7 @@ test('judgment block hints describe in words who can clear them and never print 
   // The only --as anywhere in the rendered views is the owner's own (owner-channel gated) decision command.
   const text = `${renderBrief(brief)}\n${renderReceipt(card)}`;
   assert.deepEqual([...new Set(asFlags(text))], ['owner:cli'], text);
-  assert.equal(brief.decisions.find(d => d.node === 'a')!.command, 'owed review a --ok --rank 3 --as owner:cli');
+  assert.equal(brief.decisions.find(d => d.node === 'a')!.command, `owed review a --ok --rank 3 --as owner:cli --candidate ${s.nodes.a!.candidate!.commit.slice(0, 12)}`);
   // The words match the semantics: the original reviewer at the same rank clears the block.
   r.review('a', 'ok', 2, 'reviewer:r2');
   assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === block)!.state, 'cleared');

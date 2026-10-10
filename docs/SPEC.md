@@ -8,6 +8,9 @@ or is visibly waived by the owner. The design follows `pi-dag/ARCHITECTURE.md`
 subset. Threat model: same OS user; owed prevents mistakes, laziness and
 reward-hacking shortcuts by agents using the normal tools. It does not resist a
 process that edits the ledger file directly; it detects such edits (hash chain).
+Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-worktree
+rail §2.1.7) are rails against accidents and instructions, not security
+boundaries: a process can unset the variables or change directory.
 
 ## 1. Storage
 
@@ -34,7 +37,14 @@ String form `role:id` (e.g. `owner:human`, `parent:main`, `writer:auth-api#2`,
 - Writers are created by dispatch: `writer:<node>#<attempt>`.
 - The executor is owed itself; only `owed attest`/`owed merge` produce executor
   observations.
-- The driver (`owed drive`, §12) acts as `parent:drive`.
+- The driver (`owed drive`, §12) acts as `parent:drive`. That name is the
+  driver's only (0.6.0, G2.3): the ledger refuses, on append and on replay, an
+  entry by `parent:drive` of any kind the driver never writes (it writes only
+  `dispatch`, `launch`, `send`, `halt` and `rebase`), and the CLI `--as
+  parent:drive` and the pi tools' `as: "parent:drive"` are refused for every
+  command and tool, reads included (`parent:drive is the driver's identity:
+  only owed drive records as it; it cannot be claimed with --as or as`); the
+  driver passes it internally.
 - Owner acts are recorded with a `channel`: `delegated` (D25, the default: the
   main agent acts as owner with no human step), `tty` (interactive confirmation),
   `pi-confirm` (pi UI confirmation) or `flag` (`--i-am-owner`, shown as weaker in
@@ -98,7 +108,19 @@ agent's owner acts first (§9).
    commands of the brief, report and these texts omit `--as` where the command
    already defaults to the owner (waive, defer, adopt, approve, init) and use
    `--as owner:cli` where a role must be stated (owner review, owner evidence);
-   under `OWED_CONFIRM=owner` that role is `--as owner:human`.
+   under `OWED_CONFIRM=owner` that role is `--as owner:human`. Each such
+   command for a candidate-bound act (waive, approve, evidence, owner review) on
+   a node with an open candidate ends with (approve: is followed by) `--candidate
+   <commit12>` of that candidate (G1.3, §8 act binding).
+7. Writer-worktree rail (0.6.0, G2.1, F3): in a pi-durable-subagents call
+   (`DSA_CALL` or `DSA_EXEC` set), an owed process (CLI or pi tool) whose working
+   directory (the CLI's cwd, the tool's `cwd` argument, the pi session's
+   directory or the process's own) is inside the open slot worktree of node X is
+   refused `review` and `evidence` on X, nothing recorded: `a writer worktree
+   cannot record a review or evidence for its own node; run the review from the
+   repository root or another directory`. Waives are already refused for
+   subagents (item 3). Like item 3 this is an accident rail, not a security
+   boundary (§1).
 
 ## 3. Plan (content, YAML)
 
@@ -362,9 +384,14 @@ harness, materialization failure) is ⊥: no information, no block.
 4. `closure-review` iff the diff touches closure globs: needs a review `ok` with
    rank ≥ 2 by a non-writer, or an owner waiver.
 5. `review` iff `review.count > 0`: needs `count` distinct reviewers with rank ≥
-   `min_rank`, none of them a writer of this node (any attempt).
+   `min_rank`, none of them a writer of this node (any attempt). One recusal
+   rule (0.6.0, G2.2) for counting reviews, rulings acknowledgments, evidence and
+   for refusing new reviews: a principal is excluded when it is a writer of the
+   node or shares a writer's id after the role (any attempt), so a review by
+   `reviewer:A#2` stops counting once `writer:A#2` exists.
 6. `rulings`: satisfied iff the attempt's `rulings_seen` ≥ the latest in-scope
-   `rule` seq, or a later `review ok` by rank ≥ 1 with `ack_rulings` ≥ that seq.
+   `rule` seq, or a later `review ok` by rank ≥ 1 with `ack_rulings` ≥ that seq
+   by a principal the recusal rule of item 5 does not exclude.
 7. `strength:<id>` for each check with `mutants`; executor observation (§7):
    `pass` means the check killed at least `min_kill` of the base's mutants. A
    `fail` is an execution block like any other. On merge it keeps the candidate's key.
@@ -630,8 +657,8 @@ dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // create
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
 attest(o: {cwd, node, rerun?: boolean, signal?: AbortSignal}): Promise<AttestResult>   // abort: §7.8
-review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review", needs?: "parent"}): Promise<Entry>
-waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel}): Promise<Entry>
+review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review", needs?: "parent", named?: string, pin?: {seq, commit}, from?: string[]}): Promise<Entry>   // named: --candidate; pin: an owner dialog's candidate; from: more working directories for the writer-worktree rail
+waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel, named?: string, pin?: {seq, commit}}): Promise<Entry>
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
 abandon(o: {cwd, node, reason, as}): Promise<Entry>      // reason = the --note text
 merge(o: {cwd, node, as, signal?}): Promise<MergeResult>          // builds M, attests M, guarded CAS; abort: §7.8
@@ -646,9 +673,11 @@ escape(o: {cwd, node, merge, class, note, evidence?, as, channel?}): Promise<Ent
 decoyDigest(text: string): {digest}                      // pure helper; parses the reveal JSON, writes nothing
 decoyCommit(o: {cwd, digest, as, channel}): Promise<Entry>
 decoyReveal(o: {cwd, payload: string, as, channel}): Promise<Entry>   // payload = reveal JSON text
-approve(o: {cwd, node, note?, block?, as, channel, candidate?: {seq, commit}}): Promise<Entry>   // D23: owner only; review entry on obligation approve, rank 3; candidate = the confirmed one
+approve(o: {cwd, node, note?, block?, as, channel, candidate?: {seq, commit}, named?: string}): Promise<Entry>   // D23: owner only; review entry on obligation approve, rank 3; candidate = the confirmed one
 approvePreview(o: {cwd, node}): Promise<{node, seq, commit, base, changed}>   // D23: what the owner approves (no effect)
-evidence(o: {cwd, node, id, files: string[], note, as, channel?, expect?, candidate?: {seq, commit}}): Promise<EvidenceEntry>   // D23: candidate evidence or receipt; expect = files a dialog showed, candidate = the candidate it showed
+candidatePreview(o: {cwd, node}): Promise<{node, seq, commit, base, changed}>   // G1.2: the open candidate, for the waive and owner-review dialogs (no effect)
+candidateArg(v?: string): string | undefined              // G1.1: validates --candidate (7..40 hex; usage error otherwise)
+evidence(o: {cwd, node, id, files: string[], note, as, channel?, expect?, candidate?: {seq, commit}, named?: string, from?: string[]}): Promise<EvidenceEntry>   // D23: candidate evidence or receipt; expect = files a dialog showed, candidate = the candidate it showed
 evidencePreview(o: {cwd, node}): Promise<{node, candidate?: {seq, commit, base}, merge?}>   // D23: where evidence would be recorded (no effect)
 evidenceFiles(o: {cwd, files: string[]}): Promise<EvidenceFile[]>   // D23: read + sha256 + bytes; repository-relative path when inside the repository
 ```
@@ -659,6 +688,25 @@ refuse under the lock with `candidate changed since confirmation; nothing
 recorded` when the node's current open candidate differs (a resubmit, rebase or
 abandon during the confirmation); the CLI approve prompt and the pi
 `owed_approve` / owner `owed_evidence` (candidate mode) dialogs always pass it.
+Under `OWED_CONFIRM=owner` the waive and owner-review confirmations (pi dialog;
+CLI: a stderr line `Waive <node>/<obligation>: candidate …` or `Owner review of
+node <node>: candidate <commit> (submit #<seq>), base <base>, N changed files`
+before the TTY prompt) show the open candidate as approve's does and pin it the
+same way (0.6.0, G1.2, F1).
+
+Act binding (0.6.0, G1, F1/F2). `review`, `waive`, `approve` and `evidence` (on
+an open candidate) accept the candidate the caller judged: CLI `--candidate
+<commit>`, pi parameter `candidate`, ops `named` — 40 hex or a prefix of at
+least 7 hex (case-insensitive; otherwise a usage error before anything is read).
+Under the ledger lock at append time the act is refused unless the node has an
+open candidate whose commit starts with it: `candidate changed: you named
+<given>, the open candidate is #<seq> <commit12>; nothing recorded`, or
+`candidate changed: you named <given>, node <node> has no open candidate;
+nothing recorded`. Without it behavior is unchanged; nothing new is recorded.
+Delegated owners and reviewers pass the commit they read, so a resubmit between
+reading and acting makes the act fail instead of landing on content nobody
+judged. Every command owed suggests for such an act on a node with an open
+candidate carries `--candidate <commit12>` (§2.1.6, the review packet §12).
 
 Repository root. Every path owed derives for the repository (dispatch worktree
 paths, gc, `info/exclude`) uses the **main worktree root** (ruling #122):
@@ -953,7 +1001,9 @@ ledger plan), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
 run inside its worktree), `attest <node> [--rerun]`,
 `review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings]`
 (`--needs-parent` records `needs: "parent"`; refused with `--ok`),
-`waive <node> <obligation> --reason ... [--accept-risk 12,15]`,
+`waive <node> <obligation> --reason ... [--accept-risk 12,15]`
+(`review`, `waive`, `approve` and `evidence` also take `--candidate COMMIT`,
+§8 act binding),
 `defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
 spelling `--reason`; not both), `merge <node>`, `status`,
 `why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
@@ -1050,16 +1100,16 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_submit` | `node`, `commit?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
 | `owed_attest` | `node`, `rerun?`, `as` | attest |
-| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `needs_parent?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only) |
+| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `as` | merge |
 | `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_rule` | `text`, `nodes`, `as` | ruling |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
 | `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | initialize the ledger (§11.1) |
-| `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
-| `owed_approve` | `node`, `note?`, `block?`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | owner approval (D23); under the gate the dialog shows `Approve node <node>` (or `Block approval of node <node>`), `Candidate: <commit> (submit #<seq>)`, `Base: <base>`, `Changed files: <n>`, then the note; only that candidate is approved (§8) |
-| `owed_evidence` | `node`, `id`, `files?`, `note`, `as` (reviewer/parent/owner) | manual evidence or receipt (D23); an owner is delegated (no dialog; under `OWED_CONFIRM=owner` a dialog showing `Candidate: <commit> (submit #<seq>)` and `Base: <base>` (or `Receipt on merge #<m>`), `Files (N):` as `path sha12 (bytes)` and the note; the recording is refused if the files or the candidate changed after the dialog) |
+| `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `candidate?`, `as` | owner waiver; under the gate the dialog shows `Candidate: <commit> (submit #<seq>)`, `Base:`, `Changed files:` and only that candidate is waived (§8) |
+| `owed_approve` | `node`, `note?`, `block?`, `candidate?`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | owner approval (D23); under the gate the dialog shows `Approve node <node>` (or `Block approval of node <node>`), `Candidate: <commit> (submit #<seq>)`, `Base: <base>`, `Changed files: <n>`, then the note; only that candidate is approved (§8) |
+| `owed_evidence` | `node`, `id`, `files?`, `note`, `candidate?`, `as` (reviewer/parent/owner) | manual evidence or receipt (D23); an owner is delegated (no dialog; under `OWED_CONFIRM=owner` a dialog showing `Candidate: <commit> (submit #<seq>)` and `Base: <base>` (or `Receipt on merge #<m>`), `Files (N):` as `path sha12 (bytes)` and the note; the recording is refused if the files or the candidate changed after the dialog) |
 | `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
 | `owed_adopt` | `commit?`, `note`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`) | adopt trunk commits made outside owed (owner; `as: parent:…` under an `adopt` allowance, §3.4); under the gate the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
@@ -1341,9 +1391,12 @@ of the candidate with its required count/rank and current mark, rulings in
 scope, the reviewer identity `reviewer:drive-<node>-<attempt>-<n>`, the exact
 commands
 
-    owed review <node> --as reviewer:drive-<node>-<attempt>-<n> --ok|--block --rank R [--obligation closure-review] [--ack-rulings S] --note "..."
+    owed review <node> --as reviewer:drive-<node>-<attempt>-<n> --ok|--block --rank R [--obligation closure-review] [--ack-rulings S] --candidate <commit12> --note "..."
 
-(R = `review.min_rank`, at least 1, for `review`; 2 for `closure-review`;
+(`--candidate` names the reviewed candidate, §8 act binding: a resubmit during
+the review makes recording fail; the line after the commands tells the reviewer
+to re-read `owed why <node>` and review the new candidate then;
+R = `review.min_rank`, at least 1, for `review`; 2 for `closure-review`;
 `--ack-rulings S` with the latest in-scope ruling S when the rulings item is
 owed; a rank above 2 is owner-only and the packet says the run cannot discharge
 it), and the rules: inspect the actual diff (`git diff <base> <candidate>`), do
