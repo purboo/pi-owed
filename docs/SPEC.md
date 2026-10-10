@@ -22,6 +22,22 @@ boundaries: a process can unset the variables or change directory.
   `hash(entry)` = sha256 hex of the canonical JSON (keys sorted recursively) of
   the entry **without** a `hash` field; the stored line also contains `hash`.
 - `blobs/<sha256>`: content-addressed blobs (plans, logs, dispatch packets).
+- `cache/plans/<blob sha>.json` (0.10, N4): the persistent parsed-plan cache,
+  `{v, sha, plan}`; `v` = cache format + owed version (`PLAN_CACHE_VERSION`).
+  An op reads a plan from the in-process cache, then from this entry, then from
+  the YAML blob; after a YAML parse it writes the entry atomically (temp file,
+  then rename). Any read error, invalid JSON, other `v` or other `sha` means the
+  entry is ignored and the YAML is parsed again; a write that fails is ignored:
+  the cache never fails an op. It is a derived local file, as writable by local
+  processes as the ledger and the blobs. `owed verify` never uses it for replay:
+  it parses every plan blob from YAML and reads each cache entry raw. An entry
+  of another `v` is rewritten silently (stale, not a fault). An entry of this
+  `v` whose `sha` or plan differs from the blob, or a file that cannot be read
+  or is not JSON, is reported in `cacheMismatch` (JSON; not a verify failure)
+  and rewritten. `owed gc` (also `--dry-run`) removes entries whose sha no
+  longer appears in a genesis or plan entry, and temp files older than 60 s
+  (`GcResult.planCache`, a `Plan cache files ... removed` line); nothing is
+  recorded in the ledger for them.
 - `lock/`: mutual exclusion by atomic `mkdir`; contains `owner.json`
   `{pid, host, ts}`. A lock whose pid is dead on the same host is stale and may be
   broken. All read-check-append sequences run under the lock (§6.4). Other named
@@ -478,6 +494,19 @@ never part of a key.
 harness, materialization failure) is ⊥: no information, no block.
 
 ## 6. Reducer (pure: entries → State)
+
+Replay speed (0.10, N4). The fold keeps per-node indexes of reviews, evidence and
+waivers, executor observations by item, launches by rid and entries by seq, so
+item and validation lookups never scan the whole ledger. After each entry it
+recomputes the derived fields (items, accepted, phase, dependents, stale halt)
+only of the nodes the entry can change: every node for genesis, plan and merge
+entries, the named nodes (or every node for `*`) for a ruling, the subject of an
+observation, the node of any other entry with one; trunk invariants and
+`genesisDone` every time. `dependents` (transitive dependents) is computed once
+per plan. A deep-frozen plan from the lookup (ops' plan cache) is shared by the
+state instead of cloned. The State, queries, views and `validateDraft` decisions
+are those of the 0.10 reducer (test/perf.test.ts compares them with a frozen
+copy at every k-th prefix of fuzz, synthetic and real ledgers).
 
 ### 6.1 Node lifecycle
 - `ready` ⟺ every dep has a `merge` entry, node not merged, no open slot.

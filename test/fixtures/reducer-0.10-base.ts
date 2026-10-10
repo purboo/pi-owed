@@ -1,25 +1,14 @@
+// N4: frozen copy of src/reducer.ts at 360f0c8 (0.10 trunk: carry, cas-retry, amend; equal to e01d451), the reference of test/perf.test.ts. Do not edit.
 import { matchesGlob } from 'node:path';
-import { H, ZERO, canonical, sha256 } from './canon.ts';
-import { OwedError } from './errors.ts';
-import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
-import { execKey } from './git.ts';
-import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
+import { H, ZERO, canonical, sha256 } from '../../src/canon.ts';
+import { OwedError } from '../../src/errors.ts';
+import { EVIDENCE_ID, manualDowngrades } from '../../src/plan.ts';
+import { execKey } from '../../src/git.ts';
+import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, Rule, RunRole, SendKind, SendReason, State, StateFacts } from '../../src/types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
-/**
- * N4 (0.10): replay indexes, kept in ledger order as entries are folded (`record`), so item and validation lookups
- * read only the entries of one node or item instead of scanning every entry. Arrays hold the replayed entries.
- */
-interface Indexes {
-  /** entries by seq (a list: replay never assumes unique seqs) */ bySeq: Map<number, Entry[]>;
-  /** executor:owed observations by `subject \0 obligation \0 key` */ obs: Map<string, ObsEntry[]>;
-  /** reviews, evidence and waivers by node */ reviews: Map<string, ReviewEntry[]>; evidence: Map<string, EvidenceEntry[]>; waives: Map<string, WaiveEntry[]>;
-  /** launches by rid */ launches: Map<unknown, LaunchEntry[]>;
-  /** seq of the latest plan entry */ lastPlan?: number;
-  /** transitive dependents per node id of the current plan (recomputed when the plan changes) */ dependents: Map<string, number>;
-}
-interface History extends Indexes { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
+interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
@@ -39,42 +28,10 @@ const binding = (b: Block, spec: NodeSpec | undefined): boolean => active(b) && 
 const role = (by: string): string => by.split(':')[0] ?? '';
 const blankPlan = (): Plan => ({ version: 1, trunk: '', closure: [], invariants: [], nodes: [] });
 const emptyNode = (id: string): NodeState => ({ id, phase: 'blocked', items: [], blocks: [], accepted: false, dependents: 0, writers: [], runs: [] });
-/** N4: node specs by id of a frozen (shared, unchangeable) plan; the first spec of an id wins, as with find. */
-const specIndex = new WeakMap<Plan, Map<string, NodeSpec>>();
-function nodeSpec(s: State, id: string): NodeSpec | undefined {
-  const plan = s.plan;
-  if (!Object.isFrozen(plan) || !Object.isFrozen(plan.nodes)) return plan.nodes.find(n => n.id === id);
-  let m = specIndex.get(plan);
-  if (!m) { m = new Map(); for (const n of plan.nodes) if (!m.has(n.id)) m.set(n.id, n); specIndex.set(plan, m); }
-  return m.get(id);
-}
+const nodeSpec = (s: State, id: string): NodeSpec | undefined => s.plan.nodes.find(n => n.id === id);
 /** A node spec without its `type` (D19.4) and `drive` (K3): neither is an obligation. */
 const withoutType = (n: NodeSpec | undefined): NodeSpec | undefined => n && { ...n, type: undefined, drive: undefined };
-const itemKey = (subject: string, obligation: string, key: string): string => `${subject}\0${obligation}\0${key}`;
-const listed = <K, V>(m: Map<K, V[]>, k: K): V[] => m.get(k) ?? [];
-const push = <K, V>(m: Map<K, V[]>, k: K, v: V): void => { const l = m.get(k); if (l) l.push(v); else m.set(k, [v]); };
-const observations = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => [...listed(context(s).obs, itemKey(subject, obligation, key))];
-/** N4: appends a replayed entry to the history and its indexes. */
-function record(h: History, e: Entry): void {
-  h.entries.push(e); push(h.bySeq, e.seq, e);
-  if (e.kind === 'obs' && e.by === 'executor:owed') push(h.obs, itemKey(e.subject, e.obligation, e.key), e);
-  else if (e.kind === 'review') push(h.reviews, e.node, e);
-  else if (e.kind === 'evidence') push(h.evidence, e.node, e);
-  else if (e.kind === 'waive') push(h.waives, e.node, e);
-  else if (e.kind === 'launch') push(h.launches, e.rid, e);
-  else if (e.kind === 'plan') h.lastPlan = e.seq;
-}
-/** N4: the number of transitive dependents of every node of `plan` (reverse adjacency, one DFS per node). */
-function dependentCounts(plan: Plan): Map<string, number> {
-  const rev = new Map<string, string[]>(), out = new Map<string, number>();
-  for (const other of plan.nodes) for (const d of new Set(other.deps)) push(rev, d, other.id);
-  for (const n of plan.nodes) {
-    const seen = new Set<string>();
-    const visit = (id: string): void => { for (const other of listed(rev, id)) if (!seen.has(other)) { seen.add(other); visit(other); } };
-    visit(n.id); out.set(n.id, seen.size);
-  }
-  return out;
-}
+const observations = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => context(s).entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === subject && e.obligation === obligation && e.key === key);
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => observations(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
 function required(spec: NodeSpec, facts: CandidateFacts): string[] {
@@ -115,14 +72,14 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
   if (obligation === 'review' || obligation === 'closure-review') {
     const rank = obligation === 'closure-review' ? 2 : spec?.review.min_rank ?? 1;
     const count = obligation === 'closure-review' ? 1 : spec?.review.count ?? 1;
-    const reviews = listed(context(s).reviews, subject).filter(e => e.kind === 'review' && e.node === subject && e.obligation === obligation && e.key === key && e.verdict === 'ok' && e.rank >= rank && !isWriter(node, e.by));
+    const reviews = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.obligation === obligation && e.key === key && e.verdict === 'ok' && e.rank >= rank && !isWriter(node, e.by));
     out.evidence = reviews.map(e => e.seq);
     out.discharger = obligation === 'closure-review' ? 'owner' : 'reviewer';
     out.detail = `${obligation} requires ${count} non-writer reviews with rank at least ${rank}`;
     if (new Set(reviews.map(e => e.by)).size >= count) out.status = 'E';
   } else if (obligation === 'rulings') {
     const latest = latestRule(s, subject);
-    const acknowledgments = listed(context(s).reviews, subject).filter(e => e.kind === 'review' && e.node === subject && e.attempt === node?.slot?.attempt && e.seq > (node?.slot?.dispatchSeq ?? -1) && e.verdict === 'ok' && e.rank >= 1 && (e.ack_rulings ?? -1) >= latest && !isWriter(node, e.by) && e.key === node?.candidate?.keys[e.obligation]);
+    const acknowledgments = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.attempt === node?.slot?.attempt && e.seq > (node?.slot?.dispatchSeq ?? -1) && e.verdict === 'ok' && e.rank >= 1 && (e.ack_rulings ?? -1) >= latest && !isWriter(node, e.by) && e.key === node?.candidate?.keys[e.obligation]);
     if ((node?.slot?.rulings_seen ?? -1) >= latest || acknowledgments.length) {
       out.status = 'E';
       out.evidence = acknowledgments.length ? acknowledgments.map(e => e.seq) : [node!.slot!.dispatchSeq];
@@ -131,14 +88,14 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
     out.detail = latest === -1 ? NO_RULINGS : `rulings requires acknowledgment of applicable ruling #${latest}`;
     if (latest === -1 && out.status === 'E') return { ...out, mark: '✔', discharger: undefined };
   } else if (obligation === 'approve') {
-    const oks = listed(context(s).reviews, subject).filter(e => e.kind === 'review' && e.node === subject && e.obligation === 'approve' && e.key === key && e.verdict === 'ok' && role(e.by) === 'owner');
+    const oks = context(s).entries.filter(e => e.kind === 'review' && e.node === subject && e.obligation === 'approve' && e.key === key && e.verdict === 'ok' && role(e.by) === 'owner');
     out.evidence = oks.map(e => e.seq);
     out.discharger = 'owner';
     out.detail = 'approve requires an owner approval of the current candidate';
     if (oks.length) out.status = 'E';
   } else if (obligation.startsWith('evidence:')) {
     const ev = spec?.evidence?.find(x => `evidence:${x.id}` === obligation), need = ev?.by ?? 'reviewer';
-    const found = listed(context(s).evidence, subject).filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.node === subject && e.id === ev?.id && e.key === key && e.merge === undefined && e.files.length > 0 && (role(e.by) === need || role(e.by) === 'owner') && !isWriter(node, e.by));
+    const found = context(s).entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.node === subject && e.id === ev?.id && e.key === key && e.merge === undefined && e.files.length > 0 && (role(e.by) === need || role(e.by) === 'owner') && !isWriter(node, e.by));
     out.evidence = found.map(e => e.seq);
     out.discharger = need as Discharger;
     out.detail = `${obligation} requires manual evidence by ${need}${ev ? `: ${ev.what}` : ''}`;
@@ -162,7 +119,7 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
   }
   if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied${isManual(obligation) ? ' (manual)' : ''}` };
   if (subject !== 'trunk' && !obligation.startsWith('inv:')) {
-    const waiver = listed(context(s).waives, subject).findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
+    const waiver = context(s).entries.findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
     if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : waiver.channel === 'delegated' ? ' (delegated)' : ''}` };
   }
   if (subject === 'trunk') {
@@ -175,46 +132,30 @@ function nodeItems(s: State, id: string, facts: CandidateFacts): ItemView[] {
   const spec = nodeSpec(s, id);
   return spec ? required(spec, facts).map(o => item(s, id, o, facts.keys[o] ?? '')) : [];
 }
-/**
- * N4: the nodes whose derived fields (items, accepted, phase, dependents, stale halt) entry `e` can change. Those
- * fields read only the node's own slot, candidate, blocks, writers and entries, the rulings in its scope, the plan and
- * (phase) the merged state of its deps. So a genesis, plan or merge entry touches every node, a ruling the nodes it
- * names, an observation its subject, any other entry with a node its node, and the rest none.
- */
-function touched(e: Entry): Set<string> | 'all' {
-  if (e.kind === 'genesis' || e.kind === 'plan' || e.kind === 'merge') return 'all';
-  if (e.kind === 'rule') return e.nodes === '*' ? 'all' : new Set(e.nodes);
-  if (e.kind === 'obs') return new Set([e.subject]);
-  return 'node' in e ? new Set([e.node]) : new Set();
-}
-function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
-  const h = context(s);
+function refresh(s: State): void {
   for (const spec of s.plan.nodes) {
-    if (dirty !== 'all' && !dirty.has(spec.id)) continue;
     const n = s.nodes[spec.id] ??= emptyNode(spec.id);
     n.items = n.candidate ? nodeItems(s, n.id, n.candidate) : [];
     n.accepted = !!n.candidate && (!!n.slot?.open || !!n.merged) && n.items.every(i => i.status !== 'D') && !n.blocks.some(b => binding(b, spec));
     n.phase = n.merged ? 'merged' : n.slot?.open ? n.candidate ? n.accepted ? 'accepted' : 'submitted' : 'dispatched' : spec.deps.every(d => s.nodes[d]?.merged) ? 'ready' : 'blocked';
-    n.dependents = h.dependents.get(n.id) ?? 0;
+    const seen = new Set<string>();
+    const visit = (id: string): void => { for (const other of s.plan.nodes) if (other.deps.includes(id) && !seen.has(other.id)) { seen.add(other.id); visit(other.id); } };
+    visit(n.id);
+    n.dependents = seen.size;
     if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
   }
   s.invariants = s.plan.invariants.map(i => item(s, 'trunk', `inv:${i.id}`, s.trunk.invKeys[i.id] ?? ''));
-  const g = h.genesis;
+  const g = context(s).genesis;
   // Genesis covers the invariants of the genesis plan; invariants added later are
   // judged by the no-new-debt rule on the first merge that carries their key.
   // Invariants removed later by the owner (a visible downgrade) are exempt.
   s.genesisDone = !!g && context(s).plans(g.plan).invariants.filter(i => s.plan.invariants.some(c => c.id === i.id)).every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
 }
 
-/**
- * N4: the plan object the state keeps: a lookup's deep-frozen plan (ops' plan cache) is shared, since nothing can change
- * it; any other is cloned as before, so a caller's later change cannot reach the state.
- */
-const own = (p: Plan): Plan => Object.isFrozen(p) && Object.isFrozen(p.nodes) ? p : structuredClone(p);
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
 export function reduce(entries: Entry[], plans: PlanLookup): State {
   const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [], adoptions: [] };
-  const h: History = { entries: [], plans, obsPlans: new Map(), mergeCatches: new Set(), shadow: new Map(), bySeq: new Map(), obs: new Map(), reviews: new Map(), evidence: new Map(), waives: new Map(), launches: new Map(), dependents: new Map() };
+  const h: History = { entries: [], plans, obsPlans: new Map(), mergeCatches: new Set(), shadow: new Map() };
   Object.defineProperty(s, history, { value: h });
   for (const original of entries) {
     const e = structuredClone(original);
@@ -222,11 +163,11 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     if (errors.length) throw new OwedError(`Entry #${e.seq} invalid: ${errors.join('; ')}`);
     if (e.kind === 'genesis') {
       h.genesis = e;
-      s.plan = own(plans(e.plan)); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
+      s.plan = structuredClone(plans(e.plan)); s.planSha = e.plan;
       s.trunk = { name: e.trunk, ...e.state, seq: e.seq };
       if (s.plan.allow !== undefined) h.allowSeq = e.seq;
     } else if (e.kind === 'plan') {
-      const next = own(plans(e.plan));
+      const next = structuredClone(plans(e.plan));
       const detected = downgradeDetails(s.plan, next);
       // A candidate's facts were computed under the old plan; if its node's
       // obligations, setup, exec or closure changed, the writer must submit again.
@@ -236,7 +177,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && invalidates(s.plan, next, n.id)) n.candidate = undefined;
       const allowChanged = canonical(s.plan.allow) !== canonical(next.allow);
       supersede(s, h, e.seq, next);
-      s.plan = next; s.planSha = e.plan; h.dependents = dependentCounts(next);
+      s.plan = next; s.planSha = e.plan;
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
       // A parent's downgrades were accepted only because the prior plan's allowances cover them (D21.3).
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
@@ -250,7 +191,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       if (!n.writers.includes(writer)) n.writers.push(writer);
     } else if (e.kind === 'submit') {
       // N1: a carry submit names the plan entry that carried it (the latest one before it) and the submit it carried.
-      const plan = e.carry !== undefined ? h.lastPlan : undefined;
+      const plan = e.carry !== undefined ? h.entries.findLast(x => x.kind === 'plan')?.seq : undefined;
       s.nodes[e.node]!.candidate = { ...e.facts, seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
     }
     else if (e.kind === 'abandon') { s.nodes[e.node]!.slot!.open = false; s.nodes[e.node]!.candidate = undefined; }
@@ -279,7 +220,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       const n = s.nodes[e.node]!;
       if (e.verdict === 'block') n.blocks.push({ seq: e.seq, node: e.node, obligation: e.obligation, kind: 'judgment', key: e.key, rank: e.rank, state: 'active', ...(e.needs === 'parent' ? { needs: 'parent' as const } : {}) });
       // An owner block on approve (D23) is cleared by a later owner ok on the current key, whichever owner id.
-      else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === listed(h.bySeq, b.seq)[0]?.by) || (e.obligation === 'approve' && role(e.by) === 'owner'))) { b.state = 'cleared'; b.clearedBy = e.seq; }
+      else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === h.entries.find(x => x.seq === b.seq)?.by) || (e.obligation === 'approve' && role(e.by) === 'owner'))) { b.state = 'cleared'; b.clearedBy = e.seq; }
     } else if (e.kind === 'waive') {
       const n = s.nodes[e.node]!;
       for (const b of n.blocks) if (underlyingActive(h, b) && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && e.accept_risk?.includes(b.seq)) {
@@ -317,8 +258,8 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     } else if (e.kind === 'halt') s.nodes[e.node]!.halt = e;
     for (const n of Object.values(s.nodes)) if (n.halt && clearsHalt(e, n.id)) n.halt = undefined;
     for (const v of s.decoys) settleDecoy(v, e, h.mergeCatches);
-    record(h, e); s.seq = e.seq; s.head = e.hash;
-    refresh(s, touched(e));
+    h.entries.push(e); s.seq = e.seq; s.head = e.hash;
+    refresh(s);
   }
   return s;
 }
@@ -658,7 +599,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (!target) errors.push('obs node does not exist');
         if (!/^(check:.+|red:.+|strength:.+|writes)$/.test(d.obligation)) errors.push('obs can only observe execution obligations');
         if (d.merging !== undefined && d.merging !== d.subject) errors.push('obs merging must name its node subject');
-        if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && underlying(context(s), b) === 'active' && b.key === d.key && b.obligation === d.obligation && listed(context(s).bySeq, b.seq).some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
+        if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && underlying(context(s), b) === 'active' && b.key === d.key && b.obligation === d.obligation && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
       }
       if (d.merging !== undefined && (typeof d.merging !== 'string' || !s.nodes[d.merging]?.slot?.open || !s.nodes[d.merging]?.candidate)) errors.push('obs merging must name a node with an open candidate');
       if (!d.key) errors.push('obs is missing an obligation key');
@@ -724,7 +665,7 @@ export function validateDraft(s: State, d: Draft): string[] {
   switch (d.kind) {
     case 'escape': {
       allow('owner', 'parent');
-      const m = Number.isInteger(d.merge) ? listed(context(s).bySeq, d.merge)[0] : undefined;
+      const m = Number.isInteger(d.merge) ? context(s).entries.find(e => e.seq === d.merge) : undefined;
       if (m?.kind !== 'merge' || m.node !== d.node) errors.push(`escape merge #${d.merge} is not a merge of node ${d.node}`);
       if (!ESCAPE_CLASSES.includes(d.class)) errors.push(`escape class must be one of ${ESCAPE_CLASSES.join(', ')}`);
       if (typeof d.note !== 'string' || !d.note.trim()) errors.push('escape requires a note');
@@ -739,14 +680,14 @@ export function validateDraft(s: State, d: Draft): string[] {
         const project = projectId(s), base = runId(project, d.node, d.attempt, d.role), tail = typeof d.rid === 'string' && d.rid.startsWith(`${base}:`) ? d.rid.slice(base.length + 1) : undefined;
         if (d.role === 'writer' ? d.rid !== base : !(tail !== undefined && /^[1-9][0-9]*$/.test(tail))) errors.push(`launch rid must be ${base}${d.role === 'reviewer' ? ':<n> (n >= 1; reviewer runs always carry n)' : ''}`);
         if (!d.labels || typeof d.labels !== 'object' || Array.isArray(d.labels) || canonical(d.labels) !== canonical(runLabels(project, d.node, d.attempt, d.role))) errors.push(`launch labels must be ${canonical(runLabels(project, d.node, d.attempt, d.role))}`);
-        if (listed(context(s).launches, d.rid).some(e => e.kind === 'launch' && e.rid === d.rid)) errors.push(`launch ${d.rid} is already recorded; a re-launch reuses the stored entry`);
+        if (context(s).entries.some(e => e.kind === 'launch' && e.rid === d.rid)) errors.push(`launch ${d.rid} is already recorded; a re-launch reuses the stored entry`);
       }
       if (d.rulings !== undefined) errors.push(...carriedErrors(s, d, 'launch'));
       break;
     }
     case 'send': {
       allow('parent'); slot();
-      if (!listed(context(s).launches, d.rid).some(e => e.kind === 'launch' && e.rid === d.rid && e.node === d.node && e.attempt === d.attempt)) errors.push('send rid must name a recorded launch of this node attempt');
+      if (!context(s).entries.some(e => e.kind === 'launch' && e.rid === d.rid && e.node === d.node && e.attempt === d.attempt)) errors.push('send rid must name a recorded launch of this node attempt');
       if (!SEND_KINDS.includes(d.sendKind)) errors.push(`send sendKind must be one of ${SEND_KINDS.join(', ')}`);
       if (!SEND_REASONS.includes(d.reason)) errors.push(`send reason must be one of ${SEND_REASONS.join(', ')}`);
       if (!blobHash(d.message)) errors.push('send message must be a blob hash (64 lowercase hex)');
@@ -911,7 +852,7 @@ export function attestJobs(s: State, id: string): AttestJob[] {
   const jobs: AttestJob[] = [];
   const seen = new Set<string>();
   for (const b of n.blocks) if (b.kind === 'exec' && b.state === 'active') {
-    const e = listed(context(s).bySeq, b.seq).find((e): e is ObsEntry => e.kind === 'obs' && e.seq === b.seq);
+    const e = context(s).entries.find((e): e is ObsEntry => e.kind === 'obs' && e.seq === b.seq);
     if (!e) continue;
     const token = `${b.obligation}\0${b.key}`;
     if (seen.has(token)) continue;
@@ -963,7 +904,7 @@ export function jobCurrent(s: State, j: AttestJob): boolean {
   if (!n || !nodeSpec(s, j.subject)) return false;
   // An attribution rerun is current only for an active block whose failing obs has the job's key, commit and base (the
   // condition validateDraft applies), so a block replaced by one on another commit supersedes it instead of refusing.
-  if (j.attribution) return n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === j.obligation && b.key === j.key && listed(context(s).bySeq, b.seq).some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === j.commit && e.base === j.base));
+  if (j.attribution) return n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === j.obligation && b.key === j.key && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === j.commit && e.base === j.base));
   return !!n.slot?.open && !!n.candidate && n.candidate.keys[j.obligation] === j.key;
 }
 export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): AttestJob[] {

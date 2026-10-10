@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
-import { Ledger, entryHash, type LockOwner } from './ledger.ts';
+import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors } from './plan.ts';
 import { genesisProgress, jobCurrent, invalidates, carryable } from './reducer.ts';
@@ -32,7 +32,8 @@ export interface AttestGenesisResult extends GenesisAttest { observations: Entry
 export interface DispatchPacket { node: string; attempt: number; worktree: string; branch: string; packet: string; entry: Entry; subagent: { agent: 'worker'; cwd: string; task: string } }
 export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard }
 export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[] }
-export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string }
+/** `cacheMismatch` (N4): plan shas whose persistent cache entry disagreed with the YAML blob; verify rewrote them. */
+export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string; cacheMismatch?: string[] }
 type Context = { cwd: string };
 type Actor = Context & { as: Principal; channel?: Channel };
 const by = (o: Actor): string => `${o.as.role}:${o.as.id}`;
@@ -52,9 +53,28 @@ export const DRIVER_CLAIM = "parent:drive is the driver's identity: only owed dr
 /** D25.4: `OWED_CONFIRM=owner` restores the owner confirmation (pi dialog / TTY prompt); otherwise owner acts are delegated. */
 export function confirmGate(env: NodeJS.ProcessEnv = process.env): boolean { return env.OWED_CONFIRM?.trim() === 'owner'; }
 function guard(s: State, d: Draft): void { const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('; ')); }
+/**
+ * N4: parsed plans by `<owed dir>\0<blob sha>`, for the life of the process. Blobs are content-addressed and immutable,
+ * so an entry never needs invalidation; plans are deep-frozen because every load shares them (the reducer clones what
+ * it keeps). Behind it is the persistent cache of the ledger (Ledger.readPlanCache), then the YAML blob.
+ */
+const planCache = new Map<string, Plan>();
+function deepFreeze<T>(v: T): T { if (v && typeof v === 'object' && !Object.isFrozen(v)) { Object.freeze(v); for (const x of Object.values(v)) deepFreeze(x); } return v; }
+async function cachedPlan(ledger: Ledger, sha: string): Promise<Plan> {
+  const k = `${ledger.dir}\0${sha}`;
+  let p = planCache.get(k);
+  if (p) return p;
+  const stored = await ledger.readPlanCache(sha);
+  if (stored) p = stored as Plan;
+  else { p = parsePlan((await ledger.getBlob(sha)).toString()); await ledger.writePlanCache(sha, p); }
+  planCache.set(k, deepFreeze(p));
+  return p;
+}
+/** Plan shas the ledger names (genesis and plan entries), in ledger order. */
+const planShas = (entries: Entry[]): string[] => [...new Set(entries.flatMap(e => e.kind === 'genesis' || e.kind === 'plan' ? [e.plan] : []))];
 async function load(ledger: Ledger, extra: string[] = []) {
   const entries = await ledger.read(), plans = new Map<string, Plan>();
-  for (const sha of new Set([...entries.flatMap(e => e.kind === 'genesis' || e.kind === 'plan' ? [e.plan] : []), ...extra])) plans.set(sha, parsePlan((await ledger.getBlob(sha)).toString()));
+  for (const sha of new Set([...planShas(entries), ...extra])) plans.set(sha, await cachedPlan(ledger, sha));
   const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
   return { entries, lookup, state: reduce(entries,lookup) };
 }
@@ -799,7 +819,28 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const superseded = supersededOf(state,Object.values(state.nodes)).filter(b => included({seq:b.supersededBy}));
   return {...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
-export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
+/**
+ * Verifies the hash chain and replays the ledger. N4: never reads the plan caches; every plan is parsed from its YAML
+ * blob and reads each persistent cache entry raw: one of another version is rewritten silently; one of this version
+ * whose sha or plan disagrees with the blob, or an unreadable or non-JSON file, is reported in `cacheMismatch` (not a
+ * failure) and rewritten.
+ */
+export async function verify(o: Context): Promise<VerifyResult> {
+  try {
+    const ledger = await Ledger.open(o.cwd), entries = await ledger.read(), plans = new Map<string, Plan>(), cacheMismatch: string[] = [];
+    for (const sha of planShas(entries)) {
+      const p = parsePlan((await ledger.getBlob(sha)).toString()), c = await ledger.rawPlanCache(sha);
+      plans.set(sha, p);
+      if (c.state === 'missing') continue;
+      // Another version is a stale entry (rewritten silently); corruption or other content under this version is reported.
+      const report = c.state === 'corrupt' || (c.v === PLAN_CACHE_VERSION && (c.sha !== sha || canonical(c.plan) !== canonical(p)));
+      if (report) cacheMismatch.push(sha);
+      if (report || c.v !== PLAN_CACHE_VERSION) await ledger.writePlanCache(sha, p);
+    }
+    const state = reduce(entries, sha => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; });
+    return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}) };
+  } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; }
+}
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
 export async function brief(o: Context & {since?:number|string; now?:number}): Promise<Brief> {
   const {state,entries} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
@@ -954,7 +995,8 @@ export interface GcKept { node: string; attempt: number; worktree: string; branc
 /** M2: a reused measurement tree gc removed (or, with dry run, would remove), or kept, and why. */
 export interface GcTree { path: string; reason: string }
 /** `trees`/`treesKept` (M2): reused measurement trees removed and kept; present only when non-empty. */
-export interface GcResult { dryRun: boolean; removed: GcItem[]; kept: GcKept[]; trees?: GcTree[]; treesKept?: GcTree[]; entry?: Entry }
+/** `planCache` (N4): plan cache files removed (dry run: that would be removed) because the ledger no longer names their sha. */
+export interface GcResult { dryRun: boolean; removed: GcItem[]; kept: GcKept[]; trees?: GcTree[]; treesKept?: GcTree[]; planCache?: string[]; entry?: Entry }
 async function real(path: string): Promise<string> { try { return await realpath(path); } catch { return resolve(path); } }
 async function exists(path: string): Promise<boolean> { try { await stat(path); return true; } catch { return false; } }
 /** Ref that keeps the commit of submit entry `seq` reachable after its branch is deleted (attribution reruns need it). */
@@ -1017,7 +1059,12 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
       }
       if (worktree || branch || pinned.length) removed.push({ node: d.node, attempt: d.attempt, worktree, branch, pinned });
     }
-    const t = await gcTrees(root,state.plan,dryRun), extra = { ...(t.trees.length ? { trees:t.trees } : {}), ...(t.kept.length ? { treesKept:t.kept } : {}) };
+    // N4: plan cache entries (and stray temp files) whose sha the ledger no longer names; nothing is recorded for them.
+    // Temp files only once older than 60 s: a younger one may be a write in progress.
+    const named = new Set(planShas(entries).map(sha => `${sha}.json`)), now = Date.now(), planCache: string[] = [];
+    for (const f of await ledger.planCacheFiles()) if (!named.has(f) && (!f.endsWith('.tmp') || now - (await ledger.planCacheMtime(f) ?? now) > 60_000)) planCache.push(f);
+    if (!dryRun) for (const f of planCache) await ledger.removePlanCache(f);
+    const t = await gcTrees(root,state.plan,dryRun), extra = { ...(t.trees.length ? { trees:t.trees } : {}), ...(t.kept.length ? { treesKept:t.kept } : {}), ...(planCache.length ? { planCache } : {}) };
     if (dryRun || !removed.length) return { dryRun, removed, kept, ...extra };
     await git.git(root, ['worktree', 'prune']);
     const text = `gc removed ${removed.map(i => `${i.node}#${i.attempt} (${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(r => `pinned ${r}`)].filter(Boolean).join(', ')})`).join('; ')}`;

@@ -1,12 +1,13 @@
-import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Plan, Rule, SlotRebase, State } from './types.ts';
-import type { AdoptPreview, GcResult } from './ops.ts';
-import type { TrunkDrift } from './git.ts';
-import { matchesAny, driveConfig } from './plan.ts';
-import { NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor } from './reducer.ts';
-import { genesisProgress } from './reducer.ts';
-import { OwedError } from './errors.ts';
-import { observationsOf } from './reducer.ts';
-import type { WaiveEntry } from './types.ts';
+// N4: frozen copy of src/views.ts at 360f0c8 bound to the frozen base reducer, the reference of test/perf.test.ts. Do not edit.
+import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Plan, Rule, SlotRebase, State } from '../../src/types.ts';
+import type { AdoptPreview, GcResult } from '../../src/ops.ts';
+import type { TrunkDrift } from '../../src/git.ts';
+import { matchesAny, driveConfig } from '../../src/plan.ts';
+import { NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor } from './reducer-0.10-base.ts';
+import { genesisProgress } from './reducer-0.10-base.ts';
+import { OwedError } from '../../src/errors.ts';
+import { observationsOf } from './reducer-0.10-base.ts';
+import type { WaiveEntry } from '../../src/types.ts';
 
 export interface ReceiptCard {
   node: string; phase: NodeState['phase']; accepted: boolean;
@@ -376,9 +377,7 @@ export function renderGc(r: GcResult): string {
   const kept = r.kept.map(i => `  ${i.node}#${i.attempt} (${i.branch}): ${i.reason}`);
   // M2: reused measurement trees, only when there are any.
   const trees = [...(r.trees?.length ? [`Reused measurement trees ${r.dryRun ? 'that would be removed' : 'removed'}:`, ...r.trees.map(t => `  ${t.path}: ${t.reason}`)] : []), ...(r.treesKept?.length ? ['Reused measurement trees kept:', ...r.treesKept.map(t => `  ${t.path}: ${t.reason}`)] : [])];
-  // N4: stale plan cache files, only when there are any.
-  const cache = r.planCache?.length ? [`Plan cache files ${r.dryRun ? 'that would be removed' : 'removed'} (sha no longer in the ledger): ${r.planCache.length}`] : [];
-  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...trees, ...cache, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
+  return [`${r.dryRun ? 'Would remove' : 'Removed'}${removed.length ? '' : ': nothing'}`, ...removed, `Kept${kept.length ? '' : ': nothing'}`, ...kept, ...trees, ...(r.entry ? [renderEntry(r.entry)] : [])].join('\n');
 }
 export function renderReport(v: Report): string {
   const list = (title: string, lines: string[]) => [`${title}${lines.length ? '' : ': none'}`, ...lines.map(l => `  ${l}`)];
