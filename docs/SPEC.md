@@ -477,7 +477,7 @@ harness, materialization failure) is ⊥: no information, no block.
     count. A removed check (or node) differs too. A superseded block is not
     active: it does not block, gets no attribution rerun (`attestJobs`), a
     queued rerun of it is not current (`jobCurrent`, §7.10) and it needs no
-    waiver (none can cite it). The current candidate must still pass the new
+    waiver. The current candidate must still pass the new
     definition. A block whose definition did not change goes flaky as before.
     Rationale: a flaky block is a risk about the definition its observation ran
     under, and a waiver would record a risk acceptance where the check itself was
@@ -485,8 +485,14 @@ harness, materialization failure) is ⊥: no information, no block.
     entry is recorded and shown with the block (`#<seq> superseded by plan #<p>
     (check <id> definition changed|removed)` in `why`, `status` and `report`),
     so it accounts for the change. A downgrade, such as lowering `min_tests` or
-    removing a check, still needs the owner (§3). A waiver already recorded for a
-    block that is later superseded stays recorded and has no further effect. The
+    removing a check, still needs the owner (§3).
+    Supersede never invalidates a later entry, so ledgers written before 0.8
+    still replay. Validation accepts an attribution observation of a superseded
+    block, and a waiver whose `accept_risk` names a superseded block, exactly as it
+    would accept them had the block not been superseded: the reducer keeps the
+    block's underlying state (active, flaky or cleared, moved on by such entries as
+    before) for validation only. Neither entry changes the block's state: it stays
+    superseded. owed itself never creates such a rerun. The
     Rust model in `formal/` does not model superseded blocks.
   - Judgment block (review block of rank r by reviewer A): cleared by a later
     `review ok` on the **current key** of that item either by A with rank ≥ r or

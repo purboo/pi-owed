@@ -7,7 +7,7 @@ import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyVi
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
-interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
+interface History { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
@@ -16,6 +16,12 @@ function context(state: State): History {
 }
 /** A block that still counts: active or flaky. Cleared and superseded (L2) blocks do not. */
 const active = (b: Block): boolean => b.state === 'active' || b.state === 'flaky';
+/**
+ * L2 replay compatibility: the state of `b` as it would be without supersede. Supersede never invalidates a later
+ * entry, so validation of attribution observations and accept_risk reads this state; it never makes a block count.
+ */
+const underlying = (h: History, b: Block): Block['state'] => b.state === 'superseded' ? h.shadow.get(b.seq) ?? 'active' : b.state;
+const underlyingActive = (h: History, b: Block): boolean => { const u = underlying(h, b); return u === 'active' || u === 'flaky'; };
 /** Blocks that still bind the node: judgment blocks always; execution blocks only while their obligation exists (removing it is an owner-only, visible downgrade). */
 const binding = (b: Block, spec: NodeSpec | undefined): boolean => active(b) && (b.kind === 'judgment' || !spec || spec.checks.some(c => b.obligation === `check:${c.id}` || (c.red && b.obligation === `red:${c.id}`) || (!!c.mutants && b.obligation === `strength:${c.id}`)) || b.obligation === 'writes');
 const role = (by: string): string => by.split(':')[0] ?? '';
@@ -148,7 +154,7 @@ function refresh(s: State): void {
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
 export function reduce(entries: Entry[], plans: PlanLookup): State {
   const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [], adoptions: [] };
-  const h: History = { entries: [], plans, obsPlans: new Map(), mergeCatches: new Set() };
+  const h: History = { entries: [], plans, obsPlans: new Map(), mergeCatches: new Set(), shadow: new Map() };
   Object.defineProperty(s, history, { value: h });
   for (const original of entries) {
     const e = structuredClone(original);
@@ -195,8 +201,10 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       if (e.merging && e.verdict === 'fail' && (e.subject !== 'trunk' || item(s, 'trunk', e.obligation, s.trunk.invKeys[e.obligation.slice(4)] ?? '').status === 'E')) h.mergeCatches.add(e.seq);
       const n = s.nodes[e.subject];
       if (n) {
-        const matches = n.blocks.filter(b => b.kind === 'exec' && b.state === 'active' && b.obligation === e.obligation && b.key === e.key);
+        const matches = n.blocks.filter(b => b.kind === 'exec' && underlying(h, b) === 'active' && b.obligation === e.obligation && b.key === e.key);
         if (e.attribution && e.verdict !== 'error') for (const b of matches) {
+          // L2: an attribution rerun of a superseded block (recorded before 0.8, or by hand) leaves it superseded.
+          if (b.state === 'superseded') { h.shadow.set(b.seq, e.verdict === 'fail' ? 'cleared' : 'flaky'); continue; }
           b.state = e.verdict === 'fail' ? 'cleared' : 'flaky';
           if (b.state === 'cleared') b.clearedBy = e.seq;
         }
@@ -209,7 +217,10 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === h.entries.find(x => x.seq === b.seq)?.by) || (e.obligation === 'approve' && role(e.by) === 'owner'))) { b.state = 'cleared'; b.clearedBy = e.seq; }
     } else if (e.kind === 'waive') {
       const n = s.nodes[e.node]!;
-      for (const b of n.blocks) if (active(b) && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && e.accept_risk?.includes(b.seq)) { b.state = 'cleared'; b.clearedBy = e.seq; }
+      for (const b of n.blocks) if (underlyingActive(h, b) && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && e.accept_risk?.includes(b.seq)) {
+        if (b.state === 'superseded') h.shadow.set(b.seq, 'cleared'); // L2: the block stays superseded
+        else { b.state = 'cleared'; b.clearedBy = e.seq; }
+      }
     } else if (e.kind === 'defer') {
       for (const i of e.items) s.deferred.push({ seq: e.seq, node: e.node, id: i.id, key: i.key });
     } else if (e.kind === 'merge') {
@@ -265,7 +276,7 @@ function supersede(s: State, h: History, seq: number, next: Plan): void {
   for (const n of Object.values(s.nodes)) for (const b of n.blocks) {
     const id = checkOf(b.obligation), old = h.obsPlans.get(b.seq);
     if (b.kind !== 'exec' || !active(b) || id === undefined || !old) continue;
-    if (checkDefinition(old, n.id, id) !== checkDefinition(next, n.id, id)) { b.state = 'superseded'; b.supersededBy = seq; }
+    if (checkDefinition(old, n.id, id) !== checkDefinition(next, n.id, id)) { h.shadow.set(b.seq, b.state); b.state = 'superseded'; b.supersededBy = seq; }
   }
 }
 
@@ -508,7 +519,7 @@ export function validateDraft(s: State, d: Draft): string[] {
   const spec = 'node' in d ? nodeSpec(s, d.node) : undefined;
   if ('node' in d && (!n || (!spec && d.kind !== 'escape'))) errors.push(`Node ${d.node} does not exist`);
   const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
-  const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && active(b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
+  const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && underlyingActive(context(s), b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
   switch (d.kind) {
     case 'plan': {
       allow('owner', 'parent');
@@ -546,7 +557,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (!target) errors.push('obs node does not exist');
         if (!/^(check:.+|red:.+|strength:.+|writes)$/.test(d.obligation)) errors.push('obs can only observe execution obligations');
         if (d.merging !== undefined && d.merging !== d.subject) errors.push('obs merging must name its node subject');
-        if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.key === d.key && b.obligation === d.obligation && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
+        if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && underlying(context(s), b) === 'active' && b.key === d.key && b.obligation === d.obligation && context(s).entries.some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
       }
       if (d.merging !== undefined && (typeof d.merging !== 'string' || !s.nodes[d.merging]?.slot?.open || !s.nodes[d.merging]?.candidate)) errors.push('obs merging must name a node with an open candidate');
       if (!d.key) errors.push('obs is missing an obligation key');
@@ -563,7 +574,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('owner'); current(d.obligation, d.key);
       if (d.obligation.startsWith('inv:') || d.node === 'trunk') errors.push('invariant can never be waived');
       if (!d.reason.trim()) errors.push('waive requires a reason');
-      if (d.accept_risk?.some(seq => !n?.blocks.some(b => b.seq === seq && b.obligation === d.obligation && active(b)))) errors.push('accept_risk must reference active blocks for this obligation');
+      if (d.accept_risk?.some(seq => !n?.blocks.some(b => b.seq === seq && b.obligation === d.obligation && underlyingActive(context(s), b)))) errors.push('accept_risk must reference active blocks for this obligation');
       break;
     case 'defer':
       allow('owner');

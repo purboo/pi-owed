@@ -6,7 +6,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { attestJobs, jobCurrent, manualKeys, reduce, validateDraft } from '../src/reducer.ts';
 import { manualHalt } from '../src/drive.ts';
-import { receipt, renderReceipt, renderReport, renderStatus, statusView, supersededOf } from '../src/views.ts';
+import { receipt, renderReceipt, renderReport, renderStatus, statusView } from '../src/views.ts';
 import type { Report } from '../src/views.ts';
 import type { CandidateFacts, Draft, Entry, ObsEntry, Plan, StateFacts } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
@@ -57,7 +57,6 @@ test('L2.1/L2.2: an env-fix plan change supersedes the block: no attribution rer
   assert.equal(block(r, fail).state, 'superseded');
   assert.equal(block(r, fail).supersededBy, p);
   assert.equal(jobCurrent(s, queued), false, 'a queued rerun of a superseded block is not current');
-  assert.match(validateDraft(s, { kind: 'obs', by: 'executor:owed', subject: 'a', obligation: 'check:unit', key: 'check1', verdict: 'pass', exit: 0, durationMs: 1, commit: 'c1', base: 's0', attribution: true }).join(), /active execution block/);
   // The plan change invalidated the candidate; the writer submits again, and the new definition is measured.
   assert.equal(s.nodes.a!.candidate, undefined);
   r.submit(facts('2'));
@@ -69,8 +68,30 @@ test('L2.1/L2.2: an env-fix plan change supersedes the block: no attribution rer
   assert.equal(s.nodes.a!.accepted, true, 'accepted with no waiver');
   assert.equal(s.nodes.a!.items.find(i => i.obligation === 'check:unit')?.status, 'E');
   assert.ok(!r.entries.some(e => e.kind === 'waive'));
-  // A superseded block cannot be accepted by a waiver: it is not active.
-  assert.match(validateDraft(s, { kind: 'waive', by: 'owner:human', node: 'a', obligation: 'check:unit', key: 'check2', reason: 'x', accept_risk: [fail] }).join(), /active blocks/);
+});
+
+test('L2 replay: supersede never invalidates a later entry; an attribution rerun or a risk waiver of a superseded block leaves it superseded', () => {
+  for (const later of ['rerun-pass', 'rerun-fail', 'waiver'] as const) {
+    // The reviewer's sequence: failing obs, definition change, resubmit, then a later entry naming the old block.
+    const r = rig(); r.dispatch(); r.submit();
+    const fail = r.obs('check:unit', 'check1', 'fail');
+    const p = r.replan(x => { unit(x).run = 'make artifact && unit'; });
+    r.submit(facts('2'));
+    let d: Draft;
+    if (later === 'waiver') d = { kind: 'waive', by: 'owner:human', channel: 'tty', node: 'a', obligation: 'check:unit', key: 'check2', reason: 'risk accepted before 0.8', accept_risk: [fail] };
+    else d = { kind: 'obs', by: 'executor:owed', subject: 'a', obligation: 'check:unit', key: 'check1', verdict: later === 'rerun-pass' ? 'pass' : 'fail', exit: later === 'rerun-pass' ? 0 : 1, durationMs: 1, commit: 'c1', base: 's0', attribution: true };
+    assert.deepEqual(validateDraft(r.state(), d), [], `${later} validates as it did before 0.8`);
+    r.add(d);
+    const s = r.state();
+    assert.equal(block(r, fail).state, 'superseded', `${later}: the block stays superseded`);
+    assert.equal(block(r, fail).supersededBy, p);
+    assert.equal(block(r, fail).clearedBy, undefined);
+    // A second rerun after a confirming one is refused, exactly as before 0.8 (the block's underlying state moved on).
+    if (later !== 'waiver') assert.match(validateDraft(s, { ...d, verdict: 'fail' } as Draft).join(), /active execution block/);
+    if (later === 'rerun-pass') assert.deepEqual(validateDraft(s, { kind: 'waive', by: 'owner:human', node: 'a', obligation: 'check:unit', key: 'check2', reason: 'x', accept_risk: [fail] }), [], 'a flaky underlying block may still be cited');
+    // owed itself never queues a rerun of it.
+    assert.deepEqual(attestJobs(s, 'a').filter(j => j.attribution), []);
+  }
 });
 
 test('L2.2: an unchanged check definition still goes flaky (title, brief, closure, other checks and nodes do not count)', () => {
@@ -107,7 +128,7 @@ test('L2.1: removing a check supersedes its blocks; a flaky block is superseded 
   const p = r.replan(x => { x.nodes[0]!.checks.pop(); });
   assert.equal(block(r, lint).state, 'superseded'); assert.equal(block(r, lint).supersededBy, p);
   assert.ok(r.state().downgrades.some(d => d.seq === p), 'removal is still an owner downgrade');
-  assert.deepEqual(supersededOf(r.state(), [r.state().nodes.a!]).map(b => b.text), [`#${lint} superseded by plan #${p} (check lint removed)`]);
+  assert.deepEqual(receipt(r.state(), r.entries, 'a').superseded?.map(b => b.text), [`#${lint} superseded by plan #${p} (check lint removed)`]);
   // Rerun first (flaky), plan fix second.
   r.submit(facts('2'));
   const fail = r.obs('check:unit', 'check2', 'fail', { commit: 'c2' });
@@ -130,7 +151,7 @@ test('L2.3: why, status and report show a superseded block; it is not listed as 
   assert.ok(renderReceipt(card).split('\n').includes(`⊘ ${line}`), renderReceipt(card));
   const status = statusView(s, r.entries);
   assert.ok(renderStatus(status).split('\n').includes(`⊘ a: ${line}`), renderStatus(status));
-  const report = { since: -1, merges: [], blocks: [], waivers: [], downgrades: [], rulings: [], decisions: [], changes: [], ownerActions: [], adoptions: [], halts: [], escapes: { escapes: [], byClass: { missing: 0, 'false-pass': 0, reuse: 0, weak: 0, waiver: 0 }, decoys: [], caught: 0, escaped: 0, pending: 0, unrevealed: 0, rate: null }, superseded: supersededOf(s, [s.nodes.a!]) } as Report;
+  const report = { since: -1, merges: [], blocks: [], waivers: [], downgrades: [], rulings: [], decisions: [], changes: [], ownerActions: [], adoptions: [], halts: [], escapes: { escapes: [], byClass: { missing: 0, 'false-pass': 0, reuse: 0, weak: 0, waiver: 0 }, decoys: [], caught: 0, escaped: 0, pending: 0, unrevealed: 0, rate: null }, superseded: card.superseded } as Report;
   const text = renderReport(report).split('\n');
   const at = text.indexOf('Superseded blocks (not active; the plan changed their check)');
   assert.ok(at > text.indexOf('Active blocks: none'), text.join('\n'));
