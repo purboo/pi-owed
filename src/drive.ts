@@ -4,7 +4,7 @@
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
-import { dispatchPacket, evidenceCommand, oneLine, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, Rule, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
@@ -172,7 +172,10 @@ export function ownerNeeded(s: State, node: string): string | undefined {
   }
   return ownerBlock.length ? text(ownerBlock[0]!) : undefined;
 }
-const ownerNotify = (node: string, reason: string): Action => ({ do: 'notify', node, text: `${node}: needs the owner (${oneLine(reason)}); the driver leaves it alone` });
+/** D25.6: the commands that resolve an owner decision on `node`, as one clause addressed to the main agent. */
+const resolveText = (s: State, node: string): string => { const c = ownerCommands(s, node); return c.length ? `; the main agent resolves it with: ${c.join(' | ')}` : `; the main agent decides: owed why ${node}`; };
+// The reason's own trailing `needs the owner` (ownerNeeded) is dropped: the prefix already says it.
+const ownerNotify = (s: State, node: string, reason: string): Action => ({ do: 'notify', node, text: `${node}: needs the owner (the main agent decides; owed lists the command): ${oneLine(reason.replace(/ needs the owner$/, ''))}; the driver leaves it alone${resolveText(s, node)}` });
 
 // ---------- decide ----------
 const isSealed = (v: RunView): boolean => v.state === 'sealed' || v.state === 'pruned';
@@ -198,7 +201,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   const taken = open.map(n => writes(n.id));
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
     const owner = ownerNeeded(s, n.id);
-    if (owner) { out.push(ownerNotify(n.id, owner)); continue; }
+    if (owner) { out.push(ownerNotify(s, n.id, owner)); continue; }
     if (taken.length >= opts.max || !plan.nodes.some(x => x.id === n.id) || taken.some(w => writesOverlap(writes(n.id), w))) continue;
     out.push({ do: 'dispatch', node: n.id });
     taken.push(writes(n.id));
@@ -214,7 +217,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   if (halted(s, id)) return undefined;
   // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only.
   const owner = ownerNeeded(s, id);
-  if (owner) return ownerNotify(id, owner);
+  if (owner) return ownerNotify(s, id, owner);
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
   const writer = ar.launches.find(l => l.role === 'writer');
   // Row 2: writer launch missing.
@@ -308,7 +311,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const reviewing = reviewers.some(l => !isSealed(view(l)));
     if (stale.length) {
       if (reviewing) return fenced() ?? steerRulings();
-      return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active and no reviewer run of candidate #${c.seq} is running; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}`, 'owner');
+      return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active and no reviewer run of candidate #${c.seq} is running; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}${resolveText(s, id)}`, 'owner');
     }
     // D23: everything but approve/evidence:* is satisfied and nothing blocks: halt for the owner (approve) or a human
     // (evidence) with the exact commands. Never earlier: the rows above run first.
@@ -325,7 +328,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (wSealed && !reviewing) {
       const items = n.items.filter(i => i.status !== 'E').map(i => `${i.obligation} ${i.mark} ${i.detail}`);
       const blocks = n.blocks.filter(b => b.state === 'active').map(b => blockText(s, c, b));
-      return halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}`, 'owner');
+      return halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}${resolveText(s, id)}`, 'owner');
     }
   }
   // Row 18: the running writer was fenced after the last steer; else (D22.2a, lowest priority, only when the node

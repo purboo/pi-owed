@@ -35,10 +35,54 @@ String form `role:id` (e.g. `owner:human`, `parent:main`, `writer:auth-api#2`,
 - The executor is owed itself; only `owed attest`/`owed merge` produce executor
   observations.
 - The driver (`owed drive`, §12) acts as `parent:drive`.
-- Owner acts require a human channel, recorded as `channel`:
-  `tty` (interactive confirmation), `pi-confirm` (pi UI confirmation),
-  `flag` (`--i-am-owner`, shown as weaker in every view). Agents must never use
-  the flag; the skill says so.
+- Owner acts are recorded with a `channel`: `delegated` (D25, the default: the
+  main agent acts as owner with no human step), `tty` (interactive confirmation),
+  `pi-confirm` (pi UI confirmation) or `flag` (`--i-am-owner`, shown as weaker in
+  every view). `tty` and `pi-confirm` occur only under the opt-in gate
+  `OWED_CONFIRM=owner` (§11). Agents must never use the flag; the skill says so.
+  Ledgers written by 0.4.x stay valid; a 0.4.1 reader verifies and replays a
+  ledger containing `delegated` (it never checked channel values).
+
+### 2.1 Delegated owner (D25)
+
+A human states the task and leaves; the main agent (the top-level session) holds
+every authority, including the owner's. Accountability moves from pre-approval to
+audit: every act is in the hash-chained ledger and the brief lists the main
+agent's owner acts first (§9).
+
+1. In pi, an owner tool (every tool that acts as an owner principal: plan with
+   downgrades, adopt, waive, defer, decoy, review as owner, approve, evidence,
+   init, …) runs with no dialog; the entry is `by: owner:<id>`, `channel:
+   "delegated"`. The default owner id in pi is `owner:pi`.
+2. CLI: an owner command (`--as owner:<id>`, or a command whose default principal
+   is `owner:human`) records `delegated` with or without a TTY, without a prompt;
+   `--i-am-owner` stays accepted and records `flag`.
+3. A process with `DSA_CALL` or `DSA_EXEC` in its environment (a
+   pi-durable-subagents call) is refused for roles owner and parent, in pi tools
+   and the CLI alike, before anything is recorded: `owner and parent acts are
+   reserved for the main agent; this process is a subagent call (DSA_CALL)` (or
+   `DSA_EXEC`). Reads (`status`, `why`, `report`, `brief`, `verify`, `decoy
+   digest`) and `attest` (recorded as the executor) are not refused; the default
+   role of such a process is unchanged. This is an accident rail, not a security
+   boundary: a process can unset the variables. `owed drive` (and `owed_drive`)
+   is not refused (D17 keeps starting a detached driver from a dsa call).
+4. `OWED_CONFIRM=owner` (environment) restores the confirmation (§10, §11).
+   Without it nothing ever waits on a human.
+5. Every delegated owner act that eases acceptance needs a non-empty note or
+   reason: a plan update with downgrades (`owed plan --note`, `owed_plan` `note`;
+   the plan entry has an optional `note`), `waive` (`reason`), `defer` (`reason`),
+   `adopt` (`note`); refused without one, nothing recorded.
+6. The driver's "needs the owner" notifications read `<node>: needs the owner
+   (the main agent decides; owed lists the command): <reason>; the driver leaves
+   it alone; the main agent resolves it with: <commands>`; its owner halts for a
+   stale review block or a stalled candidate end with `; the main agent resolves
+   it with: <commands>` (`views.ownerCommands`, in order: with an open candidate
+   the brief's command for each owner item still owed, a waiver for every other
+   item still owed and every uncleared block, and `owed abandon <node> --note
+   "<why>"`; without one, as the brief's dispatch/clear hints, `owed dispatch
+   <node>` first when no slot is open, then each waiver prefixed `after the
+   writer submits a candidate:` since a waiver needs one; nothing for a merged
+   node). The reason's own trailing `needs the owner` is not repeated.
 
 ## 3. Plan (content, YAML)
 
@@ -244,7 +288,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | kind | by | payload | effect |
 |---|---|---|---|
 | `genesis` | owner | `{trunk, commit, plan}` (plan = blob sha) | names s₀ and the plan |
-| `plan` | owner/parent | `{prior, plan, rev?, path?}` | new plan; must cite current plan sha (CAS); downgrade needs owner, unless the parent's downgrades are all covered by an allowance of the prior plan (§3.4); `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
+| `plan` | owner/parent | `{prior, plan, rev?, path?, note?}` | new plan; must cite current plan sha (CAS); downgrade needs owner, unless the parent's downgrades are all covered by an allowance of the prior plan (§3.4); `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
 | `rule` | owner/parent | `{text, nodes: string[] \| "*"}` | ruling; in scope for those nodes |
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
@@ -539,7 +583,7 @@ changed; retry`): they decide a trunk move on what they measured.
 ```ts
 init(o: {cwd, plan: string, as: Principal, channel, signal?}): Promise<InitResult>      // genesis + genesis attest of invariants; signal: §7.8
 readPlan(o: {cwd, path, rev?}): Promise<{plan, rev?, path}>   // plan text from the working tree, or from commit `rev` (`git show rev:path`); path repository-relative
-planSet(o: {cwd, plan, rev?, path?, as, channel?}): Promise<Entry>   // records rev/path in the plan entry
+planSet(o: {cwd, plan, rev?, path?, note?, as, channel?}): Promise<Entry>   // records rev/path (and note: why, D25.5) in the plan entry
 rule(o: {cwd, text, nodes, as}): Promise<Entry>
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
@@ -809,6 +853,13 @@ while genesis items lack observations.
   after `since`, `--json` `receipts`); both present only when non-empty.
 - **Brief** (`brief [--since seq|ISO]`, `briefView`/`renderBrief`): a morning
   summary, one line per item, sections in this order:
+  0. *Owner acts (delegated) since <since>* (D25.5) — every owner entry with
+     channel `delegated` after `since`, in ledger order:
+     `#seq <by> <kind>[ <node>]: <what> — <note or reason>` (what: the downgrade
+     items, the waived obligation, the deferred invariants, the adopted
+     prior..commit, the ruling's nodes, …); `--json` `delegated`
+     `[{seq, ts, by, kind, node?, what, note}]`; omitted when there is none.
+     `report` and every entry line mark these entries `(delegated)`.
   1. *Needs your decision* — the owner queue (node and trunk items with status D
      and discharger `owner`), sorted by the number of transitive downstream
      nodes of the item's node (trunk items count 0), then node id and
@@ -873,17 +924,22 @@ no ledger write, no owner confirmation), `gc [--dry-run]` (parent/owner), and
 `drive [--once] [--max N]` (the driver, §12.7; always `parent:drive`, no `--as`),
 `drive --detach [--max N]`, `drive --status [--json]`, `drive --stop [--now]`
 (the background driver, §12.8),
-`approve <node> [--note TEXT] [--block]` (D23: owner, default `owner:human`, TTY
-or `--i-am-owner`; `--block` records an owner block; before the prompt, and also
-with `--i-am-owner`, it prints to stderr `Approve node <node>: candidate <commit>
+`approve <node> [--note TEXT] [--block]` (D23: owner, default `owner:human`;
+delegated by default — no prompt, TTY or not, D25 §2.1; under `OWED_CONFIRM=owner`
+a TTY confirmation or `--i-am-owner`; `--block` records an owner block; before
+recording (and before any prompt) it prints to stderr `Approve node <node>: candidate <commit>
 (submit #<seq>), base <base>, N changed files` and approves only that candidate) and
 `evidence <node> <id> [--file PATH]... --note TEXT [--as role:id]` (D23: default
 `parent:cli`; `--file` may repeat, paths relative to the cwd, hashed when
 recorded; stored repository-relative when inside the repository, else absolute;
 an owner `--as` prompts like other owner commands).
 `--as role:id` sets the principal (default `parent:cli`; `submit` and `rebase`
-default to the slot's writer when run inside its worktree). Owner commands prompt on a TTY
-unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused
+default to the slot's writer when run inside its worktree). Owner commands are
+delegated (D25, §2.1: `channel: delegated`, no prompt, TTY or not); `--i-am-owner`
+records `channel: flag`. Under `OWED_CONFIRM=owner` they prompt on a TTY as in
+0.4.1 and refuse without one unless `--i-am-owner`. `plan` takes `--note TEXT`
+(required for a delegated downgrade). In a pi-durable-subagents call owner and
+parent commands are refused (§2.1). Exit codes: 0 ok, 1 refused
 by a guard (message says which obligation), 2 usage error, 3 internal error,
 130/143 aborted by a signal.
 
@@ -953,14 +1009,14 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_rule` | `text`, `nodes`, `as` | ruling |
-| `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
-| `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:human`, owner only) | initialize the ledger (§11.1) |
+| `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
+| `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | initialize the ledger (§11.1) |
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
-| `owed_approve` | `node`, `note?`, `block?`, `as` (default `owner:human`, owner only) | owner approval (D23); the dialog shows `Approve node <node>` (or `Block approval of node <node>`), `Candidate: <commit> (submit #<seq>)`, `Base: <base>`, `Changed files: <n>`, then the note; only that candidate is approved (§8) |
-| `owed_evidence` | `node`, `id`, `files?`, `note`, `as` (reviewer/parent/owner) | manual evidence or receipt (D23); an owner gets a dialog showing `Candidate: <commit> (submit #<seq>)` and `Base: <base>` (or `Receipt on merge #<m>`), `Files (N):` as `path sha12 (bytes)` and the note; the recording is refused if the files or the candidate changed after the dialog |
+| `owed_approve` | `node`, `note?`, `block?`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | owner approval (D23); under the gate the dialog shows `Approve node <node>` (or `Block approval of node <node>`), `Candidate: <commit> (submit #<seq>)`, `Base: <base>`, `Changed files: <n>`, then the note; only that candidate is approved (§8) |
+| `owed_evidence` | `node`, `id`, `files?`, `note`, `as` (reviewer/parent/owner) | manual evidence or receipt (D23); an owner is delegated (no dialog; under `OWED_CONFIRM=owner` a dialog showing `Candidate: <commit> (submit #<seq>)` and `Base: <base>` (or `Receipt on merge #<m>`), `Files (N):` as `path sha12 (bytes)` and the note; the recording is refused if the files or the candidate changed after the dialog) |
 | `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
-| `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner; `as: parent:…` under an `adopt` allowance, §3.4, with no dialog); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
+| `owed_adopt` | `commit?`, `note`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`) | adopt trunk commits made outside owed (owner; `as: parent:…` under an `adopt` allowance, §3.4); under the gate the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
 | `owed_decoy` | `action` (`commit`/`reveal`/`digest`), `digest?`, `file?`, `as` | decoy commitment and reveal (owner); `digest` writes nothing |
 | `owed_drive` | `action?` (`once` default, `start`, `status`, `stop`), `max?` (once/start), `now?` (stop) | the driver (§12.7, §12.8): one pass, or start/report/stop the background driver; start makes this session follow its log for wake-ups |
 
@@ -970,9 +1026,25 @@ result is a tool error `Aborted: aborted` (details `code: aborted`). `owed_drive
 (action once) passes it to its pass as well: the pass stops after the current
 action (§12.7).
 
-Owner operations (`waive`, `defer`, `adopt`, downgrade plans, decoys, and any tool
-called with `as: owner:…`) call `ctx.ui.confirm` and are recorded with
-`channel: "pi-confirm"`; without UI they refuse. The confirmation text is the
+Owner operations (`waive`, `defer`, `adopt`, `approve`, owner `evidence`, `init`,
+downgrade plans, decoys, and any tool called with `as: owner:…`) are delegated
+(D25, §2.1): no dialog, recorded with `channel: "delegated"`, default principal
+`owner:pi`; `owed_plan` takes `note` (required for a delegated downgrade). Under
+the opt-in gate `OWED_CONFIRM=owner` the default principal is `owner:human` and
+they call `ctx.ui.confirm` and are recorded with `channel: "pi-confirm"`; without
+UI they refuse. That dialog waits at most `OWED_CONFIRM_TIMEOUT` seconds (a
+non-negative integer, default 120; `0` waits indefinitely; any other value means
+the default): owed passes `{timeout: N·1000 + 1000, signal}` to
+`ctx.ui.confirm` (pi shows a countdown that outlasts owed's own limit) and races
+the dialog against its own N-second timer and the tool call's abort, so a UI
+that ignores `timeout`/`signal` or never answers cannot hold the call. When
+owed's timer fires it aborts the dialog, ignores any later answer, records
+nothing and refuses with code `refused` and `Owner confirmation not given within
+<N> s; nothing was recorded.`; the tool call's abort (Escape) dismisses it the
+same way and refuses `aborted`. Neither is ever read as a confirmation. `owed_approve` and owner `owed_evidence`
+pass the confirmed candidate (D23 pin) in both modes; delegated acts record on
+the current candidate. In a pi-durable-subagents call every tool that acts as
+owner or parent is refused (§2.1). The confirmation text is the
 fixed summary, then `Repository: <dir>` and `Identity: owner:<id>`, then each
 free-text field (note, reason, ruling, evidence, changed paths) as `Label: value` on one line
 with `\`, newlines and tabs escaped and C0/C1 controls (U+0000–U+001F,
@@ -986,13 +1058,14 @@ run worker with dsa → submit → attest → review (fresh reviewer, not the wr
 
 ### 11.1 `owed_init` (D24)
 
-`owed_init {plan, cwd?, as?}` is owner only. It reads and parses the plan,
-resolves refs/heads/<trunk>, refuses an initialized ledger (`Already
-initialized …`, before any dialog), then shows the owner dialog: the fixed summary
+`owed_init {plan, cwd?, as?}` is owner only (default `owner:pi`, delegated: no
+dialog, channel `delegated`; D25). It reads and parses the plan, resolves
+refs/heads/<trunk>, refuses an initialized ledger (`Already initialized …`,
+before any dialog), then, under `OWED_CONFIRM=owner` only, shows the owner dialog: the fixed summary
 `Initialize the owed ledger`, `Trunk: <name> at <commit12>`, `Plan: <path>
 (sha256 <sha12>)` (the sha of the stored plan blob that genesis records),
 `Nodes: <n>`, then Repository/Identity and the list field `Invariants:` (one id
-per line); recorded with channel `pi-confirm`. It appends genesis for exactly the
+per line); recorded with channel `pi-confirm` (`delegated` without the gate). It appends genesis for exactly the
 confirmed commit (`init` with `measure: false`, `commit` pinned), starts
 `attestGenesis` in the background in-process (an AbortController aborted on
 `session_shutdown`) and returns at once: details `{entry, genesis: <seq>,

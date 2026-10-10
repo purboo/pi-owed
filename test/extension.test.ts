@@ -7,6 +7,8 @@ import owed from '../src/extension.ts';
 import { Ledger } from '../src/ledger.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
+// D25.4: these tests exercise the owner confirmation (dialog or TTY prompt), now the opt-in gate OWED_CONFIRM=owner.
+process.env.OWED_CONFIRM = 'owner';
 
 function harness(cwd: string, confirm: boolean | undefined = true) {
   const tools = new Map<string, ToolDefinition>();

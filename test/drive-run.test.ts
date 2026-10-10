@@ -205,7 +205,7 @@ test('D8.4: an asking run only notifies (the loop prints it once); an owner-need
     const out = r.lines.join('\n');
     const asks = r.lines.filter(l => /g: writer run .* asks \(qid q1-1, rev 1\): which database\? — the driver never answers/.test(l));
     assert.equal(asks.length, 1, out);
-    const owner = r.lines.filter(l => /^h: needs the owner \(review requires rank 3/.test(l));
+    const owner = r.lines.filter(l => /^h: needs the owner \(the main agent decides; owed lists the command\): review requires rank 3/.test(l));
     assert.equal(owner.length, 1, out);
     const es = await f.entries();
     assert.equal(kinds(es, 'send').length, 0, 'never answers');

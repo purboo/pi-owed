@@ -2,7 +2,8 @@
 
 export type Role = 'owner' | 'parent' | 'writer' | 'reviewer' | 'executor';
 export interface Principal { role: Role; id: string }
-export type Channel = 'tty' | 'pi-confirm' | 'flag';
+/** How an owner act was authorized: a TTY prompt, a pi dialog, `--i-am-owner` (flag), or delegated to the main agent (D25: no human step). */
+export type Channel = 'tty' | 'pi-confirm' | 'flag' | 'delegated';
 
 // ---------- plan ----------
 export interface CheckSpec {
@@ -92,7 +93,7 @@ export interface Counts { tests?: number; pass?: number; fail?: number; skip?: n
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; state: StateFacts }
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
-export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string }
+export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*' }
 export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
 export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts }
@@ -203,7 +204,7 @@ export interface NodeState {
   halt?: HaltEntry;
 }
 export interface AttemptRuns { attempt: number; launches: LaunchEntry[]; sends: SendEntry[] }
-export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string }
+export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string; /** D25: present only for a delegated owner ruling */ channel?: 'delegated' }
 export interface State {
   seq: number;                 // last seq, -1 when empty
   head: string;                // hash of last entry
@@ -215,7 +216,7 @@ export interface State {
   invariants: ItemView[];      // invariant items on the current trunk state
   rules: Rule[];
   /** `allowance` (D21): set when a parent's plan update was accepted under an allowance; S = seq of the genesis/plan entry that last changed `allow`. */
-  downgrades: { seq: number; by: string; items: Downgrade[]; allowance?: number }[];
+  downgrades: { seq: number; by: string; items: Downgrade[]; allowance?: number; /** D25: present only for a delegated owner plan update */ channel?: 'delegated' }[];
   deferred: { seq: number; node: string; id: string; key: string }[];
   escapes: EscapeView[];
   decoys: DecoyView[];             // revealed decoys with outcomes
