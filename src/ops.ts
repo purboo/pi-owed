@@ -134,19 +134,23 @@ async function physical(path: string): Promise<string> {
 /**
  * D19: branch and worktree of attempt `attempt` of node `spec` under the plan's `worktrees:` block (defaults: root
  * `.owed/wt`, branch `owed/{node}/{attempt}`), and the info/exclude line: `.owed/` for the default root (as in 0.4.1),
- * `/<repository-relative root>/` for another root inside the main worktree, none for a root outside it. Refuses
- * (usage) an invalid branch name or a root equal to the main worktree root, before any effect.
+ * `/<repository-relative root>/` (glob metacharacters escaped) for another root inside the main worktree, none for a
+ * root outside it. The worktree path is physical (the root's deepest existing ancestor resolved through symlinks), so
+ * it equals git's toplevel inside the slot and writer inference matches it. Refuses (usage) an invalid branch name or a
+ * root equal to the main worktree root, before any effect.
  */
 async function slotLayout(root: string, plan: Plan, spec: NodeSpec, attempt: number): Promise<{ branch: string; worktree: string; excludeLine?: string }> {
   const cfg = worktreesConfig(plan), branch = expandBranch(cfg.branch, spec, attempt);
   if ((await git.git(root,['check-ref-format','--branch',branch],{allowFail:true})).code) throw new OwedError(`branch name ${branch} (from worktrees.branch "${cfg.branch}") is not a valid git branch name`,'usage');
-  const base = resolve(root,cfg.root), worktree = join(base,`${spec.id}-${attempt}`);
-  const rel = relative(await physical(root),await physical(base));
+  const base = await physical(resolve(root,cfg.root)), worktree = join(base,`${spec.id}-${attempt}`);
+  const rel = relative(await physical(root),base);
   if (!rel) throw new OwedError(`worktrees.root ${cfg.root} is the main worktree root; use a directory inside or outside it`,'usage');
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return { branch, worktree };
   const path = rel.split(sep).join('/');
-  return { branch, worktree, excludeLine: path === '.owed/wt' ? '.owed/' : `/${path}/` };
+  return { branch, worktree, excludeLine: path === '.owed/wt' ? '.owed/' : `/${ignoreLiteral(path)}/` };
 }
+/** `text` as a literal gitignore pattern: `\`, `*`, `?` and `[` escaped, and a leading `!` or `#`. */
+export function ignoreLiteral(text: string): string { return text.replace(/[\\*?[]/g,'\\$&').replace(/^[!#]/,'\\$&'); }
 export async function submit(o: Actor & { node: string; commit?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), { state } = await load(ledger), n = node(state,o.node);
   if (!n.slot?.open) throw new OwedError('No open writer slot');
