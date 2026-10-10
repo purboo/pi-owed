@@ -1,5 +1,242 @@
 # Changelog
 
+## 0.7.0
+
+The wais run of 2026-10-10 reported lock, threshold, budget, routing and
+throughput frictions on 0.6.0/0.6.1 (feedback #8-#14): K1 answers the attest
+lock collisions (#8, #12, and the global lock of #15), K2 the bare halt and
+waiver notes (#8, #12), K3 per-node models (#11), K4 the merge refused by an
+unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
+#9, #11) and K6 the serial driver (#13).
+
+- **Per-node attest lock, busy exit (K1; wais #8, #12, #15).** In wais a writer
+  ran `owed attest`, as `owed why` told it to, while the driver attested the
+  same node; the second attest waited 60 s for the repository-wide `attest`
+  lock, failed with `Internal error: timed out waiting for attest` (exit 3), and
+  the driver halted (#539). `owed attest <node>` now takes a lock of that node
+  only, `attest-<first 16 hex of sha256(node id)>`, so attests of different
+  nodes run in parallel (each observation is appended under the ledger lock only
+  while its item is current, D24; temporary worktrees, git worktree admin
+  directories and log blobs get unique names). `attest --genesis` keeps its
+  `genesis` lock. When the node's lock (or `genesis` for `--genesis`) is held by
+  a live process on this host, attest fails at once with the new `OwedError`
+  code `busy` and exit 75: `attest of <node> is already running (pid <pid> on
+  <host> since <ISO time>); its observations will appear in owed why <node>`
+  (`--genesis`: `attest --genesis is already running (…); its observations will
+  appear in owed status`). A dead owner on this host is reaped as before; a lock
+  of another host is waited for (60 s) and then fails with the same text. Every
+  other lock wait that times out is `busy` too: `timed out waiting for the
+  <name> lock held by pid <pid> on <host> since <time>; retry` (the ledger lock
+  reads `the ledger lock`), no longer `internal`. The CLI prints `Busy: <msg>`
+  on stderr and exits 75; pi tools return `Busy: <msg>` as a tool error with
+  details `{code: "busy", reason}`. With `--json` every command that ends with an
+  error (an OwedError or an internal error) now also prints one line `{"error": <message>, "code": <code>}` on stdout; stderr and
+  exit codes are unchanged. Where owed suggests `owed attest <node>` to a writer
+  (the `owed why` clear hint of an execution block, which the driver's repair
+  message embeds), it adds `(skip this when owed drive is running: the driver
+  attests)`. A dispatch by the driver (`parent:drive`) stores a packet ending
+  with `the driver measures your candidate; do not run owed attest`, and every
+  driver writer task carries that line; a manual dispatch stores its packet
+  without it.
+- **Count notes, block notes, what a waiver means (K2; wais #8, #12).** In wais
+  a check that ran 100 of 100 passing tests against `min_tests: 200` showed only
+  `zero tests or min_tests unmet`. A non-red check that fails only on its count
+  now notes `min_tests unmet: counted <tests> (<pass> pass, <fail> fail[, <skip>
+  skip]) < min_tests <m>; exit <code>` or `zero tests; exit <code>`; red notes
+  are unchanged, and the observation gains no field. `owed why` shows the note
+  of an execution block's failing observation on the block line (` — note:
+  …`), and `owed status` on the pending item it holds (` — note #<seq>: …`),
+  one line of at most 200 characters (`--json`: `blocks[].note`,
+  `pending.<group>[].blockNotes`). In wais an owner learned only from the waived status
+  that `--accept-risk` stopped measurement (#12). `owed waive` (CLI text,
+  `--json` field `meaning`, the pi tool's text and details) now states what the
+  reducer applies (review #781): `waived <obligation> for candidate #<submit>
+  <commit12> (key <key12>): <effect>; …`. The waiver is recorded for the key,
+  not for one candidate: it counts for every candidate of the node with that
+  key, in this or a later attempt, while no unaccepted active block remains on
+  the obligation; a later block suspends it and clearing that block restores
+  it. The effect says whether it is in effect now, not yet (naming the
+  unaccepted blocks and what clears each), not needed (the item is satisfied),
+  or not applicable; the text says which change of the key makes owed measure
+  it again, and that a measured obligation whose key has no observation yet is
+  still measured. Each flaky block in `--accept-risk` adds `the flaky block #<seq> stays recorded as
+  accepted risk`. The text is computed from the ledger right after the waiver,
+  so a later entry cannot relabel it. `owed why` shows a waived item as
+  `<subject>/<obligation> waived (not measured for this candidate) by <who>:
+  <reason> (<channel>)`.
+- **Node models (K3; wais #11).** In wais every driver-launched writer used the
+  plan's one writer model, so cheaper slots stayed idle. A node may set
+  `drive: {writer?: {agent?, model?}, reviewer?: {agent?, model?}}`, validated
+  like the plan's roles (unknown keys and bad types are errors). For each role
+  the node sets, an object with `agent` replaces the plan's role (the model is
+  the node's, else none: the agent's default applies); one with only `model`
+  keeps the plan's agent and overrides its model. `drive: {}` and an empty role
+  object are dropped, so a plan without node `drive` keeps its canonical bytes
+  and sha. Node `drive` is not an obligation: changing it is never a downgrade,
+  invalidates no candidate and affects only later launches; a re-launch sends
+  its stored spec bytes. `owed why <node>` shows `Drive: writer <agent>
+  (<model>) · reviewer <agent> (<model>)` with the effective values when the
+  node sets `drive` (`(<model>)` only when a model is set; `--json` `drive`).
+  README, SPEC §12.2 and the `owed` skill describe it.
+- **Node-scoped merge CAS (K4; wais #14).** In wais a 5-minute merge measurement
+  was refused with `Plan, candidate or trunk changed; retry` after two plan
+  updates that did not touch the node, and was measured again from scratch.
+  After measuring, `owed merge` now compares under the ledger lock only the
+  ledger trunk commit, the trunk ref, the node's slot (dispatch seq, attempt,
+  base, open) and its candidate (submit seq, commit). If one moved it refuses
+  and records nothing, naming the cause: `slot of <node> changed (#<seq>
+  <kind>); nothing recorded`; `candidate #<S> <commit12> of <node> was
+  invalidated by plan #<N> (its spec changed); the writer submits again, then
+  merge`; `trunk changed (CAS): …`; otherwise `Plan, candidate or trunk changed;
+  retry`. A plan update that keeps the candidate, and entries of other nodes,
+  no longer refuse. The guard runs on the latest state under the latest plan
+  (merge facts and keys are recomputed when the plan changed) plus the measured
+  observations whose job is still current (D24.1); the others are dropped. A
+  job the run did not measure (a key the update introduced, e.g. a changed
+  invariant) refuses with `not measured: <subject>/<obligation> (key <key12>),
+  … (the plan changed while merge measured); run owed merge again: it measures
+  only what lacks a verdict`. On a guard refusal the kept observations are
+  appended, so a retry measures only jobs without a verdict (a pass or fail is
+  reused, an `error` is measured again). Adopt keeps its strict rule.
+  `formal/REPORT-mc-owed.md` §9 "0.7 merge CAS" shows the node-scoped CAS stays
+  within what the model checks (`merge_guard`, `merge_jobs` in `owed05.rs`).
+- **Repair epoch, rulings to sealed writers, threshold hint (K5; wais #8, #9,
+  #11).** In wais a parent plan mistake used up the repair budget and a later
+  ruling never reached the halted writer (FLAKY-COLDPLAY #406, QA-REGISTRY
+  #427); the parent sent follow-ups by hand. `drive.repairs` now counts the
+  attempt's repair sends after the node's epoch: the latest of its dispatch,
+  the latest ruling naming the node (`*` does not count) and the latest plan
+  entry that changed the node's canonical spec (ignoring `title` and node
+  `drive`; `brief` counts). Both repair rows use it, and the halt reads `repairs
+  exhausted (<k> of <n> since ruling #s | plan #s | dispatch): <cause>`. When
+  the writer run is sealed and a ruling naming the node is undelivered, the
+  driver sends one follow-up with reason `ruling` in place of a `finished …
+  without submitting` halt or the `repairs exhausted` halt (the only halts it
+  can replace, review #784 F2): `New parent rulings for <node>:`, one line per
+  undelivered in-scope ruling, the active blocks of the current (else latest)
+  candidate with their notes, then `Apply these rulings; they override your
+  packet. Then commit and run \`owed submit <node>\`.` It records `rulings`, is
+  not a repair, and a writer that finishes it without submitting halts naming
+  it; dsa rejecting it halts at once. The submit, rebase, repair and ruling
+  follow-ups to the writer carry the undelivered in-scope rulings first and
+  record `rulings`: `submit` and
+  `rebase` follow-ups record it too (new; only when they carry a ruling) and
+  start with `Parent rulings for <node> (apply them; they override your
+  packet):`, and a repair message now starts with its `Rulings since dispatch:`
+  block. A send dsa rejected delivers nothing to the writer (review #784 F1):
+  the driver reads dsa's request state of the attempt's recorded sends each
+  pass (cached once terminal), and the next writer follow-up carries those
+  rulings. When the node's latest two failing, non-attribution observations of
+  check X both exited 0 with no failure and the same test count below X's
+  `min_tests`, and no ruling naming the node followed, the driver halts for the
+  parent instead of repairing: `check <X>: <tests> tests ran and passed twice,
+  below min_tests <m>; the plan's threshold may be wrong: fix the plan (owed
+  plan) or rule (owed rule --nodes <node> "…")`; the first under-count still
+  gets a repair. The `repairs exhausted` and `finished … without submitting`
+  halts list each deciding failing observation as `#<obs> <obligation>: <note>`
+  (at most 200 characters). SPEC and the skill say: after fixing a plan mistake,
+  or to let the writer continue, record a ruling naming the node.
+- **Background measurements (K6; wais #13).** In wais one 5-minute merge
+  measurement held every other node (16:03-16:09) with Opus 3/12 busy. The
+  driver now starts attests (a child process, as before) and merges
+  (`ops.merge` in the driver process) and goes on: `decide` gives a node with a
+  measurement in flight no action, and other nodes are dispatched, launched,
+  sent to and halted as usual. At most `drive.measure` measurements run at once
+  (new plan key, integer >= 1, default 2; kept in the parsed plan only when
+  set) and at most one merge. A started measurement logs a quiet `{"do":
+  "attest"|"merge","node":…,"outcome":"started"}`; one that ends wakes the
+  loop, and the next pass handles the result first as before (report, halts,
+  rebase). An `owed attest` exit 75 (K1) is `busy`, like hold refusing the
+  lease: never a halt, not progress, no wake, and the node waits for the next
+  timed or event pass (review #785: the first version retried 53 times in 8 s);
+  every `started` line gets its completion line. While its own merge is in
+  flight or unhandled, the driver makes no trunk drift check (review #785: its
+  own merge raised a false drift notify). The K4 refusals are handled: `not
+  measured` → retry next pass; `slot … changed` and `candidate … was
+  invalidated` → `superseded`, no halt. `owed drive --status`, `/owed` and
+  `owed_drive` status list `<node> <attest|merge> since <time>` from the log
+  (`--json` `measuring`). A driver with a measurement in flight is never idle.
+  Stopping: the first SIGINT/SIGTERM of the loop (so `owed drive --stop`, a
+  SIGTERM as in 0.6.x) and `owed_drive` stop start nothing new and wait for the
+  measurements without a time limit, then exit `stopped`; a second signal (so
+  `--stop --now`) or the first under `--once` stops at once: it aborts the merge
+  (its checks get SIGKILL; a merge aborted before its last abort point does not
+  move trunk, D16a.1), SIGTERMs the dsa invocations
+  and attest process groups, waits 5 s, SIGKILLs those groups, waits 1 s, then
+  writes the `killed` line and exit record and exits 130. A loop error aborts
+  an in-flight merge and waits up to 6 s for it. `--once` and the pi tool's pass
+  wait for the measurements they started. A driver that died leaves its attest
+  children to finish (their observations land under D24); the new driver's
+  attest of that node gets exit 75 and retries later.
+
+**Compatibility.** The ledger entry kinds are unchanged, and a plan that sets
+neither node `drive` nor `drive.measure` keeps its canonical bytes and sha.
+pi-owed 0.6.x refuses a plan that sets `drive.measure` (`drive.measure: unknown
+key`: its plan-level `drive` block rejects unknown keys), both as a plan update
+and when it replays a ledger that recorded such a plan. 0.6.x does not validate
+node keys, so it ignores a node's `drive` and launches that node with the
+plan's drive. 0.6.x replay refuses a ledger with a `submit` or `rebase` send
+carrying `rulings` (`send rulings is only allowed with reason ruling or
+repair`); it accepts the `ruling` follow-ups, since a `ruling` send always
+carried `rulings`. Exit 75 and the `busy` code are new; lock timeouts that were
+`internal` (exit 3) are `busy` (exit 75). With `--json` every `OwedError` (and
+an internal error) now also prints `{"error","code"}` on stdout, where before a
+failure printed nothing there. The merge CAS is node-scoped: a plan update that
+keeps the merging node's candidate no longer refuses its merge, and the new
+refusal texts above replace `Plan, candidate or trunk changed; retry` for their
+causes. Upgrade the CLI, the pi extension and the remote executors together: a
+0.6.x attest takes the repository-wide `attest` lock and a 0.7.0 attest the
+node's lock, so the two do not exclude each other on one node (both record
+under D24, but the node is measured twice), and a 0.6.x process cannot replay a
+ledger with the plans or sends above.
+
+**Deferred.** `error_expect` for environment-precondition failures (#12): a
+check reports these today by exiting 126/127 without a count, which records
+`error`, not a failure. Per-tier model routing (#11 asked for a tier or risk
+mapping; 0.7.0 routes per node). A plan warning for unknown node keys (typos
+like `drvie:` are ignored; refusing them would change which existing plans are
+accepted). Attest-busy nits: a dispatch whose ledger-lock timeout is followed
+by a failed rollback still exits 75 `retry` though leftovers may block a
+retry; `--json=x` gets no JSON error line (the CLI matches `--json` only). The
+SIGKILL limit: a stop at once SIGKILLs the dsa invocations' and attest
+children's process groups only; the checks an attest runs have process groups
+of their own, so a check whose attest was SIGKILLed before ending it keeps
+running, unrecorded, until it exits. K review nits not fixed: with per-node
+locks, parallel node attests each measure a pending genesis invariant (correct
+under D24, more CPU); lock owners record no process start time, so a stale
+attest lock whose pid was reused reads as busy indefinitely, and the driver
+retries without a halt; the `hold` comment in `src/dsa.ts` still says owed
+exits only 0..3; the driver's `--json` loop exit record maps a `busy` error to
+code 3; merge's abort path (`abortWith`) keeps the strict whole-plan
+stability rule, so an abort after any plan update discards the measurements;
+merge recomputes facts with git under the ledger lock when the plan changed;
+merge's branch for a node that left the plan is unreachable (removing the node
+invalidates its candidate first); the invalidation refusal says `its spec
+changed` also for `setup`, `exec` or `closure` changes; a waiver of an
+obligation the candidate does not have prints an empty key (unknown
+obligations are not refused, as before); the threshold hint reads the node's
+observations across attempts, so a new attempt's first under-count may hint at
+once; the node-models sha test recomputes the plan sha formula instead of
+going through `owed plan`, and a merge-cas test title says `without
+remeasuring` but counts only the invariant. Without dsa, an owed attest that
+exits 75 on a ledger-lock timeout is logged as `machine lease refused`
+(busyDetail); the behavior is right. While a node stays busy the log gets a
+`started` and a busy line per timed pass (0.6.x printed one busy line per busy
+period). A rejected ruling send is recognized after a driver restart through
+dsa's request record; whether that survives a dsa `prune` was not verified. Still open from 0.6.1: the writes
+hint lists node ids verbatim as globs and grants every listed node the union
+of the new prefixes; a concurrent dispatch can make a rollback report
+`rollback failed: directory cleanup`; a rollback that wraps a non-OwedError
+drops its stack and the pi extension returns it as a tool error; pi
+revalidation replays the whole ledger once per delivery attempt, and a failed
+delivery's dropped wakes are already marked resolved; a staying driver polls
+neither dsa events nor trunk drift while it waits. Still open from 0.6.0: a
+follow-up dsa retires because the call sealed before delivery still ends in a
+misleading `finished repair follow-up without submitting` halt (awaits dsa
+§49); M4 and M6 of `owed05-big.sh` remain within 9% of the 22M-state cap. The
+0.6.1 candidates stay open: bind a reviewer's identity to its dsa call; rulings that uphold or
+overrule a named block.
+
 ## 0.6.1
 
 The wais run of 2026-10-10 reported four driver and planning frictions
