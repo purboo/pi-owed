@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
-import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, Rule, RunRole, RunView, SendKind, SendReason, State } from './types.ts';
+import type { AttemptRuns, Block, LaunchEntry, NodeState, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
 export type Action =
@@ -147,6 +147,44 @@ export function rebaseMessage(s: State, node: string): string {
   const slot = s.nodes[node]!.slot!, r = slot.rebase!;
   return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): in ${slot.worktree} run \`git rebase --onto ${r.base} ${r.from}\`, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
 }
+/** The latest submit of the node's open attempt (also one a plan change or rebase no longer counts as the candidate). */
+const lastSubmit = (s: State, node: string): SubmitEntry | undefined => {
+  const attempt = s.nodes[node]!.slot!.attempt;
+  return entriesOf(s).findLast((e): e is SubmitEntry => e.kind === 'submit' && e.node === node && e.attempt === attempt);
+};
+/**
+ * G3.2: the active review blocks the driver would repair when it must ask the writer for a new candidate (row 8: no
+ * current candidate after a plan change or a rebase): recorded in this attempt on the key of its latest submit, and not
+ * awaiting a parent ruling. Owner blocks never reach row 8 (`ownerNeeded` notifies first).
+ */
+export function resubmitBlocks(s: State, node: string): Block[] {
+  const n = s.nodes[node]!, last = lastSubmit(s, node);
+  if (!last) return [];
+  return n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && b.seq > n.slot!.dispatchSeq && b.key === last.facts.keys[b.obligation] && !awaitingRuling(s, b));
+}
+/**
+ * G3.2: the one follow-up (reason `repair`) that replaces row 8's `submit` / `rebase` follow-up while `resubmitBlocks`
+ * is not empty: the rulings in scope since dispatch (and those quoted by needs-parent blocks), the blocks with their
+ * notes, why a new candidate is needed (plan changed, or trunk moved with the rebase instructions), then commit and
+ * submit. `rulings` (E4): the highest seq it carries, 0 when none.
+ */
+export function resubmitFollowUp(s: State, node: string): { message: string; rulings: number } {
+  const n = s.nodes[node]!, slot = n.slot!, last = lastSubmit(s, node)!, entries = entriesOf(s), quoted: Rule[] = [];
+  const notes = resubmitBlocks(s, node).map(b => {
+    const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
+    if (ruled) quoted.push(ruled);
+    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${ruled ? ` (needed a parent ruling; ruling #${ruled.seq})` : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
+  });
+  const since = rulingsInScope(s, node).filter(r => r.seq > slot.dispatchSeq);
+  const rules = [...since, ...quoted.filter(q => !since.some(r => r.seq === q.seq))].sort((a, b) => a.seq - b.seq);
+  const rb = slot.rebase && slot.rebase.seq > last.seq ? slot.rebase : undefined;
+  return { rulings: carried(rules), message: [
+    ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`)] : []),
+    `Review blocks on your candidate ${last.facts.commit} (submit #${last.seq}) of ${node}, attempt ${slot.attempt} (the reviewer's note):`, ...notes,
+    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\` and resolve conflicts within the allowed writes.`
+      : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
+    `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
+}
 
 // ---------- driver reviewers ----------
 /**
@@ -270,6 +308,16 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 8: writer done without a current candidate (after a rebase: the rebase follow-up first).
   if (wSealed && !c) {
     const rb = slot.rebase;
+    // G3.2: with a block the driver would repair, one repair follow-up replaces the submit / rebase follow-up.
+    const fix = resubmitBlocks(s, id);
+    if (fix.length) {
+      const cause = `review block ${fix.map(b => `#${b.seq} ${b.obligation}`).join(', ')}; a new candidate is needed`;
+      const done = ar.sends.filter(x => x.reason === 'repair'), outstanding = done.findLast(x => x.seq > Math.max(rb?.seq ?? slot.dispatchSeq, lastSubmit(s, id)?.seq ?? -1));
+      if (outstanding) return halt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`);
+      if (done.length >= opts.repairs) return halt(`repairs exhausted (${done.length} of ${opts.repairs}): ${cause}`);
+      const r = resubmitFollowUp(s, id);
+      return send(writer, 'follow-up', 'repair', r.message, r.rulings);
+    }
     if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) return send(writer, 'follow-up', 'rebase', rebaseMessage(s, id));
     const since = rb?.seq ?? slot.dispatchSeq, nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     return nudge ? halt(`writer run ${writer.rid} finished without submitting a candidate after follow-up ${nudge.send}`) : send(writer, 'follow-up', 'submit', submitMessage(id));
@@ -304,9 +352,13 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Row 11: a measured block: an obligation of the candidate failed (✘), or an active execution block binds it.
     const measured = n.items.filter(i => i.mark === '✘' || n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation));
     if (measured.length) return repair(`measured block ${measured.map(i => `${i.obligation} [${i.evidence.map(x => `#${x}`).join(', ')}]`).join(', ')}`);
-    // Row 12: review obligations awaiting and fewer reviewer runs than the candidate needs: launch the next n.
+    const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
+    const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
+    // Row 12: review obligations awaiting and fewer reviewer runs than the candidate needs: launch the next n. G3.1:
+    // never while a review block is active on the candidate's key: row 15 repairs it first (a reviewer would judge
+    // content the repair replaces).
     const reviewers = live.filter(l => l.role === 'reviewer');
-    if (n.items.some(i => (i.obligation === 'review' || i.obligation === 'closure-review') && i.status === 'D') && reviewers.length < reviewRuns(s, id))
+    if (!current.length && n.items.some(i => (i.obligation === 'review' || i.obligation === 'closure-review') && i.status === 'D') && reviewers.length < reviewRuns(s, id))
       return reviewerLaunch(s, id, nextReviewerN(s, id), opts.project, opts.root);
     // Rows 13-14: a sealed reviewer run whose obligations are still awaiting (it recorded no review on them).
     const entries = entriesOf(s);
@@ -322,8 +374,6 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale
     // block (recorded on an earlier candidate) is left to the slot re-review: wait only while a reviewer run of this
     // candidate is unsealed (row 12 already launched any needed run); otherwise halt needing the owner.
-    const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
-    const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
     if (current.length) return repair(`review block ${current.map(b => `#${b.seq} ${b.obligation}`).join(', ')}`);
     const reviewing = reviewers.some(l => !isSealed(view(l)));
     if (stale.length) {
