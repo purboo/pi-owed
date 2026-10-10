@@ -2,12 +2,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt, planText, seed } from './helpers/surface.ts';
 import { git, revParse } from '../src/git.ts';
 import { parsePlan, planDowngrades, expandBranch } from '../src/plan.ts';
+import { ignoreLiteral } from '../src/ops.ts';
 import type { DispatchPacket, StatusView } from '../src/ops.ts';
 
 type Gc = { removed: { node: string; attempt: number; worktree: string | null; branch: string | null }[]; kept: unknown[] };
@@ -188,4 +189,41 @@ test('D19.4: changing worktrees or type is not a downgrade, keeps the candidate,
     const gc = await call<Gc>(r.cwd, ['gc']);
     assert.deepEqual(gc.removed.map(i => [i.worktree, i.branch]), [[a1.worktree, 'owed/a/1']], 'gc uses the recorded layout of attempt 1');
   } finally { await r.cleanup(); }
+});
+
+test('D19.2 (#388): a root through a symlink records the physical slot path; submit from the slot infers the writer', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    await seed(r.cwd); const plan = join(r.root, 'plan.yaml'), real = join(r.root, 'real'), link = join(r.root, 'link');
+    await mkdir(real); await symlink(real, link);
+    await writeFile(plan, yamlPlan({ worktrees: { root: join(link, 'slots') } }));
+    await call(r.cwd, ['init', plan, '--i-am-owner']);
+    const a = await call<DispatchPacket>(r.cwd, ['dispatch', 'a']);
+    assert.equal(a.worktree, join(await realpath(real), 'slots', 'a-1'), 'recorded path is physical');
+    assert.equal((await git(a.worktree, ['rev-parse', '--show-toplevel'])).stdout.trim(), a.worktree, 'equals git toplevel in the slot');
+    assert.equal((await call<StatusView>(r.cwd, ['status'])).nodes.a!.slot!.worktree, a.worktree);
+    await commitAt(a.worktree, { 'test/a.cjs': 'module.exports=1;' });
+    // From the symlinked spelling of the slot too: git's toplevel is physical either way.
+    for (const cwd of [a.worktree, join(link, 'slots', 'a-1')]) {
+      const entry = await call<{ kind: string; by: string }>(cwd, ['submit', 'a']);
+      assert.equal(entry.kind, 'submit'); assert.equal(entry.by, 'writer:a#1', `writer inferred from ${cwd}`);
+    }
+  } finally { await r.cleanup(); }
+});
+
+test('D19.3 (#388): glob metacharacters of an inside root are escaped in the exclude line', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    await seed(r.cwd); const plan = join(r.root, 'plan.yaml'), root = 'sl*ts/[x]?/b\\s';
+    await writeFile(plan, yamlPlan({ worktrees: { root } }));
+    await call(r.cwd, ['init', plan, '--i-am-owner']);
+    const a = await call<DispatchPacket>(r.cwd, ['dispatch', 'a']);
+    assert.equal(a.worktree, join(r.cwd, root, 'a-1'));
+    const exclude = (await readFile(join(r.cwd, '.git', 'info', 'exclude'), 'utf8')).split('\n');
+    assert.ok(exclude.includes('/sl\\*ts/\\[x]\\?/b\\\\s/'), exclude.join('\n'));
+    // The slot root is ignored literally; a user's untracked sibling that the unescaped glob would match stays visible.
+    await mkdir(join(r.cwd, 'slots', 'xy', 'bs'), { recursive: true }); await writeFile(join(r.cwd, 'slots', 'xy', 'bs', 'user.txt'), 'mine');
+    assert.equal((await git(r.cwd, ['status', '--porcelain', '--untracked-files=all'])).stdout, '?? slots/xy/bs/user.txt\n');
+  } finally { await r.cleanup(); }
+  assert.equal(ignoreLiteral('!a'), '\\!a'); assert.equal(ignoreLiteral('#a'), '\\#a'); assert.equal(ignoreLiteral('a!#'), 'a!#');
 });

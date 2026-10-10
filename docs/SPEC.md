@@ -491,15 +491,18 @@ changing git or the ledger.
 ### 8.1 Worktree layout and a trunk checked out elsewhere (D19)
 
 Dispatch of attempt `a` of node `n` creates the worktree at
-`resolve(<main worktree root>, worktrees.root, "<n>-<a>")` and the branch from
+`<P>/<n>-<a>`, where `P` is `resolve(<main worktree root>, worktrees.root)` with
+its deepest existing ancestor resolved through symlinks (the physical path, equal
+to git's toplevel inside the slot, so writer inference matches it), and the branch from
 the template (§3.1; `{type}` = the node's `type`, default `feat`). The expanded
 name must pass `git check-ref-format --branch`, and the root must not be the main
 worktree root itself; otherwise dispatch refuses (usage) before any ledger,
 exclude or worktree effect. Missing parent directories of the worktree are
 created. `<git common dir>/info/exclude` gets `.owed/` for the default root (as
 in 0.4.1), `/<repository-relative root>/` for another root inside the main
-worktree, and nothing for a root outside it (compared after resolving symlinks of
-the deepest existing ancestor). The dispatch entry records `branch` and
+worktree (with `\`, `*`, `?`, `[` and a leading `!`/`#` escaped, so it matches
+that directory literally; the line stays after the slots are gone), and nothing for
+a root outside it (both compared as physical paths). The dispatch entry records `branch` and
 `worktree`; every later use (submit/rebase writer inference, rebase packets,
 gc, the driver, views) reads the recorded values and never reconstructs them.
 
@@ -507,9 +510,15 @@ When the trunk branch is checked out in a linked worktree, a merge fast-forwards
 it there (`git merge --ff-only` in that worktree) and refuses when it has
 uncommitted tracked changes, before trunk moves and without recording the merge:
 `trunk worktree <path> has uncommitted changes: commit them there, or detach it
-(git -C <path> switch --detach), then retry` (refused, exit 1). Unless the trunk
-is checked out in the main worktree, dispatch, merge and gc never switch, check
-out or write the main worktree.
+(git -C <path> switch --detach), then retry` (refused, exit 1). Dispatch, merge
+and gc never switch the main worktree's branch or HEAD and never change its
+tracked files or index, with two exceptions: slot worktrees are created and
+removed under a root inside it (the default `.owed/wt`; excluded as above), and a
+merge fast-forwards it when the trunk is checked out there. With a root outside
+it and the trunk checked out elsewhere they write nothing in the main worktree.
+Limitations: an ambiguous template (e.g. `{node}{attempt}`) can expand to the same
+name for two attempts (dispatch then fails in `git worktree add`), and parent
+directories created for a dispatch that fails are left in place.
 
 ## 9. Views
 
