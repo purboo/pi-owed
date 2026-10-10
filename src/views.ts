@@ -1,8 +1,8 @@
-import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Plan, Rule, SlotRebase, State } from './types.ts';
+import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Plan, Rule, SlotRebase, State } from './types.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny } from './plan.ts';
-import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling } from './reducer.ts';
+import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual } from './reducer.ts';
 import { genesisProgress } from './reducer.ts';
 import { OwedError } from './errors.ts';
 
@@ -23,6 +23,8 @@ export interface ReceiptCard {
   exec?: string;
   /** Driver launches and sends of the open attempt. */
   runs?: AttemptRuns;
+  /** D23 receipts recorded on the merged node (informational), in ledger order; present only when there are any. */
+  receipts?: EvidenceEntry[];
 }
 export interface StatusView {
   trunk: State['trunk']; nodes: Record<string, NodeState>; groups: Record<string, string[]>;
@@ -74,7 +76,15 @@ export interface Report {
   /** Driver halts after `since`, plus every still active halt (`active`). */
   halts: (HaltEntry & { active: boolean })[];
   escapes: EscapeSummary;
+  /** D23 receipts (evidence entries on merged nodes) after `since`. */
+  receipts?: EvidenceEntry[];
 }
+/** D23: files of a manual evidence entry as `path sha12`, then its note (always manual, never measured). */
+export function evidenceText(e: EvidenceEntry): string {
+  return `files ${e.files.map(f => `${oneLine(f.path)} ${f.sha256.slice(0, 12)}`).join(', ') || 'none'}; note: ${oneLine(e.note)}`;
+}
+/** One D23 receipt line: `Receipt #seq <id> by <who> (merge #m): files …; note: …`. */
+export const receiptText = (e: EvidenceEntry): string => `Receipt #${e.seq} ${e.node}/${e.id} by ${e.by}${e.channel === 'flag' ? ' (flag weak confirmation)' : ''} (merge #${e.merge}): ${evidenceText(e)}`;
 /** CLI owner confirmation for adopt: full prior..commit, commit count, every changed path (one per line) and the note, escaped onto single lines. */
 export function renderAdoptPreview(p: AdoptPreview, note: string): string {
   return [`Adopt trunk ${oneLine(p.trunk)}: ledger trunk ${p.prior}..${p.commit}`, `${plural(p.commits, 'commit')} made outside owed, not reviewed by owed; adopting makes ${p.commit} the ledger trunk.`, `Changed paths (${p.changed.length}):${p.changed.length ? '' : ' none'}`, ...p.changed.map(path => `  ${oneLine(path)}`), `Note: ${oneLine(note)}`].join('\n');
@@ -95,6 +105,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string): Rece
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')),
     ...(halted(s, node) ? { halt: halted(s, node) } : {}),
     ...(s.plan.exec ? { exec: execText(s.plan) } : {}),
+    ...(entries.some(e => e.kind === 'evidence' && e.node === node && e.merge !== undefined) ? { receipts: entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.node === node && e.merge !== undefined) } : {}),
     ...(n.slot?.open && n.runs.some(r => r.attempt === n.slot!.attempt) ? { runs: n.runs.find(r => r.attempt === n.slot!.attempt) } : {}),
     ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) };
 }
@@ -127,8 +138,21 @@ const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
 function itemText(i: ItemView & { observations?: Entry[] }): string {
   if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${HALT_CLEAR}`;
+  if (isManual(i.obligation)) return manualText(i);
   const label = i.status === 'W' ? 'waived' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
+  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
+}
+/**
+ * D23 items, always marked manual (never "measured"): `✔ approved (owner:<id>, <channel>)`, `✔ evidenced (manual) by
+ * <who>` with files `path sha12` and the note; pending ones read `awaiting owner approval` / `awaiting manual evidence`.
+ */
+function manualText(i: ItemView & { observations?: Entry[] }): string {
+  const obs = i.observations ?? [], approve = i.obligation === 'approve';
+  const ok = obs.filter(e => approve ? e.kind === 'review' && e.verdict === 'ok' : e.kind === 'evidence');
+  const label = i.status === 'E' ? approve ? `approved${ok.length ? ` (${ok.map(e => `${e.by}, ${e.channel ?? 'no channel'}`).join('; ')})` : ''}` : `evidenced (manual)${ok.length ? ` by ${[...new Set(ok.map(e => e.by))].join(', ')}` : ''}`
+    : i.status === 'W' ? 'waived' : i.mark === '⊥' ? approve ? 'awaiting owner approval' : 'awaiting manual evidence' : i.mark === '⛔' ? 'blocked' : i.detail;
+  const evidence = obs.map(e => e.kind === 'evidence' ? `#${e.seq} ${e.by}: ${evidenceText(e)}` : e.kind === 'review' ? `#${e.seq} ${e.by} ${e.verdict}${e.channel ? ` (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : ''}${e.note ? `: ${oneLine(e.note)}` : ''}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
 /** How a driver halt is cleared (SPEC §12, D3). */
@@ -143,7 +167,7 @@ function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
 export function renderReceipt(v: ReceiptCard): string {
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${HALT_CLEAR}`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${HALT_CLEAR}`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}`), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
   return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
@@ -167,6 +191,7 @@ function entryLine(e: Entry): string {
     case 'launch': return `${head} recorded driver launch of ${e.node} attempt ${e.attempt} ${e.role} ${e.rid}`;
     case 'send': return `${head} recorded driver ${e.sendKind} (${e.reason}) to ${e.rid}: ${e.send}`;
     case 'halt': return `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${oneLine(e.reason)}`;
+    case 'evidence': return e.merge !== undefined ? `${head} recorded receipt ${e.node}/${e.id} (merge #${e.merge}): ${evidenceText(e)}` : `${head} recorded manual evidence ${e.node}/evidence:${e.id}: ${evidenceText(e)}`;
     case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
     case 'decoy-reveal': return `${head} revealed decoys ${e.decoys.map(d => d.node).join(', ')}`;
     default: return `${head} ${e.kind}`;
@@ -192,6 +217,7 @@ export function renderReport(v: Report): string {
     ...list('Owner actions', v.ownerActions.map(entryLine)),
     ...(v.adoptions?.length ? list('Trunk adoptions (owner decisions: commits made outside owed)', v.adoptions.map(adoptionText)) : []),
     ...(v.halts?.length ? list('Driver halts', v.halts.map(h => `${h.node}: ${haltText(h)}${h.active ? ' (active)' : ' (cleared)'}`)) : []),
+    ...(v.receipts?.length ? list('Receipts (manual, informational)', v.receipts.map(receiptText)) : []),
     ...renderEscapes(v.escapes)].join('\n');
 }
 
@@ -223,6 +249,8 @@ export interface BriefMerged {
   node: string; seq: number; ts: string; commit: string;
   measured: number; waived: number; reviewed: number; deferred: number; untested: number;
   measuredItems: string[]; waivedItems: string[]; untestedChanges: string[]; reviewers: string[];
+  /** D23 approve/evidence items in E: manual, never counted as measured (present only when non-empty). */
+  manualItems?: string[];
 }
 export interface BriefBlock { seq: number; node: string; obligation: string; kind: Block['kind']; state: Block['state']; failingObs?: number; reviewer?: string; rank?: number; clear: string }
 export interface BriefProgress { node: string; phase: 'dispatched' | 'submitted'; attempt: number; dispatchSeq: number; dispatchedAt: string; ageMs: number; submitSeq?: number; submittedAt?: string; submitAgeMs?: number }
@@ -238,11 +266,15 @@ const obligationFlag = (o: string): string => o === 'closure-review' ? ' --oblig
 const waiveCommand = (node: string, obligation: string, risks: number[]): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}`;
 /** Hint for a node without an open writer slot: nothing can be cleared on an old candidate, only on a new attempt. */
 const dispatchHint = (n: NodeState): string => n.merged ? `${n.id} is merged; no attempt can clear this` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
+/** D23: the command that records manual evidence `id` of `node` as principal `as`. */
+export const evidenceCommand = (node: string, id: string, as: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}`;
 /** The command that removes an owner-queue item from the owner's queue. */
 function decisionCommand(s: State, i: ItemView): string {
   if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
   const n = s.nodes[i.subject];
   if (n && !n.slot?.open) return dispatchHint(n);
+  if (i.obligation === 'approve') return `owed approve ${i.subject} [--note TEXT] (owner)`;
+  if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), 'owner:human');
   const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && b.state !== 'cleared') ?? [];
   if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as owner:human`;
   return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq));
@@ -259,6 +291,7 @@ function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `;
   if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks)}`;
   if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} (the attribution rerun on the original content clears the block)`;
+  if (b.obligation === 'approve') return `${after}a later owner approval of the current candidate clears it: owed approve ${b.node}`;
   const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
   const ruling = !currentNeeds(s, b) ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed rule --nodes ${b.node} "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
   return `${after}${ruling}an ok review of ${b.node}/${b.obligation} on the current candidate by the original reviewer ${by} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it; or owner: ${waiveCommand(b.node, b.obligation, risks)}`;
@@ -278,13 +311,14 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
     .sort((a, b) => b.blockedDownstream - a.blockedDownstream || a.node.localeCompare(b.node) || a.obligation.localeCompare(b.obligation));
   const merged = entries.filter((e): e is Extract<Entry, { kind: 'merge' }> => e.kind === 'merge' && included(e) && !!s.nodes[e.node]).map(e => {
     const card = receipt(s, entries, e.node);
-    const measuredItems = card.items.filter(i => i.status === 'E' && !reviewObligation(i.obligation) && i.obligation !== 'rulings').map(i => i.obligation);
+    const measuredItems = card.items.filter(i => i.status === 'E' && !reviewObligation(i.obligation) && i.obligation !== 'rulings' && !isManual(i.obligation)).map(i => i.obligation);
+    const manualItems = card.items.filter(i => i.status === 'E' && isManual(i.obligation)).map(i => i.obligation);
     const waivedItems = card.items.filter(i => i.status === 'W').map(i => i.obligation);
     const reviewers = [...new Set(card.items.filter(i => i.status === 'E' && reviewObligation(i.obligation)).flatMap(i => i.observations.flatMap(o => o.kind === 'review' && o.verdict === 'ok' ? [o.by] : [])))];
     return { node: e.node, seq: e.seq, ts: e.ts, commit: e.commit, measured: measuredItems.length, waived: waivedItems.length,
       reviewed: card.items.filter(i => i.status === 'E' && reviewObligation(i.obligation)).length,
       deferred: s.deferred.filter(d => d.node === e.node).length, untested: card.untested.length,
-      measuredItems, waivedItems, untestedChanges: card.untested, reviewers };
+      measuredItems, waivedItems, untestedChanges: card.untested, reviewers, ...(manualItems.length ? { manualItems } : {}) };
   });
   const rejected = open.flatMap(n => n.blocks.filter(b => b.state !== 'cleared')).map(b => ({ seq: b.seq, node: b.node, obligation: b.obligation, kind: b.kind, state: b.state,
     ...(b.kind === 'exec' ? { failingObs: b.seq } : { reviewer: entries.find(e => e.seq === b.seq)?.by, rank: b.rank }), clear: clearHint(s, entries, b) }));
@@ -306,7 +340,7 @@ export function renderBrief(v: Brief): string {
   const section = (title: string, lines: string[]) => [`${title}${lines.length ? ` (${lines.length}):` : ': none'}`, ...lines.map(l => `  ${l}`)];
   return [`Brief (since ${v.since === -1 ? 'start' : typeof v.since === 'number' ? `#${v.since}` : v.since})`,
     ...section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)),
-    ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
+    ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.manualItems?.length ? `, ${m.manualItems.length} manual (${m.manualItems.join(', ')})` : ''}${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
     ...(v.adoptions?.length ? section('Adopted outside owed (owner decisions)', v.adoptions.map(adoptionText)) : []),
     ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),
     ...section('In progress', v.inProgress.map(p => `${p.node} ${p.phase} (attempt ${p.attempt}): dispatched ${age(p.ageMs)} ago${p.submitAgeMs !== undefined ? `, submitted ${age(p.submitAgeMs)} ago` : ''}`)),
@@ -357,6 +391,12 @@ export function reviewObligations(s: State, node: string, n: number): ('review' 
  * active rank-1 block) (D11), so its ok clears its own block and outranks another reviewer's rank-1 block; such other
  * blocks are quoted too.
  */
+/** D23 line of a review packet: approve is the owner's; evidence names its role and, when this reviewer may record it, the command. */
+function manualRequired(spec: NodeSpec, o: string, who: string): string {
+  if (o === 'approve') return 'owner approval (owed approve), not recorded by reviewers';
+  const ev = spec.evidence?.find(e => `evidence:${e.id}` === o);
+  return `manual evidence by ${ev?.by ?? 'reviewer'}${ev ? `: ${oneLine(ev.what)}` : ''}${ev?.by === 'reviewer' ? ` (if you checked it yourself: ${evidenceCommand(spec.id, ev.id, who)})` : ''}`;
+}
 export function reviewPacket(s: State, node: string, n = 1): string {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
   if (!st || !spec) throw new OwedError(`Node ${node} does not exist`);
@@ -373,7 +413,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   const judged = st.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
   const blocks = judged.filter(b => author(b.seq)?.by === who), others = judged.filter(b => author(b.seq)?.by !== who && b.rank === 1);
   const slotRank = (o: 'review' | 'closure-review'): number => Math.max(rank(o), ...blocks.filter(b => b.obligation === o).map(b => b.rank ?? 0), ...others.filter(b => b.obligation === o).map(b => (b.rank ?? 0) + 1));
-  const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : 'measured by owed';
+  const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : isManual(o) ? manualRequired(spec, o, who) : 'measured by owed';
   const mine = reviewObligations(s, node, n);
   const commands = mine.flatMap(o => slotRank(o) > 2 ? [`(${o} requires rank ${slotRank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${slotRank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --note "..."`]);
   const quote = (b: Block): string => { const e = author(b.seq); return `- #${b.seq} ${b.obligation} rank ${b.rank}${author(b.seq)?.by === who ? '' : ` by ${e?.by ?? '?'}`}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; };

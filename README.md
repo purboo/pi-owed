@@ -105,6 +105,30 @@ For this small demonstration a person can perform the independent review. In a r
 
 Plans are versioned through `owed plan <file>` / `owed_plan`; `owed plan <file> --rev <commit-ish>` reads the file from a commit (for example the plan kept in trunk) and the plan entry records that commit and path. Parents may strengthen or otherwise update a plan; weakening obligations requires an owner decision and remains visible as a downgrade. Pi owner operations require `ctx.ui.confirm`, record `channel: pi-confirm`, and refuse without UI. CLI owner operations prompt on a terminal. The CLI's `--i-am-owner` flag is a weaker human automation channel, recorded visibly; agents must never use it.
 
+## Owner approval, manual evidence and receipts
+
+Some acceptance cannot be measured by a check: an external effect the owner must authorize (an npm publish, a push), or a human look at a real page. A node can declare both:
+
+```yaml
+  - id: release
+    writes: ["package.json", "CHANGELOG.md"]
+    approve: owner                      # obligation approve: only the owner discharges it
+    evidence:
+      - id: ui                          # obligation evidence:ui
+        what: "looked at the page in a real browser"
+        by: reviewer                    # reviewer (default), parent or owner; the owner always qualifies
+```
+
+`owed approve <node> [--note TEXT] [--block]` (owner: terminal confirmation or `--i-am-owner`; pi `owed_approve`, with a dialog showing the node, candidate commit, base and number of changed files) approves the open candidate the owner was shown — if the writer submits another candidate before the confirmation lands, nothing is recorded; `--block` records an owner block that a later owner approval clears. Approval is keyed by the candidate's patch, like a review. `owed evidence <node> <id> --file <path> [--file …] --note TEXT --as reviewer:<id>` (pi `owed_evidence`) records manual evidence: owed hashes every file (sha256 and size) when it records it, and only a principal of the declared role, or the owner, who is not a writer of the node counts. `why` always shows these as manual — `✔ approved (owner:human, tty)`, `✔ evidenced (manual) by reviewer:r1` with each file as `path sha12` and the note — never as measured, and `brief` counts them as `manual`. `owed drive` runs everything else first; when only approve and/or evidence remain it halts (needs the owner for approve, a human for evidence) with the exact command.
+
+After a merge the same command records a **receipt**, informational evidence of what happened next, for example a publish:
+
+```sh
+owed evidence release npm --file pi-owed-0.5.0.tgz --note "0.5.0 published, dist-tag latest"
+```
+
+A receipt cites the node's latest merge; files are optional and the note is required. `why` and `report` list receipts. Removing `approve` or an evidence item from a plan (or weakening its `by`) is a downgrade only the owner may make.
+
 ## North-star metric: escapes
 
 Acceptance is only as good as what it lets through. When a defect is found after a node was merged, record it against that merge:

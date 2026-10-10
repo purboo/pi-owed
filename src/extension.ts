@@ -126,6 +126,24 @@ export default function owed(pi: ExtensionAPI): void {
     const { cwd: _cwd, needs_parent, ...args } = p;
     const r = await ops.review({ ...args, ...(needs_parent ? { needs: 'parent' as const } : {}), ...await actor(ctx, dir, p.as, `Review ${oneLine(p.node)}/${p.obligation ?? 'review'}: ${p.verdict}${needs_parent ? ' (needs a parent ruling)' : ''}, rank ${p.rank}`, { Note: p.note }) }); return card(dir, p.node, r);
   });
+  tool('approve', 'Owner approval of the open candidate of a node with `approve: owner` (D23), e.g. before a publish or push; block records an owner block instead (cleared by a later owner approval). UI confirmation is required; the dialog shows the node, candidate commit, base and the number of changed files.', Type.Object({ node, note: Type.Optional(Type.String()), block: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir) => {
+    const who = requireRole(p.as, 'owner:human', ['owner'], 'approve');
+    const v = await ops.approvePreview({ cwd: dir, node: p.node });
+    const a = await actor(ctx, dir, who, `${p.block ? 'Block approval of' : 'Approve'} node ${oneLine(v.node)}\nCandidate: ${v.commit} (submit #${v.seq})\nBase: ${v.base}\nChanged files: ${v.changed}`, { Note: p.note });
+    // The confirmed candidate is the one approved: a resubmit during the dialog refuses (review ruling #389).
+    const r = await ops.approve({ ...a, channel: 'pi-confirm', node: p.node, note: p.note, block: !!p.block, candidate: { seq: v.seq, commit: v.commit } }); return card(dir, p.node, r);
+  });
+  tool('evidence', 'Manual evidence (D23): on a node with an open candidate it discharges evidence:<id> (files required; recorded by the role the plan names, or the owner; never a writer); on a merged node it records an informational receipt (e.g. version, dist-tag, tarball). Files (relative to cwd) are hashed when recorded. Always shown as manual, never as measured. An owner needs UI confirmation.', Type.Object({ node, id: Type.String({ minLength: 1 }), files: Type.Optional(Type.Array(Type.String({ minLength: 1 }), { description: 'Evidence files, relative to cwd.' })), note: reason, as: Type.String({ pattern: '^(owner|parent|reviewer):.+$', description: 'Principal role:id (reviewer, parent or owner).' }), cwd }), async (p, ctx, dir) => {
+    const files = p.files ?? [];
+    // The owner confirms the files as hashed now; ops refuses when they changed before recording.
+    const expect = principal(p.as).role === 'owner' ? await ops.evidenceFiles({ cwd: dir, files }) : undefined;
+    // The owner confirms the candidate too: a resubmit during the dialog refuses (review ruling #389).
+    const at = expect ? await ops.evidencePreview({ cwd: dir, node: p.node }) : undefined;
+    const target = at?.candidate ? `Candidate: ${at.candidate.commit} (submit #${at.candidate.seq})\nBase: ${at.candidate.base}` : at?.merge !== undefined ? `Receipt on merge #${at.merge}` : 'No open candidate and no merge';
+    const a = expect ? await actor(ctx, dir, p.as, `Record manual evidence ${oneLine(p.node)}/${oneLine(p.id)}\n${target}\nManual evidence is shown as manual, never as measured.`, { [`Files (${expect.length})`]: { items: expect.map(f => `${f.path} ${f.sha256.slice(0, 12)} (${f.bytes} bytes)`) }, Note: p.note }) : await actor(ctx, dir, p.as);
+    const r = await ops.evidence({ ...a, node: p.node, id: p.id, files, note: p.note, ...(expect ? { expect } : {}), ...(at?.candidate ? { candidate: { seq: at.candidate.seq, commit: at.candidate.commit } } : {}) });
+    return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
+  });
   tool('merge', 'Run the merge guard, measure the merge tree and advance trunk with CAS.', Type.Object({ node, as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`), node: p.node, signal }); return card(dir, p.node, r); });
   tool('abandon', 'Close the open writer slot of a node (parent or owner); the node can then be dispatched again. note (or its older name reason) is recorded.', Type.Object({ node, note: Type.Optional(Type.String()), reason: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'abandon');
