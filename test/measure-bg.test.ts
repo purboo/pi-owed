@@ -286,18 +286,14 @@ test('K6 restart: a killed driver leaves its attest child running; the new drive
     first.kill('SIGKILL'); await gone;
     const check = f.pid('check');
     assert.ok(alive(check), "the dead driver's attest child still runs");
-    // 0.7.0 K1: the attest of a node that is already being attested exits 75 at once. This wrapper stands in for that
-    // check while the first attest holds the attest lock; otherwise it runs owed attest.
-    const k1 = join(f.root, 'k1-owed');
-    await writeFile(k1, `#!/bin/sh\nif [ -d "$OWED_DIR/attest" ]; then echo "attest of $2 is already running (pid ? on ${hostname()} since ?); its observations will appear in owed why $2" >&2; exit 75; fi\nexec "${process.execPath}" "${OWED}" "$@"\n`);
-    await chmod(k1, 0o755);
-    const second = (await f.once({ owed: [k1] })).join('\n');
+    // 0.7.0 K1: the attest of a node that is already being attested exits 75 at once (the real owed, through hold).
+    const second = (await f.once()).join('\n');
     assert.match(second, /^attest r: busy — another attest of r is running, retry next pass: attest of r is already running/m, second);
     assert.deepEqual(halts(await f.entries()), []);
     f.open('gate');
     await until(async () => (await f.entries()).some(e => e.kind === 'obs' && e.subject === 'r' && e.obligation === 'check:r' && e.verdict === 'pass'), 60_000, "the orphan attest's observation lands");
     await until(() => !alive(check), 10_000, 'the orphan attest ended');
-    await f.onceUntil(6, async () => merged(await f.entries(), 'r'), { owed: [k1] });
+    await f.onceUntil(6, async () => merged(await f.entries(), 'r'));
     assert.deepEqual(halts(await f.entries()), []);
   } finally { await f.done(); }
 });
@@ -398,5 +394,109 @@ test('#785 (2): the driver\'s own merge appending while a pass observes is no tr
     assert.match(out, /^merge a: merged — trunk [0-9a-f]{12}$/m, out);
     assert.ok(merged(await f.entries(), 'a'));
     assert.deepEqual(halts(await f.entries()), []);
+  } finally { await f.done(); }
+});
+
+// ---------- K4 refusals in the driver (Parent answers 17:1x, item 6) ----------
+/** Node a (check ca) with a gated invariant on its merge tree, armed by `<gates>/armed`; `extra` invariants appended. */
+const k4Plan = (path: (n: string) => string, o: { extra?: object[]; check?: string } = {}) => ({
+  ...planOf(node('a', { checks: [{ id: 'ca', run: o.check ?? 'true', reads: ['a.txt'] }] })),
+  invariants: [{ id: 'slow', run: `if [ -f a.txt ] && [ -e '${path('armed')}' ]; then ${gated(path('inv'), path('gate'))}; fi; true`, reads: ['a.txt'] }, ...(o.extra ?? [])],
+});
+/** Node a accepted; a Driver starts its merge; `during` runs while the merge measures; then the merge ends and is handled. */
+async function k4Merge(during: (f: Awaited<ReturnType<typeof rig>>) => Promise<unknown>) {
+  const f = await rig(path => k4Plan(path));
+  try {
+    await f.agent('a-writer', writer('a'));
+    await f.onceUntil(6, async () => !!(await ops.status({ cwd: f.cwd })).nodes.a?.accepted);
+    f.open('armed');
+    const lines: string[] = [];
+    const d = new Driver({ cwd: f.cwd, log: l => lines.push(l), dsa: f.dsa, session: null });
+    assert.equal(typeof (d as unknown as { settle?: unknown }).settle, 'function', 'the driver runs measurements in the background (K6)');
+    await d.pass();
+    await until(() => existsSync(f.path('inv')), 60_000, "a's merge measures");
+    await during(f);
+    f.open('gate');
+    await d.settle();
+    return { f, d, lines };
+  } catch (e) { await f.done(); throw e; }
+}
+
+test('K4 in the driver: `not measured` (an invariant added while the merge measured) is a retry, no halt; the next pass merges', { timeout: 180_000 }, async () => {
+  const r = await k4Merge(f => f.plan(k4Plan(f.path, { extra: [{ id: 'extra', run: 'true', reads: ['a.txt'] }] })));
+  try {
+    const out = r.lines.join('\n');
+    assert.match(out, /^merge a: retry — merge refused \(.*not measured: trunk\/inv:extra .*\); retry next pass$/m, out);
+    assert.deepEqual(halts(await r.f.entries()), []);
+    for (let i = 0; i < 4 && !merged(await r.f.entries(), 'a'); i++) { await r.d.pass(); await r.d.settle(); }
+    assert.ok(merged(await r.f.entries(), 'a'), r.lines.join('\n'));
+    assert.deepEqual(halts(await r.f.entries()), []);
+  } finally { await r.f.done(); }
+});
+
+test('K4 in the driver: a candidate invalidated by a plan update, or a changed slot, is reported (superseded), no halt', { timeout: 240_000 }, async () => {
+  const inv = await k4Merge(f => f.plan(k4Plan(f.path, { check: 'true; true' })));
+  try {
+    const out = inv.lines.join('\n');
+    assert.match(out, /^merge a: superseded — merge refused \(candidate #\d+ [0-9a-f]{12} of a was invalidated by plan #\d+ \(its spec changed\); the writer submits again, then merge\); the next pass decides on the new state$/m, out);
+    assert.deepEqual(halts(await inv.f.entries()), []);
+    assert.ok(!merged(await inv.f.entries(), 'a'));
+  } finally { await inv.f.done(); }
+  const slot = await k4Merge(f => ops.abandon({ cwd: f.cwd, node: 'a', as: { role: 'parent', id: 'main' }, reason: 'restart a' }));
+  try {
+    const out = slot.lines.join('\n');
+    assert.match(out, /^merge a: superseded — merge refused \(slot of a changed \(#\d+ abandon\); nothing recorded\); the next pass decides on the new state$/m, out);
+    assert.deepEqual(halts(await slot.f.entries()), []);
+  } finally { await slot.f.done(); }
+});
+
+// ---------- review #784 F1 and the rejected ruling follow-up (item 7) ----------
+const sendsOf = (es: Entry[]) => es.filter((e): e is Extract<Entry, { kind: 'send' }> => e.kind === 'send');
+
+test('#784 F1: a ruling steer dsa rejects (the writer sealed meanwhile) is not delivered: the next follow-up carries the ruling, no halt', { timeout: 180_000 }, async () => {
+  const f = await rig(() => planOf(node('w', { review: { count: 1, min_rank: 1 } })));
+  try {
+    await f.agent('w-writer-1', 'echo w > w.txt; git add w.txt; git commit -qm w\necho RUNNING');
+    await f.agent('w-writer-2', 'case "$FAKE_MESSAGE" in *"use the blue variant"*) owed submit w;; *) exit 9;; esac');
+    await f.onceUntil(4, async () => (await f.entries()).some(e => e.kind === 'launch' && e.node === 'w'));
+    const rule = await ops.rule({ cwd: f.cwd, as: { role: 'parent', id: 'main' }, text: 'use the blue variant', nodes: ['w'] });
+    await f.agent('w-reviewer', `who=$(grep -o "reviewer:drive-w-1-[0-9]*" "$FAKE_SPEC" | head -1)\nowed review w --as "$who" --ok --rank 1 --note "blue variant applied" --ack-rulings ${rule.seq}`);
+    /** The writer's call seals between the driver's describe and its steer (the reviewer's probe): dsa rejects the steer. */
+    class SealsFirst extends Dsa {
+      override async send(...a: Parameters<Dsa['send']>): ReturnType<Dsa['send']> {
+        if (a[2] === 'steer') {
+          const p = join(f.dir, 'state.json'), raw = JSON.parse(await readFile(p, 'utf8'));
+          Object.assign(raw.runs[a[1]], { state: 'sealed', status: 'ok' }); await writeFile(p, JSON.stringify(raw));
+        }
+        return super.send(...a);
+      }
+    }
+    const dsa = new SealsFirst({ bin: FAKE, env: f.env, timeoutMs: 120_000 });
+    const first = (await f.once({ dsa })).join('\n');
+    assert.match(first, /^send steer \(ruling\) to \S+ \[\S+\]: rejected — .*is finished; use follow-up; not retried as a steer \(the writer's next follow-up carries these rulings/m, first);
+    await f.onceUntil(6, async () => merged(await f.entries(), 'w'), { dsa });
+    const sends = sendsOf(await f.entries());
+    const writerSends = sends.filter(x => x.rid === sends[0]!.rid);
+    assert.deepEqual(writerSends.map(x => [x.sendKind, x.reason]), [['steer', 'ruling'], ['follow-up', 'submit']]);
+    assert.equal(writerSends[1]!.rulings, rule.seq, 'the submit follow-up carries the ruling the rejected steer did not deliver');
+    assert.match(await readFile(join(f.dir, 'messages', writerSends[1]!.send), 'utf8'), /#\d+ use the blue variant/);
+    assert.deepEqual(halts(await f.entries()), []);
+  } finally { await f.done(); }
+});
+
+test('item 7: a ruling follow-up dsa rejects halts in the same pass (the log says so), like any other send', { timeout: 180_000 }, async () => {
+  const f = await rig(() => planOf(node('v')));
+  try {
+    await f.agent('v-writer-1', 'echo v > v.txt; git add v.txt; git commit -qm v');
+    await f.agent('v-writer-2', 'true');
+    await f.onceUntil(6, async () => sendsOf(await f.entries()).some(x => x.reason === 'submit'));
+    await ops.rule({ cwd: f.cwd, as: { role: 'parent', id: 'main' }, text: 'commit the file and submit', nodes: ['v'] });
+    writeFileSync(join(f.dir, 'faults'), 'send 1 none\n');
+    const before = (await f.entries()).length;
+    const out = (await f.once()).join('\n');
+    assert.match(out, /^send follow-up \(ruling\) to \S+ \[\S+\]: rejected — fault; halted$/m, out);
+    const added = (await f.entries()).slice(before);
+    assert.deepEqual(added.map(e => e.kind === 'send' ? `send ${e.reason}` : e.kind), ['send ruling', 'halt'], 'the halt is recorded in the same pass');
+    assert.match((added[1] as Extract<Entry, { kind: 'halt' }>).reason, /^dsa rejected send \S+: fault; this attempt's request is fixed/);
   } finally { await f.done(); }
 });
