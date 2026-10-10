@@ -9,9 +9,10 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-w
 import { sha256 } from '../src/canon.ts';
 import { decide, repairEpoch, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, resumeOf, runId, validateDraft, waitingFor } from '../src/reducer.ts';
-import { toRunView } from '../src/dsa.ts';
+import { Dsa, toRunView, type RunResult } from '../src/dsa.ts';
 import { renderEntry, renderReceipt, renderStatus, receipt, statusView } from '../src/views.ts';
-import { reportText } from '../src/drive-run.ts';
+import { Driver, driveOnce, reportText } from '../src/drive-run.ts';
+import { askingText } from '../src/drive.ts';
 import { Follower, classifyLine, haltHintText } from '../src/drive-bg.ts';
 import owed from '../src/extension.ts';
 import * as ops from '../src/ops.ts';
@@ -241,6 +242,12 @@ test('L1.4 (#16): describe reports the call address <wid>/<key>; halts naming a 
   // An asking notice without a question address falls back to the run's call address.
   const ask = act(r, new Map([view(W, 'asking', { to: 'w7/tasks:0', questions: [{ qid: 'q', rev: 1, question: '?' }] })]));
   assert.ok(ask?.do === 'notify' && ask.text.includes('to:"w7/tasks:0"') && ask.text.includes('--to w7/tasks:0'), JSON.stringify(ask));
+  // Review #886 F2: an asking run without a reported question also gives the call address (and only when known).
+  const l = r.entries.find(e => e.kind === 'launch')! as Extract<Entry, { kind: 'launch' }>;
+  assert.equal(askingText('a', l, { rid: W, state: 'asking', to: 'w7/tasks:0' }), `a: writer run ${W} (to:"w7/tasks:0") is asking (no question reported; see pi-durable-subagents describe --key ${W}); the driver never answers`);
+  assert.equal(askingText('a', l, { rid: W, state: 'asking', wid: 'w7' }), `a: writer run ${W} is asking (no question reported; see pi-durable-subagents describe --key ${W}); the driver never answers`);
+  const bare = act(r, new Map([view(W, 'asking', { to: 'w7/tasks:0' })]));
+  assert.ok(bare?.do === 'notify' && bare.text.includes(`${W} (to:"w7/tasks:0") is asking`), JSON.stringify(bare));
 });
 
 // ---------- L1.5: hints and notices ----------
@@ -330,5 +337,83 @@ test('L1.1: owed resume (CLI) and owed_resume (pi): refusals, output, --json, wa
     assert.match(merged.stdout, /^Recorded #\d+ parent:cli resumed a after b\nb is already merged: a resumes now\n/);
     const pm = await call('resume', { node: 'a', after: 'b' });
     assert.match(pm.text, /\nb is already merged: a resumes now\n/);
+  } finally { await r.cleanup(); }
+});
+
+// ---------- Review #886: the driver's waiting event, PassResult.waiting; the call address in a run request-conflict halt ----------
+/** A git repo with nodes a and b (b depends on a, so the driver never dispatches it); a dispatched. */
+async function driverRig() {
+  const r = await repo();
+  await commitAt(r.cwd, { README: 'x\n' });
+  const nodeOf = (id: string, deps: string[] = []) => ({ id, deps, writes: [`${id}/`], checks: [], review: { count: 0, min_rank: 1 } });
+  await ops.init({ cwd: r.cwd, plan: JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], nodes: [nodeOf('a'), nodeOf('b', ['a'])] }), as: { role: 'owner', id: 'human' }, channel: 'flag' });
+  await ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' });
+  return r;
+}
+/** A dsa that must not be called (a waiting node gets no launch). */
+class NoDsa extends Dsa { constructor() { super({ bin: '/nonexistent/dsa' }); } override async run(_rid: string): Promise<RunResult> { throw new Error('no run expected'); } }
+const WAIT = /^waiting: a waits for b \(resume #(\d+)\)$/;
+
+test('review #886 F1: the loop prints the waiting line once per node and resume; PassResult.waiting lists the waiting nodes', { timeout: 120_000 }, async () => {
+  const r = await driverRig();
+  try {
+    const w1 = (await ops.resume({ cwd: r.cwd, as: parent, channel: 'flag', node: 'a', after: 'b', note: 'wait' })).entry;
+    const lines: string[] = [];
+    const d = new Driver({ cwd: r.cwd, log: l => lines.push(l), dsa: new NoDsa(), session: null, handleSignals: false });
+    const p1 = await d.pass();
+    assert.deepEqual(p1.waiting, [{ node: 'a', after: 'b', resume: w1.seq }]);
+    assert.deepEqual(p1.actions, [], 'no action for a waiting node (b is not ready)');
+    const p2 = await d.pass();
+    assert.deepEqual(p2.waiting, [{ node: 'a', after: 'b', resume: w1.seq }]);
+    assert.deepEqual(lines.filter(l => WAIT.test(l)), [`waiting: a waits for b (resume #${w1.seq})`], `printed once for the same resume: ${lines.join('\n')}`);
+    const w2 = (await ops.resume({ cwd: r.cwd, as: parent, channel: 'flag', node: 'a', after: 'b', note: 'still wait' })).entry;
+    const p3 = await d.pass();
+    assert.deepEqual(p3.waiting, [{ node: 'a', after: 'b', resume: w2.seq }]);
+    await d.pass();
+    assert.deepEqual(lines.filter(l => WAIT.test(l)), [`waiting: a waits for b (resume #${w1.seq})`, `waiting: a waits for b (resume #${w2.seq})`], 'a new resume prints a new line');
+    // --json: the event object.
+    const json: string[] = [];
+    await new Driver({ cwd: r.cwd, json: true, log: l => json.push(l), dsa: new NoDsa(), session: null, handleSignals: false }).pass();
+    assert.deepEqual(json.map(l => JSON.parse(l)).filter(e => e.event === 'waiting'), [{ event: 'waiting', node: 'a', after: 'b', resume: w2.seq }]);
+    // A resume without after ends the wait: the list is empty and nothing is printed for a.
+    await ops.resume({ cwd: r.cwd, as: parent, channel: 'flag', node: 'a' });
+    const quiet: string[] = [];
+    const d2 = new Driver({ cwd: r.cwd, log: l => quiet.push(l), dsa: new class extends NoDsa { override async run(rid: string): Promise<RunResult> { return { outcome: 'applied', wid: 'w1', created: true, spec_digest: rid }; } }(), session: null, handleSignals: false });
+    assert.deepEqual((await d2.pass()).waiting, []);
+    assert.ok(!quiet.some(l => l.startsWith('waiting:')), quiet.join('\n'));
+  } finally { await r.cleanup(); }
+});
+
+test('review #886 F1: driveOnce (owed_drive, --once) prints the waiting line on every pass', { timeout: 120_000 }, async () => {
+  const r = await driverRig();
+  try {
+    const w = (await ops.resume({ cwd: r.cwd, as: parent, channel: 'flag', node: 'a', after: 'b' })).entry;
+    for (let i = 0; i < 2; i++) {
+      const out = await driveOnce({ cwd: r.cwd, dsa: new NoDsa(), session: null });
+      assert.equal(out.error, undefined, out.error);
+      assert.deepEqual(out.lines.filter(l => WAIT.test(l)), [`waiting: a waits for b (resume #${w.seq})`], `pass ${i + 1}: ${out.lines.join('\n')}`);
+    }
+  } finally { await r.cleanup(); }
+});
+
+test('review #886 nit (a): a run request-conflict halt names the call address describe reported earlier', { timeout: 120_000 }, async () => {
+  const r = await driverRig();
+  try {
+    let phase = 0;
+    class Scripted extends Dsa {
+      constructor() { super({ bin: '/nonexistent/dsa' }); }
+      override async run(rid: string): Promise<RunResult> { return phase === 0 ? { outcome: 'applied', wid: 'w9', created: true, spec_digest: rid } : { outcome: 'conflict', state: 'sealed' }; }
+      override async inspect(rid: string): Promise<{ view: RunView; gen?: number }> {
+        return { view: phase === 1 ? { rid, state: 'running', wid: 'w9', to: 'w9/tasks:0' } : { rid, state: 'absent' } };
+      }
+    }
+    const lines: string[] = [];
+    const d = new Driver({ cwd: r.cwd, log: l => lines.push(l), dsa: new Scripted(), session: null, handleSignals: false });
+    await d.pass();                    // launches a's writer
+    phase = 1; await d.pass();         // describe reports the call address; the writer runs
+    phase = 2; await d.pass();         // the run is absent: re-launch, dsa reports a request-conflict
+    const halt = (await (await Ledger.open(r.cwd)).read()).findLast(e => e.kind === 'halt') as Extract<Entry, { kind: 'halt' }> | undefined;
+    assert.ok(halt, lines.join('\n'));
+    assert.match(halt.reason, /^dsa request-conflict on run owed:\S+:a:1:writer \(to:"w9\/tasks:0"\) \(recorded content differs, state sealed\); never retried with other bytes$/);
   } finally { await r.cleanup(); }
 });

@@ -1435,7 +1435,15 @@ must name the node's current open slot (node and attempt), and so must a halt.
     follow-up sent before the resume to a sealed writer, `error` observations
     for "attest recorded no verdict twice"), so the driver acts on its next
     pass — e.g. retries a merge refused for an environmental reason, sends a
-    sealed writer a fresh repair or submit follow-up, measures again;
+    sealed writer a fresh repair or submit follow-up, measures again. A repair
+    follow-up sent before the resume to a writer that seals after it (without
+    a new candidate) is followed by a fresh repair under the new budget, not by
+    the "finished repair follow-up without submitting" halt. Halts the driver
+    has no remedy for recur with the same reason after a resume while their
+    cause persists: a writer run sealed non-ok (row 7) and a reviewer run
+    sealed without recording its reviews (row 14, `review-missing`) halt again
+    on the next pass with the same reason — fix the cause (or record the
+    review, or abandon) instead;
   - with `after`: the node is **waiting** while the latest resume of the open
     attempt has `after` and that node is not merged (`waitingFor(state,
     node) → {after, resume} | undefined`). A later resume replaces an earlier
@@ -1682,10 +1690,11 @@ it gives the reviewer's `owed evidence` command.
   (never a bare wid). Every halt reason that names a writer or reviewer run
   (`writer run <rid> sealed …`, `… finished … without submitting …`,
   `review-missing: reviewer run <rid> …`, `dsa rejected run|send <id> …`,
-  `cannot re-launch|re-send …`, a send request-conflict) adds ` (to:"<wid>/<key>")`
+  `cannot re-launch|re-send …`, a run or send request-conflict) adds ` (to:"<wid>/<key>")`
   after the run or send id when it is known, the same `to:"…"` form as the
   asking notice (`toArg`); an asking question without its own `to` falls back
-  to it, then to the run id.
+  to it, then to the run id, and an asking run without a reported question
+  reads `<role> run <rid> (to:"<wid>/<key>") is asking (no question reported; …)`.
 - **Waiting (0.8, L1.5).** Each pass logs, per waiting node (§12.3 Resume), the
   quiet line `waiting: <node> waits for <dep> (resume #<seq>)` (`--json`:
   `{"event":"waiting","node","after","resume"}`; `PassResult.waiting`); the
