@@ -290,7 +290,10 @@ while the machine is busy; with an older dsa that rejects `--no-wait` the
 attempt is halted with that error. One driver per repository
 (`.git/owed/drive.lock`); a lock left by a dead driver on this host is taken
 over, but a lock from another host is not: check that host, then remove the
-file by hand. A first Ctrl-C stops after the current action, a second at once.
+file by hand. Attests and merges run in the background while the driver
+serves other nodes (at most `drive.measure` at once, default 2, and one merge).
+A first Ctrl-C stops after the current action and waits for them, a second
+stops at once.
 
 ```sh
 owed drive            # until idle; run it in a terminal or a systemd-run --user unit
@@ -298,7 +301,7 @@ owed drive --once     # one pass (also the pi tool owed_drive)
 owed drive --detach   # the same loop as a detached background process; prints its pid and log
 owed drive --detach --stay   # when idle, keep running and wait for ledger changes (a growing plan)
 owed drive --status   # running (pid, host, since) or not, its last exit record, the last 10 log lines
-owed drive --stop     # stop it after its current action (--now: at once)
+owed drive --stop     # stop it after its current action and in-flight measurements (--now: at once)
 ```
 
 The plan's optional `drive:` block sets the writer and reviewer dsa agents
