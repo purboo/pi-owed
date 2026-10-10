@@ -55,8 +55,13 @@ agent's owner acts first (§9).
    init, …) runs with no dialog; the entry is `by: owner:<id>`, `channel:
    "delegated"`. The default owner id in pi is `owner:pi`.
 2. CLI: an owner command (`--as owner:<id>`, or a command whose default principal
-   is `owner:human`) records `delegated` with or without a TTY, without a prompt;
-   `--i-am-owner` stays accepted and records `flag`.
+   is the owner) records `delegated` with or without a TTY, without a prompt;
+   `--i-am-owner` stays accepted and records `flag`. The CLI's default owner
+   principal is `owner:cli` (0.5.1, E3.3; matching pi's `owner:pi`), also with
+   `--i-am-owner`; only under `OWED_CONFIRM=owner` it is `owner:human`.
+   Compatibility: entries written by earlier versions keep `owner:human`; a
+   script that matched `by: owner:human` for CLI owner acts now sees
+   `owner:cli` (pass `--as owner:human` to keep the old id).
 3. A process with `DSA_CALL` or `DSA_EXEC` in its environment (a
    pi-durable-subagents call) is refused for roles owner and parent, in pi tools
    and the CLI alike, before anything is recorded: `owner and parent acts are
@@ -83,6 +88,17 @@ agent's owner acts first (§9).
    <node>` first when no slot is open, then each waiver prefixed `after the
    writer submits a candidate:` since a waiver needs one; nothing for a merged
    node). The reason's own trailing `needs the owner` is not repeated.
+   The driver's output line of a halt needing the owner reads `halt <node>
+   attempt <n>, needs the owner (the main agent decides; owed lists the
+   command): halted — <reason>` (a human halt keeps `(needs human)`); the
+   halt rows of `status`, `why`, `report` and entry lines read `halted by
+   driver #<seq> (attempt <n>), needs the owner (the main agent decides; owed
+   lists the command): <reason>` (a human halt keeps `(attempt <n>, needs
+   human)`). Trunk drift is never a node halt (§12.7 Trunk drift). The
+   commands of the brief, report and these texts omit `--as` where the command
+   already defaults to the owner (waive, defer, adopt, approve, init) and use
+   `--as owner:cli` where a role must be stated (owner review, owner evidence);
+   under `OWED_CONFIRM=owner` that role is `--as owner:human`.
 
 ## 3. Plan (content, YAML)
 
@@ -875,7 +891,8 @@ while genesis items lack observations.
   them as `N manual (<obligations>)` (`--json` `manualItems`, present only when
   non-empty). An approve block's hint is `owed approve <node>`; the brief's
   owner command for a pending approve is `owed approve <node>`, for owner
-  evidence `owed evidence <node> <id> --file <path> --note … --as owner:human`.
+  evidence `owed evidence <node> <id> --file <path> --note … --as owner:cli`
+  (`--as` only where the command's default principal is not the owner).
   Receipts (evidence on a merged node) are listed by `why`
   (`Receipt #seq <node>/<id> by <who> (merge #m): files …; note: …`, `--json`
   `receipts`) and `report` (`Receipts (manual, informational)` for receipts
@@ -893,7 +910,7 @@ while genesis items lack observations.
      and discharger `owner`), sorted by the number of transitive downstream
      nodes of the item's node (trunk items count 0), then node id and
      obligation; each line carries the exact command that discharges the item:
-     `owed review <node> [--obligation closure-review] --ok --rank 3 --as owner:human`
+     `owed review <node> [--obligation closure-review] --ok --rank 3 --as owner:cli`
      for `review`/`closure-review` items whose only blocks (if any) are active
      judgment blocks, otherwise `owed waive <node> <obligation> --reason … [--accept-risk
      <every active block seq on that obligation>]`; trunk invariants cannot be
@@ -953,7 +970,7 @@ no ledger write, no owner confirmation), `gc [--dry-run]` (parent/owner), and
 `drive [--once] [--max N]` (the driver, §12.7; always `parent:drive`, no `--as`),
 `drive --detach [--max N]`, `drive --status [--json]`, `drive --stop [--now]`
 (the background driver, §12.8),
-`approve <node> [--note TEXT] [--block]` (D23: owner, default `owner:human`;
+`approve <node> [--note TEXT] [--block]` (D23: owner, default `owner:cli`, `owner:human` under `OWED_CONFIRM=owner`;
 delegated by default — no prompt, TTY or not, D25 §2.1; under `OWED_CONFIRM=owner`
 a TTY confirmation or `--i-am-owner`; `--block` records an owner block; before
 recording (and before any prompt) it prints to stderr `Approve node <node>: candidate <commit>
@@ -1398,8 +1415,25 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `ops.rebase` (the writer's `rebase` follow-up comes from a later `decide`);
   the transient `Plan, candidate or trunk changed; retry` (the ledger moved
   while merge measured; merge recorded nothing) → retried next pass, no halt,
-  not progress; trunk CAS drift → halt needing the owner; any other → halt
-  needing a human.
+  not progress; trunk CAS drift (the ref moved during the merge) → the trunk
+  drift notify below, retried next pass, no halt; any other → halt needing a
+  human.
+- **Trunk drift** (0.5.1, review ruling #559). The trunk ref no longer
+  equal to the ledger trunk is a repository fact, not a node fact: 0.5.1
+  drivers never record it as a ledger halt. Each pass, before merging, the
+  driver compares `refs/heads/<trunk>` with the ledger trunk; on drift it
+  merges nothing that pass (every other action continues) and emits one
+  repo-level owner notify (node `trunk`, `facts` = the ledger trunk's seq):
+  `trunk <name> moved outside owed (<ledger12> → <ref12>); the main agent
+  resolves it with: owed adopt --note "<why>"` when the ref fast-forwards the
+  ledger trunk, otherwise `trunk <name> was rewound or rewritten (<ledger12> →
+  <ref12|missing>); restore it: git update-ref refs/heads/<name> <ledger>
+  <ref>` (full commits; `""` for a missing ref). The loop prints it once per
+  change and the follower wakes once per change. After `owed adopt` the next
+  pass merges with no other act. A halt recorded for drift by a 0.5.0 driver
+  (`merge refused: trunk changed (CAS)…`, needs owner) stays a ledger halt:
+  adopt (or restore) trunk, then clear it with `owed rebase <node>` (the
+  writer rebases and resubmits, then the driver re-attests and merges).
 - **Stalled** (D12): the `stalled:` halt lists every non-E item and each
   active block as `#seq <obligation> by <principal> rank <r> on candidate #C`
   (`stale` instead of `on candidate #C` when recorded on another key; no rank
@@ -1455,8 +1489,8 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   signal handlers. A merge runs inside the driver: the stop at once aborts it
   first (the driver's AbortController, D16a.1), so its checks get SIGKILL and
   trunk does not move. Accepted window: a stop after merge's `git update-ref`
-  and before its ledger append leaves trunk ahead of the ledger; the next merge
-  or pass sees CAS drift and halts needing the owner (never silent; the owner
+  and before its ledger append leaves trunk ahead of the ledger; the next pass
+  sees the drift and emits the trunk drift notify (never silent; the owner
   adopts the merge commit). Each process group gets one SIGTERM per stop; the
   `owed attest` CLI treats signals within 1 s of its first as the same request
   (hold may forward the driver's SIGTERM while the group also gets it).
@@ -1546,8 +1580,25 @@ polling.
   `pi.sendMessage({customType: "owed-drive", display: true, content},
   {triggerTurn: true, deliverAs: "followUp"})`, content = `owed drive
   (<repo>):`, the carried merges and wake lines in log order, `Next: owed
-  status / owed why <node>`. Identical wake lines within one read collapse;
-  there is no dedupe across reads (D17a.5: every halt line wakes). If
+  status / owed why <node>`. Identical wake lines within one read collapse.
+  One wake per new fact (E3.1, replacing D17a.5's "every halt line wakes"):
+  the driver adds to every node-scoped wake line (halt, notify, describe
+  failure, outcomes rejected/conflict/refused/error) `facts`, the node's fact
+  mark = the highest seq of ledger entries naming the node (`node`, an
+  observation's `subject`, a ruling listing it) not written by `parent:drive`
+  (0 when none; the driver's own launches, sends, halts, dispatches, rebases
+  and merges are not new facts, writer/parent/reviewer/owner entries and
+  executor observations are). The follower keeps per node the text (without a
+  repeat suffix) and fact mark of the last wake it took for delivery; a line
+  with the same text and a fact mark not higher is a repeat: it does not wake,
+  and it rides along with the next message as `<text> (repeat n, no new ledger
+  entries)` (only the latest repeat per node). A changed text or a higher mark
+  wakes. Lines without `facts` (an older driver, non-JSON lines) wake as
+  before. In the loop the driver itself marks such a line `repeat: n` (text
+  suffix ` (repeat n, no new ledger entries)`) when it equals the node's last
+  printed wake in text and fact mark, and a notify is printed again when its
+  fact mark rose even if its text did not change. A re-halt after a writer
+  resubmits, or after a ruling, wakes (the clearing entry is a new fact). If
   `sendMessage` throws, the batch is kept and retried next tick (D17a.8). It stops after a read with a terminal line, or when the pid is
   gone without one (`driver pid P ended without an exit record`; liveness is
   checked before the read, so nothing the driver wrote is missed). One

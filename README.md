@@ -4,7 +4,7 @@ No receipt, not done.
 
 `owed` is an acceptance ledger for multi-agent task graphs in one Git repository. It records what was actually checked, who reviewed it, what the owner waived, and what remains owed before a merge. Version **0.1 — experimental**.
 
-The main agent is the owner (0.5, delegated owner): a human states the task in natural language and leaves; no human ever has to operate owed. Owner acts (waivers, downgrades, adoptions, approvals) run without a prompt and are recorded with channel `delegated`; every act that eases acceptance (a downgrade, waiver, deferral or adoption) carries a mandatory reason, and an approval may carry a note; `owed brief` starts with every delegated owner act, so accountability is an audit of the hash-chained ledger rather than a pre-approval. Subagent processes (pi-durable-subagents calls) can never act as owner or parent. Set `OWED_CONFIRM=owner` to restore human confirmation.
+The main agent is the owner (0.5, delegated owner): a human states the task in natural language and leaves; no human ever has to operate owed. Owner acts (waivers, downgrades, adoptions, approvals) run without a prompt and are recorded with channel `delegated`; every act that eases acceptance (a downgrade, waiver, deferral or adoption) carries a mandatory reason, and an approval may carry a note; `owed brief` starts with every delegated owner act, so accountability is an audit of the hash-chained ledger rather than a pre-approval. Subagent processes (pi-durable-subagents calls) can never act as owner or parent. Owner acts are recorded as `owner:pi` from pi and `owner:cli` from the CLI (0.5.1; earlier CLI versions recorded `owner:human`; pass `--as owner:human` to keep that id). Set `OWED_CONFIRM=owner` to restore human confirmation (then the default owner is `owner:human`).
 
 It provides a CLI, a pi extension, and an agent skill. It is not an agent scheduler, a sandbox, or a replacement for code review. Your agent runner does the work; owed keeps acceptance evidence and guards the merge.
 
@@ -305,8 +305,14 @@ before the lock is released, so once `--stop` says `stopped` it is in the log.
 (never a reused pid, never another host). In pi, `owed_drive` with `action:
 "start"` does the same, and the session is woken with one message when the
 driver halts, needs the owner, a run asks a question, it is stalled, dsa events
-fail or the driver exits (merges ride along with the next message; every halt
-wakes, also one with the same text as an earlier one). Every top-level pi
+fail or the driver exits (merges ride along with the next message). One wake
+per new fact: a halt or notify of a node wakes again only when its text changed
+or the ledger gained entries for that node not written by the driver (e.g. the
+writer resubmitted, a ruling); otherwise it only rides along with the next
+message as `<text> (repeat n, no new ledger entries)`. Trunk moved outside owed is
+not a halt: the driver merges nothing and notifies once per change with
+`owed adopt --note "<why>"` (or the `git update-ref` that restores a rewound
+trunk); after the adopt its next pass merges. Every top-level pi
 session opened in the repository later follows a running driver from then on
 and is woken too; sessions inside a dsa call (`DSA_EXEC`/`DSA_CALL` set, e.g.
 dsa writers and reviewers in the repository's worktrees) do not attach by

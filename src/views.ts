@@ -182,7 +182,9 @@ function manualText(i: ItemView & { observations?: Entry[] }): string {
 }
 /** How a driver halt is cleared (SPEC §12, D3). */
 const HALT_CLEAR = 'cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, a ruling naming it), or a new attempt';
-const haltText = (h: HaltEntry): string => `halted by driver #${h.seq} (attempt ${h.attempt}, needs ${h.needs}): ${oneLine(h.reason)}`;
+/** D25.6 (review ruling #559): an owner halt reads `needs the owner (the main agent decides; owed lists the command)`. */
+const NEEDS_OWNER_TEXT = 'needs the owner (the main agent decides; owed lists the command)';
+const haltText = (h: HaltEntry): string => h.needs === 'owner' ? `halted by driver #${h.seq} (attempt ${h.attempt}), ${NEEDS_OWNER_TEXT}: ${oneLine(h.reason)}` : `halted by driver #${h.seq} (attempt ${h.attempt}, needs ${h.needs}): ${oneLine(h.reason)}`;
 const launchText = (l: LaunchEntry): string => `#${l.seq} ${l.role} ${l.rid}`;
 /** ` (needs a parent ruling)` / ` (ruled #<seq>)` after a current-candidate needs-parent block (D18.5, D18b.4); empty otherwise. */
 const rulingMark = (b: { ruling?: 'needed' | number }): string => b.ruling === undefined ? '' : b.ruling === 'needed' ? ' (needs a parent ruling)' : ` (ruled #${b.ruling})`;
@@ -215,7 +217,7 @@ function entryLine(e: Entry): string {
     case 'adopt': return `${head} adopted trunk ${e.trunk} ${e.prior.slice(0, 12)}..${e.commit.slice(0, 12)} (${plural(e.commits, 'commit')} made outside owed, ${plural(e.changed.length, 'changed path')}): ${e.note}`;
     case 'launch': return `${head} recorded driver launch of ${e.node} attempt ${e.attempt} ${e.role} ${e.rid}`;
     case 'send': return `${head} recorded driver ${e.sendKind} (${e.reason}${e.rulings ? ` through #${e.rulings}` : ''}) to ${e.rid}: ${e.send}`;
-    case 'halt': return `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${oneLine(e.reason)}`;
+    case 'halt': return e.needs === 'owner' ? `${head} halted ${e.node} attempt ${e.attempt}, ${NEEDS_OWNER_TEXT}: ${oneLine(e.reason)}` : `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${oneLine(e.reason)}`;
     case 'evidence': return e.merge !== undefined ? `${head} recorded receipt ${e.node}/${e.id} (merge #${e.merge}): ${evidenceText(e)}` : `${head} recorded manual evidence ${e.node}/evidence:${e.id}: ${evidenceText(e)}`;
     case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
     case 'decoy-reveal': return `${head} revealed decoys ${e.decoys.map(d => d.node).join(', ')}`;
@@ -318,15 +320,20 @@ export function ownerCommands(s: State, node: string): string[] {
   if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
   return [...new Set(out)];
 }
+/**
+ * The owner principal a resolving command states where a role must be given (E3.3, ruling #559): the CLI's default
+ * owner, `owner:cli`, or `owner:human` under the confirmation gate `OWED_CONFIRM=owner`.
+ */
+const ownerAs = (): string => process.env.OWED_CONFIRM?.trim() === 'owner' ? 'owner:human' : 'owner:cli';
 /** The command that removes an owner-queue item from the owner's queue. */
 function decisionCommand(s: State, i: ItemView): string {
   if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
   const n = s.nodes[i.subject];
   if (n && !n.slot?.open) return dispatchHint(n);
   if (i.obligation === 'approve') return `owed approve ${i.subject} [--note TEXT] (owner)`;
-  if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), 'owner:human');
+  if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), ownerAs());
   const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && b.state !== 'cleared') ?? [];
-  if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as owner:human`;
+  if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}`;
   return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq));
 }
 /**

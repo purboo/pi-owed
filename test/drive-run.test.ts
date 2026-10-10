@@ -481,7 +481,7 @@ test('D15.2: merge refused with the transient `Plan, candidate or trunk changed;
   }
 });
 
-test('D15.2/D14.2: trunk CAS drift is not the transient refusal: merge halts needing the owner', { timeout: 180_000 }, async () => {
+test('D15.2/D14.2 (ruling #559 c): trunk drift is a repo-level owner notify, never a halt; no merge until adopted', { timeout: 180_000 }, async () => {
   const f = await rig(planOf(node('t')));
   try {
     await f.agent('t-writer', 'echo t > t.txt; git add t.txt; git commit -qm t; owed submit t');
@@ -489,10 +489,9 @@ test('D15.2/D14.2: trunk CAS drift is not the transient refusal: merge halts nee
     // trunk moves outside owed (no adopt): the ledger trunk no longer matches refs/heads/main.
     await f.put('other.txt', 'x\n'); await f.commit();
     const r = await f.drive({ once: true });
-    assert.match(r.lines.join('\n'), /merge t: refused — trunk changed \(CAS\).*; halted \(needs owner\)/, r.lines.join('\n'));
-    assert.doesNotMatch(r.lines.join('\n'), /retry next pass/);
-    const h = halts(await f.entries());
-    assert.equal(h.length, 1); assert.equal(h[0]!.needs, 'owner'); assert.match(h[0]!.reason, /^merge refused: trunk changed \(CAS\)/);
+    assert.match(r.lines.join('\n'), /^trunk main moved outside owed \([0-9a-f]{12} → [0-9a-f]{12}\); the main agent resolves it with: owed adopt --note "<why>"$/m, r.lines.join('\n'));
+    assert.doesNotMatch(r.lines.join('\n'), /merge t/);
+    assert.equal(halts(await f.entries()).length, 0);
     assert.ok(!merged(await f.entries(), 't'));
   } finally { await f.cleanup(); }
 });
