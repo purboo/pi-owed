@@ -2,8 +2,9 @@
 # owed05 at bigger bounds (run on ipc from formal/ after `cargo build --offline --release -p models`).
 # Safety properties and the findings; the liveness property (whole graph kept) only on M1.
 # Usage: bash models/scripts/owed05-big.sh [timeout_s per run, default 900] [runs, default all, e.g. "M4 M5"]
-# Memory: ~300 bytes per distinct state at these sizes (full frontier states); every run is capped at 40M states (simulation: MS) and
-# 14 GB of virtual memory (ulimit) so the shared host never swaps.
+# Memory: ~300 bytes per distinct state at these sizes (full frontier states); every run is capped at 22M states (simulation: MS,
+# sampled states), 8 GB of virtual memory (ulimit) and the timeout, so the shared host never swaps. 22M states stay under 8 GB
+# (M1: 16.5M states, 5.0 GB RSS) and cover M1-M6 (largest M4, 20.3M); a bigger exhaustive run stops at max-states, without verdicts.
 T=${1:-900}
 ONLY=${2:-}
 SAFETY="--prop EasingAuthorized --prop NoSubagentAuthority --prop NoSelfJudge --prop BlockWins --prop MergedMeansCovered --prop BadMergeTracesToOwner"
@@ -13,7 +14,7 @@ run() {
   local name=$1; shift
   [ -n "$ONLY" ] && [[ " $ONLY " != *" $name "* ]] && return
   echo "=== $name: $*"
-  ( ulimit -v 14000000; /usr/bin/time -f "# time %e s, max RSS %M KB" timeout $((T + 120)) target/release/owedmc check owed05 --workers 16 --timeout "$T" --max-states "${MS:-40000000}" "$@" ) | grep -vE '^# (engine|flags)'
+  ( ulimit -v 8000000; /usr/bin/time -f "# time %e s, max RSS %M KB" timeout $((T + 120)) target/release/owedmc check owed05 --workers 16 --timeout "$T" --max-states "${MS:-22000000}" "$@" ) | grep -vE '^# (engine|flags)'
   echo "exit=${PIPESTATUS[0]}"
 }
 run M1 --mode tools --const REVIEWS=2 --const MAIN=2 --const ADOPT=false $SAFETY $FIND --prop ExecBlockResolves
