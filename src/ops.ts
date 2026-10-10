@@ -431,9 +431,10 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
 /**
  * Records the intent to start a dsa run (role parent; the driver is `parent:drive`). `spec` is the exact spec JSON
  * bytes, stored as a blob. Idempotent: a launch already recorded with the same rid, node, attempt, role, spec bytes
- * and labels is returned with `created: false`; a different one is refused (a request conflict).
+ * and labels is returned with `created: false`; a different one is refused (a request conflict). `rulings` (E4) is
+ * recorded on a new entry only; a recorded entry keeps its own value.
  */
-export async function launch(o: Actor & { node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string> }): Promise<{ entry: LaunchEntry; created: boolean }> {
+export async function launch(o: Actor & { node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string>; rulings?: number }): Promise<{ entry: LaunchEntry; created: boolean }> {
   owner(o); const ledger = await Ledger.open(o.cwd), spec = await ledger.putBlob(o.spec);
   return ledger.withLock(async () => {
     const { state, entries } = await load(ledger);
@@ -442,7 +443,7 @@ export async function launch(o: Actor & { node: string; attempt: number; role: R
       if (prior.node !== o.node || prior.attempt !== o.attempt || prior.role !== o.role || prior.spec !== spec || canonical(prior.labels) !== canonical(o.labels)) throw new OwedError(`launch ${o.rid} is already recorded (#${prior.seq}) with other content`);
       return { entry: prior, created: false };
     }
-    const d: Draft = { kind: 'launch', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, role: o.role, rid: o.rid, spec, labels: o.labels };
+    const d: Draft = { kind: 'launch', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, role: o.role, rid: o.rid, spec, labels: o.labels, ...(o.rulings !== undefined ? { rulings: o.rulings } : {}) };
     guard(state, d); return { entry: (await ledger.append([d]))[0] as LaunchEntry, created: true };
   });
 }
