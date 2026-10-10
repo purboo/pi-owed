@@ -2,6 +2,9 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { git, revParse } from '../../src/git.ts';
+// D25.3: these tests drive owed as the main agent. A writer that runs the suite inside a pi-durable-subagents call
+// inherits DSA_CALL/DSA_EXEC, which would refuse every owner and parent act; tests that need them set them explicitly.
+delete process.env.DSA_CALL; delete process.env.DSA_EXEC;
 export async function repo() {
   const root = await mkdtemp(join(tmpdir(), 'owed-test-'));
   const cwd = join(root, 'repo'); await mkdir(cwd);

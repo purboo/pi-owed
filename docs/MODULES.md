@@ -169,6 +169,7 @@ export class DriveWatch { follow(o); attach(cwd); stopAll() }          // the ex
 
 ## src/extension.ts, skills/owed/SKILL.md  (leaf surface)
 Default export `(pi: ExtensionAPI) => void`, SPEC §11. Uses `import { Type } from '@earendil-works/pi-ai'` for parameters. Registers `session_start` (follow a live background driver) and `session_shutdown` (clear the followers) when `pi.on` exists; wake-ups use `pi.sendMessage` (SPEC §12.8).
+D25 (SPEC §2.1, §11): `actor(ctx, dir, as, summary, fields, signal)` refuses owner/parent in a dsa call (`ops.subagentRefusal`), returns `channel: 'delegated'` for an owner unless `ops.confirmGate()` (`OWED_CONFIRM=owner`), and otherwise shows the dialog with `confirmTimeout()` (`OWED_CONFIRM_TIMEOUT`, default `CONFIRM_TIMEOUT_S` = 120) and the tool's abort signal; `confirmTimeoutText(seconds)`. The CLI applies the same rules (`delegated` without a prompt unless the gate). `ops.subagentCall/subagentRefusal/confirmGate`; `planSet` takes `note`; the reducer requires a note on a delegated owner downgrade; `views.briefView` adds `delegated` (`BriefDelegated`), entry lines mark `(delegated)`, `views.ownerCommands(state, node)` lists the commands the driver's owner notifications and halts append.
 
 ## Tests
 `test/<module>.test.ts` with `node:test`. Git tests create temp repos under `os.tmpdir()` with `OWED_DIR` pointing into the temp dir; never touch the real repository's `.git`. Keep CPU low: no parallel heavy work; the machine is shared (run tests with `nice -n 10`).

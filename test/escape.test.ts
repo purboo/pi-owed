@@ -7,6 +7,8 @@ import { canonical, sha256 } from '../src/canon.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt, planText, seed, checkTest } from './helpers/surface.ts';
 import type { CandidateFacts, Draft, Entry, Plan, State, StateFacts } from '../src/types.ts';
+// D25.4: these tests exercise the owner confirmation (dialog or TTY prompt), now the opt-in gate OWED_CONFIRM=owner.
+process.env.OWED_CONFIRM = 'owner';
 
 // Only base-existing exports are imported statically; new behavior is asserted through
 // observable state, validation messages and CLI processes so the base fails by assertion.
