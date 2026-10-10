@@ -221,10 +221,11 @@ test('K5.2: a ruling during a running review, or while the clean candidate await
   m.add({ kind: 'review', by: 'reviewer:drive-a-1-1', node: 'a', attempt: 1, obligation: 'review', key: m.state().nodes.a!.candidate!.keys.review!, verdict: 'ok', rank: 1, note: 'fine', ack_rulings: named2.seq });
   const ok = sealed(view(R1, 'sealed', { status: 'ok' }));
   assert.deepEqual(act(m, ok), { do: 'merge', node: 'a' }, 'accepted: merge, the writer is not woken');
-  // A later ruling leaves `rulings` unacknowledged and nothing runs: the stalled halt stays (the candidate has no block).
-  m.rule('a late note for a');
+  // A later ruling leaves `rulings` unacknowledged and nothing runs. 0.8 (L3.1): instead of the stalled halt, the
+  // candidate's sealed reviewer gets the ruling (its ack discharges `rulings`); the writer is still not woken.
+  const late = m.rule('a late note for a');
   const st = act(m, ok);
-  assert.ok(st?.do === 'halt' && st.needs === 'owner' && st.reason.startsWith('stalled: rulings'), JSON.stringify(st));
+  assert.ok(isSend(st, 'ruling') && st.rid === R1 && st.sendKind === 'follow-up' && st.rulings === late.seq, JSON.stringify(st));
 });
 
 test('K5.2: a ruling after the halt for finished-without-submit (no candidate) → a ruling follow-up; a * ruling does not; then the halt names it', () => {
