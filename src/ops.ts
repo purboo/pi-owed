@@ -13,7 +13,7 @@ import { receipt, statusView, escapeSummary, driftText, dispatchPacket } from '.
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import type { Brief } from './views.ts';
-import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
+import type { AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
 /** An item a job measured: its observation was not recorded because the item was no longer current (D24.1). */
@@ -61,6 +61,26 @@ function node(s: State, id: string) { const n = inited(s).nodes[id]; if (!n) thr
 function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.open || !n.candidate) throw new OwedError(`Node ${id} has no open candidate`); return n; }
 function stable(before: State, after: State, id?: string): void {
   if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.slot?.base !== after.nodes[id]?.slot?.base || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('Plan, candidate or trunk changed; retry');
+}
+/**
+ * K4.1: the node-scoped merge CAS. A merge refuses (recording nothing) only when what it measured from moved: the ledger
+ * trunk, or node `id`'s slot (dispatch seq, attempt, base, open) or candidate (submit seq, commit). Plan updates and
+ * entries of other nodes do not refuse by themselves: the guard decides on the latest state. The refusal names the
+ * cause when a retry cannot succeed: a changed slot, or a candidate a plan entry invalidated (its node spec changed).
+ */
+function nodeStable(before: State, latest: Awaited<ReturnType<typeof load>>, id: string): void {
+  const after = latest.state, a = before.nodes[id], b = after.nodes[id], since = latest.entries.filter(e => e.seq > before.seq);
+  if (before.trunk.commit !== after.trunk.commit) throw new OwedError('Plan, candidate or trunk changed; retry');
+  if (a?.slot?.dispatchSeq !== b?.slot?.dispatchSeq || a?.slot?.attempt !== b?.slot?.attempt || a?.slot?.base !== b?.slot?.base || a?.slot?.open !== b?.slot?.open) {
+    const e = since.find(e => (e.kind === 'dispatch' || e.kind === 'abandon' || e.kind === 'rebase') && e.node === id);
+    throw new OwedError(`slot of ${id} changed (${e ? `#${e.seq} ${e.kind}` : 'unknown entry'}); nothing recorded`);
+  }
+  if (a?.candidate?.seq === b?.candidate?.seq && a?.candidate?.commit === b?.candidate?.commit) return;
+  if (a?.candidate && !b?.candidate) {
+    const prefix = latest.entries.filter(e => e.seq <= before.seq);
+    for (const e of since) { prefix.push(e); if (e.kind === 'plan' && !reduce(prefix,latest.lookup).nodes[id]?.candidate) throw new OwedError(`candidate #${a.candidate.seq} ${a.candidate.commit.slice(0,12)} of ${id} was invalidated by plan #${e.seq} (its spec changed); the writer submits again, then merge`); }
+  }
+  throw new OwedError('Plan, candidate or trunk changed; retry');
 }
 async function mutate(o: Actor, make: (s: State) => Draft | Promise<Draft>): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
@@ -358,7 +378,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal }): P
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
     if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
-    const facts = await git.candidateFacts(o.cwd,state.plan,state.plan.nodes.find(x => x.id === o.node)!,state.trunk.commit,built.commit,n.slot!.attempt), sf = await git.stateFacts(o.cwd,state.plan,built.commit), m = {facts,state:sf};
+    const m = await mergeFacts(o.cwd,state,o.node,built.commit);
     const observations: Draft[] = [];
     // An aborted run (D16) is not measured: undefined, and the merge stops before trunk moves.
     const measure = async (job: AttestJob) => { if (o.signal?.aborted) return undefined; const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); return o.signal?.aborted ? undefined : obs; };
@@ -366,20 +386,56 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal }): P
     for (const job of genesisJobs(state)) { const obs = await measure(job); if (!obs) return abortWith(ledger,state,observations,o.node); observations.push(obs); }
     for (const job of mergeJobs(state,o.node,m)) { const obs = await measure(job); if (!obs) return abortWith(ledger,state,observations,o.node); observations.push({...obs,merging:o.node} as Draft); }
     return ledger.withLock(async () => {
-      const latest = await load(ledger); stable(state,latest.state,o.node);
-      // Evaluate the prospective observations without persisting them before CAS.
-      // A moved ref must leave the ledger completely unchanged by this merge.
-      const current = prospective(latest,observations);
+      // K4.1: node-scoped CAS (ledger trunk, this node's slot and candidate) and the trunk ref; a moved one records nothing.
+      const latest = await load(ledger); nodeStable(state,latest,o.node);
+      { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
+      // K4.2: the guard decides on the latest state under the latest plan: the merge facts are recomputed when the plan
+      // changed, and only the measured observations whose job is still current there are kept (D24.1).
+      const spec = latest.state.plan.nodes.find(x => x.id === o.node), reasons: string[] = [];
+      if (!spec) reasons.push(`${o.node} is no longer a node of the plan`);
+      const lm = !spec || latest.state.planSha === state.planSha ? m : await mergeFacts(o.cwd,latest.state,o.node,built.commit);
+      const { state: current, kept } = mergeCurrent(latest,o.node,lm,observations,!!spec);
       // Last abort point (D16): after it trunk moves and the merge entry must follow.
-      if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
-      const g = mergeGuard(current,o.node,m);
-      if (!g.ok) { if (observations.length) await ledger.append(observations); throw new OwedError(g.reasons.join('; ')); }
-      const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts,state:sf}; guard(current,d);
+      if (o.signal?.aborted) { if (kept.length) await ledger.append(kept); throw aborted(); }
+      const g = spec ? mergeGuard(current,o.node,lm) : undefined;
+      if (g) reasons.push(...g.reasons);
+      // A job of the latest state this run did not measure (a key the plan update introduced) refuses; a retry measures it.
+      const missed = spec ? unmeasured(current,o.node,lm,observations) : [];
+      if (missed.length) reasons.push(`not measured: ${missed.map(j => `${j.subject}/${j.obligation} (key ${j.key.slice(0,12)})`).join(', ')} (the plan changed while merge measured); run owed merge again: it measures only what lacks a verdict`);
+      if (reasons.length || !g) { if (kept.length) await ledger.append(kept); throw new OwedError(reasons.join('; ')); }
+      const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
-      const entry = (await ledger.append([...observations,d])).at(-1)!;
+      const entry = (await ledger.append([...kept,d])).at(-1)!;
       return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D')};
     },undefined,o.signal);
   },'merge',o.signal);
+}
+/** The merge result's candidate and state facts of node `id` under the plan of `s` (merge commit `commit` on the ledger trunk). */
+async function mergeFacts(cwd: string, s: State, id: string, commit: string): Promise<{ facts: CandidateFacts; state: StateFacts }> {
+  const spec = s.plan.nodes.find(x => x.id === id)!, n = s.nodes[id]!;
+  return { facts:await git.candidateFacts(cwd,s.plan,spec,s.trunk.commit,commit,n.slot!.attempt), state:await git.stateFacts(cwd,s.plan,commit) };
+}
+const sameJob = (a: JobRef, b: JobRef): boolean => a.subject === b.subject && a.obligation === b.obligation && a.key === b.key;
+/**
+ * K4.2 (D24.1 for merge): the measured `observations` whose job is still current, in order, and the prospective state
+ * after them. A merge-result observation is current while its (subject, obligation, key) is a merge job of the latest
+ * state under merge facts `m` (so the key is the latest plan's key and still lacks a verdict); a genesis observation
+ * while it is a genesis job. `nodeJobs` false (the node left the plan) keeps genesis observations only.
+ */
+function mergeCurrent(latest: Awaited<ReturnType<typeof load>>, id: string, m: { facts: CandidateFacts; state: StateFacts }, observations: Draft[], nodeJobs: boolean): { state: State; kept: Draft[] } {
+  const replay = [...latest.entries], kept: Draft[] = []; let current = latest.state;
+  for (const obs of observations) {
+    if (obs.kind !== 'obs') continue;
+    const jobs = obs.merging !== undefined ? (nodeJobs ? mergeJobs(current,id,m) : []) : genesisJobs(current);
+    if (!jobs.some(j => sameJob(j,obs)) || validateDraft(current,obs).length) continue;
+    const entry = {...obs,seq:current.seq+1,ts:new Date().toISOString(),prev:current.head} as Entry;
+    entry.hash=entryHash(entry); replay.push(entry); current=reduce(replay,latest.lookup); kept.push(obs);
+  }
+  return { state: current, kept };
+}
+/** Genesis and merge jobs of `s` (merge facts `m`) that no measured observation of this run covers. */
+function unmeasured(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }, observations: Draft[]): JobRef[] {
+  return [...genesisJobs(s),...mergeJobs(s,id,m)].filter(j => !observations.some(o => o.kind === 'obs' && sameJob(j,o))).map(j => ({ subject:j.subject, obligation:j.obligation, key:j.key }));
 }
 /** State after appending `observations` to the loaded ledger, without persisting them (each is guarded in turn). */
 function prospective(latest: Awaited<ReturnType<typeof load>>, observations: Draft[]): State {
