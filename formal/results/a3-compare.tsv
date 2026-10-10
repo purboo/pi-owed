@@ -1,0 +1,188 @@
+log	class	label	tlc_result	tlc_distinct	tlc_generated	tlc_depth	tlc_trace	tlc_workers	ours	ours_distinct	ours_generated	ours_depth	ours_trace	tlcorder_distinct	tlcorder_trace	status	detail	seconds
+PiDagAuth3-a22-AuthoritySound-free-min2.log	current	a3_auth a22 AuthoritySound MaxLog=2,Scope=free	VIOLATED	11802	11964	3	3	4	VIOLATED	44311	88411	3	3	13251	3	OK	TLC 4 workers: 11802 distinct, trace 3; TLC-order 13251 distinct; levels <2: 211, <=2: 44311, <=2 (TLC trace depth): 44311	0.043
+PiDagAuth3-a22-AuthoritySound-free-sanity4-first.log	current	a3_auth a22 AuthoritySound MaxLog=4,Scope=free	VIOLATED	45443	45443	5	4	4	VIOLATED	9305311	9305311	4	3	13251	3	OK	TLC 4 workers: 45443 distinct, trace 4; TLC-order 13251 distinct; levels <2: 211, <=2: 44311, <=3 (TLC trace depth): 9305311	5.529
+PiDagAuth3-a22-AuthoritySound-free-sanity4.log	current	a3_auth a22 AuthoritySound MaxLog=4,Scope=free	VIOLATED	46032	46032	5	4	4	VIOLATED	9305311	9305311	4	3	13251	3	OK	TLC 4 workers: 46032 distinct, trace 4; TLC-order 13251 distinct; levels <2: 211, <=2: 44311, <=3 (TLC trace depth): 9305311	5.722
+PiDagAuth3-a22-AuthoritySound.log	auth-v1	a3_auth a22 AuthoritySound MaxLog=5	VIOLATED	76	76	3	3	2	VIOLATED	1019	1396	6	3	80	3	OK	TLC 2 workers: 76 distinct, trace 3; TLC-order 80 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.120
+PiDagAuth3-a22-ConflictDebt.log	auth-v1	a3_auth a22 ConflictDebt MaxLog=5	VIOLATED	685	721	5	5	2	VIOLATED	1019	1396	6	5	612	5	OK	TLC 2 workers: 685 distinct, trace 5; TLC-order 612 distinct; levels <4: 443, <=4: 779, <=4 (TLC trace depth): 779	0.053
+PiDagAuth3-a22-DecisionAuthority-free-min2.log	current	a3_auth a22 DecisionAuthority MaxLog=2,Scope=free	VIOLATED	9439	9521	3	3	4	VIOLATED	44311	88411	3	3	4282	3	OK	TLC 4 workers: 9439 distinct, trace 3; TLC-order 4282 distinct; levels <2: 211, <=2: 44311, <=2 (TLC trace depth): 44311	0.041
+PiDagAuth3-a22-DecisionAuthority-free-sanity4-first.log	current	a3_auth a22 DecisionAuthority MaxLog=4,Scope=free	VIOLATED	34426	34426	5	3	4	VIOLATED	9305311	9305311	4	3	4282	3	OK	TLC 4 workers: 34426 distinct, trace 3; TLC-order 4282 distinct; levels <2: 211, <=2: 44311, <=2 (TLC trace depth): 44311	5.143
+PiDagAuth3-a22-DecisionAuthority-free-sanity4.log	current	a3_auth a22 DecisionAuthority MaxLog=4,Scope=free	VIOLATED	34216	34216	5	3	4	VIOLATED	9305311	9305311	4	3	4282	3	OK	TLC 4 workers: 34216 distinct, trace 3; TLC-order 4282 distinct; levels <2: 211, <=2: 44311, <=2 (TLC trace depth): 44311	4.803
+PiDagAuth3-a22-DecisionAuthority.log	auth-v1	a3_auth a22 DecisionAuthority MaxLog=5	VIOLATED	203	207	4	3	2	VIOLATED	1019	1396	6	3	138	3	OK	TLC 2 workers: 203 distinct, trace 3; TLC-order 138 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.095
+PiDagAuth3-a22-Finished.log	auth-v1	a3_auth a22 Finished MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.011
+PiDagAuth3-a22-FuturePreserves.log	auth-v1	a3_auth a22 FuturePreserves MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.024
+PiDagAuth3-a22-GoodProgress.log	auth-v1	a3_auth a22 GoodProgress MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a22-NoAuthorJudge.log	auth-v1	a3_auth a22 NoAuthorJudge MaxLog=5	VIOLATED	236	240	4	3	2	VIOLATED	1019	1396	6	3	184	3	OK	TLC 2 workers: 236 distinct, trace 3; TLC-order 184 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.024
+PiDagAuth3-a22-NoWriterJudge-free-min2.log	current	a3_auth a22 NoWriterJudge MaxLog=2,Scope=free	VIOLATED	10473	10606	3	3	4	VIOLATED	44311	88411	3	3	4763	3	OK	TLC 4 workers: 10473 distinct, trace 3; TLC-order 4763 distinct; levels <2: 211, <=2: 44311, <=2 (TLC trace depth): 44311	0.046
+PiDagAuth3-a22-NoWriterJudge-free-sanity4-first.log	current	a3_auth a22 NoWriterJudge MaxLog=4,Scope=free	VIOLATED	37991	37991	5	4	4	VIOLATED	9305311	9305311	4	3	4763	3	OK	TLC 4 workers: 37991 distinct, trace 4; TLC-order 4763 distinct; levels <2: 211, <=2: 44311, <=3 (TLC trace depth): 9305311	6.362
+PiDagAuth3-a22-NoWriterJudge-free-sanity4.log	current	a3_auth a22 NoWriterJudge MaxLog=4,Scope=free	VIOLATED	38893	38893	5	5	4	VIOLATED	9305311	9305311	4	3	4763	3	OK	TLC 4 workers: 38893 distinct, trace 5; TLC-order 4763 distinct; levels <2: 211, <=2: 44311, <=4 (TLC trace depth): 9305311	5.107
+PiDagAuth3-a22-NoWriterJudge.log	auth-v1	a3_auth a22 NoWriterJudge MaxLog=5	VIOLATED	125	125	3	3	2	VIOLATED	1019	1396	6	3	91	3	OK	TLC 2 workers: 125 distinct, trace 3; TLC-order 91 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.106
+PiDagAuth3-a22-NothingCrossWaived.log	auth-v1	a3_auth a22 NothingCrossWaived MaxLog=5	VIOLATED	124	124	3	3	2	VIOLATED	1019	1396	6	3	91	3	OK	TLC 2 workers: 124 distinct, trace 3; TLC-order 91 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.032
+PiDagAuth3-a22-NothingDeferredMerged.log	auth-v1	a3_auth a22 NothingDeferredMerged MaxLog=5	VIOLATED	293	297	4	3	2	VIOLATED	1019	1396	6	3	95	3	OK	TLC 2 workers: 293 distinct, trace 3; TLC-order 95 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.040
+PiDagAuth3-a22-NothingMerged.log	auth-v1	a3_auth a22 NothingMerged MaxLog=5	VIOLATED	142	143	3	2	2	VIOLATED	1019	1396	6	2	34	2	OK	TLC 2 workers: 142 distinct, trace 2; TLC-order 34 distinct; levels <1: 18, <=1: 70, <=1 (TLC trace depth): 70	0.012
+PiDagAuth3-a22-NothingParentWaived.log	auth-v1	a3_auth a22 NothingParentWaived MaxLog=5	VIOLATED	212	216	4	3	2	VIOLATED	1019	1396	6	3	138	3	OK	TLC 2 workers: 212 distinct, trace 3; TLC-order 138 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.005
+PiDagAuth3-a22-NothingRevivedWaived.log	auth-v1	a3_auth a22 NothingRevivedWaived MaxLog=5	VIOLATED	1019	1401	6	6	2	VIOLATED	1019	1396	6	6	960	6	OK	TLC 2 workers: 1019 distinct, trace 6; TLC-order 960 distinct; levels <5: 779, <=5: 1019, <=5 (TLC trace depth): 1019	0.005
+PiDagAuth3-a22-NothingSpeechWaived.log	auth-v1	a3_auth a22 NothingSpeechWaived MaxLog=5	VIOLATED	342	354	4	4	2	VIOLATED	1019	1396	6	4	434	4	OK	TLC 2 workers: 342 distinct, trace 4; TLC-order 434 distinct; levels <3: 197, <=3: 443, <=3 (TLC trace depth): 443	0.006
+PiDagAuth3-a22-RelevantInvalidates.log	auth-v1	a3_auth a22 RelevantInvalidates MaxLog=5	VIOLATED	336	348	4	3	2	VIOLATED	1019	1396	6	3	117	3	OK	TLC 2 workers: 336 distinct, trace 3; TLC-order 117 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.006
+PiDagAuth3-a22-RetroHonored.log	auth-v1	a3_auth a22 RetroHonored MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.006
+PiDagAuth3-a22-SamePrincipalSupersedes.log	auth-v1	a3_auth a22 SamePrincipalSupersedes MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a22-StateRemainsDebt.log	auth-v1	a3_auth a22 StateRemainsDebt MaxLog=5	VIOLATED	137	138	3	2	2	VIOLATED	1019	1396	6	2	69	2	OK	TLC 2 workers: 137 distinct, trace 2; TLC-order 69 distinct; levels <1: 18, <=1: 70, <=1 (TLC trace depth): 70	0.005
+PiDagAuth3-a22-UnrelatedPreserves.log	auth-v1	a3_auth a22 UnrelatedPreserves MaxLog=5	VIOLATED	297	301	4	3	2	VIOLATED	1019	1396	6	3	119	3	OK	TLC 2 workers: 297 distinct, trace 3; TLC-order 119 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.004
+PiDagAuth3-a3-AllSafety-free-ex3.log	current	a3_auth a3 AllSafety MaxLog=3,Scope=free	INCOMPLETE	4415439			0	4	HOLDS	9305311	18566311	4	0			OK	TLC INCOMPLETE (no final count); owedmc HOLDS	10.892
+PiDagAuth3-a3-AllSafety-free-exh3-long.log	current	a3_auth a3 AllSafety MaxLog=3,Scope=free	HOLDS	9305311	18566311	4	0	16	HOLDS	9305311	18566311	4	0	9305311	0	OK		10.051
+PiDagAuth3-a3-AllSafety-free-sim-smoke.log	current	a3_auth a3 AllSafety MaxLog=6,Scope=free	HOLDS-SIM		32001		0	4	HOLDS-SIM		36000		0			OK	sampled 4000 walks, 36000 states	0.162
+PiDagAuth3-a3-AllSafety-free-sim6.log	current	a3_auth a3 AllSafety MaxLog=6,Scope=free	INCOMPLETE				0	4	HOLDS-SIM		18000000		0			OK	sampled 2000000 walks, 18000000 states	54.732
+PiDagAuth3-a3-AllSafety-free-sim8-smoke.log	current	a3_auth a3 AllSafety MaxLog=8,Scope=free	HOLDS-SIM		32001		0	4	HOLDS-SIM		36000		0			OK	sampled 4000 walks, 36000 states	1.055
+PiDagAuth3-a3-AllSafety-free-smoke2.log	current	a3_auth a3 AllSafety MaxLog=2,Scope=free	HOLDS	44311	88411	3	0	4	HOLDS	44311	88411	3	0	44311	0	OK		0.041
+PiDagAuth3-a3-AllSafety-runnerfix-timeout.log	current	a3_auth a3 AllSafety MaxLog=6,Scope=free	INCOMPLETE				0	2	HOLDS-SIM		9000000		0			OK	sampled 1000000 walks, 9000000 states	27.139
+PiDagAuth3-a3-AllSafety-scenario-regression.log	current	a3_auth a3 AllSafety MaxLog=5,Scope=scenarios	HOLDS	1019	1402	6	0	4	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-AuthoritySound.log	auth-v1	a3_auth a3 AuthoritySound MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.004
+PiDagAuth3-a3-ConflictDebt.log	auth-v1	a3_auth a3 ConflictDebt MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-DecisionAuthority.log	auth-v1	a3_auth a3 DecisionAuthority MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.006
+PiDagAuth3-a3-Finished-scenario-regression.log	current	a3_auth a3 Finished MaxLog=5,Scope=scenarios	HOLDS	1019	1402	6	0	4	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-Finished.log	auth-v1	a3_auth a3 Finished MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-FuturePreserves.log	auth-v1	a3_auth a3 FuturePreserves MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-GoodProgress-scenario-regression.log	current	a3_auth a3 GoodProgress MaxLog=5,Scope=scenarios	HOLDS	1019	1402	6	0	4	HOLDS	1019	1396	6	0	1019	0	OK		0.006
+PiDagAuth3-a3-GoodProgress.log	auth-v1	a3_auth a3 GoodProgress MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.006
+PiDagAuth3-a3-NoAuthorJudge.log	auth-v1	a3_auth a3 NoAuthorJudge MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.006
+PiDagAuth3-a3-NoWriterJudge.log	auth-v1	a3_auth a3 NoWriterJudge MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.006
+PiDagAuth3-a3-NothingCrossWaived.log	auth-v1	a3_auth a3 NothingCrossWaived MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.006
+PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.log	current	a3_auth a3 NothingDeferredMerged MaxLog=5,Scope=scenarios	VIOLATED	328	333	4	3	4	VIOLATED	1019	1396	6	3	95	3	OK	TLC 4 workers: 328 distinct, trace 3; TLC-order 95 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.006
+PiDagAuth3-a3-NothingDeferredMerged.log	auth-v1	a3_auth a3 NothingDeferredMerged MaxLog=5	VIOLATED	338	350	4	3	2	VIOLATED	1019	1396	6	3	95	3	OK	TLC 2 workers: 338 distinct, trace 3; TLC-order 95 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.005
+PiDagAuth3-a3-NothingMerged-free-witness2.log	current	a3_auth a3 NothingMerged MaxLog=2,Scope=free	VIOLATED	31492	31940	3	3	4	VIOLATED	44311	88411	3	3	3154	3	OK	TLC 4 workers: 31492 distinct, trace 3; TLC-order 3154 distinct; levels <2: 211, <=2: 44311, <=2 (TLC trace depth): 44311	0.038
+PiDagAuth3-a3-NothingMerged-scenario-regression.log	current	a3_auth a3 NothingMerged MaxLog=5,Scope=scenarios	VIOLATED	196	199	3	2	4	VIOLATED	1019	1396	6	2	34	2	OK	TLC 4 workers: 196 distinct, trace 2; TLC-order 34 distinct; levels <1: 18, <=1: 70, <=1 (TLC trace depth): 70	0.004
+PiDagAuth3-a3-NothingMerged.log	auth-v1	a3_auth a3 NothingMerged MaxLog=5	VIOLATED	141	142	3	2	2	VIOLATED	1019	1396	6	2	34	2	OK	TLC 2 workers: 141 distinct, trace 2; TLC-order 34 distinct; levels <1: 18, <=1: 70, <=1 (TLC trace depth): 70	0.004
+PiDagAuth3-a3-NothingParentWaived-scenario-regression.log	current	a3_auth a3 NothingParentWaived MaxLog=5,Scope=scenarios	VIOLATED	360	374	4	4	4	VIOLATED	1019	1396	6	4	215	4	OK	TLC 4 workers: 360 distinct, trace 4; TLC-order 215 distinct; levels <3: 197, <=3: 443, <=3 (TLC trace depth): 443	0.006
+PiDagAuth3-a3-NothingParentWaived.log	auth-v1	a3_auth a3 NothingParentWaived MaxLog=5	VIOLATED	248	252	4	4	2	VIOLATED	1019	1396	6	4	215	4	OK	TLC 2 workers: 248 distinct, trace 4; TLC-order 215 distinct; levels <3: 197, <=3: 443, <=3 (TLC trace depth): 443	0.005
+PiDagAuth3-a3-NothingRevivedWaived.log	auth-v1	a3_auth a3 NothingRevivedWaived MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-NothingSpeechWaived.log	auth-v1	a3_auth a3 NothingSpeechWaived MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.004
+PiDagAuth3-a3-RelevantInvalidates.log	auth-v1	a3_auth a3 RelevantInvalidates MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-RetroHonored.log	auth-v1	a3_auth a3 RetroHonored MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-SamePrincipalSupersedes.log	auth-v1	a3_auth a3 SamePrincipalSupersedes MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-StateRemainsDebt.log	auth-v1	a3_auth a3 StateRemainsDebt MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-UnrelatedPreserves.log	auth-v1	a3_auth a3 UnrelatedPreserves MaxLog=5	HOLDS	1019	1402	6	0	2	HOLDS	1019	1396	6	0	1019	0	OK		0.005
+PiDagAuth3-a3-author-NoAuthorJudge.log	auth-v1	a3_auth a3-author NoAuthorJudge MaxLog=5	VIOLATED	110	110	3	2	2	VIOLATED	1019	1396	6	2	19	2	OK	TLC 2 workers: 110 distinct, trace 2; TLC-order 19 distinct; levels <1: 18, <=1: 70, <=1 (TLC trace depth): 70	0.005
+PiDagAuth3-a3-conflict-ConflictDebt.log	auth-v1	a3_auth a3-conflict ConflictDebt MaxLog=5	VIOLATED	686	721	5	5	2	VIOLATED	1019	1396	6	5	612	5	OK	TLC 2 workers: 686 distinct, trace 5; TLC-order 612 distinct; levels <4: 443, <=4: 779, <=4 (TLC trace depth): 779	0.006
+PiDagAuth3-a3-continuous-AuthoritySound.log	auth-v1	a3_auth a3-continuous AuthoritySound MaxLog=5	VIOLATED	552	581	5	5	2	VIOLATED	1019	1396	6	5	720	5	OK	TLC 2 workers: 552 distinct, trace 5; TLC-order 720 distinct; levels <4: 443, <=4: 779, <=4 (TLC trace depth): 779	0.006
+PiDagAuth3-a3-continuous-NothingRevivedWaived.log	auth-v1	a3_auth a3-continuous NothingRevivedWaived MaxLog=5	VIOLATED	1019	1393	6	6	2	VIOLATED	1019	1396	6	6	960	6	OK	TLC 2 workers: 1019 distinct, trace 6; TLC-order 960 distinct; levels <5: 779, <=5: 1019, <=5 (TLC trace depth): 1019	0.005
+PiDagAuth3-a3-future-FuturePreserves.log	auth-v1	a3_auth a3-future FuturePreserves MaxLog=5	VIOLATED	1019	1401	6	5	2	VIOLATED	1019	1396	6	5	573	5	OK	TLC 2 workers: 1019 distinct, trace 5; TLC-order 573 distinct; levels <4: 443, <=4: 779, <=4 (TLC trace depth): 779	0.005
+PiDagAuth3-a3-issue-AuthoritySound.log	auth-v1	a3_auth a3-issue AuthoritySound MaxLog=5	VIOLATED	76	76	3	3	2	VIOLATED	1019	1396	6	3	80	3	OK	TLC 2 workers: 76 distinct, trace 3; TLC-order 80 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.005
+PiDagAuth3-a3-key-RelevantInvalidates.log	auth-v1	a3_auth a3-key RelevantInvalidates MaxLog=5	VIOLATED	292	296	4	3	2	VIOLATED	1019	1396	6	3	117	3	OK	TLC 2 workers: 292 distinct, trace 3; TLC-order 117 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.005
+PiDagAuth3-a3-key-UnrelatedPreserves.log	auth-v1	a3_auth a3-key UnrelatedPreserves MaxLog=5	VIOLATED	340	352	4	3	2	VIOLATED	1019	1396	6	3	119	3	OK	TLC 2 workers: 340 distinct, trace 3; TLC-order 119 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.006
+PiDagAuth3-a3-past-NoWriterJudge.log	auth-v1	a3_auth a3-past NoWriterJudge MaxLog=5	VIOLATED	334	343	4	4	2	VIOLATED	1019	1396	6	4	330	4	OK	TLC 2 workers: 334 distinct, trace 4; TLC-order 330 distinct; levels <3: 197, <=3: 443, <=3 (TLC trace depth): 443	0.005
+PiDagAuth3-a3-permission-DecisionAuthority.log	auth-v1	a3_auth a3-permission DecisionAuthority MaxLog=5	VIOLATED	251	255	4	3	2	VIOLATED	1019	1396	6	3	138	3	OK	TLC 2 workers: 251 distinct, trace 3; TLC-order 138 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.006
+PiDagAuth3-a3-retro-RetroHonored.log	auth-v1	a3_auth a3-retro RetroHonored MaxLog=5	VIOLATED	729	776	5	5	2	VIOLATED	1019	1396	6	5	478	5	OK	TLC 2 workers: 729 distinct, trace 5; TLC-order 478 distinct; levels <4: 443, <=4: 779, <=4 (TLC trace depth): 779	0.005
+PiDagAuth3-a3-same-SamePrincipalSupersedes.log	auth-v1	a3_auth a3-same SamePrincipalSupersedes MaxLog=5	VIOLATED	347	359	4	4	2	VIOLATED	1019	1396	6	4	420	4	OK	TLC 2 workers: 347 distinct, trace 4; TLC-order 420 distinct; levels <3: 197, <=3: 443, <=3 (TLC trace depth): 443	0.005
+PiDagAuth3-a3-scope-AuthoritySound.log	auth-v1	a3_auth a3-scope AuthoritySound MaxLog=5	VIOLATED	83	83	3	3	2	VIOLATED	1019	1396	6	3	158	3	OK	TLC 2 workers: 83 distinct, trace 3; TLC-order 158 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.005
+PiDagAuth3-a3-state-StateRemainsDebt.log	auth-v1	a3_auth a3-state StateRemainsDebt MaxLog=5	VIOLATED	126	126	3	2	2	VIOLATED	1019	1396	6	2	69	2	OK	TLC 2 workers: 126 distinct, trace 2; TLC-order 69 distinct; levels <1: 18, <=1: 70, <=1 (TLC trace depth): 70	0.005
+PiDagAuth3-a3-writers-NoWriterJudge.log	auth-v1	a3_auth a3-writers NoWriterJudge MaxLog=5	VIOLATED	125	125	3	3	2	VIOLATED	1019	1396	6	3	91	3	OK	TLC 2 workers: 125 distinct, trace 3; TLC-order 91 distinct; levels <2: 70, <=2: 197, <=2 (TLC trace depth): 197	0.006
+PiDagMerge-a22-DeferredDebtVisible-ruling-defer.log	current	a3_merge a22 DeferredDebtVisible Scenario=defer	HOLDS	22	41	8	0	1	HOLDS	22	29	8	0	22	0	OK		0.006
+PiDagMerge-a22-DeferredDebtVisible-ruling-falsePass.log	current	a3_merge a22 DeferredDebtVisible Scenario=falsePass	HOLDS	36	73	8	0	1	HOLDS	36	49	8	0	36	0	OK		0.006
+PiDagMerge-a22-DeferredDebtVisible-ruling-flakyDebt.log	current	a3_merge a22 DeferredDebtVisible Scenario=flakyDebt	HOLDS	15	26	7	0	1	HOLDS	15	19	7	0	15	0	OK		0.005
+PiDagMerge-a22-DeferredDebtVisible-ruling-genesis.log	current	a3_merge a22 DeferredDebtVisible Scenario=genesis	HOLDS	18	27	8	0	1	HOLDS	18	23	8	0	18	0	OK		0.005
+PiDagMerge-a22-DeferredDebtVisible-ruling-launderReview.log	current	a3_merge a22 DeferredDebtVisible Scenario=launderReview	HOLDS	71	151	11	0	1	HOLDS	71	101	11	0	71	0	OK		0.007
+PiDagMerge-a22-DeferredDebtVisible-ruling-launderTest.log	current	a3_merge a22 DeferredDebtVisible Scenario=launderTest	HOLDS	183	453	11	0	1	HOLDS	183	261	11	0	183	0	OK		0.008
+PiDagMerge-a22-DeferredDebtVisible-ruling-matrix.log	current	a3_merge a22 DeferredDebtVisible Scenario=matrix	HOLDS	25	47	8	0	1	HOLDS	25	33	8	0	25	0	OK		0.005
+PiDagMerge-a22-DeferredDebtVisible-ruling-oldDebt.log	current	a3_merge a22 DeferredDebtVisible Scenario=oldDebt	HOLDS	25	47	8	0	1	HOLDS	25	33	8	0	25	0	OK		0.005
+PiDagMerge-a22-DeferredDebtVisible-ruling-rerun.log	current	a3_merge a22 DeferredDebtVisible Scenario=rerun	HOLDS	113	287	11	0	1	HOLDS	113	159	11	0	113	0	OK		0.006
+PiDagMerge-a22-EscapeAttributable-ruling-defer.log	current	a3_merge a22 EscapeAttributable Scenario=defer	HOLDS	22	41	8	0	1	HOLDS	22	29	8	0	22	0	OK		0.004
+PiDagMerge-a22-EscapeAttributable-ruling-falsePass.log	current	a3_merge a22 EscapeAttributable Scenario=falsePass	HOLDS	36	73	8	0	1	HOLDS	36	49	8	0	36	0	OK		0.005
+PiDagMerge-a22-EscapeAttributable-ruling-flakyDebt.log	current	a3_merge a22 EscapeAttributable Scenario=flakyDebt	HOLDS	15	26	7	0	1	HOLDS	15	19	7	0	15	0	OK		0.005
+PiDagMerge-a22-EscapeAttributable-ruling-free.log	current	a3_merge a22 EscapeAttributable Scenario=free	HOLDS-SIM		3024461		0	4	HOLDS-SIM		168000		0			OK	sampled 8000 walks, 168000 states	0.046
+PiDagMerge-a22-EscapeAttributable-ruling-genesis.log	current	a3_merge a22 EscapeAttributable Scenario=genesis	HOLDS	18	27	8	0	1	HOLDS	18	23	8	0	18	0	OK		0.002
+PiDagMerge-a22-EscapeAttributable-ruling-launderReview.log	current	a3_merge a22 EscapeAttributable Scenario=launderReview	HOLDS	71	151	11	0	1	HOLDS	71	101	11	0	71	0	OK		0.003
+PiDagMerge-a22-EscapeAttributable-ruling-launderTest.log	current	a3_merge a22 EscapeAttributable Scenario=launderTest	HOLDS	183	453	11	0	1	HOLDS	183	261	11	0	183	0	OK		0.003
+PiDagMerge-a22-EscapeAttributable-ruling-matrix.log	current	a3_merge a22 EscapeAttributable Scenario=matrix	HOLDS	25	47	8	0	1	HOLDS	25	33	8	0	25	0	OK		0.002
+PiDagMerge-a22-EscapeAttributable-ruling-oldDebt.log	current	a3_merge a22 EscapeAttributable Scenario=oldDebt	HOLDS	25	47	8	0	1	HOLDS	25	33	8	0	25	0	OK		0.002
+PiDagMerge-a22-EscapeAttributable-ruling-rerun.log	current	a3_merge a22 EscapeAttributable Scenario=rerun	HOLDS	113	287	11	0	1	HOLDS	113	159	11	0	113	0	OK		0.003
+PiDagMerge-a22-GenesisBeforeAdvance-genesis.log	merge-preruling	a3_merge a22 GenesisBeforeAdvance Scenario=good	VIOLATED	25	31	6	6	1	VIOLATED	33	45	8	6	25	6	OK		0.003
+PiDagMerge-a22-GoodEventuallyMerges-live.log	merge-preruling	a3_merge a22 GoodEventuallyMerges Scenario=live	VIOLATED	17	43	6	7	1	VIOLATED	17	31	6	8			OK		0.002
+PiDagMerge-a22-JudgedAtCommit-race.log	merge-preruling	a3_merge a22 JudgedAtCommit Scenario=race	VIOLATED	17	21	7	7	1	VIOLATED	23	33	8	7	17	7	OK		0.003
+PiDagMerge-a22-LeaseExcludes-live.log	merge-preruling	a3_merge a22 LeaseExcludes Scenario=live	HOLDS	17	43	6	0	1	HOLDS	17	31	6	0	17	0	OK		0.003
+PiDagMerge-a22-NoBypassedNegative-ruling-defer.log	current	a3_merge a22 NoBypassedNegative Scenario=defer	HOLDS	22	41	8	0	1	HOLDS	22	29	8	0	22	0	OK		0.004
+PiDagMerge-a22-NoBypassedNegative-ruling-falsePass.log	current	a3_merge a22 NoBypassedNegative Scenario=falsePass	HOLDS	36	73	8	0	1	HOLDS	36	49	8	0	36	0	OK		0.004
+PiDagMerge-a22-NoBypassedNegative-ruling-flakyDebt.log	current	a3_merge a22 NoBypassedNegative Scenario=flakyDebt	HOLDS	15	26	7	0	1	HOLDS	15	19	7	0	15	0	OK		0.004
+PiDagMerge-a22-NoBypassedNegative-ruling-free.log	current	a3_merge a22 NoBypassedNegative Scenario=free	VIOLATED		5196		13	4	VIOLATED		168000		17			OK	sampled 8000 walks, 168000 states	0.046
+PiDagMerge-a22-NoBypassedNegative-ruling-genesis.log	current	a3_merge a22 NoBypassedNegative Scenario=genesis	HOLDS	18	27	8	0	1	HOLDS	18	23	8	0	18	0	OK		0.002
+PiDagMerge-a22-NoBypassedNegative-ruling-launderReview.log	current	a3_merge a22 NoBypassedNegative Scenario=launderReview	VIOLATED	33	45	8	8	1	VIOLATED	71	101	11	8	33	8	OK		0.003
+PiDagMerge-a22-NoBypassedNegative-ruling-launderTest.log	current	a3_merge a22 NoBypassedNegative Scenario=launderTest	VIOLATED	53	70	8	8	1	VIOLATED	183	261	11	8	53	8	OK		0.003
+PiDagMerge-a22-NoBypassedNegative-ruling-matrix.log	current	a3_merge a22 NoBypassedNegative Scenario=matrix	HOLDS	25	47	8	0	1	HOLDS	25	33	8	0	25	0	OK		0.003
+PiDagMerge-a22-NoBypassedNegative-ruling-oldDebt.log	current	a3_merge a22 NoBypassedNegative Scenario=oldDebt	HOLDS	25	47	8	0	1	HOLDS	25	33	8	0	25	0	OK		0.002
+PiDagMerge-a22-NoBypassedNegative-ruling-rerun.log	current	a3_merge a22 NoBypassedNegative Scenario=rerun	VIOLATED	39	52	8	8	1	VIOLATED	113	159	11	8	39	8	OK		0.007
+PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.log	merge-preruling	a3_merge a22 NoFlakyRerunEscape Scenario=launderTest	VIOLATED	91	144	9	9	1	VIOLATED	183	261	11	9	91	9	OK		0.005
+PiDagMerge-a22-NoLaundering-launderTest.log	merge-preruling	a3_merge a22 NoLaundering Scenario=launderTest	VIOLATED	53	70	8	8	1	VIOLATED	183	261	11	8	53	8	OK		0.005
+PiDagMerge-a22-NoLaundering-rerun.log	merge-preruling	a3_merge a22 NoLaundering Scenario=rerun	VIOLATED	39	52	8	8	1	VIOLATED	113	159	11	8	39	8	OK		0.005
+PiDagMerge-a22-NoLaundering-review.log	merge-preruling	a3_merge a22 NoLaundering Scenario=launderReview	VIOLATED	33	45	8	8	1	VIOLATED	71	101	11	8	33	8	OK		0.006
+PiDagMerge-a22-NoNewBreakage-falsePass.log	merge-preruling	a3_merge a22 NoNewBreakage Scenario=falsePass	VIOLATED	21	28	6	6	1	VIOLATED	36	49	8	6	21	6	OK		0.004
+PiDagMerge-a22-NoNewBreakage-flakyDebt.log	merge-preruling	a3_merge a22 NoNewBreakage Scenario=flakyDebt	VIOLATED	11	12	6	6	1	VIOLATED	15	19	7	6	11	6	OK		0.004
+PiDagMerge-a22-NoNewBreakage-genesis.log	merge-preruling	a3_merge a22 NoNewBreakage Scenario=genesis	VIOLATED	13	13	6	6	1	VIOLATED	18	23	8	6	13	6	OK		0.004
+PiDagMerge-a22-NoNewBreakage-matrix.log	merge-preruling	a3_merge a22 NoNewBreakage Scenario=matrix	VIOLATED	13	14	6	6	1	VIOLATED	25	33	8	6	13	6	OK		0.004
+PiDagMerge-a22-NodeAcceptanceCovered-ruling-free.log	current	a3_merge a22 NodeAcceptanceCovered Scenario=free	VIOLATED		2953		13	4	VIOLATED		168000		14			OK	sampled 8000 walks, 168000 states	0.047
+PiDagMerge-a22-NothingMerged-live.log	merge-preruling	a3_merge a22 NothingMerged Scenario=live	VIOLATED	14	24	6	6	1	VIOLATED	17	31	6	6	14	6	OK		0.002
+PiDagMerge-a22-StateNeverWaived-waiver.log	merge-preruling	a3_merge a22 StateNeverWaived Scenario=waiver	VIOLATED	22	26	7	7	1	VIOLATED	38	53	9	7	22	7	OK		0.003
+PiDagMerge-a3-DeferredDebtVisible-ruling-defer.log	current	a3_merge a3 DeferredDebtVisible Scenario=defer	HOLDS	10	13	8	0	1	HOLDS	10	13	8	0	10	0	OK		0.002
+PiDagMerge-a3-DeferredDebtVisible-ruling-falsePass.log	current	a3_merge a3 DeferredDebtVisible Scenario=falsePass	HOLDS	14	24	7	0	1	HOLDS	14	19	7	0	14	0	OK		0.002
+PiDagMerge-a3-DeferredDebtVisible-ruling-flakyDebt.log	current	a3_merge a3 DeferredDebtVisible Scenario=flakyDebt	HOLDS	5	6	5	0	1	HOLDS	5	6	5	0	5	0	OK		0.001
+PiDagMerge-a3-DeferredDebtVisible-ruling-genesis.log	current	a3_merge a3 DeferredDebtVisible Scenario=genesis	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.002
+PiDagMerge-a3-DeferredDebtVisible-ruling-launderReview.log	current	a3_merge a3 DeferredDebtVisible Scenario=launderReview	HOLDS	33	50	11	0	1	HOLDS	33	47	11	0	33	0	OK		0.004
+PiDagMerge-a3-DeferredDebtVisible-ruling-launderTest.log	current	a3_merge a3 DeferredDebtVisible Scenario=launderTest	HOLDS	101	154	12	0	1	HOLDS	101	145	12	0	101	0	OK		0.005
+PiDagMerge-a3-DeferredDebtVisible-ruling-matrix.log	current	a3_merge a3 DeferredDebtVisible Scenario=matrix	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.002
+PiDagMerge-a3-DeferredDebtVisible-ruling-oldDebt.log	current	a3_merge a3 DeferredDebtVisible Scenario=oldDebt	HOLDS	13	17	8	0	1	HOLDS	13	17	8	0	13	0	OK		0.003
+PiDagMerge-a3-DeferredDebtVisible-ruling-rerun.log	current	a3_merge a3 DeferredDebtVisible Scenario=rerun	HOLDS	72	109	12	0	1	HOLDS	72	102	12	0	72	0	OK		0.004
+PiDagMerge-a3-EscapeAttributable-ruling-defer.log	current	a3_merge a3 EscapeAttributable Scenario=defer	HOLDS	10	13	8	0	1	HOLDS	10	13	8	0	10	0	OK		0.003
+PiDagMerge-a3-EscapeAttributable-ruling-falsePass.log	current	a3_merge a3 EscapeAttributable Scenario=falsePass	HOLDS	14	24	7	0	1	HOLDS	14	19	7	0	14	0	OK		0.004
+PiDagMerge-a3-EscapeAttributable-ruling-flakyDebt.log	current	a3_merge a3 EscapeAttributable Scenario=flakyDebt	HOLDS	5	6	5	0	1	HOLDS	5	6	5	0	5	0	OK		0.003
+PiDagMerge-a3-EscapeAttributable-ruling-genesis.log	current	a3_merge a3 EscapeAttributable Scenario=genesis	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.004
+PiDagMerge-a3-EscapeAttributable-ruling-launderReview.log	current	a3_merge a3 EscapeAttributable Scenario=launderReview	HOLDS	33	50	11	0	1	HOLDS	33	47	11	0	33	0	OK		0.007
+PiDagMerge-a3-EscapeAttributable-ruling-launderTest.log	current	a3_merge a3 EscapeAttributable Scenario=launderTest	HOLDS	101	154	12	0	1	HOLDS	101	145	12	0	101	0	OK		0.007
+PiDagMerge-a3-EscapeAttributable-ruling-matrix.log	current	a3_merge a3 EscapeAttributable Scenario=matrix	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.004
+PiDagMerge-a3-EscapeAttributable-ruling-oldDebt.log	current	a3_merge a3 EscapeAttributable Scenario=oldDebt	HOLDS	13	17	8	0	1	HOLDS	13	17	8	0	13	0	OK		0.005
+PiDagMerge-a3-EscapeAttributable-ruling-rerun.log	current	a3_merge a3 EscapeAttributable Scenario=rerun	HOLDS	72	109	12	0	1	HOLDS	72	102	12	0	72	0	OK		0.007
+PiDagMerge-a3-FreeCoreSafety-ruling-free.log	current	a3_merge a3 FreeCoreSafety Scenario=free	HOLDS-SIM		12760539		0	4	HOLDS-SIM		840000		0			OK	sampled 40000 walks, 840000 states	0.166
+PiDagMerge-a3-FreeCoreSafety-runnerfix-ok.log	current	a3_merge a3 FreeCoreSafety Scenario=free	HOLDS-SIM		637852		0	2	HOLDS-SIM		42000		0			OK	sampled 2000 walks, 42000 states	0.008
+PiDagMerge-a3-FreeNoTwoMerges-ruling-free.log	current	a3_merge a3 FreeNoTwoMerges Scenario=free	VIOLATED		576017		21	4	VIOLATED		168000		17			OK	sampled 8000 walks, 168000 states	0.031
+PiDagMerge-a3-GenesisBeforeAdvance-genesis.log	merge-preruling	a3_merge a3 GenesisBeforeAdvance Scenario=good	HOLDS	17	23	8	0	1	HOLDS	17	23	8	0	17	0	OK		0.002
+PiDagMerge-a3-GoodEventuallyMerges-live.log	merge-preruling	a3_merge a3 GoodEventuallyMerges Scenario=live	HOLDS	9	14	6	0	1	HOLDS	9	14	6	0	9	0	OK		0.002
+PiDagMerge-a3-JudgedAtCommit-race.log	merge-preruling	a3_merge a3 JudgedAtCommit Scenario=race	HOLDS	14	21	9	0	1	HOLDS	14	19	9	0	14	0	OK		0.003
+PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.log	merge-preruling	a3_merge a3-K1 NoNewBreakage Scenario=flakyDebt	HOLDS	5	6	5	0	1	HOLDS	5	6	5	0	5	0	OK		0.002
+PiDagMerge-a3-K1-NoNewBreakage-genesis.log	merge-preruling	a3_merge a3-K1 NoNewBreakage Scenario=genesis	VIOLATED	7	8	6	6	1	VIOLATED	8	10	7	6	7	6	OK		0.002
+PiDagMerge-a3-K1-NoNewBreakage-matrix.log	merge-preruling	a3_merge a3-K1 NoNewBreakage Scenario=matrix	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.002
+PiDagMerge-a3-K2-NoLaundering-review.log	merge-preruling	a3_merge a3-K2 NoLaundering Scenario=launderReview	VIOLATED	21	28	8	8	1	VIOLATED	36	51	11	8	21	8	OK		0.003
+PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.log	merge-preruling	a3_merge a3-K3 NoNewBreakage Scenario=flakyDebt	VIOLATED	7	7	6	6	1	VIOLATED	8	10	7	6	7	6	OK		0.002
+PiDagMerge-a3-K3-NoNewBreakage-genesis.log	merge-preruling	a3_merge a3-K3 NoNewBreakage Scenario=genesis	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.002
+PiDagMerge-a3-K3-NoNewBreakage-matrix.log	merge-preruling	a3_merge a3-K3 NoNewBreakage Scenario=matrix	VIOLATED	8	8	6	6	1	VIOLATED	13	17	8	6	8	6	OK		0.002
+PiDagMerge-a3-K3state-StateNeverWaived-waiver.log	merge-preruling	a3_merge a3-K3state StateNeverWaived Scenario=waiver	VIOLATED	11	12	7	7	1	VIOLATED	16	22	9	7	11	7	OK		0.003
+PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.log	merge-preruling	a3_merge a3-K4 GenesisBeforeAdvance Scenario=good	VIOLATED	25	30	6	6	1	VIOLATED	33	45	8	6	25	6	OK		0.003
+PiDagMerge-a3-K5atomic-JudgedAtCommit-race.log	merge-preruling	a3_merge a3-K5atomic JudgedAtCommit Scenario=race	VIOLATED	10	11	7	7	1	VIOLATED	12	17	8	7	10	7	OK		0.003
+PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.log	merge-preruling	a3_merge a3-K5queue GoodEventuallyMerges Scenario=live	VIOLATED	24	57	7	9	1	VIOLATED	24	57	7	10			OK		0.003
+PiDagMerge-a3-K5queue-LeaseExcludes-live.log	merge-preruling	a3_merge a3-K5queue LeaseExcludes Scenario=live	VIOLATED	5	5	4	4	1	VIOLATED	24	57	7	4	5	4	OK		0.005
+PiDagMerge-a3-K5queue-NothingMerged-live.log	merge-preruling	a3_merge a3-K5queue NothingMerged Scenario=live	VIOLATED	13	16	6	6	1	VIOLATED	24	57	7	6	13	6	OK		0.005
+PiDagMerge-a3-LeaseExcludes-live.log	merge-preruling	a3_merge a3 LeaseExcludes Scenario=live	HOLDS	9	14	6	0	1	HOLDS	9	14	6	0	9	0	OK		0.003
+PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.log	merge-preruling	a3_merge a3 NewEscapeAttributable Scenario=oldDebt	HOLDS	13	17	8	0	1	HOLDS	13	17	8	0	13	0	OK		0.004
+PiDagMerge-a3-NoBypassedNegative-ruling-defer.log	current	a3_merge a3 NoBypassedNegative Scenario=defer	HOLDS	10	13	8	0	1	HOLDS	10	13	8	0	10	0	OK		0.004
+PiDagMerge-a3-NoBypassedNegative-ruling-falsePass.log	current	a3_merge a3 NoBypassedNegative Scenario=falsePass	HOLDS	14	24	7	0	1	HOLDS	14	19	7	0	14	0	OK		0.004
+PiDagMerge-a3-NoBypassedNegative-ruling-flakyDebt.log	current	a3_merge a3 NoBypassedNegative Scenario=flakyDebt	HOLDS	5	6	5	0	1	HOLDS	5	6	5	0	5	0	OK		0.003
+PiDagMerge-a3-NoBypassedNegative-ruling-genesis.log	current	a3_merge a3 NoBypassedNegative Scenario=genesis	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.003
+PiDagMerge-a3-NoBypassedNegative-ruling-launderReview.log	current	a3_merge a3 NoBypassedNegative Scenario=launderReview	HOLDS	33	50	11	0	1	HOLDS	33	47	11	0	33	0	OK		0.006
+PiDagMerge-a3-NoBypassedNegative-ruling-launderTest.log	current	a3_merge a3 NoBypassedNegative Scenario=launderTest	HOLDS	101	154	12	0	1	HOLDS	101	145	12	0	101	0	OK		0.007
+PiDagMerge-a3-NoBypassedNegative-ruling-matrix.log	current	a3_merge a3 NoBypassedNegative Scenario=matrix	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.004
+PiDagMerge-a3-NoBypassedNegative-ruling-oldDebt.log	current	a3_merge a3 NoBypassedNegative Scenario=oldDebt	HOLDS	13	17	8	0	1	HOLDS	13	17	8	0	13	0	OK		0.005
+PiDagMerge-a3-NoBypassedNegative-ruling-rerun.log	current	a3_merge a3 NoBypassedNegative Scenario=rerun	HOLDS	72	109	12	0	1	HOLDS	72	102	12	0	72	0	OK		0.007
+PiDagMerge-a3-NoDeferredMerge-defer.log	merge-preruling	a3_merge a3 NoDeferredMerge Scenario=defer	VIOLATED	9	10	7	7	1	VIOLATED	10	13	8	7	9	7	OK		0.005
+PiDagMerge-a3-NoDeferredMerge-ruling-free.log	current	a3_merge a3 NoDeferredMerge Scenario=free	VIOLATED		127402		15	4	VIOLATED		168000		14			OK	sampled 8000 walks, 168000 states	0.043
+PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.log	merge-preruling	a3_merge a3 NoFlakyRerunEscape Scenario=launderTest	HOLDS	101	154	12	0	1	HOLDS	101	145	12	0	101	0	OK		0.004
+PiDagMerge-a3-NoLaundering-launderTest.log	merge-preruling	a3_merge a3 NoLaundering Scenario=launderTest	VIOLATED	59	74	9	9	1	VIOLATED	101	145	12	9	59	9	OK		0.003
+PiDagMerge-a3-NoLaundering-rerun.log	merge-preruling	a3_merge a3 NoLaundering Scenario=rerun	VIOLATED	44	53	9	9	1	VIOLATED	72	102	12	9	44	9	OK		0.004
+PiDagMerge-a3-NoLaundering-review.log	merge-preruling	a3_merge a3 NoLaundering Scenario=launderReview	HOLDS	33	50	11	0	1	HOLDS	33	47	11	0	33	0	OK		0.003
+PiDagMerge-a3-NoNewBreakage-defer.log	merge-preruling	a3_merge a3 NoNewBreakage Scenario=defer	HOLDS	10	13	8	0	1	HOLDS	10	13	8	0	10	0	OK		0.002
+PiDagMerge-a3-NoNewBreakage-falsePass.log	merge-preruling	a3_merge a3 NoNewBreakage Scenario=falsePass	VIOLATED	13	17	6	6	1	VIOLATED	14	19	7	6	13	6	OK		0.002
+PiDagMerge-a3-NoNewBreakage-flakyDebt.log	merge-preruling	a3_merge a3 NoNewBreakage Scenario=flakyDebt	HOLDS	5	6	5	0	1	HOLDS	5	6	5	0	5	0	OK		0.002
+PiDagMerge-a3-NoNewBreakage-genesis.log	merge-preruling	a3_merge a3 NoNewBreakage Scenario=genesis	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.002
+PiDagMerge-a3-NoNewBreakage-matrix.log	merge-preruling	a3_merge a3 NoNewBreakage Scenario=matrix	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.003
+PiDagMerge-a3-NoNewBreakage-oldDebt.log	merge-preruling	a3_merge a3 NoNewBreakage Scenario=oldDebt	HOLDS	13	17	8	0	1	HOLDS	13	17	8	0	13	0	OK		0.004
+PiDagMerge-a3-NoOldDebtMerge-oldDebt.log	merge-preruling	a3_merge a3 NoOldDebtMerge Scenario=oldDebt	VIOLATED	8	8	6	6	1	VIOLATED	13	17	8	6	8	6	OK		0.004
+PiDagMerge-a3-NoOwnerWaivedMerge-owner.log	merge-preruling	a3_merge a3 NoOwnerWaivedMerge Scenario=launderReview	VIOLATED	22	30	9	9	1	VIOLATED	33	47	11	9	22	9	OK		0.006
+PiDagMerge-a3-NoUnrelatedMerge-good.log	merge-preruling	a3_merge a3 NoUnrelatedMerge Scenario=good	VIOLATED	16	18	7	7	1	VIOLATED	17	23	8	7	16	7	OK		0.004
+PiDagMerge-a3-NothingMerged-good.log	merge-preruling	a3_merge a3 NothingMerged Scenario=good	VIOLATED	13	14	6	6	1	VIOLATED	17	23	8	6	13	6	OK		0.004
+PiDagMerge-a3-NothingMerged-live.log	merge-preruling	a3_merge a3 NothingMerged Scenario=live	VIOLATED	8	10	6	6	1	VIOLATED	9	14	6	6	8	6	OK		0.003
+PiDagMerge-a3-NothingMerged-ruling-free.log	current	a3_merge a3 NothingMerged Scenario=free	VIOLATED		4598		13	4	VIOLATED		168000		16			OK	sampled 8000 walks, 168000 states	0.044
+PiDagMerge-a3-StateNeverWaived-waiver.log	merge-preruling	a3_merge a3 StateNeverWaived Scenario=waiver	HOLDS	6	7	6	0	1	HOLDS	6	7	6	0	6	0	OK		0.002

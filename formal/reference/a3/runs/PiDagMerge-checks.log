@@ -1,0 +1,2964 @@
+WORKERS=1 TLC_HEAP=512m TLC_TIMEOUT=90 NODEADLOCK unset
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K2', 'NoLaundering', 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1', '-review']
+PiDagMerge       a22    NoLaundering           VIOLATED  33 distinct states found
+PiDagMerge       a3     NoLaundering           HOLDS     33 distinct states found
+PiDagMerge       a3-K2  NoLaundering           VIOLATED  21 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K2'
++ props=NoLaundering
++ consts='Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tag=-review
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge-a22-NoLaundering-review
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoLaundering-review.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9c258bf76137454be80631dfa9c67169cbc44ddae27dc96d0922760b6b9aa3ae'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:40+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoLaundering-review.states -config runs/PiDagMerge-a22-NoLaundering-review.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NoLaundering-review.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoLaundering-review.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoLaundering-review.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoLaundering-review.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoLaundering VIOLATED '33 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge-a3-NoLaundering-review
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ cut -c1-64
+++ sha256sum PiDagMerge.tla
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoLaundering-review.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 ce7674387fb4376bd2138390719353416cca4d476b068c7d4b8662641143d083'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:41+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoLaundering-review.states -config runs/PiDagMerge-a3-NoLaundering-review.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoLaundering-review.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoLaundering-review.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoLaundering-review.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoLaundering HOLDS '33 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge-a3-K2-NoLaundering-review
++ echo CONSTANTS
++ echo '  Mode = "a3-K2"'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K2-NoLaundering-review.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 220a8341310ef77d70546dc377223419b9fd5ad8767014182ec4f9f3316e1ca2'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:42+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K2-NoLaundering-review.states -config runs/PiDagMerge-a3-K2-NoLaundering-review.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-K2-NoLaundering-review.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K2-NoLaundering-review.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K2-NoLaundering-review.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K2-NoLaundering-review.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K2 NoLaundering VIOLATED '21 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K1 a3-K3', 'P:NoNewBreakage', 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1', '-flakyDebt']
+PiDagMerge       a22    NoNewBreakage          VIOLATED  11 distinct states found
+PiDagMerge       a3     NoNewBreakage          HOLDS     5 distinct states found
+PiDagMerge       a3-K1  NoNewBreakage          HOLDS     5 distinct states found
+PiDagMerge       a3-K3  NoNewBreakage          VIOLATED  7 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K1 a3-K3'
++ props=P:NoNewBreakage
++ consts='Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-flakyDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a22-NoNewBreakage-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoNewBreakage-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 2b37d66d0d864d809b5b313df8e7eefe9f9702dfa97cb8728d8d7da9275b75a7'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:43+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoNewBreakage-flakyDebt.states -config runs/PiDagMerge-a22-NoNewBreakage-flakyDebt.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a22-NoNewBreakage-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoNewBreakage-flakyDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoNewBreakage-flakyDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoNewBreakage-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoNewBreakage VIOLATED '11 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-NoNewBreakage-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoNewBreakage-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 f739fb0306d2f9520528e1b9b773cdc57d3dd5cbcdecff4c0ee7b0c1fb240ab1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:44+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoNewBreakage-flakyDebt.states -config runs/PiDagMerge-a3-NoNewBreakage-flakyDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoNewBreakage-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoNewBreakage-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoNewBreakage-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoNewBreakage HOLDS '5 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-K1-NoNewBreakage-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3-K1"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ cut -c1-64
+++ sha256sum PiDagMerge.tla
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 a9da3a5a53fa6d02af533e4b19f22f3b1fa0e6252d0e4c52c2e0a40fcb4375b1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:45+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.states -config runs/PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K1 NoNewBreakage HOLDS '5 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3-K3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 2c2709e62620de12341c7e74d8fdb01b97b0d7dce8a7f4107396ae8fd6403271'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:46+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.states -config runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K3 NoNewBreakage VIOLATED '7 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K1 a3-K3', 'P:NoNewBreakage', 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1', '-matrix']
+PiDagMerge       a22    NoNewBreakage          VIOLATED  13 distinct states found
+PiDagMerge       a3     NoNewBreakage          HOLDS     6 distinct states found
+PiDagMerge       a3-K1  NoNewBreakage          HOLDS     6 distinct states found
+PiDagMerge       a3-K3  NoNewBreakage          VIOLATED  8 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K1 a3-K3'
++ props=P:NoNewBreakage
++ consts='Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tag=-matrix
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a22-NoNewBreakage-matrix
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoNewBreakage-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 33efcd59b294758897c2853d08de34063bac11828ce682cf2a22f3f76b9406ab'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:47+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoNewBreakage-matrix.states -config runs/PiDagMerge-a22-NoNewBreakage-matrix.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a22-NoNewBreakage-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoNewBreakage-matrix.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoNewBreakage-matrix.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoNewBreakage-matrix.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoNewBreakage VIOLATED '13 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-NoNewBreakage-matrix
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoNewBreakage-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c722b8ade4d4572c192a587bdca78a0ae54770afc54881e52ff7a5eeadde932f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:48+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoNewBreakage-matrix.states -config runs/PiDagMerge-a3-NoNewBreakage-matrix.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoNewBreakage-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoNewBreakage-matrix.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoNewBreakage-matrix.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoNewBreakage HOLDS '6 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-K1-NoNewBreakage-matrix
++ echo CONSTANTS
++ echo '  Mode = "a3-K1"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K1-NoNewBreakage-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 0e9265e0cd4bbad99cac9495af577b5c1d443e46a06d07301bc39cc4cb9be189'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:49+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K1-NoNewBreakage-matrix.states -config runs/PiDagMerge-a3-K1-NoNewBreakage-matrix.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-K1-NoNewBreakage-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K1-NoNewBreakage-matrix.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K1-NoNewBreakage-matrix.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K1 NoNewBreakage HOLDS '6 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-K3-NoNewBreakage-matrix
++ echo CONSTANTS
++ echo '  Mode = "a3-K3"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K3-NoNewBreakage-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 133aea005ddf7983824859677f0660e3f38896b5027e4b43464bedb9f91de93e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:50+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K3-NoNewBreakage-matrix.states -config runs/PiDagMerge-a3-K3-NoNewBreakage-matrix.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a3-K3-NoNewBreakage-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K3-NoNewBreakage-matrix.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K3-NoNewBreakage-matrix.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K3-NoNewBreakage-matrix.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K3 NoNewBreakage VIOLATED '8 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K1 a3-K3', 'P:NoNewBreakage', 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1', '-genesis']
+PiDagMerge       a22    NoNewBreakage          VIOLATED  13 distinct states found
+PiDagMerge       a3     NoNewBreakage          HOLDS     6 distinct states found
+PiDagMerge       a3-K1  NoNewBreakage          VIOLATED  7 distinct states found
+PiDagMerge       a3-K3  NoNewBreakage          HOLDS     6 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K1 a3-K3'
++ props=P:NoNewBreakage
++ consts='Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tag=-genesis
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a22-NoNewBreakage-genesis
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoNewBreakage-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 da87b5797bf7511d096e39c1c9bffc0bc5c4f30652551320d7fadb5d03f97777'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:51+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoNewBreakage-genesis.states -config runs/PiDagMerge-a22-NoNewBreakage-genesis.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a22-NoNewBreakage-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoNewBreakage-genesis.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoNewBreakage-genesis.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoNewBreakage-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoNewBreakage VIOLATED '13 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-NoNewBreakage-genesis
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a3-NoNewBreakage-genesis.cfg
++ echo '# cfg    sha256 2b75585a950720d7bb332f6fa3d4b8303e00b8d61853d3986a3568898500dca2'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:52+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoNewBreakage-genesis.states -config runs/PiDagMerge-a3-NoNewBreakage-genesis.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoNewBreakage-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoNewBreakage-genesis.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoNewBreakage-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoNewBreakage HOLDS '6 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-K1-NoNewBreakage-genesis
++ echo CONSTANTS
++ echo '  Mode = "a3-K1"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K1-NoNewBreakage-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 f34c4666f87c5b4e751303928dc63d9059d63e10dce7f7707f76df4aff09f741'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:53+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K1-NoNewBreakage-genesis.states -config runs/PiDagMerge-a3-K1-NoNewBreakage-genesis.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a3-K1-NoNewBreakage-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K1-NoNewBreakage-genesis.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K1-NoNewBreakage-genesis.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K1-NoNewBreakage-genesis.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K1 NoNewBreakage VIOLATED '7 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-K3-NoNewBreakage-genesis
++ echo CONSTANTS
++ echo '  Mode = "a3-K3"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K3-NoNewBreakage-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 7636e9df3b193e3f8f566195a8e2aa6f897b5a8be42ec7ce239632e2be151cf5'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:54+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K3-NoNewBreakage-genesis.states -config runs/PiDagMerge-a3-K3-NoNewBreakage-genesis.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-K3-NoNewBreakage-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K3-NoNewBreakage-genesis.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K3-NoNewBreakage-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K3 NoNewBreakage HOLDS '6 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K4', 'GenesisBeforeAdvance', 'Scenario = "good"; O = o; K0 = k0; K1 = k1', '-genesis']
+PiDagMerge       a22    GenesisBeforeAdvance   VIOLATED  25 distinct states found
+PiDagMerge       a3     GenesisBeforeAdvance   HOLDS     17 distinct states found
+PiDagMerge       a3-K4  GenesisBeforeAdvance   VIOLATED  25 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K4'
++ props=GenesisBeforeAdvance
++ consts='Scenario = "good"; O = o; K0 = k0; K1 = k1'
++ tag=-genesis
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ tr ';' '\n'
++ echo 'Scenario = "good"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis.cfg
++ echo '# cfg    sha256 22c419c1f2c95180d4143b9b062e9f22473079440f3e87859f0292ea94c526ce'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:55+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis.states -config runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-GenesisBeforeAdvance-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 GenesisBeforeAdvance VIOLATED '25 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge-a3-GenesisBeforeAdvance-genesis
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "good"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-GenesisBeforeAdvance-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 39a2e53145884c17cde84be777fc2b249b0b426bc3e0ca7fd53597f088ca3c4e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:57+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-GenesisBeforeAdvance-genesis.states -config runs/PiDagMerge-a3-GenesisBeforeAdvance-genesis.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-GenesisBeforeAdvance-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-GenesisBeforeAdvance-genesis.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-GenesisBeforeAdvance-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 GenesisBeforeAdvance HOLDS '17 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=GenesisBeforeAdvance
++ case $p in
++ base=runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis
++ echo CONSTANTS
++ echo '  Mode = "a3-K4"'
++ echo 'Scenario = "good"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT GenesisBeforeAdvance'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 58f211659574642a4039cc5938489800062e018c79bd52740c450e8f7b626aab'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:58+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.states -config runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K4 GenesisBeforeAdvance VIOLATED '25 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K5atomic', 'JudgedAtCommit', 'Scenario = "race"; O = o; K0 = k0; K1 = k1', '-race']
+PiDagMerge       a22    JudgedAtCommit         VIOLATED  17 distinct states found
+PiDagMerge       a3     JudgedAtCommit         HOLDS     14 distinct states found
+PiDagMerge       a3-K5atomic JudgedAtCommit         VIOLATED  10 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K5atomic'
++ props=JudgedAtCommit
++ consts='Scenario = "race"; O = o; K0 = k0; K1 = k1'
++ tag=-race
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge-a22-JudgedAtCommit-race
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "race"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a22-JudgedAtCommit-race.cfg
++ echo '# cfg    sha256 70a5a6f35ed83517da88d8f6c2214baae397e724926215838a1d8ff72274a460'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:48:59+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-JudgedAtCommit-race.states -config runs/PiDagMerge-a22-JudgedAtCommit-race.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-JudgedAtCommit-race.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-JudgedAtCommit-race.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-JudgedAtCommit-race.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-JudgedAtCommit-race.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 JudgedAtCommit VIOLATED '17 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge-a3-JudgedAtCommit-race
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "race"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-JudgedAtCommit-race.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 86a8042142663f4d3ea28516905188448b00759fc71312bd33354885b63a7429'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:00+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-JudgedAtCommit-race.states -config runs/PiDagMerge-a3-JudgedAtCommit-race.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-JudgedAtCommit-race.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-JudgedAtCommit-race.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-JudgedAtCommit-race.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 JudgedAtCommit HOLDS '14 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=JudgedAtCommit
++ case $p in
++ base=runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race
++ echo CONSTANTS
++ echo '  Mode = "a3-K5atomic"'
++ echo 'Scenario = "race"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT JudgedAtCommit'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 7ffedcdf76ea198b86a83a17dd0ea661f0fbd94fa25d30f6807699d25211b4cc'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:01+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race.states -config runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K5atomic-JudgedAtCommit-race.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K5atomic JudgedAtCommit VIOLATED '10 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoLaundering', 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1', '-launderTest']
+PiDagMerge       a22    NoLaundering           VIOLATED  53 distinct states found
+PiDagMerge       a3     NoLaundering           VIOLATED  59 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props=NoLaundering
++ consts='Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tag=-launderTest
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge-a22-NoLaundering-launderTest
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ cut -c1-64
+++ sha256sum PiDagMerge.tla
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoLaundering-launderTest.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 1d99866eb7ca92150737410817bc46639128b94af3414d519c335d5635228df5'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:02+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoLaundering-launderTest.states -config runs/PiDagMerge-a22-NoLaundering-launderTest.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NoLaundering-launderTest.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoLaundering-launderTest.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoLaundering-launderTest.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoLaundering-launderTest.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoLaundering VIOLATED '53 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge-a3-NoLaundering-launderTest
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoLaundering-launderTest.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 b481a06bd38cb3be1cb9d22fdfb25c7da7d37e4045926a10a84c5bd0f6ab6ab1'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:03+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoLaundering-launderTest.states -config runs/PiDagMerge-a3-NoLaundering-launderTest.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NoLaundering-launderTest.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoLaundering-launderTest.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NoLaundering-launderTest.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoLaundering-launderTest.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoLaundering VIOLATED '59 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoLaundering', 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1', '-rerun']
+PiDagMerge       a22    NoLaundering           VIOLATED  39 distinct states found
+PiDagMerge       a3     NoLaundering           VIOLATED  44 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props=NoLaundering
++ consts='Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tag=-rerun
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge-a22-NoLaundering-rerun
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoLaundering-rerun.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 6bc469fd44164ac725ea7c535fe0825d5363d3535df19afa90b2b9cbad73f1f8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:04+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoLaundering-rerun.states -config runs/PiDagMerge-a22-NoLaundering-rerun.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NoLaundering-rerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoLaundering-rerun.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoLaundering-rerun.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoLaundering-rerun.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoLaundering VIOLATED '39 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoLaundering
++ case $p in
++ base=runs/PiDagMerge-a3-NoLaundering-rerun
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoLaundering'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoLaundering-rerun.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 0d5d9a5bfa37bd43e788a1ef2c752124581bb21afce2c04ebd9e567504372653'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:06+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoLaundering-rerun.states -config runs/PiDagMerge-a3-NoLaundering-rerun.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NoLaundering-rerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoLaundering-rerun.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NoLaundering-rerun.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoLaundering-rerun.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoLaundering VIOLATED '44 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoFlakyRerunEscape', 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1', '-flakyRerun']
+PiDagMerge       a22    NoFlakyRerunEscape     VIOLATED  91 distinct states found
+PiDagMerge       a3     NoFlakyRerunEscape     HOLDS     101 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props=NoFlakyRerunEscape
++ consts='Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tag=-flakyRerun
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 1b9cf278a1728d25154134baf7c1b5e042d2df71cfe97e6a8da7821997e06cc7'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:07+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.states -config runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoFlakyRerunEscape VIOLATED '91 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoFlakyRerunEscape
++ case $p in
++ base=runs/PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoFlakyRerunEscape'
+++ cut -c1-64
+++ sha256sum PiDagMerge.tla
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.cfg
++ echo '# cfg    sha256 46d7bab5cdb6a9dcdc7f7087cb8a1d866ffb7124b96fe82a64763e642cbe0c20'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:08+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.states -config runs/PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoFlakyRerunEscape HOLDS '101 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'P:NoNewBreakage', 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1', '-falsePass']
+PiDagMerge       a22    NoNewBreakage          VIOLATED  21 distinct states found
+PiDagMerge       a3     NoNewBreakage          VIOLATED  13 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props=P:NoNewBreakage
++ consts='Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tag=-falsePass
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a22-NoNewBreakage-falsePass
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoNewBreakage-falsePass.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 0ea07d93db3b1de4a9f1dfc000ca44968de6b17cb75594a400a333fbdb611967'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:09+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoNewBreakage-falsePass.states -config runs/PiDagMerge-a22-NoNewBreakage-falsePass.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a22-NoNewBreakage-falsePass.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoNewBreakage-falsePass.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoNewBreakage-falsePass.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoNewBreakage-falsePass.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoNewBreakage VIOLATED '21 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-NoNewBreakage-falsePass
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a3-NoNewBreakage-falsePass.cfg
++ echo '# cfg    sha256 a853acfbfa765411a44f78236bc882c8ebc4efdbc01e199a3dc31ce7012f39c7'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:10+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoNewBreakage-falsePass.states -config runs/PiDagMerge-a3-NoNewBreakage-falsePass.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a3-NoNewBreakage-falsePass.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoNewBreakage-falsePass.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NoNewBreakage-falsePass.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoNewBreakage-falsePass.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoNewBreakage VIOLATED '13 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K3state', 'StateNeverWaived', 'Scenario = "waiver"; O = o; K0 = k0; K1 = k1', '-waiver']
+PiDagMerge       a22    StateNeverWaived       VIOLATED  22 distinct states found
+PiDagMerge       a3     StateNeverWaived       HOLDS     6 distinct states found
+PiDagMerge       a3-K3state StateNeverWaived       VIOLATED  11 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K3state'
++ props=StateNeverWaived
++ consts='Scenario = "waiver"; O = o; K0 = k0; K1 = k1'
++ tag=-waiver
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge-a22-StateNeverWaived-waiver
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "waiver"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-StateNeverWaived-waiver.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 461d635a7a88e35140919a711747331cc56fe9aabef0a3a0792068c7b60b629b'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:11+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-StateNeverWaived-waiver.states -config runs/PiDagMerge-a22-StateNeverWaived-waiver.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-StateNeverWaived-waiver.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-StateNeverWaived-waiver.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-StateNeverWaived-waiver.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-StateNeverWaived-waiver.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 StateNeverWaived VIOLATED '22 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge-a3-StateNeverWaived-waiver
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "waiver"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-StateNeverWaived-waiver.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 e14e2bcbb7c27a94f7ee422ea6d8304e96ce2ec32a216a588034325339c97c13'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:12+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-StateNeverWaived-waiver.states -config runs/PiDagMerge-a3-StateNeverWaived-waiver.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-StateNeverWaived-waiver.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-StateNeverWaived-waiver.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-StateNeverWaived-waiver.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 StateNeverWaived HOLDS '6 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=StateNeverWaived
++ case $p in
++ base=runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver
++ echo CONSTANTS
++ echo '  Mode = "a3-K3state"'
++ echo 'Scenario = "waiver"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT StateNeverWaived'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 91139ad18a3f83ae49b650d4c745cc9d16950fd493b98617af8a59c9e3de2d73'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:13+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver.states -config runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K3state-StateNeverWaived-waiver.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K3state StateNeverWaived VIOLATED '11 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3 a3-K5queue', 'P:GoodEventuallyMerges LeaseExcludes NothingMerged', 'Scenario = "live"; O = o; K0 = k0; K1 = k1', '-live']
+PiDagMerge       a22    GoodEventuallyMerges   VIOLATED  17 distinct states found
+PiDagMerge       a22    LeaseExcludes          HOLDS     17 distinct states found
+PiDagMerge       a22    NothingMerged          VIOLATED  14 distinct states found
+PiDagMerge       a3     GoodEventuallyMerges   HOLDS     9 distinct states found
+PiDagMerge       a3     LeaseExcludes          HOLDS     9 distinct states found
+PiDagMerge       a3     NothingMerged          VIOLATED  8 distinct states found
+PiDagMerge       a3-K5queue GoodEventuallyMerges   VIOLATED  24 distinct states found
+PiDagMerge       a3-K5queue LeaseExcludes          VIOLATED  5 distinct states found
+PiDagMerge       a3-K5queue NothingMerged          VIOLATED  13 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3 a3-K5queue'
++ props='P:GoodEventuallyMerges LeaseExcludes NothingMerged'
++ consts='Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tag=-live
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge-a22-GoodEventuallyMerges-live
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-GoodEventuallyMerges-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 0346ceeb1dcd858977a5c785405006e70ad3994763125075a2a629d3e2ffce7b'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:14+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-GoodEventuallyMerges-live.states -config runs/PiDagMerge-a22-GoodEventuallyMerges-live.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a22-GoodEventuallyMerges-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-GoodEventuallyMerges-live.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-GoodEventuallyMerges-live.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-GoodEventuallyMerges-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 GoodEventuallyMerges VIOLATED '17 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge-a22-LeaseExcludes-live
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a22-LeaseExcludes-live.cfg
++ echo '# cfg    sha256 b2327c32f279a1001901dc598f83195043d7f39bba9e3919d5ffb78e6248dfd3'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:16+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-LeaseExcludes-live.states -config runs/PiDagMerge-a22-LeaseExcludes-live.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-LeaseExcludes-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-LeaseExcludes-live.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-LeaseExcludes-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 LeaseExcludes HOLDS '17 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge-a22-NothingMerged-live
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ tr ';' '\n'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NothingMerged-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 366dd6620f7246e31b2731421df0e66a3e68cb8014b3c085b4542b90d951d603'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:17+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NothingMerged-live.states -config runs/PiDagMerge-a22-NothingMerged-live.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NothingMerged-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NothingMerged-live.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NothingMerged-live.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NothingMerged-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NothingMerged VIOLATED '14 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge-a3-GoodEventuallyMerges-live
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-GoodEventuallyMerges-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 931a47f686f223256859bb15bfb6e81b963929a91cebcac8b38078a9258b4a62'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:18+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-GoodEventuallyMerges-live.states -config runs/PiDagMerge-a3-GoodEventuallyMerges-live.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-GoodEventuallyMerges-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-GoodEventuallyMerges-live.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-GoodEventuallyMerges-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 GoodEventuallyMerges HOLDS '9 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge-a3-LeaseExcludes-live
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-LeaseExcludes-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 4f196c760dfe9e7469070347fc174de31a017bc55842a761dc80b37ff047ce40'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:19+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-LeaseExcludes-live.states -config runs/PiDagMerge-a3-LeaseExcludes-live.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-LeaseExcludes-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-LeaseExcludes-live.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-LeaseExcludes-live.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 LeaseExcludes HOLDS '9 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge-a3-NothingMerged-live
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NothingMerged-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 385eae77b8063f28ea46a01f5bc486f55b5dd90e2c2a6ba76d9fc33754ae076d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:20+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NothingMerged-live.states -config runs/PiDagMerge-a3-NothingMerged-live.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NothingMerged-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NothingMerged-live.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NothingMerged-live.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NothingMerged-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NothingMerged VIOLATED '8 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:GoodEventuallyMerges
++ case $p in
++ kind=PROPERTY
++ name=GoodEventuallyMerges
++ base=runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live
++ echo CONSTANTS
++ echo '  Mode = "a3-K5queue"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY GoodEventuallyMerges'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 244de22a59dcd41a387939e0965807abd97c2907518e201a76c05be254c96a62'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:20+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.states -config runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.cfg PiDagMerge.tla
++ rc=13
++ rm -rf runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K5queue GoodEventuallyMerges VIOLATED '24 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=LeaseExcludes
++ case $p in
++ base=runs/PiDagMerge-a3-K5queue-LeaseExcludes-live
++ echo CONSTANTS
++ echo '  Mode = "a3-K5queue"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT LeaseExcludes'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K5queue-LeaseExcludes-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 8def32eb6e35fb350d070d5b8833af5413265f17512ddde51718f54427eba72a'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:21+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K5queue-LeaseExcludes-live.states -config runs/PiDagMerge-a3-K5queue-LeaseExcludes-live.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-K5queue-LeaseExcludes-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K5queue-LeaseExcludes-live.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K5queue-LeaseExcludes-live.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K5queue-LeaseExcludes-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K5queue LeaseExcludes VIOLATED '5 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge-a3-K5queue-NothingMerged-live
++ echo CONSTANTS
++ echo '  Mode = "a3-K5queue"'
++ echo 'Scenario = "live"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-K5queue-NothingMerged-live.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c166b04ee3cbc8981f50c8cd9d3b69a74f994bb7f41def04a7a7c66330c783af'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:23+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-K5queue-NothingMerged-live.states -config runs/PiDagMerge-a3-K5queue-NothingMerged-live.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-K5queue-NothingMerged-live.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-K5queue-NothingMerged-live.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-K5queue-NothingMerged-live.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-K5queue-NothingMerged-live.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3-K5queue NothingMerged VIOLATED '13 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a3', 'NothingMerged NoUnrelatedMerge', 'Scenario = "good"; O = o; K0 = k0; K1 = k1', '-good']
+PiDagMerge       a3     NothingMerged          VIOLATED  13 distinct states found
+PiDagMerge       a3     NoUnrelatedMerge       VIOLATED  16 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes=a3
++ props='NothingMerged NoUnrelatedMerge'
++ consts='Scenario = "good"; O = o; K0 = k0; K1 = k1'
++ tag=-good
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NothingMerged
++ case $p in
++ base=runs/PiDagMerge-a3-NothingMerged-good
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "good"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NothingMerged'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NothingMerged-good.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9d569029e558d50d1cd985a8061872ec0fd45e7f68eb10578a99fa7c0cf68a0c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:24+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NothingMerged-good.states -config runs/PiDagMerge-a3-NothingMerged-good.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NothingMerged-good.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NothingMerged-good.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NothingMerged-good.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NothingMerged-good.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NothingMerged VIOLATED '13 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NoUnrelatedMerge
++ case $p in
++ base=runs/PiDagMerge-a3-NoUnrelatedMerge-good
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "good"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoUnrelatedMerge'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoUnrelatedMerge-good.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 7f8d548bd0ae580be2dcc56da3dcf573a318cd8d83e2b60903ff07ac676d7a9c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:25+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoUnrelatedMerge-good.states -config runs/PiDagMerge-a3-NoUnrelatedMerge-good.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NoUnrelatedMerge-good.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoUnrelatedMerge-good.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NoUnrelatedMerge-good.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoUnrelatedMerge-good.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoUnrelatedMerge VIOLATED '16 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a3', 'P:NoNewBreakage DeferredDebtVisible NoDeferredMerge', 'Scenario = "defer"; O = o; K0 = k0; K1 = k1', '-defer']
+PiDagMerge       a3     NoNewBreakage          HOLDS     10 distinct states found
+PiDagMerge       a3     DeferredDebtVisible    HOLDS     10 distinct states found
+PiDagMerge       a3     NoDeferredMerge        VIOLATED  9 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes=a3
++ props='P:NoNewBreakage DeferredDebtVisible NoDeferredMerge'
++ consts='Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ tag=-defer
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-NoNewBreakage-defer
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoNewBreakage-defer.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 e0cc4480784dacfdf289cd0cc04dbc282da08ff58cbe632c39272786c2928d2f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:26+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoNewBreakage-defer.states -config runs/PiDagMerge-a3-NoNewBreakage-defer.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoNewBreakage-defer.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoNewBreakage-defer.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoNewBreakage-defer.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoNewBreakage HOLDS '10 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=DeferredDebtVisible
++ case $p in
++ base=runs/PiDagMerge-a3-DeferredDebtVisible-defer
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT DeferredDebtVisible'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-DeferredDebtVisible-defer.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 68d071b077a8bf0ba185e9a6da1bafbb22f3879c5c4e587448c405e9da90c8f8'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:27+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-DeferredDebtVisible-defer.states -config runs/PiDagMerge-a3-DeferredDebtVisible-defer.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-DeferredDebtVisible-defer.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-DeferredDebtVisible-defer.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-DeferredDebtVisible-defer.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 DeferredDebtVisible HOLDS '10 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NoDeferredMerge
++ case $p in
++ base=runs/PiDagMerge-a3-NoDeferredMerge-defer
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "defer"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoDeferredMerge'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoDeferredMerge-defer.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 cf82c96d51ead1d16ad9db1e49094ec09c284f13481421653340ac13c365fa3b'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:28+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoDeferredMerge-defer.states -config runs/PiDagMerge-a3-NoDeferredMerge-defer.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NoDeferredMerge-defer.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoDeferredMerge-defer.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NoDeferredMerge-defer.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoDeferredMerge-defer.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoDeferredMerge VIOLATED '9 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a3', 'NoOwnerWaivedMerge', 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1', '-owner']
+PiDagMerge       a3     NoOwnerWaivedMerge     VIOLATED  22 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes=a3
++ props=NoOwnerWaivedMerge
++ consts='Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tag=-owner
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoOwnerWaivedMerge
++ case $p in
++ base=runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOwnerWaivedMerge'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 494f245193169e89b3514eb9e1a40ce084dd9408279e55593e88e70f83308c14'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:29+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner.states -config runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoOwnerWaivedMerge-owner.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoOwnerWaivedMerge VIOLATED '22 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a3', 'P:NoNewBreakage NoOldDebtMerge', 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1', '-oldDebt']
+PiDagMerge       a3     NoNewBreakage          HOLDS     13 distinct states found
+PiDagMerge       a3     NoOldDebtMerge         VIOLATED  8 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes=a3
++ props='P:NoNewBreakage NoOldDebtMerge'
++ consts='Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-oldDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=P:NoNewBreakage
++ case $p in
++ kind=PROPERTY
++ name=NoNewBreakage
++ base=runs/PiDagMerge-a3-NoNewBreakage-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'PROPERTY NoNewBreakage'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoNewBreakage-oldDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 b027d134e49e419e95c9229dd9141d4c47dc55032af6255108f2f10e52e3c1af'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:30+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoNewBreakage-oldDebt.states -config runs/PiDagMerge-a3-NoNewBreakage-oldDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoNewBreakage-oldDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoNewBreakage-oldDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoNewBreakage-oldDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoNewBreakage HOLDS '13 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=NoOldDebtMerge
++ case $p in
++ base=runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoOldDebtMerge'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 acc7c7660f7db40236420d8e769d5e67d5dcc7a0614aff4a2c74c59a0f96d79f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:31+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt.states -config runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoOldDebtMerge-oldDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoOldDebtMerge VIOLATED '8 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1', '-promise-launderReview']
+PiDagMerge       a22    NoBypassedNegative     VIOLATED  33 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     71 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     33 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     33 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-launderReview
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 f58e5ad67092d01ed6e4f22774873d06001d841b59023c7df6a5cf5fd296f017'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:32+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-launderReview.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative VIOLATED '33 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ tr ';' '\n'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-launderReview.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 deeef70f35bc470f854b8124371ce5e123d97162366b7fb132e340f25ffb22ec'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:33+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-launderReview.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-launderReview.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-launderReview.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-launderReview.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-launderReview.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable HOLDS '71 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-launderReview.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 af56403c6487deb344f5900fbed3ce3f7f9137305836c0691e574aaed7946df0'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:34+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-launderReview.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-launderReview.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-launderReview.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-launderReview.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-launderReview.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '33 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-launderReview
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderReview"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-launderReview.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 44b7e2c477715e25657f7e2c6b532a64f53e59b5eb708978f1073e2cc935b017'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:35+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-launderReview.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-launderReview.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-launderReview.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-launderReview.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-launderReview.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable HOLDS '33 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1', '-promise-launderTest']
+PiDagMerge       a22    NoBypassedNegative     VIOLATED  53 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     183 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     101 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     101 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-launderTest
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 8a21d4733c8d32525fbb04ad43c40e87fae4b3256dea7493dc4e06046ad7034d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:36+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-launderTest.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative VIOLATED '53 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-launderTest
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-launderTest.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 7ff925a00bffd6a1b01e27a61cbd3cf695b14c5156475c049d56b9cdafc8b162'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:37+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-launderTest.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-launderTest.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-launderTest.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-launderTest.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-launderTest.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable HOLDS '183 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-launderTest
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-launderTest.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 120531a0b7a57a234af5c07f599684235a19a90bf66f27cda5bae0f6d921e3c9'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:38+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-launderTest.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-launderTest.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-launderTest.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-launderTest.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-launderTest.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '101 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-launderTest
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "launderTest"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge.tla
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-launderTest.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 7e647c3bd6e3add19d834ba680b7f9695ccb0acf92b0aa02b32c36625b78b48a'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:39+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-launderTest.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-launderTest.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-launderTest.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-launderTest.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-launderTest.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable HOLDS '101 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1', '-promise-rerun']
+PiDagMerge       a22    NoBypassedNegative     VIOLATED  39 distinct states found
+PiDagMerge       a22    EscapeAttributable     HOLDS     113 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     72 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     72 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-rerun
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 6c6309ed9e192654e11bdd61581146171aca9244b894eb7ca6d0eab6cc188a0f'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:40+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-rerun.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative VIOLATED '39 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-rerun
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-rerun.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 614a36f5be262ab04d853f13898cc04e1c01440942f975ec26eec1498f3b880d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:41+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-rerun.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-rerun.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-rerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-rerun.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-rerun.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable HOLDS '113 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-rerun
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-rerun.cfg
++ echo '# cfg    sha256 5c2f1d85587998a9a20d3d5bb140ec2d84f01be0d500a57ff6ce158529890fd4'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:42+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-rerun.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-rerun.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-rerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-rerun.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-rerun.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '72 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-rerun
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "rerun"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-rerun.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9a3d7b48e275a2f86e7c2f480070d4bd1dd981e7406455cf5c1de4f4e9ee369c'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:43+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-rerun.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-rerun.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-rerun.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-rerun.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-rerun.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable HOLDS '72 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1', '-promise-flakyDebt']
+PiDagMerge       a22    NoBypassedNegative     HOLDS     15 distinct states found
+PiDagMerge       a22    EscapeAttributable     VIOLATED  11 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     5 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     5 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-flakyDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 1471dcba7865dff9ac2f27fb9897622d0861f0cecc04985ca331073713303123'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:44+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative HOLDS '15 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 2b1acac9b39705a6dd98cd375c4efcd4b12e14216dcc8a275fb1f5821f1d5711'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:45+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.log
++ r=VIOLATED
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable VIOLATED '11 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c18441bcdfdd7e8edf0f2579a80ea40284289720a08fde85c8beb3b0bc4b455d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:46+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '5 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-flakyDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "flakyDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-flakyDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 20ad06fccae719beaec255253090406169daec1bf9fe76f65f43774a5bc485bd'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:47+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-flakyDebt.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-flakyDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-flakyDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-flakyDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-flakyDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable HOLDS '5 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1', '-promise-matrix']
+PiDagMerge       a22    NoBypassedNegative     HOLDS     25 distinct states found
+PiDagMerge       a22    EscapeAttributable     VIOLATED  13 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     6 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     6 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-matrix
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-matrix
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 a5a68c4a744860f67f89a97cfd2230b4b6a3496f87d26abbbeb027cf371cf2f7'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:48+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-matrix.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-matrix.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-matrix.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-matrix.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative HOLDS '25 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-matrix
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 6f96015c822fa87626e6fde8748694971b908a6cc2e62cfa136aa1c5f4ec5bac'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:49+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-matrix.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-matrix.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-matrix.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-EscapeAttributable-promise-matrix.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-matrix.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable VIOLATED '13 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-matrix
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 bd1d974423904794afd79e82ad9c21d5316e08822c82c7db6b6055bb307eaf4e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:50+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-matrix.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-matrix.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-matrix.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-matrix.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '6 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-matrix
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "matrix"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-matrix.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 d0bf0c31baef1ae508db6c8449c29778fad7766c8ddaa2d092d86c5588973142'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:51+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-matrix.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-matrix.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-matrix.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-matrix.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-matrix.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable HOLDS '6 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1', '-promise-genesis']
+PiDagMerge       a22    NoBypassedNegative     HOLDS     18 distinct states found
+PiDagMerge       a22    EscapeAttributable     VIOLATED  13 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     6 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     6 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-genesis
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-genesis
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 c1b7e1763234dd42918737e90f411cf18e31a9e693cd9d941bffe5a1c5696d40'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:52+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-genesis.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-genesis.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-genesis.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative HOLDS '18 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-genesis
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 2772484c7afe72caa28dbae5488ab188b917d40a937d4c0b921d36b393e357b3'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:53+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-genesis.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-genesis.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-genesis.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-EscapeAttributable-promise-genesis.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable VIOLATED '13 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-genesis
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 fd0a83c9878f24231c75a795ca2958767524783b0218c2a5e031fedea429b257'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:54+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-genesis.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-genesis.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-genesis.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '6 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-genesis
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "genesis"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-genesis.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 1e75b18be94f33f9ccfce2e4cc224486961c4771a4b4015a4e45ddb2f22ede5d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:55+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-genesis.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-genesis.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-genesis.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-genesis.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-genesis.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable HOLDS '6 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1', '-promise-falsePass']
+PiDagMerge       a22    NoBypassedNegative     HOLDS     36 distinct states found
+PiDagMerge       a22    EscapeAttributable     VIOLATED  24 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     14 distinct states found
+PiDagMerge       a3     EscapeAttributable     HOLDS     14 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-falsePass
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-falsePass
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-falsePass.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 b75cf93a151b7dc96703a202d4deb7ad007e1b15de5fdfb80463bcddb7f86526'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:56+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-falsePass.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-falsePass.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-falsePass.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-falsePass.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-falsePass.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative HOLDS '36 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ cut -c1-64
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass.cfg
++ echo '# cfg    sha256 c5bdc1705a4181fac32706512bee06639da81ae4803b4b149cb026544c5048b0'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:57+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-falsePass.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable VIOLATED '24 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-falsePass
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-falsePass.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 5578450be46cd6f0ad0e86dda8c56bb714a5f70d5aea6f352681827374f5ca7e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:58+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-falsePass.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-falsePass.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-falsePass.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-falsePass.log
++ r=HOLDS
+++ tail -1
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-falsePass.log
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '14 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-falsePass
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "falsePass"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-falsePass.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 95d26ca0ee8a2d3bc285d080adabf01c385ae22f640b8c4cd6dd64e136b5501e'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:59+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-falsePass.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-falsePass.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-falsePass.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-falsePass.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-falsePass.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable HOLDS '14 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a22 a3', 'NoBypassedNegative EscapeAttributable', 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1', '-promise-oldDebt']
+PiDagMerge       a22    NoBypassedNegative     HOLDS     25 distinct states found
+PiDagMerge       a22    EscapeAttributable     VIOLATED  13 distinct states found
+PiDagMerge       a3     NoBypassedNegative     HOLDS     13 distinct states found
+PiDagMerge       a3     EscapeAttributable     VIOLATED  8 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes='a22 a3'
++ props='NoBypassedNegative EscapeAttributable'
++ consts='Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-oldDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a22-NoBypassedNegative-promise-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-NoBypassedNegative-promise-oldDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 5b8d843b5bb3f4401a6798a71381475853c7b734d6d41bea0d6593a4f0fe3a8d'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:49:59+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-NoBypassedNegative-promise-oldDebt.states -config runs/PiDagMerge-a22-NoBypassedNegative-promise-oldDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a22-NoBypassedNegative-promise-oldDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-NoBypassedNegative-promise-oldDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-NoBypassedNegative-promise-oldDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 NoBypassedNegative HOLDS '25 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a22"'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 f85dfda739d9afb917b9f853ef651d50fa1ea4939370318cdb72be0bb779ab39'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:50:00+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt.states -config runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a22-EscapeAttributable-promise-oldDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a22 EscapeAttributable VIOLATED '13 distinct states found'
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NoBypassedNegative
++ case $p in
++ base=runs/PiDagMerge-a3-NoBypassedNegative-promise-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ sed 's/^ */  /'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NoBypassedNegative'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NoBypassedNegative-promise-oldDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 176feecc52e53ce9d9ac946a9f924cf3a99c8a24aa7fb21e6b05660755a379d5'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:50:01+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NoBypassedNegative-promise-oldDebt.states -config runs/PiDagMerge-a3-NoBypassedNegative-promise-oldDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NoBypassedNegative-promise-oldDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NoBypassedNegative-promise-oldDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NoBypassedNegative-promise-oldDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NoBypassedNegative HOLDS '13 distinct states found'
++ for p in $props
++ kind=INVARIANT
++ name=EscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT EscapeAttributable'
+++ sha256sum PiDagMerge.tla
+++ cut -c1-64
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 89c1b509e3ff33c0222b1e8c9a8142257cc28e9584f4d0209f55871dcf6d1928'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:50:02+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt.states -config runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt.cfg PiDagMerge.tla
++ rc=12
++ rm -rf runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt.log
++ r=VIOLATED
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-EscapeAttributable-promise-oldDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 EscapeAttributable VIOLATED '8 distinct states found'
++ exit 0
+
+wrapper_exit=0
+['bash', '-x', 'formal/a3/check.sh', 'PiDagMerge', 'a3', 'NewEscapeAttributable', 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1', '-promise-oldDebt']
+PiDagMerge       a3     NewEscapeAttributable  HOLDS     13 distinct states found
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagMerge
++ modes=a3
++ props=NewEscapeAttributable
++ consts='Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ tag=-promise-oldDebt
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n '' ']'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=NewEscapeAttributable
++ case $p in
++ base=runs/PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scenario = "oldDebt"; O = o; K0 = k0; K1 = k1'
++ sed 's/^ */  /'
++ tr ';' '\n'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT NewEscapeAttributable'
+++ cut -c1-64
+++ sha256sum PiDagMerge.tla
++ echo '# module sha256 65dadcf33e0dbf772dc4b7df47e6898dbcd7db705d32f80f52cde863e5224310'
+++ sha256sum runs/PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 9baea17a8e0aad7502138f48ef518ffda16eab2c40bdfa3f7bc7bb1563b446aa'
+++ date -Is
++ echo '# flags  <deadlock checked> <exhaustive> 2026-10-08T21:50:04+08:00'
++ timeout 90 java -Xmx512m -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 1 -metadir runs/PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.states -config runs/PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.cfg PiDagMerge.tla
++ rc=0
++ rm -rf runs/PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.states
++ grep -q 'No error has been found' runs/PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.log
++ r=HOLDS
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagMerge a3 NewEscapeAttributable HOLDS '13 distinct states found'
++ exit 0
+
+wrapper_exit=0

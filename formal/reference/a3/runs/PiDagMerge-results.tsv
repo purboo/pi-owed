@@ -1,0 +1,62 @@
+log	mode	scenario	property	status	distinct	generated	checked	traces	trace_steps	seed	module_sha
+PiDagMerge-a22-DeferredDebtVisible-ruling-defer.log	a22	defer	DeferredDebtVisible	HOLDS	22	41			-1	-324721086984406130	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-falsePass.log	a22	falsePass	DeferredDebtVisible	HOLDS	36	73			-1	2809696882489966759	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-flakyDebt.log	a22	flakyDebt	DeferredDebtVisible	HOLDS	15	26			-1	-4830063366060591577	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-genesis.log	a22	genesis	DeferredDebtVisible	HOLDS	18	27			-1	-3903250151812523842	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-launderReview.log	a22	launderReview	DeferredDebtVisible	HOLDS	71	151			-1	-9131485560291336846	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-launderTest.log	a22	launderTest	DeferredDebtVisible	HOLDS	183	453			-1	7957760555324985427	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-matrix.log	a22	matrix	DeferredDebtVisible	HOLDS	25	47			-1	-4226124367436846542	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-oldDebt.log	a22	oldDebt	DeferredDebtVisible	HOLDS	25	47			-1	8540699256372362697	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-DeferredDebtVisible-ruling-rerun.log	a22	rerun	DeferredDebtVisible	HOLDS	113	287			-1	3007319899876354616	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-defer.log	a22	defer	EscapeAttributable	HOLDS	22	41			-1	8891742938649930538	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-falsePass.log	a22	falsePass	EscapeAttributable	HOLDS	36	73			-1	6338528203830196483	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-flakyDebt.log	a22	flakyDebt	EscapeAttributable	HOLDS	15	26			-1	-768117331359401016	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-free.log	a22	free	EscapeAttributable	HOLDS-SIM		3024461	3024461	8000	-1	-1398937318763759230	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-genesis.log	a22	genesis	EscapeAttributable	HOLDS	18	27			-1	-8057181529475924435	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-launderReview.log	a22	launderReview	EscapeAttributable	HOLDS	71	151			-1	7706622049802339780	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-launderTest.log	a22	launderTest	EscapeAttributable	HOLDS	183	453			-1	-5023711764236225651	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-matrix.log	a22	matrix	EscapeAttributable	HOLDS	25	47			-1	-9153697913057330864	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-oldDebt.log	a22	oldDebt	EscapeAttributable	HOLDS	25	47			-1	841688268141374071	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-EscapeAttributable-ruling-rerun.log	a22	rerun	EscapeAttributable	HOLDS	113	287			-1	7572151651475442788	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-defer.log	a22	defer	NoBypassedNegative	HOLDS	22	41			-1	-3363953513270177054	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-falsePass.log	a22	falsePass	NoBypassedNegative	HOLDS	36	73			-1	4951929455683858031	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-flakyDebt.log	a22	flakyDebt	NoBypassedNegative	HOLDS	15	26			-1	-381603665753668280	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-free.log	a22	free	NoBypassedNegative	VIOLATED		5196	5257	16	12	-1051216705138399627	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-genesis.log	a22	genesis	NoBypassedNegative	HOLDS	18	27			-1	291667705820880594	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-launderReview.log	a22	launderReview	NoBypassedNegative	VIOLATED	33	45			7	2917165994349754355	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-launderTest.log	a22	launderTest	NoBypassedNegative	VIOLATED	53	70			7	-788585313778005055	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-matrix.log	a22	matrix	NoBypassedNegative	HOLDS	25	47			-1	1662146880490803387	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-oldDebt.log	a22	oldDebt	NoBypassedNegative	HOLDS	25	47			-1	-3581780685251524611	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NoBypassedNegative-ruling-rerun.log	a22	rerun	NoBypassedNegative	VIOLATED	39	52			7	5026696312905176208	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a22-NodeAcceptanceCovered-ruling-free.log	a22	free	NodeAcceptanceCovered	VIOLATED		2953	3036	10	12	1888451957712121656	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-defer.log	a3	defer	DeferredDebtVisible	HOLDS	10	13			-1	-1708091430512812463	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-falsePass.log	a3	falsePass	DeferredDebtVisible	HOLDS	14	24			-1	863250197191296023	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-flakyDebt.log	a3	flakyDebt	DeferredDebtVisible	HOLDS	5	6			-1	4087729772216328221	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-genesis.log	a3	genesis	DeferredDebtVisible	HOLDS	6	7			-1	1512498326588807099	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-launderReview.log	a3	launderReview	DeferredDebtVisible	HOLDS	33	50			-1	2629946876496008378	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-launderTest.log	a3	launderTest	DeferredDebtVisible	HOLDS	101	154			-1	-7178836081600796407	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-matrix.log	a3	matrix	DeferredDebtVisible	HOLDS	6	7			-1	-3312517939036896236	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-oldDebt.log	a3	oldDebt	DeferredDebtVisible	HOLDS	13	17			-1	-3387140036475523963	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-DeferredDebtVisible-ruling-rerun.log	a3	rerun	DeferredDebtVisible	HOLDS	72	109			-1	-774379443164250305	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-defer.log	a3	defer	EscapeAttributable	HOLDS	10	13			-1	-4405125780789112496	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-falsePass.log	a3	falsePass	EscapeAttributable	HOLDS	14	24			-1	-5533626144704452020	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-flakyDebt.log	a3	flakyDebt	EscapeAttributable	HOLDS	5	6			-1	171167307266834986	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-genesis.log	a3	genesis	EscapeAttributable	HOLDS	6	7			-1	1559488212756677435	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-launderReview.log	a3	launderReview	EscapeAttributable	HOLDS	33	50			-1	5868967038324608137	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-launderTest.log	a3	launderTest	EscapeAttributable	HOLDS	101	154			-1	1236989458084584246	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-matrix.log	a3	matrix	EscapeAttributable	HOLDS	6	7			-1	-8033280899503553623	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-oldDebt.log	a3	oldDebt	EscapeAttributable	HOLDS	13	17			-1	-3422928329202442639	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-EscapeAttributable-ruling-rerun.log	a3	rerun	EscapeAttributable	HOLDS	72	109			-1	-8067101746169758527	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-FreeCoreSafety-ruling-free.log	a3	free	FreeCoreSafety	HOLDS-SIM		12760539	12760539	40000	-1	9132539921166338765	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-FreeNoTwoMerges-ruling-free.log	a3	free	FreeNoTwoMerges	VIOLATED		576017	576158	1809	20	8161355951802614133	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-defer.log	a3	defer	NoBypassedNegative	HOLDS	10	13			-1	-1937586823678405290	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-falsePass.log	a3	falsePass	NoBypassedNegative	HOLDS	14	24			-1	-4026782301323475435	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-flakyDebt.log	a3	flakyDebt	NoBypassedNegative	HOLDS	5	6			-1	9099532893230834153	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-genesis.log	a3	genesis	NoBypassedNegative	HOLDS	6	7			-1	-4333548743913942459	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-launderReview.log	a3	launderReview	NoBypassedNegative	HOLDS	33	50			-1	-5965509162963963308	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-launderTest.log	a3	launderTest	NoBypassedNegative	HOLDS	101	154			-1	-4743506296937998764	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-matrix.log	a3	matrix	NoBypassedNegative	HOLDS	6	7			-1	-5162457210419953497	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-oldDebt.log	a3	oldDebt	NoBypassedNegative	HOLDS	13	17			-1	-4928613037324295988	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoBypassedNegative-ruling-rerun.log	a3	rerun	NoBypassedNegative	HOLDS	72	109			-1	-6147555819047808817	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NoDeferredMerge-ruling-free.log	a3	free	NoDeferredMerge	VIOLATED		127402	127554	399	14	-8200358880676582419	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+PiDagMerge-a3-NothingMerged-ruling-free.log	a3	free	NothingMerged	VIOLATED		4598	4644	16	12	-5224787934838410524	7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957

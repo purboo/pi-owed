@@ -1,0 +1,25 @@
+# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0
+# cfg    sha256 54f1550a86515ceb9cd99d169be898547dbafc3f991a912fe300f9fdf292cb2a
+# flags  <deadlock checked> -simulate num=1000 -depth 8 2026-10-08T21:34:52+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running Random Simulation with seed 6360629504433933192 with 4 workers on 20 cores with 910MB heap and 64MB offheap memory [pid: 3443845] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagAuth3.tla
+Parsing file /tmp/tlc-15112742138786731025/Integers.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Integers.tla)
+Parsing file /tmp/tlc-15112742138786731025/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-15112742138786731025/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-15112742138786731025/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Parsing file /tmp/tlc-15112742138786731025/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagAuth3
+Linting of module PiDagAuth3
+Starting... (2026-10-08 21:34:53)
+Computed 1 initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 21:34:53.
+Progress: 32001 states checked, 4000 traces generated (trace length: mean=3, var(x)=25, sd=5)
+The number of states generated: 32001
+Simulation using seed 6360629504433933192 and aril 0
+Finished in 07s at (2026-10-08 21:35:00)

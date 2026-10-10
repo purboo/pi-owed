@@ -1,0 +1,50 @@
++ set -u
+++ dirname formal/a3/check.sh
++ cd formal/a3
++ mkdir -p runs
++ mod=PiDagAuth3
++ modes=a3
++ props=AllSafety
++ consts='Scope = "free"; MaxLog = 6; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tag=-free-sim6
++ dl=
++ '[' 0 = 1 ']'
++ sim=
++ '[' -n num=500000 ']'
++ sim='-simulate num=500000 -depth 8'
++ errs=0
++ for mode in $modes
++ for p in $props
++ kind=INVARIANT
++ name=AllSafety
++ case $p in
++ base=runs/PiDagAuth3-a3-AllSafety-free-sim6
++ echo CONSTANTS
++ echo '  Mode = "a3"'
++ echo 'Scope = "free"; MaxLog = 6; Owner = Owner; P1 = P1; P2 = P2; W1 = W1; W2 = W2'
++ tr ';' '\n'
++ sed 's/^ */  /'
++ echo 'SPECIFICATION Spec'
++ echo 'INVARIANT AllSafety'
+++ cut -c1-64
+++ sha256sum PiDagAuth3.tla
++ echo '# module sha256 4e33cdf2dc776ed8501dab5cd3f86805a9ea8b3e63e2ac7a46d4badd259f21c0'
+++ sha256sum runs/PiDagAuth3-a3-AllSafety-free-sim6.cfg
+++ cut -c1-64
++ echo '# cfg    sha256 fa2533aa3323edf824c3186606b2cbdb5224ffae6160b465e25fbc66fe2f4093'
+++ date -Is
++ echo '# flags  <deadlock checked> -simulate num=500000 -depth 8 2026-10-08T21:56:47+08:00'
++ timeout 900 java -Xmx3g -XX:+UseParallelGC -cp ../tla2tools.jar tlc2.TLC -noGenerateSpecTE -workers 4 -simulate num=500000 -depth 8 -metadir runs/PiDagAuth3-a3-AllSafety-free-sim6.states -config runs/PiDagAuth3-a3-AllSafety-free-sim6.cfg PiDagAuth3.tla
++ rc=124
++ rm -rf runs/PiDagAuth3-a3-AllSafety-free-sim6.states
++ grep -q 'No error has been found' runs/PiDagAuth3-a3-AllSafety-free-sim6.log
++ grep -qE 'is violated|was violated|Deadlock reached|Temporal properties were violated' runs/PiDagAuth3-a3-AllSafety-free-sim6.log
++ '[' -n '-simulate num=500000 -depth 8' ']'
++ grep -qE '^Finished|The number of states generated' runs/PiDagAuth3-a3-AllSafety-free-sim6.log
++ grep -q '^Error' runs/PiDagAuth3-a3-AllSafety-free-sim6.log
++ r=HOLDS-SIM
+++ grep -oE '[0-9,]+ distinct states found' runs/PiDagAuth3-a3-AllSafety-free-sim6.log
+++ tail -1
++ printf '%-16s %-6s %-22s %-9s %s\n' PiDagAuth3 a3 AllSafety HOLDS-SIM ''
+PiDagAuth3       a3     AllSafety              HOLDS-SIM 
++ exit 0

@@ -1,0 +1,27 @@
+# module sha256 7972e7a830fe5a503653abc3c5e3edbf8f983f6d232254f41e05432927905957
+# cfg    sha256 2c558fdb99751cf886d16553ae2fdefbde79f1dbeaa27a6a4a46d234013f4715
+# flags  <deadlock checked> <exhaustive> 2026-10-08T22:10:34+08:00
+TLC2 Version 2026.10.06.014338 (rev: 94d0c50)
+Running breadth-first search Model-Checking with fp 28 and seed 1512498326588807099 with 1 worker on 20 cores with 477MB heap and 64MB offheap memory [pid: 3483439] (Linux 5.15.0-139-generic amd64, Ubuntu 11.0.27 64bit, MSBDiskFPSet, DiskStateQueue).
+Parsing file /home/purboo/project/pi-things/pi-dag/formal/a3/PiDagMerge.tla
+Parsing file /tmp/tlc-14380136463818529157/Naturals.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Naturals.tla)
+Parsing file /tmp/tlc-14380136463818529157/FiniteSets.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/FiniteSets.tla)
+Parsing file /tmp/tlc-14380136463818529157/Sequences.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/Sequences.tla)
+Parsing file /tmp/tlc-14380136463818529157/TLC.tla (jar:file:/home/purboo/project/pi-things/pi-dag/formal/tla2tools.jar!/tla2sany/StandardModules/TLC.tla)
+Semantic processing of module Naturals
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module TLC
+Semantic processing of module PiDagMerge
+Linting of module PiDagMerge
+Starting... (2026-10-08 22:10:35)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-10-08 22:10:35.
+Model checking completed. No error has been found.
+  Estimates of the probability that TLC did not check all reachable states
+  because two distinct states had the same fingerprint:
+  calculated (optimistic):  val = 3.3E-19
+7 states generated, 6 distinct states found, 0 states left on queue.
+The depth of the complete state graph search is 6.
+The average outdegree of the complete state graph is 1 (minimum is 0, the maximum 1 and the 95th percentile is 1).
+Finished in 00s at (2026-10-08 22:10:35)
