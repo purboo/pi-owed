@@ -76,7 +76,7 @@ export interface Report {
   changes: { subject: string; obligation: string; before?: string; after: string }[];
   /** Owner entries after `since`, except `adopt` (listed once, under `adoptions`). */
   ownerActions: Entry[];
-  /** Owner adoptions of trunk commits made outside owed, after `since`. */
+  /** Adoptions of trunk commits made outside owed, after `since` (owner ones, and parent ones under allowance). */
   adoptions: AdoptionView[];
   /** Driver halts after `since`, plus every still active halt (`active`). */
   halts: (HaltEntry & { active: boolean })[];
@@ -93,6 +93,11 @@ export const receiptText = (e: EvidenceEntry): string => `Receipt #${e.seq} ${e.
 /** CLI owner confirmation for adopt: full prior..commit, commit count, every changed path (one per line) and the note, escaped onto single lines. */
 export function renderAdoptPreview(p: AdoptPreview, note: string): string {
   return [`Adopt trunk ${oneLine(p.trunk)}: ledger trunk ${p.prior}..${p.commit}`, `${plural(p.commits, 'commit')} made outside owed, not reviewed by owed; adopting makes ${p.commit} the ledger trunk.`, `Changed paths (${p.changed.length}):${p.changed.length ? '' : ' none'}`, ...p.changed.map(path => `  ${oneLine(path)}`), `Note: ${oneLine(note)}`].join('\n');
+}
+/** Owner adoptions under the owner-decisions heading, parent adoptions (under allowance) under their own; each omitted when empty. */
+function adoptionSections(all: AdoptionView[] | undefined, section: (title: string, lines: string[]) => string[], owner: string, parent: string): string[] {
+  const own = (all ?? []).filter(a => a.allowance === undefined), allowed = (all ?? []).filter(a => a.allowance !== undefined);
+  return [...(own.length ? section(owner, own.map(adoptionText)) : []), ...(allowed.length ? section(parent, allowed.map(adoptionText)) : [])];
 }
 /** prior..commit, commit count, changed paths and note of one adoption. */
 export function adoptionText(a: AdoptionView): string {
@@ -242,7 +247,7 @@ export function renderReport(v: Report): string {
     ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by}${r.channel === 'delegated' ? ' (delegated)' : ''} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
     ...list('Owner decisions needed', v.decisions.map(itemText)),
     ...list('Owner actions', v.ownerActions.map(entryLine)),
-    ...(v.adoptions?.length ? list('Trunk adoptions (owner decisions: commits made outside owed)', v.adoptions.map(adoptionText)) : []),
+    ...adoptionSections(v.adoptions, list, 'Trunk adoptions (owner decisions: commits made outside owed)', 'Trunk adoptions under allowance (parent adoptions: commits made outside owed)'),
     ...(v.halts?.length ? list('Driver halts', v.halts.map(h => `${h.node}: ${haltText(h)}${h.active ? ' (active)' : ' (cleared)'}`)) : []),
     ...(v.receipts?.length ? list('Receipts (manual, informational)', v.receipts.map(receiptText)) : []),
     ...renderEscapes(v.escapes)].join('\n');
@@ -286,8 +291,10 @@ export interface BriefProgress { node: string; phase: 'dispatched' | 'submitted'
 export interface Brief {
   since: number | string; now: string;
   decisions: BriefDecision[]; merged: BriefMerged[]; rejected: BriefBlock[]; inProgress: BriefProgress[];
-  /** Owner adoptions of trunk commits made outside owed after `since` (shown only when there are any). */
+  /** Adoptions of trunk commits made outside owed after `since` (shown only when there are any): owner ones as owner decisions, parent ones under allowance apart. */
   adoptions: AdoptionView[];
+  /** Plan downgrades a parent recorded under an allowance after `since` (D21.3), labelled as in the report (shown only when there are any). */
+  allowanceDowngrades: State['downgrades'];
   /** D25.5: owner entries with channel `delegated` after `since`, in ledger order (the brief's first section, shown when there are any). */
   delegated: BriefDelegated[];
   totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number };
@@ -387,7 +394,8 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
   const count = (phase: NodeState['phase']): number => nodes.filter(n => n.phase === phase).length;
   const adoptions = s.adoptions.filter(a => { const e = entries.find(x => x.seq === a.seq); return !!e && included(e); });
   const delegated = entries.filter(e => e.channel === 'delegated' && e.by.startsWith('owner:') && included(e)).map(delegatedAct);
-  return { since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, rejected, inProgress,
+  const allowanceDowngrades = s.downgrades.filter(d => { const e = entries.find(x => x.seq === d.seq); return d.allowance !== undefined && !!e && included(e); });
+  return { since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress,
     totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: count('blocked') } };
 }
 /** D25.5: one delegated owner entry as kind, node, what it did and its note or reason. */
@@ -419,7 +427,8 @@ export function renderBrief(v: Brief): string {
     ...(v.delegated?.length ? section(`Owner acts (delegated) since ${since}`, v.delegated.map(delegatedText)) : []),
     ...section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)),
     ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.manualItems?.length ? `, ${m.manualItems.length} manual (${m.manualItems.join(', ')})` : ''}${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
-    ...(v.adoptions?.length ? section('Adopted outside owed (owner decisions)', v.adoptions.map(adoptionText)) : []),
+    ...adoptionSections(v.adoptions, section, 'Adopted outside owed (owner decisions)', 'Adopted outside owed (parent adoptions under allowance)'),
+    ...(v.allowanceDowngrades?.length ? section('Downgrades under allowance', v.allowanceDowngrades.flatMap(d => d.items.map(i => `#${d.seq} ${allowanceLabel(d)} ${i.node}: ${i.what}`))) : []),
     ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),
     ...section('In progress', v.inProgress.map(p => `${p.node} ${p.phase} (attempt ${p.attempt}): dispatched ${age(p.ageMs)} ago${p.submitAgeMs !== undefined ? `, submitted ${age(p.submitAgeMs)} ago` : ''}`)),
     `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies`].join('\n');

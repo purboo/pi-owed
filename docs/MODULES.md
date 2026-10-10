@@ -31,6 +31,8 @@ export const WORKTREE_DEFAULTS: WorktreesConfig;       // {root: '.owed/wt', bra
 export const DEFAULT_NODE_TYPE = 'feat';
 export function worktreesConfig(plan: Plan): WorktreesConfig;   // plan.worktrees or the defaults
 export function branchTemplateErrors(template: string, label: string): string[];   // needs {node} and {attempt}; only {type} besides
+export function branchAmbiguityErrors(template: string, label: string): string[]; // G4: {node} once; {attempt}/{type} separated from it (sufficient injectivity rule)
+export function worktreesErrors(cfg: WorktreesConfig): string[];   // G4: control characters in root/branch + ambiguity; checked by ops when a plan is recorded, not on replay
 export function expandBranch(template: string, spec: Pick<NodeSpec, 'id' | 'type'>, attempt: number): string;
 ```
 `parsePlan` also parses the D23 node fields `approve` (only `owner`) and `evidence` ([{id, what, by}], `by` default reviewer), set only when present; `manualDowngrades(node, prev, next)` (`approve removed`, `evidence <id> removed|weakened`) is shared by `planDowngrades` and the reducer's detection; `EVIDENCE_ID` is the id pattern.
@@ -118,7 +120,7 @@ D23 (SPEC §6.2 items 8–9): `manualKeys(spec, patch)` = the `approve`/`evidenc
 `reduce` fills `NodeState.runs` (per-attempt launches/sends) and `NodeState.halt` (cleared by a later non-driver, non-executor entry on the node or a ruling naming it, or a new attempt).
 Allowances (SPEC §3.4, D21), pure:
 ```ts
-export function uncoveredDowngrades(prev: Plan, next: Plan, claimed?: Downgrade[]): Downgrade[];  // detected + claimed downgrades no rule of prev covers; [] = a parent may record the update
+export function uncoveredDowngrades(prev: Plan, next: Plan, claimed?: Downgrade[]): Downgrade[];  // detected + claimed downgrades no rule of prev covers, each once (a claimed item whose detected wording is listed is left out); [] = a parent may record the update
 export function adoptPrefixes(plan: Plan): string[];                    // `adopt` prefixes of every rule
 export function unadoptable(plan: Plan, changed: readonly string[]): string | undefined;  // first path outside them
 export function writesAllowed(plan: Plan, node: string, paths: readonly string[]): boolean;  // a matching rule's writes prefixes cover every path

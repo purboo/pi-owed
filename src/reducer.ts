@@ -403,7 +403,18 @@ function covered(prev: Plan, next: Plan, d: Downgrade, claimed: boolean): boolea
  * ones and the `claimed` ones of the plan entry (D21.2). Empty = a parent may record the update without an owner.
  */
 export function uncoveredDowngrades(prev: Plan, next: Plan, claimed: Downgrade[] = []): Downgrade[] {
-  return [...downgradeDetails(prev, next).filter(d => !covered(prev, next, d, false)), ...claimed.filter(d => !covered(prev, next, d, true))];
+  const detected = downgradeDetails(prev, next).filter(d => !covered(prev, next, d, false)), seen = new Set(detected.map(d => `${d.node}\n${d.what}`));
+  // Each downgrade once (G4): a claimed item is left out when its detected wording is already listed.
+  return [...detected, ...claimed.filter(d => !covered(prev, next, d, true) && !detectedWordings(d.what).some(w => seen.has(`${d.node}\n${w}`)))].filter((d, i, all) => all.findIndex(x => x.node === d.node && x.what === d.what) === i);
+}
+/** The downgradeDetails wordings a planDowngrades item (plan.ts) may have; the item itself when the wording is shared. */
+function detectedWordings(what: string): string[] {
+  if (what === 'review count lowered' || what === 'review rank lowered') return ['review count/rank reduced'];
+  if (what === 'writes widened') return ['writes scope expanded'];
+  const out = [what], mutants = ' mutants removed or changed, or min_kill reduced';
+  const pairs: [string, string][] = [[' removed', ' check removed'], [' red disabled', ' red disabled'], [' min_tests lowered', ' min_tests reduced'], [' mutants removed', mutants], [' min_kill lowered', mutants]];
+  if (what.startsWith('check ')) for (const [claimed, detected] of pairs) if (what.endsWith(claimed)) out.push(`${what.slice(6, what.length - claimed.length)}${detected}`);
+  return out;
 }
 /** `adopt` prefixes of every rule of `plan` (D21.4). */
 export function adoptPrefixes(plan: Plan): string[] { return (plan.allow ?? []).flatMap(r => r.adopt ?? []); }

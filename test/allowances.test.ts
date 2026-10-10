@@ -87,20 +87,20 @@ test('coverage: only rules of the prior plan, on matching nodes, within their bo
   assert.deepEqual(gaps(edit(base(), 'p', n => { n.checks = [check('core-p')]; })), []);
   assert.deepEqual(gaps(edit(base(), 'p', n => { n.checks = [{ ...check('ui-p'), run: 'false' }, check('core-p')]; })), [], 'a definition change of an allowed check');
   // Not covered: below the bound, outside the prefix, other check ids, other nodes.
-  assert.deepEqual(gaps(edit(base(), 'p', n => { n.review = { count: 0, min_rank: 2 }; })), ['p: review count/rank reduced', 'p: review count lowered']);
-  assert.deepEqual(gaps(edit(base(), 'p', n => { n.writes = ['p/', 'src/']; })), ['p: writes scope expanded', 'p: writes widened']);
-  assert.deepEqual(gaps(edit(base(), 'p', n => { n.checks = [check('ui-p')]; })), ['p: core-p check removed', 'p: check core-p removed']);
-  assert.deepEqual(gaps(edit(base(), 'q', n => { n.review = { count: 0, min_rank: 1 }; })), ['q: review count/rank reduced', 'q: review count lowered']);
+  assert.deepEqual(gaps(edit(base(), 'p', n => { n.review = { count: 0, min_rank: 2 }; })), ['p: review count/rank reduced']);
+  assert.deepEqual(gaps(edit(base(), 'p', n => { n.writes = ['p/', 'src/']; })), ['p: writes scope expanded']);
+  assert.deepEqual(gaps(edit(base(), 'p', n => { n.checks = [check('ui-p')]; })), ['p: core-p check removed']);
+  assert.deepEqual(gaps(edit(base(), 'q', n => { n.review = { count: 0, min_rank: 1 }; })), ['q: review count/rank reduced']);
   // Never covered, even by a rule that allows everything on every node.
   const all: Spec = { ...base(), allow: [{ review_count: 0, review_rank: 1, writes: ['docs/', 'p/'], checks: ['*', '**'] }] }, wide = P(all);
-  assert.deepEqual(gaps({ ...all, nodes: (all.nodes as Spec[]).filter(n => n.id !== 'x') }, wide), ['x: node removed', 'x: node removed']);
-  assert.deepEqual(gaps({ ...all, invariants: [] }, wide), ['trunk: health check removed', 'trunk: check health removed']);
+  assert.deepEqual(gaps({ ...all, nodes: (all.nodes as Spec[]).filter(n => n.id !== 'x') }, wide), ['x: node removed']);
+  assert.deepEqual(gaps({ ...all, invariants: [] }, wide), ['trunk: health check removed']);
   assert.deepEqual(gaps({ ...all, setup: 'npm ci' }, wide), ['*: setup/closure changed; cannot prove obligations were not reduced']);
   assert.deepEqual(gaps(all, P(edit(all, 'q', n => { n.deps = ['p']; }))), ['q: dependency removed']);
   // The new plan's rules never cover its own downgrades; changing allow is itself an owner-only downgrade.
   const none = base(); delete none.allow;
-  assert.deepEqual(gaps(edit(base(), 'p', n => { n.review = { count: 1, min_rank: 1 }; }), P(none)), ['trunk: allow changed', 'p: review count/rank reduced', 'p: review count lowered', 'p: review rank lowered', 'trunk: allow changed']);
-  assert.deepEqual(gaps({ ...base(), allow: [ALLOW[0], { adopt: ['testdata/', 'src/'] }] }), ['trunk: allow changed', 'trunk: allow changed']);
+  assert.deepEqual(gaps(edit(base(), 'p', n => { n.review = { count: 1, min_rank: 1 }; }), P(none)), ['trunk: allow changed', 'p: review count/rank reduced']);
+  assert.deepEqual(gaps({ ...base(), allow: [ALLOW[0], { adopt: ['testdata/', 'src/'] }] }), ['trunk: allow changed']);
   // Deleting whole rules (or the block) is not a downgrade.
   assert.deepEqual(planDowngrades(prev, P({ ...base(), allow: [ALLOW[1]] })), []);
   assert.deepEqual(gaps(none), []);
@@ -133,15 +133,15 @@ test('parent plan updates: covered downgrades need no owner, stay in ΔO⁻ labe
     // Uncovered parent updates are refused, listing what no rule covers; nothing is recorded.
     const before = await entries(r.cwd);
     const refuse = async (plan: Spec, re: RegExp) => { await assert.rejects(setPlan(r.cwd, plan), (err: Error) => /Only owner may approve a plan that reduces obligations; not covered by an allowance of the current plan: /.test(err.message) && re.test(err.message)); };
-    await refuse(edit(eased, 'p', n => { n.review = { count: 0, min_rank: 1 }; }), /p: review count\/rank reduced; p: review count lowered$/);
-    await refuse(edit(eased, 'p', n => { n.checks = []; }), /p: core-p check removed; p: check core-p removed$/);
-    await refuse(edit(eased, 'q', n => { n.review = { count: 0, min_rank: 1 }; }), /q: review count lowered/);
-    await refuse(edit(eased, 'p', n => { n.writes = ['p/', 'docs/api/', 'src/']; }), /p: writes widened/);
+    await refuse(edit(eased, 'p', n => { n.review = { count: 0, min_rank: 1 }; }), /p: review count\/rank reduced$/);
+    await refuse(edit(eased, 'p', n => { n.checks = []; }), /p: core-p check removed$/);
+    await refuse(edit(eased, 'q', n => { n.review = { count: 0, min_rank: 1 }; }), /q: review count\/rank reduced$/);
+    await refuse(edit(eased, 'p', n => { n.writes = ['p/', 'docs/api/', 'src/']; }), /p: writes scope expanded$/);
     await refuse({ ...eased, allow: [...ALLOW, { nodes: ['q'], review_count: 0 }] }, /trunk: allow changed/);
     await refuse({ ...eased, setup: 'true' }, /\*: setup\/closure changed/);
     { const out = await cli(r.cwd, ['why', 'p']); assert.equal(out.code, 0); }
     await writeFile(join(r.root, 'q0.json'), JSON.stringify(edit(eased, 'q', n => { n.review = { count: 0, min_rank: 1 }; })));
-    { const out = await cli(r.cwd, ['plan', join(r.root, 'q0.json')]); assert.equal(out.code, 1); assert.match(out.stderr, /Refused: .*not covered by an allowance of the current plan: q: review count\/rank reduced; q: review count lowered/); }
+    { const out = await cli(r.cwd, ['plan', join(r.root, 'q0.json')]); assert.equal(out.code, 1); assert.match(out.stderr, /Refused: .*not covered by an allowance of the current plan: q: review count\/rank reduced(?!;)/); }
     assert.deepEqual(await entries(r.cwd), before, 'refusals record nothing');
     // The owner adds a rule for q: S moves to that entry; a parent downgrade of q is then covered and labelled with it.
     const widened = { ...eased, allow: [...ALLOW, { nodes: ['q'], review_count: 0 }] };
@@ -243,7 +243,7 @@ test('pi: owed_adopt and owed_plan as parent under an allowance show no dialog; 
     const before = await entries(r.cwd);
     const refused = await h.call('owed_plan', { plan: 'q0.json', as: 'parent:pi' });
     assert.equal(refused.isError, true);
-    assert.match(text(refused), /Only owner may confirm plan downgrades; not covered by an allowance of the current plan: q: review count\/rank reduced; q: review count lowered$/);
+    assert.match(text(refused), /Only owner may confirm plan downgrades; not covered by an allowance of the current plan: q: review count\/rank reduced$/);
     assert.deepEqual(await entries(r.cwd), before);
     const confirmed = await h.call('owed_plan', { plan: 'q0.json' });
     assert.notEqual(confirmed.isError, true, text(confirmed));
@@ -320,15 +320,15 @@ test('coverage: evidence <id> removed/weakened covered by a checks glob on a mat
   assert.deepEqual(planDowngrades(prev, P(weakened)), [{ node: 'p', what: 'evidence ui-shot weakened' }]);
   assert.deepEqual(gaps(weakened), []);
   // Not covered: an id outside the globs, a node no rule matches, or a rule without `checks`.
-  assert.deepEqual(gaps(ev(e => e.filter(x => x.id !== 'core-sign'))), ['p: evidence core-sign removed', 'p: evidence core-sign removed']);
-  assert.deepEqual(gaps(ev(e => e.map(x => x.id === 'core-sign' ? { ...x, by: 'parent' } : x))), ['p: evidence core-sign weakened', 'p: evidence core-sign weakened']);
+  assert.deepEqual(gaps(ev(e => e.filter(x => x.id !== 'core-sign'))), ['p: evidence core-sign removed']);
+  assert.deepEqual(gaps(ev(e => e.map(x => x.id === 'core-sign' ? { ...x, by: 'parent' } : x))), ['p: evidence core-sign weakened']);
   const onX = edit(base(), 'x', n => { n.evidence = [{ id: 'ui-x', what: 'look' }]; });
-  assert.deepEqual(gaps(edit(onX, 'x', n => { n.evidence = []; }), P(onX)), ['x: evidence ui-x removed', 'x: evidence ui-x removed']);
+  assert.deepEqual(gaps(edit(onX, 'x', n => { n.evidence = []; }), P(onX)), ['x: evidence ui-x removed']);
   const noChecks = { ...manual(), allow: [{ nodes: ['p'], review_count: 0 }] };
-  assert.deepEqual(gaps({ ...removed, allow: noChecks.allow }, P(noChecks)), ['p: evidence ui-shot removed', 'p: evidence ui-shot removed']);
+  assert.deepEqual(gaps({ ...removed, allow: noChecks.allow }, P(noChecks)), ['p: evidence ui-shot removed']);
   // Never covered, even by a rule that allows every check id on every node.
   const all: Spec = { ...manual(), allow: [{ review_count: 0, review_rank: 1, writes: ['docs/', 'p/'], checks: ['*', '**'] }] }, wide = P(all);
-  assert.deepEqual(gaps(edit(all, 'p', n => { delete n.approve; }), wide), ['p: approve removed', 'p: approve removed']);
+  assert.deepEqual(gaps(edit(all, 'p', n => { delete n.approve; }), wide), ['p: approve removed']);
   assert.deepEqual(gaps(edit(all, 'p', n => { n.evidence = []; }), wide), [], 'every evidence id matches *');
   assert.deepEqual(gaps({ ...all, exec: { wrap: ['true'] } }, wide), ['*: exec changed; cannot prove obligations were not reduced']);
   assert.deepEqual(gaps({ ...all, exec: { env: { A: '1' } } }, P({ ...all, exec: { env: { A: '0' } } })), ['*: exec changed; cannot prove obligations were not reduced']);
@@ -348,8 +348,8 @@ test('parent plan updates: a covered evidence removal is recorded under allowanc
     const current = edit(manual(), 'p', n => { n.evidence = (n.evidence as Spec[]).filter(x => x.id !== 'ui-shot'); });
     const before = await entries(r.cwd);
     const refuse = async (plan: Spec, re: RegExp) => { await assert.rejects(setPlan(r.cwd, plan), (err: Error) => /Only owner may approve a plan that reduces obligations; not covered by an allowance of the current plan: /.test(err.message) && re.test(err.message)); };
-    await refuse(edit(current, 'p', n => { delete n.approve; }), /p: approve removed; p: approve removed$/);
-    await refuse(edit(current, 'p', n => { n.evidence = []; }), /p: evidence core-sign removed; p: evidence core-sign removed$/);
+    await refuse(edit(current, 'p', n => { delete n.approve; }), /plan: p: approve removed$/);
+    await refuse(edit(current, 'p', n => { n.evidence = []; }), /plan: p: evidence core-sign removed$/);
     await refuse({ ...current, exec: { wrap: ['true'] } }, /: \*: exec changed; cannot prove obligations were not reduced$/);
     assert.deepEqual(await entries(r.cwd), before, 'refusals record nothing');
     // The owner may still make them.

@@ -162,7 +162,18 @@ nodes:
 ```
 
 The branch template must contain `{node}` and `{attempt}`; any placeholder other
-than `{node}`, `{attempt}` and `{type}` is a plan error. A plan without the block
+than `{node}`, `{attempt}` and `{type}` is a plan error. A plan being recorded
+(`init`, `plan`) is also refused (usage, nothing recorded) when `root` or the
+template contains a control character (a code point below 0x20, 0x7f, U+2028 or
+U+2029) or when the template is ambiguous, i.e. two distinct (node, attempt) pairs
+could expand to the same name. The rule is sufficient, not exact: `{node}` occurs
+exactly once, every `{attempt}` or `{type}` before it is directly followed by a
+literal character that cannot occur in its value (a digit for `{attempt}`; a
+lowercase letter, digit or `-` for `{type}`), and every one after it is directly
+preceded by one. So `owed/{node}/{attempt}` and `{type}/{node}-{attempt}` are
+accepted, `{node}{attempt}` (`a1`+`1` and `a`+`11` give `a11`) and
+`{node}-{type}-{attempt}` are refused. These checks apply to plans being recorded,
+not to replay: a ledger whose recorded plan has such a block stays readable. A plan without the block
 parses to a plan without a `worktrees` key (the same canonical plan and sha as
 0.4.1); a block present is filled with the defaults. Neither `worktrees` nor a
 node's `type` is an obligation: changing them is never a downgrade (a parent may
@@ -254,7 +265,10 @@ invalidates a candidate.
   ΔO⁻; every view labels them `by parent:<id> under allowance (plan #S)`, where
   S is the seq of the latest genesis/plan entry that changed the `allow` block
   before that update. An uncovered downgrade still needs the owner; the refusal
-  for a parent lists the uncovered items.
+  for a parent lists the uncovered items, each downgrade once: a listed item is
+  left out when the same downgrade is already listed in its detected wording
+  (`review count lowered` under `review count/rank reduced`, `check <id> removed`
+  under `<id> check removed`, `writes widened` under `writes scope expanded`, …).
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
   `changed` lies under an `adopt` prefix of a rule of the **current** plan and
   `adoptGuard` passes. No owner channel is needed.
@@ -726,7 +740,10 @@ trunk commit missing from the repository.
 attempts. It is a parent/owner operation (same rule as `abandon`; default
 actor `parent:cli`), refused for any other role. For every `dispatch` entry whose attempt is merged or abandoned (never
 the current open slot) it removes the slot worktree with `git worktree remove`
-(no `--force`) and deletes the branch recorded in the dispatch entry (§8.1) with `git branch -D`,
+(no `--force`) and deletes the branch recorded in the dispatch entry (§8.1) with `git branch -D`
+only when that name maps back to the attempt it collects: when another dispatch entry (another node or attempt,
+possible under an ambiguous template of an older plan) recorded the same name, the branch is kept with reason
+`branch name <name> is also recorded for <node>#<attempt>, …; not deleted`;
 then runs `git worktree prune` (also run first, so a hand-deleted slot directory
 does not pin its branch). Before removing anything of a finished attempt it pins
 each commit of that attempt's `submit` entries that the ledger's trunk commit does
@@ -762,7 +779,9 @@ the template (§3.1; `{type}` = the node's `type`, default `feat`). The expanded
 name must pass `git check-ref-format --branch`, and the root must not be the main
 worktree root itself; otherwise dispatch refuses (usage) before any ledger,
 exclude or worktree effect. Missing parent directories of the worktree are
-created. `<git common dir>/info/exclude` gets `.owed/` for the default root (as
+created; a dispatch that then fails (in `git worktree add`, or when the ledger
+moved and it rolls back the worktree and branch) removes the directories it
+created again (empty ones only). `<git common dir>/info/exclude` gets `.owed/` for the default root (as
 in 0.4.1), `/<repository-relative root>/` for another root inside the main
 worktree (with `\`, `*`, `?`, `[` and a leading `!`/`#` escaped, so it matches
 that directory literally; the line stays after the slots are gone), and nothing for
@@ -780,9 +799,9 @@ tracked files or index, with two exceptions: slot worktrees are created and
 removed under a root inside it (the default `.owed/wt`; excluded as above), and a
 merge fast-forwards it when the trunk is checked out there. With a root outside
 it and the trunk checked out elsewhere they write nothing in the main worktree.
-Limitations: an ambiguous template (e.g. `{node}{attempt}`) can expand to the same
-name for two attempts (dispatch then fails in `git worktree add`), and parent
-directories created for a dispatch that fails are left in place.
+A new plan cannot have an ambiguous template (§3.1); one recorded by an older plan
+may still expand to the same name for two attempts (dispatch then fails in
+`git worktree add`), and gc keeps a branch recorded for more than one attempt.
 
 ### 8.2 Init and genesis attest (D24)
 
@@ -845,12 +864,14 @@ while genesis items lack observations.
   the node's changed files not matched by any passing check's `reads`.
 - **Allowances in views** (§3.4, D21): a downgrade a parent recorded under an
   allowance is labelled `by parent:<id> under allowance (plan #S)` — in the
-  report's ΔO⁻ list (instead of the bare principal), in the receipt card (one
+  report's ΔO⁻ list (instead of the bare principal), in the brief's
+  *Downgrades under allowance* section (same line format), in the receipt card (one
   `ΔO⁻ #seq by parent:<id> under allowance (plan #S): <node>: <what>` line after
   the JSON line; `--json` downgrades carry `allowance: S`) and in the CLI/pi
   output of `plan`. A parent adoption reads `#seq adopted by parent:<id> under
-  allowance (plan #S) prior..commit …` in report and brief (`--json`
-  `adoptions[].allowance`) and in the `adopt` output.
+  allowance (plan #S) prior..commit …` in report and brief, in their own section
+  apart from the owner decisions (`--json` `adoptions[].allowance`), and in the
+  `adopt` output.
 - **Out-of-writes paths** (receipt card, D21.5, for every plan): when the
   candidate's `writes` item is ✘ or ⛔ and changed paths lie outside the node's
   writes, the line `Out-of-writes paths: <p1>, <p2>, …` lists them (the first 20,
@@ -878,8 +899,10 @@ while genesis items lack observations.
   owner decisions needed — written in plain language —, owner actions (owner
   entries after `since` except `adopt`, which is listed once, under the trunk
   adoptions), trunk adoptions after
-  `since` as owner decisions (seq, owner, prior..commit, commit count, changed
-  paths, note; `--json` `adoptions`; the section is shown only when non-empty), and an **Escapes**
+  `since` (seq, who, prior..commit, commit count, changed paths, note; `--json`
+  `adoptions`): owner adoptions under `Trunk adoptions (owner decisions: commits
+  made outside owed)`, parent adoptions under `Trunk adoptions under allowance
+  (parent adoptions: commits made outside owed)`, each section shown only when non-empty, and an **Escapes**
   section: escape counts by class with each escape, decoys caught / escaped /
   pending with each revealed decoy, unrevealed commitments and the escape rate
   (cumulative, §6.5; `--json` returns it as `escapes`).
@@ -920,9 +943,15 @@ while genesis items lack observations.
      obligations, reviewed obligations, deferred invariants, untested changes
      (as in the receipt card) and the reviewers. A waived item is counted only
      as waived, never as measured.
-  2a. *Adopted outside owed (owner decisions)* — per `adopt` entry after
+  2a. *Adopted outside owed (owner decisions)* — per owner `adopt` entry after
      `since`: seq, owner, prior..commit, commit count, changed paths and note
-     (`--json` `adoptions`); omitted when there is none.
+     (`--json` `adoptions`); omitted when there is none. Parent adoptions follow
+     under *Adopted outside owed (parent adoptions under allowance)*, labelled
+     `adopted by parent:<id> under allowance (plan #S)`; omitted when there is none.
+  2b. *Downgrades under allowance* — the downgrades a parent recorded under an
+     allowance (§3.4) in plan entries after `since`, one line per item labelled as
+     in the report: `#seq by parent:<id> under allowance (plan #S) <node>: <what>`
+     (`--json` `allowanceDowngrades`, the ΔO⁻ records); omitted when there is none.
   3. *Rejected or blocked* — every non-cleared block of an unmerged node: node,
      obligation, the failing observation seq (execution blocks; the block seq
      is the failing obs) or the blocking review (judgment blocks), and how to
