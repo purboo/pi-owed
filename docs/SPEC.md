@@ -1751,11 +1751,17 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
     it loads the state, with the rules of this section (the report; an attest
     error halts; the merge refusals below), naming the attempt the
     measurement started on. Handling a result is progress.
-  - Exit 75 of `owed attest` (0.7.0 K1: another attest of that node runs) is
-    `busy`, retried by a later pass, never a halt; its text is `another attest
-    of <node> is running, retry next pass: <owed's message>`. Through `hold`
-    an exit 75 is either hold refusing the lease or owed's busy exit; owed's
-    message (`attest of <node> is already running`) tells them apart.
+  - Busy (review #785): an attest that ends `busy` (hold refused the lease, or
+    exit 75 of `owed attest`: 0.7.0 K1, another attest of that node runs) is
+    never a halt, not progress and does not wake the loop. Its line is printed
+    when it ends (not deduplicated: every `started` line gets its completion
+    line), and that node starts no measurement again before the loop's next
+    timed pass (`passMs`) or event pass; passes triggered by progress or by
+    another measurement ending skip it. Its text is `another attest of <node>
+    is running, retry next pass: <owed's message>` for owed's exit 75 and
+    `machine lease refused, retry next pass: <hold's message>` otherwise;
+    owed's message (`attest of <node> is already running`) tells them apart
+    through `hold`. A busy line no longer replaces an equal previous one.
   - Idle: a pass is idle only when no attempt is open, nothing is dispatched
     and nothing is in flight; a driver with a measurement in flight never
     exits `idle` and never logs `idle-wait`.
@@ -1772,7 +1778,11 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `merge N: retry — merge refused (…); retry next pass` (0.7.0: it ends the
   measurement in the log) and the trunk drift notify below, retried next pass,
   no halt; any other → halt needing a human.
-- **Trunk drift** (0.5.1, review ruling #559). The trunk ref no longer
+- **Trunk drift** (0.5.1, review ruling #559). 0.7.0 (review #785): while a
+  merge of this driver is in flight, or ended and not yet handled, the pass
+  makes no drift check and no drift notify (its own merge may have moved the
+  ref past the state the pass loaded); a real drift during that merge is
+  reported by the merge's CAS refusal. The trunk ref no longer
   equal to the ledger trunk is a repository fact, not a node fact: 0.5.1
   drivers never record it as a ledger halt. Each pass, before merging, the
   driver compares `refs/heads/<trunk>` with the ledger trunk; on drift it
@@ -1843,8 +1853,10 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   (exit 1) cursor is reset to the head and triggers a pass; the limit halves
   only after a page the client could not parse and returns to 100 after a good
   page; other failures (e.g. a missing binary) are printed. In the loop a
-  notify (asking run, owner-needed node) or a busy machine is printed only
-  when its text changed for that node (busy compared without hold's ages).
+  notify (asking run, owner-needed node) is printed only when its text
+  changed for that node. (Before 0.7.0 a busy machine was too, compared
+  without hold's ages; since K6 every busy attest follows its own `started`
+  line and is printed, at most once per timed or event pass.)
   Exit 0 with `idle` when no attempt is open, nothing is dispatched and
   nothing is in flight. Stopping (0.7.0, K6):
   - *Stop* (the first SIGINT/SIGTERM of the loop, `owed drive --stop`,
@@ -1860,6 +1872,11 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
     forwards it to its `owed attest`) and to the process groups of direct
     `owed attest` children; then wait for the in-flight measurements to end, up
     to 5 s, and SIGKILL the groups still running, waiting up to 1 s more.
+    Limit: the SIGKILL reaches the dsa invocations' and the attest children's
+    process groups only. The checks an `owed attest` runs are in process
+    groups of their own (§7), which that attest ends on its SIGTERM (§10
+    Signals); a check whose attest was SIGKILLed before ending it keeps
+    running, unrecorded, until it exits.
     Their results are not handled (the driver records nothing; `owed attest`
     records its own observations and ends the checks it started, §10
     Signals). Then the `killed` line, the exit record (`--json` loop), the lock
@@ -1869,8 +1886,9 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
     measurements that pass started and handles them before it returns: its
     output ends with their completion lines.
   - A driver that ends with an error (the exit record `error`) aborts an
-    in-flight merge as above; attest children finish on their own (as after a
-    crash).
+    in-flight merge as above and waits up to 6 s for it to end before it
+    writes the exit record and releases the lock; attest children finish on
+    their own (as after a crash).
   The pi tool's pass installs no signal handlers. Accepted window: a stop after merge's `git update-ref`
   and before its ledger append leaves trunk ahead of the ledger; the next pass
   sees the drift and emits the trunk drift notify (never silent; the owner

@@ -362,7 +362,9 @@ test('D14.7: a rejected or expired events cursor is reset to the head', { timeou
   } finally { await f.cleanup(); }
 });
 
-test('D14.6: a busy machine is printed once although hold reports a different age every pass', { timeout: 120_000 }, async () => {
+// K6 (0.7.0, review #785) changed this test: every busy attest follows its own `started` line and gets its completion
+// line (no dedup), at most once per timed pass; before, one busy line was printed for the whole period.
+test('D14.6: a busy machine: hold ages do not change the busy key; each started attest gets its busy line, once per timed pass', { timeout: 120_000 }, async () => {
   assert.equal(busyKey('hold: machine is not free now (pid 7 `sleep 6` (exclusive, 2s)); not running the command (exit 75)'), busyKey('hold: machine is not free now (pid 7 `sleep 6` (exclusive, 13s)); not running the command (exit 75)'));
   assert.notEqual(busyKey('hold: machine is not free now (pid 7 (exclusive, 2s))'), busyKey('hold: machine is not free now (pid 8 (exclusive, 2s))'));
   const f = await rig(planOf(node('k', { checks: [{ id: 'k', run: 'true' }] })));
@@ -373,7 +375,10 @@ test('D14.6: a busy machine is printed once although hold reports a different ag
     const r = await loopFor(f, 3500, { passMs: 250 });
     const refused = (await f.log()).filter(x => x.cmd === 'hold' && x.refused).length;
     assert.ok(refused >= 3, `several passes attested (${refused})`);
-    assert.equal(r.lines.filter(l => /attest k: busy/.test(l)).length, 1, r.lines.join('\n'));
+    const busy = r.lines.filter(l => /attest k: busy/.test(l)).length, started = r.lines.filter(l => /^attest k: started$/.test(l)).length;
+    assert.equal(busy, refused, r.lines.join('\n'));
+    assert.equal(started, refused, r.lines.join('\n'));
+    assert.ok(refused <= Math.ceil(3500 / 250) + 2, `at most once per timed pass (${refused})`);
   } finally { await f.cleanup(); }
 });
 

@@ -183,6 +183,8 @@ interface Measurement {
   done: boolean;
   finish?: () => Promise<ActionReport[]>;
 }
+/** How a measurement ended: `finish` handles it on the loop; `busy` (attest only): its report, handled at once instead. */
+interface Ended { finish: () => Promise<ActionReport[]>; busy?: ActionReport }
 /** Hard stop (SPEC §12.7 Stopping): how long it waits for in-flight measurements after SIGTERM, then after SIGKILL. */
 const HARD_WAIT_MS = 5000, KILL_WAIT_MS = 1000;
 /** The text of a busy attest: owed's own busy exit (K1: another attest of the node runs), else hold refusing the lease. */
@@ -362,6 +364,14 @@ export class Driver {
   private readonly ended: Measurement[] = [];
   /** Ends the loop's current `wait` (a measurement ended). */
   private waker?: () => void;
+  /**
+   * Busy back-off (review #785): the loop's timed/event pass count (`tick`), and per node the count at which its attest
+   * ended busy. A node does not start a measurement again in the same count: not before the next timed or event pass.
+   */
+  private cycle = 0;
+  private readonly busyAt = new Map<string, number>();
+  /** The loop calls this before a pass started by its timer or by a dsa event (not by a measurement ending). */
+  tick(): void { this.cycle++; }
   /** A stop at once runs: ended measurements are not handled (their results are not recorded by the driver). */
   hard = false;
   /** The pi session of this driver's runs (E1). */
@@ -452,8 +462,11 @@ export class Driver {
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
     // (every other action continues) and emit the repo-level owner notify (the loop prints it once per change).
+    // K6 (review #785): while a merge of this driver is in flight or ended but not yet handled, the trunk ref may be ahead
+    // of the state loaded above because of that merge: no drift check and no notify this pass (its CAS reports drift).
     let checked = true;
-    const drift = await git.trunkDrift(this.root!, s.trunk.name, s.trunk.commit).catch(() => { checked = false; return undefined; });
+    const merging = [...this.measuring.values()].some(m => m.do === 'merge');
+    const drift = merging ? (checked = false, undefined) : await git.trunkDrift(this.root!, s.trunk.name, s.trunk.commit).catch(() => { checked = false; return undefined; });
     if (drift) {
       const r = driftReport(s, drift);
       reports.push(r); this.emit(r, s);
@@ -472,6 +485,8 @@ export class Driver {
         // K6: start it in the background; over `drive.measure`, or a second merge: skipped, decided again later.
         const inFlight = [...this.measuring.values()];
         if (inFlight.length >= cap || (a.do === 'merge' && inFlight.some(m => m.do === 'merge'))) continue;
+        // Busy back-off: an attest that ended busy waits for the next timed or event pass.
+        if (this.busyAt.get(a.node) === this.cycle) continue;
         const r = this.start(s, a.do, a.node);
         reports.push(r); this.emit(r, s);
         continue;
@@ -490,9 +505,16 @@ export class Driver {
   private start(s: State, what: 'attest' | 'merge', node: string): ActionReport {
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
     const m: Measurement = { do: what, node, attempt, at, done: false, ended: Promise.resolve() };
-    const work = what === 'attest' ? this.attest(node, attempt) : this.merge(node, attempt);
-    m.ended = work.then(f => { m.finish = f; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
-      .finally(() => { m.done = true; this.ended.push(m); this.waker?.(); });
+    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt) : this.merge(node, attempt).then(finish => ({ finish }));
+    let busy: ActionReport | undefined;
+    m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
+      .finally(() => {
+        m.done = true;
+        // A busy attest (review #785) is not progress and does not wake the loop: its line is printed now (so status no
+        // longer lists it) and the node waits for the next timed or event pass.
+        if (busy) { this.measuring.delete(node); this.busyAt.set(node, this.cycle); if (!this.hard) this.emit(busy); return; }
+        this.ended.push(m); this.waker?.();
+      });
     this.measuring.set(node, m);
     return { do: what, node, outcome: 'started', at };
   }
@@ -515,17 +537,20 @@ export class Driver {
   async reap(out: ActionReport[] = []): Promise<number> {
     if (this.hard || !this.ended.length) return 0;
     const batch = this.ended.splice(0), reports: ActionReport[] = [];
+    // Each result is handled on its own: an unexpected error of one is rethrown only after the others were handled.
+    let failure: { e: unknown } | undefined;
     for (const m of batch) {
       this.measuring.delete(m.node);
       try { reports.push(...await m.finish!()); }
       catch (e) {
-        if (!(e instanceof OwedError || e instanceof DsaError)) throw e;
+        if (!(e instanceof OwedError || e instanceof DsaError)) { failure ??= { e }; continue; }
         reports.push({ do: m.do, node: m.node, outcome: 'error', detail: oneLine(e.message) });
       }
     }
     // Wake reports carry the node's fact mark in the state after the measurements (their observations are facts).
-    const now = await loadState(this.ledger!);
+    const now = await loadState(this.ledger!).catch(() => undefined);
     for (const r of reports) { out.push(r); this.emit(r, now); }
+    if (failure) throw failure.e;
     return batch.length;
   }
   /** Stop (SPEC §12.7): waits for every in-flight measurement to end and handles it; returns at once on a stop at once. */
@@ -536,9 +561,9 @@ export class Driver {
       await this.reap(out);
     }
   }
-  /** Stop at once: waits up to `ms` for the in-flight measurements to end; true when all did. */
-  async drain(ms: number): Promise<boolean> {
-    const all = Promise.all([...this.measuring.values()].map(m => m.ended)).then(() => true);
+  /** Stop at once: waits up to `ms` for the in-flight measurements (only merges: `merges`) to end; true when all did. */
+  async drain(ms: number, merges = false): Promise<boolean> {
+    const all = Promise.all([...this.measuring.values()].filter(m => !merges || m.do === 'merge').map(m => m.ended)).then(() => true);
     let t: NodeJS.Timeout | undefined;
     const late = new Promise<boolean>(resolve => { t = setTimeout(() => resolve(false), ms); });
     try { return await Promise.race([all, late]); } finally { clearTimeout(t); }
@@ -558,7 +583,9 @@ export class Driver {
       const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${rk}:${r.outcome}`;
       if (this.facts.printed.get(slot) === key) return;
       this.facts.printed.set(slot, key);
-    } else if (r.do === 'attest' && r.outcome !== 'started') this.facts.printed.delete(`${rk}:busy`);
+    // Any other attest line, `started` included, ends the busy dedup: a started measurement always gets its completion
+    // line (review #785), so status never lists one that ended.
+    } else if (r.do === 'attest') this.facts.printed.delete(`${rk}:busy`);
     if (!this.o.once && r.facts !== undefined) {
       const text = reportText({ ...r, repeat: undefined }), last = this.facts.wakes.get(rk);
       if (last && last.text === text && last.facts === r.facts) r.repeat = ++last.n;
@@ -637,15 +664,16 @@ export class Driver {
    * else — an owed error (2/3), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
    * a human on attempt `attempt` (D14.3).
    */
-  private async attest(node: string, attempt: number): Promise<() => Promise<ActionReport[]>> {
+  private async attest(node: string, attempt: number): Promise<Ended> {
     const argv = [...this.owed, 'attest', node], cwd = this.root!;
     const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(detail ? { detail: oneLine(detail) } : {}) });
-    const ok = (r: ActionReport) => async (): Promise<ActionReport[]> => [r];
-    const fail = (why: string) => async (): Promise<ActionReport[]> => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; };
+    const ok = (r: ActionReport): Ended => ({ finish: async () => [r] });
+    const busy = (detail: string): Ended => { const r = report('busy', detail); return { finish: async () => [r], busy: r }; };
+    const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; } });
     let ran: { exit: number | null; stdout: string; stderr: string };
     if (dsaAvailable(this.dsa.bin)) {
       const r = await this.dsa.hold('machine', argv, { shared: true, cwd });
-      if (r.outcome === 'busy') return ok(report('busy', busyDetail(node, r.reason)));
+      if (r.outcome === 'busy') return busy(busyDetail(node, r.reason));
       if (r.outcome === 'signal') return fail(`pi-durable-subagents hold ended by ${r.reason}`);
       if (r.outcome === 'refused') return fail(`pi-durable-subagents hold refused: ${tail(r.reason)}${/--no-wait/.test(r.reason) ? ' (owed drive requires pi-durable-subagents >= 1.0.27 for `hold --no-wait`)' : ''}`);
       ran = r;
@@ -653,7 +681,7 @@ export class Driver {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
     if (ran.exit === 0 || ran.exit === 1) return ok(report('done', ran.exit === 0 ? 'accepted' : 'not accepted yet'));
-    if (ran.exit === 75) return ok(report('busy', busyDetail(node, tail(ran.stderr || ran.stdout))));
+    if (ran.exit === 75) return busy(busyDetail(node, tail(ran.stderr || ran.stdout)));
     return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
   }
 
@@ -856,12 +884,16 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
         while (!driver.stopping && ledgerHead(ledger.dir) === head) {
           await driver.wait(o.pollMs ?? 3000, stop.signal);
         }
+        driver.tick();
       } else {
-        // K6: a measurement that ends wakes the loop at once.
+        // K6: a measurement that ends wakes the loop at once; only a timed or event pass ends a busy back-off (tick).
         const last = Date.now();
         while (!driver.stopping) {
           await driver.wait(o.pollMs ?? 3000, stop.signal);
-          if (driver.stopping || driver.woken || Date.now() - last >= (o.passMs ?? 30_000) || await poll()) break;
+          if (driver.stopping) break;
+          if (Date.now() - last >= (o.passMs ?? 30_000)) { driver.tick(); break; }
+          if (driver.woken) break;
+          if (await poll()) { driver.tick(); break; }
         }
       }
       if (driver.stopping) {
@@ -875,8 +907,9 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
   finally {
     // A stop at once owns the exit (record, release, process.exit): never write a second record or release here.
     if (hardStop) await hardStop;
-    // A loop ending with an error aborts an in-flight merge (it stops before trunk moves); attest children finish alone.
-    if (failure) driver.abort.abort();
+    // A loop ending with an error aborts an in-flight merge (it stops before trunk moves) and waits for it, bounded as
+    // for a stop at once, before the lock is released; attest children finish alone.
+    if (failure) { driver.hard = true; driver.abort.abort(); await driver.drain(HARD_WAIT_MS + KILL_WAIT_MS, true); }
     if (handle) { process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); }
     o.signal?.removeEventListener('abort', onAbort);
     // D17a.2: the exit record precedes the release; it stays the last line (nothing is printed after it).
