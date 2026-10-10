@@ -13,7 +13,8 @@ import * as ops from '../src/ops.ts';
 import * as plans from '../src/plan.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
-import { drive, procStart } from '../src/drive-run.ts';
+import { Driver, drive, procStart } from '../src/drive-run.ts';
+import * as bg from '../src/drive-bg.ts';
 import { driveStatus, driveStop, driverLine, logPath, renderDriveStatus } from '../src/drive-bg.ts';
 import { canonical } from '../src/canon.ts';
 import { git } from '../src/git.ts';
@@ -73,10 +74,10 @@ async function rig(make: (path: (name: string) => string) => object) {
       assert.ok(await cond(), out.join('\n'));
     },
     /** The in-process `--json` loop; its lines are parsed live and appended to the background log (for --status). */
-    loop(o: { owed?: string[] } = {}) {
+    loop(o: { owed?: string[]; passMs?: number } = {}) {
       const lines: Line[] = [], ac = new AbortController(), log = logPath(process.env.OWED_DIR!);
       mkdirSync(dirname(log), { recursive: true });
-      const done = drive({ cwd: r.cwd, json: true, dsa, owed: o.owed, log: l => { appendFileSync(log, `${l}\n`); lines.push(JSON.parse(l) as Line); }, pollMs: 50, passMs: 300, handleSignals: false, signal: ac.signal });
+      const done = drive({ cwd: r.cwd, json: true, dsa, owed: o.owed, log: l => { appendFileSync(log, `${l}\n`); lines.push(JSON.parse(l) as Line); }, pollMs: 50, passMs: o.passMs ?? 300, handleSignals: false, signal: ac.signal });
       const state = { settled: false };
       void done.finally(() => { state.settled = true; }).catch(() => undefined);
       const h = { lines, stop: () => ac.abort(), done, settled: () => state.settled, text: () => lines.map(l => JSON.stringify(l)).join('\n') };
@@ -331,4 +332,71 @@ test('K6 status, /owed and owed_drive status list the in-flight measurements rea
     assert.equal((await driveStatus({ cwd: r.cwd })).measuring, undefined);
     assert.doesNotMatch(await driverLine(r.cwd), /measuring/);
   } finally { await r.cleanup(); }
+});
+
+// ---------- review #785 ----------
+test('#785 (1, 3): an attest that always exits 75 runs at most once per timed pass; every started line has its busy line; status stops listing it', { timeout: 180_000 }, async () => {
+  const f = await rig(() => planOf(node('k', { checks: [{ id: 'k', run: 'test -f k.txt', reads: ['k.txt'] }] })));
+  try {
+    await f.agent('k-writer', writer('k'));
+    await f.onceUntil(4, async () => (await f.entries()).some(e => e.kind === 'submit'));
+    const count = join(f.root, 'busy-count'), busy = join(f.root, 'busy-owed');
+    await writeFile(busy, `#!/bin/sh\necho x >> '${count}'\necho "attest of $2 is already running (pid 4242 on h since 2026-10-10T16:03:00.000Z); its observations will appear in owed why $2" >&2\nexit 75\n`); await chmod(busy, 0o755);
+    const runs = () => existsSync(count) ? readFileSync(count, 'utf8').split('\n').filter(Boolean).length : 0;
+    const passMs = 400, t0 = Date.now();
+    const l = f.loop({ owed: [busy], passMs });
+    await until(() => runs() >= 3, 30_000, 'the busy attest is retried');
+    // Between retries nothing is in flight: status does not keep listing the ended attest.
+    await until(async () => (await driveStatus({ cwd: f.cwd })).measuring === undefined, 5_000, 'status lists no measurement between busy retries');
+    await sleep(2500);
+    l.stop();
+    assert.equal(await l.done, 0, l.text());
+    const elapsed = Date.now() - t0, n = runs();
+    assert.ok(n <= Math.ceil(elapsed / passMs) + 2, `at most once per timed pass: ${n} runs in ${elapsed} ms (passMs ${passMs})\n${l.text()}`);
+    const lines = l.lines;
+    assert.equal(started(lines, 'attest', 'k').length, n, l.text());
+    assert.equal(lines.filter(x => x.do === 'attest' && x.node === 'k' && x.outcome === 'busy').length, n, 'every started attest got its busy line');
+    // Looked up at run time, so the base (without it) fails by assertion rather than at import.
+    const measuringOf = (bg as unknown as { measuringOf?: (lines: string[]) => unknown[] }).measuringOf;
+    assert.equal(typeof measuringOf, 'function');
+    assert.deepEqual(measuringOf!(lines.filter(x => x.event !== 'exit').map(x => JSON.stringify(x))), []);
+    assert.deepEqual(halts(await f.entries()), []);
+  } finally { await f.done(); }
+});
+
+test('#785 (2): the driver\'s own merge appending while a pass observes is no trunk drift (no notify), and the merge is reported', { timeout: 180_000 }, async () => {
+  const armed = (path: (n: string) => string) => `[ -e '${path('armed')}' ]`;
+  const f = await rig(path => ({ ...planOf(node('a'), node('b')), invariants: [{ id: 'slow', run: `if [ -f a.txt ] && ${armed(path)}; then ${gated(path('inv'), path('gate'))}; fi; true`, reads: ['a.txt'] }] }));
+  try {
+    await f.agent('a-writer', writer('a'));   // b's writer has no script: it stays running, so every pass inspects it
+    await f.onceUntil(6, async () => !!(await ops.status({ cwd: f.cwd })).nodes.a?.accepted && (await f.entries()).some(e => e.kind === 'launch' && e.node === 'b'));
+    f.open('armed');
+    const lines: string[] = [], trap = { on: false, hit: false };
+    const entries = f.entries;
+    /** Forced interleaving: b's describe returns only after a's merge appended (trunk moved past the loaded state). */
+    class Late extends Dsa {
+      override async inspect(rid: string) {
+        if (trap.on && /:b:1:writer$/.test(rid)) {
+          trap.on = false; trap.hit = true;
+          f.open('gate');
+          await until(async () => (await entries()).some(e => e.kind === 'merge' && e.node === 'a'), 60_000, "a's merge appended");
+        }
+        return super.inspect(rid);
+      }
+    }
+    const d = new Driver({ cwd: f.cwd, log: l => lines.push(l), dsa: new Late({ bin: FAKE, env: f.env, timeoutMs: 120_000 }), session: null });
+    assert.equal(typeof (d as unknown as { settle?: unknown }).settle, 'function', 'the driver runs measurements in the background (K6)');
+    await d.pass();
+    assert.match(lines.join('\n'), /^merge a: started$/m);
+    await until(() => existsSync(f.path('inv')), 60_000, "a's merge measures");
+    trap.on = true;
+    await d.pass();
+    assert.ok(trap.hit, 'the second pass described b while the merge appended');
+    await d.settle();
+    const out = lines.join('\n');
+    assert.doesNotMatch(out, /moved outside owed|rewound|drift/, out);
+    assert.match(out, /^merge a: merged — trunk [0-9a-f]{12}$/m, out);
+    assert.ok(merged(await f.entries(), 'a'));
+    assert.deepEqual(halts(await f.entries()), []);
+  } finally { await f.done(); }
 });
