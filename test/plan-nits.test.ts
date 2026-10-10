@@ -125,13 +125,13 @@ test('G4.3: a dispatch that rolls back (rulings changed under it) removes the pa
   const r = await fixture(plain({ worktrees: { root: 'keep/new/slots' } }));
   try {
     await commitAt(r.cwd, { 'keep/file': 'tracked\n' });
-    // post-checkout runs inside `git worktree add`: it records a ruling, so the dispatch's append sees changed rulings.
+    // post-checkout changes rulings on each of N2's three attempts, then allows the next dispatch.
     const owed = fileURLToPath(new URL('../bin/owed.js', import.meta.url)), mark = join(r.root, 'hook-ran'), hook = join(r.cwd, '.git', 'hooks', 'post-checkout');
-    await writeFile(hook, `#!/bin/sh\n[ -f '${mark}' ] && exit 0\ntouch '${mark}'\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ncd '${r.cwd}' && '${process.execPath}' '${owed}' rule 'changed under dispatch' --nodes '*' >> '${mark}.log' 2>&1\nexit 0\n`);
+    await writeFile(hook, `#!/bin/sh\n[ -f '${mark}' ] && [ "$(wc -l < '${mark}')" -ge 3 ] && exit 0\necho attempt >> '${mark}'\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ncd '${r.cwd}' && '${process.execPath}' '${owed}' rule 'changed under dispatch' --nodes '*' >> '${mark}.log' 2>&1\nexit 0\n`);
     await chmod(hook, 0o755);
     await assert.rejects(ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' }), /Rulings changed; dispatch again/);
     assert.ok(existsSync(mark), 'the hook ran');
-    assert.ok((await entries(r.cwd)).some(e => e.kind === 'rule'), await readFile(`${mark}.log`, 'utf8').catch(() => 'no log'));
+    assert.equal((await entries(r.cwd)).filter(e => e.kind === 'rule').length, 3, await readFile(`${mark}.log`, 'utf8').catch(() => 'no log'));
     assert.ok(!(await entries(r.cwd)).some(e => e.kind === 'dispatch'));
     assert.ok(!existsSync(join(r.cwd, 'keep', 'new')), 'keep/new/slots created by the dispatch is gone');
     assert.equal(await readFile(join(r.cwd, 'keep', 'file'), 'utf8'), 'tracked\n', 'the existing directory stays');

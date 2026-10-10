@@ -80,14 +80,15 @@ test('H3.1: a rollback where every step fails names all three steps; nothing rec
   } finally { await r.cleanup(); }
 });
 
-test('H3.1: a rollback whose steps all succeed rethrows the original error unchanged', { timeout: 120_000 }, async () => {
+test('H3.1: after three CAS failures, a rollback whose steps all succeed rethrows the original error unchanged', { timeout: 120_000 }, async () => {
   const r = await fixture(plain({ worktrees: { root: 'deep/er/slots' } }));
   try {
-    // The ruling is recorded by a hook that leaves the worktree clean: every rollback step succeeds.
+    // A ruling on every attempt exhausts N2's retries; the hook leaves every worktree clean.
     const owed = fileURLToPath(new URL('../bin/owed.js', import.meta.url)), mark = join(r.root, 'hook-ran'), file = join(r.cwd, '.git', 'hooks', 'post-checkout');
-    await writeFile(file, `#!/bin/sh\n[ -f '${mark}' ] && exit 0\ntouch '${mark}'\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ncd '${r.cwd}' && '${process.execPath}' '${owed}' rule 'changed under dispatch' --nodes '*' >> '${mark}.log' 2>&1\nexit 0\n`);
+    await writeFile(file, `#!/bin/sh\ntouch '${mark}'\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ncd '${r.cwd}' && '${process.execPath}' '${owed}' rule 'changed under dispatch' --nodes '*' >> '${mark}.log' 2>&1\nexit 0\n`);
     await chmod(file, 0o755);
     await assert.rejects(ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' }), (e: Error) => e.message === 'Rulings changed; dispatch again');
+    assert.equal((await entries(r.cwd)).filter(e => e.kind === 'rule').length, 3);
     assert.ok(!existsSync(join(r.cwd, 'deep')));
     assert.ok(!await hasBranch(r.cwd, 'owed/a/1'));
     assert.equal(await worktreeCount(r.cwd), 1);

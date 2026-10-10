@@ -60,8 +60,24 @@ async function load(ledger: Ledger, extra: string[] = []) {
 function inited(s: State): State { if (s.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first'); return s; }
 function node(s: State, id: string) { const n = inited(s).nodes[id]; if (!n) throw new OwedError(`Node ${id} does not exist`); return n; }
 function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.open || !n.candidate) throw new OwedError(`Node ${id} has no open candidate`); return n; }
+// Keep the public error class/code; only these CAS refusals are eligible for an operation retry.
+const casRefusals = new WeakSet<OwedError>();
+function casRefusal(message: string): OwedError { const error = new OwedError(message); casRefusals.add(error); return error; }
+/** N2: fresh snapshot per attempt, at most three; a changed plan or failed rollback keeps the refusal. */
+async function retryCas<T>(ledger: Ledger, run: (before: State) => Promise<T>): Promise<T> {
+  let prior: State | undefined, refusal: unknown;
+  for (let attempt = 0; ; attempt++) {
+    const before = (await load(ledger)).state;
+    if (prior && before.planSha !== prior.planSha) throw refusal;
+    try { return await run(before); }
+    catch (error) {
+      if (attempt === 2 || !(error instanceof OwedError) || !casRefusals.has(error)) throw error;
+      prior = before; refusal = error;
+    }
+  }
+}
 function stable(before: State, after: State, id?: string): void {
-  if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.slot?.base !== after.nodes[id]?.slot?.base || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw new OwedError('Plan, candidate or trunk changed; retry');
+  if (before.planSha !== after.planSha || before.trunk.commit !== after.trunk.commit || (id && (before.nodes[id]?.slot?.dispatchSeq !== after.nodes[id]?.slot?.dispatchSeq || before.nodes[id]?.slot?.base !== after.nodes[id]?.slot?.base || before.nodes[id]?.candidate?.seq !== after.nodes[id]?.candidate?.seq || before.nodes[id]?.slot?.open !== after.nodes[id]?.slot?.open))) throw casRefusal('Plan, candidate or trunk changed; retry');
 }
 /**
  * K4.1: the node-scoped merge CAS. A merge refuses (recording nothing) only when what it measured from moved: the ledger
@@ -302,8 +318,9 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
 export interface NotCarried { node: string; reason: string }
 /** `notCarried` (N1, optional): receives one item per open candidate the plan entry invalidated and could not carry. */
 export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[] }): Promise<Entry> {
-  owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan), before = (await load(ledger)).state;
-  return ledger.withLock(async () => { const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d); return (await ledger.append(await withCarries(o.cwd,latest,d,p.plan,o.notCarried)))[0]!; });
+  owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
+  // N2: each attempt recomputes carries from its own fresh locked read; only the successful attempt reports skips.
+  return retryCas(ledger, before => ledger.withLock(async () => { const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d); const skipped: NotCarried[] = [], entry = (await ledger.append(await withCarries(o.cwd,latest,d,p.plan,skipped)))[0]!; o.notCarried?.push(...skipped); return entry; }));
 }
 /**
  * N1: the plan draft `d` followed by one carry submit (by executor:owed) per open candidate it invalidates whose node
@@ -341,8 +358,8 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
   // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
   // Resolved first, so an unverifiable layout is refused before any ledger, exclude or worktree effect.
   owner(o); const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
-  return ledger.withLock(async () => {
-    const { state } = await load(ledger), n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
+  return ledger.withLock(() => retryCas(ledger, async state => {
+    const n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('Node id is unsafe for a worktree path','usage');
     // Overlapping writes of concurrent slots produce conflicts or ambiguous ownership; refuse unless explicitly allowed.
     const overlaps = overlapping(state,o.node);
@@ -365,13 +382,17 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     };
     try { await git.addWorktree(root,worktree,branch,state.trunk.commit); } catch (error) { throw await rolledBack(error,[['directory cleanup',unmake]]); }
     let entry: Entry;
-    try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw new OwedError('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
+    try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw casRefusal('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw casRefusal('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
     catch (error) {
       const run = (args: string[]) => async () => { const r = await git.git(root,args,{allowFail:true}); return r.code ? r.stderr.trim().split('\n').join(' ') || `exit ${r.code}` : undefined; };
-      throw await rolledBack(error,[['git worktree remove',run(['worktree','remove',worktree])],['git branch -d',run(['branch','-d',branch])],['directory cleanup',unmake]]);
+      const dropBranch = async () => {
+        const tip = await git.revParse(root,`refs/heads/${branch}`);
+        return run(['branch',tip === state.trunk.commit ? '-D' : '-d',branch])();
+      };
+      throw await rolledBack(error,[['git worktree remove',run(['worktree','remove',worktree])],['git branch -d',dropBranch],['directory cleanup',unmake]]);
     }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
-  },'dispatch');
+  }),'dispatch');
 }
 /**
  * Runs every rollback step of a failed dispatch, even after an earlier step failed; a step returns its failure text
