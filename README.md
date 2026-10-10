@@ -391,13 +391,14 @@ rebase or abandon on the node clears a halt, and the next pass resumes. A ruling
 driver-launched writer or reviewer call is running reaches it as a steer
 (reason `ruling`, recorded) once the node has nothing else to do; sealed calls
 get rulings with the next follow-up (submit, rebase and repair follow-ups list
-the undelivered rulings first), and reviewers still acknowledge them with
+the undelivered rulings first; a ruling steer dsa rejected, e.g. because the call
+had just ended, counts as undelivered), and reviewers still acknowledge them with
 `--ack-rulings`. Launch entries and follow-ups record the rulings their
 message carried, so a ruling recorded while one is being sent is steered
 afterwards. A ruling naming the node gives the attempt a fresh repair budget
 (`repairs` counts the repairs since the latest such ruling or plan change of the
 node's spec), and a sealed writer the driver would otherwise halt for (finished
-without submitting, repairs exhausted, stalled) gets it as one `ruling`
+without submitting, repairs exhausted) gets it as one `ruling`
 follow-up instead; never while a reviewer run of the candidate is running or
 when the candidate has no block. A check that ran the same number of passing
 tests twice, below its `min_tests`, halts for the parent (`the plan's threshold

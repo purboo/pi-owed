@@ -158,6 +158,8 @@ export interface PassResult {
  */
 class Facts {
   readonly applied = new Set<string>();
+  /** Send ids dsa decided `rejected` (terminal: never asked again in this process), with dsa's reason (review #784 F1). */
+  readonly refused = new Map<string, string>();
   /** rid → generation a follow-up applied in this process started; a describe of an older, sealed generation is stale. */
   readonly expectGen = new Map<string, number>();
   /** rid → latest generation describe reported. */
@@ -189,7 +191,7 @@ interface Ended { finish: () => Promise<ActionReport[]>; busy?: ActionReport }
 const HARD_WAIT_MS = 5000, KILL_WAIT_MS = 1000;
 /** The text of a busy attest: owed's own busy exit (K1: another attest of the node runs), else hold refusing the lease. */
 const busyDetail = (node: string, reason: string): string => /attest of \S+ is already running/.test(reason)
-  ? `another attest of ${node} is running, retry next pass: ${reason}`
+  ? `another attest of ${node} is running, retry next pass: ${reason.replace(/^Busy: /, '')}`
   : `machine lease refused, retry next pass: ${reason}`;
 
 // ---------- ledger state ----------
@@ -395,7 +397,8 @@ export class Driver {
 
   /**
    * Describe the live runs of every open, not halted attempt; ask dsa about recorded sends not yet confirmed; read the
-   * stored bytes `decide` may need for retries. `rejected`: sends dsa reports rejected (this pass only).
+   * stored bytes `decide` may need for retries. `rejected`: the attempt's sends dsa decided rejected (every pass; cached
+   * once terminal) and the runs and sends rejected in this process.
    */
   private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]> }> {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
@@ -417,12 +420,16 @@ export class Driver {
       if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
       // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a
       // crash after the call); only an undecided one is re-sent (with the stored bytes and the same id, D13.1).
+      // A rejected send (dsa's durable request state; cached once terminal) is passed to decide every pass: a rejected
+      // ruling steer then does not count as delivered to the writer (review #784 F1).
       for (const x of ar.sends) {
         if (this.facts.applied.has(x.send)) continue;
+        const known = this.facts.refused.get(x.send);
+        if (known !== undefined) { rejected.set(x.send, known); continue; }
         try {
           const r = await this.dsa.request(x.send);
           if (r.state === 'applied') { this.facts.applied.add(x.send); continue; }
-          if (r.state === 'rejected') { rejected.set(x.send, r.reason ?? 'rejected'); continue; }
+          if (r.state === 'rejected') { this.facts.refused.set(x.send, r.reason ?? 'rejected'); rejected.set(x.send, r.reason ?? 'rejected'); continue; }
         } catch { /* unknown: re-send; dsa returns the first outcome for the same id */ }
         await blob(x.message);
       }
@@ -638,8 +645,12 @@ export class Driver {
             }
             return done('applied', true, a.send ? 're-sent' : undefined, x);
           }
-          // D22.3: a rejected ruling steer (e.g. the call sealed meanwhile) is logged only: no halt, never retried.
-          if (r.outcome === 'rejected' && a.reason === 'ruling') return done('rejected', false, `${r.reason}; not retried (the rulings travel with the next repair and reviewer acks)`, x);
+          if (r.outcome === 'rejected') this.facts.refused.set(id, r.reason);
+          // D22.3: a rejected ruling steer (e.g. the call sealed meanwhile) is logged only: no halt, never retried as a
+          // steer. Review #784 F1: it does not count as delivered, so the writer's next follow-up (submit, rebase, repair
+          // or ruling) carries its rulings; reviewers get them through the rulings obligation. A rejected ruling
+          // follow-up halts like any other send (as decide would on the next pass).
+          if (r.outcome === 'rejected' && a.reason === 'ruling' && a.sendKind === 'steer') return done('rejected', false, `${r.reason}; not retried as a steer (the writer's next follow-up carries these rulings; reviewers get them through the rulings obligation)`, x);
           if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'send', id, r.reason)); return done('rejected', false, `${r.reason}; halted`, x); }
           if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on send ${id}; never retried with other bytes`); return done('conflict', false, 'halted', x); }
           return done('pending', false, r.reason ?? 'retry next pass', x);
@@ -688,7 +699,8 @@ export class Driver {
   /**
    * `ops.merge` in this process (the CLI refuses `--as parent:drive`), aborted by a stop at once (D16a.1); resolves with
    * how the loop handles the result. Refusals (D14.2): `rebase needed` rebases; the transient refusal (the ledger moved
-   * while merge measured; nothing recorded) retries on a later pass; a CAS failure (trunk moved during the merge) is a
+   * while merge measured; nothing recorded) and K4's `not measured` retry on a later pass; K4's changed slot and
+   * invalidated candidate are reported (`superseded`), no halt; a CAS failure (trunk moved during the merge) is a
    * retry line plus the trunk drift notify, never a halt (ruling #559 c); any other refusal halts needing a human.
    */
   private async merge(node: string, attempt: number): Promise<() => Promise<ActionReport[]>> {
@@ -701,6 +713,12 @@ export class Driver {
       if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
       return async () => {
         if (e.message === MERGE_TRANSIENT) return [report('retry', `merge refused (${e.message}); retry next pass`)];
+        // K4: a key the plan update introduced was not measured (the measured observations were kept): the next pass
+        // merges again and measures only what lacks a verdict. Never a halt.
+        if (e.message.includes('not measured: ')) return [report('retry', `merge refused (${e.message}); retry next pass`)];
+        // K4: the slot moved (abandon, rebase, dispatch) or a plan entry invalidated the candidate: nothing was recorded
+        // and the next pass decides on the new state (a new candidate, a rebase follow-up). Reported, never a halt.
+        if (/^slot of \S+ changed \(/.test(e.message) || /^candidate #\d+ \S+ of \S+ was invalidated by plan #\d+/.test(e.message)) return [report('superseded', `merge refused (${e.message}); the next pass decides on the new state`)];
         if (e.message.startsWith('rebase needed')) {
           const r = await ops.rebase({ cwd, as, node });
           return [report('rebased', `merge refused (${e.message}); slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`)];

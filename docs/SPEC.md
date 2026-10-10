@@ -1516,9 +1516,11 @@ Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
   "accept the content as is" is the owner's waive, not a repair.
 - **Ruling follow-up.** When the writer run is sealed and an in-scope ruling
   naming the node (not only `*`) is above its *delivered* (§12.5.1), the driver
-  sends one `follow-up` with reason `ruling` in place of: the `finished …
-  without submitting` halts, the `repairs exhausted` halt, the `stalled:` halt,
-  and an otherwise empty pass while the node has no current candidate. Never
+  sends one `follow-up` with reason `ruling` in place of the `finished …
+  without submitting` halts and the `repairs exhausted` halt (review #784 F2:
+  the `stalled:` halt and a pass without a current candidate never meet a due
+  ruling follow-up: a failed item or an active block is handled by the repair
+  rows first, and row 8 acts on every sealed writer without a candidate). Never
   while a reviewer run of the current candidate is unsealed, and never when the
   current candidate has no active block and no failed item: the ruling then
   reaches the reviewers (steer, the `rulings` obligation and `ack_rulings`), and
@@ -1531,9 +1533,8 @@ Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
   = the highest seq it lists. It is not a repair (not counted). A writer that
   finishes it without submitting halts as before, naming it: `writer run <rid>
   finished ruling follow-up <send> without submitting a new candidate
-  (<cause>)`. dsa rejecting it halts the attempt on the next pass, like any
-  other send (the re-send row; only ruling *steers* are never halted for,
-  D22.3).
+  (<cause>)`. dsa rejecting it halts the attempt in the same pass, like any
+  other send (only ruling *steers* are never halted for, D22.3).
 - **Threshold hint.** On the measured repair path, for a check X among the
   measured items: when the node's latest two failing, non-attribution
   observations of `check:X` both exited 0 with `counts.fail` 0 and the same
@@ -1585,9 +1586,15 @@ it gives the reviewer's `owed evidence` command.
   highest in-scope ruling seq (`--nodes` names the node, or `*`) the run already
   has: the max of `rulings` on its launch entry and on every send to it that
   records `rulings` (`repair`, `ruling`, and since 0.7 `submit` and `rebase`
-  follow-ups; also an unconfirmed or rejected ruling send), and for the writer
+  follow-ups; also an unconfirmed ruling send), and for the writer
   its dispatch `rulings_seen`. A ruling counts as delivered to the writer once a
-  writer send that carried it is recorded. Entries without the field (written by
+  writer send that carried it is recorded. 0.7 (review #784 F1): a send dsa
+  rejected delivered nothing to the writer: the driver reads dsa's request state
+  of the attempt's recorded sends each pass (`describe --key <send id>`; cached
+  once terminal) and leaves the rejected ones out of the writer's *delivered*
+  when it composes a writer follow-up (submit, rebase, repair, ruling), so that
+  follow-up carries their rulings. The ruling steer row still counts a rejected
+  steer (it is never sent again as a steer). Entries without the field (written by
   0.5.0) fall back to the 0.5.0 position rule: a reviewer launch carried the
   in-scope rulings recorded before its entry, a `repair` send those recorded
   before it (D22.4a), a writer launch `rulings_seen`.
@@ -1606,11 +1613,13 @@ it gives the reviewer's `owed evidence` command.
   a few passes at most. Only `fenced` steers count as the last steer of the
   fenced row, so a ruling steer never hides a fence.
 - **Rejection (D22.3).** dsa rejecting a ruling steer (e.g. the call sealed
-  meanwhile) is printed (`rejected — <reason>; not retried …`) and never halts;
-  a recorded ruling steer dsa reports rejected is skipped by the re-send row and
-  never sent again under a new id. The rulings then travel as before (repair
-  messages list the rulings since dispatch; reviewers acknowledge with
-  `--ack-rulings`). An unconfirmed ruling send is re-sent like any send (same id,
+  meanwhile) is printed (`rejected — <reason>; not retried as a steer (the
+  writer's next follow-up carries these rulings; reviewers get them through the
+  rulings obligation)`) and never halts; a recorded ruling steer dsa reports
+  rejected is skipped by the re-send row and never sent again as a steer. Its
+  rulings are not delivered (above): the writer's next follow-up lists them;
+  reviewers acknowledge with `--ack-rulings`. A rejected ruling *follow-up*
+  halts at once, like any other send. An unconfirmed ruling send is re-sent like any send (same id,
   stored bytes).
 - **Obligation unchanged (D22.4).** A steer is not an acknowledgment: the
   `rulings` obligation still needs the reviewer's `ack_rulings`.
@@ -1777,7 +1786,12 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   not progress; trunk CAS drift (the ref moved during the merge) → the line
   `merge N: retry — merge refused (…); retry next pass` (0.7.0: it ends the
   measurement in the log) and the trunk drift notify below, retried next pass,
-  no halt; any other → halt needing a human.
+  no halt; K4 (§6.4) `not measured: …` (a key the plan update introduced; the
+  measured observations were kept) → `merge N: retry — merge refused (…); retry
+  next pass`, no halt, and the next pass merges again; K4 `slot of <n> changed
+  (…)` and `candidate #S … was invalidated by plan #N …` → `merge N:
+  superseded — merge refused (…); the next pass decides on the new state`, no
+  halt (quiet: no wake); any other → halt needing a human.
 - **Trunk drift** (0.5.1, review ruling #559). 0.7.0 (review #785): while a
   merge of this driver is in flight, or ended and not yet handled, the pass
   makes no drift check and no drift notify (its own merge may have moved the
