@@ -145,10 +145,11 @@ fails the kept batch's dropped wakes are already marked resolved; and a staying 
 neither dsa events nor trunk drift while it waits (only the ledger head). Still
 open from 0.6.0: a follow-up forwarded into running work that dsa retires
 because the call sealed before delivery still ends in a misleading `finished
-repair follow-up without submitting` halt; the fix awaits dsa §49. 0.7
+repair follow-up without submitting` halt; the fix awaits dsa §49; M4 and M6 of `owed05-big.sh` remain within 9% of the
+22M-state cap (a larger model stops at the cap: each property without a verdict
+yet reports TIMEOUT, never HOLDS, and the exit status counts them). 0.7
 candidates: bind a reviewer's identity to its dsa call; rulings that uphold or
-overrule a named block. M4 and M6 of `owed05-big.sh` remain within 9% of the
-22M-state cap (a larger model stops at the cap with exit 1 and no verdict).
+overrule a named block.
 
 ## 0.6.0
 
