@@ -601,10 +601,11 @@ export function validateDraft(s: State, d: Draft): string[] {
       // D22.1: `rulings` = the highest ruling seq a `ruling` send includes; required for reason ruling, forbidden otherwise.
       if (d.reason === 'ruling') {
         if (!Number.isInteger(d.rulings) || !s.rules.some(r => r.seq === d.rulings && (r.nodes === '*' || r.nodes.includes(d.node)))) errors.push(`send reason ruling requires rulings = the seq of a recorded ruling covering ${d.node}`);
-      } else if (d.reason === 'repair') {
+      } else if (d.reason === 'repair' || d.reason === 'submit' || d.reason === 'rebase') {
         // E4: a repair records the highest in-scope ruling seq its message carried (0 when none); absent on 0.5.0 entries.
-        if (d.rulings !== undefined) errors.push(...carriedErrors(s, d, 'send reason repair'));
-      } else if (d.rulings !== undefined) errors.push('send rulings is only allowed with reason ruling or repair');
+        // K5.2 (0.7): a submit or rebase follow-up records it when it carries rulings.
+        if (d.rulings !== undefined) errors.push(...carriedErrors(s, d, `send reason ${d.reason}`));
+      } else if (d.rulings !== undefined) errors.push('send rulings is only allowed with reason ruling, repair, submit or rebase');
       break;
     }
     case 'evidence': errors.push(...evidenceErrors(d, n, spec)); break;

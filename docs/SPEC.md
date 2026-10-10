@@ -378,7 +378,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
 | `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels, rulings?: number}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; `rulings` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the task carried, 0 when none: an integer ≤ the entry's seq, 0 or the seq of a recorded ruling covering the node (§12.5.1); strict fields |
-| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling`; `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; forbidden for other reasons (§12.5.1); strict fields |
+| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling`; `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; reasons `submit` and `rebase` (0.7) the same, written only when the message carried a ruling; forbidden for other reasons (§12.5.1); strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
 | `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
 
@@ -1465,8 +1465,8 @@ count) has a seq above the block's, the action is a halt needing `human`:
 next repair` (one clause per such block; with a repair already outstanding the
 ruling reaches the writer with the following repair or the re-review). No repair follow-up is sent and none is
 counted. That node-named ruling also clears the halt (§12.3); the block is then
-repaired as usual, and every repair message lists, after the review notes, the
-rulings covering the node recorded after the dispatch (`Rulings since
+repaired as usual, and every repair message lists, first (0.7; before 0.7 after
+the review notes), the rulings covering the node recorded after the dispatch (`Rulings since
 dispatch:` with `- #seq text`); the note of a needs-parent block quotes its
 ruling (`ruling #seq: text`), also when that ruling predates the dispatch (a
 block from an earlier attempt). The re-review acknowledges them through
@@ -1489,11 +1489,63 @@ rebase --onto` instructions), then `commit, and run owed submit <node>`. Its
 `rulings` records what it carries, so no separate ruling steer follows. A writer
 that finishes it without submitting halts. Identical content resubmitted keeps
 the block current: a second repair (or the exhausted halt), never a reviewer
-run. Before all of this (review #680), when an active block on the key of
+run. The `submit` and `rebase` follow-ups list the undelivered in-scope rulings
+first (`Parent rulings for <node> (apply them; they override your packet):`,
+`- #seq text`) and then record `rulings` (0.7); a repair message starts with
+its `Rulings since dispatch:` block. Before all of this (review #680), when an active block on the key of
 that latest submit still awaits a parent ruling, row 8 halts with the
 needs-parent halt text (also when no block is repairable): a repair, rebase or
 submit follow-up would make the unruled block stale and let a re-review bypass
 the parent question. Without any such block row 8 is unchanged.
+
+Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
+- **Budget epoch.** `repairs` counts the attempt's `repair` sends after the
+  node's epoch (`repairEpoch`): the latest of the attempt's dispatch, the latest
+  ruling naming the node (`--nodes` includes it; `*` does not count) and the
+  latest plan entry that changed the node's spec (canonical, ignoring `title`
+  and the node's `drive`; `brief` counts, because the parent fixed the task).
+  Both repair rows (the candidate repair and row 8's resubmit repair) use it.
+  The halt says `repairs exhausted (<k> of <n> since ruling #s | plan #s |
+  dispatch): <cause>`. So after fixing a plan mistake, or to let the writer
+  continue, the parent records a ruling naming the node: it gives a fresh budget
+  and is delivered (the next repair or follow-up carries it). A ruling meaning
+  "accept the content as is" is the owner's waive, not a repair.
+- **Ruling follow-up.** When the writer run is sealed and an in-scope ruling
+  naming the node (not only `*`) is above its *delivered* (§12.5.1), the driver
+  sends one `follow-up` with reason `ruling` in place of: the `finished …
+  without submitting` halts, the `repairs exhausted` halt, the `stalled:` halt,
+  and an otherwise empty pass while the node has no current candidate. Never
+  while a reviewer run of the current candidate is unsealed, and never when the
+  current candidate has no active block and no failed item: the ruling then
+  reaches the reviewers (steer, the `rulings` obligation and `ack_rulings`), and
+  a block's repair carries it. Message: `New parent rulings for <node>:`, one
+  line `#<seq> (<nodes>): <text>` per undelivered in-scope ruling, then `Active
+  blocks on your candidate <commit> (submit #<seq>):` with `- #<seq>
+  <obligation>[ by <who> rank <r>]: <note>` for the active blocks on the current
+  candidate's keys (else the latest submit's), then `Apply these rulings; they
+  override your packet. Then commit and run \`owed submit <node>\`.`. `rulings`
+  = the highest seq it lists. It is not a repair (not counted). A writer that
+  finishes it without submitting halts as before, naming it: `writer run <rid>
+  finished ruling follow-up <send> without submitting a new candidate
+  (<cause>)`. dsa rejecting it halts the attempt on the next pass, like any
+  other send (the re-send row; only ruling *steers* are never halted for,
+  D22.3).
+- **Threshold hint.** On the measured repair path, for a check X among the
+  measured items: when the node's latest two failing, non-attribution
+  observations of `check:X` both exited 0 with `counts.fail` 0 and the same
+  `counts.tests`, below X's current `min_tests`, and no ruling naming the node
+  was recorded after the later one, the driver halts (needs `human`; the parent
+  decides) instead of repairing: `check <X>: <tests> tests ran and passed twice,
+  below min_tests <m>; the plan's threshold may be wrong: fix the plan (owed
+  plan) or rule (owed rule --nodes <node> "…")`. The first under-count still
+  gets a repair (the writer may have to add tests). After a ruling naming the
+  node the repair path runs again, with the fresh budget and the ruling carried;
+  a plan fix changes the check's key and the writer resubmits.
+- **Evidence in halts.** The `repairs exhausted` and `finished … without
+  submitting` halts of a measured cause list, after `measured block <obligation>
+  [#…]`, each failing observation that decides it as `#<obs> <obligation>:
+  <note>` (one line, at most 200 characters; the note falls back to `exit
+  <code>`), joined by `; `.
 
 Owner approval and manual evidence (D23). After the rows above (attest, needs
 a parent ruling, measured repair, reviewer launches, review-missing, review
@@ -1527,9 +1579,11 @@ it gives the reviewer's `owed evidence` command.
 - **Delivered rulings.** For each drive-launched run of the open attempt (the
   writer and the reviewer runs of the current candidate), *delivered* = the
   highest in-scope ruling seq (`--nodes` names the node, or `*`) the run already
-  has: the max of `rulings` on its launch entry and on every `repair` and
-  `ruling` send to it (also an unconfirmed or rejected ruling send), and for the
-  writer its dispatch `rulings_seen`. Entries without the field (written by
+  has: the max of `rulings` on its launch entry and on every send to it that
+  records `rulings` (`repair`, `ruling`, and since 0.7 `submit` and `rebase`
+  follow-ups; also an unconfirmed or rejected ruling send), and for the writer
+  its dispatch `rulings_seen`. A ruling counts as delivered to the writer once a
+  writer send that carried it is recorded. Entries without the field (written by
   0.5.0) fall back to the 0.5.0 position rule: a reviewer launch carried the
   in-scope rulings recorded before its entry, a `repair` send those recorded
   before it (D22.4a), a writer launch `rulings_seen`.
@@ -1547,9 +1601,9 @@ it gives the reviewer's `owed evidence` command.
   at most one action per node per pass; every other row wins, so a steer waits
   a few passes at most. Only `fenced` steers count as the last steer of the
   fenced row, so a ruling steer never hides a fence.
-- **Rejection (D22.3).** dsa rejecting a ruling send (e.g. the call sealed
+- **Rejection (D22.3).** dsa rejecting a ruling steer (e.g. the call sealed
   meanwhile) is printed (`rejected — <reason>; not retried …`) and never halts;
-  a recorded ruling send dsa reports rejected is skipped by the re-send row and
+  a recorded ruling steer dsa reports rejected is skipped by the re-send row and
   never sent again under a new id. The rulings then travel as before (repair
   messages list the rulings since dispatch; reviewers acknowledge with
   `--ack-rulings`). An unconfirmed ruling send is re-sent like any send (same id,

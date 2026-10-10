@@ -250,7 +250,7 @@ test('row 11: measured block → repair follow-up with the owed why card; once p
   r.submit('2'); r.obs('writes', 'pass'); r.obs('check:unit', 'fail');
   const capped = act(r, runsOf(okWriter()), { applied: applied(r), repairs: 1 });
   assert.ok(capped?.do === 'halt' && capped.needs === 'human');
-  assert.match(capped.reason, /^repairs exhausted \(1 of 1\): measured block check:unit \[#\d+\]/);
+  assert.match(capped.reason, /^repairs exhausted \(1 of 1 since dispatch\): measured block check:unit \[#\d+\]/);
   assert.equal(act(r, runsOf(okWriter()), { applied: applied(r), repairs: 2 })?.do, 'send', 'below the cap: a second repair');
 });
 
@@ -303,7 +303,7 @@ test('row 15: review block → repair follow-up, counted against the same repair
   m.submit('2'); m.obs('check:unit', 'fail', { attribution: true, key: 'a-check:unit-1', commit: 'ac1', base: 's0' }); m.pass();
   m.launchReviewer(1); m.review('block');
   const capped = act(m, runs, { applied: applied(m), repairs: 1 });
-  assert.ok(capped?.do === 'halt' && /^repairs exhausted \(1 of 1\): review block #\d+ review/.test(capped.reason));
+  assert.ok(capped?.do === 'halt' && /^repairs exhausted \(1 of 1 since dispatch\): review block #\d+ review/.test(capped.reason));
 });
 
 test('row 16: accepted → merge', () => {
@@ -563,7 +563,7 @@ test('D11: the slot reviewer records a new block on c2 → exactly one repair', 
   assert.equal(r.entries.filter(e => e.kind === 'send' && e.reason === 'repair').length, 2, 'one repair per candidate (c1, c2)');
   // With repairs 1 the c2 block exhausts the cap instead.
   const { r: q } = reReview(); q.review('block', 'reviewer:drive-a-1-1', 1);
-  assert.match((act(q, runs, { applied: applied(q), repairs: 1 }) as { reason: string }).reason, /^repairs exhausted \(1 of 1\): review block #\d+ review$/);
+  assert.match((act(q, runs, { applied: applied(q), repairs: 1 }) as { reason: string }).reason, /^repairs exhausted \(1 of 1 since dispatch\): review block #\d+ review$/);
 });
 
 test('D11: the slot reviewer oks c2 but a stale closure-review block stays active → halt needing the owner, naming the seq', () => {
