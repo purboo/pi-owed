@@ -150,11 +150,11 @@ test('G3.2: plan change with a repairable block: one repair follow-up (rulings, 
   // It finishes without submitting: halt (not a submit nudge).
   const h = act(r, runsOf(sealed(W())));
   assert.ok(h?.do === 'halt' && /finished repair follow-up .* without submitting a new candidate/.test(h.reason), JSON.stringify(h));
-  // Without a block, row 8 is unchanged: submit.
+  // Without a block, row 8 sends submit; 0.10 (N1.4): it names the plan entry that invalidated the submit.
   const q = rig(); q.dispatch(); q.launchWriter(); q.submit(); q.pass();
-  q.plan(nodeA({ checks: [unit, { id: 'pose', run: 'x', timeout_s: 60, reads: ['a/**'] }] }));
+  const qp = q.plan(nodeA({ checks: [unit, { id: 'pose', run: 'x', timeout_s: 60, reads: ['a/**'] }] }));
   const s = act(q, runsOf(sealed(W())));
-  assert.ok(s?.do === 'send' && s.reason === 'submit' && s.message === drv.submitMessage('a'), JSON.stringify(s));
+  assert.ok(s?.do === 'send' && s.reason === 'submit' && s.message === drv.planChangedMessage('a', qp.seq, ['checks']), JSON.stringify(s));
 });
 
 test('G3.2: rebase with a repairable block: one repair carrying the rebase instructions; repairs are counted', () => {

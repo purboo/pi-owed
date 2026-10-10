@@ -104,13 +104,13 @@ test('K5 FLAKY-COLDPLAY: repair, plan fix of min_tests + ruling, block #403, pla
   assert.ok(h1.reason.endsWith(`; #${under.seq} check:repeat: ${NOTE})`), h1.reason);
   r.halt(h1);
   // #394/#395: the owner fixes min_tests, the parent rules.
-  r.plan({ ...flaky, checks: [check({ id: 'repeat', min_tests: 100 })] });
+  const v24 = r.plan({ ...flaky, checks: [check({ id: 'repeat', min_tests: 100 })] });
   const r395 = r.rule('min_tests 200 was a parent planning error; keep the 5 tests');
   // #396: the submit follow-up carries the ruling first (no separate steer).
   const sub = act(r);
   assert.ok(isSend(sub, 'submit'), JSON.stringify(sub));
   assert.equal(sub.rulings, r395.seq);
-  assert.equal(sub.message, [`Parent rulings for a (apply them; they override your packet):`, `- #${r395.seq} min_tests 200 was a parent planning error; keep the 5 tests`, 'commit your work and run `owed submit a`'].join('\n'));
+  assert.equal(sub.message, [`Parent rulings for a (apply them; they override your packet):`, `- #${r395.seq} min_tests 200 was a parent planning error; keep the 5 tests`, driveMod.planChangedMessage('a', v24.seq, ['checks'])].join('\n'));
   r.record(sub);
   assert.equal(act(r, running()), undefined, 'delivered: no ruling steer follows');
   // #398-#404: passes, reviewer 1 blocks needing a parent ruling, halt.

@@ -136,12 +136,14 @@ test('M1/M2: parallel and trees are in no key; changing them invalidates, downgr
     // Changing back, or only parallel: still nothing.
     await ok('plan (parent)', () => ops.planSet({ cwd: r.cwd, plan: JSON.stringify(planOf([timed(r, 'u', 0)], { parallel: 1 })), as: parent }));
     assert.equal((await ops.status({ cwd: r.cwd })).nodes.a!.candidate?.seq, before.seq);
-    // An env change still invalidates the candidate and records the owner-only '*' exec downgrade.
+    // An env change still invalidates the candidate (0.10, N1: owed carries it with new keys) and records the owner-only
+    // '*' exec downgrade.
     await ops.planSet({ cwd: r.cwd, plan: JSON.stringify(planOf([timed(r, 'u', 0)], { parallel: 1, env: { X: '1' } })), as: owner, channel: 'flag' });
-    const e = (await ledger.read()).at(-1)!;
-    assert.ok(e.kind === 'plan');
+    const [e, carry] = (await ledger.read()).slice(-2);
+    assert.ok(e!.kind === 'plan' && carry!.kind === 'submit' && carry!.carry === before.seq, JSON.stringify(carry));
     const s2 = await ops.status({ cwd: r.cwd });
-    assert.equal(s2.nodes.a!.candidate, undefined, 'env change invalidates the candidate');
+    assert.equal(s2.nodes.a!.candidate?.seq, carry!.seq, 'env change invalidates the candidate; owed carries it');
+    assert.notDeepEqual(s2.nodes.a!.candidate?.keys, before.keys, 'with new keys');
     assert.ok(JSON.stringify((await ops.report({ cwd: r.cwd })).downgrades).includes('exec changed'), 'env change records the exec downgrade');
     await assert.rejects(ops.planSet({ cwd: r.cwd, plan: JSON.stringify(planOf([timed(r, 'u', 0)], { parallel: 1, wrap: ['env'] })), as: parent }), /exec changed|owner|downgrade/i, 'a parent cannot change wrap');
   } finally { await r.cleanup(); }
