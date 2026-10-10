@@ -1,0 +1,27 @@
+name: publish
+
+# Publishes to npm when a version tag (v*) is pushed. npm trusted publishing:
+# the job authenticates with a GitHub OIDC token (id-token: write); there is no
+# npm token and no repository secret. Trusted publishing needs npm >= 11.5, and
+# the npm bundled with Node 24 may be older, so npm is upgraded first.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Upgrade npm (trusted publishing needs npm >= 11.5)
+        run: npm install -g npm@latest
+      - run: npm publish --access public
