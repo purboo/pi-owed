@@ -233,6 +233,8 @@ This is a local, same-user trust boundary. It guards against mistakes and lazy c
 
 ## Parallel slots and a moving trunk
 
+`owed dispatch` and `owed plan` retry a failed compare-and-swap (CAS) up to three attempts in total when the ledger plan sha is unchanged. Each attempt reads fresh state; dispatch finishes its rollback before trying again. A changed plan, a failed rollback, or the third CAS failure returns the refusal with its original error class and exit code. Dispatch rollback uses `git update-ref -d refs/heads/<branch> <base>` to compare the tip and delete atomically, regardless of the main worktree's HEAD. A ref that moved is kept and the CAS failure is reported under the existing `git branch -d` rollback label. A branch still checked out in a worktree is kept too.
+
 `owed dispatch <node>` refuses when the node's `writes` overlap (path prefix) those of another node with an open slot and names that node; `--allow-overlap` dispatches anyway and records the overlap in the dispatch entry. `owed status` marks ready nodes that overlap an open slot.
 
 When trunk moves under an open slot, there is no need to abandon and redispatch. `owed rebase <node>` (the parent, or the writer inside its worktree) moves the slot base to the current trunk and invalidates the open candidate; the writer then runs the printed `git rebase --onto <new base> <old base>` in the same worktree and submits again. Review blocks still bind the node. `owed why` shows the previously reviewed patch and a hint, `git range-diff <old base>..<old commit> <new base>..<new commit>`, so a reviewer only has to review the conflict resolution.
@@ -280,6 +282,10 @@ A writer's writes question on such a node then costs one parent plan update and 
 `owed adopt --note TEXT --as parent:<id>` (pi: `owed_adopt` with `as: parent:…`) adopts trunk commits without a prompt when every changed path lies under an `adopt` prefix and the usual no-new-debt guard passes; the refusal names the first path outside. Views show `adopted by parent:<id> under allowance (plan #S)`.
 
 A candidate that changes files outside its writes fails the writes item; `owed why` lists those paths (`Out-of-writes paths: …`, the first 20) and, when a rule covers them all, adds `the parent may widen writes in the plan (allowance plan #S)`. A ruling cannot accept such paths: widening writes is a plan change.
+
+A changed check definition refusal names the changed fields (`run`, `timeout_s`, `reads`, `tests`, `red_expect`). Owed cannot compare commands: the change needs owner authority or a matching check allowance; adding the command as a new check id avoids replacing the existing check. This explanation does not change which edits count as downgrades.
+
+On `owed plan`, both check-less and loop warnings skip nodes already merged in the ledger. Invariant warnings and all `owed init` warnings are unchanged.
 
 ## Reclaiming worktrees
 

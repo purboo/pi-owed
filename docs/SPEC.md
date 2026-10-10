@@ -348,6 +348,11 @@ invalidates a candidate.
   matching prior rule. Recommended practice: keep writes strict and
   pre-authorize at plan time the prefixes integration/packaging nodes need
   (entry files, `package.json`, wiring directories).
+  For a changed check definition (0.10, N2), the detected item names the changed
+  fields among `run`, `timeout_s`, `reads`, `tests`, `red_expect`, in that order:
+  `<id> check definition changed (run, reads); owed cannot compare commands, so
+  this needs owner authority or an allow rule; to avoid it, add the new command
+  as a new check id`. Detection and allowance coverage are unchanged.
 - **Check-less nodes** (0.6.1 H2.2). `owed init` / `owed plan` (CLI and pi
   tools) warn, refusing and recording nothing, for each node of the new plan
   with no checks and no evidence obligations: `warning: node <id> has no
@@ -365,6 +370,8 @@ invalidates a candidate.
   pass`/`# fail` line (else the last `1..N` plan), `Tests:` summary or pytest
   summary line replaces the earlier one;
   cargo `test result:` lines are summed. Nothing is refused or recorded.
+  In 0.10 (N2), both warning kinds skip nodes merged in the current ledger on
+  `owed plan`; invariant warnings remain. `owed init` warnings are unchanged.
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
   `changed` lies under an `adopt` prefix of a rule of the **current** plan and
   `adoptGuard` passes. No owner channel is needed.
@@ -1061,7 +1068,12 @@ exclude or worktree effect. Missing parent directories of the worktree are
 created; a dispatch that then fails (in `git worktree add`, or when the ledger
 moved and it rolls back the worktree and branch) removes the directories it
 created again (empty ones only). Every rollback step (`git worktree remove`,
-`git branch -d`, directory cleanup) runs even when an earlier one fails; the
+branch deletion, directory cleanup) runs even when an earlier one fails. Branch
+deletion uses `git update-ref -d refs/heads/<branch> <base>`: Git compares the
+old value and deletes in one transaction (0.10, N2; review #976). A moved ref is
+kept and the CAS failure is reported under the existing `git branch -d` rollback
+label. A branch still checked out in a worktree is also kept. An untouched branch
+can be removed even when the main worktree's HEAD does not contain its base. The
 error then names the original failure and each failed step, and nothing is
 recorded. `<git common dir>/info/exclude` gets `.owed/` for the default root (as
 in 0.4.1), `/<repository-relative root>/` for another root inside the main
@@ -1070,6 +1082,14 @@ that directory literally; the line stays after the slots are gone), and nothing 
 a root outside it (both compared as physical paths). The dispatch entry records `branch` and
 `worktree`; every later use (submit/rebase writer inference, rebase packets,
 gc, the driver, views) reads the recorded values and never reconstructs them.
+
+In 0.10 (N2), dispatch and plan retry CAS refusals for at most three attempts in
+total, each starting with a fresh ledger read, only while the plan sha is
+unchanged. Dispatch keeps its dispatch lock across the attempts and completes
+worktree, branch and directory rollback before retrying; a failed rollback is
+returned immediately. A different plan sha prevents retry. The third CAS
+failure returns the last refusal with the same error class and exit code. Other
+failures (authority, validation, git, lock timeout) are not retried.
 
 When the trunk branch is checked out in a linked worktree, a merge fast-forwards
 it there (`git merge --ff-only` in that worktree) and refuses when it has
