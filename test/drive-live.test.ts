@@ -234,6 +234,41 @@ test('H1.1b two open questions: the first answered drops the held line; the next
   } finally { await f.done(); }
 });
 
+test('H1.1b a dropped wake also drops its repeat ride-along and later repeats of it', { timeout: 60_000 }, async () => {
+  const f = await rig(planOf(node('h')));
+  const dir = join(f.root, 'follow'), log = join(dir, 'log.jsonl');
+  mkdirSync(dir); writeFileSync(log, '');
+  const line = (o: Json) => appendFileSync(log, `${JSON.stringify(o)}\n`);
+  const halt = (facts: number, detail = 'stuck') => ({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail, facts });
+  try {
+    const mark = run.factMark(await run.stateOf(f.cwd), 'h');
+    const got: string[] = [], state = { busy: false };
+    const fo = new NEW.Follower({ log, repo: '/r', pid: process.pid, start: run.procStart(process.pid), deliver: (c: string) => got.push(c), busy: () => state.busy, revalidate: NEW.revalidator({ cwd: f.cwd, dsa: f.dsa }) });
+    line(halt(mark));
+    assert.match(await fo.step() ?? '', /halted — stuck\n/, 'delivered while current');
+    state.busy = true;
+    line(halt(mark, 'other'));        // a new wake of h (other text), held
+    assert.equal(await fo.step(), undefined);
+    line(halt(mark, 'other'));        // its repeat (a later read): rides along, held
+    assert.equal(await fo.step(), undefined);
+    await ops.rule({ cwd: f.cwd, as: parent, text: 'decided', nodes: ['h'] });
+    line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'unrelated' });
+    state.busy = false;
+    const m = await fo.step();
+    assert.deepEqual(m?.split('\n'), ['owed drive (/r):', 'halt k attempt 1 (needs human): halted — unrelated', 'Next: owed status / owed why <node>', '(1 wake(s) resolved before delivery)'],
+      'the resolved wake of h and its repeat ride-along are gone');
+    line(halt(mark, 'other'));        // a later repeat of the resolved wake: does not ride along
+    line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'next' });
+    const n = await fo.step();
+    assert.deepEqual(n?.split('\n'), ['owed drive (/r):', 'halt k attempt 1 (needs human): halted — next', 'Next: owed status / owed why <node>']);
+    // The driver's next pass reports h with the new mark: a new fact, delivered.
+    const now = run.factMark(await run.stateOf(f.cwd), 'h');
+    line(halt(now));
+    assert.match(await fo.step() ?? '', /halted — stuck\nNext: /, 'a new fact of h wakes');
+    fo.stop();
+  } finally { await f.done(); }
+});
+
 test('H1.1d CLI-era follower (no pi hooks): no hold, no revalidation; tick delivers as before', () => {
   const dir = mkdtempSync(join(tmpdir(), 'owed-live-')), log = join(dir, 'log.jsonl');
   writeFileSync(log, '');
@@ -279,6 +314,31 @@ test('H1.2 pi start stay:true: idle-wait wakes and the driver stays; a plan upda
     await until(() => h.messages.some(m => /driver exited 0 \(stopped\)/.test(m.message.content)), 10_000, 'the exit wake');
   } finally { await h.emit('session_shutdown'); await f.done(); }
 });
+
+for (const when of ['during-idle-pass', 'after-idle-wait'] as const) {
+  test(`H1.2 stay: a plan update ${when} resumes passes and dispatches the new node (review #725)`, { timeout: 60_000 }, async () => {
+    const f = await rig(planOf());
+    const orig = run.Driver.prototype.pass;
+    let calls = 0, injected = false;
+    const inject = () => ops.planSet({ cwd: f.cwd, as: parent, plan: JSON.stringify(planOf(node('b'))) });
+    // The update lands after the idle pass loaded its state, just before it returns idle (or after idle-wait).
+    run.Driver.prototype.pass = async function (this: run.Driver) {
+      const res = await orig.call(this); calls++;
+      if (res.idle && !injected) { injected = true; if (when === 'during-idle-pass') await inject(); else setTimeout(() => { void inject(); }, 500); }
+      return res;
+    };
+    const out: string[] = [], ac = new AbortController();
+    try {
+      const p = run.drive({ cwd: f.cwd, json: true, stay: true, pollMs: 100, passMs: 500, dsa: new Dsa({ bin: FAKE, env: { FAKE_DSA_DIR: f.dir } }), session: null, log: l => out.push(l), signal: ac.signal, handleSignals: false });
+      await until(() => out.some(l => (JSON.parse(l) as Json).do === 'dispatch'), 20_000, `the dispatch of b (${when})`).finally(() => ac.abort());
+      await p;
+      const lines = out.map(l => JSON.parse(l) as Json);
+      assert.ok(calls > 1, `passes=${calls}`);
+      assert.ok(lines.some(x => x.do === 'dispatch' && x.node === 'b'), JSON.stringify(lines));
+      assert.equal(lines.filter(x => x.event === 'idle-wait').length, 1, 'one idle period before the dispatch');
+    } finally { run.Driver.prototype.pass = orig; await f.done(); }
+  });
+}
 
 test('H1.2 CLI: --stay only with --detach or the loop; --detach --stay reports idleSince and stays until --stop', { timeout: 120_000 }, async () => {
   const f = await rig(planOf());

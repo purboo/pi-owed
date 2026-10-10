@@ -1793,7 +1793,9 @@ polling.
     the driver's next pass with the new mark. A failed ledger read keeps it.
     Terminal lines, drift lines (node `trunk`), `idle-wait` and lines without a
     fact mark are never dropped. The ledger is read and each run described at
-    most once per delivery.
+    most once per delivery. A dropped wake that is still its key's latest
+    record (E3.1) also drops that record's repeat ride-along, and later repeats
+    of it do not ride along (they are as stale); a new fact of the node wakes.
   - (c) If lines were dropped, the delivered message ends with a last line
     `(<n> wake(s) resolved before delivery)` (after `Next: …`), counting only
     that delivery's drops; the count is not carried over. If no wake line is
@@ -1808,9 +1810,11 @@ polling.
   (text `idle: nothing open and nothing ready; staying until the ledger
   changes (owed drive --stop ends it)`); an idle period ends with a pass that
   is not idle. `idle-wait` wakes the session; it is not terminal. The driver
-  keeps the lock and waits until the ledger head (the last line of
-  `ledger.jsonl`, read from the file's end every `pollMs`) differs from the
-  head at idle, then resumes passes; a ledger change that leaves it idle
+  keeps the lock and waits until the ledger head (the hash of the last entry
+  of `ledger.jsonl`, read from the file's end every `pollMs`) differs from the
+  head the idle pass decided on (`PassResult.head`, that pass's state), then
+  resumes passes; an entry appended during the idle pass (e.g. a plan update)
+  is such a difference, so the next pass runs at once (review #725); a ledger change that leaves it idle
   starts no new period (no second line). A stop or signal ends it as before
   (exit record `stopped`). `--detach --stay` passes `--stay` to the detached
   driver; the lock does not record it. `owed drive --status` adds after its
