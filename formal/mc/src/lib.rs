@@ -56,6 +56,10 @@ pub enum Property<M: Model> {
     Action { name: &'static str, holds: fn(&M, &M::State, &M::Action, &M::State) -> bool },
     /// P ~> Q under weak fairness of every fairness class (TLA+ WF over each class).
     LeadsTo { name: &'static str, p: fn(&M, &M::State) -> bool, q: fn(&M, &M::State) -> bool },
+    /// <>Q from the initial states under weak fairness of every fairness class (engine follow-up of the mc-engine
+    /// review, additive to the pinned API): violated iff some behavior from an initial state never satisfies Q,
+    /// i.e. a ~Q path from a ~Q initial state reaches a weakly fair ~Q cycle (stuttering included).
+    Eventually { name: &'static str, q: fn(&M, &M::State) -> bool },
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -66,6 +70,7 @@ impl<M: Model> Clone for Property<M> {
             Property::Invariant { name, holds } => Property::Invariant { name, holds: *holds },
             Property::Action { name, holds } => Property::Action { name, holds: *holds },
             Property::LeadsTo { name, p, q } => Property::LeadsTo { name, p: *p, q: *q },
+            Property::Eventually { name, q } => Property::Eventually { name, q: *q },
         }
     }
 }
@@ -73,7 +78,10 @@ impl<M: Model> Clone for Property<M> {
 impl<M: Model> Property<M> {
     pub fn name(&self) -> &'static str {
         match self {
-            Property::Invariant { name, .. } | Property::Action { name, .. } | Property::LeadsTo { name, .. } => name,
+            Property::Invariant { name, .. }
+            | Property::Action { name, .. }
+            | Property::LeadsTo { name, .. }
+            | Property::Eventually { name, .. } => name,
         }
     }
     pub fn kind(&self) -> Kind {
@@ -81,6 +89,7 @@ impl<M: Model> Property<M> {
             Property::Invariant { .. } => Kind::Invariant,
             Property::Action { .. } => Kind::Action,
             Property::LeadsTo { .. } => Kind::LeadsTo,
+            Property::Eventually { .. } => Kind::Eventually,
         }
     }
 }
@@ -94,6 +103,7 @@ pub enum Kind {
     Action,
     LeadsTo,
     Deadlock,
+    Eventually,
 }
 
 impl Kind {
@@ -103,6 +113,7 @@ impl Kind {
             Kind::Action => "action",
             Kind::LeadsTo => "leadsto",
             Kind::Deadlock => "deadlock",
+            Kind::Eventually => "eventually",
         }
     }
 }
@@ -278,6 +289,9 @@ pub struct Stats {
     pub limit: Option<String>,
     /// Simulation: walks run.
     pub traces: u64,
+    /// Exhaustive: number of new distinct states per BFS level (`levels[0]` = initial states). The last entry
+    /// may be a level that was generated but not expanded (the run stopped at a level boundary).
+    pub levels: Vec<u64>,
 }
 
 pub struct Report<M: Model> {
@@ -323,7 +337,9 @@ pub(crate) type ActFn<M> = fn(&M, &<M as Model>::State, &<M as Model>::Action, &
 pub(crate) struct Sel<M: Model> {
     pub(crate) invs: Vec<(usize, InvFn<M>)>,
     pub(crate) acts: Vec<(usize, ActFn<M>)>,
-    pub(crate) leads: Vec<(usize, InvFn<M>, InvFn<M>)>,
+    /// LeadsTo and Eventually: (slot, P, Q); P = None means "is an initial state" (Eventually = Init ~> Q where
+    /// only the initial occurrences count).
+    pub(crate) leads: Vec<(usize, Option<InvFn<M>>, InvFn<M>)>,
     pub(crate) deadlock: Option<usize>,
 }
 
@@ -385,7 +401,8 @@ pub fn check<M: Model>(model: &M, opts: &Options) -> Report<M> {
                 match matches[0] {
                     Property::Invariant { holds, .. } => sel.invs.push((slot, *holds)),
                     Property::Action { holds, .. } => sel.acts.push((slot, *holds)),
-                    Property::LeadsTo { p, q, .. } => sel.leads.push((slot, *p, *q)),
+                    Property::LeadsTo { p, q, .. } => sel.leads.push((slot, Some(*p), *q)),
+                    Property::Eventually { q, .. } => sel.leads.push((slot, None, *q)),
                 }
             }
             _ => {
@@ -399,7 +416,7 @@ pub fn check<M: Model>(model: &M, opts: &Options) -> Report<M> {
     if sel.leads.len() > live::MAX_LEADS {
         for (slot, _, _) in sel.leads.drain(..) {
             results[slot].verdict = Verdict::Error;
-            results[slot].message = Some(format!("at most {} LeadsTo properties per run", live::MAX_LEADS));
+            results[slot].message = Some(format!("at most {} LeadsTo/Eventually properties per run", live::MAX_LEADS));
         }
     }
     let nslots = results.len();
@@ -448,17 +465,21 @@ pub(crate) fn panic_message(p: &Box<dyn std::any::Any + Send>) -> String {
     }
 }
 
-/// `owedmc <crate version> (git <describe>)`; describe of the source checkout the engine was built from.
+/// `owedmc <crate version> (git <describe>, src sha256 <hex>)`, recorded at build time by `build.rs`: `git describe
+/// --always --dirty --tags` of the checkout the engine was built from ("unknown" without git) and the SHA-256 of
+/// the engine sources `formal/mc/src/*.rs` (file names and contents in name order; see `build.rs`).
 pub fn engine_version() -> String {
-    let git = std::process::Command::new("git")
-        .args(["-C", env!("CARGO_MANIFEST_DIR"), "describe", "--always", "--dirty", "--tags"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".to_string());
-    format!("owedmc {} (git {})", env!("CARGO_PKG_VERSION"), git)
+    format!(
+        "owedmc {} (git {}, src sha256 {})",
+        env!("CARGO_PKG_VERSION"),
+        env!("OWEDMC_BUILD_GIT"),
+        env!("OWEDMC_BUILD_SRC_SHA256")
+    )
+}
+
+/// SHA-256 of the engine sources as computed by `build.rs` (also part of [`engine_version`]).
+pub fn engine_source_sha256() -> &'static str {
+    env!("OWEDMC_BUILD_SRC_SHA256")
 }
 
 impl DynTrace {

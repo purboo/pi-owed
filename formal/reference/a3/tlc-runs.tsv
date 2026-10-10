@@ -1,0 +1,247 @@
+log	module	sha8	mode	consts	prop	kind	search	workers	result	distinct	generated	depth	trace_states	sim_traces	sim_checked	sim_num	sim_depth	deadlock	class
+PiDagAuth3-a22-AuthoritySound-free-min2.log	PiDagAuth3	4e33cdf2	a22	MaxLog=2;Scope=free	AuthoritySound	INVARIANT	bfs	4	VIOLATED	11802	11964	3	3					checked	current
+PiDagAuth3-a22-AuthoritySound-free-sanity4-first.log	PiDagAuth3	4e33cdf2	a22	MaxLog=4;Scope=free	AuthoritySound	INVARIANT	bfs	4	VIOLATED	45443	45443	5	4					checked	current
+PiDagAuth3-a22-AuthoritySound-free-sanity4.log	PiDagAuth3	4e33cdf2	a22	MaxLog=4;Scope=free	AuthoritySound	INVARIANT	bfs	4	VIOLATED	46032	46032	5	4					checked	current
+PiDagAuth3-a22-AuthoritySound.log	PiDagAuth3	32122309	a22	MaxLog=5	AuthoritySound	INVARIANT	bfs	2	VIOLATED	76	76	3	3					checked	auth-v1
+PiDagAuth3-a22-ConflictDebt.log	PiDagAuth3	32122309	a22	MaxLog=5	ConflictDebt	INVARIANT	bfs	2	VIOLATED	685	721	5	5					checked	auth-v1
+PiDagAuth3-a22-DecisionAuthority-free-min2.log	PiDagAuth3	4e33cdf2	a22	MaxLog=2;Scope=free	DecisionAuthority	INVARIANT	bfs	4	VIOLATED	9439	9521	3	3					checked	current
+PiDagAuth3-a22-DecisionAuthority-free-sanity4-first.log	PiDagAuth3	4e33cdf2	a22	MaxLog=4;Scope=free	DecisionAuthority	INVARIANT	bfs	4	VIOLATED	34426	34426	5	3					checked	current
+PiDagAuth3-a22-DecisionAuthority-free-sanity4.log	PiDagAuth3	4e33cdf2	a22	MaxLog=4;Scope=free	DecisionAuthority	INVARIANT	bfs	4	VIOLATED	34216	34216	5	3					checked	current
+PiDagAuth3-a22-DecisionAuthority.log	PiDagAuth3	32122309	a22	MaxLog=5	DecisionAuthority	INVARIANT	bfs	2	VIOLATED	203	207	4	3					checked	auth-v1
+PiDagAuth3-a22-Finished.log	PiDagAuth3	32122309	a22	MaxLog=5	Finished	PROPERTY	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a22-FuturePreserves.log	PiDagAuth3	32122309	a22	MaxLog=5	FuturePreserves	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a22-GoodProgress.log	PiDagAuth3	32122309	a22	MaxLog=5	GoodProgress	PROPERTY	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a22-NoAuthorJudge.log	PiDagAuth3	32122309	a22	MaxLog=5	NoAuthorJudge	INVARIANT	bfs	2	VIOLATED	236	240	4	3					checked	auth-v1
+PiDagAuth3-a22-NoWriterJudge-free-min2.log	PiDagAuth3	4e33cdf2	a22	MaxLog=2;Scope=free	NoWriterJudge	INVARIANT	bfs	4	VIOLATED	10473	10606	3	3					checked	current
+PiDagAuth3-a22-NoWriterJudge-free-sanity4-first.log	PiDagAuth3	4e33cdf2	a22	MaxLog=4;Scope=free	NoWriterJudge	INVARIANT	bfs	4	VIOLATED	37991	37991	5	4					checked	current
+PiDagAuth3-a22-NoWriterJudge-free-sanity4.log	PiDagAuth3	4e33cdf2	a22	MaxLog=4;Scope=free	NoWriterJudge	INVARIANT	bfs	4	VIOLATED	38893	38893	5	5					checked	current
+PiDagAuth3-a22-NoWriterJudge.log	PiDagAuth3	32122309	a22	MaxLog=5	NoWriterJudge	INVARIANT	bfs	2	VIOLATED	125	125	3	3					checked	auth-v1
+PiDagAuth3-a22-NothingCrossWaived.log	PiDagAuth3	32122309	a22	MaxLog=5	NothingCrossWaived	INVARIANT	bfs	2	VIOLATED	124	124	3	3					checked	auth-v1
+PiDagAuth3-a22-NothingDeferredMerged.log	PiDagAuth3	32122309	a22	MaxLog=5	NothingDeferredMerged	INVARIANT	bfs	2	VIOLATED	293	297	4	3					checked	auth-v1
+PiDagAuth3-a22-NothingMerged.log	PiDagAuth3	32122309	a22	MaxLog=5	NothingMerged	INVARIANT	bfs	2	VIOLATED	142	143	3	2					checked	auth-v1
+PiDagAuth3-a22-NothingParentWaived.log	PiDagAuth3	32122309	a22	MaxLog=5	NothingParentWaived	INVARIANT	bfs	2	VIOLATED	212	216	4	3					checked	auth-v1
+PiDagAuth3-a22-NothingRevivedWaived.log	PiDagAuth3	32122309	a22	MaxLog=5	NothingRevivedWaived	INVARIANT	bfs	2	VIOLATED	1019	1401	6	6					checked	auth-v1
+PiDagAuth3-a22-NothingSpeechWaived.log	PiDagAuth3	32122309	a22	MaxLog=5	NothingSpeechWaived	INVARIANT	bfs	2	VIOLATED	342	354	4	4					checked	auth-v1
+PiDagAuth3-a22-RelevantInvalidates.log	PiDagAuth3	32122309	a22	MaxLog=5	RelevantInvalidates	INVARIANT	bfs	2	VIOLATED	336	348	4	3					checked	auth-v1
+PiDagAuth3-a22-RetroHonored.log	PiDagAuth3	32122309	a22	MaxLog=5	RetroHonored	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a22-SamePrincipalSupersedes.log	PiDagAuth3	32122309	a22	MaxLog=5	SamePrincipalSupersedes	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a22-StateRemainsDebt.log	PiDagAuth3	32122309	a22	MaxLog=5	StateRemainsDebt	INVARIANT	bfs	2	VIOLATED	137	138	3	2					checked	auth-v1
+PiDagAuth3-a22-UnrelatedPreserves.log	PiDagAuth3	32122309	a22	MaxLog=5	UnrelatedPreserves	INVARIANT	bfs	2	VIOLATED	297	301	4	3					checked	auth-v1
+PiDagAuth3-a3-AllSafety-free-ex3.log	PiDagAuth3	4e33cdf2	a3	MaxLog=3;Scope=free	AllSafety	INVARIANT	bfs	4	INCOMPLETE	4415439			0					checked	current
+PiDagAuth3-a3-AllSafety-free-ex4-pre-author.log	PiDagAuth3	5d1a8fb4	a3	MaxLog=4;Scope=free	AllSafety	INVARIANT	bfs	4	INCOMPLETE	1116987			0					checked	intermediate
+PiDagAuth3-a3-AllSafety-free-ex4-pre-flat.log	PiDagAuth3	4d021af3	a3	MaxLog=4;Scope=free	AllSafety	INVARIANT	bfs	4	INCOMPLETE	4230352			0					checked	intermediate
+PiDagAuth3-a3-AllSafety-free-ex4.log	PiDagAuth3	4e33cdf2	a3	MaxLog=4;Scope=free	AllSafety	INVARIANT	bfs	4	INCOMPLETE	5077555			0					checked	current
+PiDagAuth3-a3-AllSafety-free-exh3-long.log	PiDagAuth3	4e33cdf2	a3	MaxLog=3;Scope=free	AllSafety	INVARIANT	bfs	16	HOLDS	9305311	18566311	4	0					checked	current
+PiDagAuth3-a3-AllSafety-free-sim-smoke.log	PiDagAuth3	4e33cdf2	a3	MaxLog=6;Scope=free	AllSafety	INVARIANT	sim	4	HOLDS-SIM		32001		0	4000	32001	1000	8	checked	current
+PiDagAuth3-a3-AllSafety-free-sim6.log	PiDagAuth3	4e33cdf2	a3	MaxLog=6;Scope=free	AllSafety	INVARIANT	sim	4	INCOMPLETE				0	1043507	8348032	500000	8	checked	current
+PiDagAuth3-a3-AllSafety-free-sim8-smoke.log	PiDagAuth3	4e33cdf2	a3	MaxLog=8;Scope=free	AllSafety	INVARIANT	sim	4	HOLDS-SIM		32001		0	4000	32001	1000	8	checked	current
+PiDagAuth3-a3-AllSafety-free-smoke2.log	PiDagAuth3	4e33cdf2	a3	MaxLog=2;Scope=free	AllSafety	INVARIANT	bfs	4	HOLDS	44311	88411	3	0					checked	current
+PiDagAuth3-a3-AllSafety-runnerfix-timeout.log	PiDagAuth3	4e33cdf2	a3	MaxLog=6;Scope=free	AllSafety	INVARIANT	sim	2	INCOMPLETE				0			500000	8	checked	current
+PiDagAuth3-a3-AllSafety-scenario-regression.log	PiDagAuth3	4e33cdf2	a3	MaxLog=5;Scope=scenarios	AllSafety	INVARIANT	bfs	4	HOLDS	1019	1402	6	0					checked	current
+PiDagAuth3-a3-AuthoritySound.log	PiDagAuth3	32122309	a3	MaxLog=5	AuthoritySound	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-ConflictDebt.log	PiDagAuth3	32122309	a3	MaxLog=5	ConflictDebt	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-DecisionAuthority.log	PiDagAuth3	32122309	a3	MaxLog=5	DecisionAuthority	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-Finished-scenario-regression.log	PiDagAuth3	4e33cdf2	a3	MaxLog=5;Scope=scenarios	Finished	PROPERTY	bfs	4	HOLDS	1019	1402	6	0					checked	current
+PiDagAuth3-a3-Finished.log	PiDagAuth3	32122309	a3	MaxLog=5	Finished	PROPERTY	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-FuturePreserves.log	PiDagAuth3	32122309	a3	MaxLog=5	FuturePreserves	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-GoodProgress-scenario-regression.log	PiDagAuth3	4e33cdf2	a3	MaxLog=5;Scope=scenarios	GoodProgress	PROPERTY	bfs	4	HOLDS	1019	1402	6	0					checked	current
+PiDagAuth3-a3-GoodProgress.log	PiDagAuth3	32122309	a3	MaxLog=5	GoodProgress	PROPERTY	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-NoAuthorJudge.log	PiDagAuth3	32122309	a3	MaxLog=5	NoAuthorJudge	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-NoWriterJudge.log	PiDagAuth3	32122309	a3	MaxLog=5	NoWriterJudge	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-NothingCrossWaived.log	PiDagAuth3	32122309	a3	MaxLog=5	NothingCrossWaived	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-NothingDeferredMerged-scenario-regression.log	PiDagAuth3	4e33cdf2	a3	MaxLog=5;Scope=scenarios	NothingDeferredMerged	INVARIANT	bfs	4	VIOLATED	328	333	4	3					checked	current
+PiDagAuth3-a3-NothingDeferredMerged.log	PiDagAuth3	32122309	a3	MaxLog=5	NothingDeferredMerged	INVARIANT	bfs	2	VIOLATED	338	350	4	3					checked	auth-v1
+PiDagAuth3-a3-NothingMerged-free-witness2.log	PiDagAuth3	4e33cdf2	a3	MaxLog=2;Scope=free	NothingMerged	INVARIANT	bfs	4	VIOLATED	31492	31940	3	3					checked	current
+PiDagAuth3-a3-NothingMerged-scenario-regression.log	PiDagAuth3	4e33cdf2	a3	MaxLog=5;Scope=scenarios	NothingMerged	INVARIANT	bfs	4	VIOLATED	196	199	3	2					checked	current
+PiDagAuth3-a3-NothingMerged.log	PiDagAuth3	32122309	a3	MaxLog=5	NothingMerged	INVARIANT	bfs	2	VIOLATED	141	142	3	2					checked	auth-v1
+PiDagAuth3-a3-NothingParentWaived-scenario-regression.log	PiDagAuth3	4e33cdf2	a3	MaxLog=5;Scope=scenarios	NothingParentWaived	INVARIANT	bfs	4	VIOLATED	360	374	4	4					checked	current
+PiDagAuth3-a3-NothingParentWaived.log	PiDagAuth3	32122309	a3	MaxLog=5	NothingParentWaived	INVARIANT	bfs	2	VIOLATED	248	252	4	4					checked	auth-v1
+PiDagAuth3-a3-NothingRevivedWaived.log	PiDagAuth3	32122309	a3	MaxLog=5	NothingRevivedWaived	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-NothingSpeechWaived.log	PiDagAuth3	32122309	a3	MaxLog=5	NothingSpeechWaived	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-RelevantInvalidates.log	PiDagAuth3	32122309	a3	MaxLog=5	RelevantInvalidates	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-RetroHonored.log	PiDagAuth3	32122309	a3	MaxLog=5	RetroHonored	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-SamePrincipalSupersedes.log	PiDagAuth3	32122309	a3	MaxLog=5	SamePrincipalSupersedes	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-StateRemainsDebt.log	PiDagAuth3	32122309	a3	MaxLog=5	StateRemainsDebt	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-UnrelatedPreserves.log	PiDagAuth3	32122309	a3	MaxLog=5	UnrelatedPreserves	INVARIANT	bfs	2	HOLDS	1019	1402	6	0					checked	auth-v1
+PiDagAuth3-a3-author-NoAuthorJudge.log	PiDagAuth3	32122309	a3-author	MaxLog=5	NoAuthorJudge	INVARIANT	bfs	2	VIOLATED	110	110	3	2					checked	auth-v1
+PiDagAuth3-a3-conflict-ConflictDebt.log	PiDagAuth3	32122309	a3-conflict	MaxLog=5	ConflictDebt	INVARIANT	bfs	2	VIOLATED	686	721	5	5					checked	auth-v1
+PiDagAuth3-a3-continuous-AuthoritySound.log	PiDagAuth3	32122309	a3-continuous	MaxLog=5	AuthoritySound	INVARIANT	bfs	2	VIOLATED	552	581	5	5					checked	auth-v1
+PiDagAuth3-a3-continuous-NothingRevivedWaived.log	PiDagAuth3	32122309	a3-continuous	MaxLog=5	NothingRevivedWaived	INVARIANT	bfs	2	VIOLATED	1019	1393	6	6					checked	auth-v1
+PiDagAuth3-a3-future-FuturePreserves.log	PiDagAuth3	32122309	a3-future	MaxLog=5	FuturePreserves	INVARIANT	bfs	2	VIOLATED	1019	1401	6	5					checked	auth-v1
+PiDagAuth3-a3-issue-AuthoritySound.log	PiDagAuth3	32122309	a3-issue	MaxLog=5	AuthoritySound	INVARIANT	bfs	2	VIOLATED	76	76	3	3					checked	auth-v1
+PiDagAuth3-a3-key-RelevantInvalidates.log	PiDagAuth3	32122309	a3-key	MaxLog=5	RelevantInvalidates	INVARIANT	bfs	2	VIOLATED	292	296	4	3					checked	auth-v1
+PiDagAuth3-a3-key-UnrelatedPreserves.log	PiDagAuth3	32122309	a3-key	MaxLog=5	UnrelatedPreserves	INVARIANT	bfs	2	VIOLATED	340	352	4	3					checked	auth-v1
+PiDagAuth3-a3-past-NoWriterJudge.log	PiDagAuth3	32122309	a3-past	MaxLog=5	NoWriterJudge	INVARIANT	bfs	2	VIOLATED	334	343	4	4					checked	auth-v1
+PiDagAuth3-a3-permission-DecisionAuthority.log	PiDagAuth3	32122309	a3-permission	MaxLog=5	DecisionAuthority	INVARIANT	bfs	2	VIOLATED	251	255	4	3					checked	auth-v1
+PiDagAuth3-a3-retro-RetroHonored.log	PiDagAuth3	32122309	a3-retro	MaxLog=5	RetroHonored	INVARIANT	bfs	2	VIOLATED	729	776	5	5					checked	auth-v1
+PiDagAuth3-a3-same-SamePrincipalSupersedes.log	PiDagAuth3	32122309	a3-same	MaxLog=5	SamePrincipalSupersedes	INVARIANT	bfs	2	VIOLATED	347	359	4	4					checked	auth-v1
+PiDagAuth3-a3-scope-AuthoritySound.log	PiDagAuth3	32122309	a3-scope	MaxLog=5	AuthoritySound	INVARIANT	bfs	2	VIOLATED	83	83	3	3					checked	auth-v1
+PiDagAuth3-a3-state-StateRemainsDebt.log	PiDagAuth3	32122309	a3-state	MaxLog=5	StateRemainsDebt	INVARIANT	bfs	2	VIOLATED	126	126	3	2					checked	auth-v1
+PiDagAuth3-a3-writers-NoWriterJudge.log	PiDagAuth3	32122309	a3-writers	MaxLog=5	NoWriterJudge	INVARIANT	bfs	2	VIOLATED	125	125	3	3					checked	auth-v1
+PiDagMerge-a22-DeferredDebtVisible-ruling-defer.log	PiDagMerge	7972e7a8	a22	Scenario=defer	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	22	41	8	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-falsePass.log	PiDagMerge	7972e7a8	a22	Scenario=falsePass	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	36	73	8	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-flakyDebt.log	PiDagMerge	7972e7a8	a22	Scenario=flakyDebt	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	15	26	7	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-genesis.log	PiDagMerge	7972e7a8	a22	Scenario=genesis	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	18	27	8	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-launderReview.log	PiDagMerge	7972e7a8	a22	Scenario=launderReview	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	71	151	11	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-launderTest.log	PiDagMerge	7972e7a8	a22	Scenario=launderTest	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	183	453	11	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-matrix.log	PiDagMerge	7972e7a8	a22	Scenario=matrix	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-oldDebt.log	PiDagMerge	7972e7a8	a22	Scenario=oldDebt	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	current
+PiDagMerge-a22-DeferredDebtVisible-ruling-rerun.log	PiDagMerge	7972e7a8	a22	Scenario=rerun	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	113	287	11	0					checked	current
+PiDagMerge-a22-EscapeAttributable-free-sim.log	PiDagMerge	65dadcf3	a22	Scenario=free	EscapeAttributable	INVARIANT	sim	4	VIOLATED		6579		14	24	6605	2000	20	checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-falsePass.log	PiDagMerge	65dadcf3	a22	Scenario=falsePass	EscapeAttributable	INVARIANT	bfs	1	VIOLATED	24	35	6	6					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-flakyDebt.log	PiDagMerge	65dadcf3	a22	Scenario=flakyDebt	EscapeAttributable	INVARIANT	bfs	1	VIOLATED	11	12	6	6					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-genesis.log	PiDagMerge	65dadcf3	a22	Scenario=genesis	EscapeAttributable	INVARIANT	bfs	1	VIOLATED	13	13	6	6					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-launderReview.log	PiDagMerge	65dadcf3	a22	Scenario=launderReview	EscapeAttributable	INVARIANT	bfs	1	HOLDS	71	151	11	0					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-launderTest.log	PiDagMerge	65dadcf3	a22	Scenario=launderTest	EscapeAttributable	INVARIANT	bfs	1	HOLDS	183	453	11	0					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-matrix.log	PiDagMerge	65dadcf3	a22	Scenario=matrix	EscapeAttributable	INVARIANT	bfs	1	VIOLATED	13	14	6	6					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-oldDebt.log	PiDagMerge	65dadcf3	a22	Scenario=oldDebt	EscapeAttributable	INVARIANT	bfs	1	VIOLATED	13	14	6	6					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-promise-rerun.log	PiDagMerge	65dadcf3	a22	Scenario=rerun	EscapeAttributable	INVARIANT	bfs	1	HOLDS	113	287	11	0					checked	ruling-changed
+PiDagMerge-a22-EscapeAttributable-ruling-defer.log	PiDagMerge	7972e7a8	a22	Scenario=defer	EscapeAttributable	INVARIANT	bfs	1	HOLDS	22	41	8	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-falsePass.log	PiDagMerge	7972e7a8	a22	Scenario=falsePass	EscapeAttributable	INVARIANT	bfs	1	HOLDS	36	73	8	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-flakyDebt.log	PiDagMerge	7972e7a8	a22	Scenario=flakyDebt	EscapeAttributable	INVARIANT	bfs	1	HOLDS	15	26	7	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-free.log	PiDagMerge	7972e7a8	a22	Scenario=free	EscapeAttributable	INVARIANT	sim	4	HOLDS-SIM		3024461		0	8000	3024461	2000	20	checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-genesis.log	PiDagMerge	7972e7a8	a22	Scenario=genesis	EscapeAttributable	INVARIANT	bfs	1	HOLDS	18	27	8	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-launderReview.log	PiDagMerge	7972e7a8	a22	Scenario=launderReview	EscapeAttributable	INVARIANT	bfs	1	HOLDS	71	151	11	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-launderTest.log	PiDagMerge	7972e7a8	a22	Scenario=launderTest	EscapeAttributable	INVARIANT	bfs	1	HOLDS	183	453	11	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-matrix.log	PiDagMerge	7972e7a8	a22	Scenario=matrix	EscapeAttributable	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-oldDebt.log	PiDagMerge	7972e7a8	a22	Scenario=oldDebt	EscapeAttributable	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	current
+PiDagMerge-a22-EscapeAttributable-ruling-rerun.log	PiDagMerge	7972e7a8	a22	Scenario=rerun	EscapeAttributable	INVARIANT	bfs	1	HOLDS	113	287	11	0					checked	current
+PiDagMerge-a22-GenesisBeforeAdvance-genesis.log	PiDagMerge	65dadcf3	a22	Scenario=good	GenesisBeforeAdvance	INVARIANT	bfs	1	VIOLATED	25	31	6	6					checked	merge-preruling
+PiDagMerge-a22-GoodEventuallyMerges-live.log	PiDagMerge	65dadcf3	a22	Scenario=live	GoodEventuallyMerges	PROPERTY	bfs	1	VIOLATED	17	43	6	7					checked	merge-preruling
+PiDagMerge-a22-JudgedAtCommit-race.log	PiDagMerge	65dadcf3	a22	Scenario=race	JudgedAtCommit	INVARIANT	bfs	1	VIOLATED	17	21	7	7					checked	merge-preruling
+PiDagMerge-a22-LeaseExcludes-live.log	PiDagMerge	65dadcf3	a22	Scenario=live	LeaseExcludes	INVARIANT	bfs	1	HOLDS	17	43	6	0					checked	merge-preruling
+PiDagMerge-a22-NoBypassedNegative-free-sim.log	PiDagMerge	65dadcf3	a22	Scenario=free	NoBypassedNegative	INVARIANT	sim	4	VIOLATED		3474		16	14	3531	2000	20	checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-new-test.log	PiDagMerge	d38bdf07	a22	Scenario=launderTest	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	53	70	8	8					checked	intermediate
+PiDagMerge-a22-NoBypassedNegative-promise-falsePass.log	PiDagMerge	65dadcf3	a22	Scenario=falsePass	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	36	73	8	0					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-promise-flakyDebt.log	PiDagMerge	65dadcf3	a22	Scenario=flakyDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	15	26	7	0					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-promise-genesis.log	PiDagMerge	65dadcf3	a22	Scenario=genesis	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	18	27	8	0					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-promise-launderReview.log	PiDagMerge	65dadcf3	a22	Scenario=launderReview	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	33	45	8	8					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-promise-launderTest.log	PiDagMerge	65dadcf3	a22	Scenario=launderTest	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	53	70	8	8					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-promise-matrix.log	PiDagMerge	65dadcf3	a22	Scenario=matrix	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-promise-oldDebt.log	PiDagMerge	65dadcf3	a22	Scenario=oldDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-promise-rerun.log	PiDagMerge	65dadcf3	a22	Scenario=rerun	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	39	52	8	8					checked	ruling-changed
+PiDagMerge-a22-NoBypassedNegative-ruling-defer.log	PiDagMerge	7972e7a8	a22	Scenario=defer	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	22	41	8	0					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-falsePass.log	PiDagMerge	7972e7a8	a22	Scenario=falsePass	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	36	73	8	0					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-flakyDebt.log	PiDagMerge	7972e7a8	a22	Scenario=flakyDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	15	26	7	0					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-free.log	PiDagMerge	7972e7a8	a22	Scenario=free	NoBypassedNegative	INVARIANT	sim	4	VIOLATED		5196		13	16	5257	2000	20	checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-genesis.log	PiDagMerge	7972e7a8	a22	Scenario=genesis	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	18	27	8	0					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-launderReview.log	PiDagMerge	7972e7a8	a22	Scenario=launderReview	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	33	45	8	8					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-launderTest.log	PiDagMerge	7972e7a8	a22	Scenario=launderTest	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	53	70	8	8					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-matrix.log	PiDagMerge	7972e7a8	a22	Scenario=matrix	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-oldDebt.log	PiDagMerge	7972e7a8	a22	Scenario=oldDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	25	47	8	0					checked	current
+PiDagMerge-a22-NoBypassedNegative-ruling-rerun.log	PiDagMerge	7972e7a8	a22	Scenario=rerun	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	39	52	8	8					checked	current
+PiDagMerge-a22-NoFlakyRerunEscape-flakyRerun.log	PiDagMerge	65dadcf3	a22	Scenario=launderTest	NoFlakyRerunEscape	INVARIANT	bfs	1	VIOLATED	91	144	9	9					checked	merge-preruling
+PiDagMerge-a22-NoLaundering-launderTest.log	PiDagMerge	65dadcf3	a22	Scenario=launderTest	NoLaundering	INVARIANT	bfs	1	VIOLATED	53	70	8	8					checked	merge-preruling
+PiDagMerge-a22-NoLaundering-rerun.log	PiDagMerge	65dadcf3	a22	Scenario=rerun	NoLaundering	INVARIANT	bfs	1	VIOLATED	39	52	8	8					checked	merge-preruling
+PiDagMerge-a22-NoLaundering-review.log	PiDagMerge	65dadcf3	a22	Scenario=launderReview	NoLaundering	INVARIANT	bfs	1	VIOLATED	33	45	8	8					checked	merge-preruling
+PiDagMerge-a22-NoNewBreakage-falsePass.log	PiDagMerge	65dadcf3	a22	Scenario=falsePass	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	21	28	6	6					checked	merge-preruling
+PiDagMerge-a22-NoNewBreakage-flakyDebt.log	PiDagMerge	65dadcf3	a22	Scenario=flakyDebt	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	11	12	6	6					checked	merge-preruling
+PiDagMerge-a22-NoNewBreakage-genesis.log	PiDagMerge	65dadcf3	a22	Scenario=genesis	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	13	13	6	6					checked	merge-preruling
+PiDagMerge-a22-NoNewBreakage-matrix.log	PiDagMerge	65dadcf3	a22	Scenario=matrix	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	13	14	6	6					checked	merge-preruling
+PiDagMerge-a22-NodeAcceptanceCovered-ruling-free.log	PiDagMerge	7972e7a8	a22	Scenario=free	NodeAcceptanceCovered	INVARIANT	sim	4	VIOLATED		2953		13	10	3036	2000	20	checked	current
+PiDagMerge-a22-NothingMerged-live.log	PiDagMerge	65dadcf3	a22	Scenario=live	NothingMerged	INVARIANT	bfs	1	VIOLATED	14	24	6	6					checked	merge-preruling
+PiDagMerge-a22-StateNeverWaived-waiver.log	PiDagMerge	65dadcf3	a22	Scenario=waiver	StateNeverWaived	INVARIANT	bfs	1	VIOLATED	22	26	7	7					checked	merge-preruling
+PiDagMerge-a3-DeferredDebtVisible-defer.log	PiDagMerge	65dadcf3	a3	Scenario=defer	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	10	13	8	0					checked	ruling-changed
+PiDagMerge-a3-DeferredDebtVisible-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	DeferredDebtVisible	INVARIANT	sim	4	VIOLATED		628118		17	2347	628275	2000	20	checked	ruling-changed
+PiDagMerge-a3-DeferredDebtVisible-min-deferred.log	PiDagMerge	65dadcf3	a3	Scenario=replayDeferred	DeferredDebtVisible	INVARIANT	bfs	1	VIOLATED	57	65	8	8					checked	ruling-changed
+PiDagMerge-a3-DeferredDebtVisible-ruling-defer.log	PiDagMerge	7972e7a8	a3	Scenario=defer	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	10	13	8	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-falsePass.log	PiDagMerge	7972e7a8	a3	Scenario=falsePass	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	14	24	7	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-flakyDebt.log	PiDagMerge	7972e7a8	a3	Scenario=flakyDebt	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	5	6	5	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-genesis.log	PiDagMerge	7972e7a8	a3	Scenario=genesis	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-launderReview.log	PiDagMerge	7972e7a8	a3	Scenario=launderReview	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	33	50	11	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-launderTest.log	PiDagMerge	7972e7a8	a3	Scenario=launderTest	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	101	154	12	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-matrix.log	PiDagMerge	7972e7a8	a3	Scenario=matrix	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-oldDebt.log	PiDagMerge	7972e7a8	a3	Scenario=oldDebt	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	13	17	8	0					checked	current
+PiDagMerge-a3-DeferredDebtVisible-ruling-rerun.log	PiDagMerge	7972e7a8	a3	Scenario=rerun	DeferredDebtVisible	INVARIANT	bfs	1	HOLDS	72	109	12	0					checked	current
+PiDagMerge-a3-EscapeAttributable-free-exhaustive.log	PiDagMerge	65dadcf3	a3	Scenario=free	EscapeAttributable	INVARIANT	bfs	4	VIOLATED	185207	238263	5	5					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	EscapeAttributable	INVARIANT	sim	4	VIOLATED		136489		14	510	136610	2000	20	checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-free-smoke.log	PiDagMerge	d38bdf07	a3	Scenario=free	EscapeAttributable	INVARIANT	sim	4	HOLDS-SIM		102067		0	400	102067	100	20	checked	intermediate
+PiDagMerge-a3-EscapeAttributable-promise-falsePass.log	PiDagMerge	65dadcf3	a3	Scenario=falsePass	EscapeAttributable	INVARIANT	bfs	1	HOLDS	14	24	7	0					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-promise-flakyDebt.log	PiDagMerge	65dadcf3	a3	Scenario=flakyDebt	EscapeAttributable	INVARIANT	bfs	1	HOLDS	5	6	5	0					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-promise-genesis.log	PiDagMerge	65dadcf3	a3	Scenario=genesis	EscapeAttributable	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-promise-launderReview.log	PiDagMerge	65dadcf3	a3	Scenario=launderReview	EscapeAttributable	INVARIANT	bfs	1	HOLDS	33	50	11	0					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-promise-launderTest.log	PiDagMerge	65dadcf3	a3	Scenario=launderTest	EscapeAttributable	INVARIANT	bfs	1	HOLDS	101	154	12	0					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-promise-matrix.log	PiDagMerge	65dadcf3	a3	Scenario=matrix	EscapeAttributable	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-promise-oldDebt.log	PiDagMerge	65dadcf3	a3	Scenario=oldDebt	EscapeAttributable	INVARIANT	bfs	1	VIOLATED	8	8	6	6					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-promise-rerun.log	PiDagMerge	65dadcf3	a3	Scenario=rerun	EscapeAttributable	INVARIANT	bfs	1	HOLDS	72	109	12	0					checked	ruling-changed
+PiDagMerge-a3-EscapeAttributable-ruling-defer.log	PiDagMerge	7972e7a8	a3	Scenario=defer	EscapeAttributable	INVARIANT	bfs	1	HOLDS	10	13	8	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-falsePass.log	PiDagMerge	7972e7a8	a3	Scenario=falsePass	EscapeAttributable	INVARIANT	bfs	1	HOLDS	14	24	7	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-flakyDebt.log	PiDagMerge	7972e7a8	a3	Scenario=flakyDebt	EscapeAttributable	INVARIANT	bfs	1	HOLDS	5	6	5	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-genesis.log	PiDagMerge	7972e7a8	a3	Scenario=genesis	EscapeAttributable	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-launderReview.log	PiDagMerge	7972e7a8	a3	Scenario=launderReview	EscapeAttributable	INVARIANT	bfs	1	HOLDS	33	50	11	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-launderTest.log	PiDagMerge	7972e7a8	a3	Scenario=launderTest	EscapeAttributable	INVARIANT	bfs	1	HOLDS	101	154	12	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-matrix.log	PiDagMerge	7972e7a8	a3	Scenario=matrix	EscapeAttributable	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-oldDebt.log	PiDagMerge	7972e7a8	a3	Scenario=oldDebt	EscapeAttributable	INVARIANT	bfs	1	HOLDS	13	17	8	0					checked	current
+PiDagMerge-a3-EscapeAttributable-ruling-rerun.log	PiDagMerge	7972e7a8	a3	Scenario=rerun	EscapeAttributable	INVARIANT	bfs	1	HOLDS	72	109	12	0					checked	current
+PiDagMerge-a3-FreeCoreSafety-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	FreeCoreSafety	INVARIANT	sim	4	HOLDS-SIM		10694779		0	40000	10694779	10000	20	checked	ruling-changed
+PiDagMerge-a3-FreeCoreSafety-ruling-free.log	PiDagMerge	7972e7a8	a3	Scenario=free	FreeCoreSafety	INVARIANT	sim	4	HOLDS-SIM		12760539		0	40000	12760539	10000	20	checked	current
+PiDagMerge-a3-FreeCoreSafety-runnerfix-ok.log	PiDagMerge	7972e7a8	a3	Scenario=free	FreeCoreSafety	INVARIANT	sim	2	HOLDS-SIM		637852		0	2000	637852	1000	20	checked	current
+PiDagMerge-a3-FreeNoTwoMerges-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	FreeNoTwoMerges	INVARIANT	sim	4	VIOLATED		38537		17	145	38645	2000	20	checked	ruling-changed
+PiDagMerge-a3-FreeNoTwoMerges-ruling-free.log	PiDagMerge	7972e7a8	a3	Scenario=free	FreeNoTwoMerges	INVARIANT	sim	4	VIOLATED		576017		21	1809	576158	2000	20	checked	current
+PiDagMerge-a3-GenesisBeforeAdvance-genesis.log	PiDagMerge	65dadcf3	a3	Scenario=good	GenesisBeforeAdvance	INVARIANT	bfs	1	HOLDS	17	23	8	0					checked	merge-preruling
+PiDagMerge-a3-GoodEventuallyMerges-live.log	PiDagMerge	65dadcf3	a3	Scenario=live	GoodEventuallyMerges	PROPERTY	bfs	1	HOLDS	9	14	6	0					checked	merge-preruling
+PiDagMerge-a3-GoodEventuallyMerges-repair.log	PiDagMerge	a94efbec	a3	Scenario=live	GoodEventuallyMerges	PROPERTY	bfs	1	HOLDS	9	14	6	0					checked	intermediate
+PiDagMerge-a3-JudgedAtCommit-race.log	PiDagMerge	65dadcf3	a3	Scenario=race	JudgedAtCommit	INVARIANT	bfs	1	HOLDS	14	21	9	0					checked	merge-preruling
+PiDagMerge-a3-K1-NoNewBreakage-flakyDebt.log	PiDagMerge	65dadcf3	a3-K1	Scenario=flakyDebt	NoNewBreakage	PROPERTY	bfs	1	HOLDS	5	6	5	0					checked	merge-preruling
+PiDagMerge-a3-K1-NoNewBreakage-genesis.log	PiDagMerge	65dadcf3	a3-K1	Scenario=genesis	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	7	8	6	6					checked	merge-preruling
+PiDagMerge-a3-K1-NoNewBreakage-matrix.log	PiDagMerge	65dadcf3	a3-K1	Scenario=matrix	NoNewBreakage	PROPERTY	bfs	1	HOLDS	6	7	6	0					checked	merge-preruling
+PiDagMerge-a3-K2-NoLaundering-review.log	PiDagMerge	65dadcf3	a3-K2	Scenario=launderReview	NoLaundering	INVARIANT	bfs	1	VIOLATED	21	28	8	8					checked	merge-preruling
+PiDagMerge-a3-K3-NoNewBreakage-flakyDebt.log	PiDagMerge	65dadcf3	a3-K3	Scenario=flakyDebt	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	7	7	6	6					checked	merge-preruling
+PiDagMerge-a3-K3-NoNewBreakage-genesis.log	PiDagMerge	65dadcf3	a3-K3	Scenario=genesis	NoNewBreakage	PROPERTY	bfs	1	HOLDS	6	7	6	0					checked	merge-preruling
+PiDagMerge-a3-K3-NoNewBreakage-matrix.log	PiDagMerge	65dadcf3	a3-K3	Scenario=matrix	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	8	8	6	6					checked	merge-preruling
+PiDagMerge-a3-K3state-StateNeverWaived-waiver.log	PiDagMerge	65dadcf3	a3-K3state	Scenario=waiver	StateNeverWaived	INVARIANT	bfs	1	VIOLATED	11	12	7	7					checked	merge-preruling
+PiDagMerge-a3-K4-GenesisBeforeAdvance-genesis.log	PiDagMerge	65dadcf3	a3-K4	Scenario=good	GenesisBeforeAdvance	INVARIANT	bfs	1	VIOLATED	25	30	6	6					checked	merge-preruling
+PiDagMerge-a3-K5atomic-JudgedAtCommit-race.log	PiDagMerge	65dadcf3	a3-K5atomic	Scenario=race	JudgedAtCommit	INVARIANT	bfs	1	VIOLATED	10	11	7	7					checked	merge-preruling
+PiDagMerge-a3-K5queue-GoodEventuallyMerges-live.log	PiDagMerge	65dadcf3	a3-K5queue	Scenario=live	GoodEventuallyMerges	PROPERTY	bfs	1	VIOLATED	24	57	7	9					checked	merge-preruling
+PiDagMerge-a3-K5queue-LeaseExcludes-live.log	PiDagMerge	65dadcf3	a3-K5queue	Scenario=live	LeaseExcludes	INVARIANT	bfs	1	VIOLATED	5	5	4	4					checked	merge-preruling
+PiDagMerge-a3-K5queue-NothingMerged-live.log	PiDagMerge	65dadcf3	a3-K5queue	Scenario=live	NothingMerged	INVARIANT	bfs	1	VIOLATED	13	16	6	6					checked	merge-preruling
+PiDagMerge-a3-LeaseExcludes-live.log	PiDagMerge	65dadcf3	a3	Scenario=live	LeaseExcludes	INVARIANT	bfs	1	HOLDS	9	14	6	0					checked	merge-preruling
+PiDagMerge-a3-NewEscapeAttributable-free-smoke.log	PiDagMerge	d38bdf07	a3	Scenario=free	NewEscapeAttributable	INVARIANT	sim	4	HOLDS-SIM		101623		0	400	101623	100	20	checked	intermediate
+PiDagMerge-a3-NewEscapeAttributable-promise-oldDebt.log	PiDagMerge	65dadcf3	a3	Scenario=oldDebt	NewEscapeAttributable	INVARIANT	bfs	1	HOLDS	13	17	8	0					checked	merge-preruling
+PiDagMerge-a3-NoBypassedNegative-free-exhaustive.log	PiDagMerge	65dadcf3	a3	Scenario=free	NoBypassedNegative	INVARIANT	bfs	4	INCOMPLETE	297135			0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	NoBypassedNegative	INVARIANT	sim	4	VIOLATED		1189639		16	4446	1189691	10000	20	checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-free-smoke.log	PiDagMerge	d38bdf07	a3	Scenario=free	NoBypassedNegative	INVARIANT	sim	4	HOLDS-SIM		102212		0	400	102212	100	20	checked	intermediate
+PiDagMerge-a3-NoBypassedNegative-min-negative.log	PiDagMerge	65dadcf3	a3	Scenario=replayNegative	NoBypassedNegative	INVARIANT	bfs	1	VIOLATED	33	33	9	9					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-new-test.log	PiDagMerge	d38bdf07	a3	Scenario=launderTest	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	101	154	12	0					checked	intermediate
+PiDagMerge-a3-NoBypassedNegative-promise-falsePass.log	PiDagMerge	65dadcf3	a3	Scenario=falsePass	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	14	24	7	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-promise-flakyDebt.log	PiDagMerge	65dadcf3	a3	Scenario=flakyDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	5	6	5	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-promise-genesis.log	PiDagMerge	65dadcf3	a3	Scenario=genesis	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-promise-launderReview.log	PiDagMerge	65dadcf3	a3	Scenario=launderReview	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	33	50	11	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-promise-launderTest.log	PiDagMerge	65dadcf3	a3	Scenario=launderTest	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	101	154	12	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-promise-matrix.log	PiDagMerge	65dadcf3	a3	Scenario=matrix	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-promise-oldDebt.log	PiDagMerge	65dadcf3	a3	Scenario=oldDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	13	17	8	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-promise-rerun.log	PiDagMerge	65dadcf3	a3	Scenario=rerun	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	72	109	12	0					checked	ruling-changed
+PiDagMerge-a3-NoBypassedNegative-ruling-defer.log	PiDagMerge	7972e7a8	a3	Scenario=defer	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	10	13	8	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-falsePass.log	PiDagMerge	7972e7a8	a3	Scenario=falsePass	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	14	24	7	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-flakyDebt.log	PiDagMerge	7972e7a8	a3	Scenario=flakyDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	5	6	5	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-genesis.log	PiDagMerge	7972e7a8	a3	Scenario=genesis	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-launderReview.log	PiDagMerge	7972e7a8	a3	Scenario=launderReview	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	33	50	11	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-launderTest.log	PiDagMerge	7972e7a8	a3	Scenario=launderTest	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	101	154	12	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-matrix.log	PiDagMerge	7972e7a8	a3	Scenario=matrix	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-oldDebt.log	PiDagMerge	7972e7a8	a3	Scenario=oldDebt	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	13	17	8	0					checked	current
+PiDagMerge-a3-NoBypassedNegative-ruling-rerun.log	PiDagMerge	7972e7a8	a3	Scenario=rerun	NoBypassedNegative	INVARIANT	bfs	1	HOLDS	72	109	12	0					checked	current
+PiDagMerge-a3-NoDeferredMerge-defer.log	PiDagMerge	65dadcf3	a3	Scenario=defer	NoDeferredMerge	INVARIANT	bfs	1	VIOLATED	9	10	7	7					checked	merge-preruling
+PiDagMerge-a3-NoDeferredMerge-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	NoDeferredMerge	INVARIANT	sim	4	VIOLATED		9814		13	39	9862	2000	20	checked	ruling-changed
+PiDagMerge-a3-NoDeferredMerge-ruling-free.log	PiDagMerge	7972e7a8	a3	Scenario=free	NoDeferredMerge	INVARIANT	sim	4	VIOLATED		127402		15	399	127554	2000	20	checked	current
+PiDagMerge-a3-NoFlakyRerunEscape-flakyRerun.log	PiDagMerge	65dadcf3	a3	Scenario=launderTest	NoFlakyRerunEscape	INVARIANT	bfs	1	HOLDS	101	154	12	0					checked	merge-preruling
+PiDagMerge-a3-NoLaundering-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	NoLaundering	INVARIANT	sim	4	VIOLATED		3273		20	14	3334	2000	20	checked	ruling-changed
+PiDagMerge-a3-NoLaundering-launderTest.log	PiDagMerge	65dadcf3	a3	Scenario=launderTest	NoLaundering	INVARIANT	bfs	1	VIOLATED	59	74	9	9					checked	merge-preruling
+PiDagMerge-a3-NoLaundering-rerun.log	PiDagMerge	65dadcf3	a3	Scenario=rerun	NoLaundering	INVARIANT	bfs	1	VIOLATED	44	53	9	9					checked	merge-preruling
+PiDagMerge-a3-NoLaundering-review.log	PiDagMerge	65dadcf3	a3	Scenario=launderReview	NoLaundering	INVARIANT	bfs	1	HOLDS	33	50	11	0					checked	merge-preruling
+PiDagMerge-a3-NoNewBreakage-defer.log	PiDagMerge	65dadcf3	a3	Scenario=defer	NoNewBreakage	PROPERTY	bfs	1	HOLDS	10	13	8	0					checked	merge-preruling
+PiDagMerge-a3-NoNewBreakage-falsePass.log	PiDagMerge	65dadcf3	a3	Scenario=falsePass	NoNewBreakage	PROPERTY	bfs	1	VIOLATED	13	17	6	6					checked	merge-preruling
+PiDagMerge-a3-NoNewBreakage-flakyDebt.log	PiDagMerge	65dadcf3	a3	Scenario=flakyDebt	NoNewBreakage	PROPERTY	bfs	1	HOLDS	5	6	5	0					checked	merge-preruling
+PiDagMerge-a3-NoNewBreakage-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	NoNewBreakage	PROPERTY	sim	4	VIOLATED		81266		15	305	81307	2000	20	checked	ruling-changed
+PiDagMerge-a3-NoNewBreakage-genesis.log	PiDagMerge	65dadcf3	a3	Scenario=genesis	NoNewBreakage	PROPERTY	bfs	1	HOLDS	6	7	6	0					checked	merge-preruling
+PiDagMerge-a3-NoNewBreakage-matrix.log	PiDagMerge	65dadcf3	a3	Scenario=matrix	NoNewBreakage	PROPERTY	bfs	1	HOLDS	6	7	6	0					checked	merge-preruling
+PiDagMerge-a3-NoNewBreakage-oldDebt.log	PiDagMerge	65dadcf3	a3	Scenario=oldDebt	NoNewBreakage	PROPERTY	bfs	1	HOLDS	13	17	8	0					checked	merge-preruling
+PiDagMerge-a3-NoNewBreakage-repair.log	PiDagMerge	e35f5310	a3	Scenario=flakyDebt	NoNewBreakage	PROPERTY	bfs	1	HOLDS	5	6	5	0					checked	intermediate
+PiDagMerge-a3-NoOldDebtMerge-oldDebt.log	PiDagMerge	65dadcf3	a3	Scenario=oldDebt	NoOldDebtMerge	INVARIANT	bfs	1	VIOLATED	8	8	6	6					checked	merge-preruling
+PiDagMerge-a3-NoOwnerWaivedMerge-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	NoOwnerWaivedMerge	INVARIANT	sim	4	VIOLATED		3573		13	15	3630	2000	20	checked	ruling-changed
+PiDagMerge-a3-NoOwnerWaivedMerge-owner.log	PiDagMerge	65dadcf3	a3	Scenario=launderReview	NoOwnerWaivedMerge	INVARIANT	bfs	1	VIOLATED	22	30	9	9					checked	merge-preruling
+PiDagMerge-a3-NoUnrelatedMerge-good.log	PiDagMerge	65dadcf3	a3	Scenario=good	NoUnrelatedMerge	INVARIANT	bfs	1	VIOLATED	16	18	7	7					checked	merge-preruling
+PiDagMerge-a3-NothingMerged-free-sim.log	PiDagMerge	65dadcf3	a3	Scenario=free	NothingMerged	INVARIANT	sim	4	VIOLATED		6928		18	28	7009	2000	20	checked	ruling-changed
+PiDagMerge-a3-NothingMerged-good.log	PiDagMerge	65dadcf3	a3	Scenario=good	NothingMerged	INVARIANT	bfs	1	VIOLATED	13	14	6	6					checked	merge-preruling
+PiDagMerge-a3-NothingMerged-live.log	PiDagMerge	65dadcf3	a3	Scenario=live	NothingMerged	INVARIANT	bfs	1	VIOLATED	8	10	6	6					checked	merge-preruling
+PiDagMerge-a3-NothingMerged-ruling-free.log	PiDagMerge	7972e7a8	a3	Scenario=free	NothingMerged	INVARIANT	sim	4	VIOLATED		4598		13	16	4644	2000	20	checked	current
+PiDagMerge-a3-StateNeverWaived-waiver.log	PiDagMerge	65dadcf3	a3	Scenario=waiver	StateNeverWaived	INVARIANT	bfs	1	HOLDS	6	7	6	0					checked	merge-preruling
