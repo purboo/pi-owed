@@ -386,8 +386,10 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     catch (error) {
       const run = (args: string[]) => async () => { const r = await git.git(root,args,{allowFail:true}); return r.code ? r.stderr.trim().split('\n').join(' ') || `exit ${r.code}` : undefined; };
       const dropBranch = async () => {
-        const tip = await git.revParse(root,`refs/heads/${branch}`);
-        return run(['branch',tip === state.trunk.commit ? '-D' : '-d',branch])();
+        const ref = `refs/heads/${branch}`, checkedOut = (await git.listWorktrees(root)).find(w => w.branch === ref);
+        // update-ref does not enforce branch's checked-out protection; keep it before the atomic ref CAS.
+        if (checkedOut) return `branch '${branch}' is checked out in ${checkedOut.path}`;
+        return run(['update-ref','-d',ref,state.trunk.commit])();
       };
       throw await rolledBack(error,[['git worktree remove',run(['worktree','remove',worktree])],['git branch -d',dropBranch],['directory cleanup',unmake]]);
     }
