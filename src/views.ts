@@ -134,6 +134,8 @@ const carriedOf = (n: NodeState): Carried | undefined => n.slot?.open && n.candi
 export const carriedText = (c: Carried): string => `candidate #${c.seq} carried by plan #${c.plan} from submit #${c.submit}`;
 /** N1.3: the line `owed plan` prints for a carry submit recorded after the plan entry. */
 export const carryLine = (e: Entry): string => e.kind === 'submit' ? `Carried ${e.node}: candidate ${e.facts.commit.slice(0, 12)} (submit #${e.carry}) is still the candidate as #${e.seq}; changed checks are measured again` : '';
+/** N1 (23:4x): the line `owed plan` prints for a carry it skipped. */
+export const notCarriedLine = (x: { node: string; reason: string }): string => `Not carried ${x.node}: ${x.reason}; the writer submits again`;
 /** L2: a superseded execution block with its audit line. */
 export type SupersededBlock = Block & { supersededBy: number; text: string };
 /** L2: `#<seq> superseded by plan #<p> (check <id> definition changed|removed)`. */

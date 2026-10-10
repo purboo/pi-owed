@@ -179,8 +179,10 @@ The candidate stays the writer's own commit: writer-only rules (no self-review,
 decoys) treat it exactly like the original. A change to any other node field
 (`brief`, `deps`, `review`, `title`, `approve`, `evidence`, …) never carries: the
 writer must see it and submit again, as in 0.9. A carry whose facts cannot be
-computed, or that validation would refuse, is left out (the candidate stays
-invalidated). `owed why` and `owed status` show `candidate #C carried by plan #P
+computed, or that validation would refuse, is left out (the plan is still
+recorded and the candidate stays invalidated), never silently: `owed plan` (and
+`owed_plan`) print `Not carried <node>: <reason>; the writer submits again`, and
+JSON has `notCarried: [{node, reason}]`. `owed why` and `owed status` show `candidate #C carried by plan #P
 from submit #S`, and `owed plan` prints one `Carried <node>: …` line per carried
 node. The formal model does not cover carry (Deferred).
 Invariants removed by the owner no longer need their genesis observation.
