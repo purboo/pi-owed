@@ -511,6 +511,7 @@ test('review packet without blocks keeps its text (slot identity k = n − base)
     'Your reviewer identity: reviewer:drive-a-1-1 (never the writer of this node).',
     'Inspect the actual diff: git diff s0 ac1',
     'Do not edit files, commit or run owed submit; review only.',
+    `--ok means the candidate meets the node's goal as its title and brief state it, not only that the writer's report or evidence is accurate. If the candidate or the writer's report says the goal is not met, record --block (--needs-parent when the goal itself is in question).`,
     'If the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, record --block --needs-parent and state the decision needed; do not push a guess onto the writer.',
     'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',
     '  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 1 --candidate ac1 --note "..."',

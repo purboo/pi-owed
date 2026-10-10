@@ -17,6 +17,7 @@ export class OwedError extends Error { constructor(message: string, readonly cod
 ```ts
 export function parsePlan(text: string): Plan;   // YAML → Plan with defaults; throws OwedError('usage') listing every validation error
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[];   // SPEC §3 downgrade rules; also invariant removed/weakened
+export function checklessWarnings(plan: Plan): string[];   // 0.6.1 H2.2: `warning: node <id> has no checks: …` per node with no checks and no evidence (init/plan output only)
 export function globMatch(path: string, glob: string): boolean;  // '**' any depth, '*' within a segment, 'dir/' prefix; use node:path matchesGlob where suitable
 export function matchesAny(path: string, globs: string[]): boolean;
 export const DRIVE_DEFAULTS: DriveConfig;              // {max: 4, repairs: 2, writer: {agent: 'worker'}, reviewer: {agent: 'reviewer'}}
@@ -121,6 +122,7 @@ D23 (SPEC §6.2 items 8–9): `manualKeys(spec, patch)` = the `approve`/`evidenc
 Allowances (SPEC §3.4, D21), pure:
 ```ts
 export function uncoveredDowngrades(prev: Plan, next: Plan, claimed?: Downgrade[]): Downgrade[];  // detected + claimed downgrades no rule of prev covers, each once (a claimed item whose detected wording is listed is left out); [] = a parent may record the update
+export function writesHint(prev: Plan, next: Plan, gaps: Downgrade[]): string | undefined;  // 0.6.1 H2.1: `hint: an allow rule {nodes: […], writes: […]} in the prior plan would cover this` when every gap widens writes
 export function adoptPrefixes(plan: Plan): string[];                    // `adopt` prefixes of every rule
 export function unadoptable(plan: Plan, changed: readonly string[]): string | undefined;  // first path outside them
 export function writesAllowed(plan: Plan, node: string, paths: readonly string[]): boolean;  // a matching rule's writes prefixes cover every path
