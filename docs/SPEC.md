@@ -29,11 +29,13 @@ boundaries: a process can unset the variables or change directory.
   then rename). Any read error, invalid JSON, other `v` or other `sha` means the
   entry is ignored and the YAML is parsed again; a write that fails is ignored:
   the cache never fails an op. It is a derived local file, as writable by local
-  processes as the ledger and the blobs. `owed verify` never reads it: it parses
-  every plan blob from YAML, reports in `cacheMismatch` (JSON; not a failure)
-  each entry that disagrees with its blob (or is unreadable or of another
-  version) and rewrites it. `owed gc` (also `--dry-run`) removes entries and
-  temp files whose sha no longer appears in a genesis or plan entry
+  processes as the ledger and the blobs. `owed verify` never uses it for replay:
+  it parses every plan blob from YAML and reads each cache entry raw. An entry
+  of another `v` is rewritten silently (stale, not a fault). An entry of this
+  `v` whose `sha` or plan differs from the blob, or a file that cannot be read
+  or is not JSON, is reported in `cacheMismatch` (JSON; not a verify failure)
+  and rewritten. `owed gc` (also `--dry-run`) removes entries whose sha no
+  longer appears in a genesis or plan entry, and temp files older than 60 s
   (`GcResult.planCache`, a `Plan cache files ... removed` line); nothing is
   recorded in the ledger for them.
 - `lock/`: mutual exclusion by atomic `mkdir`; contains `owner.json`

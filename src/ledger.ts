@@ -191,6 +191,17 @@ export class Ledger {
       await rename(temp, join(dir, `${sha}.json`));
     } catch { await rm(temp, { force: true }).catch(() => undefined); }
   }
+  /**
+   * The raw cache entry of `sha` for `owed verify`: `missing` (no file), `corrupt` (unreadable, or not JSON), else its
+   * fields as stored.
+   */
+  async rawPlanCache(sha: string): Promise<{ state: 'missing' } | { state: 'corrupt' } | { state: 'read'; v: unknown; sha: unknown; plan: unknown }> {
+    let text: string;
+    try { text = await readFile(join(this.dir, 'cache', 'plans', `${sha}.json`), 'utf8'); } catch (e) { return isCode(e, 'ENOENT') ? { state: 'missing' } : { state: 'corrupt' }; }
+    try { const c = JSON.parse(text) as Record<string, unknown> | null; return c && typeof c === 'object' ? { state: 'read', v: c.v, sha: c.sha, plan: c.plan } : { state: 'corrupt' }; } catch { return { state: 'corrupt' }; }
+  }
+  /** Modification time (ms) of a file in the plan cache directory, undefined when it cannot be read. */
+  async planCacheMtime(file: string): Promise<number | undefined> { try { return (await stat(join(this.dir, 'cache', 'plans', file))).mtimeMs; } catch { return undefined; } }
   /** File names in the plan cache directory (entries `<sha>.json` and stray temp files); empty when there is none. */
   async planCacheFiles(): Promise<string[]> {
     try { return (await readdir(join(this.dir, 'cache', 'plans'))).sort(); } catch { return []; }
