@@ -2,6 +2,7 @@
 //! them for the `owedmc` command line.
 
 pub mod a3;
+pub mod owed05;
 pub mod toy;
 
 /// All registered models.
@@ -9,5 +10,6 @@ pub fn registry() -> mc::Registry {
     let mut r = mc::Registry::new();
     r.add(toy::info());
     a3::register(&mut r);
+    r.add(owed05::info());
     r
 }
