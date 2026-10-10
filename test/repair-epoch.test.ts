@@ -184,7 +184,7 @@ test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node
   assert.ok(rej?.do === 'halt' && rej.reason.startsWith(`dsa rejected send ${sent.send}: call pruned`), JSON.stringify(rej));
 });
 
-test('K5.2: a ruling during a running review, or while the clean candidate awaits merge, sends no writer follow-up', () => {
+test('K5.2: a ruling during a running review, or while the clean candidate awaits merge, sends no writer follow-up; a block\'s repair carries it first', () => {
   const r = started(spec({ id: 'a', checks: [check({ id: 'unit' })], review: { count: 1, min_rank: 1 } }));
   r.submit(); r.pass(); r.record(act(r));
   const runs = sealed(view(R1, 'running'));
@@ -195,15 +195,24 @@ test('K5.2: a ruling during a running review, or while the clean candidate await
   assert.ok(isSend(steer, 'ruling') && steer.rid === R1 && steer.sendKind === 'steer' && steer.rulings === named.seq, JSON.stringify(steer));
   r.record(steer);
   assert.equal(act(r, runs), undefined, 'no writer follow-up during a running review');
-  assert.ok(star.seq < named.seq);
-  // The reviewer approves (acknowledging the rulings): the clean candidate awaits merge, a later ruling does not wake the writer.
-  r.add({ kind: 'review', by: 'reviewer:drive-a-1-1', node: 'a', attempt: 1, obligation: 'review', key: r.state().nodes.a!.candidate!.keys.review!, verdict: 'ok', rank: 1, note: 'fine', ack_rulings: named.seq });
-  const done = sealed(view(R1, 'sealed', { status: 'ok' }));
-  assert.deepEqual(act(r, done), { do: 'merge', node: 'a' });
-  const late = r.rule('a late note for a');
-  const after = act(r, done);
-  assert.ok(after?.do !== 'send' || after.rid !== W, `no writer follow-up: ${JSON.stringify(after)}`);
-  assert.ok(late.seq > named.seq);
+  // The reviewer blocks: the repair (not a ruling follow-up) carries both rulings, first.
+  const b = r.review('block', { note: 'not per the ruling' });
+  const rep = act(r, sealed(view(R1, 'sealed', { status: 'ok' })));
+  assert.ok(isSend(rep, 'repair') && rep.rulings === named.seq, JSON.stringify(rep));
+  assert.ok(rep.message.startsWith(`Rulings since dispatch:\n- #${star.seq} general guidance\n- #${named.seq} use the registry\nowed found problems`), rep.message);
+  assert.ok(rep.message.includes(`- #${b.seq} review by reviewer:drive-a-1-1 rank 1: not per the ruling`));
+  // A ruling while the clean candidate awaits merge does not wake the writer either, nor replaces the stalled halt of a
+  // candidate without a block.
+  const m = started(spec({ id: 'a', checks: [check({ id: 'unit' })], review: { count: 1, min_rank: 1 } }));
+  m.submit(); m.pass(); m.record(act(m));
+  const named2 = m.rule('use the registry');
+  m.add({ kind: 'review', by: 'reviewer:drive-a-1-1', node: 'a', attempt: 1, obligation: 'review', key: m.state().nodes.a!.candidate!.keys.review!, verdict: 'ok', rank: 1, note: 'fine', ack_rulings: named2.seq });
+  const ok = sealed(view(R1, 'sealed', { status: 'ok' }));
+  assert.deepEqual(act(m, ok), { do: 'merge', node: 'a' }, 'accepted: merge, the writer is not woken');
+  // A later ruling leaves `rulings` unacknowledged and nothing runs: the stalled halt stays (the candidate has no block).
+  m.rule('a late note for a');
+  const st = act(m, ok);
+  assert.ok(st?.do === 'halt' && st.needs === 'owner' && st.reason.startsWith('stalled: rulings'), JSON.stringify(st));
 });
 
 test('K5.2: a ruling after the halt for finished-without-submit (no candidate) → a ruling follow-up; a * ruling does not; then the halt names it', () => {
