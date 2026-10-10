@@ -9,7 +9,7 @@ import { parsePlan } from '../src/plan.ts';
 import { Ledger } from '../src/ledger.ts';
 import { runJob } from '../src/exec.ts';
 import * as ops from '../src/ops.ts';
-import type { AttestJob } from '../src/types.ts';
+import type { AttestJob, ObsEntry } from '../src/types.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
@@ -60,7 +60,8 @@ const plan = (flag: string) => JSON.stringify({ version: 1, trunk: 'main', closu
   { id: 'c', writes: ['src/c'], checks: [{ id: 'unit', run: tap(1, 1, 0) }], review: { count: 0, min_rank: 1 } },
 ] });
 
-test('K2.2/K2.3: owed why and owed status show an exec block\'s note on its line; waivers say what they mean and why shows them as not measured', { timeout: 300_000 }, async () => {
+/** A ledger with nodes a, b, c submitted; a and b attested (failing). */
+async function fixture() {
   const x = await repo();
   try {
     const flag = join(x.root, 'flag');
@@ -75,11 +76,19 @@ test('K2.2/K2.3: owed why and owed status show an exec block\'s note on its line
     }
     await ops.attest({ cwd: x.cwd, node: 'a' }); await ops.attest({ cwd: x.cwd, node: 'b' });
     const entries = await (await Ledger.open(x.cwd)).read();
-    const obsOf = (id: string) => entries.find(e => e.kind === 'obs' && e.subject === id && e.obligation === 'check:unit');
+    const obsOf = (id: string) => entries.find((e): e is ObsEntry => e.kind === 'obs' && e.subject === id && e.obligation === 'check:unit');
     const fa = obsOf('a'), fb = obsOf('b');
-    assert.ok(fa?.kind === 'obs' && fa.verdict === 'fail' && fb?.kind === 'obs' && fb.verdict === 'fail');
-    const noteA = 'min_tests unmet: counted 2 (2 pass, 0 fail) < min_tests 3; exit 0';
-    assert.equal(fa.note, noteA);
+    if (fa?.verdict !== 'fail' || fb?.verdict !== 'fail') throw new Error(`expected failing observations: ${JSON.stringify([fa, fb])}`);
+    return { x, flag, slots, fa, fb };
+  } catch (e) { await x.cleanup(); throw e; }
+}
+
+test('K2.2: owed why and owed status show an exec block\'s failing note on its line, at most 200 characters', { timeout: 300_000 }, async () => {
+  const { x, fa, fb } = await fixture();
+  try {
+    // The note as recorded (K2.1 is tested above); here only where it is shown.
+    const noteA = fa.note ?? '';
+    assert.ok(noteA.length > 0 && !noteA.includes('\n'), noteA);
     assert.ok((fb.note ?? '').length > 200, fb.note);
     const shortB = `${(fb.note ?? '').replace(/\n/g, '\\n').slice(0, 199)}…`;
 
@@ -101,6 +110,12 @@ test('K2.2/K2.3: owed why and owed status show an exec block\'s note on its line
     assert.ok(itemB?.endsWith(` — note #${fb.seq}: ${shortB}`), status);
     const sv = await ops.status({ cwd: x.cwd });
     assert.deepEqual(Object.values(sv.pending).flat().find(i => i.subject === 'a' && i.obligation === 'check:unit')?.blockNotes, [{ seq: fa.seq, note: noteA }]);
+  } finally { await x.cleanup(); }
+});
+
+test('K2.3: waivers say what they mean and their true scope; why shows a waived item as not measured', { timeout: 300_000 }, async () => {
+  const { x, flag, slots, fa, fb } = await fixture();
+  try {
 
     // a becomes flaky: the attribution rerun on the original content passes.
     await writeFile(flag, '');
