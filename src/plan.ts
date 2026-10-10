@@ -2,12 +2,50 @@ import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
 import { canonical } from './canon.ts';
-import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
+import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
-/** The plan's driver config, or the defaults when it has no `drive:` block. */
-export function driveConfig(plan: Plan): DriveConfig { return structuredClone(plan.drive ?? DRIVE_DEFAULTS); }
+/**
+ * The plan's driver config, or the defaults when it has no `drive:` block. With `node`, that node's `drive` (K3)
+ * overrides each role it sets: a role object with `agent` replaces the plan's (model: the node's, else none, so the
+ * agent's own default applies); one with only `model` keeps the plan's agent and overrides the model.
+ */
+export function driveConfig(plan: Plan, node?: string): DriveConfig {
+  const cfg = structuredClone(plan.drive ?? DRIVE_DEFAULTS), own = node === undefined ? undefined : plan.nodes.find(n => n.id === node)?.drive;
+  for (const role of ['writer', 'reviewer'] as const) cfg[role] = overrideAgent(cfg[role], own?.[role]);
+  return cfg;
+}
+/** K3: one role of the plan's config with a node override applied (see `driveConfig`). */
+function overrideAgent(base: DriveAgent, own: NodeDriveAgent | undefined): DriveAgent {
+  if (own?.agent !== undefined) return { agent: own.agent, ...(own.model !== undefined ? { model: own.model } : {}) };
+  if (own?.model !== undefined) return { agent: base.agent, model: own.model };
+  return base;
+}
+/** Validates a `{agent?, model?}` role object (plan `drive.writer`/`drive.reviewer`, node `drive.*`); returns the fields set. */
+function parseAgent(x: unknown, label: string, errors: string[]): NodeDriveAgent | undefined {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${label}: expected object`); return undefined; }
+  const a = x as Record<string, unknown>, res: NodeDriveAgent = {};
+  for (const k of Object.keys(a)) if (k !== 'agent' && k !== 'model') errors.push(`${label}.${k}: unknown key`);
+  if (a.agent !== undefined) { if (typeof a.agent !== 'string' || !a.agent.trim()) errors.push(`${label}.agent: expected non-empty string`); else res.agent = a.agent; }
+  if (a.model !== undefined) { if (typeof a.model !== 'string' || !a.model.trim()) errors.push(`${label}.model: expected non-empty string`); else res.model = a.model; }
+  return res;
+}
+/**
+ * K3: parses a node's optional `drive` field ({writer?, reviewer?}, each {agent?, model?}); unknown keys and bad types
+ * are errors. Empty role objects and an empty block are dropped (undefined), so `drive: {}` equals no field.
+ */
+function parseNodeDrive(v: unknown, p: string, errors: string[]): NodeDrive | undefined {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push(`${p}.drive: expected object`); return undefined; }
+  const r = v as Record<string, unknown>, out: NodeDrive = {};
+  for (const k of Object.keys(r)) if (k !== 'writer' && k !== 'reviewer') errors.push(`${p}.drive.${k}: unknown key`);
+  for (const role of ['writer', 'reviewer'] as const) {
+    if (r[role] === undefined) continue;
+    const a = parseAgent(r[role], `${p}.drive.${role}`, errors);
+    if (a && Object.keys(a).length) out[role] = a;
+  }
+  return out.writer || out.reviewer ? out : undefined;
+}
 /** Parses an optional `drive:` block; unknown keys and bad types are errors. */
 function parseDrive(v: unknown, errors: string[]): DriveConfig {
   const out = structuredClone(DRIVE_DEFAULTS);
@@ -19,13 +57,8 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   out.repairs = int(r.repairs, 'drive.repairs', 0, out.repairs);
   const agent = (x: unknown, label: string, dflt: DriveAgent): DriveAgent => {
     if (x === undefined) return dflt;
-    if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${label}: expected object`); return dflt; }
-    const a = x as Record<string, unknown>;
-    for (const k of Object.keys(a)) if (k !== 'agent' && k !== 'model') errors.push(`${label}.${k}: unknown key`);
-    const res: DriveAgent = { agent: dflt.agent };
-    if (a.agent !== undefined) { if (typeof a.agent !== 'string' || !a.agent.trim()) errors.push(`${label}.agent: expected non-empty string`); else res.agent = a.agent; }
-    if (a.model !== undefined) { if (typeof a.model !== 'string' || !a.model.trim()) errors.push(`${label}.model: expected non-empty string`); else res.model = a.model; }
-    return res;
+    const a = parseAgent(x, label, errors);
+    return a ? { agent: a.agent ?? dflt.agent, ...(a.model !== undefined ? { model: a.model } : {}) } : dflt;
   };
   out.writer = agent(r.writer, 'drive.writer', out.writer);
   out.reviewer = agent(r.reviewer, 'drive.reviewer', out.reviewer);
@@ -256,6 +289,7 @@ export function parsePlan(text: string): Plan {
     if (n.brief !== undefined) out.brief = str(n.brief, `${p}.brief`);
     if (n.type !== undefined) { if (typeof n.type !== 'string' || !/^[a-z][a-z0-9-]*$/.test(n.type)) errors.push(`${p}.type: expected a string matching ^[a-z][a-z0-9-]*$`); else out.type = n.type; }
     parseManual(n, p, out, errors);
+    if (n.drive !== undefined) { const d = parseNodeDrive(n.drive, p, errors); if (d) out.drive = d; }
     return out;
   });
   const ids = new Map<string, NodeSpec>();

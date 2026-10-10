@@ -45,7 +45,7 @@ export interface MergeRefusal {
 /**
  * Inputs of `decide` besides the ledger state, the plan and the run views.
  * `max`/`repairs`: the executor resolves them from `driveConfig(plan)` and `--max`. Agents and models come from
- * `driveConfig(plan)` directly. The remaining fields are facts only the executor has (in-process, or read from the
+ * `driveConfig(plan, node)` directly (the node's `drive` over the plan's, K3). The remaining fields are facts only the executor has (in-process, or read from the
  * ledger's blob store); they make the result a pure function of the arguments.
  */
 export interface DriveOpts {
@@ -104,14 +104,14 @@ export function writerTask(s: State, node: string): string {
   if (!spec) throw new Error(`Node ${node} is not in the plan of its dispatch #${slot.dispatchSeq}`);
   return dispatchPacket(spec, slot.attempt, slot.worktree, writerRulings(s, node, slot.dispatchSeq));
 }
-/** Launch action of the writer of the node's open attempt (spec: writer agent/model, cwd = slot worktree, task = dispatch packet). */
+/** Launch action of the writer of the node's open attempt (spec: writer agent/model of `driveConfig(plan, node)`, cwd = slot worktree, task = dispatch packet). */
 export function writerLaunch(s: State, node: string, project: string): Extract<Action, { do: 'launch' }> {
-  const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan).writer;
+  const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan, node).writer;
   return { do: 'launch', node, attempt: slot.attempt, role: 'writer', rid: runId(project, node, slot.attempt, 'writer'), spec: launchSpec({ ...agent, cwd: slot.worktree, task: writerTask(s, node), name: runName(node, slot.attempt, 'writer') }), labels: runLabels(project, node, slot.attempt, 'writer'), rulings: carried(writerRulings(s, node, slot.dispatchSeq)) };
 }
 /** Launch action of reviewer run `n` (attempt-global) on the node's current candidate (cwd = repo root, task = review packet, which lists every ruling in scope). */
 export function reviewerLaunch(s: State, node: string, n: number, project: string, root: string): Extract<Action, { do: 'launch' }> {
-  const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan).reviewer;
+  const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan, node).reviewer;
   return { do: 'launch', node, attempt: slot.attempt, role: 'reviewer', n, rid: runId(project, node, slot.attempt, 'reviewer', n), spec: launchSpec({ ...agent, cwd: root, task: reviewPacket(s, node, n), name: runName(node, slot.attempt, 'reviewer', n) }), labels: runLabels(project, node, slot.attempt, 'reviewer'), rulings: carried(rulingsInScope(s, node)) };
 }
 export const WRITER_INTERRUPTED = 'You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.';

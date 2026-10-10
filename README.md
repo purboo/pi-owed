@@ -301,6 +301,27 @@ owed drive --status   # running (pid, host, since) or not, its last exit record,
 owed drive --stop     # stop it after its current action (--now: at once)
 ```
 
+The plan's optional `drive:` block sets the writer and reviewer dsa agents
+(and models) for every node; a node may override them with its own `drive`
+(0.7.0), e.g. to route routine nodes to cheaper models:
+
+```yaml
+drive:
+  writer:   { agent: worker,   model: "example/model-large:high" }
+  reviewer: { agent: reviewer, model: "example/model-large:high" }
+nodes:
+  - id: docs-pass
+    drive:
+      writer:   { agent: worker-cheap }            # agent set: replaces the plan's writer (its own default model)
+      reviewer: { model: "example/model-small" }   # model only: the plan's reviewer agent with this model
+```
+
+A node `drive` is not an obligation: changing it is never a downgrade, keeps
+the submitted candidate and affects only later launches (a re-launch resends
+the recorded bytes). `owed why <node>` shows
+`Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` for a node that
+sets it. A plan using a node `drive` needs owed ≥ 0.7.0.
+
 `--detach` refuses while a driver holds the lock (naming pid, host, start and
 log). Otherwise it keeps the previous log as `.git/owed/drive/log.jsonl.1`,
 starts `owed drive --json` in its own session with stdout and stderr appended to

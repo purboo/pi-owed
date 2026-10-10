@@ -21,9 +21,10 @@ export function checklessWarnings(plan: Plan): string[];   // 0.6.1 H2.2: `warni
 export function globMatch(path: string, glob: string): boolean;  // '**' any depth, '*' within a segment, 'dir/' prefix; use node:path matchesGlob where suitable
 export function matchesAny(path: string, globs: string[]): boolean;
 export const DRIVE_DEFAULTS: DriveConfig;              // {max: 4, repairs: 2, writer: {agent: 'worker'}, reviewer: {agent: 'reviewer'}}
-export function driveConfig(plan: Plan): DriveConfig;  // plan.drive or the defaults (SPEC §12.2)
+export function driveConfig(plan: Plan, node?: string): DriveConfig;  // plan.drive or the defaults; with node: its `drive` roles applied (SPEC §12.2, K3)
 ```
 `parsePlan` parses the optional `drive:` block (SPEC §12.2): defaults filled when present, unknown keys and bad types are errors; `planDowngrades` ignores it.
+`parsePlan` parses the optional node field `drive` (0.7.0 K3, `NodeSpec.drive: NodeDrive`): `{writer?, reviewer?}` of `{agent?, model?}`, validated like the plan's roles; empty role objects and `drive: {}` are dropped. A node role with `agent` replaces the plan's role (model: the node's or none); one with only `model` keeps the plan's agent. `drive.ts` `writerLaunch`/`reviewerLaunch` use `driveConfig(state.plan, node)`; the reducer compares node specs without `type` and `drive` when deciding candidate invalidation; `views.receipt` adds `drive` (`views.driveText(plan, node)`: `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)`) when the node sets it.
 `parsePlan` parses the optional `exec:` block (SPEC §3.2, D20): `plan.exec` = `{env?, wrap?}` with only non-empty fields, absent when both are empty; `planDowngrades` ignores it (like `setup`); the reducer's downgrade detection records an exec change as a `'*'` item (owner only).
 
 D19 (SPEC §3.1): `parsePlan` also parses the optional `worktrees:` block (`plan.worktrees` only when present, filled with defaults) and node `type`; `planDowngrades` ignores both.

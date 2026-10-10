@@ -154,10 +154,15 @@ nodes:
     review: {count: 1, min_rank: 1}   # default {count: 0}
     brief: |                   # free text included in the dispatch packet
       ...
+    drive:                     # optional (0.7.0): driver agents/models for this node only (§12.2); never an obligation
+      writer: { agent: worker-cheap }      # {agent?, model?}; default: the plan's drive.writer
+      reviewer: { model: "example/model-small:high" }   # default: the plan's drive.reviewer
 ```
 
 A plan change that alters a node's spec, `setup` or `closure` invalidates that
 node's submitted candidate: the writer must submit again so keys are recomputed.
+The node fields `type` (§3.1) and `drive` (§12.2) are not obligations: changing
+them invalidates no candidate and is never a downgrade.
 Invariants removed by the owner no longer need their genesis observation.
 
 Validation: unique ids; deps exist; acyclic; `red: true` requires `tests`;
@@ -1260,6 +1265,39 @@ undefined, `driveConfig(plan)` returns the defaults) and rejects unknown keys
 (in `drive`, `writer`, `reviewer`) and bad types. It is not an obligation:
 changing or removing `drive:` is never a downgrade (a plan change by parent).
 
+**Node `drive` (0.7.0).** A node may set its own roles:
+
+```yaml
+nodes:
+  - id: docs-pass
+    drive:
+      writer:   { agent: worker-cheap }           # agent set: replaces the plan's writer; no model here → the agent's default
+      reviewer: { model: "example/model-small" }  # model only: the plan's reviewer agent with this model
+```
+
+Shape `{writer?: {agent?, model?}, reviewer?: {agent?, model?}}`, validated
+like the plan's roles (unknown keys and bad types are errors, e.g.
+`nodes[0].drive.writer.effort: unknown key`); `max` and `repairs` stay
+plan-wide. `drive: {}` and an empty role object count as absent: they are
+dropped from the parsed plan, so a plan without node `drive` keeps its
+canonical bytes and sha. The driver's launch spec for a node
+(`driveConfig(plan, node)`) takes each role from the plan's `drive` (or the
+defaults) and applies the node's object for that role, because a model belongs
+to its agent:
+- the node's object sets `agent`: it replaces the plan's role; the model is the
+  node's `model` if set, otherwise none (the agent's own default model applies).
+  Plan `{agent: worker, model: opus}` + node `{agent: worker-cheap}` →
+  `{agent: worker-cheap}`;
+- it sets only `model`: the plan's (or default) agent with the node's model.
+  Plan `{agent: worker, model: opus}` + node `{model: glm}` →
+  `{agent: worker, model: glm}`.
+
+Node `drive` is not an obligation: changing it is never a downgrade,
+invalidates no candidate (the reducer compares node specs without `type` and
+`drive`) and affects only later launches. A re-launch of a recorded run sends
+its stored spec bytes, as before (§12.5 row 3). A plan with a node `drive`
+needs owed ≥ 0.7.0 to replay.
+
 ### 12.3 Ledger entries (D3)
 
 Persist before submit: an intent is appended **before** the dsa call, and every
@@ -1307,7 +1345,10 @@ must name the node's current open slot (node and attempt), and so must a halt.
   attempt (`<node> attempt N: #seq <role> <rid>`). Both sections are shown only
   when non-empty; `--json` has `halted: HaltEntry[]` and
   `launches: {node: LaunchEntry[]}`.
-- **Why**: the active halt with how it is cleared, then each launch
+- **Why**: when the node sets `drive` (§12.2), the line
+  `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` with the
+  effective values of its later launches (`(<model>)` only when a model is
+  set; `--json` `drive`); the active halt with how it is cleared, then each launch
   (`Driver launch #seq <role> <rid> (spec <sha12>)`) and send
   (`Driver send #seq <kind> (<reason>) to <rid>: <send id>`) of the open
   attempt; `--json` has `halt?` and `runs?`.
