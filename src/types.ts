@@ -88,6 +88,7 @@ export interface StateFacts { commit: string; tree: string; invKeys: Record<stri
 
 // ---------- ledger ----------
 export type Verdict = 'pass' | 'fail' | 'error';
+/** format: 'tap' | 'cargo' | 'jest/vitest' | 'pytest' | 'mixed' (cargo + TAP in one log, E2.1) | 'mutants'. */
 export interface Counts { tests?: number; pass?: number; fail?: number; skip?: number; format?: string }
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
