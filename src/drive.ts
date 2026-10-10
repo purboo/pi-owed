@@ -3,7 +3,7 @@
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
-import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, reviewerBase, runId, runLabels, writesOverlap } from './reducer.ts';
+import { attestJobs, awaitingRuling, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -230,13 +230,17 @@ const epochSpec = (p: Plan, node: string): string | undefined => {
 };
 /**
  * K5.1: the repair budget epoch of the node's open attempt: the latest of its dispatch, the latest ruling naming the
- * node (`*` does not count) and the latest plan entry that changed its spec (`epochSpec`). `repairs` counts the
- * attempt's repair sends after it; `label` is `ruling #s`, `plan #s` or `dispatch`.
+ * node (`*` does not count), the latest resume of the attempt (0.8, L1.2) and the latest plan entry that changed its
+ * spec (`epochSpec`). `repairs` counts the attempt's repair sends after it; `label` is `ruling #s`, `resume #s`,
+ * `plan #s` or `dispatch`.
  */
 export function repairEpoch(s: State, node: string): { seq: number; label: string } {
   let best = { seq: s.nodes[node]!.slot!.dispatchSeq, label: 'dispatch' };
   const rule = s.rules.findLast(r => r.nodes !== '*' && r.nodes.includes(node));
   if (rule && rule.seq > best.seq) best = { seq: rule.seq, label: `ruling #${rule.seq}` };
+  // 0.8 (L1.2): the latest resume of the open attempt starts a new epoch too.
+  const resume = resumeOf(s, node);
+  if (resume && resume.seq > best.seq) best = { seq: resume.seq, label: `resume #${resume.seq}` };
   for (const e of [...entriesOf(s)].reverse()) {
     if (e.seq <= best.seq) break;
     if (e.kind === 'plan' && epochSpec(planAt(s, e.seq), node) !== epochSpec(planAt(s, e.seq + 1), node)) { best = { seq: e.seq, label: `plan #${e.seq}` }; break; }
@@ -406,26 +410,39 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
 function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpts, n: NodeState): Action | undefined {
   const id = n.id, slot = n.slot!, attempt = slot.attempt, c = n.candidate;
   const halt = (reason: string, needs: 'human' | 'owner' = 'human'): Action => ({ do: 'halt', node: id, attempt, reason, needs });
-  const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => ({ do: 'send', node: id, attempt, rid: l.rid, sendKind, message, reason, ...(rulings !== undefined ? { rulings } : {}) });
+  // 0.8 (L1.3): the first writer follow-up after a resume starts with the resume line (`resumeLine`).
+  const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => {
+    const line = l.role === 'writer' && sendKind === 'follow-up' ? resumeLine(s, id, l.rid) : undefined;
+    return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
+  };
+  // Row 5: a run asking: notify (question, answer address); the driver never answers.
+  // H1.1b: the report carries rid and the first question's qid/rev; its text is askingText as before.
+  const asking = (l: LaunchEntry, v: RunView): Action => { const q = v.questions?.[0]; return { do: 'notify', node: id, text: askingText(id, l, v), rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) }; };
   // Row 1: halted.
   if (halted(s, id)) return undefined;
-  // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only.
-  const owner = ownerNeeded(s, id);
-  if (owner) return ownerNotify(s, id, owner);
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
-  const writer = ar.launches.find(l => l.role === 'writer');
-  // Row 2: writer launch missing.
-  if (!writer) return writerLaunch(s, id, opts.project);
   // Runs that matter: the writer and the reviewer runs of the current candidate (a reviewer run belongs to the latest
   // candidate submitted before its launch entry); runs of earlier candidates are obsolete.
   const live = ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq));
+  // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
+  if (waitingFor(s, id)) { for (const l of live) { const v = runs.get(l.rid); if (v?.state === 'asking') return asking(l, v); } return undefined; }
+  // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only.
+  const owner = ownerNeeded(s, id);
+  if (owner) return ownerNotify(s, id, owner);
+  const writer = ar.launches.find(l => l.role === 'writer');
+  // Row 2: writer launch missing.
+  if (!writer) return writerLaunch(s, id, opts.project);
   if (live.some(l => !runs.has(l.rid))) return undefined;
   const view = (l: LaunchEntry): RunView => runs.get(l.rid)!;
+  // 0.8 (L1.4): a run named in a halt carries dsa's call address when describe reported one.
+  const at = (l: LaunchEntry): string => `${l.rid}${callAt(view(l))}`;
+  // 0.8 (L1.3): the latest resume of the attempt; what the driver waits for after a follow-up counts from it.
+  const resumed = resumeOf(s, id)?.seq ?? -1;
   // Row 3: a launch whose run is absent: re-launch with the stored bytes and the same rid; a rejection seen by this process halts (D9).
   for (const l of live) {
     const rejected = opts.rejected.get(l.rid);
-    if (rejected !== undefined) return halt(rejectedHalt(id, 'run', l.rid, rejected));
-    if (view(l).state === 'absent') return relaunch(s, opts, l) ?? halt(`cannot re-launch ${l.rid}: the stored spec bytes (blob ${l.spec}) were not supplied and the rebuilt spec differs`);
+    if (rejected !== undefined) return halt(rejectedHalt(id, 'run', at(l), rejected));
+    if (view(l).state === 'absent') return relaunch(s, opts, l) ?? halt(`cannot re-launch ${at(l)}: the stored spec bytes (blob ${l.spec}) were not supplied and the rebuilt spec differs`);
   }
   // Row 4: a recorded send not confirmed applied in this process: re-send the same id and bytes.
   for (const x of ar.sends) {
@@ -434,17 +451,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // D22.3: a rejected ruling steer is never retried and never halts; its rulings travel with repairs and reviewer
     // acks. A rejected ruling follow-up (K5.2) halts like any other send.
     if (refused !== undefined && x.reason === 'ruling' && x.sendKind === 'steer') continue;
-    if (refused !== undefined) return halt(rejectedHalt(id, 'send', x.send, refused));
+    const xl = live.find(l => l.rid === x.rid)!;
+    if (refused !== undefined) return halt(rejectedHalt(id, 'send', `${x.send}${callAt(view(xl))}`, refused));
     const bytes = opts.blobs?.get(x.message);
-    if (bytes === undefined || sha256(bytes) !== x.message) return halt(`cannot re-send ${x.send}: the stored message bytes (blob ${x.message}) were not supplied`);
+    if (bytes === undefined || sha256(bytes) !== x.message) return halt(`cannot re-send ${x.send}${callAt(view(xl))}: the stored message bytes (blob ${x.message}) were not supplied`);
     return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send, ...(x.rulings !== undefined ? { rulings: x.rulings } : {}) };
   }
-  // Row 5: a run asking: notify (question, answer address); the driver never answers.
-  // H1.1b: the report carries rid and the first question's qid/rev; its text is askingText as before.
-  for (const l of live) if (view(l).state === 'asking') {
-    const q = view(l).questions?.[0];
-    return { do: 'notify', node: id, text: askingText(id, l, view(l)), rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) };
-  }
+  // Row 5: a run asking (`asking`).
+  for (const l of live) if (view(l).state === 'asking') return asking(l, view(l));
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
   /**
    * K5.2: a sealed writer lacking a ruling that names the node gets one ruling follow-up (not a repair), but never while
@@ -469,16 +483,16 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (!wSealed) return halt(reason);
     const f = rulingSend();
     if (f) return f;
-    const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(after, lastSubmit(s, id)?.seq ?? -1));
+    const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(after, lastSubmit(s, id)?.seq ?? -1, resumed));
     if (!rf) return halt(reason);
     const refused = opts.rejected.get(rf.send);
-    return halt(refused !== undefined ? rejectedHalt(id, 'send', rf.send, refused) : `writer run ${writer.rid} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
+    return halt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
   };
   const writerMsg = (message: string): { message: string; rulings?: number } => withRulings(s, id, ar, writer, message, opts.rejected);
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
   // Row 7: writer sealed non-ok.
-  if (wSealed && wStatus !== 'ok') return halt(`writer run ${writer.rid} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
+  if (wSealed && wStatus !== 'ok') return halt(`writer run ${at(writer)} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
   // Row 8: writer done without a current candidate (after a rebase: the rebase follow-up first).
   if (wSealed && !c) {
     const rb = slot.rebase;
@@ -490,16 +504,16 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const fix = resubmitBlocks(s, id);
     if (fix.length) {
       const cause = `review block ${fix.map(b => `#${b.seq} ${b.obligation}`).join(', ')}; a new candidate is needed`;
-      const after = Math.max(rb?.seq ?? slot.dispatchSeq, lastSubmit(s, id)?.seq ?? -1);
+      const after = Math.max(rb?.seq ?? slot.dispatchSeq, lastSubmit(s, id)?.seq ?? -1, resumed);
       const outstanding = ar.sends.findLast(x => x.reason === 'repair' && x.seq > after), budget = repairsSince(s, id, ar);
-      if (outstanding) return writerHalt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq);
+      if (outstanding) return writerHalt(`writer run ${at(writer)} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq);
       if (budget.count >= opts.repairs) { const ex = `repairs exhausted (${budget.count} of ${opts.repairs} since ${budget.label}): ${cause}`; return writerHalt(ex, ex, after); }
       const r = resubmitFollowUp(s, id, opts.conflicts?.get(id));
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     }
     if (rb && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
-    const since = rb?.seq ?? slot.dispatchSeq, nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
-    if (nudge) return writerHalt(`writer run ${writer.rid} finished without submitting a candidate after follow-up ${nudge.send}`, `no candidate after follow-up ${nudge.send}`, nudge.seq);
+    const since = Math.max(rb?.seq ?? slot.dispatchSeq, resumed), nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
+    if (nudge) return writerHalt(`writer run ${at(writer)} finished without submitting a candidate after follow-up ${nudge.send}`, `no candidate after follow-up ${nudge.send}`, nudge.seq);
     const m = writerMsg(submitMessage(id));
     return send(writer, 'follow-up', 'submit', m.message, m.rulings);
   }
@@ -514,14 +528,15 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   if (c) {
     // Rows 9-10: measured obligations without a verdict on the candidate's keys, and attribution reruns of blocks from
     // earlier content (a failure of the current content is a repair, not an attest): attest, unless `error` twice.
-    const jobs = attestJobs(s, id).filter(j => !(j.attribution && j.key === c.keys[j.obligation])).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error') }));
+    const jobs = attestJobs(s, id).filter(j => !(j.attribution && j.key === c.keys[j.obligation])).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed) }));
     if (jobs.some(x => x.errors.length < 2)) return { do: 'attest', node: id };
     if (jobs.length) return halt(`attest recorded no verdict twice: ${jobs.map(x => `${x.j.obligation} (${x.errors.map(o => `#${o.seq} ${o.note ?? `exit ${o.exit}`}`).join('; ')})`).join(', ')}`);
     // Repair: one follow-up per candidate, at most `repairs` per attempt; a writer that finishes it without resubmitting halts.
     // K5.1: the budget counts the repairs since the node's epoch; K5.2: a due ruling follow-up replaces either halt.
     const repair = (cause: string): Action | undefined => {
-      const outstanding = ar.sends.findLast(x => x.reason === 'repair' && x.seq > c.seq), budget = repairsSince(s, id, ar);
-      if (outstanding) return wSealed ? writerHalt(`writer run ${writer.rid} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq) : fenced() ?? steerRulings();
+      // 0.8 (L1.3): after a resume a sealed writer gets a fresh repair (a running one is still waited for).
+      const outstanding = ar.sends.findLast(x => x.reason === 'repair' && x.seq > c.seq && (!wSealed || x.seq > resumed)), budget = repairsSince(s, id, ar);
+      if (outstanding) return wSealed ? writerHalt(`writer run ${at(writer)} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq) : fenced() ?? steerRulings();
       if (budget.count >= opts.repairs) { const ex = `repairs exhausted (${budget.count} of ${opts.repairs} since ${budget.label}): ${cause}`; return writerHalt(ex, ex, c.seq); }
       const r = repairFollowUp(s, id);
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
@@ -558,7 +573,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const awaiting = reviewObligations(s, id, k).filter(o => n.items.find(i => i.obligation === o)?.status === 'D' && !entries.some(e => e.kind === 'review' && e.node === id && e.by === who && e.obligation === o && e.key === c.keys[o]));
       if (!awaiting.length) continue;
       if (statusOf(v) === 'unknown' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
-      return halt(`review-missing: reviewer run ${l.rid} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${statusOf(v) === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
+      return halt(`review-missing: reviewer run ${at(l)} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${statusOf(v) === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
     }
     // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale
     // block (recorded on an earlier candidate) is left to the slot re-review: wait only while a reviewer run of this
@@ -686,6 +701,22 @@ function rulingSteer(s: State, n: NodeState, ar: AttemptRuns, live: readonly Lau
   }
   return undefined;
 }
+/** The dsa call address argument `to:"<wid>/<key>"` of asking notices (D22.6), also used by halts (0.8, L1.4). */
+export const toArg = (to: string): string => `to:${JSON.stringify(to)}`;
+/** 0.8 (L1.4): ` (to:"<wid>/<key>")` after a run id in a halt or wake line when describe reported the call address, else empty. */
+export const callAt = (v: RunView | undefined): string => v?.to ? ` (${toArg(v.to)})` : '';
+/**
+ * 0.8 (L1.3): the first line of the first writer follow-up (writer run `rid`) after the latest resume of the node's open
+ * attempt: `The parent resumed this node (#<seq>)[ after <dep> merged at <commit12>][: <note>]`. Undefined when there
+ * is no resume, or a writer follow-up was already recorded after it.
+ */
+export function resumeLine(s: State, node: string, rid: string): string | undefined {
+  const r = resumeOf(s, node), n = s.nodes[node];
+  if (!r || !n) return undefined;
+  if (n.runs.find(x => x.attempt === r.attempt)?.sends.some(x => x.rid === rid && x.sendKind === 'follow-up' && x.seq > r.seq)) return undefined;
+  const dep = r.after !== undefined ? s.nodes[r.after]?.merged : undefined;
+  return `The parent resumed this node (#${r.seq})${dep ? ` after ${r.after} merged at ${dep.commit.slice(0, 12)}` : ''}${r.note ? `: ${oneLine(r.note)}` : ''}`;
+}
 /**
  * The asking line of a run (D22.6; halts, drive output and wake-up messages): one line per open question, addressed by
  * dsa's call address `questions[].to` (`<wid>/<key>`), or the run id when dsa reports none, in both the pi `subagents`
@@ -695,7 +726,7 @@ export function askingText(node: string, l: LaunchEntry, v: RunView): string {
   const qs = v.questions ?? [];
   if (!qs.length) return `${node}: ${l.role} run ${l.rid} is asking (no question reported; see pi-durable-subagents describe --key ${l.rid}); the driver never answers`;
   return qs.map(q => {
-    const to = q.to ?? l.rid;
-    return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", to:${JSON.stringify(to)}, qid:${JSON.stringify(q.qid)}, message:"…"}; or: pi-durable-subagents send --request <id> --to ${to} --kind answer --qid ${q.qid} --rev ${q.rev} --message @<file>`;
+    const to = q.to ?? v.to ?? l.rid;
+    return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", ${toArg(to)}, qid:${JSON.stringify(q.qid)}, message:"…"}; or: pi-durable-subagents send --request <id> --to ${to} --kind answer --qid ${q.qid} --rev ${q.rev} --message @<file>`;
   }).join('\n');
 }
