@@ -316,6 +316,16 @@ dsa call, start still works but prints `note: started from inside a dsa call; if
 that call's processes are contained, the driver may end with it — prefer
 starting it from a top-level session or systemd-run --user`.
 
+With pi-durable-subagents ≥ 1.0.31 the driver's runs are listed in the pi
+session that started it: owed reads `DSA_SESSION` (ignored inside a dsa call),
+records it in `drive.lock`, hands it to a detached driver and passes
+`--session <id>` to every `run`. `owed drive --status`, `/owed` and
+`owed_drive` status say `runs are listed in pi session <id>`, or `no pi
+session: runs show only in pi-durable-subagents status / the CLI` for a driver
+started outside pi. An older dsa that refuses `--session` is used without it
+(one log line, never a halt). To move a repository's runs to another pi session,
+stop the driver and start it from that session; earlier runs stay where they were.
+
 The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,
 `owed why`) waits for an action on the node by the main agent (the delegated owner;
