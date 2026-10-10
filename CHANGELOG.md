@@ -29,8 +29,8 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   <name> lock held by pid <pid> on <host> since <time>; retry` (the ledger lock
   reads `the ledger lock`), no longer `internal`. The CLI prints `Busy: <msg>`
   on stderr and exits 75; pi tools return `Busy: <msg>` as a tool error with
-  details `{code: "busy", reason}`. With `--json` every failing command now also
-  prints one line `{"error": <message>, "code": <code>}` on stdout; stderr and
+  details `{code: "busy", reason}`. With `--json` every command that ends with an
+  error (an OwedError or an internal error) now also prints one line `{"error": <message>, "code": <code>}` on stdout; stderr and
   exit codes are unchanged. Where owed suggests `owed attest <node>` to a writer
   (the `owed why` clear hint of an execution block, which the driver's repair
   message embeds), it adds `(skip this when owed drive is running: the driver
@@ -47,7 +47,7 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   of an execution block's failing observation on the block line (` — note:
   …`), and `owed status` on the pending item it holds (` — note #<seq>: …`),
   one line of at most 200 characters (`--json`: `blocks[].note`,
-  `pending[].blockNotes`). In wais an owner learned only from the waived status
+  `pending.<group>[].blockNotes`). In wais an owner learned only from the waived status
   that `--accept-risk` stopped measurement (#12). `owed waive` (CLI text,
   `--json` field `meaning`, the pi tool's text and details) now states what the
   reducer applies (review #781): `waived <obligation> for candidate #<submit>
@@ -59,8 +59,7 @@ unrelated plan update (#14), K5 the repair budget and undelivered rulings (#8,
   unaccepted blocks and what clears each), not needed (the item is satisfied),
   or not applicable; the text says which change of the key makes owed measure
   it again, and that a measured obligation whose key has no observation yet is
-still measured. Each
-  flaky block in `--accept-risk` adds `the flaky block #<seq> stays recorded as
+  still measured. Each flaky block in `--accept-risk` adds `the flaky block #<seq> stays recorded as
   accepted risk`. The text is computed from the ledger right after the waiver,
   so a later entry cannot relabel it. `owed why` shows a waived item as
   `<subject>/<obligation> waived (not measured for this candidate) by <who>:
@@ -118,8 +117,9 @@ still measured. Each
   candidate with their notes, then `Apply these rulings; they override your
   packet. Then commit and run \`owed submit <node>\`.` It records `rulings`, is
   not a repair, and a writer that finishes it without submitting halts naming
-  it; dsa rejecting it halts at once. Every writer follow-up carries the
-  undelivered in-scope rulings first and records `rulings`: `submit` and
+  it; dsa rejecting it halts at once. The submit, rebase, repair and ruling
+  follow-ups to the writer carry the undelivered in-scope rulings first and
+  record `rulings`: `submit` and
   `rebase` follow-ups record it too (new; only when they carry a ruling) and
   start with `Parent rulings for <node> (apply them; they override your
   packet):`, and a repair message now starts with its `Rulings since dispatch:`
@@ -160,7 +160,8 @@ still measured. Each
   SIGTERM as in 0.6.x) and `owed_drive` stop start nothing new and wait for the
   measurements without a time limit, then exit `stopped`; a second signal (so
   `--stop --now`) or the first under `--once` stops at once: it aborts the merge
-  (its checks get SIGKILL, trunk does not move), SIGTERMs the dsa invocations
+  (its checks get SIGKILL; a merge aborted before its last abort point does not
+  move trunk, D16a.1), SIGTERMs the dsa invocations
   and attest process groups, waits 5 s, SIGKILLs those groups, waits 1 s, then
   writes the `killed` line and exit record and exits 130. A loop error aborts
   an in-flight merge and waits up to 6 s for it. `--once` and the pi tool's pass
@@ -217,7 +218,12 @@ obligations are not refused, as before); the threshold hint reads the node's
 observations across attempts, so a new attempt's first under-count may hint at
 once; the node-models sha test recomputes the plan sha formula instead of
 going through `owed plan`, and a merge-cas test title says `without
-remeasuring` but counts only the invariant. Still open from 0.6.1: the writes
+remeasuring` but counts only the invariant. Without dsa, an owed attest that
+exits 75 on a ledger-lock timeout is logged as `machine lease refused`
+(busyDetail); the behavior is right. While a node stays busy the log gets a
+`started` and a busy line per timed pass (0.6.x printed one busy line per busy
+period). A rejected ruling send is recognized after a driver restart through
+dsa's request record; whether that survives a dsa `prune` was not verified. Still open from 0.6.1: the writes
 hint lists node ids verbatim as globs and grants every listed node the union
 of the new prefixes; a concurrent dispatch can make a rollback report
 `rollback failed: directory cleanup`; a rollback that wraps a non-OwedError
