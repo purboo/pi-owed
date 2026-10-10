@@ -128,15 +128,16 @@ test('operations: strength obligation blocks, receipt shows k/n, attribution and
     assert.ok(card.blocks.some(b => b.obligation === 'strength:unit' && b.kind === 'exec'), 'a failed strength observation is an execution block');
     assert.ok(card.items.some(i => i.obligation === 'strength:unit' && i.mark === '⛔'));
     assert.match(renderReceipt(card), /strength 1\/3/);
-    // The owner lowers min_kill (a visible downgrade); the writer resubmits; attribution clears the old block.
+    // The owner lowers min_kill (a visible downgrade); the writer resubmits. L2 (0.8.0): min_kill is part of the check
+    // definition, so the plan entry supersedes the old block and no attribution rerun runs (before 0.8.0 one cleared it).
     await assert.rejects(ops.planSet({ cwd: r.cwd, plan: planFor(0.3), as: parent }), /owner/);
-    await ops.planSet({ cwd: r.cwd, plan: planFor(0.3), as: owner, channel: 'flag' });
+    const lowered = await ops.planSet({ cwd: r.cwd, plan: planFor(0.3), as: owner, channel: 'flag' });
     await ops.submit(writer);
     const second = await ops.attest({ cwd: r.cwd, node: 's' });
     const strength2 = second.observations.filter(e => e.kind === 'obs' && e.obligation === 'strength:unit');
-    assert.equal(strength2.length, 2, 'attribution rerun on the old key plus the new key');
-    assert.ok(strength2.some(e => e.kind === 'obs' && e.attribution && e.verdict === 'fail'));
+    assert.equal(strength2.length, 1, 'only the new key is measured');
     assert.ok(strength2.some(e => e.kind === 'obs' && !e.attribution && e.verdict === 'pass'));
+    assert.deepEqual(second.receipt.superseded?.map(b => [b.seq, b.supersededBy]), [[obs.seq, lowered.seq]]);
     assert.equal(second.accepted, true, JSON.stringify(second.receipt.items.map(i => [i.obligation, i.detail])));
     assert.match(renderReceipt(second.receipt), /✔ measured s\/strength:unit .*strength 1\/3/);
   } finally { await r.cleanup(); }

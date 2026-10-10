@@ -167,6 +167,14 @@ The node fields `type` (§3.1) and `drive` (§12.2) are not obligations: changin
 them invalidates no candidate and is never a downgrade.
 Invariants removed by the owner no longer need their genesis observation.
 
+**Checks prepare their own artifacts** (0.8, L2.5, wais #19). owed measures every
+check and invariant in a fresh temporary worktree of the candidate or merge tree
+(§7). Nothing that exists only in slot worktrees (build outputs, caches,
+`node_modules`) is present there. A check or invariant must prepare its own build
+artifacts, for example through `setup` or its `run` command. When a failure was
+environmental and the parent or owner fixes the check, the plan update supersedes
+the old execution block (§6.3), so it needs neither a rerun nor a waiver.
+
 Validation: unique ids; deps exist; acyclic; `red: true` requires `tests`;
 `writes` non-empty for nodes with checks; `mutants` (node checks only, non-empty)
 must lie inside the closure — each glob, read as a path, matches a closure glob,
@@ -459,6 +467,33 @@ harness, materialization failure) is ⊥: no information, no block.
     failure is deterministic for the old content and the block clears. If it
     passes, key k is ⊤ and the block becomes **flaky**: only an owner `waive`
     with `accept_risk` citing it clears it.
+  - **Superseded** execution block (0.8, L2, wais #20): when a `plan` entry is
+    replayed, every active or flaky execution block on `check:<id>`, `red:<id>`
+    or `strength:<id>` whose **check definition** differs between the plan of
+    its failing observation and the new plan becomes `superseded`, with
+    `supersededBy` = the plan entry's seq. The check definition is the node's
+    canonical CheckSpec `<id>` with all its fields, plus `plan.setup` and the
+    `exec` key part (§4.1); `title`, `brief`, `closure` and other nodes do not
+    count. A removed check (or node) differs too. A superseded block is not
+    active: it does not block, gets no attribution rerun (`attestJobs`), a
+    queued rerun of it is not current (`jobCurrent`, §7.10) and it needs no
+    waiver. The current candidate must still pass the new
+    definition. A block whose definition did not change goes flaky as before.
+    Rationale: a flaky block is a risk about the definition its observation ran
+    under, and a waiver would record a risk acceptance where the check itself was
+    wrong. Only a parent or owner can change a check's definition, and that plan
+    entry is recorded and shown with the block (`#<seq> superseded by plan #<p>
+    (check <id> definition changed|removed)` in `why`, `status` and `report`),
+    so it accounts for the change. A downgrade, such as lowering `min_tests` or
+    removing a check, still needs the owner (§3).
+    Supersede never invalidates a later entry, so ledgers written before 0.8
+    still replay. Validation accepts an attribution observation of a superseded
+    block, and a waiver whose `accept_risk` names a superseded block, exactly as it
+    would accept them had the block not been superseded: the reducer keeps the
+    block's underlying state (active, flaky or cleared, moved on by such entries as
+    before) for validation only. Neither entry changes the block's state: it stays
+    superseded. owed itself never creates such a rerun. The
+    Rust model in `formal/` does not model superseded blocks.
   - Judgment block (review block of rank r by reviewer A): cleared by a later
     `review ok` on the **current key** of that item either by A with rank ≥ r or
     by anyone with rank > r (owner = 3), or by an owner `waive` with
@@ -996,6 +1031,17 @@ while genesis items lack observations.
   clears the block)` (0.7, K1.3: a writer's attest beside a running driver only
   finds the node's attest lock busy). The driver's repair message embeds the card
   and so carries the same clause.
+- **Superseded blocks** (0.8, L2.3; §6.3) stay visible but never as active
+  blocks. `why` lists each superseded block of the node as `⊘ #<seq> superseded
+  by plan #<p> (check <id> definition changed)`, or `(check <id> removed)` when
+  the new plan has no such check; `--json` has `superseded` (the block with
+  `state: "superseded"`, `supersededBy` and `text`). `status` lists those of
+  nodes not merged under `Superseded blocks (not active; the plan changed their
+  check):` as `⊘ <node>: <text>`. `report` lists the blocks superseded by plan
+  entries after `since` in their own section `Superseded blocks (not active; the
+  plan changed their check)`, after `Active blocks` (which keeps flaky ones), as
+  `<node>/<obligation> <text>`; the section is omitted when empty. Waiver hints,
+  owner commands and the brief ignore superseded blocks.
 - **Dispatch packet** (0.7, K1.3): the packet `owed dispatch` stores and returns
   ends with `After committing, run: owed submit <node>`. When the driver
   dispatches (`parent:drive`) it ends with one more line, `the driver measures

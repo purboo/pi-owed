@@ -190,8 +190,11 @@ export interface Block {
   kind: 'exec' | 'judgment';
   key: string;
   rank?: number;
-  state: 'active' | 'cleared' | 'flaky';
+  /** `superseded` (L2): a plan entry changed or removed the check definition its failing observation ran under. */
+  state: 'active' | 'cleared' | 'flaky' | 'superseded';
   clearedBy?: number;
+  /** L2: seq of the plan entry that superseded this execution block. */
+  supersededBy?: number;
   /** Copied from a review block recorded with `needs: 'parent'` (D18): resolved by a later ruling naming the node (`parentRuling`). */
   needs?: 'parent';
 }
