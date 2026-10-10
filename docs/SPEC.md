@@ -185,6 +185,36 @@ recorded and the candidate stays invalidated), never silently: `owed plan` (and
 JSON has `notCarried: [{node, reason}]`. `owed why` and `owed status` show `candidate #C carried by plan #P
 from submit #S`, and `owed plan` prints one `Carried <node>: …` line per carried
 node. The formal model does not cover carry (Deferred).
+
+**Amend: widen one node's writes (0.10, N3, wais #26).** `owed amend <node>
+--writes +<path>[,+<path>...] --note "<limit>" [--plan <file>]` (pi `owed_amend`
+`{node, writes, note, plan?, as?, cwd?}`) is a targeted plan update. The plan file
+is `--plan` (relative to cwd), else the `path` of the latest plan entry (refused
+when that entry has none). It is refused when the file's plan differs from the
+ledger's current plan (`plan file has unrecorded edits`; a comment-only difference
+is no difference), for an unknown or merged node, an empty path list, a path
+without `+`, an empty note, and when every path is already in the node's writes;
+removing writes is not offered. The edit locates the node's `writes` list with the
+`yaml` Document API and changes only that list's source text (a flow list gets
+`, path` before its `]`, a block list one `- path` line per path at the same
+indentation; a node without writes gets a block list through the Document API,
+which re-emits the file), so comments, order and style are kept; new paths are
+appended, paths already there skipped, and the result must parse to the current
+plan with only that node's writes widened. In one ledger lock amend then appends
+the plan entry exactly as `owed plan` would (the same drafting and guard: a
+widening is a downgrade, so it needs the owner or an `allow` rule of the current
+plan; the plan `note` is `amend <node>: writes +<paths>. Limit: <note>`, which also
+satisfies D25.5), any N1 carry submits, and a `rule` by the same principal with
+nodes `[<node>]` and text `writes of <node> widened by plan #P: +<paths>. Limit:
+<note>`. The writer receives that ruling through the usual ruling path and
+reviewers acknowledge it (`rulings`). The edited text is written to a temporary
+file next to the plan file before the append (a write failure refuses: nothing
+recorded) and renamed over it after the append; if that rename fails, amend
+reports that the entries were recorded and where the recorded text is. Any
+refusal records nothing and leaves the file unchanged. Like `owed plan` (N2), amend
+retries a CAS refusal up to 3 attempts while the ledger's plan sha is unchanged;
+each attempt re-reads the ledger and the file, and a failed attempt removes its
+temporary file.
 Invariants removed by the owner no longer need their genesis observation.
 
 **Checks prepare their own artifacts** (0.8, L2.5, wais #19). owed measures every
@@ -899,6 +929,7 @@ changed; retry`): they decide a trunk move on what they measured.
 init(o: {cwd, plan: string, as: Principal, channel, signal?}): Promise<InitResult>      // genesis + genesis attest of invariants; signal: §7.8
 readPlan(o: {cwd, path, rev?}): Promise<{plan, rev?, path}>   // plan text from the working tree, or from commit `rev` (`git show rev:path`); path repository-relative
 planSet(o: {cwd, plan, rev?, path?, note?, as, channel?}): Promise<Entry>   // records rev/path (and note: why, D25.5) in the plan entry
+amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
 rule(o: {cwd, text, nodes, as}): Promise<Entry>
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
@@ -1309,7 +1340,8 @@ is checked out in the main worktree or nowhere.
 `owed <command> [args] [--json]`; commands mirror §8: `init <plan.yaml>`,
 `plan <plan.yaml> [--rev <commit-ish>]` (path relative to the cwd; with
 `--rev` the file is read from that commit, so a plan kept in trunk is the
-ledger plan), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
+ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
+[--plan <file>]` (§3 Amend), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
 `submit <node> [--commit X]`, `rebase <node>` (parent, or the slot writer when
 run inside its worktree), `attest <node> [--rerun]`,
 `review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings]`
@@ -1428,6 +1460,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_rule` | `text`, `nodes`, `as` | ruling |
+| `owed_amend` | `node`, `writes` (`+path` each), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
 | `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | initialize the ledger (§11.1) |
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `candidate?`, `as` | owner waiver; under the gate the dialog shows `Candidate: <commit> (submit #<seq>)`, `Base:`, `Changed files:` and only that candidate is waived (§8) |
