@@ -2,7 +2,7 @@ import { readFile, mkdir, appendFile, rmdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
-import { Ledger, entryHash } from './ledger.ts';
+import { Ledger, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors } from './plan.ts';
 import { genesisProgress, jobCurrent } from './reducer.ts';
@@ -209,7 +209,7 @@ export async function attestGenesis(o: Context & { signal?: AbortSignal }): Prom
     return await ledger.withLock(async () => {
       const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal);
       return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
-    },'genesis',o.signal);
+    },'genesis',o.signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` });
   } finally { genesisRuns.delete(run); }
 }
 /** Genesis invariant ids that still lack an observation (empty when not initialized). */
@@ -242,7 +242,8 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     if (overlaps.length && !o.allowOverlap) throw new OwedError(`writes of ${o.node} overlap the open slot of ${overlaps.join(', ')}; wait for ${overlaps.length > 1 ? 'them' : 'it'} or dispatch with --allow-overlap`);
     const attempt = (n.slot?.attempt ?? 0)+1, { branch, worktree, excludeLine } = await slotLayout(root,state.plan,spec,attempt);
     const rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
-    const packet = dispatchPacket(spec, attempt, worktree, rules);
+    // K1.3: the driver (parent:drive) launches this writer and measures its candidate itself.
+    const packet = dispatchPacket(spec, attempt, worktree, rules, by(o) === 'parent:drive');
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
     guard(state,d);
     const exclude = join(await git.commonDir(o.cwd),'info','exclude');
@@ -323,8 +324,16 @@ export async function attest(o: Context & { node: string; rerun?: boolean; signa
     if (o.rerun && !jobs.some(j => j.obligation === 'writes' && j.key === n.candidate!.keys.writes)) jobs.push({ kind:'writes',subject:o.node,obligation:'writes',key:n.candidate!.keys.writes!,commit:n.candidate!.commit,base:n.slot!.base });
     const r = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.signal), card = await why(o);
     return { node:o.node, observations:r.recorded, superseded:r.superseded, accepted:card.accepted, receipt:card };
-  },'attest',o.signal);
+  },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner) });
 }
+/**
+ * K1: the attest lock of one node, `attest-<first 16 hex of sha256(node id)>`: attests of different nodes run in
+ * parallel (each observation is appended under the ledger lock only if its item is still current, D24).
+ */
+export const attestLock = (node: string): string => `attest-${sha256(node).slice(0,16)}`;
+const heldBy = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since ${o.ts}`;
+/** K1: the `busy` message of an attest of `node` while another attest of it holds its lock. */
+export const attestBusyText = (node: string, owner: LockOwner): string => `attest of ${node} is already running (${heldBy(owner)}); its observations will appear in owed why ${node}`;
 /** `needs: 'parent'` marks a block that needs a parent ruling (D18); the ledger refuses it on an ok verdict. */
 /**
  * `named` (G1): the candidate the caller judged (commit or prefix); `pin`: the candidate an owner confirmation showed;

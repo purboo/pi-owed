@@ -47,7 +47,7 @@ export class Ledger {
   static open(cwd: string): Promise<Ledger>;
   readonly dir: string;
   read(): Promise<Entry[]>;              // parses + verifies the hash chain; throws OwedError('internal') naming the first bad seq
-  withLock<T>(fn: () => Promise<T>, name?: string, signal?: AbortSignal): Promise<T>;   // mkdir lock `${dir}/${name ?? 'lock'}`; stale (dead pid, same host) is broken; waits with backoff up to 60 s; an abort before acquisition rejects at once with OwedError('aborted') and takes nothing (no staged dir); after acquisition fn is not interrupted
+  withLock<T>(fn: () => Promise<T>, name?: string, signal?: AbortSignal, opts?: LockOptions): Promise<T>;   // mkdir lock `${dir}/${name ?? 'lock'}`; stale (dead pid, same host) is broken; waits with backoff up to 60 s, then OwedError code 'busy' (lockTimeoutText: `timed out waiting for the <name> lock held by …; retry`, the ledger lock is `the ledger lock`); opts.busy(owner) (K1): a live owner on this host fails at once with code 'busy' and that message, as does the timeout; an abort before acquisition rejects at once with OwedError('aborted') and takes nothing (no staged dir); after acquisition fn is not interrupted
   append(drafts: Draft[]): Promise<Entry[]>;  // MUST run inside withLock(); re-reads tail, assigns seq/ts/prev/hash, appends + fsync
   putBlob(data: string | Uint8Array): Promise<string>;  // sha256, write-once into blobs/
   getBlob(sha: string): Promise<Buffer>;
@@ -139,7 +139,7 @@ Dispatch worktrees: `<mainRoot>/.owed/wt/<node>-<attempt>` (main worktree root, 
 
 D19 (SPEC §8.1, §9.1): `ops.dispatch` takes the branch and worktree from a private `slotLayout(mainRoot, plan, spec, attempt)` (template expansion, `git check-ref-format --branch`, physical root resolution, the exclude line escaped with the exported `ignoreLiteral` or none for a root outside the main worktree), all before any effect; the recorded worktree is the physical path, so writer inference against git's toplevel matches. `git.advanceTrunk` refuses a dirty trunk worktree with `git.trunkDirtyText(path)`; `git.trunkElsewhere(cwd, trunk)` returns the path of a worktree other than the main one that has the trunk checked out, which `ops.status` exposes as `StatusView.trunkWorktree` and `renderStatus` prints with `views.trunkWorktreeText`. The reducer ignores node `type` when deciding whether a plan change invalidates a candidate.
 
-D24 (SPEC §7.10, §8.2): `runJobs` (attest, genesis attest) appends an observation iff `jobCurrent` holds on the latest state and lists the rest as superseded; `init` (`measure?`, `commit?`), `initPreview`, `attestGenesis` (under its own `genesis` lock, never the `attest` lock; registers itself as measuring in this process synchronously when called, until it ends), `genesisPending`/`genesisReport`, `genesisIncompleteText`. `statusView` adds `genesis` while items are pending; `genesisLine` renders it.
+D24 (SPEC §7.10, §8.2): `runJobs` (attest, genesis attest) appends an observation iff `jobCurrent` holds on the latest state and lists the rest as superseded; `init` (`measure?`, `commit?`), `initPreview`, `attestGenesis` (under its own `genesis` lock, never a node's attest lock; busy at once while a live process holds it; registers itself as measuring in this process synchronously when called, until it ends), `genesisPending`/`genesisReport`, `genesisIncompleteText`. `statusView` adds `genesis` while items are pending; `genesisLine` renders it.
 
 ## src/dsa.ts, src/drive.ts, src/drive-run.ts  (driver, SPEC §12)
 ```ts
@@ -187,3 +187,5 @@ D25 (SPEC §2.1, §11): `actor(ctx, dir, as, summary, fields, signal)` refuses o
 
 ## Tests
 `test/<module>.test.ts` with `node:test`. Git tests create temp repos under `os.tmpdir()` with `OWED_DIR` pointing into the temp dir; never touch the real repository's `.git`. Keep CPU low: no parallel heavy work; the machine is shared (run tests with `nice -n 10`).
+
+K1 (0.7, SPEC §7.11): `ops.attest` holds the node's lock `attestLock(node)` = `attest-<first 16 hex of sha256(node)>` (attests of different nodes run in parallel) with `opts.busy` = `attestBusyText(node, owner)`; `OwedError` code `busy` (errors.ts) is CLI exit 75 (`Busy: …`) and a pi tool error `Busy: …`; with `--json` every CLI failure also prints `{"error", "code"}` on stdout. `views.dispatchPacket(spec, attempt, worktree, rules, driver = true)`: `driver` appends `DRIVER_ATTESTS` (drive.ts writerTask uses the default; ops.dispatch passes `by === 'parent:drive'`); exec-block clear hints carry `SKIP_ATTEST`. `ledger.lockWait.ms` is a test hook (default 60 000).

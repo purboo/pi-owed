@@ -145,7 +145,10 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     if(got.signal) io.error(`Signal ${got.signal} arrived after the operation completed; nothing was aborted`);
     return exit;
   } catch(e) {
-    if(e instanceof OwedError && e.code === 'aborted') { if(e.message !== 'aborted') io.error(e.message); io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
-    const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal'); io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : 3;
+    const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal');
+    // K1: with --json a failure is also one line {"error", "code"} on stdout; stderr and the exit code are unchanged.
+    if(argv.includes('--json')) io.log(JSON.stringify({ error:error.message, code:error.code }));
+    if(error.code === 'aborted') { if(error.message !== 'aborted') io.error(error.message); io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
+    io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : error.code === 'busy' ? 'Busy' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : error.code === 'busy' ? 75 : 3;
   } finally { got.unhandle?.(); }
 }
