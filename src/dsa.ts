@@ -45,8 +45,8 @@ export interface DsaOptions {
   session?: string;
 }
 
-/** A pi session id as dsa 1.0.31 accepts it for `--session`. */
-const SESSION_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+/** A pi session id exactly as dsa 1.0.31 accepts it for `--session`: a letter or digit, then up to 127 of `[A-Za-z0-9._:-]`. */
+const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 /**
  * The pi session a driver started in (E1, dsa 1.0.31): `$DSA_SESSION`, which pi exports to the processes it starts.
  * Ignored inside a pi-durable-subagents call (`DSA_CALL` or `DSA_EXEC` set: a subagent), exactly as dsa ignores it, and
@@ -92,7 +92,10 @@ export class Dsa {
       let child;
       // Own process group, so a timeout can end the CLI with whatever it started in its group (dsa's orchestrator is
       // detached into a group of its own and survives).
-      try { child = spawn(this.bin, args, { cwd, env: { ...process.env, ...this.opts.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
+      // E1: dsa never picks a session up from the environment; `run` names it with `--session` when this client has one,
+      // so the driver's lock and what dsa records never disagree.
+      const env: NodeJS.ProcessEnv = { ...process.env, ...this.opts.env }; delete env.DSA_SESSION;
+      try { child = spawn(this.bin, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true }); }
       catch (e) { reject(new DsaError(`cannot run ${this.bin}: ${(e as Error).message}`)); return; }
       const pid = child.pid; if (pid) this.live.add(pid);
       const out: Buffer[] = [], err: Buffer[] = []; let outLen = 0, errLen = 0, timedOut = false, failed: Error | undefined;

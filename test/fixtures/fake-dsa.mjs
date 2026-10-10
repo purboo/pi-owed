@@ -15,6 +15,8 @@
 // (stdio passed through) and hold exits with its status. $FAKE_DSA_DIR/old-hold makes hold reject --no-wait like dsa
 // < 1.0.27 (exit 1, `pi-durable-subagents: Error: Unknown option --no-wait`).
 // Sessions (dsa 1.0.31): `run --session <id>` is accepted and logged as `session` (not part of the request content);
+// an id dsa refuses (not /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/) is rejected (exit 1); without the flag an inherited
+// $DSA_SESSION is used unless DSA_CALL/DSA_EXEC is set (an unusable inherited value is ignored), as dsa does;
 // $FAKE_DSA_DIR/old-run makes run refuse --session like dsa < 1.0.31 (exit 1, reason `Unknown or repeated option --session`).
 // Stale describe: $FAKE_DSA_DIR/stale-describe = <n>: after the next applied follow-up, the following n describes of
 // that run return the run as it was before the follow-up (dsa's view lagging behind the applied send).
@@ -145,7 +147,10 @@ function invalid(id, reason) { return new Exit(1, { request: id ?? null, applied
 
 function runCmd(args) {
   const { values, positionals } = flags(args, { request: 'value', spec: 'value', cwd: 'value', labels: 'value', json: 'flag', 'wait-ms': 'value', ...(existsSync(join(DIR, 'old-run')) ? {} : { session: 'value' }) });
-  const id = values.request, file = values.spec, session = values.session !== undefined ? { session: values.session } : {};
+  const id = values.request, file = values.spec, SID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+  if (values.session !== undefined && !SID.test(values.session)) return invalid(id, '--session must be a pi session id ([A-Za-z0-9._:-], at most 128 characters)');
+  const inherited = process.env.DSA_CALL || process.env.DSA_EXEC ? undefined : process.env.DSA_SESSION;
+  const sid = values.session ?? (inherited && SID.test(inherited) ? inherited : undefined), session = sid !== undefined ? { session: sid } : {};
   if (!id || !file || positionals.length) return invalid(id, 'usage: run --request <id> --spec <file|-> [--labels <json>] [--cwd <dir>] [--json]');
   if (!ID.test(id)) return invalid(id, `invalid request id ${id}`);
   const bytes = file === '-' ? readFileSync(0) : readFileSync(resolve(file));
