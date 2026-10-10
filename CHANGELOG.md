@@ -64,16 +64,19 @@ entries, which never ease acceptance within the bounds) needs no change.
   then commit and `owed submit <node>`. Its `rulings` records what it carried,
   so no separate ruling steer follows; a writer that finishes it without
   submitting halts, and identical content resubmitted gets another repair (or
-  the exhausted halt), never a reviewer run. Without such a block the `submit` /
-  `rebase` follow-ups are unchanged. A follow-up sent to a running writer is
+  the exhausted halt), never a reviewer run. When a block on that key awaits a
+  parent ruling, the driver halts for the ruling (needs parent) before any
+  repair, `submit` or `rebase` follow-up, also when no repairable block exists,
+  so a new candidate never makes an unruled question stale; with no block on
+  that key the `submit` / `rebase` follow-ups are unchanged. A follow-up sent to a running writer is
   forwarded into its running generation (dsa's reply carries no `generation`):
   the driver no longer expects generation + 1 then, so the sealed view that
   follows counts as sealed (a sealed writer was shown as running and the rebase
   follow-up never went out); a follow-up to a sealed call still waits for the
   next generation. The rebase follow-up (and the rebasing repair) lists the
   files that conflict between the previous candidate and the new base (`git
-  merge-tree --write-tree --name-only`), `none` when it merges cleanly, omitted
-  when git fails. Trunk drift (0.5.1 deferrals): when a pass after a drift finds
+  merge-tree --write-tree --name-only -z`, computed only when that follow-up is
+  due), `none` when it merges cleanly, omitted when git fails. Trunk drift (0.5.1 deferrals): when a pass after a drift finds
   trunk equal to the ledger trunk again, the driver forgets the drift notify's
   print and wake records and logs the quiet event `drift-cleared`, on which the
   follower forgets its own, so an identical later drift prints and wakes again;
