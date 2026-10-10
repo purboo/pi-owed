@@ -42,7 +42,7 @@ export interface ReceiptCard {
 export interface StatusView {
   trunk: State['trunk']; nodes: Record<string, NodeState>; groups: Record<string, string[]>;
   /** Pending items; an item held by execution blocks carries their failing observations' notes (`blockNotes`, K2.2). */
-  ready: string[]; pending: Record<string, (ItemView & { blockNotes?: BlockNote[] })[]>; invariants: ItemView[]; ownerFlags: Entry[];
+  ready: string[]; pending: Record<string, (ItemView & { blockNotes?: BlockNote[]; hint?: string })[]>; invariants: ItemView[]; ownerFlags: Entry[];
   /** Ready nodes whose writes overlap a node with an open slot (dispatch refuses them without --allow-overlap). */
   overlaps: Record<string, string[]>;
   /** Present when refs/heads/<trunk> differs from the ledger trunk (commits made outside owed, or a rewritten trunk). */
@@ -204,13 +204,13 @@ function genesisStatus(s: State): { genesis?: GenesisStatus } {
 }
 const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged' };
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
-function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[] }): string {
+function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[]; hint?: string }): string {
   if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${haltClear(i.subject)}`;
   if (i.status === 'W') return waivedText(i);
   if (isManual(i.obligation)) return manualText(i);
   const label = i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
-  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${(i.blockNotes ?? []).map(b => ` — note #${b.seq}: ${b.note}`).join('')}${failNotes(i.observations ?? [])}`;
+  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${(i.blockNotes ?? []).map(b => ` — note #${b.seq}: ${b.note}`).join('')}${i.hint ? ` — ${i.hint}` : ''}${failNotes(i.observations ?? [])}`;
 }
 /** K2.2: the note of an exec block's failing observation on one line, at most 200 characters. */
 export interface BlockNote { seq: number; note: string }
@@ -228,10 +228,12 @@ function blockNote(s: State, b: Block): string | undefined {
 }
 const withNote = (note: string | undefined): { note?: string } => note === undefined ? {} : { note };
 /** A pending item with the notes of the exec blocks that hold it (status, K2.2). */
-function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockNote[] } {
-  const n = s.nodes[i.subject];
-  const notes = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && countsBlock(b) && i.evidence.includes(b.seq)).flatMap(b => { const note = blockNote(s, b); return note === undefined ? [] : [{ seq: b.seq, note }]; });
-  return notes.length ? { ...i, blockNotes: notes } : i;
+function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockNote[]; hint?: string } {
+  const n = s.nodes[i.subject], held = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && countsBlock(b) && i.evidence.includes(b.seq));
+  const notes = held.flatMap(b => { const note = blockNote(s, b); return note === undefined ? [] : [{ seq: b.seq, note }]; });
+  // 0.8 (L3.2): an item held by a flaky block also offers a ruling, next to the waiver.
+  const hint = held.some(b => b.state === 'flaky') ? `owner accepts the risk: ${waiveCommand(i.subject, i.obligation, held.map(b => b.seq), candidateFlag(s, i.subject))}; ${flakyRuleHint(i.subject)}` : undefined;
+  return notes.length || hint ? { ...i, ...(notes.length ? { blockNotes: notes } : {}), ...(hint ? { hint } : {}) } : i;
 }
 /**
  * K2.3: what a recorded waiver means, as the reducer applies it (review #781 ruling). A waiver is recorded for
@@ -292,6 +294,11 @@ function manualText(i: ItemView & { observations?: Entry[] }): string {
  * `owed rule` stays the way to give guidance the writer and reviewers must acknowledge.
  */
 export const resumeCommands = (node = '<node>'): string => `owed resume ${node} --note "<why>" (add --after <node> to wait until that node merges); owed rule gives the writer and reviewers guidance they must acknowledge`;
+/**
+ * 0.8 (L3.2, wais #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
+ * check or test itself must change, a ruling sends the writer to fix it.
+ */
+export const flakyRuleHint = (node: string): string => `or owed rule "<what the writer must change>" --nodes ${node} when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;
 export const resumeHint = (node = '<node>'): string => `to clear it without an obligation: ${resumeCommands(node)}`;
 /** How a driver halt is cleared (SPEC §12, D3), with the resume hint (0.8, L1.5). */
 const haltClear = (node: string): string => `cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, resume, a ruling naming it), or a new attempt; ${resumeHint(node)}`;
@@ -438,8 +445,10 @@ export function ownerCommands(s: State, node: string): string[] {
   const later = live ? '' : 'after the writer submits a candidate: ';
   const out = n.slot?.open ? [] : [`owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
   const flag = candidateFlag(s, node);
-  out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i) : waiveCommand(node, i.obligation, blocks(i.obligation), flag)));
+  out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i, false) : waiveCommand(node, i.obligation, blocks(i.obligation), flag)));
   for (const b of n.blocks.filter(b => countsBlock(b) && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
+  // 0.8 (L3.2): once, after the waivers, when a flaky block is among them.
+  if (n.blocks.some(b => b.state === 'flaky')) out.push(flakyRuleHint(node));
   if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
   return [...new Set(out)];
 }
@@ -449,7 +458,7 @@ export function ownerCommands(s: State, node: string): string[] {
  */
 const ownerAs = (): string => process.env.OWED_CONFIRM?.trim() === 'owner' ? 'owner:human' : 'owner:cli';
 /** The command that removes an owner-queue item from the owner's queue. */
-function decisionCommand(s: State, i: ItemView): string {
+function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
   if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
   const n = s.nodes[i.subject];
   if (n && !n.slot?.open) return dispatchHint(n);
@@ -458,7 +467,8 @@ function decisionCommand(s: State, i: ItemView): string {
   if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), ownerAs(), candidate12(s, i.subject));
   const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && countsBlock(b)) ?? [];
   if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}${flag}`;
-  return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag);
+  // 0.8 (L3.2): a flaky block also offers a ruling (`ownerCommands` adds it once itself).
+  return `${waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag)}${flakyHint && blocks.some(b => b.state === 'flaky') ? `; ${flakyRuleHint(i.subject)}` : ''}`;
 }
 /**
  * How to clear a non-cleared block. A judgment block is described in words: printing a
@@ -470,7 +480,7 @@ function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && countsBlock(x)).map(x => x.seq);
   const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);
-  if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks, flag)}`;
+  if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks, flag)}; ${flakyRuleHint(b.node)}`;
   if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} ${SKIP_ATTEST} (the attribution rerun on the original content clears the block)`;
   if (b.obligation === 'approve') return `${after}a later owner approval of the current candidate clears it: owed approve ${b.node}${flag}`;
   const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
