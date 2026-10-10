@@ -395,8 +395,11 @@ async function genRig(nodeSpec: object) {
   const fake = async () => JSON.parse(await readFile(join(dir, 'state.json'), 'utf8'));
   const lines: string[] = [];
   const driver = (dsa: Dsa) => new run.Driver({ cwd: r.cwd, log: (l: string) => lines.push(l), dsa, session: null });
-  /** Passes of one driver process (its generation facts persist) until `until` holds; at most n. */
-  const passes = async (d: run.Driver, until: (es: Entry[]) => boolean, n = 10) => { for (let i = 0; i < n && !until(await entries()); i++) await d.pass(); return entries(); };
+  /**
+   * Passes of one driver process (its generation facts persist) until `until` holds; at most n. K6 (0.7.0): a pass
+   * starts attests and merges in the background; each pass here then waits for them (`settle`), as `--once` does.
+   */
+  const passes = async (d: run.Driver, until: (es: Entry[]) => boolean, n = 10) => { for (let i = 0; i < n && !until(await entries()); i++) { await d.pass(); await d.settle(); } return entries(); };
   return { ...r, dir, agents, env, entries, fake, lines, driver, passes };
 }
 const sendsOf = (es: Entry[], reason?: string) => es.filter((e): e is SendEntry => e.kind === 'send' && (!reason || e.reason === reason));
