@@ -1376,8 +1376,8 @@ to its agent:
 Node `drive` is not an obligation: changing it is never a downgrade,
 invalidates no candidate (the reducer compares node specs without `type` and
 `drive`) and affects only later launches. A re-launch of a recorded run sends
-its stored spec bytes, as before (§12.5 row 3). A plan with a node `drive`
-needs owed ≥ 0.7.0 to replay.
+its stored spec bytes, as before (§12.5 row 3). owed 0.6.x ignores a node's
+`drive` (it does not validate node keys) and launches with the plan's drive.
 
 ### 12.3 Ledger entries (D3)
 
