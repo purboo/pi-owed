@@ -233,7 +233,7 @@ This is a local, same-user trust boundary. It guards against mistakes and lazy c
 
 ## Parallel slots and a moving trunk
 
-`owed dispatch` and `owed plan` retry a failed compare-and-swap (CAS) up to three attempts in total when the ledger plan sha is unchanged. Each attempt reads fresh state; dispatch finishes its rollback before trying again. A changed plan, a failed rollback, or the third CAS failure returns the refusal with its original error class and exit code. Dispatch rollback uses `git branch -D` only when the new branch still points at the dispatch base, regardless of the main worktree's HEAD; if the branch acquired commits, it uses `-d` and reports any deletion error.
+`owed dispatch` and `owed plan` retry a failed compare-and-swap (CAS) up to three attempts in total when the ledger plan sha is unchanged. Each attempt reads fresh state; dispatch finishes its rollback before trying again. A changed plan, a failed rollback, or the third CAS failure returns the refusal with its original error class and exit code. Dispatch rollback uses `git update-ref -d refs/heads/<branch> <base>` to compare the tip and delete atomically, regardless of the main worktree's HEAD. A ref that moved is kept and the CAS failure is reported under the existing `git branch -d` rollback label. A branch still checked out in a worktree is kept too.
 
 `owed dispatch <node>` refuses when the node's `writes` overlap (path prefix) those of another node with an open slot and names that node; `--allow-overlap` dispatches anyway and records the overlap in the dispatch entry. `owed status` marks ready nodes that overlap an open slot.
 

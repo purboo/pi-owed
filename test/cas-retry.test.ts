@@ -2,7 +2,8 @@
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
@@ -73,20 +74,53 @@ test('N2 rollback deletes an untouched branch even when main HEAD does not conta
   } finally { t.mock.restoreAll(); await r.cleanup(); }
 });
 
-test('N2 rollback preserves a branch that acquired writer commits and reports -d failure without retry', async t => {
+test('N2 rollback preserves a branch that acquired writer commits and reports the ref CAS failure without retry', async t => {
   const r = await fixture();
   try {
     let written = '';
     const count = interleave(t, async n => { if (n === 1) { written = await commitAt(join(r.cwd, '.owed/wt/a-1'), { 'a/new': 'writer work\n' }); await moveTrunk(r.cwd); } });
     await assert.rejects(ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' }), (e: unknown) => {
       assert.ok(e instanceof OwedError); assert.equal(e.code, 'refused');
-      assert.match(e.message, /^Plan, candidate or trunk changed; retry\nrollback failed: git branch -d: .*not fully merged/); return true;
+      assert.match(e.message, /^Plan, candidate or trunk changed; retry\nrollback failed: git branch -d: .*is at [a-f0-9]+ but expected [a-f0-9]+/); return true;
     });
     assert.equal(count(), 1, 'rollback failure must not be retried');
     assert.equal(await revParse(r.cwd, 'owed/a/1'), written);
     assert.equal(await slots(r.cwd), 1);
     assert.equal((await entries(r.cwd)).filter(e => e.kind === 'dispatch').length, 0);
   } finally { t.mock.restoreAll(); await r.cleanup(); }
+});
+
+test('N2 review #976: rollback preserves a ref advanced immediately before deletion', async t => {
+  const r = await fixture(), oldPath = process.env.PATH;
+  try {
+    const tree = (await git(r.cwd, ['rev-parse', `${r.base}^{tree}`])).stdout.trim();
+    const moved = (await git(r.cwd, ['commit-tree', tree, '-p', r.base, '-m', 'concurrent writer'], { env: identity })).stdout.trim();
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const bin = join(r.root, 'bin'), mark = join(r.root, 'race');
+    await mkdir(bin);
+    // A real ref writer runs immediately before either the old unsafe delete or the corrected atomic delete.
+    await writeFile(join(bin, 'git'), [
+      '#!/bin/sh',
+      'if { [ "$1" = branch ] && [ "$2" = -D ] && [ "$3" = owed/a/1 ]; } || { [ "$1" = update-ref ] && [ "$2" = -d ] && [ "$3" = refs/heads/owed/a/1 ]; }; then',
+      `  '${realGit}' update-ref refs/heads/owed/a/1 '${moved}' '${r.base}' || exit 91`,
+      `  '${realGit}' rev-parse refs/heads/owed/a/1 > '${mark}'`,
+      'fi', `exec '${realGit}' "$@"`, '',
+    ].join('\n'), { mode: 0o755 });
+    process.env.PATH = `${bin}:${oldPath ?? ''}`;
+    const count = interleave(t, async n => { if (n === 1) await recordPlan(r.cwd); });
+    let failure: unknown;
+    await assert.rejects(ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' }), (e: unknown) => { failure = e; return true; });
+    assert.equal((await readFile(mark, 'utf8')).trim(), moved, 'the concurrent ref write happened before deletion');
+    assert.equal(await hasBranch(r.cwd), true, 'the concurrently advanced branch must remain');
+    assert.equal(await revParse(r.cwd, 'owed/a/1'), moved);
+    assert.ok(failure instanceof OwedError); assert.equal(failure.code, 'refused');
+    assert.match(failure.message, /^Plan, candidate or trunk changed; retry\nrollback failed: git branch -d: .*is at [a-f0-9]+ but expected [a-f0-9]+/);
+    assert.equal(count(), 1); assert.equal(await slots(r.cwd), 1);
+    assert.equal((await entries(r.cwd)).filter(e => e.kind === 'dispatch').length, 0);
+  } finally {
+    if (oldPath === undefined) delete process.env.PATH; else process.env.PATH = oldPath;
+    t.mock.restoreAll(); await r.cleanup();
+  }
 });
 
 for (const operation of ['dispatch', 'plan'] as const) {
@@ -128,6 +162,29 @@ test('N2 plan refuses another plan recorded after its read, without overwriting 
     await assert.rejects(ops.planSet({ cwd: r.cwd, as: parent, plan: JSON.stringify(spec()) }), isCas);
     assert.equal(count(), 1);
     assert.equal((await entries(r.cwd)).filter(e => e.kind === 'plan').length, 1);
+  } finally { t.mock.restoreAll(); await r.cleanup(); }
+});
+
+test('N2 plan retry around carry appends exactly one carry from the successful fresh read', async t => {
+  const r = await fixture();
+  try {
+    const d = await ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' });
+    await commitAt(d.worktree, { 'a/x': 'work\n' });
+    const sub = await ops.submit({ cwd: d.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    const next = spec(); next.nodes[0] = { ...next.nodes[0]!, checks: [{ id: 'added', run: 'true', reads: ['a/**'], timeout_s: 10 }] } as typeof next.nodes[0];
+    const count = interleave(t, async n => { if (n === 1) await moveTrunk(r.cwd); });
+    const notCarried: ops.NotCarried[] = [];
+    const plan = await ops.planSet({ cwd: r.cwd, as: parent, plan: JSON.stringify(next), notCarried });
+    assert.equal(count(), 2, 'one CAS retry');
+    const es = await entries(r.cwd), after = es.filter(e => e.seq > plan.seq);
+    assert.equal(es.filter(e => e.kind === 'plan').length, 1);
+    assert.equal(after.length, 1, JSON.stringify(after.map(e => e.kind)));
+    const carry = after[0]!;
+    assert.ok(carry.kind === 'submit' && carry.by === 'executor:owed' && carry.carry === sub.seq && carry.seq === plan.seq + 1);
+    assert.equal(es.filter(e => e.kind === 'submit' && e.carry !== undefined).length, 1, 'no duplicate carry');
+    assert.deepEqual(notCarried, []);
+    assert.deepEqual((await ops.carriedBy({ cwd: r.cwd, plan: plan.seq })).map(e => e.seq), [carry.seq]);
+    assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
   } finally { t.mock.restoreAll(); await r.cleanup(); }
 });
 

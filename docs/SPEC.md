@@ -1069,8 +1069,10 @@ created; a dispatch that then fails (in `git worktree add`, or when the ledger
 moved and it rolls back the worktree and branch) removes the directories it
 created again (empty ones only). Every rollback step (`git worktree remove`,
 branch deletion, directory cleanup) runs even when an earlier one fails. Branch
-deletion uses `git branch -D` only if the tip still equals the dispatch base;
-otherwise it uses `-d` and keeps any error (0.10, N2). Thus an untouched branch
+deletion uses `git update-ref -d refs/heads/<branch> <base>`: Git compares the
+old value and deletes in one transaction (0.10, N2; review #976). A moved ref is
+kept and the CAS failure is reported under the existing `git branch -d` rollback
+label. A branch still checked out in a worktree is also kept. An untouched branch
 can be removed even when the main worktree's HEAD does not contain its base. The
 error then names the original failure and each failed step, and nothing is
 recorded. `<git common dir>/info/exclude` gets `.owed/` for the default root (as
