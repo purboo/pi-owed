@@ -1,6 +1,7 @@
-import { readFile, mkdir, appendFile, rmdir } from 'node:fs/promises';
+import { readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { stringify } from 'yaml';
+import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
 import { Ledger, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
@@ -320,7 +321,17 @@ export interface NotCarried { node: string; reason: string }
 export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[] }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   // N2: each attempt recomputes carries from its own fresh locked read; only the successful attempt reports skips.
-  return retryCas(ledger, before => ledger.withLock(async () => { const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d); const skipped: NotCarried[] = [], entry = (await ledger.append(await withCarries(o.cwd,latest,d,p.plan,skipped)))[0]!; o.notCarried?.push(...skipped); return entry; }));
+  return retryCas(ledger, before => ledger.withLock(async () => { const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); return entry; }));
+}
+type PlanArgs = Actor & { rev?: string; path?: string; note?: string; notCarried?: NotCarried[] };
+/**
+ * Under the ledger lock: the plan entry draft for stored plan `p` (refused unless the plan and trunk are still those of
+ * `before` and the guard accepts it), followed by its N1 carry submits. Shared by planSet and amend (N3), so both apply
+ * the same authority rules.
+ */
+async function planDrafts(o: PlanArgs, ledger: Ledger, p: { plan: Plan; sha: string }, before: State): Promise<{ latest: Awaited<ReturnType<typeof load>>; drafts: Draft[] }> {
+  const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d);
+  return { latest, drafts: await withCarries(o.cwd,latest,d,p.plan,o.notCarried) };
 }
 /**
  * N1: the plan draft `d` followed by one carry submit (by executor:owed) per open candidate it invalidates whose node
@@ -352,6 +363,136 @@ export async function carriedBy(o: Context & { plan: number }): Promise<SubmitEn
   const out: SubmitEntry[] = [];
   for (const e of (await (await Ledger.open(o.cwd)).read()).filter(e => e.seq > o.plan)) { if (e.kind !== 'submit' || e.carry === undefined) break; out.push(e); }
   return out;
+}
+// ---------- N3: owed amend, widen one node's writes (wais #26) ----------
+/** N3: what `owed amend` would write: the plan file edited with the node's new writes (nothing recorded yet). */
+export interface AmendEdit {
+  node: string;
+  /** the plan file (real path) and its path as `owed plan` records it */
+  file: string; path: string;
+  /** the file text read (equal to the ledger's current plan) and the edited text */
+  text: string; next: string;
+  prior: Plan; plan: Plan;
+  /** paths appended to the node's writes, and given paths that were already there (skipped) */
+  added: string[]; present: string[];
+  /** the ledger plan sha the edit starts from */
+  planSha: string;
+}
+export interface AmendResult { node: string; file: string; path: string; added: string[]; present: string[]; plan: Entry; rule: Entry; carried: SubmitEntry[]; notCarried: NotCarried[] }
+type AmendArgs = Context & { node: string; writes: string[]; note: string; plan?: string };
+/** N3.4: the paths of `+<path>` arguments, duplicates dropped; refuses an empty list, a path without `+` and an empty path. */
+export function amendPaths(writes: string[]): string[] {
+  if (!Array.isArray(writes) || !writes.length) throw new OwedError('amend needs at least one path to add: --writes +<path>[,+<path>...]','usage');
+  const out: string[] = [];
+  for (const w of writes) {
+    const t = typeof w === 'string' ? w.trim() : '';
+    if (!t.startsWith('+')) throw new OwedError(`amend only widens writes: each path must start with + (got ${JSON.stringify(w)}); removing writes needs owed plan`,'usage');
+    const p = t.slice(1).trim();
+    if (!p) throw new OwedError('amend: empty path after +','usage');
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+/** N3.2: the plan file amend edits: `plan` (relative to cwd), else the path of the latest plan entry. */
+async function amendSource(cwd: string, entries: Entry[], plan?: string): Promise<string> {
+  if (plan !== undefined) return resolve(cwd,plan);
+  const last = entries.findLast(e => e.kind === 'plan');
+  if (last?.kind !== 'plan' || !last.path) throw new OwedError(`${last ? `the latest plan entry #${last.seq} records no plan file path` : 'no plan entry records a plan file path'}; give the plan file (owed amend --plan <file>; owed_amend plan)`,'usage');
+  return isAbsolute(last.path) ? last.path : join(await realpath(await git.repoRoot(cwd)),last.path);
+}
+/**
+ * N3.2: the edit amend makes, against ledger state `s`: the plan file must equal the ledger's current plan; its node
+ * `node` gets the new paths appended to `writes` through the yaml Document API (comments, order and flow style kept).
+ * The edited text is checked to parse to the current plan with only that node's writes widened.
+ */
+async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<AmendEdit> {
+  const paths = amendPaths(o.writes);
+  if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('amend needs a non-empty note stating the limit of the widening (--note TEXT)','usage');
+  inited(s);
+  const spec = s.plan.nodes.find(n => n.id === o.node);
+  if (!spec) throw new OwedError(`Node ${o.node} does not exist`);
+  if (s.nodes[o.node]?.merged) throw new OwedError(`Node ${o.node} is merged; amend widens the writes of a node that is not merged`);
+  const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
+  if (planBlob(read.plan).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
+  const doc = parseDocument(read.plan);
+  const nodes = doc.get('nodes'), item = isSeq(nodes) ? nodes.items.find(x => isMap(x) && x.get('id') === o.node) : undefined;
+  if (!isMap(item)) throw new OwedError(`cannot edit ${read.path}: node ${o.node} is not a map in its nodes list`);
+  const added = paths.filter(p => !spec.writes.includes(p)), present = paths.filter(p => spec.writes.includes(p));
+  if (!added.length) throw new OwedError(`writes of ${o.node} already include ${present.join(', ')}; nothing to amend`);
+  const next = spliceWrites(read.plan,doc,item,added);
+  if (next === undefined) throw new OwedError(`cannot edit ${read.path}: writes of node ${o.node} is not a list`);
+  const plan = planBlob(next).plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
+  if (canonical(plan) !== canonical(expect)) throw new OwedError(`cannot edit ${read.path}: the edited file would change more than the writes of ${o.node}`,'internal');
+  return { node:o.node, file:await realpath(resolve(o.cwd,source)), path:read.path, text:read.plan, next, prior:s.plan, plan, added, present, planSha:s.planSha };
+}
+/** A path as a YAML scalar: plain when that is unambiguous (also inside a flow list), else double-quoted (JSON). */
+const yamlPath = (p: string): string => /^[A-Za-z0-9_./][A-Za-z0-9_./*-]*$/.test(p) ? p : JSON.stringify(p);
+/**
+ * N3.2: the plan text with `added` appended to the writes list of node map `item` of `doc` (parsed from `text`). The
+ * list is located through the yaml Document API and only its own source range is edited, so every other byte
+ * (comments, order, flow or block style, spacing) is kept: a flow list gets `, path` before its `]`, a block list one
+ * `- path` line per path after its last item, at the same indentation. A node without writes gets them through the
+ * Document API (the file is then re-emitted). Undefined when writes is not a list.
+ */
+function spliceWrites(text: string, doc: ReturnType<typeof parseDocument>, item: YAMLMap, added: string[]): string | undefined {
+  const writes = item.get('writes',true);
+  if (writes === undefined || (isSeq(writes) && !writes.flow && !writes.items.length)) { item.set('writes',doc.createNode(added)); return doc.toString({ lineWidth:0 }); }
+  if (!isSeq(writes) || !writes.range) return undefined;
+  const last = writes.items.at(-1) as { range?: [number, number, number] } | undefined;
+  const quoted = (p: string): string => isScalar(last) && (last.type === 'QUOTE_DOUBLE' || last.type === 'QUOTE_SINGLE') ? JSON.stringify(p) : yamlPath(p);
+  if (writes.flow) {
+    let close = writes.range[1]-1; if (text[close] !== ']') close = text.lastIndexOf(']',close);
+    if (close < writes.range[0]) return undefined;
+    if (!writes.items.length) return `${text.slice(0,writes.range[0])}[${added.map(quoted).join(', ')}]${text.slice(close+1)}`;
+    const before = text.slice(0,close), ws = /\s*$/.exec(before)![0], core = before.slice(0,before.length-ws.length), sep = core.endsWith(',') ? ' ' : ', ';
+    return `${core}${sep}${added.map(quoted).join(', ')}${ws}${text.slice(close)}`;
+  }
+  if (!last?.range) return undefined;
+  const dash = text.lastIndexOf('-',last.range[0]), lineStart = text.lastIndexOf('\n',dash)+1, eol = text.indexOf('\n',last.range[1]), end = eol < 0 ? text.length : eol;
+  if (dash < lineStart || text.slice(lineStart,dash).trim()) return undefined;
+  const indent = text.slice(lineStart,dash);
+  return `${text.slice(0,end)}${added.map(p => `\n${indent}- ${quoted(p)}`).join('')}${text.slice(end)}`;
+}
+/** N3: the edit `owed amend` would make (refusals as for amend, except authority); nothing is recorded or written. */
+export async function amendPreview(o: AmendArgs): Promise<AmendEdit> { const { entries, state } = await load(await Ledger.open(o.cwd)); return amendEdit(o,entries,state); }
+/**
+ * N3: widens the writes of node `node`. In one ledger lock it appends the plan entry of the edited plan file (the same
+ * drafting and guard as owed plan, so a downgrade needs the owner or an allow rule, and a delegated owner its note),
+ * any N1 carry submits, and a rule naming the node, by the same principal. The edited text goes to a temporary file
+ * next to the plan file before the append and replaces the file after it; a refusal records nothing and leaves the
+ * file unchanged.
+ */
+export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
+  owner(o); const ledger = await Ledger.open(o.cwd);
+  // N2 (00:3x): retried like owed plan; each attempt re-reads the ledger and the file (amendEdit), and a failed attempt
+  // removes its temporary file before the refusal leaves the lock.
+  return retryCas(ledger, async before => {
+  const { entries } = await load(ledger), e = await amendEdit(o,entries,before), p = await storePlan(ledger,e.next);
+  const limit = o.note.trim(), widened = e.added.map(x => `+${x}`).join(', '), notCarried: NotCarried[] = [];
+  return ledger.withLock(async () => {
+    const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:`amend ${o.node}: writes ${widened}. Limit: ${limit}`, notCarried },ledger,p,loaded.state);
+    if (latest.state.nodes[o.node]?.merged) throw new OwedError(`Node ${o.node} is merged; amend widens the writes of a node that is not merged`);
+    let now: string; try { now = await readFile(e.file,'utf8'); } catch (x) { throw new OwedError(`cannot read ${e.path}: ${(x as NodeJS.ErrnoException).code ?? String(x)}; nothing recorded`); }
+    if (now !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while amending; nothing recorded`);
+    const seq = (latest.entries.at(-1)?.seq ?? -1) + 1;
+    const rule: Draft = { kind:'rule', by:by(o), channel:o.channel, text:`writes of ${o.node} widened by plan #${seq}: ${widened}. Limit: ${limit}`, nodes:[o.node] };
+    guard(replayed(latest,drafts),rule);
+    const temp = join(dirname(e.file),`.${basename(e.file)}.owed-amend-${process.pid}-${randomUUID().slice(0,8)}.tmp`);
+    try { await writeFile(temp,e.next); await chmod(temp,(await stat(e.file)).mode & 0o7777); }
+    catch (x) { await unlink(temp).catch(() => undefined); throw new OwedError(`cannot write ${e.path}: ${(x as NodeJS.ErrnoException).code ?? String(x)}; nothing recorded`); }
+    let appended: Entry[];
+    try { appended = await ledger.append([...drafts,rule]); } catch (x) { await unlink(temp).catch(() => undefined); throw x; }
+    const plan = appended[0]!, ruled = appended.at(-1)!;
+    try { await rename(temp,e.file); }
+    catch (x) { throw new OwedError(`plan #${plan.seq} and rule #${ruled.seq} were recorded, but ${e.path} could not be replaced (${(x as NodeJS.ErrnoException).code ?? String(x)}): the file still holds the prior plan; the recorded plan is in ${temp}: move it over ${e.file}`,'internal'); }
+    return { node:o.node, file:e.file, path:e.path, added:e.added, present:e.present, plan, rule:ruled, carried:appended.slice(1,-1).filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried };
+  });  });
+}
+/** The state after appending `drafts` to `latest` (seq, ts and hashes as the append would assign them). */
+function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): State {
+  const replay = [...latest.entries];
+  for (const x of drafts) { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); }
+  return reduce(replay,latest.lookup);
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*' }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes })); }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
