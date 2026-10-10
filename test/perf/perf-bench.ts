@@ -1,6 +1,6 @@
 // N4 benchmark (not a test): one fresh process per measurement.
-//   OWED_DIR=<ledger dir> node test/helpers/perf-bench.ts status|why|load <repo cwd> [node]
-//   node test/helpers/perf-bench.ts synth [entries] [nodes]
+//   OWED_DIR=<ledger dir> node test/perf/perf-bench.ts status|why|load <repo cwd> [node]
+//   node test/perf/perf-bench.ts synth [entries] [nodes]
 // Prints one JSON line: wall ms of the call and the process's peak RSS (MB).
 import { performance } from 'node:perf_hooks';
 import * as ops from '../../src/ops.ts';
