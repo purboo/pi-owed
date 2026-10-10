@@ -173,7 +173,7 @@ test('#557: cargo summaries count only at column 0 — a TAP comment or an inden
   assert.match(log, /^# test result: ok\. 40 passed/m, log);
   assert.equal(obs.counts?.format, 'tap', JSON.stringify(obs.counts));
   assert.equal(obs.counts?.tests, 2);
-  assert.equal(obs.verdict, 'fail'); assert.equal(obs.note, 'zero tests or min_tests unmet');
+  assert.equal(obs.verdict, 'fail'); assert.equal(obs.note, 'min_tests unmet: counted 2 (1 pass, 1 fail) < min_tests 5; exit 0');
 });
 
 test('#557: a non-red run that exits 126 or 127 with no count is an error (the command never ran), with the last output lines', async () => {

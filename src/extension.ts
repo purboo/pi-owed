@@ -265,7 +265,7 @@ export default function owed(pi: ExtensionAPI): void {
     // G1.2: under the gate the dialog shows the candidate the waiver lands on, and pins it.
     const v = ops.confirmGate() ? await ops.candidatePreview({ cwd: dir, node: p.node }) : undefined;
     const a = await actor(ctx, dir, who, `Waive ${oneLine(p.node)}/${oneLine(p.obligation)}\n${v ? `${candidateLines(v)}\n` : ''}Accepted risks (block seq): ${JSON.stringify(p.accept_risk ?? [])}\nThis obligation will be shown as waived, not a measured pass.`, { Reason: p.reason }, signal);
-    const r = await ops.waive({ node: p.node, obligation: p.obligation, reason: p.reason, accept_risk: p.accept_risk, named: p.candidate, ...(v ? { pin: { seq: v.seq, commit: v.commit } } : {}), ...a, channel: a.channel! }); return card(dir, p.node, r);
+    const r = await ops.waive({ node: p.node, obligation: p.obligation, reason: p.reason, accept_risk: p.accept_risk, named: p.candidate, ...(v ? { pin: { seq: v.seq, commit: v.commit } } : {}), ...a, channel: a.channel! }), meaning = await ops.waiverMeaning({ cwd: dir, entry: r }); return result({ ...r, meaning }, `${meaning}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
   tool('defer', 'Owner deferral of prospective merge-tree invariants; debt remains (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner).', Type.Object({ node, items: Type.Array(node, { minItems: 1, description: 'Invariant IDs.' }), reason, as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'defer');

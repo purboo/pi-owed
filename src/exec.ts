@@ -3,6 +3,16 @@ import type { Plan, AttestJob, ObsEntry, Counts } from './types.ts';
 import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths } from './git.ts';
 
+/**
+ * K2.1: the note of a non-red check that fails on its count: `zero tests; exit <code>`, or `min_tests unmet: counted
+ * <tests> (<pass> pass, <fail> fail[, <skip> skip]) < min_tests <m>; exit <code>` (an unknown pass/fail count reads `?`).
+ */
+export function countNote(counts: Counts | undefined, minTests: number | undefined, code: number | null): string {
+  const exit = `exit ${code ?? 'none'}`;
+  if (!counts || counts.tests === 0 || minTests === undefined) return `zero tests; ${exit}`;
+  const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
+  return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
+}
 export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; signal?: AbortSignal; onProgress?(msg: string): void }
 function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
@@ -161,7 +171,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
         const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
         obs.verdict = (red ? result.code !== null && result.code !== 0 && (!spec.red_expect || new RegExp(spec.red_expect).test(result.log)) : result.code === 0) && countOK ? 'pass' : 'fail';
-        if (!countOK) obs.note = red ? 'zero tests' : 'zero tests or min_tests unmet';
+        if (!countOK) obs.note = red ? 'zero tests' : countNote(obs.counts, spec.min_tests, result.code);
       }
     }
   } catch (e) { obs.verdict = 'error'; obs.note = e instanceof Error ? e.message : String(e); capture(`\n${obs.note}\n`); }
