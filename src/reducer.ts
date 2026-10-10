@@ -131,9 +131,9 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       const next = structuredClone(plans(e.plan));
       const detected = downgradeDetails(s.plan, next);
       // A candidate's facts were computed under the old plan; if its node's
-      // obligations, setup or closure changed, the writer must submit again.
+      // obligations, setup, exec or closure changed, the writer must submit again.
       // D19.4: the node `type` only names later branches; changing it never invalidates a candidate.
-      for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(withoutType(nodeSpec(s, n.id))) !== canonical(withoutType(next.nodes.find(x => x.id === n.id))) || s.plan.setup !== next.setup || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
+      for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && (canonical(withoutType(nodeSpec(s, n.id))) !== canonical(withoutType(next.nodes.find(x => x.id === n.id))) || s.plan.setup !== next.setup || execChanged(s.plan, next) || canonical(s.plan.closure) !== canonical(next.closure))) n.candidate = undefined;
       s.plan = next; s.planSha = e.plan;
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items });
@@ -295,6 +295,8 @@ export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interru
 const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
 // Conservative local downgrade detection keeps this leaf independent of plan.ts.
+/** Whether the `exec` block differs (D20); `exec: {}` and no block are the same (the parser drops empty fields). */
+function execChanged(prev: Plan, next: Plan): boolean { return canonical(prev.exec ?? {}) !== canonical(next.exec ?? {}); }
 function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
   const result: Downgrade[] = [];
   const add = (node: string, what: string): void => { result.push({ node, what }); };
@@ -309,6 +311,8 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
     }
   };
   if (prev.setup !== next.setup || canonical(prev.closure) !== canonical(next.closure)) add('*', 'setup/closure changed; cannot prove obligations were not reduced');
+  // D20.4: like setup, an exec change (env or wrapper, e.g. wrap ["true"]) can weaken every check: owner only, in ΔO⁻.
+  if (execChanged(prev, next)) add('*', 'exec changed; cannot prove obligations were not reduced');
   checks('trunk', prev.invariants, next.invariants);
   for (const n of prev.nodes) {
     const m = next.nodes.find(x => x.id === n.id);
