@@ -186,7 +186,12 @@ function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote
 /** K2.2: the note of an exec block's failing observation on one line, at most 200 characters. */
 export interface BlockNote { seq: number; note: string }
 const NOTE_SHOWN = 200;
-const shortNote = (note: string): string => { const t = oneLine(note); return t.length > NOTE_SHOWN ? `${t.slice(0, NOTE_SHOWN - 1)}…` : t; };
+const shortNote = (note: string): string => {
+  const t = oneLine(note); if (t.length <= NOTE_SHOWN) return t;
+  // Cut whole code points of the raw note, each escaped as oneLine does, so no surrogate pair or \uXXXX escape is split.
+  let out = ''; for (const cp of note) { const x = oneLine(cp); if (out.length + x.length > NOTE_SHOWN - 1) break; out += x; }
+  return `${out}…`;
+};
 function blockNote(s: State, b: Block): string | undefined {
   if (b.kind !== 'exec') return undefined;
   const e = entriesOf(s).find(x => x.seq === b.seq);
@@ -200,33 +205,44 @@ function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockN
   return notes.length ? { ...i, blockNotes: notes } : i;
 }
 /**
- * K2.3: what a recorded waiver means, as the reducer applies it. A waiver applies to (node, obligation, key), not to one
- * candidate: it holds for every candidate of the node, in this or a later attempt, whose key for the obligation is the
- * waived key, while every active block of the obligation is in its accept_risk. attest skips a key that already has a
- * verdict; a key without one is still measured (a pass is measured, a fail is a new block, which ends the waiver).
+ * K2.3: what a recorded waiver means, as the reducer applies it (review #781 ruling). A waiver is recorded for
+ * (node, obligation, key K), not for one candidate. It is in effect for every candidate of the node, in this or a later
+ * attempt, whose key for the obligation is K, whenever no unaccepted active block remains on the obligation (an
+ * accepted block is one in its accept_risk, older than the waiver). So it takes effect as soon as such blocks clear (for
+ * example an attribution rerun that confirms and clears a failure); a later block suspends it, and clearing that block
+ * restores it. attest skips a key that already has a verdict; a key without one is still measured.
  */
 export function waiverText(s: State, e: WaiveEntry): string {
-  const n = s.nodes[e.node], c = n?.candidate, item = n?.items.find(i => i.obligation === e.obligation), o = e.obligation;
-  const at = `${o} for candidate #${c?.seq ?? '?'} ${c?.commit.slice(0, 12) ?? '?'} (key ${e.key.slice(0, 12)})`;
-  if (!item || item.status !== 'W' || !item.evidence.includes(e.seq)) return `recorded waiver #${e.seq} of ${at}, but ${o} is not waived: ${item?.detail ?? 'not an obligation of the current candidate'}${item?.mark === '⛔' ? `; a waiver takes effect only when it accepts every active block of ${o} as a risk (accept-risk)` : ''}`;
+  const n = s.nodes[e.node], c = n?.candidate, item = n?.items.find(i => i.obligation === e.obligation), o = e.obligation, k = e.key.slice(0, 12);
   const kind = o.includes(':') ? o.slice(0, o.indexOf(':')) : o, measured = ['check', 'strength', 'red', 'writes'].includes(kind);
+  const scope = `owed counts ${o} as waived, not measured, for every candidate of ${e.node} whose ${o} key is ${k}${kind === 'rulings' ? '' : ', in this or a later attempt'}, while no unaccepted active block remains on ${o}; a later block suspends the waiver and clearing that block restores it`;
   const again = kind === 'check' || kind === 'strength' ? `a change to the check definition, setup, exec, closure or the content of its reads${kind === 'strength' ? ' or mutants' : ''} changes the key, and owed measures it again`
     : kind === 'red' ? 'a change to the check definition, setup, exec, closure, the base tree or the content of its tests changes the key, and owed measures it again'
-    : kind === 'writes' ? 'a new candidate commit or base changes the key, and owed measures it again'
+    : kind === 'writes' ? "a new candidate commit or base, or a change to the node's writes, changes the key, and owed measures it again"
     : kind === 'rulings' ? 'a new attempt changes the key, and it is owed again'
+    : kind === 'evidence' ? 'a different candidate patch or evidence definition changes the key, and it is owed again'
     : 'a different candidate patch changes the key, and it is owed again';
-  const unmeasured = measured && !observationsOf(s, e.node, o, e.key).some(x => x.verdict !== 'error') ? '; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail blocks it again' : '';
+  const unaccepted = (n?.blocks ?? []).filter(b => b.obligation === o && b.state !== 'cleared' && !((e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
+  const blockClear = (b: Block): string => b.kind === 'exec'
+    ? `an attribution rerun (owed attest) that confirms the failure clears #${b.seq}${b.state === 'flaky' ? ` (#${b.seq} is flaky: its rerun passed, so only a waiver with --accept-risk ${b.seq} accepts it)` : '; if the rerun passes, #' + b.seq + ' stays as a flaky block that only a waiver with --accept-risk accepts'}`
+    : `an ok review that clears #${b.seq}`;
+  const effect = item?.status === 'W' && item.evidence.includes(e.seq) ? 'in effect now'
+    : !item ? `${o} is not an obligation of the current candidate`
+    : item.status === 'E' ? `${o} is currently satisfied, so the waiver is not needed while it stays satisfied`
+    : unaccepted.length ? `not in effect yet: active ${unaccepted.length === 1 ? 'block' : 'blocks'} ${unaccepted.map(b => `#${b.seq}`).join(', ')} ${unaccepted.length === 1 ? 'is' : 'are'} not accepted; it takes effect as soon as no unaccepted active block remains on ${o}, for example after ${unaccepted.map(blockClear).join(', and ')}; --accept-risk accepts the current flaky or active blocks at once`
+    : `not in effect: ${item.detail}`;
+  const unmeasured = measured && !observationsOf(s, e.node, o, e.key).some(x => x.verdict !== 'error') ? '; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail adds a block that suspends the waiver until it clears' : '';
   const flaky = (e.accept_risk ?? []).filter(seq => { const b = n?.blocks.find(x => x.seq === seq); return !!b && b.kind === 'exec' && wasFlaky(s, b, e.seq); });
-  return `waived ${at}: owed counts it as waived, not measured, for every candidate of ${e.node} whose ${o} key is ${e.key.slice(0, 12)}${kind === 'rulings' ? '' : ', in this or a later attempt'}; ${again}${unmeasured}${flaky.map(seq => `; the flaky block #${seq} stays recorded as accepted risk`).join('')}`;
+  return `waived ${o} for candidate #${c?.seq ?? '?'} ${c?.commit.slice(0, 12) ?? '?'} (key ${k}): ${effect}; ${scope}; ${again}${unmeasured}${flaky.map(seq => `; the flaky block #${seq} stays recorded as accepted risk`).join('')}`;
 }
 /** An exec block that an attribution rerun passed (flaky) before entry `before`, as the reducer marks it. */
 const wasFlaky = (s: State, b: Block, before: number): boolean => entriesOf(s).some(x => x.kind === 'obs' && x.attribution && x.verdict === 'pass' && x.subject === b.node && x.obligation === b.obligation && x.key === b.key && x.seq > b.seq && x.seq < before);
 /** K2.3: a waived item reads `<subject>/<obligation> waived (not measured for this candidate) by <who>: <reason>`. */
 function waivedText(i: ItemView & { observations?: Entry[] }): string {
   const obs = i.observations ?? [], w = obs.findLast(e => e.kind === 'waive');
-  const who = w ? `${w.by}${w.channel ? ` (${w.channel}${w.channel === 'flag' ? ' weak confirmation' : ''})` : ''}` : 'the owner';
+  const channel = w?.channel ? ` (${w.channel}${w.channel === 'flag' ? ' weak confirmation' : ''})` : '';
   const rest = obs.filter(e => e !== w).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : `#${e.seq}`).join('; ');
-  return `${i.mark} ${i.subject}/${i.obligation} waived (not measured for this candidate) by ${who}: ${w?.kind === 'waive' ? oneLine(w.reason) : i.detail}${rest ? ` [${rest}]` : ''}${failNotes(obs)}`;
+  return `${i.mark} ${i.subject}/${i.obligation} waived (not measured for this candidate) by ${w?.by ?? 'the owner'}: ${w?.kind === 'waive' ? oneLine(w.reason) : i.detail}${channel}${rest ? ` [${rest}]` : ''}${failNotes(obs)}`;
 }
 /** 0.5.1 (E2 ruling 3): each fail observation's note under its item, `  note #<seq>:` then the note as recorded, indented. */
 const failNotes = (obs: Entry[]): string => obs.map(e => e.kind === 'obs' && e.verdict === 'fail' && e.note ? `\n  note #${e.seq}:${e.note.split('\n').map(l => `\n    ${l}`).join('')}` : '').join('');
