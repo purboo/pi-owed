@@ -46,6 +46,39 @@ export function branchTemplateErrors(template: string, label: string): string[] 
   for (const name of ['node', 'attempt']) if (!names.includes(name)) errors.push(`${label}: must contain {${name}}`);
   return errors;
 }
+/** Control characters refused in `worktrees.root` and `worktrees.branch` of a new plan: < 0x20, 0x7f, U+2028, U+2029. */
+const CONTROL = /[\u0000-\u001f\u007f\u2028\u2029]/;
+/** Characters a placeholder value may contain: `{attempt}` is a decimal number, `{type}` matches ^[a-z][a-z0-9-]*$. */
+const VALUE_CHARS: Record<string, RegExp> = { attempt: /[0-9]/, type: /[a-z0-9-]/ };
+/**
+ * Errors of a branch template that could render two distinct (node, attempt) pairs as the same name (sufficient
+ * rule): `{node}` occurs exactly once; every `{attempt}` or `{type}` before it is directly followed by a literal
+ * character that cannot occur in its value, and every one after it is directly preceded by one. The name then decodes
+ * from the left up to `{node}` and from the right back to it, so node and attempt are recovered uniquely.
+ */
+export function branchAmbiguityErrors(template: string, label: string): string[] {
+  const parts = template.split(PLACEHOLDER), errors: string[] = [];
+  // split with one capture group: even indexes are literals, odd ones placeholder names.
+  const at = parts.flatMap((p, i) => i % 2 && p === 'node' ? [i] : []);
+  if (at.length !== 1) return [`${label}: must contain {node} exactly once (two (node, attempt) pairs could give the same branch name)`];
+  for (let i = 1; i < parts.length; i += 2) {
+    const chars = VALUE_CHARS[parts[i]!];
+    if (!chars || i === at[0]) continue;
+    const before = i < at[0]!, edge = before ? parts[i + 1]!.charAt(0) : parts[i - 1]!.charAt(parts[i - 1]!.length - 1);
+    if (!edge || chars.test(edge)) errors.push(`${label}: {${parts[i]}} must be ${before ? 'followed' : 'preceded'} by a separator character that cannot occur in it (such as /), or two (node, attempt) pairs could give the same branch name`);
+  }
+  return errors;
+}
+/**
+ * Errors a new plan's `worktrees:` block must not have (checked when a plan is recorded, not on replay, so existing
+ * ledgers stay readable): control characters in the root or the branch template, and an ambiguous branch template.
+ */
+export function worktreesErrors(cfg: WorktreesConfig): string[] {
+  const errors: string[] = [];
+  if (CONTROL.test(cfg.root)) errors.push('worktrees.root: must not contain control characters');
+  if (CONTROL.test(cfg.branch)) errors.push('worktrees.branch: must not contain control characters');
+  return [...errors, ...branchAmbiguityErrors(cfg.branch, 'worktrees.branch')];
+}
 /** Expands a (valid) branch template for attempt `attempt` of node `spec`; `{type}` defaults to `feat`. */
 export function expandBranch(template: string, spec: Pick<NodeSpec, 'id' | 'type'>, attempt: number): string {
   const values: Record<string, string> = { node: spec.id, attempt: String(attempt), type: spec.type ?? DEFAULT_NODE_TYPE };
