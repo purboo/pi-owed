@@ -1,5 +1,124 @@
 # Changelog
 
+## 0.5.1
+
+- **Driver runs belong to the starting pi session (E1, pi-durable-subagents
+  1.0.31).** When a driver starts (`owed drive`, `--once`, `--detach`, pi
+  `owed_drive`), owed reads `DSA_SESSION` from its environment — ignored when
+  `DSA_CALL` or `DSA_EXEC` is set (a subagent), exactly as dsa does, and when
+  it is not a session id dsa accepts (a letter or digit, then up to 127 of
+  `[A-Za-z0-9._:-]`) — and records it as `session` in `drive.lock` (absent when
+  none); `--detach` hands the starter's value to the detached driver. Every
+  `pi-durable-subagents run` the driver issues passes `--session <id>` when a
+  session is recorded, and dsa child processes never inherit `DSA_SESSION`, so
+  the lock and what dsa records never disagree. A dsa that refuses `--session`
+  (older than 1.0.31) is detected once per driver: the flag is dropped, the run
+  is issued again without it and one line is logged (`dsa does not accept
+  --session (older than pi-durable-subagents 1.0.31): runs start without it and
+  are not listed in pi session <id>`); it never halts. For a running driver
+  `owed drive --status` (`--json` `session`), `/owed` and `owed_drive` status
+  show `runs are listed in pi session <id>` or `no pi session: runs show only
+  in pi-durable-subagents status / the CLI`.
+- **Check results say what happened (E2).** The count parser sums every
+  recognized segment of one log: cargo `test result:` lines and TAP
+  plans/results in the same output give one count with format `mixed` (`tests`,
+  plus `pass`/`fail`/`skip` where the TAP part reports them), which `min_tests`
+  checks; single-format logs keep their format names and numbers. cargo
+  summaries count only at column 0, so a TAP comment `# test result: ok. …` or
+  an indented YAML diagnostic containing one stays TAP text. A non-red check
+  that exits non-zero with no recognizable count, or with zero tests, is `fail`
+  (no longer `error` with `unknown test count format with min_tests`), with the
+  note `command exited <code> with no recognizable test count` (or `after zero
+  tests`) `; last output:` followed by its last 5 non-empty output lines (ANSI
+  colour removed, each at most 200 characters). Exit 126 or 127 with no count
+  is now `error` also without `min_tests` (0.5.0 recorded `fail` there):
+  `command could not run (exit 126: not executable)`, or `127: not found`, plus
+  the same tail; the command never ran, so it says nothing about the code. An
+  exit-0 run with an unknown count under `min_tests` stays `error`, and red
+  runs are unchanged. `owed why`/`owed_why` show each fail observation's note
+  under its item (`note #<seq>:`, then the note as recorded, indented), and so
+  does the driver's repair message to the writer, which includes the `owed why`
+  card. Check processes no longer inherit the `DSA_*` variables (dsa call
+  identity) except `DSA_HOME` (configuration), so owed commands inside a check
+  run under a dsa call are not refused as subagent acts; a variable the plan's
+  `exec.env` sets still applies.
+- **One wake per new fact; trunk drift is not a halt (E3).** A driver wake
+  (halt, notify, rejected, conflict, refused, error) of a node carries the
+  node's fact mark: the highest seq of the ledger entries naming it that the
+  driver (`parent:drive`) did not write. The loop driver prints a node's notify
+  only when its text or fact mark changed, and marks any other wake whose text
+  and mark equal the node's last one with `(repeat <n>, no new ledger
+  entries)`. The background follower wakes the session for such a line only
+  when its text differs from the last one delivered for that node or the node's
+  fact mark rose; a repeat does not wake and rides along with the next message
+  with the same suffix. Lines without a fact mark (a 0.5.0 driver's log) wake
+  as before. Trunk drift — the trunk ref no longer equals the ledger trunk — is
+  a repository fact and never a ledger halt: each pass the driver compares them
+  before merging; on drift it merges nothing that pass (other actions continue)
+  and emits one repo-level owner notify, `trunk <name> moved outside owed
+  (<ledger> → <ref>); the main agent resolves it with: owed adopt --note
+  "<why>"` when the ref fast-forwards the ledger trunk, otherwise `trunk <name>
+  was rewound or rewritten (<ledger> → <ref>); restore it: git update-ref
+  refs/heads/<name> <ledger> <ref>`. It prints once per change (loop) and wakes
+  once per change (follower). A CAS failure inside a merge (trunk moved
+  meanwhile) is the same notify, retried next pass; other merge refusals still
+  halt (needs human). After `owed adopt` the next pass merges with no other
+  act. Owner halts use the D25.6 wording everywhere — driver output `halt
+  <node> attempt <n>, needs the owner (the main agent decides; owed lists the
+  command)`, the halt rows of `owed why` and `owed report` and halt entry lines
+  (`owed status` lists owner halts under `Pending owner`) — and resolving
+  commands that state a role say `--as owner:cli` (`--as owner:human` under
+  `OWED_CONFIRM=owner`). The CLI's default owner principal is now `owner:cli`
+  (channel `delegated`), matching pi's `owner:pi`; it is `owner:human` only
+  under `OWED_CONFIRM=owner`.
+- **Rulings carried, not inferred (E4).** Launch entries and `repair` sends now
+  record `rulings`: the highest in-scope ruling seq their message actually
+  carried, computed from the state the message was built from, `0` when it
+  carried none (a writer launch: the rulings of its dispatch packet; a reviewer
+  launch: every ruling in scope; a repair: the rulings since dispatch and those
+  quoted by needs-parent block notes). A re-launch keeps the recorded value.
+  The rulings delivered to a run are the maximum over its launch and its repair
+  and ruling sends (and, for a writer, its dispatch `rulings_seen`); entries
+  without the field (written by 0.5.0) keep 0.5.0's position rule. A ruling
+  recorded while a launch or repair message is being built is therefore steered
+  afterwards instead of counting as delivered. The reducer validates the field
+  — an integer, at most the entry's own seq, and 0 or the seq of a ruling
+  covering the node recorded before the entry — and replay refuses otherwise;
+  other send reasons still may not carry it (`send rulings is only allowed with
+  reason ruling or repair`).
+
+**Compatibility.** pi-owed 0.5.1 reads 0.5.0 ledgers unchanged. A ledger on
+which a 0.5.1 driver recorded any launch (or a repair send) cannot be read by
+0.5.0: its replay refuses the entry (`Entry #N invalid: launch has unknown
+fields: rulings`, or `send rulings is only allowed with reason ruling` for a
+repair send), so `owed verify` fails. Upgrade every owed together — the CLI,
+the pi extension and remote executor hosts — and stop a 0.5.0 driver first. The
+CLI's default owner principal is `owner:cli`, also with `--i-am-owner` (which
+still records channel `flag`); `owner:human` only under `OWED_CONFIRM=owner`.
+Entries recorded earlier keep `owner:human`, and `--as owner:human` still
+records that id. `drive.lock` gains the optional `session`, which 0.5.0 readers
+ignore; with pi-durable-subagents older than 1.0.31 the driver falls back to
+runs without `--session`. Halts recorded for trunk drift (`merge refused: …
+trunk changed (CAS)`) by 0.5.0 drivers stay ledger halts: clear one by adopting
+(`owed adopt --note "<why>"`) or restoring trunk, then `owed rebase <node>`;
+the driver then attests again. A non-red check that exits non-zero without a
+recognizable count, or with a zero count, is now `fail` (exit 126/127 with no
+count: `error`, also without `min_tests`, where 0.5.0 recorded `fail`), so a
+check that used to stall on `unknown test count format with min_tests` now
+fails with its real error in the note.
+
+**Known limitations, deferred to 0.5.2.** The loop's record of the printed
+drift notify and the follower's last trunk wake are not reset when drift
+clears, so an identical later drift (same ledger seq and ref) neither prints
+nor wakes. A plan node named `trunk` shares the drift notify's dedupe slot (the
+plan does not reserve the id yet). A drift whose ledger trunk commit is missing
+still suggests `git update-ref` to that missing commit instead of saying it
+cannot be restored. There is no `owed plan --probe` (a dry run of check
+commands) and no plan warning for a check mixing cargo and TAP. Still open from
+0.5.0: the owner allowance (D21) nits, an ambiguous branch template expanding
+to the same name for two attempts, and parent directories left by a failed
+dispatch.
+
 ## 0.5.0
 
 - **The main agent is the owner; nothing waits on a human by default (D25).**
