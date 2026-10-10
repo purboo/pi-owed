@@ -17,16 +17,18 @@
   <since>*, one line per act with its kind, node, what it eased and the reason
   (`--json` `delegated`), and `report` marks such entries `(delegated)`: the
   morning reader audits the hash-chained ledger instead of approving in
-  advance. Driver halts that need the owner read `needs the owner (the main
-  agent decides; owed lists the command)` and end with the exact command or
-  tool call that resolves them.
-- **`OWED_CONFIRM=owner` restores the confirmation gate** of 0.4.1 (TTY
-  prompt, pi dialog; channels `tty`/`pi-confirm`; pi default principal
-  `owner:human`), except that the pi dialog waits at most
-  `OWED_CONFIRM_TIMEOUT` seconds (default 120, `0` = no limit): a timeout
-  refuses with `Owner confirmation not given within <N> s; nothing was
-  recorded.` (code `refused`), Escape refuses `aborted`, and neither is read as
-  a confirmation.
+  advance. The driver's owner notifications read `<node>: needs the owner (the
+  main agent decides; owed lists the command): <reason>; the driver leaves it
+  alone; the main agent resolves it with: <commands>`, and its owner halts for
+  a stale review block or a stalled candidate end with the same `; the main
+  agent resolves it with: <commands>`.
+- **`OWED_CONFIRM=owner` restores the confirmation gate** of 0.4.1 (TTY prompt,
+  pi dialog; channels `tty`/`pi-confirm`; pi default principal `owner:human`),
+  except that the pi dialog waits at most `OWED_CONFIRM_TIMEOUT` seconds
+  (default 120, `0` = no limit): a timeout refuses with `Owner confirmation not
+  given within <N> s; nothing was recorded.` (code `refused`), an abort of the
+  tool call refuses `aborted`, Escape (No) refuses `owner did not confirm;
+  action canceled`, and none is read as a confirmation.
 - **Subagents never act as owner or parent.** In a process with `DSA_CALL` or
   `DSA_EXEC` set (a pi-durable-subagents call) owed refuses every owner and
   parent act, in pi tools and the CLI alike, before recording anything:
@@ -198,7 +200,7 @@ timeout are refusals (exit 1 / code `refused`); `owed attest --genesis` exits 1
 while items are missing; `--as owner:<id>` without a TTY is no longer refused
 (only under `OWED_CONFIRM=owner`).
 
-**Known limitations, deferred to 0.5.1.** The background driver's report and
+**Known limitations.** Deferred to 0.5.1: The background driver's report and
 merge-halt wording still reads `(needs owner)` instead of the D25 wording.
 Check processes inherit `DSA_*` from owed's environment (the executor does not
 strip them), so an owner or parent owed command inside a check run under a dsa
@@ -207,11 +209,11 @@ call is refused. The CLI's default owner id stays `owner:human` (recorded as
 ledger position, so a ruling recorded while a repair or launch message is being
 built can count as delivered without having been carried (the reviewer's
 `ack_rulings` obligation is unaffected); 0.5.1 records the ruling seqs each
-message carried. An ambiguous branch template (e.g. `{node}{attempt}`) can
-expand to the same name for two attempts (dispatch then fails in `git worktree
-add`), and parent directories created by a failed dispatch stay. A remote
-wrapper is trusted by its argv: the key names the wrapper, not where the
-command ran.
+message carried. Documented limitations: An ambiguous branch template (e.g.
+`{node}{attempt}`) can expand to the same name for two attempts (dispatch then
+fails in `git worktree add`), and parent directories created by a failed
+dispatch stay. A remote wrapper is trusted by its argv: the key names the
+wrapper, not where the command ran.
 
 ## 0.4.1
 
