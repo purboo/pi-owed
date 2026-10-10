@@ -33,6 +33,7 @@ export function worktreesConfig(plan: Plan): WorktreesConfig;   // plan.worktree
 export function branchTemplateErrors(template: string, label: string): string[];   // needs {node} and {attempt}; only {type} besides
 export function branchAmbiguityErrors(template: string, label: string): string[]; // G4: {node} once; {attempt}/{type} separated from it (sufficient injectivity rule)
 export function worktreesErrors(cfg: WorktreesConfig): string[];   // G4: control characters in root/branch + ambiguity; checked by ops when a plan is recorded, not on replay
+export function nodeIdCaseErrors(plan: Pick<Plan, 'nodes'>): string[];   // node ids equal ignoring case; checked by ops when a plan is recorded, not on replay
 export function expandBranch(template: string, spec: Pick<NodeSpec, 'id' | 'type'>, attempt: number): string;
 ```
 `parsePlan` also parses the D23 node fields `approve` (only `owner`) and `evidence` ([{id, what, by}], `by` default reviewer), set only when present; `manualDowngrades(node, prev, next)` (`approve removed`, `evidence <id> removed|weakened`) is shared by `planDowngrades` and the reducer's detection; `EVIDENCE_ID` is the id pattern.

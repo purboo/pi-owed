@@ -194,7 +194,9 @@ literal character that cannot occur in its value (a digit for `{attempt}`; a
 lowercase letter, digit or `-` for `{type}`), and every one after it is directly
 preceded by one. So `owed/{node}/{attempt}` and `{type}/{node}-{attempt}` are
 accepted, `{node}{attempt}` (`a1`+`1` and `a`+`11` give `a11`) and
-`{node}-{type}-{attempt}` are refused. These checks apply to plans being recorded,
+`{node}-{type}-{attempt}` are refused. A plan being recorded is also refused when
+two node ids are equal ignoring case (`KB4` and `kb4`): on a case-insensitive
+filesystem they would share a branch ref and a worktree directory. These checks apply to plans being recorded,
 not to replay: a ledger whose recorded plan has such a block stays readable. A plan without the block
 parses to a plan without a `worktrees` key (the same canonical plan and sha as
 0.4.1); a block present is filled with the defaults. Neither `worktrees` nor a
@@ -829,7 +831,10 @@ worktree root itself; otherwise dispatch refuses (usage) before any ledger,
 exclude or worktree effect. Missing parent directories of the worktree are
 created; a dispatch that then fails (in `git worktree add`, or when the ledger
 moved and it rolls back the worktree and branch) removes the directories it
-created again (empty ones only). `<git common dir>/info/exclude` gets `.owed/` for the default root (as
+created again (empty ones only). Every rollback step (`git worktree remove`,
+`git branch -d`, directory cleanup) runs even when an earlier one fails; the
+error then names the original failure and each failed step, and nothing is
+recorded. `<git common dir>/info/exclude` gets `.owed/` for the default root (as
 in 0.4.1), `/<repository-relative root>/` for another root inside the main
 worktree (with `\`, `*`, `?`, `[` and a leading `!`/`#` escaped, so it matches
 that directory literally; the line stays after the slots are gone), and nothing for
