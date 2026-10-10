@@ -183,7 +183,30 @@ export interface DriveStatus {
   session?: string;
   /** A running staying driver is idle, waiting for ledger changes since this time (H1.2: its last `idle-wait`). */
   idleSince?: string;
+  /** K6: the measurements a running driver has in flight, from its log; present only when non-empty. */
+  measuring?: InFlight[];
 }
+/** One in-flight measurement of a running driver (K6). */
+export interface InFlight { node: string; do: 'attest' | 'merge'; since: string }
+/**
+ * K6: the measurements in flight according to the current driver's output (after the last exit record): each
+ * `started` attest or merge line with no later line of the same action and node (its completion), in start order.
+ */
+export function measuringOf(lines: string[]): InFlight[] {
+  const open = new Map<string, InFlight>();
+  for (const line of lines) {
+    const j = parseObject(line);
+    if (!j) continue;
+    if (j.event === 'exit' || j.event === 'killed') { open.clear(); continue; }
+    if ((j.do !== 'attest' && j.do !== 'merge') || typeof j.node !== 'string') continue;
+    const key = `${j.do}\u0000${j.node}`;
+    open.delete(key);
+    if (j.outcome === 'started') open.set(key, { node: j.node, do: j.do as InFlight['do'], since: typeof j.at === 'string' ? j.at : '?' });
+  }
+  return [...open.values()];
+}
+/** The text of in-flight measurements: `<node> <attest|merge> since <at>`. */
+export const inFlightText = (m: InFlight): string => `${m.node} ${m.do} since ${m.since}`;
 /**
  * H1.2: `at` of the last `idle-wait` line of the current driver's output (after the last exit record) when no action
  * other than a notify follows it (an idle pass prints notifies only); else undefined.
@@ -211,7 +234,10 @@ export async function driveStatus(o: { cwd: string }): Promise<DriveStatus> {
     if (typeof lock.owner.session === 'string' && lock.owner.session) r.session = lock.owner.session;
   }
   if (lock.state === 'foreign') r.foreign = true;
-  if (lock.state === 'live' && lines) { const at = idleSinceOf(lines); if (at !== undefined) r.idleSince = at; }
+  if (lock.state === 'live' && lines) {
+    const at = idleSinceOf(lines); if (at !== undefined) r.idleSince = at;
+    const m = measuringOf(lines); if (m.length) r.measuring = m;
+  }
   const exit = lines ? lastExit(lines) : undefined;
   if (exit) r.exit = exit;
   else if (lines?.length && lock.state !== 'live' && lock.state !== 'foreign') r.noExitRecord = true;
@@ -222,7 +248,7 @@ const exitText = (e: ExitRecord): string => `${e.reason} (exit ${e.code}) at ${e
 export function renderDriveStatus(r: DriveStatus): string {
   const out: string[] = [];
   if (r.foreign) out.push(`driver lock held by pid ${r.pid} on host ${r.host} since ${r.since} (another host: not checked from here)`);
-  else if (r.running) out.push(`driver running: pid ${r.pid} on ${r.host} since ${r.since}`, ...(r.idleSince !== undefined ? [idleText(r.idleSince)] : []));
+  else if (r.running) out.push(`driver running: pid ${r.pid} on ${r.host} since ${r.since}`, ...(r.idleSince !== undefined ? [idleText(r.idleSince)] : []), ...(r.measuring ?? []).map(m => `measuring: ${inFlightText(m)}`));
   else out.push(r.noExitRecord ? 'driver not running; it ended without an exit record (killed or crashed)' : 'driver not running');
   if (r.running || r.foreign) out.push(sessionText(r.session));
   if (r.exit) out.push(`last exit: ${exitText(r.exit)}`);
@@ -235,7 +261,7 @@ export function renderDriveStatus(r: DriveStatus): string {
 export async function driverLine(cwd: string): Promise<string> {
   const r = await driveStatus({ cwd });
   if (r.foreign) return `Driver: lock held by pid ${r.pid} on host ${r.host} since ${r.since}; ${sessionText(r.session)}`;
-  if (r.running) return `Driver: running pid ${r.pid} since ${r.since}; ${r.idleSince !== undefined ? `${idleText(r.idleSince)}; ` : ''}${sessionText(r.session)}`;
+  if (r.running) return `Driver: running pid ${r.pid} since ${r.since}; ${r.idleSince !== undefined ? `${idleText(r.idleSince)}; ` : ''}${r.measuring ? `measuring ${r.measuring.map(inFlightText).join(', ')}; ` : ''}${sessionText(r.session)}`;
   if (r.exit) return `Driver: not running (last exit ${r.exit.reason} at ${r.exit.at})`;
   return r.noExitRecord ? 'Driver: not running (ended without an exit record)' : r.noOutput ? 'Driver: not running (no driver output yet)' : 'Driver: not running';
 }
@@ -274,7 +300,7 @@ async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number }): Pro
   return released(dir, owner) ? { state: 'stopped', pid: owner.pid } : { state: 'stopping', pid: owner.pid };
 }
 export function renderDriveStop(r: DriveStop): string {
-  return r.state === 'none' ? 'no driver running' : r.state === 'stopped' ? 'stopped' : `stopping: pid ${r.pid} exits after its current action`;
+  return r.state === 'none' ? 'no driver running' : r.state === 'stopped' ? 'stopped' : `stopping: pid ${r.pid} exits after its current action and its in-flight measurements`;
 }
 
 // ---------- wake-ups ----------

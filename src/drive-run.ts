@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
-import { parsePlan, driveConfig } from './plan.ts';
+import { parsePlan, driveConfig, measureCap } from './plan.ts';
 import { reduce, halted, projectId } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
@@ -69,7 +69,7 @@ export const DRIVE_PRINCIPAL: Principal = { role: 'parent', id: 'drive' };
 export interface DriveOptions {
   /** A directory inside the repository. */
   cwd: string;
-  /** One pass, then exit (no lock is kept, no events are read). */
+  /** One pass, then wait for the measurements it started and handle them (K6), then exit (no events are read). */
   once?: boolean;
   /** Overrides `drive.max` of the plan. */
   max?: number;
@@ -91,7 +91,10 @@ export interface DriveOptions {
   passMs?: number;
   /** Events per `events --all` page (default 100; halved after a page the client could not read). */
   limit?: number;
-  /** Stops the loop after the current action (tests; the CLI uses SIGINT/SIGTERM). */
+  /**
+   * Stops the loop after the current action, once the in-flight measurements ended and were handled (K6; tests and the
+   * pi tool; the CLI uses SIGINT/SIGTERM).
+   */
   signal?: AbortSignal;
   /** Install SIGINT/SIGTERM handlers (default true; loop: D14.8, `once`: D16.3); the pi tool's pass installs none. */
   handleSignals?: boolean;
@@ -114,6 +117,8 @@ export interface ActionReport {
   facts?: number;
   /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
   repeat?: number;
+  /** A measurement's `started` line (K6): when it started (ISO); `owed drive --status` reads it from the log. */
+  at?: string;
 }
 
 /** D25.6: how a halt or refusal that needs the owner is worded in the driver's output. */
@@ -166,6 +171,24 @@ class Facts {
   /** A drift notify was emitted and no pass has seen trunk equal to the ledger trunk since (G3.4a). */
   drift = false;
 }
+
+/**
+ * A measurement in flight (0.7.0, K6): an `owed attest` child or an in-process `ops.merge`, from its start until the
+ * loop has handled its result. `ended` settles (never rejects) when the work ended; `finish` then turns the raw result
+ * into reports on the loop, with the halts and rebases of SPEC §12.7.
+ */
+interface Measurement {
+  do: 'attest' | 'merge'; node: string; attempt: number; at: string;
+  ended: Promise<void>;
+  done: boolean;
+  finish?: () => Promise<ActionReport[]>;
+}
+/** Hard stop (SPEC §12.7 Stopping): how long it waits for in-flight measurements after SIGTERM, then after SIGKILL. */
+const HARD_WAIT_MS = 5000, KILL_WAIT_MS = 1000;
+/** The text of a busy attest: owed's own busy exit (K1: another attest of the node runs), else hold refusing the lease. */
+const busyDetail = (node: string, reason: string): string => /attest of \S+ is already running/.test(reason)
+  ? `another attest of ${node} is running, retry next pass: ${reason}`
+  : `machine lease refused, retry next pass: ${reason}`;
 
 // ---------- ledger state ----------
 /** The ledger state of the repository of `cwd` (wake revalidation, ready hint). */
@@ -334,6 +357,13 @@ export class Driver {
    * before process.exit, so their check process groups get SIGKILL. A soft stop (`stopping`) lets the action finish.
    */
   readonly abort = new AbortController();
+  /** K6: measurements in flight by node, in start order; `ended`: those that ended and await `reap`, in end order. */
+  readonly measuring = new Map<string, Measurement>();
+  private readonly ended: Measurement[] = [];
+  /** Ends the loop's current `wait` (a measurement ended). */
+  private waker?: () => void;
+  /** A stop at once runs: ended measurements are not handled (their results are not recorded by the driver). */
+  hard = false;
   /** The pi session of this driver's runs (E1). */
   readonly session?: string;
   constructor(o: DriveOptions) {
@@ -357,11 +387,12 @@ export class Driver {
    * Describe the live runs of every open, not halted attempt; ask dsa about recorded sends not yet confirmed; read the
    * stored bytes `decide` may need for retries. `rejected`: sends dsa reports rejected (this pass only).
    */
-  private async observe(s: State): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]> }> {
+  private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]> }> {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
-      if (!n.slot?.open || halted(s, n.id)) continue;
+      // K6: a node with a measurement in flight gets no action this pass: its runs are not described.
+      if (!n.slot?.open || halted(s, n.id) || measuring.has(n.id)) continue;
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
       if (!ar) continue;
       for (const l of ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq))) {
@@ -409,11 +440,16 @@ export class Driver {
    * ledger head advanced or dsa applied a request in this pass (D14.5).
    */
   async pass(): Promise<PassResult> {
-    const ledger = await this.init(), s = await loadState(ledger), cfg = driveConfig(s.plan);
+    const ledger = await this.init(), reports: ActionReport[] = [];
+    // K6: first the measurements that ended, in the order they ended (their halts and rebases are in the state below).
+    const handled = await this.reap(reports);
+    const s = await loadState(ledger), cfg = driveConfig(s.plan);
     this.project = projectId(s);
-    const { runs, blobs, rejected, conflicts } = await this.observe(s);
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts });
-    const reports: ActionReport[] = []; let applied = false;
+    const measuring = new Set(this.measuring.keys());
+    const { runs, blobs, rejected, conflicts } = await this.observe(s, measuring);
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, measuring });
+    let applied = false;
+    const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
     // (every other action continues) and emit the repo-level owner notify (the loop prints it once per change).
     let checked = true;
@@ -432,13 +468,80 @@ export class Driver {
     }
     for (const a of actions) {
       if (this.stopping) break;
+      if (a.do === 'attest' || a.do === 'merge') {
+        // K6: start it in the background; over `drive.measure`, or a second merge: skipped, decided again later.
+        const inFlight = [...this.measuring.values()];
+        if (inFlight.length >= cap || (a.do === 'merge' && inFlight.some(m => m.do === 'merge'))) continue;
+        const r = this.start(s, a.do, a.node);
+        reports.push(r); this.emit(r, s);
+        continue;
+      }
       const r = await this.execute(s, a);
       reports.push(r.report); applied ||= r.applied;
       this.emit(r.report, s);
     }
     const head = (await ledger.read()).at(-1)?.hash;
     const open = Object.values(s.nodes).some(n => n.slot?.open);
-    return { actions: reports, progress: applied || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch'), head: s.head };
+    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head };
+  }
+
+  // ---------- measurements in flight (K6) ----------
+  /** Starts the attest or merge of `node` without awaiting it; returns its `started` report. */
+  private start(s: State, what: 'attest' | 'merge', node: string): ActionReport {
+    const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
+    const m: Measurement = { do: what, node, attempt, at, done: false, ended: Promise.resolve() };
+    const work = what === 'attest' ? this.attest(node, attempt) : this.merge(node, attempt);
+    m.ended = work.then(f => { m.finish = f; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
+      .finally(() => { m.done = true; this.ended.push(m); this.waker?.(); });
+    this.measuring.set(node, m);
+    return { do: what, node, outcome: 'started', at };
+  }
+  /** A measurement ended and awaits `reap`: the loop's wait ends at once. */
+  get woken(): boolean { return this.ended.length > 0; }
+  /** Sleeps `ms`, ending early when a measurement ends (or already ended unhandled) or `signal` aborts. */
+  wait(ms: number, signal: AbortSignal): Promise<void> {
+    if (this.woken || signal.aborted) return Promise.resolve();
+    return new Promise(resolve => {
+      const done = (): void => { clearTimeout(t); signal.removeEventListener('abort', done); if (this.waker === done) this.waker = undefined; resolve(); };
+      const t = setTimeout(done, ms);
+      this.waker = done;
+      signal.addEventListener('abort', done);
+    });
+  }
+  /**
+   * Handles the ended measurements on the loop, in the order they ended: their reports are emitted (and pushed to
+   * `out`), with the halts and rebases they call for. Nothing during a stop at once. Returns how many were handled.
+   */
+  async reap(out: ActionReport[] = []): Promise<number> {
+    if (this.hard || !this.ended.length) return 0;
+    const batch = this.ended.splice(0), reports: ActionReport[] = [];
+    for (const m of batch) {
+      this.measuring.delete(m.node);
+      try { reports.push(...await m.finish!()); }
+      catch (e) {
+        if (!(e instanceof OwedError || e instanceof DsaError)) throw e;
+        reports.push({ do: m.do, node: m.node, outcome: 'error', detail: oneLine(e.message) });
+      }
+    }
+    // Wake reports carry the node's fact mark in the state after the measurements (their observations are facts).
+    const now = await loadState(this.ledger!);
+    for (const r of reports) { out.push(r); this.emit(r, now); }
+    return batch.length;
+  }
+  /** Stop (SPEC §12.7): waits for every in-flight measurement to end and handles it; returns at once on a stop at once. */
+  async settle(out: ActionReport[] = []): Promise<void> {
+    while (this.measuring.size && !this.hard) {
+      await Promise.all([...this.measuring.values()].map(m => m.ended));
+      if (this.hard) return;
+      await this.reap(out);
+    }
+  }
+  /** Stop at once: waits up to `ms` for the in-flight measurements to end; true when all did. */
+  async drain(ms: number): Promise<boolean> {
+    const all = Promise.all([...this.measuring.values()].map(m => m.ended)).then(() => true);
+    let t: NodeJS.Timeout | undefined;
+    const late = new Promise<boolean>(resolve => { t = setTimeout(() => resolve(false), ms); });
+    try { return await Promise.race([all, late]); } finally { clearTimeout(t); }
   }
 
   /**
@@ -455,7 +558,7 @@ export class Driver {
       const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${rk}:${r.outcome}`;
       if (this.facts.printed.get(slot) === key) return;
       this.facts.printed.set(slot, key);
-    } else if (r.do === 'attest') this.facts.printed.delete(`${rk}:busy`);
+    } else if (r.do === 'attest' && r.outcome !== 'started') this.facts.printed.delete(`${rk}:busy`);
     if (!this.o.once && r.facts !== undefined) {
       const text = reportText({ ...r, repeat: undefined }), last = this.facts.wakes.get(rk);
       if (last && last.text === text && last.facts === r.facts) r.repeat = ++last.n;
@@ -514,29 +617,9 @@ export class Driver {
           if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on send ${id}; never retried with other bytes`); return done('conflict', false, 'halted', x); }
           return done('pending', false, r.reason ?? 'retry next pass', x);
         }
-        case 'attest': return { report: await this.attest(s, a.node), applied: false };
+        // K6: attest and merge are started by `pass` (`start`), never executed inline.
+        case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
-        case 'merge': {
-          try { const r = await ops.merge({ cwd, as, node: a.node, signal: this.abort.signal }); return done('merged', false, `trunk ${r.commit.slice(0, 12)}`); }
-          catch (e) {
-            if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
-            // D14.2: the refusal is acted on in this pass: rebase when trunk moved under a conflicting candidate, else halt.
-            const attempt = s.nodes[a.node]!.slot!.attempt;
-            // D15.2: another writer moved the ledger while merge measured; nothing was recorded: retry next pass.
-            if (e.message === MERGE_TRANSIENT) return done('retry', false, `merge refused (${e.message}); retry next pass`);
-            if (e.message.startsWith('rebase needed')) {
-              const r = await ops.rebase({ cwd, as, node: a.node });
-              return done('rebased', false, `merge refused (${e.message}); slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`);
-            }
-            // Ruling #559 (c): a CAS failure (trunk moved during the merge) is the drift notify, never a halt; retried next pass.
-            if (/trunk changed \(CAS\)/.test(e.message)) {
-              const now = await loadState(this.ledger!), d = await git.trunkDrift(this.root!, now.trunk.name, now.trunk.commit).catch(() => undefined);
-              return d ? { report: driftReport(now, d), applied: false } : done('retry', false, `merge refused (${e.message}); retry next pass`);
-            }
-            await this.halt(a.node, attempt, `merge refused: ${e.message}`);
-            return done('refused', false, `${e.message}; halted (needs human)`);
-          }
-        }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
         case 'notify': return { report: { ...base, outcome: 'notify', text: a.text, ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
@@ -548,26 +631,60 @@ export class Driver {
 
   /**
    * `pi-durable-subagents hold machine --shared --no-wait -- owed attest <node>` when dsa is available (D6/D9, dsa >=
-   * 1.0.27), else `owed attest <node>`. Exit 0/1: done (the ledger says what follows). Exit 75 is hold refusing the
-   * lease (`owed` itself exits 0..3): busy, nothing was queued, retry next pass. Anything else — an owed error (2/3), a
-   * signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing a human in this pass (D14.3).
+   * 1.0.27), else `owed attest <node>`; resolves with how the loop handles the result. Exit 0/1: done (the ledger says
+   * what follows). Exit 75: busy, nothing was queued, retry on a later pass: through hold either hold refusing the lease
+   * or `owed attest` itself exiting 75 because another attest of the node runs (K1); directly only the latter. Anything
+   * else — an owed error (2/3), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
+   * a human on attempt `attempt` (D14.3).
    */
-  private async attest(s: State, node: string): Promise<ActionReport> {
-    const argv = [...this.owed, 'attest', node], cwd = this.root!, attempt = s.nodes[node]!.slot!.attempt;
+  private async attest(node: string, attempt: number): Promise<() => Promise<ActionReport[]>> {
+    const argv = [...this.owed, 'attest', node], cwd = this.root!;
     const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(detail ? { detail: oneLine(detail) } : {}) });
-    const fail = async (why: string): Promise<ActionReport> => { await this.halt(node, attempt, `attest error: ${why}`); return report('error', `${why}; halted`); };
+    const ok = (r: ActionReport) => async (): Promise<ActionReport[]> => [r];
+    const fail = (why: string) => async (): Promise<ActionReport[]> => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; };
     let ran: { exit: number | null; stdout: string; stderr: string };
     if (dsaAvailable(this.dsa.bin)) {
       const r = await this.dsa.hold('machine', argv, { shared: true, cwd });
-      if (r.outcome === 'busy') return report('busy', `machine lease refused, retry next pass: ${tail(r.reason)}`);
+      if (r.outcome === 'busy') return ok(report('busy', busyDetail(node, r.reason)));
       if (r.outcome === 'signal') return fail(`pi-durable-subagents hold ended by ${r.reason}`);
       if (r.outcome === 'refused') return fail(`pi-durable-subagents hold refused: ${tail(r.reason)}${/--no-wait/.test(r.reason) ? ' (owed drive requires pi-durable-subagents >= 1.0.27 for `hold --no-wait`)' : ''}`);
       ran = r;
     } else {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
-    if (ran.exit === 0 || ran.exit === 1) return report('done', ran.exit === 0 ? 'accepted' : 'not accepted yet');
+    if (ran.exit === 0 || ran.exit === 1) return ok(report('done', ran.exit === 0 ? 'accepted' : 'not accepted yet'));
+    if (ran.exit === 75) return ok(report('busy', busyDetail(node, tail(ran.stderr || ran.stdout))));
     return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
+  }
+
+  /**
+   * `ops.merge` in this process (the CLI refuses `--as parent:drive`), aborted by a stop at once (D16a.1); resolves with
+   * how the loop handles the result. Refusals (D14.2): `rebase needed` rebases; the transient refusal (the ledger moved
+   * while merge measured; nothing recorded) retries on a later pass; a CAS failure (trunk moved during the merge) is a
+   * retry line plus the trunk drift notify, never a halt (ruling #559 c); any other refusal halts needing a human.
+   */
+  private async merge(node: string, attempt: number): Promise<() => Promise<ActionReport[]>> {
+    const cwd = this.o.cwd, as = DRIVE_PRINCIPAL;
+    const report = (outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(detail) });
+    try {
+      const r = await ops.merge({ cwd, as, node, signal: this.abort.signal });
+      return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}`)];
+    } catch (e) {
+      if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
+      return async () => {
+        if (e.message === MERGE_TRANSIENT) return [report('retry', `merge refused (${e.message}); retry next pass`)];
+        if (e.message.startsWith('rebase needed')) {
+          const r = await ops.rebase({ cwd, as, node });
+          return [report('rebased', `merge refused (${e.message}); slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`)];
+        }
+        if (/trunk changed \(CAS\)/.test(e.message)) {
+          const now = await loadState(this.ledger!), d = await git.trunkDrift(this.root!, now.trunk.name, now.trunk.commit).catch(() => undefined);
+          return [report('retry', `merge refused (${e.message}); retry next pass`), ...(d ? [driftReport(now, d)] : [])];
+        }
+        await this.halt(node, attempt, `merge refused: ${e.message}`);
+        return [report('refused', `${e.message}; halted (needs human)`)];
+      };
+    }
   }
 }
 
@@ -601,18 +718,13 @@ export async function liveRunLines(cwd: string, dsa: Dsa = new Dsa({ timeoutMs: 
 }
 
 // ---------- the loop ----------
-const sleep = (ms: number, signal: AbortSignal): Promise<void> => new Promise(resolve => {
-  if (signal.aborted) { resolve(); return; }
-  const t = setTimeout(done, ms);
-  function done() { clearTimeout(t); signal.removeEventListener('abort', done); resolve(); }
-  signal.addEventListener('abort', done);
-});
 
 /**
  * `owed drive`: takes the single-driver lock, then one pass (`once`), or the loop: passes back to back while they make
  * progress (at most 20), then wait for an `events --all` event labeled with this project (polled every `pollMs`) or
- * `passMs`, whichever comes first. Exits 0 when idle (nothing open, nothing to dispatch) or after SIGINT/SIGTERM (or
- * `signal`) once the current action is done; a second signal exits 130 at once (with `once`, the first one does). With
+ * `passMs`, whichever comes first, or a measurement ends (K6). Exits 0 when idle (nothing open, nothing to dispatch,
+ * nothing in flight) or after SIGINT/SIGTERM (or `signal`) once the current action is done and the in-flight
+ * measurements ended and were handled; a second signal exits 130 at once (with `once`, the first one does). With
  * `stay` (H1.2) an idle pass does not exit: one `idle-wait` line per idle period, then the driver waits (keeping the
  * lock) until the ledger head changes and resumes passes; a stop exits `stopped`. A live driver refuses with
  * OwedError('refused').
@@ -643,26 +755,37 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
   const say = (line: string, json: object) => o.log(o.json ? JSON.stringify(json) : line);
   const onAbort = () => { driver.stopping = true; stop.abort(); };
   let signals = 0;
-  // Loop: the first SIGINT/SIGTERM stops after the current action; the second stops at once (D14.8). `--once`: the
-  // first stops at once (D16.3). At once = end the running dsa invocations (hold passes SIGTERM to `owed attest`) and
-  // the process groups of direct attest children (attest then ends its checks, D16.2), write the killed line (and in a
-  // `--json` loop the exit record, before the release: D17a.2), release the lock, exit 130. The
-  // ledger stays consistent: every entry is appended whole, and attest records its own observations. An in-process merge
-  // is aborted first (D16a.1: its checks get SIGKILL; a stop between advanceTrunk and the append surfaces as CAS drift).
-  // One stop request is one signal per process group (D16a.3): this path runs once (it ends in process.exit, which is
-  // synchronous), killAll signals each pid of dsa's live set once, and directChildren holds only `owed attest` children
-  // spawned by runProcess, never a dsa invocation, so the two sets are disjoint and no group is signalled twice.
+  /** The stop at once, once started (it ends in process.exit); every exit path of the loop waits for it instead. */
+  let hardStop: Promise<never> | undefined;
+  // Loop: the first SIGINT/SIGTERM stops: nothing new starts, the in-flight measurements end and are handled (K6); the
+  // second stops at once (D14.8). `--once`: the first stops at once (D16.3). At once = abort the in-process merge
+  // (D16a.1: its checks get SIGKILL; a stop between advanceTrunk and the append surfaces as CAS drift), end the running
+  // dsa invocations (hold passes SIGTERM to `owed attest`) and the process groups of direct attest children (attest then
+  // ends its checks, D16.2), wait for the in-flight measurements up to HARD_WAIT_MS (then SIGKILL their groups and wait
+  // up to KILL_WAIT_MS), write the killed line (and in a `--json` loop the exit record, before the release: D17a.2),
+  // release the lock, exit 130. Their results are not handled. The ledger stays consistent: every entry is appended
+  // whole, and attest records its own observations. One stop request is one SIGTERM per process group (D16a.3): this
+  // path runs once (later signals are ignored), killAll signals each pid of dsa's live set once, and directChildren
+  // holds only `owed attest` children spawned by runProcess, never a dsa invocation, so the two sets are disjoint.
   // The handlers are installed before the lock is taken (D17a.6): in the loop a signal while starting stops it at its
   // first check; with `once` it stops at once as above (no lock yet: nothing to release).
-  const onSignal = () => {
-    if (!o.once && ++signals === 1) { onAbort(); return; }
+  const killGroups = (sig: NodeJS.Signals): void => {
+    driver.dsa.killAll(sig);
+    for (const pid of directChildren) { try { process.kill(-pid, sig); } catch { /* gone */ } }
+  };
+  const atOnce = async (): Promise<never> => {
+    driver.hard = true; driver.stopping = true; stop.abort();
     driver.abort.abort();
-    driver.dsa.killAll('SIGTERM');
-    for (const pid of directChildren) { try { process.kill(-pid, 'SIGTERM'); } catch { /* gone */ } }
+    killGroups('SIGTERM');
+    if (!(await driver.drain(HARD_WAIT_MS))) { killGroups('SIGKILL'); await driver.drain(KILL_WAIT_MS); }
     say(o.once ? 'killed: signal, stopped at once' : 'killed: second signal, stopped at once', { event: 'killed' });
     if (end.record && !end.written) { o.log(exitRecord(130, 'killed')); end.written = true; }
     lock?.releaseSync();
     process.exit(130);
+  };
+  const onSignal = () => {
+    if (!o.once && ++signals === 1) { onAbort(); return; }
+    hardStop ??= atOnce();
   };
   const handle = o.handleSignals !== false;
   if (handle) { process.on('SIGINT', onSignal); process.on('SIGTERM', onSignal); }
@@ -673,7 +796,8 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
     const ledger = await Ledger.open(o.cwd);
     lock = await acquireDriveLock(ledger.dir, driver.session);
     if (!o.once && driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
-    if (o.once) { const r = await driver.pass(); if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
+    // K6: --once (and the pi tool's pass) waits for the measurements its pass started and handles them.
+    if (o.once) { const r = await driver.pass(); await driver.settle(); if (hardStop) await hardStop; if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
     const dsa = driver.dsa, cursorFile = join(ledger.dir, 'drive', 'cursor'), LIMIT = o.limit ?? 100;
     await mkdir(join(ledger.dir, 'drive'), { recursive: true });
     let cursor: string | undefined = (await readFile(cursorFile, 'utf8').catch(() => '')).trim() || undefined, limit = LIMIT, lastError = '';
@@ -730,19 +854,29 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
         if (idleAt === undefined) { idleAt = new Date().toISOString(); say(IDLE_WAIT_TEXT, { event: 'idle-wait', at: idleAt }); }
         const head = idle;
         while (!driver.stopping && ledgerHead(ledger.dir) === head) {
-          await sleep(o.pollMs ?? 3000, stop.signal);
+          await driver.wait(o.pollMs ?? 3000, stop.signal);
         }
       } else {
+        // K6: a measurement that ends wakes the loop at once.
         const last = Date.now();
         while (!driver.stopping) {
-          await sleep(o.pollMs ?? 3000, stop.signal);
-          if (driver.stopping || Date.now() - last >= (o.passMs ?? 30_000) || await poll()) break;
+          await driver.wait(o.pollMs ?? 3000, stop.signal);
+          if (driver.stopping || driver.woken || Date.now() - last >= (o.passMs ?? 30_000) || await poll()) break;
         }
       }
-      if (driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
+      if (driver.stopping) {
+        // K6: a stop starts nothing new and waits for the in-flight measurements, handled as usual.
+        await driver.settle();
+        if (hardStop) await hardStop;
+        say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0;
+      }
     }
   } catch (e) { failure = { e }; throw e; }
   finally {
+    // A stop at once owns the exit (record, release, process.exit): never write a second record or release here.
+    if (hardStop) await hardStop;
+    // A loop ending with an error aborts an in-flight merge (it stops before trunk moves); attest children finish alone.
+    if (failure) driver.abort.abort();
     if (handle) { process.off('SIGINT', onSignal); process.off('SIGTERM', onSignal); }
     o.signal?.removeEventListener('abort', onAbort);
     // D17a.2: the exit record precedes the release; it stays the last line (nothing is printed after it).

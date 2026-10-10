@@ -77,6 +77,11 @@ export interface DriveOpts {
    * (`git merge-tree --write-tree --name-only`; empty: merges cleanly). Absent when unknown (no previous commit, git failed).
    */
   conflicts?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * 0.7.0 (K6): nodes with a measurement (attest or merge) in flight, from its start until the executor has handled its
+   * result. They get no action; their open slots still count toward `max`.
+   */
+  measuring?: ReadonlySet<string>;
 }
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
@@ -370,7 +375,8 @@ const byStatusOrder = (a: NodeState, b: NodeState): number => b.dependents - a.d
 /**
  * The actions of one pass (contract D1/D4/D10/D11): per open attempt the first matching row of the policy table, then
  * dispatches of ready nodes while open attempts < `max`. Pure: equal inputs give deep-equal outputs; inputs are not
- * modified. A node whose recorded run lacks a view in `runs` (describe failed) gets no action this pass.
+ * modified. A node whose recorded run lacks a view in `runs` (describe failed) gets no action this pass, nor does a node
+ * in `opts.measuring` (a measurement in flight, K6).
  * The plan is read from `s.plan` only (D11); the `plan` parameter is kept for the D1 signature and not used.
  */
 export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>, opts: DriveOpts): Action[] {
@@ -378,7 +384,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   const plan = s.plan;
   const out: Action[] = [];
   const open = Object.values(s.nodes).filter(n => n.slot?.open).sort(byStatusOrder);
-  for (const n of open) { const a = slotAction(s, runs, opts, n); if (a) out.push(a); }
+  for (const n of open) { if (opts.measuring?.has(n.id)) continue; const a = slotAction(s, runs, opts, n); if (a) out.push(a); }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
   const taken = open.map(n => writes(n.id));
