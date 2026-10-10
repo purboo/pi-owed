@@ -1,10 +1,11 @@
 import { readFile, mkdir, appendFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify } from 'yaml';
-import { canonical } from './canon.ts';
+import { canonical, sha256 } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch } from './plan.ts';
+import { genesisProgress, jobCurrent } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
@@ -15,9 +16,19 @@ import type { Brief } from './views.ts';
 import type { AttestJob, Channel, DecoyPayload, Draft, Entry, EscapeClass, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
-export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView }
+/** An item a job measured: its observation was not recorded because the item was no longer current (D24.1). */
+export interface JobRef { subject: string; obligation: string; key: string }
+/**
+ * Genesis attest outcome (D24): `recorded`/`missing` are the genesis invariant ids with and without a non-error
+ * observation after the run; `failed` the observed ones that failed; `superseded` the jobs dropped because their item
+ * was no longer current; `error` why the run stopped early (init only; attestGenesis rejects instead).
+ */
+export interface GenesisAttest { complete: boolean; recorded: string[]; failed: string[]; missing: string[]; superseded: JobRef[]; error?: string }
+export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView; genesis: GenesisAttest }
+export interface InitPreview { trunk: string; commit: string; planSha: string; nodes: number; invariants: string[] }
+export interface AttestGenesisResult extends GenesisAttest { observations: Entry[] }
 export interface DispatchPacket { node: string; attempt: number; worktree: string; branch: string; packet: string; entry: Entry; subagent: { agent: 'worker'; cwd: string; task: string } }
-export interface AttestResult { node: string; observations: Entry[]; accepted: boolean; receipt: ReceiptCard }
+export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard }
 export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[] }
 export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string }
 type Context = { cwd: string };
@@ -41,17 +52,21 @@ async function mutate(o: Actor, make: (s: State) => Draft): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => { const { state } = await load(ledger); const d = make(state); guard(state,d); return (await ledger.append([d]))[0]!; });
 }
-async function storePlan(ledger: Ledger, text: string) { const plan = parsePlan(text); const sha = await ledger.putBlob(stringify(JSON.parse(canonical(plan)), { sortMapEntries: true })); return { plan, sha }; }
+/** The plan blob bytes and sha stored for a plan text (canonical YAML). */
+function planBlob(text: string) { const plan = parsePlan(text), data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) }; }
+async function storePlan(ledger: Ledger, text: string) { const b = planBlob(text); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
 /** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
 const aborted = (): OwedError => new OwedError('aborted', 'aborted');
 function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) throw aborted(); }
 /**
- * Runs the jobs in order, appending each observation under the lock. On abort (D16) the running check's process group
- * is killed (src/exec.ts), its observation is not recorded, no further job starts, and this rejects with
- * OwedError('aborted'); observations appended before stay.
+ * Runs the jobs in order, appending each observation under the lock. Observations are facts about keys (D24.1): one
+ * whose item is no longer current (jobCurrent on the latest state) is dropped as superseded and the run goes on; a
+ * moved ledger alone refuses nothing. On abort (D16) the running check's process group is killed (src/exec.ts), its
+ * observation is not recorded, no further job starts, and this rejects with OwedError('aborted'); observations
+ * appended before stay. `done` (if given) receives each recorded or superseded result as it happens.
  */
-async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: AttestJob[], id?: string, signal?: AbortSignal): Promise<Entry[]> {
-  const result: Entry[] = [];
+async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: AttestJob[], signal?: AbortSignal, done?: { recorded: Entry[]; superseded: JobRef[] }): Promise<{ recorded: Entry[]; superseded: JobRef[] }> {
+  const out = done ?? { recorded: [], superseded: [] }, result = out.recorded;
   for (const job of jobs) {
     checkAbort(signal);
     let plan = snapshot.plan;
@@ -64,9 +79,13 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
     }
     const obs = await runJob({ cwd, ledger, plan, signal }, job);
     checkAbort(signal);
-    await ledger.withLock(async () => { const { state } = await load(ledger); stable(snapshot,state,id); guard(state,obs); result.push(...await ledger.append([obs])); },undefined,signal);
+    await ledger.withLock(async () => {
+      const { state } = await load(ledger);
+      if (!jobCurrent(state,job)) { out.superseded.push({ subject:job.subject, obligation:job.obligation, key:job.key }); return; }
+      guard(state,obs); result.push(...await ledger.append([obs]));
+    },undefined,signal);
   }
-  return result;
+  return out;
 }
 /**
  * Records the observations a merge or adopt measured before an abort (valid evidence) when the ledger did not move
@@ -80,13 +99,76 @@ async function abortWith(ledger: Ledger, snapshot: State, observations: Draft[],
   }
   throw aborted();
 }
-export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal }): Promise<InitResult> {
+/** What `init` would record (no effect), for the owner dialog of owed_init (D24.4); refuses an initialized ledger. */
+export async function initPreview(o: Context & { plan: string }): Promise<InitPreview> {
+  const b = planBlob(o.plan), { state } = await load(await Ledger.open(o.cwd));
+  if (state.seq >= 0) throw new OwedError(`Already initialized (genesis #0, trunk ${state.trunk.name}); owed init records genesis only once`);
+  return { trunk:b.plan.trunk, commit:await git.revParse(o.cwd,`refs/heads/${b.plan.trunk}`), planSha:b.sha, nodes:b.plan.nodes.length, invariants:b.plan.invariants.map(i => i.id) };
+}
+/**
+ * Records genesis, then (unless `measure: false`) measures the genesis items (D24). Once genesis is recorded the call
+ * succeeds even when that measurement does not observe every item (an error verdict, an exception): `genesis` says what was recorded and
+ * what is missing. An abort after genesis rejects with OwedError('aborted') whose message is the genesis-incomplete
+ * text (an abort before genesis keeps the message 'aborted'). `commit` pins the trunk commit the owner confirmed.
+ */
+export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; measure?: boolean; commit?: string }): Promise<InitResult> {
   owner(o); checkAbort(o.signal); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit);
+  if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
   const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
-  const { state } = await load(ledger); const observations = await runJobs(o.cwd,ledger,state,genesisJobs(state),undefined,o.signal);
-  return { entry, observations, status:await status(o) };
+  const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
+  let error: string | undefined;
+  if (o.measure !== false) {
+    try { const { state } = await load(ledger); await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal,done); }
+    catch (e) {
+      if (e instanceof OwedError && e.code === 'aborted') { const g = await genesisOutcome(ledger,done.superseded); throw new OwedError(genesisIncompleteText(entry.seq,g),'aborted'); }
+      error = e instanceof Error ? e.message : String(e);
+    }
+  }
+  const genesis = { ...await genesisOutcome(ledger,done.superseded), ...(error !== undefined ? { error } : {}) };
+  return { entry, observations:done.recorded, status:await status(o), genesis };
 }
+async function genesisOutcome(ledger: Ledger, superseded: JobRef[]): Promise<GenesisAttest> {
+  const g = genesisProgress((await load(ledger)).state);
+  return { complete:!g.pending.length, recorded:g.observed, failed:g.failed, missing:g.pending, superseded };
+}
+/** Lines after a receipt for items measured but not recorded because they were no longer current (D24.1); empty if none. */
+export function supersededText(items: JobRef[]): string { return items.length ? `\nSuperseded (not recorded; the item changed while it was measured): ${items.map(i => `${i.subject}/${i.obligation}`).join(', ')}` : ''; }
+/** `Initialized (genesis #n). Genesis attest incomplete: …` (D24.3); never says retry: genesis is recorded. */
+export function genesisIncompleteText(seq: number, g: Pick<GenesisAttest, 'recorded' | 'missing'>): string {
+  return `Initialized (genesis #${seq}). Genesis attest incomplete: recorded ${g.recorded.join(', ') || 'none'}; missing ${g.missing.join(', ') || 'none'}: run owed attest --genesis, or the next attest/merge measures them first.`;
+}
+/**
+ * Genesis attests running in this process (D24.5: status says "measuring in this session"), each with the promise of
+ * its ledger dir. A run registers synchronously when attestGenesis is called, before its first await.
+ */
+const genesisRuns = new Set<{ dir: Promise<string | undefined> }>();
+async function measuringHere(dir: string): Promise<boolean> {
+  for (const run of genesisRuns) if (await run.dir === dir) return true;
+  return false;
+}
+/**
+ * Measures the genesis items still lacking an observation (D24.2), under its own `genesis` lock (two genesis attests
+ * do not overlap; node attests are never blocked by it: recording is safe concurrently, D24.1); records each
+ * observation whose item is still current. Abortable like attest (§7.8).
+ */
+export async function attestGenesis(o: Context & { signal?: AbortSignal }): Promise<AttestGenesisResult> {
+  checkAbort(o.signal);
+  const opened = Ledger.open(o.cwd), run = { dir: opened.then(l => l.dir, () => undefined) };
+  genesisRuns.add(run);
+  try {
+    const ledger = await opened;
+    inited((await load(ledger)).state);
+    return await ledger.withLock(async () => {
+      const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal);
+      return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
+    },'genesis',o.signal);
+  } finally { genesisRuns.delete(run); }
+}
+/** Genesis invariant ids that still lack an observation (empty when not initialized). */
+export async function genesisPending(o: Context): Promise<string[]> { return (await genesisReport(o)).missing; }
+/** Genesis invariant ids observed (`failed` among them) and missing, from the ledger as it is. */
+export async function genesisReport(o: Context): Promise<{ recorded: string[]; failed: string[]; missing: string[] }> { const g = genesisProgress((await load(await Ledger.open(o.cwd))).state); return { recorded:g.observed, failed:g.failed, missing:g.pending }; }
 /** Reads a plan file for `owed plan`: from commit `rev` when given (path relative to cwd), else from the working tree. */
 export async function readPlan(o: Context & { path: string; rev?: string }): Promise<{ plan: string; rev?: string; path: string }> {
   if (o.rev !== undefined) { const r = await git.readAt(o.cwd,o.rev,o.path); return { plan:r.text, rev:r.commit, path:r.path }; }
@@ -169,8 +251,8 @@ export async function attest(o: Context & { node: string; rerun?: boolean; signa
       if (!jobs.some(j => j.key === key && j.obligation === obligation)) jobs.push({kind,subject:o.node,obligation,key,spec:c,commit:n.candidate!.commit,base:n.slot!.base});
     }
     if (o.rerun && !jobs.some(j => j.obligation === 'writes' && j.key === n.candidate!.keys.writes)) jobs.push({ kind:'writes',subject:o.node,obligation:'writes',key:n.candidate!.keys.writes!,commit:n.candidate!.commit,base:n.slot!.base });
-    const observations = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.node,o.signal), card = await why(o);
-    return { node:o.node, observations, accepted:card.accepted, receipt:card };
+    const r = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.signal), card = await why(o);
+    return { node:o.node, observations:r.recorded, superseded:r.superseded, accepted:card.accepted, receipt:card };
   },'attest',o.signal);
 }
 /** `needs: 'parent'` marks a block that needs a parent ruling (D18); the ledger refuses it on an ok verdict. */
@@ -303,7 +385,8 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel:
   },'merge',o.signal);
 }
 export async function status(o: Context): Promise<StatusView> {
-  const {state,entries} = await load(await Ledger.open(o.cwd)), view = statusView(inited(state),entries);
+  const ledger = await Ledger.open(o.cwd), {state,entries} = await load(ledger), view = statusView(inited(state),entries);
+  if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
   const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit), trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
   return {...view,...(drift ? {drift} : {}),...(trunkWorktree ? {trunkWorktree} : {})};
 }

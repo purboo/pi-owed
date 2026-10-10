@@ -58,6 +58,12 @@ owed status
 owed dispatch greeting
 ```
 
+In pi, the owner can instead call the `owed_init` tool (`plan`, optional `cwd`): it shows the trunk commit, plan
+sha, node count and invariants in a confirmation dialog, records genesis and measures the invariants in the
+background, showing progress in `owed_status` and sending one message when done. If a genesis attest stops early
+(`Genesis attest incomplete: …`), the ledger is initialized; run `owed attest --genesis`, or let the next
+attest/merge measure the missing invariants first.
+
 Dispatch prints the packet and creates `.owed/wt/greeting-1`. Act as the writer in that worktree:
 
 ```sh
