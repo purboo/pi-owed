@@ -5,6 +5,8 @@ import { matchesAny, driveConfig } from './plan.ts';
 import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq } from './reducer.ts';
 import { genesisProgress } from './reducer.ts';
 import { OwedError } from './errors.ts';
+import { observationsOf } from './reducer.ts';
+import type { WaiveEntry } from './types.ts';
 
 export interface ReceiptCard {
   node: string; phase: NodeState['phase']; accepted: boolean;
@@ -13,7 +15,7 @@ export interface ReceiptCard {
    * `ruling` (D18/D18b.4): only on a needs-parent block recorded on the current candidate: `'needed'` while no ruling
    * naming the node follows it, else the seq of that ruling. A stale needs-parent block has none (stale wording).
    */
-  blocks: (Block & { clear: string; ruling?: 'needed' | number })[];
+  blocks: (Block & { clear: string; ruling?: 'needed' | number; note?: string })[];
   untested: string[]; downgrades: State['downgrades']; ownerFlags: Entry[];
   /** Latest rebase of the open slot; `rangeDiff` lets a reviewer review only the conflict resolution. */
   rebase?: SlotRebase & { rangeDiff?: string };
@@ -35,7 +37,8 @@ export interface ReceiptCard {
 }
 export interface StatusView {
   trunk: State['trunk']; nodes: Record<string, NodeState>; groups: Record<string, string[]>;
-  ready: string[]; pending: Record<string, ItemView[]>; invariants: ItemView[]; ownerFlags: Entry[];
+  /** Pending items; an item held by execution blocks carries their failing observations' notes (`blockNotes`, K2.2). */
+  ready: string[]; pending: Record<string, (ItemView & { blockNotes?: BlockNote[] })[]>; invariants: ItemView[]; ownerFlags: Entry[];
   /** Ready nodes whose writes overlap a node with an open slot (dispatch refuses them without --allow-overlap). */
   overlaps: Record<string, string[]>;
   /** Present when refs/heads/<trunk> differs from the ledger trunk (commits made outside owed, or a rewritten trunk). */
@@ -113,7 +116,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string): Rece
   const outOfWrites = outsideWrites(s, node);
   return { node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
-    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: clearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}) })),
+    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: clearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')),
@@ -157,7 +160,7 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
     (groups[n.phase] ??= []).push(n.id);
     if (n.phase === 'ready' || n.phase === 'dispatched') pending['parent+writer']!.push({subject:n.id,obligation:n.phase === 'ready' ? 'dispatch' : 'submit',key:'',status:'D',mark:'⊥',discharger:n.phase === 'ready' ? 'parent' : 'writer',evidence:[],detail:n.phase === 'ready' ? 'parent can dispatch work' : 'writer must submit a candidate'});
   }
-  for (const i of [...Object.values(s.nodes).filter(n => !n.merged).flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(i);
+  for (const i of [...Object.values(s.nodes).filter(n => !n.merged).flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(withBlockNotes(s, i));
   const ready = Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), overlaps: Record<string, string[]> = {};
   for (const id of ready) { const o = overlapping(s, id); if (o.length) overlaps[id] = o; }
   const halts = Object.keys(s.nodes).flatMap(id => halted(s, id) ?? []), launches: Record<string, LaunchEntry[]> = {};
@@ -172,12 +175,74 @@ function genesisStatus(s: State): { genesis?: GenesisStatus } {
 }
 const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged' };
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
-function itemText(i: ItemView & { observations?: Entry[] }): string {
+function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[] }): string {
   if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${HALT_CLEAR}`;
+  if (i.status === 'W') return waivedText(i);
   if (isManual(i.obligation)) return manualText(i);
-  const label = i.status === 'W' ? 'waived' : i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
+  const label = i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
   const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
-  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${failNotes(i.observations ?? [])}`;
+  return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${(i.blockNotes ?? []).map(b => ` — note #${b.seq}: ${b.note}`).join('')}${failNotes(i.observations ?? [])}`;
+}
+/** K2.2: the note of an exec block's failing observation on one line, at most 200 characters. */
+export interface BlockNote { seq: number; note: string }
+const NOTE_SHOWN = 200;
+export const shortNote = (note: string): string => {
+  const t = oneLine(note); if (t.length <= NOTE_SHOWN) return t;
+  // Cut whole code points of the raw note, each escaped as oneLine does, so no surrogate pair or \uXXXX escape is split.
+  let out = ''; for (const cp of note) { const x = oneLine(cp); if (out.length + x.length > NOTE_SHOWN - 1) break; out += x; }
+  return `${out}…`;
+};
+function blockNote(s: State, b: Block): string | undefined {
+  if (b.kind !== 'exec') return undefined;
+  const e = entriesOf(s).find(x => x.seq === b.seq);
+  return e?.kind === 'obs' && e.verdict === 'fail' && e.note ? shortNote(e.note) : undefined;
+}
+const withNote = (note: string | undefined): { note?: string } => note === undefined ? {} : { note };
+/** A pending item with the notes of the exec blocks that hold it (status, K2.2). */
+function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockNote[] } {
+  const n = s.nodes[i.subject];
+  const notes = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && b.state !== 'cleared' && i.evidence.includes(b.seq)).flatMap(b => { const note = blockNote(s, b); return note === undefined ? [] : [{ seq: b.seq, note }]; });
+  return notes.length ? { ...i, blockNotes: notes } : i;
+}
+/**
+ * K2.3: what a recorded waiver means, as the reducer applies it (review #781 ruling). A waiver is recorded for
+ * (node, obligation, key K), not for one candidate. It is in effect for every candidate of the node, in this or a later
+ * attempt, whose key for the obligation is K, whenever no unaccepted active block remains on the obligation (an
+ * accepted block is one in its accept_risk, older than the waiver). So it takes effect as soon as such blocks clear (for
+ * example an attribution rerun that confirms and clears a failure); a later block suspends it, and clearing that block
+ * restores it. attest skips a key that already has a verdict; a key without one is still measured.
+ */
+export function waiverText(s: State, e: WaiveEntry): string {
+  const n = s.nodes[e.node], c = n?.candidate, item = n?.items.find(i => i.obligation === e.obligation), o = e.obligation, k = e.key.slice(0, 12);
+  const kind = o.includes(':') ? o.slice(0, o.indexOf(':')) : o, measured = ['check', 'strength', 'red', 'writes'].includes(kind);
+  const scope = `owed counts ${o} as waived, not measured, for every candidate of ${e.node} whose ${o} key is ${k}${kind === 'rulings' ? '' : ', in this or a later attempt'}, while no unaccepted active block remains on ${o}; a later block suspends the waiver and clearing that block restores it`;
+  const again = kind === 'check' || kind === 'strength' ? `a change to the check definition, setup, exec, closure or the content of its reads${kind === 'strength' ? ' or mutants' : ''} changes the key, and owed measures it again`
+    : kind === 'red' ? 'a change to the check definition, setup, exec, closure, the base tree or the content of its tests changes the key, and owed measures it again'
+    : kind === 'writes' ? "a new candidate commit or base, or a change to the node's writes, changes the key, and owed measures it again"
+    : kind === 'rulings' ? 'a new attempt changes the key, and it is owed again'
+    : kind === 'evidence' ? 'a different candidate patch or evidence definition changes the key, and it is owed again'
+    : 'a different candidate patch changes the key, and it is owed again';
+  const unaccepted = (n?.blocks ?? []).filter(b => b.obligation === o && b.state !== 'cleared' && !((e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
+  const blockClear = (b: Block): string => b.kind === 'exec'
+    ? `an attribution rerun (owed attest) that confirms the failure clears #${b.seq}${b.state === 'flaky' ? ` (#${b.seq} is flaky: its rerun passed, so only a waiver with --accept-risk ${b.seq} accepts it)` : '; if the rerun passes, #' + b.seq + ' stays as a flaky block that only a waiver with --accept-risk accepts'}`
+    : `an ok review that clears #${b.seq}`;
+  const effect = item?.status === 'W' && item.evidence.includes(e.seq) ? 'in effect now'
+    : !item ? `${o} is not an obligation of the current candidate`
+    : item.status === 'E' ? `${o} is currently satisfied, so the waiver is not needed while it stays satisfied`
+    : unaccepted.length ? `not in effect yet: active ${unaccepted.length === 1 ? 'block' : 'blocks'} ${unaccepted.map(b => `#${b.seq}`).join(', ')} ${unaccepted.length === 1 ? 'is' : 'are'} not accepted; it takes effect as soon as no unaccepted active block remains on ${o}, for example after ${unaccepted.map(blockClear).join(', and ')}; --accept-risk accepts the current flaky or active blocks at once`
+    : `not in effect: ${item.detail}`;
+  const unmeasured = measured && !observationsOf(s, e.node, o, e.key).some(x => x.verdict !== 'error') ? '; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail adds a block that suspends the waiver until it clears' : '';
+  const flaky = (e.accept_risk ?? []).filter(seq => { const b = n?.blocks.find(x => x.seq === seq); return !!b && b.kind === 'exec' && wasFlaky(s, b, e.seq); });
+  return `waived ${o} for candidate #${c?.seq ?? '?'} ${c?.commit.slice(0, 12) ?? '?'} (key ${k}): ${effect}; ${scope}; ${again}${unmeasured}${flaky.map(seq => `; the flaky block #${seq} stays recorded as accepted risk`).join('')}`;
+}
+/** An exec block that an attribution rerun passed (flaky) before entry `before`, as the reducer marks it. */
+const wasFlaky = (s: State, b: Block, before: number): boolean => entriesOf(s).some(x => x.kind === 'obs' && x.attribution && x.verdict === 'pass' && x.subject === b.node && x.obligation === b.obligation && x.key === b.key && x.seq > b.seq && x.seq < before);
+/** K2.3: a waived item reads `<subject>/<obligation> waived (not measured for this candidate) by <who>: <reason>`. */
+function waivedText(i: ItemView & { observations?: Entry[] }): string {
+  const obs = i.observations ?? [], w = obs.findLast(e => e.kind === 'waive');
+  const channel = w?.channel ? ` (${w.channel}${w.channel === 'flag' ? ' weak confirmation' : ''})` : '';
+  const rest = obs.filter(e => e !== w).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : `#${e.seq}`).join('; ');
+  return `${i.mark} ${i.subject}/${i.obligation} waived (not measured for this candidate) by ${w?.by ?? 'the owner'}: ${w?.kind === 'waive' ? oneLine(w.reason) : i.detail}${channel}${rest ? ` [${rest}]` : ''}${failNotes(obs)}`;
 }
 /** 0.5.1 (E2 ruling 3): each fail observation's note under its item, `  note #<seq>:` then the note as recorded, indented. */
 const failNotes = (obs: Entry[]): string => obs.map(e => e.kind === 'obs' && e.verdict === 'fail' && e.note ? `\n  note #${e.seq}:${e.note.split('\n').map(l => `\n    ${l}`).join('')}` : '').join('');
@@ -207,7 +272,7 @@ function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
 export function renderReceipt(v: ReceiptCard): string {
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${HALT_CLEAR}`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${HALT_CLEAR}`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
   return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
