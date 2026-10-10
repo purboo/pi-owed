@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { access, readFile, stat, writeFile, mkdir } from 'node:fs/promises';
+import { access, readFile, stat, writeFile, mkdir, readdir, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import * as git from '../src/git.ts';
@@ -275,5 +275,133 @@ test('M2: reuse trees are never slots: no gc slot item, no kept report, no trunk
     assert.deepEqual(done.removed.map(i => i.worktree), [a.worktree]);
     assert.equal(await exists(join(dir, 'inv-u-0')), true);
     assert.equal((await stat(join(dir, 'check-ca-0'))).isDirectory(), true);
+  } finally { await r.cleanup(); }
+});
+
+// ---------- pre-review 22:1x item 5 ----------
+
+test('M2: a reused tree checks out the new commit: changed, added and deleted files follow it', { timeout: 60_000 }, async () => {
+  const r = await repo();
+  try {
+    const c1 = await commitAt(r.cwd, { f: '1', gone: 'x' });
+    await git.git(r.cwd, ['rm', '-q', 'gone']);
+    const c2 = await commitAt(r.cwd, { f: '2', added: 'y' });
+    const t1 = await git.materialize(r.cwd, c1, { kind: 'check', id: 'mv' });
+    assert.equal(t1.path, join(await treesDir(r), 'check-mv-0'));
+    assert.equal(await readFile(join(t1.path, 'f'), 'utf8'), '1');
+    await t1.dispose();
+    const t2 = await git.materialize(r.cwd, c2, { kind: 'check', id: 'mv' });
+    assert.equal(t2.path, t1.path, 'the same tree');
+    assert.equal(await readFile(join(t2.path, 'f'), 'utf8'), '2');
+    assert.equal(await readFile(join(t2.path, 'added'), 'utf8'), 'y');
+    assert.equal(await exists(join(t2.path, 'gone')), false);
+    assert.equal((await git.git(t2.path, ['rev-parse', 'HEAD'])).stdout.trim(), c2);
+    await t2.dispose();
+  } finally { await r.cleanup(); }
+});
+
+test('M2: a reused tree that cannot be prepared falls back to a fresh tree, with a one-line note in the log', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    await commitAt(r.cwd, { flag: 'one' });
+    // The trees directory cannot be created: a regular file is in its place.
+    const dir = await treesDir(r); await mkdir(join(dir, '..'), { recursive: true }); await writeFile(dir, 'not a directory');
+    const u = { id: 'u', reads: ['flag'], timeout_s: 60, run: `pwd -P > ${q(r, 'pwd')}; ${PASS}` };
+    await ok('init', () => ops.init({ cwd: r.cwd, plan: JSON.stringify(planOf([u], { trees: 'reuse' })), as: owner, channel: 'flag' }));
+    const ledger = await Ledger.open(r.cwd), o = (await ledger.read()).find(e => e.kind === 'obs' && e.obligation === 'inv:u');
+    assert.ok(o?.kind === 'obs' && o.verdict === 'pass', 'the measurement still passes');
+    const log = (await ledger.getBlob(o.log!)).toString();
+    const notes = log.split('\n').filter(l => /reused tree for inv u unavailable, measuring in a fresh tree/.test(l));
+    assert.equal(notes.length, 1, `one note line in: ${log}`);
+    assert.match((await readFile(join(r.root, 'pwd'), 'utf8')), /owed-run-/, 'measured in a fresh tree');
+  } finally { await r.cleanup(); }
+});
+
+test('M2: a red run in a reused tree keeps its overlay of the candidate tests', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    // Fails when the new test exists without the implementation: on the base with the overlay (red pass), not on the candidate.
+    const run = `pwd -P >> ${q(r, 'pwd')}; if test -e newtest && ! test -e impl; then echo '# tests 1'; echo '# fail 1'; exit 1; fi; ${PASS}`;
+    const plan = { version: 1, trunk: 'main', exec: { trees: 'reuse' }, invariants: [], nodes: [{ id: 'a', writes: ['impl', 'newtest'], checks: [{ id: 'nt', reads: ['impl', 'newtest'], run, red: true, tests: ['newtest'] }] }] };
+    const base = await commitAt(r.cwd, { flag: 'base' });
+    await ok('init', () => ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'flag' }));
+    // The red tree exists already (prepared again, not created) when the red run comes.
+    await (await git.materialize(r.cwd, base, { kind: 'red', id: 'nt' })).dispose();
+    const a = await ops.dispatch({ cwd: r.cwd, node: 'a', as: parent }); await commitAt(a.worktree, { impl: '1', newtest: 't' });
+    await ops.submit({ cwd: a.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    const res = await ops.attest({ cwd: r.cwd, node: 'a' });
+    const red = res.observations.find(e => e.kind === 'obs' && e.obligation === 'red:nt');
+    assert.ok(red?.kind === 'obs' && red.verdict === 'pass', `red passes on base + overlay: ${JSON.stringify(red)}`);
+    const pwd = (await readFile(join(r.root, 'pwd'), 'utf8')).split('\n').filter(Boolean), dir = await realpathOf(await treesDir(r));
+    assert.ok(pwd.includes(join(dir, 'red-nt-0')), `the red run used red-nt-0: ${pwd.join(', ')}`);
+  } finally { await r.cleanup(); }
+});
+
+test('M1: in a parallel genesis attest a record failure starts no further job', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    const job = (id: string, sleep: number) => ({ id, reads: ['flag'], timeout_s: 60, run: `echo x >> ${q(r, `${id}.ran`)}; sleep ${sleep}; ${PASS}` });
+    await commitAt(r.cwd, { flag: 'one' });
+    await ok('init', () => ops.init({ cwd: r.cwd, plan: JSON.stringify(planOf([job('j1', 0.5), job('j2', 3), job('j3', 0.5), job('j4', 0), job('j5', 0)], { parallel: 2 })), as: owner, channel: 'flag', measure: false }));
+    const original = Ledger.prototype.append;
+    Ledger.prototype.append = async function (this: Ledger, drafts: Parameters<Ledger['append']>[0]) {
+      if (drafts.some(d => d.kind === 'obs')) throw new Error('injected record failure');
+      return original.call(this, drafts);
+    } as Ledger['append'];
+    try { await assert.rejects(ops.attestGenesis({ cwd: r.cwd }), /injected record failure/); }
+    finally { Ledger.prototype.append = original; }
+    await new Promise(res => setTimeout(res, 1500));
+    assert.equal(await exists(join(r.root, 'j1.ran')), true);
+    assert.equal(await exists(join(r.root, 'j4.ran')), false, 'j4 never started after the failed record of j1');
+    assert.equal(await exists(join(r.root, 'j5.ran')), false);
+  } finally { await r.cleanup(); }
+});
+
+test('M2: concurrent takers of a stale (dead pid) lock end with exactly one holder of that tree', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    const c = await commitAt(r.cwd, { f: '1' }), dir = await treesDir(r);
+    await mkdir(dir, { recursive: true });
+    const dead = await new Promise<number>(res => { const p = spawn('true'); p.on('exit', () => res(p.pid!)); });
+    for (let round = 0; round < 5; round++) {
+      await writeFile(join(dir, `inv-z${round}-0.lock`), `${dead}\n`);
+      const trees = await Promise.all(Array.from({ length: 6 }, () => git.materialize(r.cwd, c, { kind: 'inv', id: `z${round}` })));
+      const paths = trees.map(t => t.path);
+      assert.equal(new Set(paths).size, 6, `six different trees: ${paths.join(', ')}`);
+      assert.equal(paths.filter(p => p === join(dir, `inv-z${round}-0`)).length, 1, 'exactly one holder of the reclaimed tree');
+      assert.equal((await readFile(join(dir, `inv-z${round}-0.lock`), 'utf8')).trim(), String(process.pid));
+      assert.deepEqual((await readdir(dir)).filter(n => n.includes('.dead-') || n.includes('.tmp-')), [], 'no token or temp file left');
+      await Promise.all(trees.map(t => t.dispose()));
+    }
+  } finally { await r.cleanup(); }
+});
+
+test('M2: a lock is never empty while taken; an empty lock is held for 60 s, then dead', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    const c = await commitAt(r.cwd, { f: '1' }), dir = await treesDir(r);
+    await mkdir(dir, { recursive: true });
+    let reads = 0, empty = 0, done = false;
+    const poll = (async () => {
+      while (!done) {
+        for (const n of await readdir(dir).catch(() => [] as string[])) if (/^check-p-\d+\.lock$/.test(n)) {
+          try { const t = await readFile(join(dir, n), 'utf8'); reads++; if (!t.trim()) empty++; } catch { /* released */ }
+        }
+        await new Promise(res => setImmediate(res));
+      }
+    })();
+    for (let i = 0; i < 10; i++) await Promise.all((await Promise.all(Array.from({ length: 4 }, () => git.materialize(r.cwd, c, { kind: 'check', id: 'p' })))).map(t => t.dispose()));
+    done = true; await poll;
+    assert.ok(reads > 0, 'the poller saw lock files');
+    assert.equal(empty, 0, 'no lock file was ever empty');
+    // An empty lock (an older owed crashed between create and write) is held while young, dead after 60 s.
+    await writeFile(join(dir, 'inv-e-0.lock'), '');
+    const young = await git.materialize(r.cwd, c, { kind: 'inv', id: 'e' });
+    assert.equal(young.path, join(dir, 'inv-e-1'), 'a young empty lock is held');
+    await young.dispose();
+    const old = new Date(Date.now() - 120_000); await utimes(join(dir, 'inv-e-0.lock'), old, old);
+    const aged = await git.materialize(r.cwd, c, { kind: 'inv', id: 'e' });
+    assert.equal(aged.path, join(dir, 'inv-e-0'), 'an empty lock older than 60 s is dead and reclaimed');
+    await aged.dispose();
   } finally { await r.cleanup(); }
 });

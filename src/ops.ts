@@ -148,15 +148,16 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
     // job is killed and none starts; the completed ones are recorded (without the signal, as abortWith), then rejects.
     checkAbort(signal);
     const ready = jobs.map(() => { let settle!: (v: Draft | undefined) => void; const p = new Promise<Draft | undefined>(r => { settle = r; }); return { p, settle }; });
-    let failure: { error: unknown } | undefined;
-    const measuring = measureAll(jobs,parallel,signal,async job => runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), signal },job),(i,obs) => ready[i]!.settle(obs)).catch(error => { failure = { error }; for (const r of ready) r.settle(undefined); });
-    // A failed record still waits for the running jobs, so none outlives the run (and its lock).
+    let failure: { error: unknown } | undefined, stopped = false;
+    const measuring = measureAll(jobs,parallel,signal,async job => runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), signal },job),(i,obs) => ready[i]!.settle(obs),() => stopped).catch(error => { failure = { error }; for (const r of ready) r.settle(undefined); });
+    // A failed record starts no further job and still waits for the running ones, so none outlives the run (and its lock).
     try {
       for (let i = 0; i < jobs.length; i++) {
         const obs = await ready[i]!.p;
         if (obs) await record(jobs[i]!,obs,signal?.aborted ? undefined : signal);
       }
-    } finally { await measuring; }
+    } catch (e) { stopped = true; throw e; }
+    finally { await measuring; }
     if (failure) throw failure.error;
     checkAbort(signal);
     return out;
@@ -188,13 +189,13 @@ export const parallelOf = (plan: Plan): number => plan.exec?.parallel ?? 1;
  * job's observation as it completes, or undefined when it was not measured (abort). On abort (D16) running jobs are
  * killed by the signal (src/exec.ts), no further job starts, and the observation of a job that returns after the abort
  * is dropped. Returns the observations by job index (undefined = not measured) and whether the signal aborted. An
- * exception stops further starts and rejects once the running jobs return.
+ * exception, or `stop()` returning true, stops further starts; an exception rejects once the running jobs return.
  */
-export async function measureAll<T>(jobs: T[], width: number, signal: AbortSignal | undefined, run: (job: T, i: number) => Promise<Draft>, settled?: (i: number, obs: Draft | undefined) => void): Promise<{ observations: (Draft | undefined)[]; aborted: boolean }> {
+export async function measureAll<T>(jobs: T[], width: number, signal: AbortSignal | undefined, run: (job: T, i: number) => Promise<Draft>, settled?: (i: number, obs: Draft | undefined) => void, stop?: () => boolean): Promise<{ observations: (Draft | undefined)[]; aborted: boolean }> {
   const observations: (Draft | undefined)[] = jobs.map(() => undefined);
   let next = 0, failed: { error: unknown } | undefined;
   const worker = async (): Promise<void> => {
-    while (next < jobs.length && !signal?.aborted && !failed) {
+    while (next < jobs.length && !signal?.aborted && !failed && !stop?.()) {
       const i = next++;
       try { const obs = await run(jobs[i]!,i); if (!signal?.aborted) observations[i] = obs; }
       catch (error) { failed ??= { error }; }
@@ -834,6 +835,8 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
 async function gcTrees(root: string, plan: Plan, dryRun: boolean): Promise<{ trees: GcTree[]; kept: GcTree[] }> {
   const reuse = plan.exec?.trees === 'reuse', inv = new Set(plan.invariants.map(c => git.treeId(c.id))), checks = new Set(plan.nodes.flatMap(n => n.checks.map(c => git.treeId(c.id))));
   const trees: GcTree[] = [], kept: GcTree[] = [];
+  // Reclaim tokens older than 1 h: their reclaimer crashed (SPEC §7.12).
+  for (const path of await git.staleTokens(root,dryRun)) trees.push({ path, reason:'stale lease reclaim token' });
   for (const t of await git.reusedTrees(root)) {
     const gone = !(t.kind === 'inv' ? inv : checks).has(t.id);
     if (reuse && !gone) continue;

@@ -813,7 +813,8 @@ changed; retry`): they decide a trunk move on what they measured.
   already runs attests of different nodes in parallel (§7.11). Observations go
   into the ledger in job order whatever order the jobs finish in (merge/adopt
   append them together; the genesis attest records each in job order as soon as
-  its predecessors are recorded). With N = 1 the behavior is exactly that of
+  its predecessors are recorded; a failure to record one starts no further job).
+  With N = 1 the behavior is exactly that of
   0.8. An abort (§7, step 8) kills every running job and starts no further one.
   Parallel jobs share the machine: cargo builds that share one
   `CARGO_TARGET_DIR` serialize on cargo's build-directory lock, so give heavy
@@ -828,12 +829,22 @@ changed; retry`): they decide a trunk move on what they measured.
   (`<kind>` = `inv`/`check`/`red`/`strength`; a check id that is not path-safe,
   `^[A-Za-z0-9][A-Za-z0-9._-]*$`, is replaced by `h` + 16 hex of its sha256),
   with `<k>` the lowest index whose lease is free. The lease is the file
-  `<tree>.lock`, created with O_EXCL and holding the pid; a lease whose pid is
-  dead is stale and reclaimed (moved aside, put back if a racing reclaim moved a
-  live one), so concurrent measurements of one check get different trees.
+  `<tree>.lock` holding the pid. It is taken atomically by writing the pid to a
+  unique temporary file and link()ing it to the lock path, so a lock file is
+  never empty. A lock whose content X is dead (a dead pid, or empty/unparsable
+  and older than 60 s) is stale and reclaimed under the token
+  `<tree>.lock.dead-<X>` (X the pid, else `h` + 16 hex of the content's sha256),
+  created with O_EXCL: holding it, the reclaimer re-reads the lock, unlinks it
+  only when it still holds X, tries the normal take once (moving on to the next
+  k when it loses) and unlinks the token; a reclaimer that cannot create the
+  token does nothing for that k. Concurrent measurements of one check therefore
+  get different trees, and a stale lock ends with exactly one holder. `owed gc`
+  removes tokens older than 1 h (a crashed reclaimer).
   Preparing a reused tree for a commit: `git checkout --detach --force
-  <commit>`, then `git clean -ffdx` (no untracked or ignored file survives: the
-  content equals a fresh tree), then the overlays as for a fresh tree. What
+  <commit>`, then `git clean -ffdx` (no untracked or ignored file survives),
+  then, when `.gitmodules` exists, `git submodule deinit --all --force` (a fresh
+  `git worktree add` tree has empty submodule directories, so a reused one must
+  too): the content equals a fresh tree. Then the overlays as for a fresh tree. What
   survives is the path and the mtimes of files the checkout did not change, so a
   build cache outside the tree (a shared `CARGO_TARGET_DIR`) builds
   incrementally; a cache inside the tree (an ignored `target/`) does not
