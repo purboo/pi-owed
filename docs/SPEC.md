@@ -24,7 +24,9 @@ boundaries: a process can unset the variables or change directory.
 - `blobs/<sha256>`: content-addressed blobs (plans, logs, dispatch packets).
 - `lock/`: mutual exclusion by atomic `mkdir`; contains `owner.json`
   `{pid, host, ts}`. A lock whose pid is dead on the same host is stale and may be
-  broken. All read-check-append sequences run under the lock (§6.4).
+  broken. All read-check-append sequences run under the lock (§6.4). Other named
+  locks (`merge`, `dispatch`, `genesis`, `attest-<hash>` per node, §7.11) work the
+  same way; a wait that times out (60 s) fails with code `busy` (§7.11).
 - Every append: re-read ledger, verify chain tail, check guard, append the line
   with `fsync`, release.
 
@@ -674,6 +676,34 @@ that node's observations are superseded; an edit elsewhere interrupts nothing.
 `merge` and `adopt` keep their strict stability rule (`Plan, candidate or trunk
 changed; retry`): they decide a trunk move on what they measured.
 
+### 7.11 Attest locks and busy (0.7, K1)
+
+- `attest(node)` holds a lock of that node only, named `attest-<first 16 hex of
+  sha256(node id)>`, so attests of different nodes run in parallel: each
+  observation is appended under the ledger lock only if its item is still
+  current (§7.10). Each job materializes its own temporary worktree
+  (`mkdtemp` directory, git's worktree admin directory created by an atomic
+  `mkdir` that picks a free name) and writes its log blob through a unique
+  temporary file (§1), so concurrent attests do not collide. `attest --genesis`
+  keeps its own `genesis` lock (§8.2).
+- When the node's attest lock (or, for `--genesis`, the `genesis` lock) is held
+  by a live process on this host, attest fails at once, without waiting, with
+  `OwedError` code `busy`: `attest of <node> is already running (pid <pid> on
+  <host> since <ISO time>); its observations will appear in owed why <node>`
+  (`--genesis`: `attest --genesis is already running (pid <pid> on <host> since
+  <ISO time>); its observations will appear in owed status`). A dead owner on
+  this host is reaped as for every lock. A lock of another host has no live
+  check: attest waits as for every lock (60 s), then fails with code `busy` and
+  the same text naming that host.
+- Every other lock wait that times out (the ledger lock, `merge`, `dispatch`,
+  `drive-detach`, …) is code `busy` too: `timed out waiting for the <name> lock
+  held by pid <pid> on <host> since <time>; retry`, where the ledger lock reads
+  `the ledger lock` (without a readable owner: `timed out waiting for the <name>
+  lock; retry`). These waits keep their behavior otherwise: a live owner is
+  waited for.
+- The CLI exits 75 for `busy` (§10); pi tools return the message as a tool error
+  (`Busy: <message>`, details `{code: "busy", reason}`).
+
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
 ```ts
@@ -891,7 +921,7 @@ genesis item, so superseded jobs never make it incomplete. With
 before genesis keeps the message `aborted`. `commit` pins the trunk commit the
 owner confirmed: a different refs/heads/<trunk> refuses before any effect.
 `attestGenesis` runs under its own `genesis` lock: two genesis attests do not
-overlap, and node attests (which measure missing genesis items first) are never
+overlap (a second one while a live process holds it is `busy` at once, §7.11), and node attests (which measure missing genesis items first) are never
 blocked by it — both record as in §7.10, so concurrent observations of one item
 are each a fact about its key. It is abortable like attest (§7.8). It registers
 itself synchronously when called (before its first await) until it ends; while
@@ -924,7 +954,19 @@ while genesis items lack observations.
   dispatched) cannot clear anything on an old candidate, so its hints (blocks
   and owner decisions) say `owed dispatch <node>` and never suggest submit or
   attest; with an open slot but no candidate, judgment and flaky hints first
-  require the writer's submit.
+  require the writer's submit. An execution block reads `writer fixes and runs
+  owed submit <node>, then owed attest <node> (skip this when owed drive is
+  running: the driver attests) (the attribution rerun on the original content
+  clears the block)` (0.7, K1.3: a writer's attest beside a running driver only
+  finds the node's attest lock busy). The driver's repair message embeds the card
+  and so carries the same clause.
+- **Dispatch packet** (0.7, K1.3): the packet `owed dispatch` stores and returns
+  ends with `After committing, run: owed submit <node>`. When the driver
+  dispatches (`parent:drive`) it ends with one more line, `the driver measures
+  your candidate; do not run owed attest`. The driver's writer task (its launch
+  `task`) is that packet rebuilt from dispatch-time facts and always carries the
+  line, so a driver launch of a manually dispatched node adds the line to the
+  launch task (the stored packet stays without it).
   Also "Untested": obligations absent relative to the plan baseline (downgrades) and
   the node's changed files not matched by any passing check's `reads`.
 - **Allowances in views** (§3.4, D21): a downgrade a parent recorded under an
@@ -1083,7 +1125,12 @@ records `channel: flag`. Under `OWED_CONFIRM=owner` they prompt on a TTY as in
 (required for a delegated downgrade). In a pi-durable-subagents call owner and
 parent commands are refused (§2.1). Exit codes: 0 ok, 1 refused
 by a guard (message says which obligation), 2 usage error, 3 internal error,
-130/143 aborted by a signal.
+75 busy (a lock is held: the node's attest is already running, or a lock wait
+timed out, §7.11; stderr `Busy: <message>`; retry later), 130/143 aborted by a
+signal. With `--json` a failing command also prints one line `{"error":
+<message>, "code": "refused"|"usage"|"internal"|"busy"|"aborted"}` on stdout;
+stderr text and exit codes are the same as without `--json` (the `owed drive`
+`--json` loop instead ends with its exit record, §12.8).
 
 Signals (D16). While `attest`, `merge`, `init` or `adopt` runs (after any owner
 confirmation), SIGINT, SIGTERM and SIGHUP are handled: the first aborts the
@@ -1545,8 +1592,9 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
 - **Attest** runs `pi-durable-subagents hold machine --shared --no-wait --
   owed attest <node>` in the main worktree when dsa is available (else `owed
   attest <node>` directly); the driver's own process never holds a lease.
-  Exit 75 is hold refusing the lease without queueing anything (`owed` itself
-  exits only 0–3): the machine is busy; the driver prints hold's message (the
+  Exit 75 is hold refusing the lease without queueing anything (`owed attest`
+  itself exits 75 only when the node's attest is already running or a lock wait
+  timed out, §7.11): the machine is busy; the driver prints hold's message (the
   blockers) and retries next pass. A non-zero exit with a
   `pi-durable-subagents:` error on stderr and no stdout is dsa rejecting the
   invocation — on dsa < 1.0.27 `Unknown option --no-wait` — and halts the

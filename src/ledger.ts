@@ -33,6 +33,34 @@ async function discard(path: string): Promise<void> {
   try { await rename(path, trash); } catch (e) { if (isCode(e, 'ENOENT')) return; throw e; }
   await rm(trash, { recursive: true, force: true });
 }
+/** The owner file of a lock directory: who took it and when (ISO time). */
+export interface LockOwner { pid: number; host: string; ts: string }
+/** @internal Test hook: how long withLock waits for a lock before it fails with code `busy` (default 60 s). */
+export const lockWait = { ms: 60_000 };
+/** Options of `withLock`. */
+export interface LockOptions {
+  /**
+   * The `busy` message of this lock: given, a lock whose owner is a live process on this host fails at once with code
+   * `busy` and this message instead of waiting, and a wait that times out fails with it too (K1).
+   */
+  busy?: (owner: LockOwner) => string;
+}
+/** The text of a lock wait that timed out (code `busy`); `lock` is the ledger lock. */
+export function lockTimeoutText(name: string, owner?: LockOwner): string {
+  const what = name === 'lock' ? 'the ledger lock' : `the ${name} lock`;
+  return owner ? `timed out waiting for ${what} held by pid ${owner.pid} on ${owner.host} since ${owner.ts}; retry` : `timed out waiting for ${what}; retry`;
+}
+async function readOwner(path: string): Promise<LockOwner | undefined> {
+  try {
+    const o = JSON.parse(await readFile(join(path, 'owner.json'), 'utf8')) as Partial<LockOwner>;
+    return { pid: Number(o.pid), host: String(o.host), ts: String(o.ts) };
+  } catch (e) { if (isCode(e, 'ENOENT') || e instanceof SyntaxError) return undefined; throw e; }
+}
+/** Whether `pid` on this host is a live process (EPERM: alive, owned by another user). */
+function alive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return isCode(e, 'EPERM'); }
+}
 export class Ledger {
   readonly dir: string;
   private held = new AsyncLocalStorage<Set<string>>();
@@ -50,14 +78,17 @@ export class Ledger {
   }
   /**
    * Runs `fn` holding lock `name`. An abort of `signal` before the lock is acquired rejects at once with
-   * OwedError('aborted', 'aborted') and takes nothing (D16a.2); after acquisition `fn` runs to completion.
+   * OwedError('aborted', 'aborted') and takes nothing (D16a.2); after acquisition `fn` runs to completion. A lock
+   * still held after `lockWait.ms` fails with code `busy` (`opts.busy`'s message, else lockTimeoutText); with
+   * `opts.busy` a live owner on this host fails at once (K1). A dead owner on this host is reaped.
    */
-  async withLock<T>(fn: () => Promise<T>, name?: string, signal?: AbortSignal): Promise<T> {
+  async withLock<T>(fn: () => Promise<T>, name?: string, signal?: AbortSignal, opts: LockOptions = {}): Promise<T> {
     const lockName = name ?? 'lock';
     if (!/^[a-zA-Z0-9_-]+$/.test(lockName)) throw new OwedError('invalid lock name', 'usage');
     if (this.held.getStore()?.has(lockName)) throw new OwedError(`nested lock ${lockName}`, 'internal');
     const aborted = () => new OwedError('aborted', 'aborted');
-    const path = join(this.dir, lockName), deadline = Date.now() + 60_000;
+    const path = join(this.dir, lockName), deadline = Date.now() + lockWait.ms;
+    let owner: LockOwner | undefined;
     let delay = 10;
     const token = randomUUID();
     for (;;) {
@@ -71,6 +102,10 @@ export class Ledger {
         await rm(staged, { recursive: true, force: true });
         if (!isCode(e, 'EEXIST') && !isCode(e, 'ENOTEMPTY')) throw e;
       }
+      // The owner seen last names the holder in a busy message; a live owner of a fail-fast lock refuses at once.
+      const seen = await readOwner(path);
+      if (seen) owner = seen;
+      if (seen && opts.busy && seen.host === hostname() && alive(seen.pid)) throw new OwedError(opts.busy(seen), 'busy');
       // A second, short-lived mkdir serializes stale reaping. Recheck the owner
       // after acquiring it so a waiter can never remove a replacement live lock.
       const reaper = join(this.dir, `${lockName}-reaper`);
@@ -90,7 +125,7 @@ export class Ledger {
           } catch (e) { if (!isCode(e, 'ENOENT')) throw e; }
         } finally { await rm(reaper, { recursive: true, force: true }); }
       }
-      if (Date.now() >= deadline) throw new OwedError(`timed out waiting for ${lockName}`, 'internal');
+      if (Date.now() >= deadline) throw new OwedError(opts.busy && owner ? opts.busy(owner) : lockTimeoutText(lockName, owner), 'busy');
       if (signal?.aborted) throw aborted();
       await new Promise<void>((resolve, reject) => {
         const stop = () => { clearTimeout(timer); reject(aborted()); };

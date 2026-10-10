@@ -4,9 +4,10 @@
 // No sleeps decide an outcome: holders release through gates, and the waiter is observed registering its abort listener.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
+import { attestLock } from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { OwedError } from '../src/errors.ts';
 import type { Entry } from '../src/types.ts';
@@ -103,8 +104,17 @@ test('D16a.2: an abort while waiting for a held lock rejects at once; an abort a
 });
 
 const plan = JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], nodes: [{ id: 'a', writes: ['a.txt'], checks: [], review: { count: 0, min_rank: 1 } }] });
+/**
+ * K1: the attest lock is per node and a live owner on this host makes attest busy at once, so attest waits (and can be
+ * aborted while waiting) only for a lock of another host: planted as a lock directory whose owner names another host.
+ */
+async function foreign(l: Ledger, name: string): Promise<{ release(): Promise<void> }> {
+  await mkdir(join(l.dir, name));
+  await writeFile(join(l.dir, name, 'owner.json'), JSON.stringify({ pid: 1, host: 'other-host.invalid', token: 't', ts: '2026-01-01T00:00:00.000Z' }));
+  return { async release() { await rm(join(l.dir, name), { recursive: true, force: true }); } };
+}
 const cases: [string, string, (r: Repo, signal: AbortSignal) => Promise<unknown>][] = [
-  ['attest', 'attest', (r, signal) => ops.attest({ cwd: r.cwd, node: 'a', signal })],
+  ['attest', attestLock('a'), (r, signal) => ops.attest({ cwd: r.cwd, node: 'a', signal })],
   ['merge', 'merge', (r, signal) => ops.merge({ cwd: r.cwd, node: 'a', as: parent, signal })],
   ['adopt', 'merge', (r, signal) => ops.adopt({ cwd: r.cwd, as: owner, note: 'n', channel: 'flag', signal })],
   ['init', 'lock', (r, signal) => ops.init({ cwd: r.cwd, plan, as: owner, channel: 'flag', signal })],
@@ -114,7 +124,7 @@ for (const [op, lock, run] of cases) {
     const r = await repo();
     try {
       await commitAt(r.cwd, { README: 'x\n' });
-      const h = await hold(await Ledger.open(r.cwd), lock), ac = new AbortController(), waiting = lockWait(ac.signal);
+      const l = await Ledger.open(r.cwd), h = op === 'attest' ? await foreign(l, lock) : await hold(l, lock), ac = new AbortController(), waiting = lockWait(ac.signal);
       const p = run(r, ac.signal);
       try {
         await waiting; ac.abort();
@@ -141,7 +151,7 @@ test('D16a.2: attest aborted while waiting for the ledger lock to record a finis
     let h: { release(): Promise<void> } | undefined;
     try {
       await fileAppears(gate('started'));
-      // The check runs under the 'attest' lock; take the ledger lock its observation needs, then let the check end.
+      // The check runs under the node's attest lock; take the ledger lock its observation needs, then let the check end.
       h = await hold(await Ledger.open(r.cwd));
       const waiting = lockWait(ac.signal);
       await writeFile(gate('go'), '');
