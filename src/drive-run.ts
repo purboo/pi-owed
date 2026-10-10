@@ -18,7 +18,7 @@ import { parsePlan, driveConfig } from './plan.ts';
 import { reduce, halted, projectId } from './reducer.ts';
 import { decide, rejectedHalt } from './drive.ts';
 import type { Action } from './drive.ts';
-import { Dsa, DsaError, dsaAvailable } from './dsa.ts';
+import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
 import type { Plan, Principal, RunView, State } from './types.ts';
@@ -53,6 +53,11 @@ export interface DriveOptions {
   signal?: AbortSignal;
   /** Install SIGINT/SIGTERM handlers (default true; loop: D14.8, `once`: D16.3); the pi tool's pass installs none. */
   handleSignals?: boolean;
+  /**
+   * The pi session the driver's runs belong to (E1): recorded in `drive.lock` and passed as `run --session`. Default
+   * `startingSession()` (`$DSA_SESSION`, ignored inside a dsa call); null: none.
+   */
+  session?: string | null;
 }
 
 /** One executed action as printed (`--json`: one object per line). */
@@ -91,7 +96,8 @@ async function loadState(ledger: Ledger): Promise<State> {
 export function procStart(pid: number): string | undefined {
   try { const stat = readFileSync(`/proc/${pid}/stat`, 'utf8'); return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[19]; } catch { return undefined; }
 }
-export interface LockOwner { pid: number; start?: string; host: string; at: string; token: string }
+/** `session`: the pi session that lists the driver's runs (E1); absent when none. */
+export interface LockOwner { pid: number; start?: string; host: string; at: string; token: string; session?: string }
 export function lockAlive(o: LockOwner): boolean {
   try { process.kill(o.pid, 0); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EPERM') return false; }
   const now = procStart(o.pid);
@@ -103,8 +109,8 @@ export function lockAlive(o: LockOwner): boolean {
  * A lock of another host is never taken over (its pid cannot be checked here). Returns the release functions.
  */
 export interface DriveLock { release(): Promise<void>; /** Synchronous release for a hard stop. */ releaseSync(): void }
-export async function acquireDriveLock(dir: string): Promise<DriveLock> {
-  const path = join(dir, 'drive.lock'), me: LockOwner = { pid: process.pid, ...(procStart(process.pid) ? { start: procStart(process.pid)! } : {}), host: hostname(), at: new Date().toISOString(), token: randomUUID() };
+export async function acquireDriveLock(dir: string, session?: string): Promise<DriveLock> {
+  const path = join(dir, 'drive.lock'), me: LockOwner = { pid: process.pid, ...(procStart(process.pid) ? { start: procStart(process.pid)! } : {}), host: hostname(), at: new Date().toISOString(), token: randomUUID(), ...(session ? { session } : {}) };
   const text = JSON.stringify(me);
   for (let i = 0; i < 10; i++) {
     const staged = `${path}.${me.token}`;
@@ -166,7 +172,7 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit'; head?: string; reason?: string; error?: string; code?: number; at?: string }
+export interface LoopEvent { event: 'idle' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string }
 
 /**
  * The text-mode line of a driver output object (an ActionReport or a LoopEvent): `owed drive` prints it, and the
@@ -182,6 +188,7 @@ export function reportText(json: object): string {
       case 'cursor-reset': return e.reason !== undefined ? `events: cursor rejected (${oneLine(e.reason)}), reset${e.head ? ` to ${e.head}` : ''}` : `events: cursor expired, reset to ${e.head}`;
       case 'events-error': return `events error: ${oneLine(e.error ?? '')}`;
       case 'exit': return `driver exited ${e.code} (${e.reason})${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
+      case 'session-unsupported': return `dsa does not accept --session (older than pi-durable-subagents 1.0.31): runs start without it and are not listed in pi session ${e.session ?? '?'}${e.reason ? ` (${oneLine(e.reason)})` : ''}`;
       default: return oneLine(JSON.stringify(json));
     }
   }
@@ -201,7 +208,19 @@ export class Driver {
    * before process.exit, so their check process groups get SIGKILL. A soft stop (`stopping`) lets the action finish.
    */
   readonly abort = new AbortController();
-  constructor(o: DriveOptions) { this.o = o; this.dsa = o.dsa ?? new Dsa(); this.owed = o.owed ?? defaultOwed(); }
+  /** The pi session of this driver's runs (E1). */
+  readonly session?: string;
+  constructor(o: DriveOptions) {
+    this.o = o; this.dsa = o.dsa ?? new Dsa(); this.owed = o.owed ?? defaultOwed();
+    const session = o.session === undefined ? startingSession() : o.session ?? undefined;
+    if (session !== undefined) this.session = session;
+    // E1.2: every `run` names the session; an older dsa refuses the flag once per driver: logged, never a halt.
+    this.dsa.session = session;
+    this.dsa.onSessionRefused = reason => {
+      const e: LoopEvent = { event: 'session-unsupported', ...(session !== undefined ? { session } : {}), reason };
+      o.log(o.json ? JSON.stringify(e) : reportText(e));
+    };
+  }
 
   private async init(): Promise<Ledger> {
     if (!this.ledger) { this.ledger = await Ledger.open(this.o.cwd); this.root = await git.mainRoot(this.o.cwd); }
@@ -483,7 +502,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
   let failure: { e: unknown } | undefined;
   try {
     const ledger = await Ledger.open(o.cwd);
-    lock = await acquireDriveLock(ledger.dir);
+    lock = await acquireDriveLock(ledger.dir, driver.session);
     if (!o.once && driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     if (o.once) { const r = await driver.pass(); if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
     const dsa = driver.dsa, cursorFile = join(ledger.dir, 'drive', 'cursor'), LIMIT = o.limit ?? 100;
