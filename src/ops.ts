@@ -12,6 +12,7 @@ import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
+import { waiverText } from './views.ts';
 import type { Brief } from './views.ts';
 import type { AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
@@ -366,6 +367,8 @@ export async function review(o: Actor & { node: string; verdict:'ok'|'block'; ra
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<Entry> { const given = candidateArg(o.named); return mutate(o,s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); return {kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key:candidate(s,o.node).candidate!.keys[o.obligation] ?? '',reason:o.reason,accept_risk:o.accept_risk}; }); }
+/** K2.3: what the recorded waiver `entry` means for its node now (see views.waiverText). */
+export async function waiverMeaning(o: Context & { entry: Entry }): Promise<string> { const {state} = await load(await Ledger.open(o.cwd)); if (o.entry.kind !== 'waive') throw new OwedError('not a waiver','internal'); return waiverText(state,o.entry); }
 export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items,reason:o.reason})); }
 export async function abandon(o: Actor & { node:string; reason:string }): Promise<Entry> { return mutate(o,s => ({kind:'abandon',by:by(o),channel:o.channel,node:o.node,attempt:node(s,o.node).slot?.attempt ?? 0,reason:o.reason})); }
 export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }
