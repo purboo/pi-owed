@@ -242,14 +242,15 @@ export default function owed(pi: ExtensionAPI): void {
     const warning = pending.length ? `Warning: genesis attest pending for ${pending.join(', ')}\n` : '';
     const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.seq - 1 })).downgrades.find(x => x.seq === r.seq);
     // H2.2: warnings for check-less nodes of the new plan, after the result.
-    const warnings = planWarnings(next);
+    const state = await ops.status({ cwd: dir });
+    const warnings = planWarnings(next, new Set(Object.values(state.nodes).filter(n => n.phase === 'merged').map(n => n.id)));
     // H1.3: dispatchable ready nodes and no driver: one hint line before the H2.2 warnings, which end the text (the
     // parent decides; nothing starts automatically).
     const ready = await readyHint(dir);
     // N1.3: one line per node whose candidate the plan entry carried, and (23:4x) one per carry it skipped.
     const carried = await ops.carriedBy({ cwd: dir, plan: r.seq }), carriedText = [...carried.map(carryLine), ...notCarried.map(notCarriedLine)].map(l => `${l}\n`).join('');
     const data = { ...r, ...(pending.length ? { warning: warning.trim() } : {}), warnings, ...(carried.length ? { carried } : {}), ...(notCarried.length ? { notCarried } : {}), ...(ready ? { ready, driver: false } : {}) };
-    return result(data, `${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(await ops.status({ cwd: dir }))}${ready ? `\n${readyHintText(ready, 'pi')}` : ''}${warnings.map(w => `\n${w}`).join('')}`);
+    return result(data, `${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(state)}${ready ? `\n${readyHintText(ready, 'pi')}` : ''}${warnings.map(w => `\n${w}`).join('')}`);
   });
   tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'initialize the ledger');

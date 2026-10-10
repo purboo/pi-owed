@@ -340,8 +340,8 @@ function mutantErrors(plan: Plan): string[] {
  * H2.2: one warning per node of `plan` with no checks and no evidence obligations: its acceptance rests on review alone.
  * `owed init` / `owed plan` report them after the result; they refuse and record nothing.
  */
-export function checklessWarnings(plan: Plan): string[] {
-  return plan.nodes.filter(n => !n.checks.length && !n.evidence?.length).map(n => `warning: node ${n.id} has no checks: its acceptance rests on review alone`);
+export function checklessWarnings(plan: Plan, merged: ReadonlySet<string> = new Set()): string[] {
+  return plan.nodes.filter(n => !merged.has(n.id) && !n.checks.length && !n.evidence?.length).map(n => `warning: node ${n.id} has no checks: its acceptance rests on review alone`);
 }
 /** 0.8 (L3.3): a shell loop (`for|while|until … do`) or `seq N` in command position (`seq 5 | xargs …`, `$(seq 5)`). */
 const SHELL_LOOP = /(?:^|[\s;&|(`'"])(?:for|while|until)\s[\s\S]*?[;\n]\s*do(?:\s|$)|(?:^|[;&|(`]|\$\()\s*seq(?:\s+-?\d+){1,3}(?:\s|$|[;&|)`])/;
@@ -351,13 +351,13 @@ const SHELL_LOOP = /(?:^|[\s;&|(`'"])(?:for|while|until)\s[\s\S]*?[;\n]\s*do(?:\
  * line (else `1..N` plan), `Tests:` summary or pytest summary line replaces the earlier one, so min_tests sees one run's count; only cargo
  * `test result:` lines are summed. `owed plan` / `owed init` print it with the H2.2 warnings; nothing is refused.
  */
-export function loopWarnings(plan: Plan): string[] {
+export function loopWarnings(plan: Plan, merged: ReadonlySet<string> = new Set()): string[] {
   const one = (where: string, c: CheckSpec): string[] => c.min_tests !== undefined && SHELL_LOOP.test(c.run)
     ? [`warning: ${where} runs its command in a shell loop with min_tests ${c.min_tests}: min_tests counts only the last TAP (# tests), jest/vitest (Tests:) or pytest (N passed) summary in the log, i.e. one run, not the sum of the runs (only cargo "test result:" lines are added up)`] : [];
-  return [...plan.invariants.flatMap(c => one(`invariant ${c.id}`, c)), ...plan.nodes.flatMap(n => n.checks.flatMap(c => one(`check ${c.id} of node ${n.id}`, c)))];
+  return [...plan.invariants.flatMap(c => one(`invariant ${c.id}`, c)), ...plan.nodes.filter(n => !merged.has(n.id)).flatMap(n => n.checks.flatMap(c => one(`check ${c.id} of node ${n.id}`, c)))];
 }
 /** The warnings `owed plan` / `owed init` print after the result: check-less nodes (H2.2), then looped checks (L3.3). */
-export const planWarnings = (plan: Plan): string[] => [...checklessWarnings(plan), ...loopWarnings(plan)];
+export const planWarnings = (plan: Plan, merged: ReadonlySet<string> = new Set()): string[] => [...checklessWarnings(plan, merged), ...loopWarnings(plan, merged)];
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
   const out: Downgrade[] = [];
   function compare(node: string, before: CheckSpec[], after: CheckSpec[]): void {

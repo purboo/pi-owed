@@ -431,7 +431,8 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
       if (!d) { add(node, `${c.id} check removed`); continue; }
       if (c.red && !d.red) add(node, `${c.id} red disabled`);
       if ((d.min_tests ?? 0) < (c.min_tests ?? 0)) add(node, `${c.id} min_tests reduced`);
-      if (c.run !== d.run || c.timeout_s !== d.timeout_s || canonical(c.reads) !== canonical(d.reads) || canonical(c.tests) !== canonical(d.tests) || c.red_expect !== d.red_expect) add(node, `${c.id} check definition changed; cannot prove obligations were not reduced`);
+      const fields = (['run', 'timeout_s', 'reads', 'tests', 'red_expect'] as const).filter(field => canonical(c[field]) !== canonical(d[field]));
+      if (fields.length) add(node, `${c.id} check definition changed (${fields.join(', ')}); owed cannot compare commands, so this needs owner authority or an allow rule; to avoid it, add the new command as a new check id`);
       if (c.mutants && (canonical(c.mutants) !== canonical(d.mutants) || (d.min_kill ?? 1) < (c.min_kill ?? 1))) add(node, `${c.id} mutants removed or changed, or min_kill reduced`);
     }
   };
@@ -460,7 +461,7 @@ function allowWidened(prev: Plan, next: Plan): boolean {
 /** Rules of `plan` whose node globs match node id `node` (path.matchesGlob on the id). */
 const rulesFor = (plan: Plan, node: string): AllowRule[] => (plan.allow ?? []).filter(r => r.nodes.some(g => matchesGlob(node, g)));
 /** Check-weakening items of downgradeDetails (`<id><suffix>`) and of plan.ts planDowngrades (`check <id><suffix>`). */
-const DETECTED_CHECK = [' check removed', ' red disabled', ' min_tests reduced', ' check definition changed; cannot prove obligations were not reduced', ' mutants removed or changed, or min_kill reduced'];
+const DETECTED_CHECK = [/ check removed$/, / red disabled$/, / min_tests reduced$/, / check definition changed; cannot prove obligations were not reduced$/, / check definition changed \((?:run|timeout_s|reads|tests|red_expect)(?:, (?:run|timeout_s|reads|tests|red_expect))*\); owed cannot compare commands, so this needs owner authority or an allow rule; to avoid it, add the new command as a new check id$/, / mutants removed or changed, or min_kill reduced$/];
 const CLAIMED_CHECK = [' removed', ' red disabled', ' min_tests lowered', ' mutants removed', ' min_kill lowered'];
 /**
  * Whether a rule of the prior plan `prev` covers downgrade `d` of the update to `next` (D21.2). Covered: review
@@ -484,7 +485,7 @@ function covered(prev: Plan, next: Plan, d: Downgrade, claimed: boolean): boolea
   // Every reading of the item must be covered by a `checks` glob, and there must be one: as `<id><suffix>` naming a
   // check of the node, and (D21.1/D23.2) as `evidence <id> removed|weakened` naming an evidence obligation of the node.
   // An item readable both ways (e.g. check id `evidence`, evidence id `check`) is covered only if both readings are.
-  const ids = (claimed ? (what.startsWith('check ') ? CLAIMED_CHECK.filter(x => what.endsWith(x)).map(x => what.slice(6, what.length - x.length)) : []) : DETECTED_CHECK.filter(x => what.endsWith(x)).map(x => what.slice(0, what.length - x.length))).filter(id => before.checks.some(c => c.id === id));
+  const ids = (claimed ? (what.startsWith('check ') ? CLAIMED_CHECK.filter(x => what.endsWith(x)).map(x => what.slice(6, what.length - x.length)) : []) : DETECTED_CHECK.flatMap(x => { const match = x.exec(what); return match ? [what.slice(0, match.index)] : []; })).filter(id => before.checks.some(c => c.id === id));
   const evidence = /^evidence (\S+) (?:removed|weakened)$/.exec(what)?.[1], evidenceIds = evidence !== undefined && (before.evidence ?? []).some(e => e.id === evidence) ? [evidence] : [];
   const readings = [...ids, ...evidenceIds];
   return readings.length > 0 && readings.every(id => rules.some(r => r.checks?.some(g => matchesGlob(id, g))));
