@@ -1,10 +1,10 @@
-import { readFile, mkdir, appendFile } from 'node:fs/promises';
+import { readFile, mkdir, appendFile, rmdir } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
 import { Ledger, entryHash } from './ledger.ts';
 import * as git from './git.ts';
-import { parsePlan, planDowngrades, worktreesConfig, expandBranch } from './plan.ts';
+import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors } from './plan.ts';
 import { genesisProgress, jobCurrent } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
@@ -64,8 +64,12 @@ async function mutate(o: Actor, make: (s: State) => Draft): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => { const { state } = await load(ledger); const d = make(state); guard(state,d); return (await ledger.append([d]))[0]!; });
 }
-/** The plan blob bytes and sha stored for a plan text (canonical YAML). */
-function planBlob(text: string) { const plan = parsePlan(text), data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) }; }
+/** The plan blob bytes and sha stored for a plan text (canonical YAML); refuses a `worktrees:` block a new plan must not have (G4). */
+function planBlob(text: string) {
+  const plan = parsePlan(text), hygiene = plan.worktrees ? worktreesErrors(plan.worktrees) : [];
+  if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
+  const data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
+}
 async function storePlan(ledger: Ledger, text: string) { const b = planBlob(text); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
 /** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
 const aborted = (): OwedError => new OwedError('aborted', 'aborted');
@@ -213,11 +217,13 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     const exclude = join(await git.commonDir(o.cwd),'info','exclude');
     await mkdir(dirname(exclude),{recursive:true}); let text = ''; try { text = await readFile(exclude,'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     if (excludeLine && !text.split('\n').includes(excludeLine)) await appendFile(exclude,`\n${excludeLine}\n`);
-    await mkdir(dirname(worktree),{recursive:true});
-    await git.addWorktree(root,worktree,branch,state.trunk.commit);
+    // The first directory mkdir created (undefined when the parent existed): a rollback removes what it created.
+    const made = await mkdir(dirname(worktree),{recursive:true});
+    const unmake = async () => { if (made) for (let p = dirname(worktree); ; p = dirname(p)) { try { await rmdir(p); } catch { break; } if (p === made || dirname(p) === p) break; } };
+    try { await git.addWorktree(root,worktree,branch,state.trunk.commit); } catch (error) { await unmake(); throw error; }
     let entry: Entry;
     try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw new OwedError('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw new OwedError('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
-    catch (error) { await git.git(root,['worktree','remove',worktree]); await git.git(root,['branch','-d',branch]); throw error; }
+    catch (error) { await git.git(root,['worktree','remove',worktree]); await git.git(root,['branch','-d',branch]); await unmake(); throw error; }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
   },'dispatch');
 }
@@ -594,7 +600,11 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
       } else if (onDisk) keep('path exists but is not a registered git worktree; left untouched');
       if (hasBranch) {
         const user = trees.find(w => w.branch === `refs/heads/${d.branch}` && w.path !== path);
+        // The recorded name must map back to this attempt alone: another dispatch recording the same name (an ambiguous
+        // template of an older plan) may own the branch, so it is kept.
+        const others = entries.flatMap(e => e.kind === 'dispatch' && e.branch === d.branch && (e.node !== d.node || e.attempt !== d.attempt) ? [`${e.node}#${e.attempt}`] : []);
         if (user) keep(`branch is checked out in ${user.path}`);
+        else if (others.length) keep(`branch name ${d.branch} is also recorded for ${[...new Set(others)].join(', ')}; not deleted`);
         else if (dryRun) branch = d.branch;
         else { const r = await git.git(root, ['branch', '-D', d.branch], { allowFail: true }); if (r.code) keep(`git branch -D failed: ${r.stderr.trim()}`); else branch = d.branch; }
       }
