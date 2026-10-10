@@ -15,7 +15,7 @@ import * as drv from '../src/drive.ts';
 import { decide, reviewerLaunch, writerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
 import * as run from '../src/drive-run.ts';
 import { Follower, classifyLine } from '../src/drive-bg.ts';
-import { driveReviewer, reduce, runId } from '../src/reducer.ts';
+import { driveReviewer, manualKeys, reduce, runId } from '../src/reducer.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
 import { git } from '../src/git.ts';
@@ -170,12 +170,17 @@ test('G3.2: rebase with a repairable block: one repair carrying the rebase instr
   // Repairs exhausted: halt instead.
   const e = act(r, runsOf(sealed(W())), { repairs: 0 });
   assert.ok(e?.do === 'halt' && /^repairs exhausted \(0 of 0\): review block #\d+ review/.test(e.reason), JSON.stringify(e));
-  // An unruled needs-parent block is not repairable: row 8 unchanged (the rebase follow-up).
+  // Review #680 (a): an unruled needs-parent block (alone) halts row 8 before the rebase follow-up; once ruled, the
+  // block is repaired with the rebase instructions in one follow-up.
   const q = rig(); q.dispatch(); q.launchWriter(); q.submit(); q.pass();
-  q.review('block', { by: 'reviewer:human', needs: 'parent' });
+  const np = q.review('block', { by: 'reviewer:human', needs: 'parent', note: 'which contract?' });
   q.add({ kind: 'adopt', by: 'owner:human', channel: 'tty', trunk: 'main', prior: 's0', commit: 's1', state: { commit: 's1', tree: 't1', invKeys: {} }, changed: ['x'], commits: 1, note: 'moved' });
   q.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, base: 's1', from: 's0' });
-  assert.equal(what(act(q, runsOf(sealed(W())))), 'send rebase');
+  const qh = act(q, runsOf(sealed(W())));
+  assert.ok(qh?.do === 'halt' && qh.reason === `review block #${np.seq} review needs a parent ruling: which contract?; record \`owed rule --nodes a "<decision>"\`; the writer gets the ruling with the next repair`, JSON.stringify(qh));
+  q.recordHalt(qh); const ru = q.rule('contract X');
+  const qr = act(q, runsOf(sealed(W())));
+  assert.ok(qr?.do === 'send' && qr.reason === 'repair' && qr.rulings === ru.seq && /git rebase --onto s1 s0/.test(qr.message), JSON.stringify(qr));
 });
 
 // ---------- G3.3: the wais timeline ----------
@@ -451,4 +456,92 @@ test('G3.6: a follow-up to a sealed call without a generation in the reply still
     assert.deepEqual(sendsOf(es).map(x => x.reason), ['interrupted'], `the stale sealed views of generation 1 are not answered again:\n${f.lines.join('\n')}`);
     assert.equal(es.filter(e => e.kind === 'halt').length, 0);
   } finally { await f.cleanup(); }
+});
+
+// ---------- review #680 (a): row 8 halts first on an unruled needs-parent block (the reviewer's probes) ----------
+const mixed = () => {
+  const r = rig(); r.dispatch(); r.launchWriter(); r.submit(); r.pass();
+  r.review('block', { by: 'reviewer:human', note: 'ordinary' });
+  const np = r.review('block', { by: 'reviewer:other', needs: 'parent', note: 'which contract?' });
+  return { r, np };
+};
+const needsHalt = (np: Entry) => `review block #${np.seq} review needs a parent ruling: which contract?; record \`owed rule --nodes a "<decision>"\`; the writer gets the ruling with the next repair`;
+
+test('#680 (a) probe: ordinary + unruled needs-parent block, plan update before the next pass → row 8 halts needing the ruling, no repair', () => {
+  const { r, np } = mixed();
+  assert.equal(what(act(r, runsOf(sealed(W())))), 'halt', 'with the candidate: the D18 halt');
+  r.plan(nodeA({ checks: [unit, { id: 'pose', run: 'x', timeout_s: 60, reads: ['a/**'] }] }));
+  assert.equal(r.state().nodes.a!.candidate, undefined);
+  const a = act(r, runsOf(sealed(W())));
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: needsHalt(np), needs: 'human' });
+  // The ruling clears the halt: then one repair carrying it and both blocks, never a reviewer run.
+  r.recordHalt(a); const ru = r.rule('contract X');
+  const f = act(r, runsOf(sealed(W())));
+  assert.ok(f?.do === 'send' && f.reason === 'repair' && f.rulings === ru.seq, JSON.stringify(f));
+  assert.match(f.message, /ordinary[\s\S]*which contract\?/);
+  assert.match(f.message, new RegExp(`ruling #${ru.seq}`));
+});
+
+test('#680 (a) probe: halt recorded, then owner `owed rebase` (clears the halt) → row 8 halts again, no rebase or repair follow-up', () => {
+  const { r, np } = mixed();
+  r.recordHalt(act(r, runsOf(sealed(W()))));
+  r.add({ kind: 'adopt', by: 'owner:human', channel: 'tty', trunk: 'main', prior: 's0', commit: 's1', state: { commit: 's1', tree: 't1', invKeys: {} }, changed: ['x'], commits: 1, note: 'moved' });
+  r.add({ kind: 'rebase', by: 'owner:pi', channel: 'delegated', node: 'a', attempt: 1, base: 's1', from: 's0' } as Draft);
+  assert.equal(r.state().nodes.a!.candidate, undefined);
+  assert.deepEqual(act(r, runsOf(sealed(W())), { conflicts: new Map([['a', ['a/x']]]) }), { do: 'halt', node: 'a', attempt: 1, reason: needsHalt(np), needs: 'human' });
+  assert.equal(r.state().nodes.a!.runs[0]!.sends.length, 0, 'nothing was sent to the writer');
+  // A `*` ruling does not answer it (D18); a node-named ruling does: one repair with the rebase instructions.
+  r.recordHalt(act(r, runsOf(sealed(W()))));
+  r.add({ kind: 'rule', by: 'parent:main', text: 'general', nodes: '*' });
+  r.rule('contract X');
+  const f = act(r, runsOf(sealed(W())), { conflicts: new Map([['a', ['a/x']]]) });
+  assert.ok(f?.do === 'send' && f.reason === 'repair' && /git rebase --onto s1 s0` \(files that conflict with your previous candidate: a\/x\)/.test(f.message), JSON.stringify(f));
+});
+
+// ---------- review #680 (b): the conflict list only when row 8 can use it; -z ----------
+test('#680 (b): wantsRebaseConflicts holds only for a rebased slot without a candidate, writer sealed ok, no rebase/repair follow-up since', () => {
+  const wants = NEW.drv.wantsRebaseConflicts as (s: State, node: string, runs: Map<string, RunView>) => boolean;
+  const r = rig(); r.dispatch(); r.launchWriter(); r.submit(); r.pass();
+  assert.equal(wants(r.state(), 'a', runsOf(sealed(W()))), false, 'not rebased');
+  r.add({ kind: 'adopt', by: 'owner:human', channel: 'tty', trunk: 'main', prior: 's0', commit: 's1', state: { commit: 's1', tree: 't1', invKeys: {} }, changed: ['x'], commits: 1, note: 'moved' });
+  r.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, base: 's1', from: 's0' });
+  assert.equal(wants(r.state(), 'a', runsOf(sealed(W()))), true);
+  assert.equal(wants(r.state(), 'a', runsOf(view(W(), 'running'))), false, 'writer still running');
+  assert.equal(wants(r.state(), 'a', runsOf(view(W(), 'sealed', { status: 'failed' }))), false, 'writer sealed non-ok');
+  assert.equal(wants(r.state(), 'a', runsOf()), false, 'no view');
+  r.record(act(r, runsOf(sealed(W()))));
+  assert.equal(wants(r.state(), 'a', runsOf(sealed(W()))), false, 'rebase follow-up already sent');
+  // Submitted after the rebase, then a plan change invalidates that candidate: the rebase predates the last submit.
+  r.submit('2');
+  r.plan(nodeA({ checks: [unit, { id: 'pose', run: 'x', timeout_s: 60, reads: ['a/**'] }] }));
+  assert.equal(r.state().nodes.a!.candidate, undefined);
+  assert.equal(wants(r.state(), 'a', runsOf(sealed(W()))), false, 'rebase before the latest submit');
+});
+
+test('#680 (b): rebaseConflicts uses -z: a non-ASCII or spaced path is listed verbatim', async () => {
+  const r = await repo();
+  try {
+    const name = 'dír/a b"c.txt';
+    await r.put('README', 'x\n'); await r.put(name, 'k\n'); await r.commit();
+    await git(r.cwd, ['checkout', '-qb', 'side'], { env: identity });
+    await r.put(name, 'side\n'); const side = await r.commit();
+    await git(r.cwd, ['checkout', '-q', 'main'], { env: identity });
+    await r.put(name, 'main\n'); const moved = await r.commit();
+    const conflicts = NEW.run.rebaseConflicts as (cwd: string, base: string, commit: string) => Promise<string[] | undefined>;
+    assert.deepEqual(await conflicts(r.cwd, moved, side), [name]);
+  } finally { await r.cleanup(); }
+});
+
+// ---------- bind G1.3: the approve/evidence halt names the open candidate ----------
+test('manualHalt: the approve and evidence commands carry --candidate <commit12> of the open candidate', () => {
+  const r = rig(nodeA({ checks: [], review: { count: 0, min_rank: 1 }, approve: 'owner', evidence: [{ id: 'ui', what: 'looked at the page', by: 'reviewer' }] } as Partial<NodeSpec>));
+  r.dispatch(); r.launchWriter();
+  const long = 'abcdef0123456789abcdef0123456789abcdef01';
+  const spec = r.state().plan.nodes[0]!;
+  r.add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts: { commit: long, tree: 't', base: 's0', patch: 'p', changed: ['a/x'], closureTouched: false, keys: { writes: 'k-writes', rulings: 'k-rulings', ...manualKeys(spec, 'p') } } });
+  r.pass();
+  const h = drv.manualHalt(r.state(), 'a');
+  assert.ok(h, JSON.stringify(r.state().nodes.a!.items));
+  assert.equal(h.reason, `awaiting owner approval of candidate ${long.slice(0, 12)}: owed approve a --candidate ${long.slice(0, 12)} [--note TEXT] (owner); awaiting manual evidence evidence:ui (looked at the page) by reviewer: owed evidence a ui --file <path> --note "<what was checked>" --as reviewer:<id> --candidate ${long.slice(0, 12)}`);
+  assert.equal(h.needs, 'owner');
 });

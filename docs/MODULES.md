@@ -156,7 +156,7 @@ export function reportText(json: object): string;   // text-mode line of an Acti
 export function procStart(pid); lockAlive(owner: LockOwner); defaultOwed(): string[];   // shared with drive-bg.ts
 export function factMark(s: State, node: string): number;   // E3.1: highest seq of non-driver entries naming the node
 export function wakeReport(r): boolean; repeatText(n): string; NEEDS_OWNER; driftNotice(name, drift): string; DRIFT_NODE;   // wake lines, D25.6 wording
-export function rebaseConflicts(cwd, base, commit): Promise<string[] | undefined>;   // G3.7: merge-tree conflicted paths ([] clean); passed as DriveOpts.conflicts
+export function rebaseConflicts(cwd, base, commit): Promise<string[] | undefined>;   // G3.7: merge-tree conflicted paths ([] clean); passed as DriveOpts.conflicts when drive.ts wantsRebaseConflicts(state, node, runs)
 export function reportKey(r: {node, scope?}): string; DRIFT_KEY;   // G3.4b: print/wake record key; `scope: 'repo'` (drift) never shares a plan node's
 ```
 `drive()` in `--json` loop mode ends with the exit record `{event:'exit', code, reason, at, error?}` and returns the CLI code instead of throwing (SPEC §12.8).
