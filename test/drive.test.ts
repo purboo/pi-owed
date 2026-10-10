@@ -390,7 +390,7 @@ test('owner-needed nodes are never touched: open slot with ⊤ items, ready node
   // waiver once a candidate exists (owed waive needs one), as the brief's dispatchHint/clearHint say; "needs the owner" once.
   const blk = f.state().nodes.a!.blocks.find(x => x.state === 'flaky')!;
   // 0.8 (L3.2): a flaky block also offers a ruling, once, after the waivers.
-  const ruleHint = 'or owed rule "<what the writer must change>" --nodes a when the check or test itself must change (the writer fixes it; then the block is cleared by a new candidate\'s rerun, or superseded by a plan entry that changes the check\'s definition, see owed why)';
+  const ruleHint = 'or owed rule "<what the writer must change>" --nodes a when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check\'s definition supersedes it, or the owner waives it once the fixed candidate passes)';
   assert.deepEqual(ownerCommands(f.state(), 'a'), ['owed dispatch a', `after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq}`, ruleHint]);
   const fn = go(f).find(x => x.node === 'a');
   assert.ok(fn?.do === 'notify', JSON.stringify(fn));

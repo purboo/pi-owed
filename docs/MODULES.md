@@ -18,6 +18,8 @@ export class OwedError extends Error { constructor(message: string, readonly cod
 export function parsePlan(text: string): Plan;   // YAML → Plan with defaults; throws OwedError('usage') listing every validation error
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[];   // SPEC §3 downgrade rules; also invariant removed/weakened
 export function checklessWarnings(plan: Plan): string[];   // 0.6.1 H2.2: `warning: node <id> has no checks: …` per node with no checks and no evidence (init/plan output only)
+export function loopWarnings(plan: Plan): string[];   // 0.8 L3.3: per check/invariant with min_tests whose run loops its command (for/while/until … do, seq N): what min_tests actually counts
+export function planWarnings(plan: Plan): string[];   // checklessWarnings then loopWarnings: what owed init / owed plan (CLI, pi) print after the result
 export function globMatch(path: string, glob: string): boolean;  // '**' any depth, '*' within a segment, 'dir/' prefix; use node:path matchesGlob where suitable
 export function matchesAny(path: string, globs: string[]): boolean;
 export const DRIVE_DEFAULTS: DriveConfig;              // {max: 4, repairs: 2, writer: {agent: 'worker'}, reviewer: {agent: 'reviewer'}}
@@ -154,6 +156,8 @@ class Dsa { killAll(sig?); run(rid, specBytes, labels?, cwd?); send(id, to, kind
 // src/drive.ts: decide(state, plan, runs, opts): Action[] (pure); opts.measuring (0.7 K6): nodes with a measurement in flight get no action;
 //   opts.rejected: send/run ids dsa rejected (the attempt's sends from dsa's request state every pass): writer follow-ups leave them out of deliveredRulings (#784 F1)
 // src/drive.ts also (D22): runName(node, attempt, role, n?) (dsa run name in launch specs); deliveredRulings(state, node, attemptRuns, launch, refused?) / rulingMessage(node, role, rules) (ruling steers, SPEC §12.5.1); askingText(node, launch, view) (asking line with dsa's answer address); 0.7 K5: repairEpoch(state, node) ({seq, label}: the repair budget epoch), rulingFollowUp(state, node) (the `ruling` follow-up to a sealed writer, or undefined), thresholdHint(state, node, obligations) (the halt text when the latest two failing runs of a check passed the same count of tests, below min_tests); 0.8 L1: the epoch includes the latest resume (`resume #<seq>`); a waiting node gets only asking notifies; resumeLine(state, node, rid) (the first line of the first writer follow-up after a resume); toArg(to) / callAt(view) (the `to:"<wid>/<key>"` call address of asking notices and halts; `RunView.to` comes from `dsa.toRunView`)
+// src/drive.ts also (0.8 L3.1): a due ruling follow-up (rulingFollowUp, which also lists the node's flaky blocks) precedes the owner-needed notify, row 7 and the stalled halt; at the stalled point a candidate owing only `rulings` sends it to its latest sealed driver reviewer (reviewerRuling) or launches one
+// views.ts flakyRuleHint(node) (0.8 L3.2): the `or owed rule …` hint after a flaky block's waiver (clearHint, decisionCommand, ownerCommands once, status pending items)
 // src/drive.ts also: rejectedFixed(node) / rejectedHalt(node, 'run'|'send', id, reason) (halt text of a dsa rejection, D15.1); blockText(state, candidate, block) (a block in a `stalled:` halt, D15.3)
 // src/drive-run.ts
 export function drive(o: DriveOptions): Promise<number>;   // lock, then one pass (once) or the loop; OwedError('refused') when another driver runs
