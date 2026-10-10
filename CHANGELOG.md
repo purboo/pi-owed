@@ -9,7 +9,7 @@ which invalidated its candidate; the driver then sent a `rebase` follow-up
 (#1378). A moving trunk failed dispatch and plan CAS, and a writes question
 cost a hand-edited plan plus a separate ruling. Separately the pi-zip
 agent's profile showed every op replaying the whole ledger: 9.6-13.5 s per
-op on the wais ledger (about 1558 entries, 85 nodes), with the pi session
+op on the wais ledger (1558-1601 entries, 85-87 nodes), with the pi session
 UI frozen because pi tools run on its main thread. N1 carries candidates
 across measurement-only plan changes, N2 retries CAS under a moving trunk,
 N3 adds `owed amend`, and N4 makes replay fast.
@@ -64,8 +64,9 @@ N3 adds `owed amend`, and N4 makes replay fast.
   plan with only that node's writes widened. It refuses a file whose
   normalized plan sha differs from the ledger's (`plan file has unrecorded
   edits`; a comment-only edit does not count), an unknown or merged node,
-  an empty path list, a path without `+`, an empty note, and `nothing to
-  amend` when every path is already there; removal is not offered. In one
+  an empty path list, a path without `+`, an empty note, no plan path
+  without `--plan`, and `nothing to amend` when every path is already
+  there; removal is not offered. In one
   lock it appends the plan entry exactly as `owed plan` would (same
   authority: a widening is a downgrade, so the owner or an `allow` rule),
   any N1 carry submits, and a `rule` by the same principal for `[<node>]`:
@@ -86,9 +87,9 @@ N3 adds `owed amend`, and N4 makes replay fast.
   | Case                            | before          | 0.10.0          |
   |---------------------------------|-----------------|-----------------|
   | `status`, cold, warm plan cache | 13.5 s / 335 MB | ~0.62 s/~195 MB |
-  | `status`, hot (same process)    | ~13 s           | ~0.40 s         |
+  | `status`, hot (same process)    | not measured    | ~0.40 s         |
   | First run (fills the cache)     | 13.5 s          | 2.7 s           |
-  | Synthetic, 9917 entries         | > 800 s         | 1.2 s           |
+  | Synthetic, 9917 entries         | not measured    | 1.2 s           |
 
   Parsed plans are cached in process and persistently in `<owed
   dir>/cache/plans/<blob sha>.json` as `{v, sha, plan}`, with `v` = cache
