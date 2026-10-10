@@ -86,8 +86,8 @@ export function lastLines(log: string, n?: number): string[];   // last n (defau
 ```
 A job of kind `writes` computes the verdict from `git diff --name-only base commit` and the node's `writes` prefixes; `note` lists violating paths.
 Timeouts kill the whole process group (spawn `detached: true`, `process.kill(-pid)`). Log blobs keep at most the last 1 MiB plus a truncation marker.
-Every process (setup, check, red, strength, invariant, attribution reruns) runs as `[...plan.exec.wrap, 'bash', '-lc', cmd]` with env `{...process.env (without NODE_TEST_CONTEXT and every DSA_* variable), ...plan.exec.env, CI: '1', OWED: '1'}` (SPEC §7.9); the wrapper is killed with the process group.
-`min_tests` applies to every non-red run (check and invariant), never to a red run. A non-red run that exits non-zero with an unknown or zero count is `fail` with the last 5 output lines in the note (SPEC §7.2). A red run whose command exits 126/127 or cannot be spawned is `error` (SPEC §6.2).
+Every process (setup, check, red, strength, invariant, attribution reruns) runs as `[...plan.exec.wrap, 'bash', '-lc', cmd]` with env `{...process.env (without NODE_TEST_CONTEXT and every DSA_* variable except DSA_HOME), ...plan.exec.env, CI: '1', OWED: '1'}` (SPEC §7.9); the wrapper is killed with the process group.
+`min_tests` applies to every non-red run (check and invariant), never to a red run. A non-red run that exits non-zero with an unknown or zero count is `fail` with the last 5 output lines in the note; exit 126/127 with no count is `error` (`command could not run …`, same tail) (SPEC §7.2). cargo `test result:` lines count only at column 0. A red run whose command exits 126/127 or cannot be spawned is `error` (SPEC §6.2).
 
 ## src/reducer.ts  (leaf core, pure: no fs/git/clock)
 ```ts
