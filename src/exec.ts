@@ -13,8 +13,9 @@ function tapCounts(log: string): Counts | undefined {
   const tapPlan = [...log.matchAll(/^1\.\.(\d+)(?:\s+#.*)?\s*$/gm)].at(-1);
   return tapPlan ? { format: 'tap', tests: Number(tapPlan[1]) } : undefined;
 }
+/** cargo prints its summaries at column 0; an indented or `# `-prefixed one is TAP diagnostic text, never counted (review #557). */
 function cargoCounts(log: string): Counts | undefined {
-  const cargo = [...log.matchAll(/test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/g)];
+  const cargo = [...log.matchAll(/^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/gm)];
   return cargo.length ? cargo.reduce<Counts>((c, m) => ({ format: 'cargo', tests: (c.tests ?? 0) + Number(m[1]) + Number(m[2]) + Number(m[3]), pass: (c.pass ?? 0) + Number(m[1]), fail: (c.fail ?? 0) + Number(m[2]), skip: (c.skip ?? 0) + Number(m[3]) }), {}) : undefined;
 }
 export function parseCounts(log: string): Counts | undefined {
@@ -70,9 +71,10 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const inherited: NodeJS.ProcessEnv = { ...process.env };
       // A nested Node test runner must not inherit the parent's IPC/reporting mode.
       delete inherited.NODE_TEST_CONTEXT;
-      // E2.3: no dsa identity (DSA_CALL, DSA_EXEC, DSA_SESSION, …) leaks into a check, so owed commands inside it are not
-      // refused as subagent acts; a variable the plan's exec.env sets explicitly still applies.
-      for (const name of Object.keys(inherited)) if (name.startsWith('DSA_')) delete inherited[name];
+      // E2.3: no dsa call identity (DSA_CALL, DSA_EXEC, DSA_SESSION, …) leaks into a check, so owed commands inside it are
+      // not refused as subagent acts. DSA_HOME is configuration, not identity, and stays; a variable the plan's exec.env
+      // sets explicitly still applies.
+      for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
       // D20: the plan's exec.env over the inherited environment, CI/OWED last; the wrapper argv prefixes bash -lc.
       const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1' };
       const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
@@ -149,10 +151,12 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       if (red && (result.code === 126 || result.code === 127)) throw new Error(`red run command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})`);
       // E2.2: a non-red command that exits non-zero without running a recognizable test (unknown count or zero) is a
       // failed command, not an unparseable log: fail, with its last output lines as the note.
+      // Exit 126/127 with no count: the command never ran, so it says nothing about the code — error, not fail.
+      const tail = (): string => { const t = lastLines(result.log); return `; last output:${t.length ? t.map(l => `\n  ${l}`).join('') : ' (none)'}`; };
+      if (!red && (result.code === 126 || result.code === 127) && !obs.counts) throw new Error(`command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})${tail()}`);
       if (!red && result.code !== 0 && (!obs.counts || obs.counts.tests === 0)) {
-        const tail = lastLines(result.log);
         obs.verdict = 'fail';
-        obs.note = `command exited ${result.code} ${obs.counts ? 'after zero tests' : 'with no recognizable test count'}; last output:${tail.length ? tail.map(l => `\n  ${l}`).join('') : ' (none)'}`;
+        obs.note = `command exited ${result.code} ${obs.counts ? 'after zero tests' : 'with no recognizable test count'}${tail()}`;
       } else {
         if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
         const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
