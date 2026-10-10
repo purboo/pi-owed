@@ -105,7 +105,9 @@ export function mergeJobs(state: State, node: string, m: { facts: CandidateFacts
 export function mergeGuard(state: State, node: string, m: { facts: CandidateFacts; state: StateFacts }): MergeGuard;  // SPEC §6.4 conditions 2–4 (CAS is checked by ops)
 export function adoptJobs(state: State, st: StateFacts): AttestJob[];   // invariants whose key on the adopted state differs from the trunk key and lacks a verdict
 export function genesisProgress(state: State): { ids; observed; failed; pending };   // D24: genesis items (current-plan invariants with a genesis key) by observation
-export function jobCurrent(state: State, job: AttestJob): boolean;   // D24.1: an observation of job is still about a current item (else superseded)
+export function jobCurrent(state: State, job: AttestJob): boolean;   // D24.1: an observation of job is still about a current item (else superseded); an attribution rerun only for an active block (not a superseded one, L2)
+export function checkDefinition(plan: Plan, node: string, id: string): string | undefined;   // L2: canonical {CheckSpec, setup, execKey}; undefined when the check is absent
+export function checkOf(obligation: string): string | undefined;   // L2: the check id of check:/red:/strength:<id>
 export function adoptGuard(state: State, st: StateFacts): AdoptGuard;   // SPEC §6.6 no new debt: {ok, reasons, failed: invariant ids satisfied on trunk but not on st, invItems}; validateDraft applies it to `adopt`
 ```
 Driver (SPEC §12.3), pure:
@@ -194,3 +196,5 @@ D25 (SPEC §2.1, §11): `actor(ctx, dir, as, summary, fields, signal)` refuses o
 `test/<module>.test.ts` with `node:test`. Git tests create temp repos under `os.tmpdir()` with `OWED_DIR` pointing into the temp dir; never touch the real repository's `.git`. Keep CPU low: no parallel heavy work; the machine is shared (run tests with `nice -n 10`).
 
 K1 (0.7, SPEC §7.11): `ops.attest` holds the node's lock `attestLock(node)` = `attest-<first 16 hex of sha256(node)>` (attests of different nodes run in parallel) with `opts.busy` = `attestBusyText(node, owner)`; `OwedError` code `busy` (errors.ts) is CLI exit 75 (`Busy: …`) and a pi tool error `Busy: …`; with `--json` every CLI failure also prints `{"error", "code"}` on stdout. `views.dispatchPacket(spec, attempt, worktree, rules, driver = true)`: `driver` appends `DRIVER_ATTESTS` (drive.ts writerTask uses the default; ops.dispatch passes `by === 'parent:drive'`); exec-block clear hints carry `SKIP_ATTEST`. `ledger.lockWait.ms` is a test hook (default 60 000).
+
+L2 (0.8, SPEC §6.3, §9): replaying a `plan` entry marks `superseded` (with `supersededBy` = its seq) every active or flaky exec block on `check:`/`red:`/`strength:<id>` whose `checkDefinition` differs between `obsPlans.get(block.seq)` and the new plan (absent counts as different). The reducer's `active()` and every view filter treat only `active` and `flaky` as counting; `drive.ts` `manualHalt` too. `views.ts` exports `supersededText(state, block)`, `supersededOf(state, nodes)` and the `SupersededBlock` type; `ReceiptCard.superseded`, `StatusView.superseded` (nodes not merged) and `Report.superseded` (plan entries after `since`; built in `ops.report`) carry them.

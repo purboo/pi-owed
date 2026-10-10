@@ -2,7 +2,7 @@ import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntr
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny, driveConfig } from './plan.ts';
-import { NO_RULINGS, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor } from './reducer.ts';
+import { NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor } from './reducer.ts';
 import { genesisProgress } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
@@ -16,6 +16,8 @@ export interface ReceiptCard {
    * naming the node follows it, else the seq of that ruling. A stale needs-parent block has none (stale wording).
    */
   blocks: (Block & { clear: string; ruling?: 'needed' | number; note?: string })[];
+  /** L2: execution blocks a plan entry superseded (no longer active), with `text` = `#<seq> superseded by plan #<p> (…)`; present only when there are any. */
+  superseded?: SupersededBlock[];
   untested: string[]; downgrades: State['downgrades']; ownerFlags: Entry[];
   /** Latest rebase of the open slot; `rangeDiff` lets a reviewer review only the conflict resolution. */
   rebase?: SlotRebase & { rangeDiff?: string };
@@ -55,6 +57,8 @@ export interface StatusView {
   launches: Record<string, LaunchEntry[]>;
   /** Active review blocks on the current candidates of open attempts that need a parent ruling and have none yet (D18, D18b.4), with the reviewer's note. */
   needsRuling?: (Block & { note: string })[];
+  /** L2: superseded execution blocks of nodes that are not merged; present only when there are any. */
+  superseded?: SupersededBlock[];
   /** Present while genesis items lack observations (D24.5); `measuring` when this process runs their genesis attest. */
   genesis?: GenesisStatus;
 }
@@ -92,6 +96,8 @@ export interface Report {
   escapes: EscapeSummary;
   /** D23 receipts (evidence entries on merged nodes) after `since`. */
   receipts?: EvidenceEntry[];
+  /** L2: execution blocks superseded by a plan entry after `since`; present only when there are any. */
+  superseded?: SupersededBlock[];
 }
 /** D23: files of a manual evidence entry as `path sha12`, then its note (always manual, never measured). */
 export function evidenceText(e: EvidenceEntry): string {
@@ -114,13 +120,29 @@ export function adoptionText(a: AdoptionView): string {
   const who = a.allowance !== undefined ? `adopted by ${a.by} under allowance (plan #${a.allowance})` : `${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : a.channel === 'delegated' ? ' (delegated)' : ''} adopted`;
   return `#${a.seq} ${who} ${a.prior.slice(0, 12)}..${a.commit.slice(0, 12)} (${plural(a.commits, 'commit')} made outside owed, not reviewed by owed); changed: ${paths.join(', ') || 'none'}; note: ${a.note}`;
 }
+/** A block that still counts (active or flaky); cleared and superseded (L2) blocks do not. */
+const countsBlock = (b: Block): boolean => b.state === 'active' || b.state === 'flaky';
+/** L2: a superseded execution block with its audit line. */
+export type SupersededBlock = Block & { supersededBy: number; text: string };
+/** L2: `#<seq> superseded by plan #<p> (check <id> definition changed|removed)`. */
+export function supersededText(s: State, b: Block): string {
+  const id = checkOf(b.obligation) ?? b.obligation, p = b.supersededBy ?? -1;
+  let removed = false;
+  try { removed = checkDefinition(planAt(s, p + 1), b.node, id) === undefined; } catch { /* no plan in force: keep "definition changed" */ }
+  return `#${b.seq} superseded by plan #${p} (check ${id} ${removed ? 'removed' : 'definition changed'})`;
+}
+/** L2: the superseded blocks of `nodes`, in ledger order of the blocks. */
+export function supersededOf(s: State, nodes: readonly NodeState[]): SupersededBlock[] {
+  return nodes.flatMap(n => n.blocks.filter(b => b.state === 'superseded').map(b => ({ ...b, supersededBy: b.supersededBy ?? -1, text: supersededText(s, b) })));
+}
 export function receipt(s: State, entries: readonly Entry[], node: string): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
-  const outOfWrites = outsideWrites(s, node);
+  const outOfWrites = outsideWrites(s, node), superseded = supersededOf(s, [n]);
   return { node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
-    blocks: n.blocks.filter(b => b.state !== 'cleared').map(b => ({ ...b, clear: clearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
+    blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: clearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
+    ...(superseded.length ? { superseded } : {}),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')),
@@ -173,7 +195,8 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
   for (const n of Object.values(s.nodes)) { const runs = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined; if (runs?.launches.length) launches[n.id] = runs.launches; }
   const all = entriesOf(s), needsRuling = Object.values(s.nodes).filter(n => n.slot?.open).flatMap(n => n.blocks.filter(b => currentNeeds(s, b) && awaitingRuling(s, b)).map(b => { const e = all.find(x => x.seq === b.seq); return { ...b, note: e?.kind === 'review' ? e.note ?? '' : '' }; }));
   const waiting = Object.keys(s.nodes).sort().flatMap(id => { const w = waitingFor(s, id); return w ? [{ node: id, ...w }] : []; });
-  return { trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
+  const superseded = supersededOf(s, Object.values(s.nodes).filter(n => !n.merged));
+  return { ...(superseded.length ? { superseded } : {}), trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
 }
 function genesisStatus(s: State): { genesis?: GenesisStatus } {
   const g = genesisProgress(s);
@@ -207,7 +230,7 @@ const withNote = (note: string | undefined): { note?: string } => note === undef
 /** A pending item with the notes of the exec blocks that hold it (status, K2.2). */
 function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockNote[] } {
   const n = s.nodes[i.subject];
-  const notes = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && b.state !== 'cleared' && i.evidence.includes(b.seq)).flatMap(b => { const note = blockNote(s, b); return note === undefined ? [] : [{ seq: b.seq, note }]; });
+  const notes = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && countsBlock(b) && i.evidence.includes(b.seq)).flatMap(b => { const note = blockNote(s, b); return note === undefined ? [] : [{ seq: b.seq, note }]; });
   return notes.length ? { ...i, blockNotes: notes } : i;
 }
 /**
@@ -228,7 +251,7 @@ export function waiverText(s: State, e: WaiveEntry): string {
     : kind === 'rulings' ? 'a new attempt changes the key, and it is owed again'
     : kind === 'evidence' ? 'a different candidate patch or evidence definition changes the key, and it is owed again'
     : 'a different candidate patch changes the key, and it is owed again';
-  const unaccepted = (n?.blocks ?? []).filter(b => b.obligation === o && b.state !== 'cleared' && !((e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
+  const unaccepted = (n?.blocks ?? []).filter(b => b.obligation === o && countsBlock(b) && !((e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
   const blockClear = (b: Block): string => b.kind === 'exec'
     ? `an attribution rerun (owed attest) that confirms the failure clears #${b.seq}${b.state === 'flaky' ? ` (#${b.seq} is flaky: its rerun passed, so only a waiver with --accept-risk ${b.seq} accepts it)` : '; if the rerun passes, #' + b.seq + ' stays as a flaky block that only a waiver with --accept-risk accepts'}`
     : `an ok review that clears #${b.seq}`;
@@ -286,10 +309,10 @@ function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
 export function renderReceipt(v: ReceiptCard): string {
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${v.waiting.after} merges or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${v.waiting.after} merges or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
-  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -330,6 +353,7 @@ export function renderReport(v: Report): string {
     ...list('Merges', v.merges.map(entryLine)),
     ...list('Status changes', v.changes.map(c => `${c.subject}/${c.obligation}: ${c.before ? statusNames[c.before] ?? c.before : 'new'} → ${statusNames[c.after] ?? c.after}`)),
     ...list('Active blocks', v.blocks.map(b => `#${b.seq} ${b.node}/${b.obligation} (${b.kind === 'exec' ? 'execution' : 'review'}, rank ${b.rank}): ${b.clear}`)),
+    ...(v.superseded?.length ? list('Superseded blocks (not active; the plan changed their check)', v.superseded.map(b => `${b.node}/${b.obligation} ${b.text}`)) : []),
     ...list('Waivers', v.waivers.map(entryLine)),
     ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.allowance !== undefined ? allowanceLabel(d) : `${d.by}${d.channel === 'delegated' ? ' (delegated)' : ''}`} ${i.node}: ${i.what}`))),
     ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by}${r.channel === 'delegated' ? ' (delegated)' : ''} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
@@ -407,7 +431,7 @@ export const evidenceCommand = (node: string, id: string, as: string, candidate?
 export function ownerCommands(s: State, node: string): string[] {
   const n = s.nodes[node];
   if (!n) return [];
-  const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && b.state !== 'cleared').map(b => b.seq);
+  const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && countsBlock(b)).map(b => b.seq);
   const live = !!(n.slot?.open && n.candidate);
   if (!live && n.merged && !n.slot?.open) return [];
   const items = live ? n.items.filter(i => i.status === 'D') : [];
@@ -415,7 +439,7 @@ export function ownerCommands(s: State, node: string): string[] {
   const out = n.slot?.open ? [] : [`owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
   const flag = candidateFlag(s, node);
   out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i) : waiveCommand(node, i.obligation, blocks(i.obligation), flag)));
-  for (const b of n.blocks.filter(b => b.state !== 'cleared' && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
+  for (const b of n.blocks.filter(b => countsBlock(b) && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
   if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
   return [...new Set(out)];
 }
@@ -432,7 +456,7 @@ function decisionCommand(s: State, i: ItemView): string {
   const flag = candidateFlag(s, i.subject);
   if (i.obligation === 'approve') return `owed approve ${i.subject}${flag} [--note TEXT] (owner)`;
   if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), ownerAs(), candidate12(s, i.subject));
-  const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && b.state !== 'cleared') ?? [];
+  const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && countsBlock(b)) ?? [];
   if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}${flag}`;
   return waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag);
 }
@@ -444,7 +468,7 @@ function decisionCommand(s: State, i: ItemView): string {
 function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
   if (n && !n.slot?.open) return dispatchHint(n);
-  const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && x.state !== 'cleared').map(x => x.seq);
+  const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && countsBlock(x)).map(x => x.seq);
   const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);
   if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks, flag)}`;
   if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} ${SKIP_ATTEST} (the attribution rerun on the original content clears the block)`;
@@ -477,7 +501,7 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
       deferred: s.deferred.filter(d => d.node === e.node).length, untested: card.untested.length,
       measuredItems, waivedItems, untestedChanges: card.untested, reviewers, ...(manualItems.length ? { manualItems } : {}) };
   });
-  const rejected = open.flatMap(n => n.blocks.filter(b => b.state !== 'cleared')).map(b => ({ seq: b.seq, node: b.node, obligation: b.obligation, kind: b.kind, state: b.state,
+  const rejected = open.flatMap(n => n.blocks.filter(b => countsBlock(b))).map(b => ({ seq: b.seq, node: b.node, obligation: b.obligation, kind: b.kind, state: b.state,
     ...(b.kind === 'exec' ? { failingObs: b.seq } : { reviewer: entries.find(e => e.seq === b.seq)?.by, rank: b.rank }), clear: clearHint(s, entries, b) }));
   const inProgress = nodes.filter(n => (n.phase === 'dispatched' || n.phase === 'submitted') && n.slot).map(n => {
     const at = ts(n.slot!.dispatchSeq), sub = n.phase === 'submitted' && n.candidate ? ts(n.candidate.seq) : undefined;

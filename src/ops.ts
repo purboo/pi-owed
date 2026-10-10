@@ -9,7 +9,7 @@ import { genesisProgress, jobCurrent } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView, escapeSummary, driftText, dispatchPacket } from './views.ts';
+import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -548,7 +548,8 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const recent = entries.filter(included), before = reduce(entries.filter(e => !included(e)),lookup), old = [...Object.values(before.nodes).flatMap(n => n.items),...before.invariants];
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
   const receipts = entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.merge !== undefined && included(e));
-  return {...(receipts.length ? {receipts} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  const superseded = supersededOf(state,Object.values(state.nodes)).filter(b => included({seq:b.supersededBy}));
+  return {...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 export async function verify(o: Context): Promise<VerifyResult> { try { const {entries,state} = await load(await Ledger.open(o.cwd)); return {ok:true,entries:entries.length,head:state.head}; } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; } }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
