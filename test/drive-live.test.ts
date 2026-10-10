@@ -382,6 +382,8 @@ test('H1.3 CLI owed plan: a ready hint when nodes are dispatchable and no driver
     await f.put('p3.json', JSON.stringify(nodes('a', 'b', 'c', 'd')));
     const out = JSON.parse((await f.cli(['plan', 'p3.json', '--json'])).stdout) as Json;
     assert.deepEqual(out.ready, ['b', 'a', 'd']); assert.equal(out.driver, false); assert.equal(out.kind, 'plan');
+    assert.ok(Array.isArray(out.warnings) && (out.warnings as unknown[]).length > 0, 'H2.2 warnings stay alongside the hint');
+    assert.match(r.stdout, /\n(?:.*\n)*.*check.*\n(?:.*\n)*ready: /i, 'the check-less warnings come before the hint line');
     liveLock(f.lock);
     await f.put('p4.json', JSON.stringify(nodes('a', 'b', 'c', 'd', 'e')));
     const live = await f.cli(['plan', 'p4.json', '--json']);
