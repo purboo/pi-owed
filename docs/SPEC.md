@@ -1374,13 +1374,15 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   belong to the pi session that started it. On start (`owed drive`, `--once`,
   `--detach`, tool `owed_drive`) owed reads `DSA_SESSION` from its
   environment — ignored when `DSA_CALL` or `DSA_EXEC` is set (a subagent) or
-  when it is not a session id (`[A-Za-z0-9._:-]`, at most 128 characters),
-  as dsa does — and records it as `session` in `drive.lock` (absent when
+  when it is not a session id as dsa 1.0.31 accepts it (starts with a letter
+  or digit, then up to 127 of `[A-Za-z0-9._:-]`), as dsa does — and records it as `session` in `drive.lock` (absent when
   none). `--detach` passes the starter's value to the detached driver as
   `DSA_SESSION` (and removes an inherited one when the starter has none).
   Every `pi-durable-subagents run` the driver issues passes `--session <id>`
   when a session is recorded; the flag is not part of the request bytes, so a
-  retry passes it again without a conflict. A dsa that refuses the flag (older
+  retry passes it again without a conflict. The dsa client removes
+  `DSA_SESSION` from every dsa child's environment, so dsa never takes a
+  session from it and the lock and what dsa records never disagree. A dsa that refuses the flag (older
   than 1.0.31: `Unknown or repeated option --session`, which records nothing)
   is detected once per driver: the run is repeated without the flag, later
   runs omit it, and the driver logs one line, `dsa does not accept --session

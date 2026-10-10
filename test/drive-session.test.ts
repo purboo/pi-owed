@@ -206,3 +206,50 @@ test('E1.2: with a current dsa the flag is passed on every run and a retry of th
     assert.equal(dsa.sessionRefused, false);
   } finally { await f.done(); }
 });
+
+test('E1.1 (review #556): the session id rule is dsa 1.0.31\'s exactly: it starts with a letter or digit', () => {
+  assert.equal(startingSession({ DSA_SESSION: '-x' }), undefined);
+  assert.equal(startingSession({ DSA_SESSION: '.x' }), undefined);
+  assert.equal(startingSession({ DSA_SESSION: ':x' }), undefined);
+  assert.equal(startingSession({ DSA_SESSION: 'x-.:_9' }), 'x-.:_9');
+  assert.equal(startingSession({ DSA_SESSION: `a${'b'.repeat(127)}` }), `a${'b'.repeat(127)}`, '128 characters');
+  assert.equal(startingSession({ DSA_SESSION: `a${'b'.repeat(128)}` }), undefined, '129 characters');
+});
+
+test('E1.1 (review #556): an inherited "-x" is not a session: the run goes without --session and nothing halts', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('m')));
+  try {
+    await f.lockSpy('m');
+    for (let i = 0; i < 2; i++) { const r = await f.cli(['drive', '--once'], { DSA_SESSION: '-x', DSA_EXEC: '', DSA_CALL: '' }); assert.equal(r.code, 0, r.stderr); }
+    const runs = runsOf(await f.dsaLog());
+    assert.equal(runs.length, 1, JSON.stringify(runs));
+    assert.ok(runs[0]!.exit === 0 && runs[0]!.created && !('session' in runs[0]!), JSON.stringify(runs));
+    assert.equal((await f.entries()).filter(e => e.kind === 'halt').length, 0);
+    assert.ok(!('session' in await f.seenLock('m')));
+  } finally { await f.done(); }
+});
+
+test('E1.2 (review #556): dsa never takes the session from the environment; the lock and dsa agree (session null or explicit vs an inherited DSA_SESSION)', { timeout: 120_000 }, async () => {
+  const f = await rig(planOf(node('n'), node('p')));
+  const prior = process.env.DSA_SESSION;
+  try {
+    await f.lockSpy('n'); await f.lockSpy('p');
+    process.env.DSA_SESSION = 'pi-inherited';   // what a dsa child would inherit from this process
+    const dsa = new Dsa({ bin: FAKE, env: f.env, timeoutMs: 60_000 });
+    const pass = (session: string | null) => drive({ cwd: f.cwd, once: true, dsa, session, log: () => undefined, handleSignals: false });
+    assert.equal(await pass(null), 0);   // dispatch
+    assert.equal(await pass(null), 0);   // launches n and p
+    const runs = runsOf(await f.dsaLog());
+    assert.equal(runs.length, 2, JSON.stringify(runs));
+    assert.ok(runs.every(x => !('session' in x)), `no session recorded by dsa, as in the lock: ${JSON.stringify(runs)}`);
+    assert.ok(!('session' in await f.seenLock('n')));
+    // An explicit session wins over an inherited one, also through the client's own env option.
+    const explicit = new Dsa({ bin: FAKE, env: { ...f.env, DSA_SESSION: 'pi-env-option' }, timeoutMs: 60_000, session: 'pi-explicit' });
+    assert.equal((await explicit.run('explicit-run-1', '{"agent":"worker","task":"x"}', { node: 'zz', role: 'writer' })).outcome, 'applied');
+    const none = new Dsa({ bin: FAKE, env: { ...f.env, DSA_SESSION: 'pi-env-option' }, timeoutMs: 60_000 });
+    assert.equal((await none.run('none-run-1', '{"agent":"worker","task":"y"}', { node: 'zz', role: 'writer' })).outcome, 'applied');
+    const log = runsOf(await f.dsaLog());
+    assert.equal(log.find(x => x.request === 'explicit-run-1')?.session, 'pi-explicit');
+    assert.ok(!('session' in log.find(x => x.request === 'none-run-1')!), JSON.stringify(log));
+  } finally { if (prior === undefined) delete process.env.DSA_SESSION; else process.env.DSA_SESSION = prior; await f.done(); }
+});
