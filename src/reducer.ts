@@ -444,6 +444,9 @@ export function validateDraft(s: State, d: Draft): string[] {
       try { const next = context(s).plans(d.plan); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); } catch { errors.push('Cannot read new plan'); }
       // D21.3: a parent needs no owner when an allowance of the current (prior) plan covers every downgrade.
       if (downgrade && r !== 'owner' && (r !== 'parent' || gaps.length)) errors.push(`Only owner may approve a plan that reduces obligations${r === 'parent' ? `; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}` : ''}`);
+      if (d.note !== undefined && typeof d.note !== 'string') errors.push('plan note must be a string');
+      // D25.5: a delegated owner act that eases acceptance says why (waive, defer and adopt already require theirs).
+      if (downgrade && r === 'owner' && d.channel === 'delegated' && !(typeof d.note === 'string' && d.note.trim())) errors.push('a delegated owner plan update that reduces obligations requires a note saying why (owed plan --note TEXT; owed_plan note)');
       break;
     }
     case 'rule': allow('owner', 'parent'); if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node'); break;

@@ -9,6 +9,8 @@ import * as ops from '../src/ops.ts';
 import { git } from '../src/git.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
+// D25.4: these tests exercise the owner confirmation (dialog or TTY prompt), now the opt-in gate OWED_CONFIRM=owner.
+process.env.OWED_CONFIRM = 'owner';
 
 type Result = Awaited<ReturnType<ToolDefinition['execute']>> & { isError?: boolean };
 /** confirm: the owner's answer to ui.confirm; null means the session has no UI. */

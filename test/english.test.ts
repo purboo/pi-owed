@@ -6,6 +6,8 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-w
 import owed from '../src/extension.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
+// D25.4: these tests exercise the owner confirmation (dialog or TTY prompt), now the opt-in gate OWED_CONFIRM=owner.
+process.env.OWED_CONFIRM = 'owner';
 
 const cjk = /[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]/;
 function english(value: unknown, context: string) {

@@ -97,7 +97,7 @@ export function renderAdoptPreview(p: AdoptPreview, note: string): string {
 /** prior..commit, commit count, changed paths and note of one adoption. */
 export function adoptionText(a: AdoptionView): string {
   const paths = a.changed.length > 20 ? [...a.changed.slice(0, 20), `… (+${a.changed.length - 20} more)`] : a.changed;
-  const who = a.allowance !== undefined ? `adopted by ${a.by} under allowance (plan #${a.allowance})` : `${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : ''} adopted`;
+  const who = a.allowance !== undefined ? `adopted by ${a.by} under allowance (plan #${a.allowance})` : `${a.by}${a.channel === 'flag' ? ' (flag weak confirmation)' : a.channel === 'delegated' ? ' (delegated)' : ''} adopted`;
   return `#${a.seq} ${who} ${a.prior.slice(0, 12)}..${a.commit.slice(0, 12)} (${plural(a.commits, 'commit')} made outside owed, not reviewed by owed); changed: ${paths.join(', ') || 'none'}; note: ${a.note}`;
 }
 export function receipt(s: State, entries: readonly Entry[], node: string): ReceiptCard {
@@ -197,7 +197,7 @@ export function renderStatus(v: StatusView): string {
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
-  const head = `#${e.seq} ${e.by}${e.channel === 'flag' ? ' (flag weak confirmation)' : ''}`;
+  const head = `#${e.seq} ${e.by}${e.channel === 'flag' ? ' (flag weak confirmation)' : e.channel === 'delegated' ? ' (delegated)' : ''}`;
   switch (e.kind) {
     case 'merge': return `${head} merged ${e.node} → ${e.commit.slice(0, 12)}`;
     case 'waive': return `${head} waived ${e.node}/${e.obligation}: ${e.reason}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(x => `#${x}`).join(', ')})` : ''}`;
@@ -206,7 +206,7 @@ function entryLine(e: Entry): string {
     case 'dispatch': return `${head} dispatched ${e.node} attempt ${e.attempt}${e.overlaps?.length ? ` (allowed writes overlap with ${e.overlaps.join(', ')})` : ''}`;
     case 'rebase': return `${head} rebased ${e.node} attempt ${e.attempt}: ${e.from.slice(0, 12)} → ${e.base.slice(0, 12)}`;
     case 'abandon': return `${head} abandoned ${e.node} attempt ${e.attempt}${e.reason ? `: ${e.reason}` : ''}`;
-    case 'plan': return `${head} updated plan${e.path ? ` from ${e.path}${e.rev ? ` at ${e.rev.slice(0, 12)}` : ''}` : ''}${e.downgrades.length ? `, downgrades ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ')}` : ''}`;
+    case 'plan': return `${head} updated plan${e.path ? ` from ${e.path}${e.rev ? ` at ${e.rev.slice(0, 12)}` : ''}` : ''}${e.downgrades.length ? `, downgrades ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ')}` : ''}${e.note ? `: ${oneLine(e.note)}` : ''}`;
     case 'rule': return `${head} ruling (${e.nodes === '*' ? 'all nodes' : e.nodes.join(', ')}): ${e.text}`;
     case 'review': return `${head} reviewed ${e.node}/${e.obligation ?? 'review'} ${e.verdict} rank=${e.rank}${e.note ? `: ${e.note}` : ''}`;
     case 'escape': return `${head} recorded escape ${e.node} (merge #${e.merge}, ${e.class} ${escapeLabels[e.class]}): ${e.note}${e.evidence ? ` [${e.evidence}]` : ''}`;
@@ -276,12 +276,16 @@ export interface BriefMerged {
   manualItems?: string[];
 }
 export interface BriefBlock { seq: number; node: string; obligation: string; kind: Block['kind']; state: Block['state']; failingObs?: number; reviewer?: string; rank?: number; clear: string }
+/** One delegated owner act (D25.5): kind, node, what it did (downgrade items, waived obligation, adopted commit, …) and why. */
+export interface BriefDelegated { seq: number; ts: string; by: string; kind: Entry['kind']; node?: string; what: string; note: string }
 export interface BriefProgress { node: string; phase: 'dispatched' | 'submitted'; attempt: number; dispatchSeq: number; dispatchedAt: string; ageMs: number; submitSeq?: number; submittedAt?: string; submitAgeMs?: number }
 export interface Brief {
   since: number | string; now: string;
   decisions: BriefDecision[]; merged: BriefMerged[]; rejected: BriefBlock[]; inProgress: BriefProgress[];
   /** Owner adoptions of trunk commits made outside owed after `since` (shown only when there are any). */
   adoptions: AdoptionView[];
+  /** D25.5: owner entries with channel `delegated` after `since`, in ledger order (the brief's first section, shown when there are any). */
+  delegated: BriefDelegated[];
   totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number };
 }
 const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
@@ -291,6 +295,20 @@ const waiveCommand = (node: string, obligation: string, risks: number[]): string
 const dispatchHint = (n: NodeState): string => n.merged ? `${n.id} is merged; no attempt can clear this` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
 /** D23: the command that records manual evidence `id` of `node` as principal `as`. */
 export const evidenceCommand = (node: string, id: string, as: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}`;
+/**
+ * D25.6: commands the main agent (the delegated owner) can run to resolve an owner halt of `node`: the brief's command
+ * for each owner item still owed, a waiver for every other item still owed on the open candidate, and a new attempt.
+ */
+export function ownerCommands(s: State, node: string): string[] {
+  const n = s.nodes[node];
+  if (!n) return [];
+  const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && b.state !== 'cleared').map(b => b.seq);
+  const items = n.slot?.open && n.candidate ? n.items.filter(i => i.status === 'D') : [];
+  const out = items.map(i => i.discharger === 'owner' ? decisionCommand(s, i) : waiveCommand(node, i.obligation, blocks(i.obligation)));
+  for (const b of n.blocks.filter(b => b.state !== 'cleared' && !items.some(i => i.obligation === b.obligation))) out.push(waiveCommand(node, b.obligation, blocks(b.obligation)));
+  if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
+  return [...new Set(out)];
+}
 /** The command that removes an owner-queue item from the owner's queue. */
 function decisionCommand(s: State, i: ItemView): string {
   if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
@@ -352,16 +370,37 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
   });
   const count = (phase: NodeState['phase']): number => nodes.filter(n => n.phase === phase).length;
   const adoptions = s.adoptions.filter(a => { const e = entries.find(x => x.seq === a.seq); return !!e && included(e); });
-  return { since, now: new Date(now).toISOString(), decisions, merged, adoptions, rejected, inProgress,
+  const delegated = entries.filter(e => e.channel === 'delegated' && e.by.startsWith('owner:') && included(e)).map(delegatedAct);
+  return { since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, rejected, inProgress,
     totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: count('blocked') } };
 }
+/** D25.5: one delegated owner entry as kind, node, what it did and its note or reason. */
+function delegatedAct(e: Entry): BriefDelegated {
+  const base = { seq: e.seq, ts: e.ts, by: e.by, kind: e.kind };
+  switch (e.kind) {
+    case 'plan': return { ...base, what: e.downgrades.length ? `downgrades ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ')}` : `plan update${e.path ? ` from ${e.path}` : ''}`, note: e.note ?? '' };
+    case 'waive': return { ...base, node: e.node, what: `waived ${e.obligation}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(x => `#${x}`).join(', ')})` : ''}`, note: e.reason };
+    case 'defer': return { ...base, node: e.node, what: `deferred ${e.items.map(i => i.id).join(', ')}`, note: e.reason };
+    case 'adopt': return { ...base, what: `adopted ${e.trunk} ${e.prior.slice(0, 12)}..${e.commit.slice(0, 12)} (${plural(e.commits, 'commit')}, ${plural(e.changed.length, 'changed path')})`, note: e.note };
+    case 'review': return { ...base, node: e.node, what: `${e.obligation === 'approve' ? (e.verdict === 'ok' ? 'approved' : 'blocked approval') : `reviewed ${e.obligation ?? 'review'} ${e.verdict} rank ${e.rank}`}`, note: e.note ?? '' };
+    case 'evidence': return { ...base, node: e.node, what: e.merge !== undefined ? `receipt ${e.id} (merge #${e.merge})` : `manual evidence ${e.id}`, note: e.note };
+    case 'genesis': return { ...base, what: `initialized ledger, trunk ${e.trunk} ${e.commit.slice(0, 12)}`, note: '' };
+    case 'rule': return { ...base, what: `ruling (${e.nodes === '*' ? 'all nodes' : e.nodes.join(', ')})`, note: e.text };
+    case 'escape': return { ...base, node: e.node, what: `escape (merge #${e.merge}, ${e.class})`, note: e.note };
+    case 'abandon': return { ...base, node: e.node, what: `abandoned attempt ${e.attempt}`, note: e.reason };
+    default: return { ...base, ...('node' in e && typeof e.node === 'string' ? { node: e.node } : {}), what: e.kind, note: '' };
+  }
+}
+const delegatedText = (d: BriefDelegated): string => `#${d.seq} ${d.by} ${d.kind}${d.node ? ` ${d.node}` : ''}: ${oneLine(d.what)}${d.note ? ` — ${oneLine(d.note)}` : ''}`;
 function age(ms: number): string {
   const m = Math.floor(ms / 60_000), h = Math.floor(m / 60), d = Math.floor(h / 24);
   return d ? `${d}d${h % 24}h` : h ? `${h}h${m % 60}m` : m ? `${m}m` : `${Math.floor(ms / 1000)}s`;
 }
 export function renderBrief(v: Brief): string {
   const section = (title: string, lines: string[]) => [`${title}${lines.length ? ` (${lines.length}):` : ': none'}`, ...lines.map(l => `  ${l}`)];
-  return [`Brief (since ${v.since === -1 ? 'start' : typeof v.since === 'number' ? `#${v.since}` : v.since})`,
+  const since = v.since === -1 ? 'start' : typeof v.since === 'number' ? `#${v.since}` : v.since;
+  return [`Brief (since ${since})`,
+    ...(v.delegated?.length ? section(`Owner acts (delegated) since ${since}`, v.delegated.map(delegatedText)) : []),
     ...section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)),
     ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.manualItems?.length ? `, ${m.manualItems.length} manual (${m.manualItems.join(', ')})` : ''}${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
     ...(v.adoptions?.length ? section('Adopted outside owed (owner decisions)', v.adoptions.map(adoptionText)) : []),

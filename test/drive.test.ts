@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { canonical, sha256 } from '../src/canon.ts';
 import { blockText, decide, driverSlot, rejectedFixed, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, runLabels, projectId, entriesOf } from '../src/reducer.ts';
-import { reviewPacket, dispatchPacket } from '../src/views.ts';
+import { reviewPacket, dispatchPacket, ownerCommands } from '../src/views.ts';
+/** D25.6: the clause naming the commands the main agent can run, appended to owner halts and notifications. */
+const resolves = (s: State, node: string): string => `; the main agent resolves it with: ${ownerCommands(s, node).join(' | ')}`;
 import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
 import { parsePlan } from '../src/plan.ts';
@@ -376,7 +378,7 @@ test('owner-needed nodes are never touched: open slot with ⊤ items, ready node
   const r = submitted(); r.obs('check:unit', 'pass'); r.obs('check:unit', 'fail');
   assert.match(ownerNeeded(r.state(), 'a') ?? '', /check:unit/);
   const n1 = act(r, runsOf(okWriter()));
-  assert.ok(n1?.do === 'notify' && /^a: needs the owner \(check:unit: .*\); the driver leaves it alone$/.test(n1.text), JSON.stringify(n1));
+  assert.ok(n1?.do === 'notify' && /^a: needs the owner \(the main agent decides; owed lists the command\): check:unit: .*; the driver leaves it alone; the main agent resolves it with: owed waive a check:unit .*$/.test(n1.text), JSON.stringify(n1));
   // Flaky block (attribution rerun passed), attempt abandoned: the ready node is not re-dispatched.
   const f = submitted(); f.obs('writes', 'pass'); f.obs('check:unit', 'fail');
   f.submit('2'); f.obs('check:unit', 'pass', { attribution: true, key: 'a-check:unit-1', commit: 'ac1', base: 's0' });
@@ -560,7 +562,7 @@ test('D11: the slot reviewer oks c2 but a stale closure-review block stays activ
   r.review('ok', 'reviewer:drive-a-1-1', 1);
   const a = act(r, runsOf(okWriter(), view(R(2), 'sealed', { status: 'ok' })), { applied: applied(r) });
   assert.ok(a?.do === 'halt' && a.needs === 'owner', JSON.stringify(a));
-  assert.equal(a.reason, `stale review block #${blk.seq} closure-review rank 2 by reviewer:drive-a-1-1 still active and no reviewer run of candidate #${r.state().nodes.a!.candidate!.seq} is running; the driver cannot clear it`);
+  assert.equal(a.reason, `stale review block #${blk.seq} closure-review rank 2 by reviewer:drive-a-1-1 still active and no reviewer run of candidate #${r.state().nodes.a!.candidate!.seq} is running; the driver cannot clear it${resolves(r.state(), 'a')}`);
 });
 
 test('D11: an active rank-1 block by another principal → the slot packet asks for rank 2, and that ok clears it', () => {
@@ -640,7 +642,7 @@ test('D12 liveness catch-all: not accepted, nothing unsealed, no other row → s
   assert.equal(s.nodes.a!.accepted, false);
   assert.deepEqual(s.nodes.a!.items.filter(i => i.status !== 'E').map(i => i.obligation), ['rulings']);
   const rulings = s.nodes.a!.items.find(i => i.obligation === 'rulings')!;
-  assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }))), { do: 'halt', node: 'a', attempt: 1, reason: `stalled: rulings ${rulings.mark} ${rulings.detail}`, needs: 'owner' });
+  assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }))), { do: 'halt', node: 'a', attempt: 1, reason: `stalled: rulings ${rulings.mark} ${rulings.detail}${resolves(r.state(), 'a')}`, needs: 'owner' });
   // With a run still live it does not halt; the running writer lacks the ruling, so it gets it as a steer (D22.2a).
   const live = act(r, runsOf(view(W(), 'running'), view(R(1), 'sealed', { status: 'ok' })));
   assert.ok(live?.do === 'send' && live.reason === 'ruling' && live.sendKind === 'steer', JSON.stringify(live));
@@ -656,7 +658,7 @@ test('D15.3: a stalled: halt lists each active block with obligation, principal,
   s.nodes.a!.blocks.push({ seq: obs.seq, node: 'a', obligation: 'check:gone', kind: 'exec', key: 'old-key', state: 'active' });
   const rulings = s.nodes.a!.items.find(i => i.obligation === 'rulings')!;
   const a = decide(s, s.plan, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), optsOf(r)).find(x => x.node === 'a');
-  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'owner', reason: `stalled: rulings ${rulings.mark} ${rulings.detail}; active blocks #${obs.seq} check:gone by executor:owed stale` });
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'owner', reason: `stalled: rulings ${rulings.mark} ${rulings.detail}; active blocks #${obs.seq} check:gone by executor:owed stale${resolves(s, 'a')}` });
   // A judgment block on the current candidate's key names the candidate and the rank.
   const blk = r.review('block', 'reviewer:human', 1);
   const s2 = r.state(), b = s2.nodes.a!.blocks.find(x => x.seq === blk.seq)!;

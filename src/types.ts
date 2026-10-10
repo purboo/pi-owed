@@ -2,7 +2,8 @@
 
 export type Role = 'owner' | 'parent' | 'writer' | 'reviewer' | 'executor';
 export interface Principal { role: Role; id: string }
-export type Channel = 'tty' | 'pi-confirm' | 'flag';
+/** How an owner act was authorized: a TTY prompt, a pi dialog, `--i-am-owner` (flag), or delegated to the main agent (D25: no human step). */
+export type Channel = 'tty' | 'pi-confirm' | 'flag' | 'delegated';
 
 // ---------- plan ----------
 export interface CheckSpec {
@@ -92,7 +93,7 @@ export interface Counts { tests?: number; pass?: number; fail?: number; skip?: n
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; state: StateFacts }
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
-export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string }
+export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*' }
 export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
 export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts }
