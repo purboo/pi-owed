@@ -132,6 +132,25 @@ recorded `downgrades` field of the plan entry (and the confirmation list of
 `owed_plan`) does not list it, as for `setup`. Plans without `exec` behave
 exactly as in 0.4.1; a plan with `exec` needs owed ≥ 0.5.0 to replay.
 
+### 3.3 Owner approval and manual evidence (D23)
+
+Two optional node fields add obligations no executor can measure (§6.2 items 8–9):
+
+```yaml
+    approve: owner             # the only value: obligation `approve`, discharged by the owner only
+    evidence:                  # obligations `evidence:<id>`, discharged by `owed evidence` (§8)
+      - id: ui                 # ^[A-Za-z0-9][A-Za-z0-9._-]*$, unique in the node
+        what: "looked at the real page"   # non-empty
+        by: reviewer           # reviewer | parent | owner (default reviewer); the owner always qualifies
+```
+
+Unknown keys and bad values are errors. A node without them gets neither key in
+the stored plan (its canonical form, so a 0.4 plan's sha, is unchanged).
+Downgrades: `approve removed`; `evidence <id> removed`; `evidence <id>
+weakened` when its `by` changes to a role other than `owner`. Adding either, or
+changing an evidence `what` (a new key), is not a downgrade; it changes the node
+spec and so invalidates the open candidate (§3).
+
 ## 4. Items and keys
 
 An item is `(subject, obligation, key)`; status is evaluated per item.
@@ -181,7 +200,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer | `{node, attempt, commit}` | candidate claim (speech) |
 | `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate |
-| `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5) |
+| `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5); on obligation `approve` (D23, §6.2 item 8) only by the owner (rank 3) |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
 | `defer` | owner | `{node, items: {id, key}[], reason}` | deferral of invariant items for one merge (stays debt) |
 | `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot; `reason` is the `--note` text |
@@ -194,6 +213,7 @@ ran: a remote-host wrapper is trusted by its argv.
 | `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; strict fields |
 | `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing`; strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
+| `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
 
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
 harness, materialization failure) is ⊥: no information, no block.
@@ -238,6 +258,21 @@ harness, materialization failure) is ⊥: no information, no block.
 7. `strength:<id>` for each check with `mutants`; executor observation (§7):
    `pass` means the check killed at least `min_kill` of the base's mutants. A
    `fail` is an execution block like any other. On merge it keeps the candidate's key.
+8. `approve` iff the node has `approve: owner` (D23). Key
+   `H({o:"approve", patch})` (patch as for review). E ⟺ a `review` entry on
+   obligation `approve`, verdict ok, by the owner (rank 3) on the current key;
+   reviews of `approve` by any other role are refused. An owner block on
+   `approve` is a judgment block (discharger owner), cleared by a later owner
+   ok on the current key (any owner id). Discharger owner. Never measured.
+9. `evidence:<id>` for each `evidence` item (D23). Key
+   `H({o:"evidence", id, what, patch})`. E ⟺ an `evidence` entry on the
+   current key with at least one file, by the item's `by` role or the owner, by
+   a principal that is not a writer of the node (any attempt; same rule as
+   reviews). The ledger refuses other evidence on an open candidate (undeclared
+   id, wrong role, a writer, no files). Discharger: the `by` role. Always
+   shown as manual, never as measured; the executor never runs it.
+   The approve and evidence keys are added to the submit facts by `owed
+   submit`; the ledger refuses a submit whose keys are not derived from its patch.
 
 ### 6.3 Status of an item
 - Executor verdicts on the same item join in the lattice ⊥ < pass, fail < ⊤
@@ -468,7 +503,19 @@ escape(o: {cwd, node, merge, class, note, evidence?, as, channel?}): Promise<Ent
 decoyDigest(text: string): {digest}                      // pure helper; parses the reveal JSON, writes nothing
 decoyCommit(o: {cwd, digest, as, channel}): Promise<Entry>
 decoyReveal(o: {cwd, payload: string, as, channel}): Promise<Entry>   // payload = reveal JSON text
+approve(o: {cwd, node, note?, block?, as, channel, candidate?: {seq, commit}}): Promise<Entry>   // D23: owner only; review entry on obligation approve, rank 3; candidate = the confirmed one
+approvePreview(o: {cwd, node}): Promise<{node, seq, commit, base, changed}>   // D23: what the owner approves (no effect)
+evidence(o: {cwd, node, id, files: string[], note, as, channel?, expect?, candidate?: {seq, commit}}): Promise<EvidenceEntry>   // D23: candidate evidence or receipt; expect = files a dialog showed, candidate = the candidate it showed
+evidencePreview(o: {cwd, node}): Promise<{node, candidate?: {seq, commit, base}, merge?}>   // D23: where evidence would be recorded (no effect)
+evidenceFiles(o: {cwd, files: string[]}): Promise<EvidenceFile[]>   // D23: read + sha256 + bytes; repository-relative path when inside the repository
 ```
+
+The confirmed candidate is the one approved (review ruling #389): `approve` and
+`evidence` given `candidate` (the submit seq and commit an owner confirmed)
+refuse under the lock with `candidate changed since confirmation; nothing
+recorded` when the node's current open candidate differs (a resubmit, rebase or
+abandon during the confirmation); the CLI approve prompt and the pi
+`owed_approve` / owner `owed_evidence` (candidate mode) dialogs always pass it.
 
 Repository root. Every path owed derives for the repository (dispatch worktree
 paths, gc, `info/exclude`) uses the **main worktree root** (ruling #122):
@@ -671,6 +718,19 @@ while genesis items lack observations.
   section: escape counts by class with each escape, decoys caught / escaped /
   pending with each revealed decoy, unrevealed commitments and the escape rate
   (cumulative, §6.5; `--json` returns it as `escapes`).
+- **Manual obligations (D23)**: `approve` reads `✔ approved (<owner>, <channel>)`
+  (pending: `⊥ awaiting owner approval`); `evidence:<id>` reads `✔ evidenced
+  (manual) by <who>` with each file as `path sha12` and the note (pending:
+  `⊥ awaiting manual evidence`); their detail ends `satisfied (manual)`. They
+  are never counted or labelled as measured: the brief's Merged line counts
+  them as `N manual (<obligations>)` (`--json` `manualItems`, present only when
+  non-empty). An approve block's hint is `owed approve <node>`; the brief's
+  owner command for a pending approve is `owed approve <node>`, for owner
+  evidence `owed evidence <node> <id> --file <path> --note … --as owner:human`.
+  Receipts (evidence on a merged node) are listed by `why`
+  (`Receipt #seq <node>/<id> by <who> (merge #m): files …; note: …`, `--json`
+  `receipts`) and `report` (`Receipts (manual, informational)` for receipts
+  after `since`, `--json` `receipts`); both present only when non-empty.
 - **Brief** (`brief [--since seq|ISO]`, `briefView`/`renderBrief`): a morning
   summary, one line per item, sections in this order:
   1. *Needs your decision* — the owner queue (node and trunk items with status D
@@ -735,7 +795,15 @@ after the confirmation is refused),
 no ledger write, no owner confirmation), `gc [--dry-run]` (parent/owner), and
 `drive [--once] [--max N]` (the driver, §12.7; always `parent:drive`, no `--as`),
 `drive --detach [--max N]`, `drive --status [--json]`, `drive --stop [--now]`
-(the background driver, §12.8).
+(the background driver, §12.8),
+`approve <node> [--note TEXT] [--block]` (D23: owner, default `owner:human`, TTY
+or `--i-am-owner`; `--block` records an owner block; before the prompt, and also
+with `--i-am-owner`, it prints to stderr `Approve node <node>: candidate <commit>
+(submit #<seq>), base <base>, N changed files` and approves only that candidate) and
+`evidence <node> <id> [--file PATH]... --note TEXT [--as role:id]` (D23: default
+`parent:cli`; `--file` may repeat, paths relative to the cwd, hashed when
+recorded; stored repository-relative when inside the repository, else absolute;
+an owner `--as` prompts like other owner commands).
 `--as role:id` sets the principal (default `parent:cli`; `submit` and `rebase`
 default to the slot's writer when run inside its worktree). Owner commands prompt on a TTY
 unless `--i-am-owner` (recorded as `channel: flag`). Exit codes: 0 ok, 1 refused
@@ -811,6 +879,8 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `as` | plan update; a downgrade needs the owner |
 | `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:human`, owner only) | initialize the ledger (§11.1) |
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `as` | owner waiver |
+| `owed_approve` | `node`, `note?`, `block?`, `as` (default `owner:human`, owner only) | owner approval (D23); the dialog shows `Approve node <node>` (or `Block approval of node <node>`), `Candidate: <commit> (submit #<seq>)`, `Base: <base>`, `Changed files: <n>`, then the note; only that candidate is approved (§8) |
+| `owed_evidence` | `node`, `id`, `files?`, `note`, `as` (reviewer/parent/owner) | manual evidence or receipt (D23); an owner gets a dialog showing `Candidate: <commit> (submit #<seq>)` and `Base: <base>` (or `Receipt on merge #<m>`), `Files (N):` as `path sha12 (bytes)` and the note; the recording is refused if the files or the candidate changed after the dialog |
 | `owed_defer` | `node`, `items`, `reason`, `as` | owner deferral |
 | `owed_escape` | `node`, `merge`, `class`, `note`, `evidence?`, `as` | escape record (parent/owner) |
 | `owed_adopt` | `commit?`, `note`, `as` (default `owner:human`) | adopt trunk commits made outside owed (owner); the dialog shows prior..commit, the commit count, the changed paths and the note, and the confirmed commit is the one adopted. Changed paths: a `Changed paths (N):` line, then up to 50 paths one per line (indented, escaped as below); beyond 50, the first 50 and then the line `… +M more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>` (M = N − 50, the 12-character prior and adopted commits) |
@@ -991,6 +1061,21 @@ dispatch:` with `- #seq text`); the note of a needs-parent block quotes its
 ruling (`ruling #seq: text`), also when that ruling predates the dispatch (a
 block from an earlier attempt). The re-review acknowledges them through
 `ack_rulings` as before.
+
+Owner approval and manual evidence (D23). After the rows above (attest, needs
+a parent ruling, measured repair, reviewer launches, review-missing, review
+blocks), when every unsatisfied item of the candidate is `approve` or
+`evidence:<id>` and the node has no active or flaky block, the action is a halt
+needing `owner` while `approve` is pending, else `human`, with one clause per
+item: `awaiting owner approval of candidate <commit12>: owed approve <node>
+[--note TEXT] (owner)`, `awaiting manual evidence evidence:<id> (<what>) by
+<role>: owed evidence <node> <id> --file <path> --note "<what was checked>" --as
+<role>:<id>`. It also halts while the writer still runs; it never halts for them
+earlier. The owner's approval or an evidence entry clears the halt (§12.3); the
+driver then halts again for what remains or merges. An owner block on `approve`
+is an owner decision (`ownerNeeded`: notify only). The review packet describes
+`approve` as the owner's and an evidence item by its role; for `by: reviewer`
+it gives the reviewer's `owed evidence` command.
 
 ### 12.6 Review packet (D5)
 
