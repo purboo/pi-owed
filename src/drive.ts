@@ -724,7 +724,7 @@ export function resumeLine(s: State, node: string, rid: string): string | undefi
  */
 export function askingText(node: string, l: LaunchEntry, v: RunView): string {
   const qs = v.questions ?? [];
-  if (!qs.length) return `${node}: ${l.role} run ${l.rid} is asking (no question reported; see pi-durable-subagents describe --key ${l.rid}); the driver never answers`;
+  if (!qs.length) return `${node}: ${l.role} run ${l.rid}${callAt(v)} is asking (no question reported; see pi-durable-subagents describe --key ${l.rid}); the driver never answers`;
   return qs.map(q => {
     const to = q.to ?? v.to ?? l.rid;
     return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", ${toArg(to)}, qid:${JSON.stringify(q.qid)}, message:"…"}; or: pi-durable-subagents send --request <id> --to ${to} --kind answer --qid ${q.qid} --rev ${q.rev} --message @<file>`;

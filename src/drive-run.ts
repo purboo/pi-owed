@@ -639,7 +639,7 @@ export class Driver {
           // D14.1/D15.1: a rejection is a verdict: halt in this pass. The id and bytes are fixed for the attempt, so a
           // cleared halt retries the same request and dsa rejects it again; the halt names the recovery (abandon).
           if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'run', a.rid, r.reason)); return done('rejected', false, `${r.reason}; halted`, extra); }
-          if (r.outcome === 'conflict') { await this.halt(a.node, a.attempt, `dsa request-conflict on run ${a.rid} (recorded content differs${r.state ? `, state ${r.state}` : ''}); never retried with other bytes`); return done('conflict', false, 'halted', extra); }
+          if (r.outcome === 'conflict') { const to = callAt({ rid: a.rid, state: 'running', ...(this.facts.lastTo.has(a.rid) ? { to: this.facts.lastTo.get(a.rid)! } : {}) }); await this.halt(a.node, a.attempt, `dsa request-conflict on run ${a.rid}${to} (recorded content differs${r.state ? `, state ${r.state}` : ''}); never retried with other bytes`); return done('conflict', false, 'halted', extra); }
           return done('pending', false, r.reason ?? 'retry next pass', extra);
         }
         case 'send': {
