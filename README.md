@@ -387,10 +387,18 @@ owner halts list the command that resolves them). A ruling, submit, review,
 rebase or abandon on the node clears a halt, and the next pass resumes. A ruling recorded while a
 driver-launched writer or reviewer call is running reaches it as a steer
 (reason `ruling`, recorded) once the node has nothing else to do; sealed calls
-get rulings with the next repair, and reviewers still acknowledge them with
-`--ack-rulings`. Launch entries and repair follow-ups record the rulings their
+get rulings with the next follow-up (submit, rebase and repair follow-ups list
+the undelivered rulings first), and reviewers still acknowledge them with
+`--ack-rulings`. Launch entries and follow-ups record the rulings their
 message carried, so a ruling recorded while one is being sent is steered
-afterwards. Calls you launched by hand stay yours to steer. Driver calls
+afterwards. A ruling naming the node gives the attempt a fresh repair budget
+(`repairs` counts the repairs since the latest such ruling or plan change of the
+node's spec), and a sealed writer the driver would otherwise halt for (finished
+without submitting, repairs exhausted, stalled) gets it as one `ruling`
+follow-up instead; never while a reviewer run of the candidate is running or
+when the candidate has no block. A check that ran the same number of passing
+tests twice, below its `min_tests`, halts for the parent (`the plan's threshold
+may be wrong`) instead of another repair. Calls you launched by hand stay yours to steer. Driver calls
 carry a dsa run name (`owed <node>#<attempt> writer` / `owed <node>#<attempt>
 reviewer <n>`). An asking call is printed with dsa's answer address and both
 answer forms: the pi `subagents` send call (`to`, `qid`) and the CLI command. A halt

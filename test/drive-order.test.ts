@@ -169,7 +169,7 @@ test('G3.2: rebase with a repairable block: one repair carrying the rebase instr
   assert.ok(!a.message.includes('plan changed'));
   // Repairs exhausted: halt instead.
   const e = act(r, runsOf(sealed(W())), { repairs: 0 });
-  assert.ok(e?.do === 'halt' && /^repairs exhausted \(0 of 0\): review block #\d+ review/.test(e.reason), JSON.stringify(e));
+  assert.ok(e?.do === 'halt' && /^repairs exhausted \(0 of 0 since dispatch\): review block #\d+ review/.test(e.reason), JSON.stringify(e));
   // Review #680 (a): an unruled needs-parent block (alone) halts row 8 before the rebase follow-up; once ruled, the
   // block is repaired with the rebase instructions in one follow-up.
   const q = rig(); q.dispatch(); q.launchWriter(); q.submit(); q.pass();
@@ -213,7 +213,7 @@ test('G3.3 wais timeline: needs-parent block → halt → plan update → ruling
   // Identical content once more: repairs (2) exhausted → halt; still no reviewer run.
   r.submit('1'); r.pass();
   const h = act(r, runsOf(sealed(W())));
-  assert.ok(h?.do === 'halt' && /^repairs exhausted \(2 of 2\)/.test(h.reason), JSON.stringify(h));
+  assert.ok(h?.do === 'halt' && h.reason.startsWith(`repairs exhausted (2 of 2 since ruling #${ruling.seq})`), JSON.stringify(h));
   assert.equal(reviewers(), 1, 'only the reviewer run of the first candidate');
   assert.deepEqual(reasons(), ['repair', 'repair']);
   // Real new content: the block is stale, so the slot re-review runs (row 12) as before.
