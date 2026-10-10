@@ -470,7 +470,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
   const { entries } = await load(ledger), e = await amendEdit(o,entries,before), p = await storePlan(ledger,e.next);
   const limit = o.note.trim(), widened = e.added.map(x => `+${x}`).join(', '), notCarried: NotCarried[] = [];
   return ledger.withLock(async () => {
-    const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:`amend ${o.node}: writes ${widened}. Limit: ${limit}`, notCarried },ledger,p,loaded.state);
+    const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:`amend ${o.node}: writes ${widened}. Limit: ${limit}`, notCarried },ledger,p,before);
     if (latest.state.nodes[o.node]?.merged) throw new OwedError(`Node ${o.node} is merged; amend widens the writes of a node that is not merged`);
     let now: string; try { now = await readFile(e.file,'utf8'); } catch (x) { throw new OwedError(`cannot read ${e.path}: ${(x as NodeJS.ErrnoException).code ?? String(x)}; nothing recorded`); }
     if (now !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while amending; nothing recorded`);
