@@ -12,6 +12,7 @@ import { OwedError } from './errors.ts';
 import { defaultOwed, lockAlive, procStart, reportText } from './drive-run.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
 import { oneLine } from './views.ts';
+import { startingSession } from './dsa.ts';
 
 /** The exit record a `--json` loop driver writes last (D17.2). */
 export interface ExitRecord { event: 'exit'; code: number; reason: ExitReason; at: string; error?: string }
@@ -95,6 +96,8 @@ export interface DriveStart {
   exited?: ExitRecord;
   /** The starter ran inside a dsa call (`DSA_EXEC` set); the driver itself carries no call identity. */
   fromDsa?: boolean;
+  /** The starter's pi session (E1), passed to the driver as `DSA_SESSION`; absent when none. */
+  session?: string;
 }
 /** Shown when `--detach` / action start runs inside a dsa call. */
 export const FROM_DSA_NOTE = 'note: started from inside a dsa call; if that call\'s processes are contained, the driver may end with it — prefer starting it from a top-level session or systemd-run --user';
@@ -121,6 +124,10 @@ export async function driveStart(o: { cwd: string; max?: number; owed?: string[]
     // The driver is an independent long-lived process: no dsa call identity (DSA_EXEC, DSA_CALL); DSA_HOME and the rest stay.
     const env: NodeJS.ProcessEnv = { ...process.env, ...(process.env.OWED_DIR ? { OWED_DIR: dir } : {}) }; delete env.NODE_TEST_CONTEXT; delete env.DSA_EXEC; delete env.DSA_CALL;
     const fromDsa = !!process.env.DSA_EXEC;
+    // E1.1: the driver's runs belong to the starter's pi session; none (outside pi, or inside a dsa call) → none, also
+    // when an inherited DSA_SESSION would otherwise reach the driver once DSA_EXEC/DSA_CALL are removed.
+    const session = startingSession(process.env);
+    if (session !== undefined) env.DSA_SESSION = session; else delete env.DSA_SESSION;
     const fd = openSync(log, 'a');
     const child = (() => { try { return spawn(argv[0]!, argv.slice(1), { cwd: repo, env, detached: true, stdio: ['ignore', fd, fd] }); } finally { closeSync(fd); } })();
     const run: { ended?: string } = {};
@@ -133,10 +140,10 @@ export async function driveStart(o: { cwd: string; max?: number; owed?: string[]
     const tail = (): string => (tailLines(log) ?? []).slice(-10).map(logLineText).join('\n');
     for (;;) {
       const l = readLock(dir);
-      if (l.state === 'live' && l.owner.pid === pid) return { pid, log, repo, ...(start ? { start } : {}), ...(fromDsa ? { fromDsa } : {}) };
+      if (l.state === 'live' && l.owner.pid === pid) return { pid, log, repo, ...(start ? { start } : {}), ...(fromDsa ? { fromDsa } : {}), ...(session !== undefined ? { session } : {}) };
       if (run.ended !== undefined) {
         const lines = tailLines(log) ?? [], rec = lastExit(lines);
-        if (rec && rec.reason !== 'error') return { pid, log, repo, ...(start ? { start } : {}), exited: rec, ...(fromDsa ? { fromDsa } : {}) };
+        if (rec && rec.reason !== 'error') return { pid, log, repo, ...(start ? { start } : {}), exited: rec, ...(fromDsa ? { fromDsa } : {}), ...(session !== undefined ? { session } : {}) };
         throw new OwedError(`the driver (pid ${pid}) ended (${run.ended}) before taking the lock; log ${log}:\n${lines.slice(-10).map(logLineText).join('\n')}`);
       }
       if (Date.now() >= deadline) {
@@ -168,12 +175,19 @@ export interface DriveStatus {
   noOutput?: boolean;
   /** Last 10 log lines as text. */
   tail: string[];
+  /** The pi session the lock records for a running (or another host's) driver (E1); absent when none. */
+  session?: string;
 }
+/** Where the runs of a running driver are listed (E1.3). */
+export const sessionText = (session: string | undefined): string => session !== undefined ? `runs are listed in pi session ${session}` : 'no pi session: runs show only in pi-durable-subagents status / the CLI';
 /** `owed drive --status` (D17.3). Reads only; creates nothing. */
 export async function driveStatus(o: { cwd: string }): Promise<DriveStatus> {
   const dir = await driveDir(o.cwd), log = logPath(dir), lock = readLock(dir), lines = tailLines(log);
   const r: DriveStatus = { running: lock.state === 'live', log, tail: (lines ?? []).slice(-10).map(logLineText) };
-  if (lock.state === 'live' || lock.state === 'foreign') { r.pid = lock.owner.pid; r.host = lock.owner.host; r.since = lock.owner.at; }
+  if (lock.state === 'live' || lock.state === 'foreign') {
+    r.pid = lock.owner.pid; r.host = lock.owner.host; r.since = lock.owner.at;
+    if (typeof lock.owner.session === 'string' && lock.owner.session) r.session = lock.owner.session;
+  }
   if (lock.state === 'foreign') r.foreign = true;
   const exit = lines ? lastExit(lines) : undefined;
   if (exit) r.exit = exit;
@@ -187,6 +201,7 @@ export function renderDriveStatus(r: DriveStatus): string {
   if (r.foreign) out.push(`driver lock held by pid ${r.pid} on host ${r.host} since ${r.since} (another host: not checked from here)`);
   else if (r.running) out.push(`driver running: pid ${r.pid} on ${r.host} since ${r.since}`);
   else out.push(r.noExitRecord ? 'driver not running; it ended without an exit record (killed or crashed)' : 'driver not running');
+  if (r.running || r.foreign) out.push(sessionText(r.session));
   if (r.exit) out.push(`last exit: ${exitText(r.exit)}`);
   if (r.noOutput) out.push('no driver output yet');
   out.push(`log: ${r.log}`);
@@ -196,8 +211,8 @@ export function renderDriveStatus(r: DriveStatus): string {
 /** The `/owed` status line (D17.8). */
 export async function driverLine(cwd: string): Promise<string> {
   const r = await driveStatus({ cwd });
-  if (r.foreign) return `Driver: lock held by pid ${r.pid} on host ${r.host} since ${r.since}`;
-  if (r.running) return `Driver: running pid ${r.pid} since ${r.since}`;
+  if (r.foreign) return `Driver: lock held by pid ${r.pid} on host ${r.host} since ${r.since}; ${sessionText(r.session)}`;
+  if (r.running) return `Driver: running pid ${r.pid} since ${r.since}; ${sessionText(r.session)}`;
   if (r.exit) return `Driver: not running (last exit ${r.exit.reason} at ${r.exit.at})`;
   return r.noExitRecord ? 'Driver: not running (ended without an exit record)' : r.noOutput ? 'Driver: not running (no driver output yet)' : 'Driver: not running';
 }

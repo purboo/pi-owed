@@ -1381,6 +1381,30 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   refuse (exit 1). A lock of another host is never taken over: the refusal
   names host and pid; after checking that no driver runs there, remove the
   lock by hand.
+- **Pi session** (0.5.1 E1, pi-durable-subagents 1.0.31). A driver's runs
+  belong to the pi session that started it. On start (`owed drive`, `--once`,
+  `--detach`, tool `owed_drive`) owed reads `DSA_SESSION` from its
+  environment — ignored when `DSA_CALL` or `DSA_EXEC` is set (a subagent) or
+  when it is not a session id as dsa 1.0.31 accepts it (starts with a letter
+  or digit, then up to 127 of `[A-Za-z0-9._:-]`), as dsa does — and records it as `session` in `drive.lock` (absent when
+  none). `--detach` passes the starter's value to the detached driver as
+  `DSA_SESSION` (and removes an inherited one when the starter has none).
+  Every `pi-durable-subagents run` the driver issues passes `--session <id>`
+  when a session is recorded; the flag is not part of the request bytes, so a
+  retry passes it again without a conflict. The dsa client removes
+  `DSA_SESSION` from every dsa child's environment, so dsa never takes a
+  session from it and the lock and what dsa records never disagree. A dsa that refuses the flag (older
+  than 1.0.31: `Unknown or repeated option --session`, which records nothing)
+  is detected once per driver: the run is repeated without the flag, later
+  runs omit it, and the driver logs one line, `dsa does not accept --session
+  (older than pi-durable-subagents 1.0.31): runs start without it and are not
+  listed in pi session <id> (<refusal>)` (`--json`: event
+  `session-unsupported`, quiet for wake-ups); never a halt. While a driver
+  holds the lock (this or another host), `owed drive --status` (and tool
+  `action: "status"`) adds after its first line `runs are listed in pi session
+  <id>` or `no pi session: runs show only in pi-durable-subagents status / the
+  CLI`, `--json` adds `session` when recorded, and the `/owed` driver line
+  ends with `; ` and the same text. No driver running: no session line.
 - **Loop.** Passes run back to back while they make progress (at most 20;
   progress = the ledger head advanced or dsa applied a request in the pass, so
   an attest exiting 1 without a new entry is not progress), then the driver
