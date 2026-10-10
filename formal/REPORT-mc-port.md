@@ -69,6 +69,13 @@ search. No porting error remained after the first full comparison; the one count
 Big runs on ipc, 16 workers, `run-a3-big.sh`, log `/tmp/owed-ipc/logs/mc-port-1-101520.log` (engine src sha256
 `08433a0b…`, a3_auth `3852e495…`, a3_merge `2e56852c…`).
 
+Since 0.6.1 `run-a3-big.sh` caps every run like `models/scripts/owed05-big.sh`: `ulimit -v 8000000`, explicit state
+caps (exhaustive `--max-states 22000000`; simulations 2e9 sampled states, so the walk count stays the bound), the
+model checker's `--timeout` and a wall-clock `timeout` 120 s above it (a3_compare: 3600 s). Rerun on ipc with the
+caps (log `/tmp/owed-ipc/logs/fixes-061-1-120655.log`): no cap stops any configuration; every verdict and state
+count in the table below is unchanged (MaxLog=3 exhaustive 10.2 s, 1.7 GB RSS; a3_compare 172 s, 3.1 GB RSS,
+187 OK, 0 FAIL, 59 skipped, `results/a3-compare.tsv` identical except the seconds column).
+
 | Run | TLC | owedmc |
 |---|---|---|
 | a3_auth a3 free MaxLog=3 AllSafety (+deadlock) | HOLDS, 9,305,311 distinct, 18,566,311 generated, depth 4; 10 min 41 s, 16 workers | HOLDS, 9,305,311, 18,566,311, 4 levels; 13.3 s, 1.7 GB RSS |
