@@ -234,8 +234,8 @@ export function renderReport(v: Report): string {
     ...list('Status changes', v.changes.map(c => `${c.subject}/${c.obligation}: ${c.before ? statusNames[c.before] ?? c.before : 'new'} → ${statusNames[c.after] ?? c.after}`)),
     ...list('Active blocks', v.blocks.map(b => `#${b.seq} ${b.node}/${b.obligation} (${b.kind === 'exec' ? 'execution' : 'review'}, rank ${b.rank}): ${b.clear}`)),
     ...list('Waivers', v.waivers.map(entryLine)),
-    ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.allowance !== undefined ? allowanceLabel(d) : d.by} ${i.node}: ${i.what}`))),
-    ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
+    ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.allowance !== undefined ? allowanceLabel(d) : `${d.by}${d.channel === 'delegated' ? ' (delegated)' : ''}`} ${i.node}: ${i.what}`))),
+    ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by}${r.channel === 'delegated' ? ' (delegated)' : ''} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
     ...list('Owner decisions needed', v.decisions.map(itemText)),
     ...list('Owner actions', v.ownerActions.map(entryLine)),
     ...(v.adoptions?.length ? list('Trunk adoptions (owner decisions: commits made outside owed)', v.adoptions.map(adoptionText)) : []),
@@ -296,16 +296,23 @@ const dispatchHint = (n: NodeState): string => n.merged ? `${n.id} is merged; no
 /** D23: the command that records manual evidence `id` of `node` as principal `as`. */
 export const evidenceCommand = (node: string, id: string, as: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}`;
 /**
- * D25.6: commands the main agent (the delegated owner) can run to resolve an owner halt of `node`: the brief's command
- * for each owner item still owed, a waiver for every other item still owed on the open candidate, and a new attempt.
+ * D25.6: commands the main agent (the delegated owner) can run, in order, to resolve an owner halt or notification of
+ * `node`. With an open candidate: the brief's command for each owner item still owed, a waiver for every other item
+ * still owed and every uncleared block, then a new attempt. Without one, every command is executable when its turn
+ * comes, as in the brief's clearHint/dispatchHint: a node without an open slot is dispatched first (`owed dispatch`),
+ * and a waiver (which needs a candidate) is prefixed `after the writer submits a candidate:`; a merged node has none.
  */
 export function ownerCommands(s: State, node: string): string[] {
   const n = s.nodes[node];
   if (!n) return [];
   const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && b.state !== 'cleared').map(b => b.seq);
-  const items = n.slot?.open && n.candidate ? n.items.filter(i => i.status === 'D') : [];
-  const out = items.map(i => i.discharger === 'owner' ? decisionCommand(s, i) : waiveCommand(node, i.obligation, blocks(i.obligation)));
-  for (const b of n.blocks.filter(b => b.state !== 'cleared' && !items.some(i => i.obligation === b.obligation))) out.push(waiveCommand(node, b.obligation, blocks(b.obligation)));
+  const live = !!(n.slot?.open && n.candidate);
+  if (!live && n.merged && !n.slot?.open) return [];
+  const items = live ? n.items.filter(i => i.status === 'D') : [];
+  const later = live ? '' : 'after the writer submits a candidate: ';
+  const out = n.slot?.open ? [] : [`owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
+  out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i) : waiveCommand(node, i.obligation, blocks(i.obligation))));
+  for (const b of n.blocks.filter(b => b.state !== 'cleared' && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation))}`);
   if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
   return [...new Set(out)];
 }
