@@ -46,7 +46,7 @@ export interface EvidenceSpec { id: string; what: string; by: 'reviewer' | 'pare
 /** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
 export interface DriveAgent { agent: string; model?: string }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
-export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent }
+export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number }
 /**
  * Optional `exec:` block of the plan (SPEC §3, §7, D20): extra environment and an argv prefix for every process owed
  * starts in a materialized tree. Parsed plans keep only non-empty fields; `exec: {}` is the same as no block.

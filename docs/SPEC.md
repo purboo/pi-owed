@@ -1333,6 +1333,7 @@ error?, questions?: {qid, rev, question}[], lastFence?: {reason, at}}`
 drive:
   max: 4                 # concurrent open attempts the driver starts (default 4, integer >= 1)
   repairs: 2             # follow-ups after a failed check / block before halting (default 2, integer >= 0)
+  measure: 2             # attests and merges in flight at once (0.7.0; default 2, integer >= 1)
   writer:   { agent: worker,   model: "example/model-large:high" }   # default {agent: worker}
   reviewer: { agent: reviewer, model: "example/model-large:high" }   # default {agent: reviewer}
 ```
@@ -1341,6 +1342,9 @@ when the block is present (`Plan.drive`; absent block → `Plan.drive`
 undefined, `driveConfig(plan)` returns the defaults) and rejects unknown keys
 (in `drive`, `writer`, `reviewer`) and bad types. It is not an obligation:
 changing or removing `drive:` is never a downgrade (a plan change by parent).
+`measure` (0.7.0) is kept in the parsed plan only when the YAML sets it
+(`measureCap(plan)` applies the default 2), so a plan that does not use it
+keeps its canonical bytes and sha; a 0.6.x parser refuses a plan that sets it.
 
 **Node `drive` (0.7.0).** A node may set its own roles:
 
@@ -1512,9 +1516,11 @@ Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
   "accept the content as is" is the owner's waive, not a repair.
 - **Ruling follow-up.** When the writer run is sealed and an in-scope ruling
   naming the node (not only `*`) is above its *delivered* (§12.5.1), the driver
-  sends one `follow-up` with reason `ruling` in place of: the `finished …
-  without submitting` halts, the `repairs exhausted` halt, the `stalled:` halt,
-  and an otherwise empty pass while the node has no current candidate. Never
+  sends one `follow-up` with reason `ruling` in place of the `finished …
+  without submitting` halts and the `repairs exhausted` halt (review #784 F2:
+  the `stalled:` halt and a pass without a current candidate never meet a due
+  ruling follow-up: a failed item or an active block is handled by the repair
+  rows first, and row 8 acts on every sealed writer without a candidate). Never
   while a reviewer run of the current candidate is unsealed, and never when the
   current candidate has no active block and no failed item: the ruling then
   reaches the reviewers (steer, the `rulings` obligation and `ack_rulings`), and
@@ -1527,9 +1533,8 @@ Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
   = the highest seq it lists. It is not a repair (not counted). A writer that
   finishes it without submitting halts as before, naming it: `writer run <rid>
   finished ruling follow-up <send> without submitting a new candidate
-  (<cause>)`. dsa rejecting it halts the attempt on the next pass, like any
-  other send (the re-send row; only ruling *steers* are never halted for,
-  D22.3).
+  (<cause>)`. dsa rejecting it halts the attempt in the same pass, like any
+  other send (only ruling *steers* are never halted for, D22.3).
 - **Threshold hint.** On the measured repair path, for a check X among the
   measured items: when the node's latest two failing, non-attribution
   observations of `check:X` both exited 0 with `counts.fail` 0 and the same
@@ -1581,9 +1586,15 @@ it gives the reviewer's `owed evidence` command.
   highest in-scope ruling seq (`--nodes` names the node, or `*`) the run already
   has: the max of `rulings` on its launch entry and on every send to it that
   records `rulings` (`repair`, `ruling`, and since 0.7 `submit` and `rebase`
-  follow-ups; also an unconfirmed or rejected ruling send), and for the writer
+  follow-ups; also an unconfirmed ruling send), and for the writer
   its dispatch `rulings_seen`. A ruling counts as delivered to the writer once a
-  writer send that carried it is recorded. Entries without the field (written by
+  writer send that carried it is recorded. 0.7 (review #784 F1): a send dsa
+  rejected delivered nothing to the writer: the driver reads dsa's request state
+  of the attempt's recorded sends each pass (`describe --key <send id>`; cached
+  once terminal) and leaves the rejected ones out of the writer's *delivered*
+  when it composes a writer follow-up (submit, rebase, repair, ruling), so that
+  follow-up carries their rulings. The ruling steer row still counts a rejected
+  steer (it is never sent again as a steer). Entries without the field (written by
   0.5.0) fall back to the 0.5.0 position rule: a reviewer launch carried the
   in-scope rulings recorded before its entry, a `repair` send those recorded
   before it (D22.4a), a writer launch `rulings_seen`.
@@ -1602,11 +1613,13 @@ it gives the reviewer's `owed evidence` command.
   a few passes at most. Only `fenced` steers count as the last steer of the
   fenced row, so a ruling steer never hides a fence.
 - **Rejection (D22.3).** dsa rejecting a ruling steer (e.g. the call sealed
-  meanwhile) is printed (`rejected — <reason>; not retried …`) and never halts;
-  a recorded ruling steer dsa reports rejected is skipped by the re-send row and
-  never sent again under a new id. The rulings then travel as before (repair
-  messages list the rulings since dispatch; reviewers acknowledge with
-  `--ack-rulings`). An unconfirmed ruling send is re-sent like any send (same id,
+  meanwhile) is printed (`rejected — <reason>; not retried as a steer (the
+  writer's next follow-up carries these rulings; reviewers get them through the
+  rulings obligation)`) and never halts; a recorded ruling steer dsa reports
+  rejected is skipped by the re-send row and never sent again as a steer. Its
+  rulings are not delivered (above): the writer's next follow-up lists them;
+  reviewers acknowledge with `--ack-rulings`. A rejected ruling *follow-up*
+  halts at once, like any other send. An unconfirmed ruling send is re-sent like any send (same id,
   stored bytes).
 - **Obligation unchanged (D22.4).** A steer is not an acknowledgment: the
   `rulings` obligation still needs the reviewer's `ack_rulings`.
@@ -1726,15 +1739,64 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   attempt needing a human (an attest error, not a busy machine). `owed attest`
   exits 0/1 are done (the ledger says what follows); any other exit (2/3), a
   signal or a timeout halts needing a human in the same pass.
-- **Merge** refusals are acted on in the same pass: `rebase needed` →
+- **Background measurements** (0.7.0, K6; wais #13). An `attest` or `merge`
+  action starts a *measurement* and the pass goes on with its next action: an
+  attest runs as a child process as above; a merge runs in the driver process
+  (`ops.merge` with the driver's abort signal, never a child `owed merge`,
+  which refuses `--as parent:drive`), not awaited by the pass.
+  - A node is *in flight* from the start of its measurement until the loop has
+    handled its result. `decide` receives the in-flight nodes as a set
+    (`DriveOpts.measuring`) and gives them no action; the pass does not
+    describe their runs. Every other node is dispatched, launched, sent to and
+    halted as usual; an in-flight node's open slot counts toward `max`.
+  - Caps: at most `drive.measure` measurements (default 2) are in flight, and
+    at most one of them is a merge (merges of one trunk CAS each other). An
+    attest or merge action over a cap is skipped this pass without output; a
+    later pass decides it again. Actions start in `decide`'s order.
+  - Start line: `{"do":"attest"|"merge","node":N,"outcome":"started",
+    "at":ISO}` (text `attest N: started`), quiet for wake-ups.
+  - A measurement that ends wakes the loop: its wait ends at once. The next
+    pass first handles every ended measurement in the order they ended, before
+    it loads the state, with the rules of this section (the report; an attest
+    error halts; the merge refusals below), naming the attempt the
+    measurement started on. Handling a result is progress.
+  - Busy (review #785): an attest that ends `busy` (hold refused the lease, or
+    exit 75 of `owed attest`: 0.7.0 K1, another attest of that node runs) is
+    never a halt, not progress and does not wake the loop. Its line is printed
+    when it ends (not deduplicated: every `started` line gets its completion
+    line), and that node starts no measurement again before the loop's next
+    timed pass (`passMs`) or event pass; passes triggered by progress or by
+    another measurement ending skip it. Its text is `another attest of <node>
+    is running, retry next pass: <owed's message>` for owed's exit 75 and
+    `machine lease refused, retry next pass: <hold's message>` otherwise;
+    owed's message (`attest of <node> is already running`) tells them apart
+    through `hold`. A busy line no longer replaces an equal previous one.
+  - Idle: a pass is idle only when no attempt is open, nothing is dispatched
+    and nothing is in flight; a driver with a measurement in flight never
+    exits `idle` and never logs `idle-wait`.
+  - Restart: a driver that dies (SIGKILL, crash) leaves its attest children
+    (own process groups) to finish; their observations land under D24 (§7.10).
+    The new driver's attest of that node exits 75 and is retried later. An
+    in-process merge dies with its driver (see the accepted window below).
+- **Merge** refusals are acted on when the merge is handled: `rebase needed` →
   `ops.rebase` (the writer's `rebase` follow-up comes from a later `decide`);
   the transient `Plan, candidate or trunk changed; retry` (a new submit of the
   node or a ledger trunk move while merge measured, §6.4; a plan update alone no
   longer causes it since 0.7; merge recorded nothing) → retried next pass, no halt,
-  not progress; trunk CAS drift (the ref moved during the merge) → the trunk
-  drift notify below, retried next pass, no halt; any other → halt needing a
-  human.
-- **Trunk drift** (0.5.1, review ruling #559). The trunk ref no longer
+  not progress; trunk CAS drift (the ref moved during the merge) → the line
+  `merge N: retry — merge refused (…); retry next pass` (0.7.0: it ends the
+  measurement in the log) and the trunk drift notify below, retried next pass,
+  no halt; K4 (§6.4) `not measured: …` (a key the plan update introduced; the
+  measured observations were kept) → `merge N: retry — merge refused (…); retry
+  next pass`, no halt, and the next pass merges again; K4 `slot of <n> changed
+  (…)` and `candidate #S … was invalidated by plan #N …` → `merge N:
+  superseded — merge refused (…); the next pass decides on the new state`, no
+  halt (quiet: no wake); any other → halt needing a human.
+- **Trunk drift** (0.5.1, review ruling #559). 0.7.0 (review #785): while a
+  merge of this driver is in flight, or ended and not yet handled, the pass
+  makes no drift check and no drift notify (its own merge may have moved the
+  ref past the state the pass loaded); a real drift during that merge is
+  reported by the merge's CAS refusal. The trunk ref no longer
   equal to the ledger trunk is a repository fact, not a node fact: 0.5.1
   drivers never record it as a ledger halt. Each pass, before merging, the
   driver compares `refs/heads/<trunk>` with the ledger trunk; on drift it
@@ -1796,26 +1858,52 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   CLI`, `--json` adds `session` when recorded, and the `/owed` driver line
   ends with `; ` and the same text. No driver running: no session line.
 - **Loop.** Passes run back to back while they make progress (at most 20;
-  progress = the ledger head advanced or dsa applied a request in the pass, so
-  an attest exiting 1 without a new entry is not progress), then the driver
+  progress = the ledger head advanced, dsa applied a request or an ended
+  measurement was handled in the pass; starting a measurement is not
+  progress), then the driver
   polls `events --all --since <cursor> --limit 100` every 3 s and runs a pass
-  on an event labeled `owed: <project>`, or after 30 s. The cursor is
+  on an event labeled `owed: <project>`, when a measurement ends, or after 30 s. The cursor is
   `<ledger dir>/drive/cursor` (deletable); an expired (exit 4) or rejected
   (exit 1) cursor is reset to the head and triggers a pass; the limit halves
   only after a page the client could not parse and returns to 100 after a good
   page; other failures (e.g. a missing binary) are printed. In the loop a
-  notify (asking run, owner-needed node) or a busy machine is printed only
-  when its text changed for that node (busy compared without hold's ages).
-  Exit 0 with `idle` when no attempt is open and nothing is dispatched; the
-  first SIGINT/SIGTERM stops after the current action (`stopped`), a second
-  stops at once: SIGTERM to the running dsa invocations (hold forwards it to its
-  `owed attest`) and to the process groups of direct `owed attest` children,
-  the lock released, exit 130 (the ledger stays consistent; `owed attest` ends
-  the checks it started, §10 Signals). `owed drive --once` stops at once like
-  this on the first SIGINT/SIGTERM (D16.3). The pi tool's pass installs no
-  signal handlers. A merge runs inside the driver: the stop at once aborts it
-  first (the driver's AbortController, D16a.1), so its checks get SIGKILL and
-  trunk does not move. Accepted window: a stop after merge's `git update-ref`
+  notify (asking run, owner-needed node) is printed only when its text
+  changed for that node. (Before 0.7.0 a busy machine was too, compared
+  without hold's ages; since K6 every busy attest follows its own `started`
+  line and is printed, at most once per timed or event pass.)
+  Exit 0 with `idle` when no attempt is open, nothing is dispatched and
+  nothing is in flight. Stopping (0.7.0, K6):
+  - *Stop* (the first SIGINT/SIGTERM of the loop, `owed drive --stop`,
+    `owed_drive` action stop, `DriveOptions.signal`, and for `--once` the pi
+    tool's abort signal): start nothing new (the current action finishes, the
+    pass executes no further action), wait for every in-flight measurement to
+    end, with no time limit, and handle their results as usual (reports,
+    halts, rebases), then `stopped` (loop: and the exit record `stopped`).
+  - *Stop at once* (a second signal in the loop, so `--stop --now`; the first
+    signal with `--once`, D16.3), once per process: abort the driver's
+    AbortController (an in-process merge stops before trunk moves and its
+    checks get SIGKILL, D16a.1), SIGTERM to the running dsa invocations (hold
+    forwards it to its `owed attest`) and to the process groups of direct
+    `owed attest` children; then wait for the in-flight measurements to end, up
+    to 5 s, and SIGKILL the groups still running, waiting up to 1 s more.
+    Limit: the SIGKILL reaches the dsa invocations' and the attest children's
+    process groups only. The checks an `owed attest` runs are in process
+    groups of their own (§7), which that attest ends on its SIGTERM (§10
+    Signals); a check whose attest was SIGKILLed before ending it keeps
+    running, unrecorded, until it exits.
+    Their results are not handled (the driver records nothing; `owed attest`
+    records its own observations and ends the checks it started, §10
+    Signals). Then the `killed` line, the exit record (`--json` loop), the lock
+    released, exit 130. Further signals are ignored meanwhile. The ledger stays
+    consistent.
+  - `--once` (and the pi tool's pass) is one pass, then it waits for the
+    measurements that pass started and handles them before it returns: its
+    output ends with their completion lines.
+  - A driver that ends with an error (the exit record `error`) aborts an
+    in-flight merge as above and waits up to 6 s for it to end before it
+    writes the exit record and releases the lock; attest children finish on
+    their own (as after a crash).
+  The pi tool's pass installs no signal handlers. Accepted window: a stop after merge's `git update-ref`
   and before its ledger append leaves trunk ahead of the ledger; the next pass
   sees the drift and emits the trunk drift notify (never silent; the owner
   adopts the merge commit). Each process group gets one SIGTERM per stop; the
@@ -1877,7 +1965,12 @@ polling.
   since T`, a lock of another host (not checked), or `driver not running`
   (`; it ended without an exit record (killed or crashed)` when the log has
   driver lines but no exit record; an empty log adds `no driver output yet`); `last exit: R (exit C) at T[: error]` from the log; the log
-  path and its last 10 lines as text. Exit 0.
+  path and its last 10 lines as text. Exit 0. While the driver runs (0.7.0,
+  K6) it lists the in-flight measurements read from the log: each `started`
+  line after the last exit record with no later line of the same action and
+  node, as `measuring: <node> <attest|merge> since <at>` after the first
+  lines (`--json`: `measuring: [{node, do, since}]`, present only when
+  non-empty).
 - **Stop** (`owed drive --stop [--now]`, tool `action: "stop"`, `now`): no
   live lock → `no driver running` (exit 0, nothing created). Otherwise under
   the `drive-detach` lock, so concurrent stops send one signal. A lock of another host, or one
@@ -1885,7 +1978,8 @@ polling.
   its start time still matches (never a reused pid); `--now` sends a second
   SIGTERM 1 s later if the lock is still held (D14.8: stop at once). Waits up
   to 10 s for the lock to be released: `stopped`, else `stopping: pid P exits
-  after its current action`. Exit 0.
+  after its current action and its in-flight measurements` (§12.7 Stopping).
+  Exit 0.
 - **Flags.** `--stay` (§12.9) only with the loop or `--detach`. `--detach`, `--status`, `--stop` and `--once` exclude each other;
   `--now` only with `--stop`; `--max` not with `--status`/`--stop` (it stays
   valid with `--once`); `--json` with any. The tool refuses `now` without
@@ -1932,7 +2026,9 @@ polling.
   follower per driver log (repository) per extension instance; a new start
   replaces it; `session_shutdown` clears every timer (the driver keeps
   running).
-- **`/owed`** appends `Driver: running pid P since T`, `Driver: not running
+- **`/owed`** appends `Driver: running pid P since T` (0.7.0: then `;
+  measuring <node> <attest|merge> since <at>[, …]` while measurements are in
+  flight), `Driver: not running
   (last exit R at T)`, `Driver: not running (ended without an exit record)`,
   `Driver: not running (no driver output yet)`, `Driver: not running`, or for another host `Driver: lock held by pid P on
   host H since T`.

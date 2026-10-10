@@ -60,8 +60,10 @@ export interface DriveOpts {
   /** Send request ids (`SendEntry.send`) dsa confirmed applied in this process; any other recorded send of an open attempt is re-sent. */
   applied: ReadonlySet<string>;
   /**
-   * Request ids dsa rejected (exit 1) in this process, with dsa's reason: run ids (`dsa run`) and send ids (`dsa send`,
-   * e.g. a re-send to a pruned run). The attempt halts needing a human (D9); the request is never retried.
+   * Request ids dsa rejected (exit 1), with dsa's reason: run ids (`dsa run`) rejected in this process, and send ids
+   * (`dsa send`, e.g. a re-send to a pruned run) rejected in this process or reported rejected by dsa's request state
+   * (every pass). The attempt halts needing a human (D9); the request is never retried. A rejected ruling steer does not
+   * halt and delivered nothing to the writer (review #784 F1).
    */
   rejected: ReadonlyMap<string, string>;
   /**
@@ -77,6 +79,11 @@ export interface DriveOpts {
    * (`git merge-tree --write-tree --name-only`; empty: merges cleanly). Absent when unknown (no previous commit, git failed).
    */
   conflicts?: ReadonlyMap<string, readonly string[]>;
+  /**
+   * 0.7.0 (K6): nodes with a measurement (attest or merge) in flight, from its start until the executor has handled its
+   * result. They get no action; their open slots still count toward `max`.
+   */
+  measuring?: ReadonlySet<string>;
 }
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
@@ -241,17 +248,20 @@ const repairsSince = (s: State, node: string, ar: AttemptRuns): { count: number;
   const epoch = repairEpoch(s, node);
   return { count: ar.sends.filter(x => x.reason === 'repair' && x.seq > epoch.seq).length, label: epoch.label };
 };
-/** K5.2: the in-scope rulings the attempt's writer run `writer` has not received (`deliveredRulings`), in ledger order. */
-const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntry): Rule[] => {
-  const d = deliveredRulings(s, node, ar, writer);
+/**
+ * K5.2: the in-scope rulings the attempt's writer run `writer` has not received (`deliveredRulings`, without the sends
+ * in `refused`: dsa rejected them, review #784 F1), in ledger order.
+ */
+const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntry, refused?: Refused): Rule[] => {
+  const d = deliveredRulings(s, node, ar, writer, refused);
   return rulingsInScope(s, node).filter(r => r.seq > d);
 };
 /**
  * K5.2: a writer follow-up (`submit`, `rebase`) with the undelivered in-scope rulings first; `rulings` (their highest
  * seq) only when it carries at least one, so a follow-up without rulings stays readable by 0.6.x.
  */
-function withRulings(s: State, node: string, ar: AttemptRuns, writer: LaunchEntry, message: string): { message: string; rulings?: number } {
-  const rules = undelivered(s, node, ar, writer);
+function withRulings(s: State, node: string, ar: AttemptRuns, writer: LaunchEntry, message: string, refused?: Refused): { message: string; rulings?: number } {
+  const rules = undelivered(s, node, ar, writer, refused);
   return rules.length ? { message: [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`), message].join('\n'), rulings: carried(rules) } : { message };
 }
 /** One evidence line of a halt (K5.4): one line, at most 200 characters. */
@@ -261,10 +271,10 @@ const clip = (text: string): string => { const t = oneLine(text); return t.lengt
  * node (`*` alone never triggers it): the undelivered in-scope rulings, the active blocks on the current candidate's
  * keys (else the latest submit's) with their notes, then what to do. `rulings`: the highest seq it carries. Not a repair.
  */
-export function rulingFollowUp(s: State, node: string): { message: string; rulings: number } | undefined {
+export function rulingFollowUp(s: State, node: string, refused?: Refused): { message: string; rulings: number } | undefined {
   const n = s.nodes[node], slot = n?.slot, ar = n?.runs.find(r => r.attempt === slot?.attempt), writer = ar?.launches.find(l => l.role === 'writer');
   if (!n || !slot || !ar || !writer) return undefined;
-  const rules = undelivered(s, node, ar, writer);
+  const rules = undelivered(s, node, ar, writer, refused);
   if (!rules.some(r => r.nodes !== '*')) return undefined;
   const last = lastSubmit(s, node), c = n.candidate ?? (last ? { ...last.facts, seq: last.seq } : undefined), entries = entriesOf(s);
   const blocks = c ? n.blocks.filter(b => b.state === 'active' && b.key === c.keys[b.obligation]) : [];
@@ -370,7 +380,8 @@ const byStatusOrder = (a: NodeState, b: NodeState): number => b.dependents - a.d
 /**
  * The actions of one pass (contract D1/D4/D10/D11): per open attempt the first matching row of the policy table, then
  * dispatches of ready nodes while open attempts < `max`. Pure: equal inputs give deep-equal outputs; inputs are not
- * modified. A node whose recorded run lacks a view in `runs` (describe failed) gets no action this pass.
+ * modified. A node whose recorded run lacks a view in `runs` (describe failed) gets no action this pass, nor does a node
+ * in `opts.measuring` (a measurement in flight, K6).
  * The plan is read from `s.plan` only (D11); the `plan` parameter is kept for the D1 signature and not used.
  */
 export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>, opts: DriveOpts): Action[] {
@@ -378,7 +389,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   const plan = s.plan;
   const out: Action[] = [];
   const open = Object.values(s.nodes).filter(n => n.slot?.open).sort(byStatusOrder);
-  for (const n of open) { const a = slotAction(s, runs, opts, n); if (a) out.push(a); }
+  for (const n of open) { if (opts.measuring?.has(n.id)) continue; const a = slotAction(s, runs, opts, n); if (a) out.push(a); }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
   const taken = open.map(n => writes(n.id));
@@ -439,13 +450,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
    * K5.2: a sealed writer lacking a ruling that names the node gets one ruling follow-up (not a repair), but never while
    * a reviewer run of the current candidate is unsealed, and never when the current candidate has no active block or
    * failed item: the ruling then reaches the reviewers (steer, the rulings obligation and its ack); a block's repair
-   * carries it. Only the callers below use it: the finished-without-submitting, repairs-exhausted and stalled halts, and
-   * an otherwise empty pass without a current candidate.
+   * carries it. It replaces the finished-without-submitting and repairs-exhausted halts (`writerHalt`). The calls at the
+   * `stalled:` halt and at row 18 are defensive only (review #784 F2): a failed item or an active block is handled by
+   * the repair rows first, and row 8 acts on every sealed writer without a candidate.
    */
   const rulingSend = (): Action | undefined => {
     if (!wSealed) return undefined;
     if (c && (live.some(l => l.role === 'reviewer' && !isSealed(view(l))) || !(n.items.some(i => i.mark === '✘') || n.blocks.some(b => b.state === 'active' && b.key === c.keys[b.obligation])))) return undefined;
-    const f = rulingFollowUp(s, id);
+    const f = rulingFollowUp(s, id, opts.rejected);
     return f && send(writer, 'follow-up', 'ruling', f.message, f.rulings);
   };
   /**
@@ -462,7 +474,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const refused = opts.rejected.get(rf.send);
     return halt(refused !== undefined ? rejectedHalt(id, 'send', rf.send, refused) : `writer run ${writer.rid} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
   };
-  const writerMsg = (message: string): { message: string; rulings?: number } => withRulings(s, id, ar, writer, message);
+  const writerMsg = (message: string): { message: string; rulings?: number } => withRulings(s, id, ar, writer, message, opts.rejected);
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
   // Row 7: writer sealed non-ok.
@@ -633,21 +645,25 @@ function relaunch(s: State, opts: DriveOpts, l: LaunchEntry): Action | undefined
 /**
  * The highest ruling seq covering the node that run `l` already has (E4; D22.2): the max of the `rulings` recorded on
  * its launch entry and on every send to it that records `rulings` (`repair`, `ruling`, and since 0.7 `submit` and
- * `rebase` follow-ups; also an unconfirmed or rejected ruling send: it is never sent again under a new id), and for the
+ * `rebase` follow-ups; also an unconfirmed or rejected ruling send: it is never sent again under a new id — except that
+ * the sends in `refused` (dsa rejected them; the writer follow-ups pass it, the steer does not) count for nothing, so the
+ * writer's next follow-up carries their rulings, review #784 F1), and for the
  * writer its dispatch `rulings_seen`. Entries without the field (written
  * by 0.5.0) fall back to the 0.5.0 position rule: a reviewer launch carried the in-scope rulings recorded before it, a
  * repair send those recorded before it (its message lists the rulings since dispatch); a writer launch carried
  * `rulings_seen`.
  */
-export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: LaunchEntry): number {
+export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: LaunchEntry, refused?: Refused): number {
   const inScope = rulingsInScope(s, node);
   const before = (seq: number): number => Math.max(-1, ...inScope.filter(r => r.seq < seq).map(r => r.seq));
-  const sends = ar.sends.filter(x => x.rid === l.rid);
+  const sends = ar.sends.filter(x => x.rid === l.rid && !refused?.has(x.send));
   const launch = l.rulings ?? (l.role === 'writer' ? -1 : before(l.seq));
   // K5.2: every writer send that records `rulings` (submit, rebase, repair, ruling follow-ups) delivered them.
   const base = l.role === 'writer' ? Math.max(s.nodes[node]!.slot!.rulings_seen, launch, ...sends.map(x => x.rulings ?? (x.reason === 'repair' ? before(x.seq) : -1))) : launch;
   return Math.max(base, ...sends.filter(x => x.reason === 'ruling').map(x => x.rulings ?? -1));
 }
+/** Send ids dsa rejected (`DriveOpts.rejected`): they delivered nothing (review #784 F1). */
+type Refused = { has(id: string): boolean };
 /** Steer message of undelivered rulings (D22.2): one line per ruling `#<seq> (<nodes>): <text>`, then what to do. */
 export function rulingMessage(node: string, role: RunRole, rules: readonly Rule[]): string {
   const top = Math.max(...rules.map(r => r.seq));

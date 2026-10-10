@@ -290,7 +290,10 @@ while the machine is busy; with an older dsa that rejects `--no-wait` the
 attempt is halted with that error. One driver per repository
 (`.git/owed/drive.lock`); a lock left by a dead driver on this host is taken
 over, but a lock from another host is not: check that host, then remove the
-file by hand. A first Ctrl-C stops after the current action, a second at once.
+file by hand. Attests and merges run in the background while the driver
+serves other nodes (at most `drive.measure` at once, default 2, and one merge).
+A first Ctrl-C stops after the current action and waits for them, a second
+stops at once.
 
 ```sh
 owed drive            # until idle; run it in a terminal or a systemd-run --user unit
@@ -298,7 +301,7 @@ owed drive --once     # one pass (also the pi tool owed_drive)
 owed drive --detach   # the same loop as a detached background process; prints its pid and log
 owed drive --detach --stay   # when idle, keep running and wait for ledger changes (a growing plan)
 owed drive --status   # running (pid, host, since) or not, its last exit record, the last 10 log lines
-owed drive --stop     # stop it after its current action (--now: at once)
+owed drive --stop     # stop it after its current action and in-flight measurements (--now: at once)
 ```
 
 The plan's optional `drive:` block sets the writer and reviewer dsa agents
@@ -388,13 +391,14 @@ rebase or abandon on the node clears a halt, and the next pass resumes. A ruling
 driver-launched writer or reviewer call is running reaches it as a steer
 (reason `ruling`, recorded) once the node has nothing else to do; sealed calls
 get rulings with the next follow-up (submit, rebase and repair follow-ups list
-the undelivered rulings first), and reviewers still acknowledge them with
+the undelivered rulings first; a ruling steer dsa rejected, e.g. because the call
+had just ended, counts as undelivered), and reviewers still acknowledge them with
 `--ack-rulings`. Launch entries and follow-ups record the rulings their
 message carried, so a ruling recorded while one is being sent is steered
 afterwards. A ruling naming the node gives the attempt a fresh repair budget
 (`repairs` counts the repairs since the latest such ruling or plan change of the
 node's spec), and a sealed writer the driver would otherwise halt for (finished
-without submitting, repairs exhausted, stalled) gets it as one `ruling`
+without submitting, repairs exhausted) gets it as one `ruling`
 follow-up instead; never while a reviewer run of the candidate is running or
 when the candidate has no block. A check that ran the same number of passing
 tests twice, below its `min_tests`, halts for the parent (`the plan's threshold
