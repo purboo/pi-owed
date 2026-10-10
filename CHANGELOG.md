@@ -1,5 +1,131 @@
 # Changelog
 
+## 0.6.0
+
+The owedmc model of owed 0.5 (`formal/models`, `owed05`) checked acceptance and
+authority and found five gaps, F1-F5 (`formal/REPORT-mc-owed.md` §6): G1 closes
+F1 and F2, G2 closes F4 and F5 and adds a rail against F3. F6 (replay-only
+entries, which never ease acceptance within the bounds) needs no change.
+
+- **Candidate-bound acts name the candidate they judged (G1; F1, F2).** `owed
+  review`, `owed waive`, `owed approve` and `owed evidence` accept `--candidate
+  <commit>` (40 hex, or a prefix of at least 7 hex; anything else is a usage
+  error), and the pi tools `owed_review`, `owed_waive`, `owed_approve` and
+  `owed_evidence` an optional `candidate` string. The act is checked under the
+  ledger lock at append time and refused unless the node has an open candidate
+  whose commit starts with it: `candidate changed: you named <given>, the open
+  candidate is #<seq> <commit12>; nothing recorded` (or `…, node <node> has no
+  open candidate; nothing recorded`, which also refuses `--candidate` on a
+  merged node's receipt). Without the flag nothing changes, and the ledger
+  records nothing new. Under `OWED_CONFIRM=owner` the waive and owner-review
+  confirmations (pi dialog; CLI, unless `--i-am-owner`, printed before the TTY
+  prompt) show the candidate — commit, submit seq, base and number of changed
+  files, as approve's does — and pin it: a resubmit after the confirmation
+  records nothing (`candidate changed since confirmation`). Every command owed
+  suggests for a candidate-bound act on a node with an open candidate carries
+  `--candidate <commit12>` of that candidate: the decision commands and clear
+  hints of `owed why` and `owed brief`, the resolving commands of driver halts
+  and notifications, the driver's approve/evidence halt (`awaiting owner
+  approval …`, `awaiting manual evidence …`), and the review packet. The
+  packet's `owed review` (and reviewer evidence) commands pass the commit under
+  review, so a resubmit during the review makes recording fail instead of
+  landing on content nobody reviewed; the packet tells the reviewer to re-read
+  `owed why <node>` and review the new candidate when that happens. SPEC, README
+  and the `owed` skill say to pass the commit actually read.
+- **Judgment rails (G2; F3, F4, F5).** Inside a pi-durable-subagents call
+  (`DSA_CALL` or `DSA_EXEC` set) owed refuses `review` and `evidence` on a node
+  when a working directory of the process (the CLI's directory; for pi tools
+  also the `cwd` parameter and the session's directory), symlinks resolved, lies
+  inside that node's open slot worktree: `a writer worktree cannot record a
+  review or evidence for its own node; run the review from the repository root
+  or another directory`. Driver reviewer runs start in the main worktree and are
+  unaffected. Like the D25.3 rail it guards against accidents and instructions,
+  not deliberate evasion (SPEC §1). The review count of an obligation and the
+  rulings acknowledgment now exclude every principal the append-time recusal
+  excludes: any role whose id equals that of a writer of the node, in any
+  attempt (0.5.1 excluded only the exact writer principal). `parent:drive` is
+  the driver's identity only: on append and on replay the ledger refuses an
+  entry by it of any kind but `dispatch`, `launch`, `send`, `halt` and `rebase`
+  (`<kind> by parent:drive: the driver records only …`), and the CLI and the pi
+  tools refuse `--as parent:drive` / `as: "parent:drive"` in every command,
+  reads included.
+- **Repair before re-review; one message to the writer (G3).** While a review
+  block is active on the current candidate's key (and the node does not need the
+  owner), the driver sends the repair before launching any reviewer run of that
+  candidate; attest, the needs-parent halt and measured repairs keep their order
+  before it. When the writer is sealed without a current candidate (a plan
+  change invalidated it, or trunk moved and the slot was rebased) and an active
+  review block recorded in this attempt on the key of its latest submit does not
+  await a parent ruling, the driver sends one follow-up instead of the `submit`
+  / `rebase` one: reason `repair` (counted against `repairs`; exhausted → halt),
+  the rulings in scope since dispatch (and those quoted by needs-parent blocks)
+  first, then the blocks with their notes, then why a new candidate is needed
+  (the plan changed, or trunk moved with the `git rebase --onto` instructions),
+  then commit and `owed submit <node>`. Its `rulings` records what it carried,
+  so no separate ruling steer follows; a writer that finishes it without
+  submitting halts, and identical content resubmitted gets another repair (or
+  the exhausted halt), never a reviewer run. Without such a block the `submit` /
+  `rebase` follow-ups are unchanged. A follow-up sent to a running writer is
+  forwarded into its running generation (dsa's reply carries no `generation`):
+  the driver no longer expects generation + 1 then, so the sealed view that
+  follows counts as sealed (a sealed writer was shown as running and the rebase
+  follow-up never went out); a follow-up to a sealed call still waits for the
+  next generation. The rebase follow-up (and the rebasing repair) lists the
+  files that conflict between the previous candidate and the new base (`git
+  merge-tree --write-tree --name-only`), `none` when it merges cleanly, omitted
+  when git fails. Trunk drift (0.5.1 deferrals): when a pass after a drift finds
+  trunk equal to the ledger trunk again, the driver forgets the drift notify's
+  print and wake records and logs the quiet event `drift-cleared`, on which the
+  follower forgets its own, so an identical later drift prints and wakes again;
+  the drift notify carries `scope: "repo"` and its records are keyed apart from
+  a plan node named `trunk`; and when the ledger's trunk commit is absent the
+  notify says so (`git update-ref` cannot restore it and `owed adopt` cannot
+  check a fast-forward from it) and suggests fetching it (`git fetch <remote>
+  <ledger>`), then restoring trunk or adopting the current ref (`owed adopt
+  --commit <ref12> --note "<why>"`). `owed adopt` still refuses a missing ledger
+  trunk.
+- **Plan and worktree hygiene (G4; 0.5.0 deferrals).** A new plan (`owed init`,
+  `owed plan`) is refused when `worktrees.root` or `worktrees.branch` contains a
+  control character (below 0x20, 0x7f, U+2028, U+2029; 0.5.1 refused only NUL),
+  or when the branch template could render two (node, attempt) pairs as the same
+  name: `{node}` must occur exactly once, and each `{attempt}` or `{type}` must
+  be separated from it by a character that cannot occur in that value (such as
+  `/`), so `{node}{attempt}` is refused. These checks apply to new plans, not on
+  replay, so existing ledgers stay readable. `owed gc` keeps a branch whose name
+  is recorded for another node or attempt. A dispatch that fails and rolls back
+  removes the parent directories it created. Allowance texts: `owed report` and
+  `owed brief` list parent adoptions under allowance in their own adoptions
+  section (owner adoptions stay under owner decisions); a parent's refused plan
+  update lists each uncovered downgrade once; `owed brief` lists the downgrades
+  recorded under allowance with the report's label (`by parent:<id> under
+  allowance (plan #S)`).
+- **Formal follow-ups (G5).** `formal/REPORT-mc-owed.md` §8 lists `error`
+  observations as not modeled (the code records no verdict for them and skips
+  their attribution). Every script in `formal/models/scripts` runs owedmc under
+  `ulimit -v` 8 GB with `--max-states` and `--timeout`; `owed05-big.sh` lowers
+  its cap from 14 GB and 40M states to 8 GB and 22M states and still completes
+  M1-M6, S1 and S2 with the published states, depths and verdicts.
+
+**Compatibility.** The ledger format is unchanged: no entry gains a field, so
+pi-owed 0.5.1 can read a ledger written by 0.6.0. G2's recusal can change
+replayed views of existing ledgers: a review by `reviewer:X#n` no longer counts
+once `writer:X#n` exists. Replays of the pi-owed and wais ledgers passed `owed
+verify`, and their status, report and why outputs were byte-identical before and
+after. Replay now refuses an entry by `parent:drive` of a kind the driver never
+writes, and `--as parent:drive` is refused. A subagent's review or evidence from
+inside the node's slot worktree is refused; this is a rail, not a security
+boundary: nothing prevents a `cd` to the repository root. Upgrade the `owed` CLI
+on PATH together with the driver and the pi extension: 0.6.0 review packets and
+suggested commands pass `--candidate`, which a 0.5.1 CLI rejects as an unknown
+option.
+
+**Deferred.** `owed plan --probe` (a dry run of check commands; 0.5.1 already
+reports exit 127 with the failing lines) and a plan warning for a check mixing
+cargo and TAP. To 0.6.1: a dispatch rollback continues after a failing step
+(worktree remove, branch deletion); node ids differing only in case on
+case-insensitive filesystems; caps for `formal/run-a3-big.sh`; M4 and M6 are
+within 9% of the 22M-state cap.
+
 ## 0.5.1
 
 - **Driver runs belong to the starting pi session (E1, pi-durable-subagents
