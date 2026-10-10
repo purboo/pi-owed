@@ -298,7 +298,7 @@ export const resumeCommands = (node = '<node>'): string => `owed resume ${node} 
  * 0.8 (L3.2, wais #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
  * check or test itself must change, a ruling sends the writer to fix it.
  */
-export const flakyRuleHint = (node: string): string => `or owed rule "<what the writer must change>" --nodes ${node} when the check or test itself must change (the writer fixes it; then the block is cleared by a new candidate's rerun, or superseded by a plan entry that changes the check's definition, see owed why)`;
+export const flakyRuleHint = (node: string): string => `or owed rule "<what the writer must change>" --nodes ${node} when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;
 export const resumeHint = (node = '<node>'): string => `to clear it without an obligation: ${resumeCommands(node)}`;
 /** How a driver halt is cleared (SPEC §12, D3), with the resume hint (0.8, L1.5). */
 const haltClear = (node: string): string => `cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, resume, a ruling naming it), or a new attempt; ${resumeHint(node)}`;

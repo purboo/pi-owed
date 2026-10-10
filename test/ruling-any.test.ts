@@ -22,7 +22,7 @@ const check = (o: Partial<CheckSpec> & { id: string }): CheckSpec => ({ run: 'np
 const spec = (o: Partial<NodeSpec> & { id: string }): NodeSpec => ({ deps: [], writes: [`${o.id}/`], checks: [], review: { count: 0, min_rank: 1 }, ...o });
 const planOf = (a: NodeSpec): Plan => ({ version: 1, trunk: 'main', closure: ['closure/'], invariants: [], drive: { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } }, nodes: [a, spec({ id: 'c' })] });
 const A0 = spec({ id: 'a', checks: [check({ id: 'unit' })] });
-const RULE_HINT = 'or owed rule "<what the writer must change>" --nodes a when the check or test itself must change (the writer fixes it; then the block is cleared by a new candidate\'s rerun, or superseded by a plan entry that changes the check\'s definition, see owed why)';
+const RULE_HINT = 'or owed rule "<what the writer must change>" --nodes a when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check\'s definition supersedes it, or the owner waives it once the fixed candidate passes)';
 
 function rig(a: NodeSpec = A0) {
   const entries: Entry[] = [], plans: Record<string, Plan> = { p: planOf(a) }, blobs = new Map<string, string>();

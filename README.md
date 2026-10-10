@@ -263,7 +263,7 @@ allow: [{nodes: ["KB*", "A9-*"], writes: ["app/src/entry/", "package.json"]}]
 
 A writer's writes question on such a node then costs one parent plan update and no owner step.
 
-`owed init` and `owed plan` warn, without refusing or recording anything, for each node of the new plan with no checks and no evidence obligations: `warning: node <id> has no checks: its acceptance rests on review alone`. The CLI prints the warnings after the result; `--json`, `owed_init` and `owed_plan` return them as `warnings: string[]`.
+`owed init` and `owed plan` warn, without refusing or recording anything, for each node of the new plan with no checks and no evidence obligations: `warning: node <id> has no checks: its acceptance rests on review alone`. The CLI prints the warnings after the result; `--json`, `owed_init` and `owed_plan` return them as `warnings: string[]`. They also warn about a check (or invariant) with `min_tests` that runs its command in a shell loop (`for/while/until … do`, `seq N`): owed counts only the last TAP (`# tests`) or jest/vitest (`Tests:`) summary of the log, i.e. one run, not the sum (only cargo `test result:` lines add up), so such a loop does not raise the count.
 
 `owed adopt --note TEXT --as parent:<id>` (pi: `owed_adopt` with `as: parent:…`) adopts trunk commits without a prompt when every changed path lies under an `adopt` prefix and the usual no-new-debt guard passes; the refusal names the first path outside. Views show `adopted by parent:<id> under allowance (plan #S)`.
 
@@ -402,7 +402,16 @@ afterwards. A ruling naming the node gives the attempt a fresh repair budget
 node's spec), and a sealed writer the driver would otherwise halt for (finished
 without submitting, repairs exhausted) gets it as one `ruling`
 follow-up instead; never while a reviewer run of the candidate is running or
-when the candidate has no block. A check that ran the same number of passing
+when the candidate has no block. Since 0.8 a due ruling comes before any other
+halt too: a sealed writer gets it before the owner-needed notify (a flaky block,
+a rank 2 review block), before the `sealed <status>` halt and before the
+`stalled:` halt; when a stalled candidate owes only the `rulings`
+acknowledgment, its sealed reviewer gets the ruling as a follow-up (or a new
+reviewer is launched) and its ok with `--ack-rulings` lets the node merge.
+Each ruling is sent once; if the node still needs the owner afterwards, the
+notify or halt follows as usual. A flaky block's hints also offer `owed rule
+"<what the writer must change>" --nodes <node>` for when the check or test
+itself must change. A check that ran the same number of passing
 tests twice, below its `min_tests`, halts for the parent (`the plan's threshold
 may be wrong`) instead of another repair. Calls you launched by hand stay yours to steer. Driver calls
 carry a dsa run name (`owed <node>#<attempt> writer` / `owed <node>#<attempt>

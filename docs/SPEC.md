@@ -320,6 +320,17 @@ invalidates a candidate.
   with no checks and no evidence obligations: `warning: node <id> has no
   checks: its acceptance rests on review alone`. The CLI prints them after the
   result; `--json` and the pi tools return `warnings: string[]`.
+- **Looped checks** (0.8, L3.3, wais #22). After the check-less warnings and
+  printed the same way, one warning per check or invariant that sets
+  `min_tests` and repeats its command in a shell loop (`for|while|until … do`,
+  or `seq N` in command position, as in `seq 5 | xargs …` or `$(seq 5)`):
+  `warning: check <id> of node <node>` (or `invariant <id>`) `runs its command
+  in a shell loop with min_tests <m>: min_tests counts only the last TAP (#
+  tests) or jest/vitest (Tests:) summary in the log, i.e. one run, not the sum of
+  the runs (only cargo "test result:" lines are added up)`. That is the actual
+  rule of `parseCounts` (§7): each later TAP `# tests`/`# pass`/`# fail` line
+  (else the last `1..N` plan) or `Tests:` summary replaces the earlier one;
+  cargo `test result:` lines are summed. Nothing is refused or recorded.
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
   `changed` lies under an `adopt` prefix of a rule of the **current** plan and
   `adoptGuard` passes. No owner channel is needed.
@@ -1025,7 +1036,14 @@ while genesis items lack observations.
   dispatched) cannot clear anything on an old candidate, so its hints (blocks
   and owner decisions) say `owed dispatch <node>` and never suggest submit or
   attest; with an open slot but no candidate, judgment and flaky hints first
-  require the writer's submit. An execution block reads `writer fixes and runs
+  require the writer's submit. A flaky block's hint (and the owner-needed notify,
+  the owner commands of halts, status's pending item and the brief's decision)
+  also offers, after the waiver (0.8, L3.2): `or owed rule "<what the writer
+  must change>" --nodes <node> when the check or test itself must change (the
+  writer fixes it; the block stays flaky until a plan change of the check's
+  definition supersedes it, or the owner waives it once the fixed candidate
+  passes)`: flaky stays terminal except for supersede (§6.3) and the owner's
+  waiver. An execution block reads `writer fixes and runs
   owed submit <node>, then owed attest <node> (skip this when owed drive is
   running: the driver attests) (the attribution rerun on the original content
   clears the block)` (0.7, K1.3: a writer's attest beside a running driver only
@@ -1613,18 +1631,43 @@ Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
 - **Ruling follow-up.** When the writer run is sealed and an in-scope ruling
   naming the node (not only `*`) is above its *delivered* (§12.5.1), the driver
   sends one `follow-up` with reason `ruling` in place of the `finished …
-  without submitting` halts and the `repairs exhausted` halt (review #784 F2:
-  the `stalled:` halt and a pass without a current candidate never meet a due
-  ruling follow-up: a failed item or an active block is handled by the repair
-  rows first, and row 8 acts on every sealed writer without a candidate). Never
-  while a reviewer run of the current candidate is unsealed, and never when the
-  current candidate has no active block and no failed item: the ruling then
-  reaches the reviewers (steer, the `rulings` obligation and `ack_rulings`), and
-  a block's repair carries it. Message: `New parent rulings for <node>:`, one
+  without submitting` halts and the `repairs exhausted` halt. Never
+  while a reviewer run of the current candidate is unsealed, and (at these two
+  halts and at row 18) never when the current candidate has no active block and
+  no failed item: the ruling then reaches the reviewers (steer, the `rulings`
+  obligation and `ack_rulings`), and a block's repair carries it.
+- **A ruling before any halt (0.8, L3.1, wais #21).** A due ruling also comes
+  before every other halt of the node: the owner-needed notify (`ownerNeeded`,
+  e.g. a flaky block or a rank ≥ 2 review block), row 7 (writer sealed non-ok:
+  a ruling recorded after a failure is often the answer to it) and the
+  `stalled:` halt. Conditions: the writer run is sealed, no reviewer run of the
+  current candidate is unsealed, an undelivered in-scope ruling names the node,
+  and no active needs-parent review block sits on the keys of the current
+  candidate (else the latest submit); such a block keeps its D18 route. For
+  owner-needed and row 7 the follow-up goes to the writer. At the `stalled:`
+  point it goes to the writer when the candidate has a failed item, an active
+  block on its keys or a flaky block; when its only debt is `rulings` (every
+  reviewer run sealed, so no steer can reach one) it goes to a reviewer, since
+  only a reviewer's `ack_rulings` discharges `rulings`: a `follow-up` with
+  reason `ruling` to the latest driver reviewer run of the candidate (`New
+  parent rulings for <node>:`, the undelivered rulings, then `Re-review the
+  current candidate <commit> (submit #<seq>) in their light and record your
+  verdict with --ack-rulings <latest>; block if the writer must change
+  something.`), or, when the candidate has no driver reviewer run, a reviewer
+  launch (row 12; its packet lists every ruling in scope and records
+  `rulings`). Its ok with the ack makes the candidate acceptable; its block
+  takes the repair path, which carries the ruling to the writer. A node without
+  a `review` or `closure-review` obligation has no reviewer to ack and halts
+  `stalled:` as before. Each is sent once (*delivered*); if the node still
+  needs the owner, or the run finishes without a verdict or candidate, the
+  notify or halt follows as usual. The slotless ready-node notify of `decide`
+  is unchanged (the next dispatch packet carries the ruling). Message: `New parent rulings for <node>:`, one
   line `#<seq> (<nodes>): <text>` per undelivered in-scope ruling, then `Active
   blocks on your candidate <commit> (submit #<seq>):` with `- #<seq>
   <obligation>[ by <who> rank <r>]: <note>` for the active blocks on the current
-  candidate's keys (else the latest submit's), then `Apply these rulings; they
+  candidate's keys (else the latest submit's), then (0.8, L3.1) `Flaky blocks of
+  <node> (an attribution rerun of the failing content passed):` with the same
+  lines for every flaky block of the node, then `Apply these rulings; they
   override your packet. Then commit and run \`owed submit <node>\`.`. `rulings`
   = the highest seq it lists. It is not a repair (not counted). A writer that
   finishes it without submitting halts as before, naming it: `writer run <rid>
