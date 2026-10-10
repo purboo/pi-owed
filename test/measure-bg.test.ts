@@ -399,8 +399,8 @@ test('#785 (2): the driver\'s own merge appending while a pass observes is no tr
 
 // ---------- K4 refusals in the driver (Parent answers 17:1x, item 6) ----------
 /** Node a (check ca) with a gated invariant on its merge tree, armed by `<gates>/armed`; `extra` invariants appended. */
-const k4Plan = (path: (n: string) => string, o: { extra?: object[]; check?: string } = {}) => ({
-  ...planOf(node('a', { checks: [{ id: 'ca', run: o.check ?? 'true', reads: ['a.txt'] }] })),
+const k4Plan = (path: (n: string) => string, o: { extra?: object[]; check?: string; brief?: string } = {}) => ({
+  ...planOf(node('a', { checks: [{ id: 'ca', run: o.check ?? 'true', reads: ['a.txt'] }], ...(o.brief !== undefined ? { brief: o.brief } : {}) })),
   invariants: [{ id: 'slow', run: `if [ -f a.txt ] && [ -e '${path('armed')}' ]; then ${gated(path('inv'), path('gate'))}; fi; true`, reads: ['a.txt'] }, ...(o.extra ?? [])],
 });
 /** Node a accepted; a Driver starts its merge; `during` runs while the merge measures; then the merge ends and is handled. */
@@ -435,7 +435,8 @@ test('K4 in the driver: `not measured` (an invariant added while the merge measu
 });
 
 test('K4 in the driver: a candidate invalidated by a plan update, or a changed slot, is reported (superseded), no halt', { timeout: 240_000 }, async () => {
-  const inv = await k4Merge(f => f.plan(k4Plan(f.path, { check: 'true; true' })));
+  // 0.10 (N1): a check-only change would carry the candidate; a brief change still invalidates it.
+  const inv = await k4Merge(f => f.plan(k4Plan(f.path, { brief: 'changed brief' })));
   try {
     const out = inv.lines.join('\n');
     assert.match(out, /^merge a: superseded — merge refused \(candidate #\d+ [0-9a-f]{12} of a was invalidated by plan #\d+ \(its spec changed\); the writer submits again, then merge\); the next pass decides on the new state$/m, out);

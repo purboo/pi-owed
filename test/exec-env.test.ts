@@ -197,7 +197,10 @@ test('operations: exec: {} is no change; an exec change needs the owner, is in �
     await assert.rejects(ops.planSet({ cwd: r.cwd, plan: next, as: parent }), /owner/);
     await ops.planSet({ cwd: r.cwd, plan: next, as: owner, channel: 'flag' });
     card = await ops.why({ cwd: r.cwd, node: 's' });
-    assert.equal(card.phase, 'dispatched', 'the exec change invalidates the submitted candidate');
+    // 0.10 (N1): the exec change invalidates the submitted candidate and owed carries it with recomputed keys.
+    assert.equal(card.phase, 'submitted');
+    assert.equal(card.carried?.submit, first.seq, 'the exec change carried the submitted candidate');
+    assert.notEqual((await ops.status({ cwd: r.cwd })).nodes.s!.candidate!.keys['check:unit'], first.facts.keys['check:unit']);
     assert.ok(card.downgrades.some(g => g.items.some(i => i.node === '*' && i.what === 'exec changed; cannot prove obligations were not reduced')), JSON.stringify(card.downgrades));
     assert.equal(card.exec, 'Exec: wrap env · env CARGO_TARGET_DIR, MODE');
     assert.equal(views.renderReceipt(card).split('\n')[1], 'Exec: wrap env · env CARGO_TARGET_DIR, MODE');

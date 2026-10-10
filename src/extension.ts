@@ -11,7 +11,7 @@ import { adoptPrefixes, uncoveredDowngrades, writesHint } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
-import { allowanceLabel, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
+import { allowanceLabel, carryLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -245,8 +245,10 @@ export default function owed(pi: ExtensionAPI): void {
     // H1.3: dispatchable ready nodes and no driver: one hint line before the H2.2 warnings, which end the text (the
     // parent decides; nothing starts automatically).
     const ready = await readyHint(dir);
-    const data = { ...r, ...(pending.length ? { warning: warning.trim() } : {}), warnings, ...(ready ? { ready, driver: false } : {}) };
-    return result(data, `${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(await ops.status({ cwd: dir }))}${ready ? `\n${readyHintText(ready, 'pi')}` : ''}${warnings.map(w => `\n${w}`).join('')}`);
+    // N1.3: one line per node whose candidate the plan entry carried.
+    const carried = await ops.carriedBy({ cwd: dir, plan: r.seq }), carriedText = carried.map(e => `${carryLine(e)}\n`).join('');
+    const data = { ...r, ...(pending.length ? { warning: warning.trim() } : {}), warnings, ...(carried.length ? { carried } : {}), ...(ready ? { ready, driver: false } : {}) };
+    return result(data, `${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(await ops.status({ cwd: dir }))}${ready ? `\n${readyHintText(ready, 'pi')}` : ''}${warnings.map(w => `\n${w}`).join('')}`);
   });
   tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'initialize the ledger');
