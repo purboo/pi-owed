@@ -1,5 +1,164 @@
 # Changelog
 
+## 0.10.0
+
+The wais feedback #24-#26 reported parent round trips that owed caused
+itself: plan v69 (wais #1373) changed only a check definition of one node,
+which invalidated its candidate; the driver then sent a `rebase` follow-up
+(#1375) and the writer resubmitted the same commit at the same base
+(#1378). A moving trunk failed dispatch and plan CAS, and a writes question
+cost a hand-edited plan plus a separate ruling. Separately the pi-zip
+agent's profile showed every op replaying the whole ledger: 9.6-13.5 s per
+op on the wais ledger (1558-1601 entries, 85-87 nodes), with the pi session
+UI frozen because pi tools run on its main thread. N1 carries candidates
+across measurement-only plan changes, N2 retries CAS under a moving trunk,
+N3 adds `owed amend`, and N4 makes replay fast.
+
+- **Carry (N1; wais #24).** When a plan change invalidates a node's open
+  candidate and the node spec differs only in `checks`, `writes`, `type`
+  and `drive` (plan-wide `setup`, `exec` and `closure` changes do not
+  matter), the same `owed plan` call appends, in the same ledger lock and
+  right after the plan entry, a carry submit: a `submit` by `executor:owed`
+  with `carry: <seq>` of the carried submit, for the same commit at the
+  same slot base, its facts recomputed under the new plan. Evidence on
+  unchanged keys still counts; the next attest measures the changed keys.
+  The candidate stays the writer's commit, so writer-only rules (no
+  self-review, decoys) treat it like the original. Any other node field
+  change (`brief`, `deps`, `review`, `title`, `approve`, `evidence`, ...)
+  never carries. Validation accepts an executor submit only with `carry`
+  naming the latest submit of the open attempt, with its commit and base,
+  an open slot, no current candidate and an unchanged slot base; a writer
+  submit never has `carry`. `owed plan` prints `Carried <node>: ...` per
+  carried node; a carry whose facts cannot be computed or that validation
+  would refuse is left out (the candidate stays invalidated, as in 0.9)
+  and reported as `Not carried <node>: <reason>; the writer submits again`
+  (JSON `notCarried`). `owed why` and status show `candidate #C carried by
+  plan #P from submit #S`. Driver row 8 label fix (#1375): without a
+  current candidate, the `rebase` follow-up goes out only when the slot
+  has a rebase and no submit of the attempt followed it; when a later plan
+  entry invalidated the latest submit, the `submit` follow-up names it:
+  "plan #P changed this node's spec (<fields>); resubmit (re-run checks if
+  needed, then `owed submit <node>`)".
+- **CAS retry (N2; wais #25, #24 parts 2-3).** A dispatch rollback deletes
+  its new branch with `git update-ref -d refs/heads/<branch> <base>`, a
+  compare-and-delete in one Git transaction, whatever the main worktree's
+  HEAD (the "not fully merged" leftover of wais #25 is gone). A ref that
+  moved, or a branch still checked out in a worktree, is kept and reported
+  under the existing `git branch -d` rollback label. `owed dispatch` and
+  `owed plan` retry a CAS refusal, up to 3 attempts in total, while the
+  ledger's plan sha is unchanged; each attempt reads fresh state and
+  dispatch completes its rollback first (a failed rollback is returned at
+  once). A changed plan sha, or the third failure, returns the refusal with
+  its error class and exit code; other failures are not retried. The
+  downgrade hint for a changed check definition names the changed fields
+  among `run`, `timeout_s`, `reads`, `tests`, `red_expect` and suggests
+  adding the new command as a new check id; detection is unchanged. On
+  `owed plan`, the check-less and loop warnings skip nodes merged in the
+  ledger; `owed init` warnings are unchanged.
+- **`owed amend` (N3; wais #26).** `owed amend <node> --writes
+  +<path>[,+<path>...] --note "<limit>" [--plan <file>]` (pi `owed_amend`
+  `{node, writes, note, plan?, as?, cwd?}`) widens one node's writes. The
+  plan file is `--plan`, else the latest plan entry's `path`. The edit
+  splices only the node's `writes` list source (via the `yaml` Document
+  API) and keeps every other byte; the result must parse to the current
+  plan with only that node's writes widened. It refuses a file whose
+  normalized plan sha differs from the ledger's (`plan file has unrecorded
+  edits`; a comment-only edit does not count), an unknown or merged node,
+  an empty path list, a path without `+`, an empty note, no plan path
+  without `--plan`, and `nothing to amend` when every path is already
+  there; removal is not offered. In one
+  lock it appends the plan entry exactly as `owed plan` would (same
+  authority: a widening is a downgrade, so the owner or an `allow` rule),
+  any N1 carry submits, and a `rule` by the same principal for `[<node>]`:
+  `writes of <node> widened by plan #P: +<paths>. Limit: <note>`, which
+  reaches the writer through the ruling path and reviewers acknowledge. It
+  retries CAS like `owed plan`, re-reading file and ledger per attempt. A
+  refusal records nothing and leaves the file unchanged.
+- **Replay speed (N4; pi-zip profile).** The fold keeps per-node indexes
+  (reviews, evidence, waivers, observations by item, launches, entries by
+  seq), recomputes derived fields only for the nodes an entry can change,
+  and computes `dependents` once per plan instead of an O(N^3) DFS per
+  entry. A differential test (test/perf.test.ts) compares State, queries,
+  views and `validateDraft` decisions with a frozen copy of the previous
+  reducer at every k-th prefix of fuzz, synthetic and real ledgers.
+  Measured on ipc with a copy of the wais ledger (1601 entries, 87 nodes,
+  87 plans, 15.5 MB of YAML) and a git repo, full `owed status` path:
+
+  | Case                            | before          | 0.10.0          |
+  |---------------------------------|-----------------|-----------------|
+  | `status`, cold, warm plan cache | 13.5 s / 335 MB | ~0.62 s/~195 MB |
+  | `status`, hot (same process)    | not measured    | ~0.40 s         |
+  | First run (fills the cache)     | 13.5 s          | 2.7 s           |
+  | Synthetic, 9917 entries         | not measured    | 1.2 s           |
+
+  Parsed plans are cached in process and persistently in `<owed
+  dir>/cache/plans/<blob sha>.json` as `{v, sha, plan}`, with `v` = cache
+  format + owed version, written atomically (temp file, rename) after a
+  successful YAML parse. Any read error, invalid JSON, other `v` or other
+  `sha` is a miss and the YAML is parsed again; the cache never fails an
+  op. `owed verify` never uses it for replay: it parses every blob from
+  YAML and reads each entry raw. An entry of another `v` is rewritten
+  silently; one of this `v` whose `sha` or plan differs, or that cannot be
+  read or parsed, is reported in `cacheMismatch` (not a verify failure)
+  and rewritten. `owed gc` (also `--dry-run`) removes entries whose sha no
+  longer appears in a genesis or plan entry, and temp files older than
+  60 s; nothing is recorded in the ledger. Deleting the directory is safe.
+
+**Compatibility.** A ledger containing a carry submit needs owed >= 0.10.0
+to verify and replay: 0.9 refuses a submit whose `by` is not the slot
+writer. Upgrade the CLI, the pi extension and remote executors together.
+The plan cache version includes the owed version, so the first run after
+the upgrade parses every plan again and refills the cache.
+
+**Deferred.** The formal model does not cover carry (nor resume,
+superseded blocks, parallel measurement or reused trees). Carry nits
+(review #983, 23:5x): replay does not re-check that a carry submit directly
+follows its plan entry and that the spec change was carryable (only ops
+writes executor submits, and any local process can already append executor
+entries); carry after abandon or re-dispatch, carry of a carry and carry
+during a merge measurement are covered by review reading, not tests. Amend
+nits (00:4x): in a CRLF file, inserted block-list lines get LF endings; a
+flow list with a comment right before `]` is refused as an internal error
+instead of a usage error; a node with no `writes` gets the whole file
+re-emitted. A verify cache mismatch is shown only in JSON. Moving pi tools
+off pi's main thread (to a worker or child process). Still open from
+0.9.0: per-check "measure on the candidate merged with the current trunk"
+(#23); reading dsa 1.0.34 `delivery: "forwarded"` directly; review #950
+nit: two reclaimers that both remove the same dead-pid token older than
+1 h can, in a narrow window, end with two holders of one reuse tree; wais
+#22 parts 1-2, a merge train. Still open from 0.8.0: `error_expect` for
+environment-precondition failures (#12); per-tier model routing (#11); a
+plan warning for unknown node keys; attest-busy nits (a dispatch whose
+ledger-lock timeout is followed by a failed rollback still exits 75
+`retry`; `--json=x` gets no JSON error line); the SIGKILL limit (checks of
+a SIGKILLed attest keep running, unrecorded, until they exit); K review
+nits (parallel node attests each measure a pending genesis invariant;
+stale attest locks with a reused pid read as busy indefinitely; the `hold`
+comment in `src/dsa.ts`; the `--json` loop exit record maps `busy` to code
+3; merge's abort path keeps the strict whole-plan stability rule; merge
+recomputes facts under the ledger lock when the plan changed; merge's
+branch for a node that left the plan is unreachable; the invalidation
+refusal says `its spec changed` also for `setup`, `exec` or `closure`
+changes; a waiver of an obligation the candidate lacks prints an empty
+key; the threshold hint reads observations across attempts; the
+node-models sha test recomputes the formula; a merge-cas test title);
+without dsa, an attest exiting 75 on a lock timeout is logged as `machine
+lease refused`; a busy node logs a `started` and a busy line per timed
+pass; whether a rejected ruling send survives a dsa `prune` was not
+verified. Still open from 0.6.1: the writes hint lists node ids verbatim
+as globs and grants every listed node the union of the new prefixes; a
+concurrent dispatch can make a rollback report `rollback failed: directory
+cleanup`; a rollback that wraps a non-OwedError drops its stack; pi
+revalidation replays the whole ledger once per delivery attempt, and a
+failed delivery's dropped wakes are already marked resolved; a staying
+driver polls neither dsa events nor trunk drift while it waits; binding a
+reviewer's identity to its dsa call; rulings that uphold or overrule a
+named block. Still open from 0.6.0: a follow-up dsa retires because the
+call sealed before delivery ends in a misleading `finished repair
+follow-up without submitting` halt (awaits dsa §49); M4 and M6 of
+`owed05-big.sh` remain within 9% of the 22M-state cap. A new candidate
+that changes the flaky test itself does not clear the block.
+
 ## 0.9.0
 
 A wais merge took 13.3 min (feedback #23): the sum of its merge-tree checks
