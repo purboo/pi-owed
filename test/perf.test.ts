@@ -11,10 +11,10 @@ import { Ledger, PLAN_CACHE_VERSION } from '../src/ledger.ts';
 import { parsePlan } from '../src/plan.ts';
 import { reduce } from '../src/reducer.ts';
 import type { Entry, Plan } from '../src/types.ts';
-import { compare, fuzzLedger } from './helpers/differential.ts';
+import { compare, fuzzLedger } from './perf/differential.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, planText, seed } from './helpers/surface.ts';
-import { synthLedger } from './helpers/synth.ts';
+import { synthLedger } from './perf/synth.ts';
 
 const show = (m: ReturnType<typeof compare>): string => m ? `${m.what} at prefix ${m.at}\nbase: ${m.base.slice(0, 3000)}\ncur:  ${m.cur.slice(0, 3000)}` : '';
 

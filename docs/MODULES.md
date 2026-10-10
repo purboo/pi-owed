@@ -104,7 +104,7 @@ Every process (setup, check, red, strength, invariant, attribution reruns) runs 
 `min_tests` applies to every non-red run (check and invariant), never to a red run. A non-red run that exits non-zero with an unknown or zero count is `fail` with the last 5 output lines in the note; exit 126/127 with no count is `error` (`command could not run …`, same tail) (SPEC §7.2). cargo `test result:` lines count only at column 0. A red run whose command exits 126/127 or cannot be spawned is `error` (SPEC §6.2).
 
 ## src/reducer.ts  (leaf core, pure: no fs/git/clock)
-0.10 (N4): replay indexes in History (`record`), per-entry dirty refresh (`touched`), `dependents` per plan, frozen lookup plans shared (`own`); equivalence with the frozen copy `test/fixtures/reducer-0.10-base.ts` (+ `views-0.10-base.ts`) is tested in `test/perf.test.ts` (helpers `test/helpers/differential.ts`, `synth.ts`; benchmark `test/helpers/perf-bench.ts`/`.sh`).
+0.10 (N4): replay indexes in History (`record`), per-entry dirty refresh (`touched`), `dependents` per plan, frozen lookup plans shared (`own`); equivalence with the frozen copy `test/fixtures/reducer-0.10-base.ts` (+ `views-0.10-base.ts`) is tested in `test/perf.test.ts` (helpers `test/perf/differential.ts`, `synth.ts`; benchmark `test/perf/perf-bench.ts`/`.sh`).
 ```ts
 export type PlanLookup = (sha: string) => Plan;
 export function reduce(entries: Entry[], plans: PlanLookup): State;
