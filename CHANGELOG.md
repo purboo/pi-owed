@@ -1,5 +1,148 @@
 # Changelog
 
+## 0.6.1
+
+The wais run of 2026-10-10 reported four driver and planning frictions
+(feedback #4-#7): H1 answers #4 and #5, H2 answers #6 and #7. H3 closes three
+0.6.0 deferrals.
+
+- **Live wakes (H1.1; wais #5).** In wais the parent read a question from the
+  drive log and answered it, but the follower had already handed its wake to pi
+  as a follow-up while the agent was busy, so pi delivered the stale wake after
+  the answer. The pi extension now tracks the session's agent (`agent_start` …
+  `agent_settled`, and `ctx.isIdle()` of the latest event context) and never
+  hands a wake to pi while it runs: the follower keeps reading and holds the
+  batch. At `agent_settled` (every follower steps at once) or at the next tick
+  while idle, the batch is revalidated and what is left is delivered with
+  `triggerTurn` as before; a batch that finds the agent busy again after the
+  revalidation stays held. Revalidation runs on every pi delivery, also for a
+  batch read while idle, and on wake lines only. The driver's asking notify
+  carries the log-line fields `rid`, `qid` and `rev` (the run's first listed
+  open question; the text is unchanged), and the line is dropped when `describe`
+  of that run no longer lists that qid/rev as open; a failed describe keeps it.
+  Checking only the first question is enough: once it is answered the notify
+  text changes, and the next pass prints the line of the remaining question,
+  which is delivered. A node-scoped line with a fact mark is dropped when the
+  node's current fact mark (`factMark`) is higher: someone acted on the node,
+  and a condition that still holds is reported again by the driver's next pass
+  with the new mark; a failed ledger read keeps it. Terminal lines, drift lines,
+  `idle-wait` and lines without a fact mark are never dropped. The ledger is
+  read and each run described at most once per delivery. A dropped wake that is
+  still its key's latest record also drops that record's repeat ride-along, and
+  later repeats of it do not ride along. When lines were dropped the message
+  ends with `(<n> wake(s) resolved before delivery)` after `Next: …`, counting
+  that delivery's drops only; when no wake line is left nothing is delivered and
+  the session is not woken (merges and repeats ride along with the next
+  message). A failed `sendMessage` keeps the whole batch, revalidated again at
+  the next tick. A follower without the pi hooks (the CLI-era `tick`) is
+  unchanged.
+- **Staying driver (H1.2; wais #4).** In wais the driver exited idle after a
+  merge, the parent then added seven ready nodes, and no driver dispatched them.
+  `owed drive --stay` (with the loop or `--detach`; a usage error with `--once`,
+  `--status` or `--stop`) and `owed_drive` action `start` with `stay: true`
+  (refused with other actions) are opt-in. An idle pass of a staying driver does
+  not exit: it logs `{"event":"idle-wait","at":…}` once per idle period (text
+  `idle: nothing open and nothing ready; staying until the ledger changes (owed
+  drive --stop ends it)`), which wakes the session and is not terminal. The
+  driver keeps the lock and polls every `pollMs` the hash of the last complete
+  entry of `ledger.jsonl`, read from the file's end, until it differs from the
+  head the idle pass decided on, then resumes passes. That baseline is the idle
+  pass's own head (review #725): an entry appended while the idle pass ran, such
+  as a plan update adding a ready node, already counts as a change and the next
+  pass runs at once; the first candidate read the head after the pass and then
+  waited for a further change with the new node undispatched. An idle period
+  ends with a pass that is not idle, so a ledger change that leaves the driver
+  idle logs no second `idle-wait`. A stop or signal ends it as before (exit
+  record `stopped`). `--detach --stay` passes `--stay` to the detached driver;
+  the lock does not record it. While the driver runs and its log, after the last
+  exit record, has an `idle-wait` followed by no action other than a notify,
+  `owed drive --status` adds `idle, waiting for ledger changes since <at>`
+  (`--json`: `idleSince`), and `/owed` and `owed_drive` status show it too.
+  Without `--stay` an idle pass exits `idle` as before. SKILL.md recommends
+  `stay: true` when the plan will grow.
+- **Ready hint (H1.3; wais #4).** After a successful `owed plan` or `owed_plan`,
+  when the new state has nodes the driver would dispatch now (the `dispatch`
+  actions of its `decide`: readiness, `drive.max`, writes overlap, owner-needed)
+  and no driver holds the repository's lock (a live lock or a lock of another
+  host counts as a driver, a stale one does not), the output adds one line: CLI
+  `ready: <ids> (<n>); no driver is running: owed drive --detach --stay`, pi
+  `ready: <ids> (<n>); no driver is running: owed_drive {action:"start",
+  stay:true}`. The ids are in the driver's dispatch order. `--json` output and
+  the tool details gain `ready: string[]` and `driver: false` only together with
+  the line. Nothing starts automatically, and a failure computing the hint adds
+  nothing. The line comes before the H2.2 warnings, which end the plan text
+  (SPEC §12.9).
+- **Allowance guidance (H2.1; wais #6).** In wais two writes questions within 15
+  minutes each cost a plan version and an owner act. README and the `owed` skill
+  gain a planning recipe: keep writes strict by default, and at plan time
+  pre-authorize the `writes` prefixes integration and packaging nodes tend to
+  need with an `allow` rule, e.g. `allow: [{nodes: ["KB*", "A9-*"], writes:
+  ["app/src/entry/", "package.json"]}]`; a writer's writes question then costs
+  one parent plan update and no owner step. A parent plan update refused only
+  for widened writes (every uncovered downgrade is `writes widened` or `writes
+  scope expanded`) adds, in the CLI and in `owed_plan`, one line with a
+  ready-to-paste rule for the next plan: `hint: an allow rule {nodes: ["KB4"],
+  writes: ["<new prefixes>"]} in the prior plan would cover this`, the new
+  prefixes being those under neither the node's prior writes nor a matching
+  prior rule.
+- **Check-less nodes (H2.2; wais #7).** In wais a milestone node with no check
+  merged on a review of its evidence, although its writer reported the milestone
+  not met. `owed init` and `owed plan` (CLI and pi tools) warn, refusing and
+  recording nothing, for each node of the new plan with no checks and no
+  evidence obligations: `warning: node <id> has no checks: its acceptance rests
+  on review alone`. Every such node is warned about, not only one whose title
+  says "Milestone": a title is not a contract. The CLI prints the warnings after
+  the result; `--json`, `owed_init` and `owed_plan` return `warnings: string[]`
+  (empty when there are none).
+- **What an ok review means (H2.3; wais #7).** The review packet adds a line
+  before the needs-parent instruction: `--ok` means the candidate meets the
+  node's goal as its title and brief state it, not only that the writer's report
+  or evidence is accurate; if the candidate or the writer's report says the goal
+  is not met, record `--block` (`--needs-parent` when the goal itself is in
+  question). The driver does not parse review notes. The `owed` skill says the
+  same.
+- **0.6.0 deferrals (H3).** Every step of a dispatch rollback (`git worktree
+  remove`, `git branch -d`, directory cleanup) runs even when an earlier one
+  fails; the error then names the original failure and each failed step
+  (`<original>` followed by the line `rollback failed: <step>: <reason>; …`),
+  keeps an OwedError's code (`internal` otherwise), and nothing is recorded, as
+  before. A new plan (`owed init`, `owed plan`) is refused when two node ids are
+  equal ignoring case (`KB4` and `kb4`), since on a case-insensitive filesystem
+  they would share a branch ref and a worktree directory; replay is unaffected.
+  `formal/run-a3-big.sh` caps every run like `formal/models/scripts`: `ulimit -v
+  8000000`, explicit state caps (exhaustive 22M distinct states; simulations 2e9
+  sampled states, so the walk count stays the bound), the model checker's
+  `--timeout` and a wall-clock `timeout` 120 s above it (`a3_compare`: 3600 s).
+  Rerun on ipc with the caps, no cap stopped any configuration and every
+  published a3 verdict and state count is unchanged
+  (`formal/REPORT-mc-port.md`).
+
+**Compatibility.** The ledger format is unchanged: no entry gains a field, so
+pi-owed 0.6.0 can read a ledger written by 0.6.1. The asking notify's `rid`,
+`qid` and `rev` are fields of the drive log line, not of the ledger. `--stay` is
+opt-in: without it the driver exits idle as before. The wake timing and the
+revalidation change only in pi; a follower without the pi hooks delivers as
+before. The JSON output of `owed plan` and `owed init` and the details of
+`owed_plan` and `owed_init` gain `warnings`; `ready` and `driver` appear only
+together with the ready hint line. New plans are refused for node ids differing
+only in case: a ledger whose recorded plan has such ids stays readable, but a
+plan update that keeps both ids is refused.
+
+**Deferred.** Review nits not fixed: the writes hint lists node ids verbatim in
+`nodes`, which allow rules read as globs, so an id containing `[` does not match
+itself and the pasted rule misses that node; with several nodes the hint grants
+every listed node the union of all new prefixes (broader than needed, still
+covering the update); a concurrent dispatch whose worktree lies in a parent
+directory this dispatch created makes the rollback report `rollback failed:
+directory cleanup` (ENOTEMPTY) although only empty directories are removed; a
+rollback that wraps a non-OwedError drops its stack; and a staying driver polls
+neither dsa events nor trunk drift while it waits (only the ledger head). Still
+open from 0.6.0: a follow-up forwarded into running work that dsa retires
+because the call sealed before delivery still ends in a misleading `finished
+repair follow-up without submitting` halt; the fix awaits dsa §49. 0.7
+candidates: bind a reviewer's identity to its dsa call; rulings that uphold or
+overrule a named block.
+
 ## 0.6.0
 
 The owedmc model of owed 0.5 (`formal/models`, `owed05`) checked acceptance and
