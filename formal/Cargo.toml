@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["mc", "models"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+debug = false
+codegen-units = 4
+
+[profile.test]
+opt-level = 3
