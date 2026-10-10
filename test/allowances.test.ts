@@ -136,7 +136,7 @@ test('parent plan updates: covered downgrades need no owner, stay in ΔO⁻ labe
     await refuse(edit(eased, 'p', n => { n.review = { count: 0, min_rank: 1 }; }), /p: review count\/rank reduced$/);
     await refuse(edit(eased, 'p', n => { n.checks = []; }), /p: core-p check removed$/);
     await refuse(edit(eased, 'q', n => { n.review = { count: 0, min_rank: 1 }; }), /q: review count\/rank reduced$/);
-    await refuse(edit(eased, 'p', n => { n.writes = ['p/', 'docs/api/', 'src/']; }), /p: writes scope expanded$/);
+    await refuse(edit(eased, 'p', n => { n.writes = ['p/', 'docs/api/', 'src/']; }), /p: writes scope expanded\nhint: an allow rule \{nodes: \["p"\], writes: \["src\/"\]\} in the prior plan would cover this$/);
     await refuse({ ...eased, allow: [...ALLOW, { nodes: ['q'], review_count: 0 }] }, /trunk: allow changed/);
     await refuse({ ...eased, setup: 'true' }, /\*: setup\/closure changed/);
     { const out = await cli(r.cwd, ['why', 'p']); assert.equal(out.code, 0); }

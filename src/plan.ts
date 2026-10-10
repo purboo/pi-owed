@@ -288,6 +288,13 @@ function mutantErrors(plan: Plan): string[] {
   for (const n of plan.nodes) for (const c of n.checks) for (const g of c.mutants ?? []) if (!globWithinClosure(g, plan.closure)) errors.push(`${n.id}: check ${c.id}: mutant glob ${g} must lie inside the plan closure`);
   return errors;
 }
+/**
+ * H2.2: one warning per node of `plan` with no checks and no evidence obligations: its acceptance rests on review alone.
+ * `owed init` / `owed plan` report them after the result; they refuse and record nothing.
+ */
+export function checklessWarnings(plan: Plan): string[] {
+  return plan.nodes.filter(n => !n.checks.length && !n.evidence?.length).map(n => `warning: node ${n.id} has no checks: its acceptance rests on review alone`);
+}
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
   const out: Downgrade[] = [];
   function compare(node: string, before: CheckSpec[], after: CheckSpec[]): void {

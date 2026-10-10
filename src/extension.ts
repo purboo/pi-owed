@@ -6,8 +6,8 @@ import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-a
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
-import { parsePlan, planDowngrades } from './plan.ts';
-import { adoptPrefixes, uncoveredDowngrades } from './reducer.ts';
+import { checklessWarnings, parsePlan, planDowngrades } from './plan.ts';
+import { adoptPrefixes, uncoveredDowngrades, writesHint } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, renderDriveStart, renderDriveStatus, renderDriveStop } from './drive-bg.ts';
@@ -219,12 +219,14 @@ export default function owed(pi: ExtensionAPI): void {
     // D21.3: downgrades that an allowance of the current plan covers need no owner; the parent records them.
     const gaps = downgrades.length ? uncoveredDowngrades(prior, next, downgrades) : [];
     const who = p.as ?? (gaps.length ? ownerDefault() : 'parent:pi');
-    if (gaps.length && principal(who).role !== 'owner') throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}`);
+    if (gaps.length && principal(who).role !== 'owner') { const hint = writesHint(prior, next, gaps); throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}${hint ? `\n${hint}` : ''}`); }
     const r = await ops.planSet({ ...await actor(ctx, dir, who, `Update plan ${oneLine(read.path)}${read.rev ? ` at ${read.rev}` : ''}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`, { Note: p.note }, signal), ...read, ...(p.note !== undefined ? { note: p.note } : {}) });
     const pending = await ops.genesisPending({ cwd: dir });
     const warning = pending.length ? `Warning: genesis attest pending for ${pending.join(', ')}\n` : '';
     const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.seq - 1 })).downgrades.find(x => x.seq === r.seq);
-    return result(pending.length ? { ...r, warning: warning.trim() } : r, `${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(await ops.status({ cwd: dir }))}`);
+    // H2.2: warnings for check-less nodes of the new plan, after the result.
+    const warnings = checklessWarnings(next);
+    return result({ ...r, ...(pending.length ? { warning: warning.trim() } : {}), warnings }, `${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(await ops.status({ cwd: dir }))}${warnings.map(w => `\n${w}`).join('')}`);
   });
   tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'initialize the ledger');
@@ -241,7 +243,8 @@ export default function owed(pi: ExtensionAPI): void {
         async (e: unknown) => ac.signal.aborted ? undefined : end(`owed init: genesis attest of ${oneLine(dir)} stopped (${oneLine(e instanceof Error ? e.message : String(e))})`, await ops.genesisReport({ cwd: dir }).catch(() => ({ recorded: [], failed: [], missing: r.genesis.missing }))),
       ).then(content => { if (content) pi.sendMessage({ customType: 'owed-init', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }); }).catch(() => undefined).finally(() => { genesisRuns.delete(ac); });
     }
-    return result({ entry: r.entry, genesis: r.entry.seq, measuring: n }, `${renderEntry(r.entry)}\nInitialized (genesis #${r.entry.seq}). ${n ? `Measuring ${n} genesis invariant${n === 1 ? '' : 's'} in the background in this session; owed_status shows progress and this session gets one message when it ends.` : 'No invariants to measure.'}`);
+    const warnings = checklessWarnings(parsePlan(read.plan));
+    return result({ entry: r.entry, genesis: r.entry.seq, measuring: n, warnings }, `${renderEntry(r.entry)}\nInitialized (genesis #${r.entry.seq}). ${n ? `Measuring ${n} genesis invariant${n === 1 ? '' : 's'} in the background in this session; owed_status shows progress and this session gets one message when it ends.` : 'No invariants to measure.'}${warnings.map(w => `\n${w}`).join('')}`);
   });
   tool('waive', 'Owner waiver of a current obligation (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner); reason says why; accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), candidate: candidateParam, as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'waive');
