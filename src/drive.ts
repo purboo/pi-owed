@@ -174,7 +174,8 @@ export function ownerNeeded(s: State, node: string): string | undefined {
 }
 /** D25.6: the commands that resolve an owner decision on `node`, as one clause addressed to the main agent. */
 const resolveText = (s: State, node: string): string => { const c = ownerCommands(s, node); return c.length ? `; the main agent resolves it with: ${c.join(' | ')}` : `; the main agent decides: owed why ${node}`; };
-const ownerNotify = (s: State, node: string, reason: string): Action => ({ do: 'notify', node, text: `${node}: needs the owner (the main agent decides; owed lists the command): ${oneLine(reason)}; the driver leaves it alone${resolveText(s, node)}` });
+// The reason's own trailing `needs the owner` (ownerNeeded) is dropped: the prefix already says it.
+const ownerNotify = (s: State, node: string, reason: string): Action => ({ do: 'notify', node, text: `${node}: needs the owner (the main agent decides; owed lists the command): ${oneLine(reason.replace(/ needs the owner$/, ''))}; the driver leaves it alone${resolveText(s, node)}` });
 
 // ---------- decide ----------
 const isSealed = (v: RunView): boolean => v.state === 'sealed' || v.state === 'pruned';

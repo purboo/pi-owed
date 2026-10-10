@@ -204,7 +204,7 @@ export interface NodeState {
   halt?: HaltEntry;
 }
 export interface AttemptRuns { attempt: number; launches: LaunchEntry[]; sends: SendEntry[] }
-export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string }
+export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string; /** D25: present only for a delegated owner ruling */ channel?: 'delegated' }
 export interface State {
   seq: number;                 // last seq, -1 when empty
   head: string;                // hash of last entry
@@ -216,7 +216,7 @@ export interface State {
   invariants: ItemView[];      // invariant items on the current trunk state
   rules: Rule[];
   /** `allowance` (D21): set when a parent's plan update was accepted under an allowance; S = seq of the genesis/plan entry that last changed `allow`. */
-  downgrades: { seq: number; by: string; items: Downgrade[]; allowance?: number }[];
+  downgrades: { seq: number; by: string; items: Downgrade[]; allowance?: number; /** D25: present only for a delegated owner plan update */ channel?: 'delegated' }[];
   deferred: { seq: number; node: string; id: string; key: string }[];
   escapes: EscapeView[];
   decoys: DecoyView[];             // revealed decoys with outcomes

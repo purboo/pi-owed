@@ -386,6 +386,14 @@ test('owner-needed nodes are never touched: open slot with ⊤ items, ready node
   assert.equal(f.state().nodes.a!.phase, 'ready');
   assert.match(ownerNeeded(f.state(), 'a') ?? '', /flaky block/);
   assert.deepEqual(go(f).map(x => `${x.do}:${x.node}`), ['notify:a', 'dispatch:c', 'dispatch:d'], 'a only notified; d no longer overlaps an open slot');
+  // D25.6 (pre-review #3): without an open candidate the commands are executable in order — dispatch first, then the
+  // waiver once a candidate exists (owed waive needs one), as the brief's dispatchHint/clearHint say; "needs the owner" once.
+  const blk = f.state().nodes.a!.blocks.find(x => x.state === 'flaky')!;
+  assert.deepEqual(ownerCommands(f.state(), 'a'), ['owed dispatch a', `after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq}`]);
+  const fn = go(f).find(x => x.node === 'a');
+  assert.ok(fn?.do === 'notify', JSON.stringify(fn));
+  assert.equal(fn.text, `a: needs the owner (the main agent decides; owed lists the command): flaky block #${blk.seq} on check:unit; the driver leaves it alone; the main agent resolves it with: owed dispatch a | after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq}`);
+  assert.equal(fn.text.match(/needs the owner/g)!.length, 1);
   // A review the plan requires at rank 3: only the owner can record it.
   const o = submitted(basePlan(DRIVE, { a: { review: { count: 1, min_rank: 3 } } })); o.pass();
   assert.match(ownerNeeded(o.state(), 'a') ?? '', /rank 3/);

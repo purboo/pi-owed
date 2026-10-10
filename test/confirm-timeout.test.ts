@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed, { confirmTimeout, confirmTimeoutText } from '../src/extension.ts';
 import { Ledger } from '../src/ledger.ts';
+import { main } from '../src/cli.ts';
 import * as ops from '../src/ops.ts';
 import { renderBrief, renderReport } from '../src/views.ts';
 import type { Entry } from '../src/types.ts';
@@ -158,19 +159,31 @@ test('OWED_CONFIRM=owner: the dialog waits at most OWED_CONFIRM_TIMEOUT seconds,
   const r = await fixture();
   try {
     const calls: Opts[] = [];
-    // A dialog that never answers, and (wrongly) answers yes when dismissed: owed's timer decides; a timeout is never a yes.
-    const never = (_t: string, _m: string, opts?: Opts) => { calls.push(opts); return new Promise<boolean>(res => opts?.signal?.addEventListener('abort', () => res(true), { once: true })); };
-    const before = await entries(r.cwd), started = Date.now();
-    const out = await withEnv({ ...delegatedEnv, OWED_CONFIRM: 'owner', OWED_CONFIRM_TIMEOUT: '1' }, () => harness(r.cwd, never)('owed_plan', { plan: 'eased.json', note: 'n' }));
-    const elapsed = Date.now() - started;
-    assert.ok(elapsed >= 900 && elapsed < 10_000, `elapsed ${elapsed} ms`);
-    assert.equal(out.isError, true);
-    assert.equal(text(out), `Refused: ${confirmTimeoutText(1)}`);
+    // Two dialogs that never answer (pre-review #1): one never settles at all, one ignores `signal` and `timeout` too
+    // and answers yes much later. owed's own timer must bound the call either way; a late yes is never a confirmation.
+    let late: Promise<boolean> | undefined;
+    const fakes: [string, (t: string, m: string, opts?: Opts) => Promise<boolean>][] = [
+      ['never settles', (_t, _m, opts) => { calls.push(opts); return new Promise<boolean>(() => {}); }],
+      ['ignores signal, answers yes after 3 s', (_t, _m, opts) => { calls.push(opts); late = new Promise<boolean>(res => setTimeout(() => res(true), 3000)); return late; }],
+    ];
+    const before = await entries(r.cwd);
+    for (const [label, fake] of fakes) {
+      const started = Date.now();
+      const out = await withEnv({ ...delegatedEnv, OWED_CONFIRM: 'owner', OWED_CONFIRM_TIMEOUT: '1' }, () => harness(r.cwd, fake)('owed_plan', { plan: 'eased.json', note: 'n' }));
+      const elapsed = Date.now() - started;
+      assert.ok(elapsed >= 900 && elapsed < 2500, `${label}: elapsed ${elapsed} ms`);
+      assert.equal(out.isError, true, label);
+      assert.equal(text(out), `Refused: ${confirmTimeoutText(1)}`, label);
+      assert.deepEqual(out.details, { code: 'refused', reason: confirmTimeoutText(1) }, label);
+      assert.equal(calls.at(-1)!.timeout, 2000, `${label}: pi's countdown outlasts owed's own 1 s limit`);
+      assert.equal(calls.at(-1)!.signal?.aborted, true, `${label}: owed dismissed the dialog`);
+      assert.deepEqual(await entries(r.cwd), before, `${label}: nothing recorded`);
+    }
     assert.equal(confirmTimeoutText(1), 'Owner confirmation not given within 1 s; nothing was recorded.');
-    assert.deepEqual(out.details, { code: 'refused', reason: confirmTimeoutText(1) });
-    assert.equal(calls[0]!.timeout, 1000, 'pi shows a countdown');
-    assert.equal(calls[0]!.signal?.aborted, true, 'owed dismissed the dialog');
-    assert.deepEqual(await entries(r.cwd), before, 'nothing recorded');
+    assert.equal(await late, true);
+    await new Promise(res => setTimeout(res, 100));
+    assert.deepEqual(await entries(r.cwd), before, 'the late yes recorded nothing');
+    const never = fakes[0]![1];
     // Escape (the tool call's abort) refuses `aborted`; yes records pi-confirm as owner:human (the 0.4.1 default).
     const ac = new AbortController();
     const abortNow = (t: string, m: string, opts?: Opts) => { const p = never(t, m, opts); queueMicrotask(() => ac.abort()); return p; };
@@ -257,5 +270,94 @@ test('approve/evidence and waive: delegated acts record on the current candidate
       const a = (await entries(r.cwd)).at(-1)!;
       assert.ok(a.kind === 'review' && a.by === 'owner:human' && a.channel === 'pi-confirm' && a.key === c2.keys.approve);
     });
+  } finally { await r.cleanup(); }
+});
+
+test('pi delegated path (OWED_CONFIRM unset): owed_waive, owed_adopt, owner owed_review and owed_init record delegated with no dialog', { timeout: 120_000 }, async () => {
+  const r = await fixture();
+  try {
+    await withEnv(delegatedEnv, async () => {
+      const call = harness(r.cwd, noDialog);
+      const d = await ops.dispatch({ cwd: r.cwd, node: 'a', as: { role: 'parent', id: 'p' } });
+      await commitAt(d.worktree, { 'a/x.txt': 'x\n' });
+      await ops.submit({ cwd: d.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+      const rev = await call('owed_review', { node: 'a', verdict: 'ok', rank: 3, note: 'looked at the diff', as: 'owner:pi' });
+      assert.notEqual(rev.isError, true, text(rev));
+      let e = (await entries(r.cwd)).at(-1)!;
+      assert.ok(e.kind === 'review' && e.by === 'owner:pi' && e.channel === 'delegated', JSON.stringify(e));
+      const w = await call('owed_waive', { node: 'a', obligation: 'writes', reason: 'generated file outside writes is fine' });
+      assert.notEqual(w.isError, true, text(w));
+      e = (await entries(r.cwd)).at(-1)!;
+      assert.ok(e.kind === 'waive' && e.by === 'owner:pi' && e.channel === 'delegated' && e.reason === 'generated file outside writes is fine', JSON.stringify(e));
+      assert.match(text(w), /\(delegated\)/);
+      assert.match((await ops.why({ cwd: r.cwd, node: 'a' })).items.find(i => i.obligation === 'writes')!.detail, /^writes owner waived: generated file outside writes is fine \(delegated\)$/);
+      const head = await commitAt(r.cwd, { 'hotfix.txt': 'h\n' });
+      const ad = await call('owed_adopt', { note: 'hotfix reviewed by the main agent' });
+      assert.notEqual(ad.isError, true, text(ad));
+      e = (await entries(r.cwd)).at(-1)!;
+      assert.ok(e.kind === 'adopt' && e.by === 'owner:pi' && e.channel === 'delegated' && e.commit === head, JSON.stringify(e));
+    });
+    const fresh = await repo();
+    try {
+      await commitAt(fresh.cwd, { README: 'x\n' });
+      await writeFile(join(fresh.cwd, 'plan.json'), plan(1));
+      await withEnv(delegatedEnv, async () => {
+        const init = await harness(fresh.cwd, noDialog)('owed_init', { plan: 'plan.json' });
+        assert.notEqual(init.isError, true, text(init));
+      });
+      const g = (await entries(fresh.cwd))[0]!;
+      assert.ok(g.kind === 'genesis' && g.by === 'owner:pi' && g.channel === 'delegated', JSON.stringify(g));
+    } finally { await fresh.cleanup(); }
+  } finally { await r.cleanup(); }
+});
+
+test('replay: a forged delegated owner plan entry with downgrades and no note is refused (verify fails, status refuses)', { timeout: 60_000 }, async () => {
+  const r = await fixture();
+  try {
+    const genesis = (await entries(r.cwd))[0]!;
+    assert.ok(genesis.kind === 'genesis');
+    await ops.planSet({ cwd: r.cwd, plan: plan(2), as: { role: 'parent', id: 'p' } });
+    const ledger = await Ledger.open(r.cwd), current = (await entries(r.cwd)).at(-1)!;
+    assert.ok(current.kind === 'plan');
+    // Back from review count 2 to the genesis plan (count 1): a downgrade, appended without the guard.
+    await ledger.withLock(() => ledger.append([{ kind: 'plan', by: 'owner:pi', channel: 'delegated', prior: current.plan, plan: genesis.plan, downgrades: [{ node: 'a', what: 'review count lowered' }] }]));
+    const v = await ops.verify({ cwd: r.cwd });
+    assert.equal(v.ok, false);
+    assert.match(v.error ?? '', /Entry #\d+ invalid: .*a delegated owner plan update that reduces obligations requires a note saying why/);
+    await assert.rejects(ops.status({ cwd: r.cwd }), /requires a note saying why/);
+  } finally { await r.cleanup(); }
+});
+
+test('CLI with a TTY (io.ask): an owner command records delegated and never prompts; OWED_CONFIRM=owner prompts again', { timeout: 60_000 }, async () => {
+  const r = await fixture(), cwd = process.cwd(), prompts: string[] = [], log: string[] = [];
+  const io = (answer: string) => ({ ask: async (q: string) => { prompts.push(q); return answer; }, log: (t: string) => { log.push(t); }, error: (t: string) => { log.push(t); } });
+  process.chdir(r.cwd);
+  try {
+    let code = await withEnv(delegatedEnv, () => main(['rule', 'keep it small', '--nodes', '*', '--as', 'owner:x'], io('no')));
+    assert.equal(code, 0, log.join('\n'));
+    assert.deepEqual(prompts, [], 'never prompted');
+    const e = (await entries(r.cwd)).at(-1)!;
+    assert.ok(e.kind === 'rule' && e.by === 'owner:x' && e.channel === 'delegated', JSON.stringify(e));
+    const before = await entries(r.cwd);
+    code = await withEnv({ ...delegatedEnv, OWED_CONFIRM: 'owner' }, () => main(['rule', 'gated', '--nodes', '*', '--as', 'owner:x'], io('no')));
+    assert.equal(code, 1); assert.equal(prompts.length, 1);
+    assert.deepEqual(await entries(r.cwd), before);
+    code = await withEnv({ ...delegatedEnv, OWED_CONFIRM: 'owner' }, () => main(['rule', 'gated', '--nodes', '*', '--as', 'owner:x'], io('yes')));
+    assert.equal(code, 0); assert.equal((await entries(r.cwd)).at(-1)!.channel, 'tty');
+  } finally { process.chdir(cwd); await r.cleanup(); }
+});
+
+test('report marks delegated acts in the Downgrades and Rulings sections', { timeout: 60_000 }, async () => {
+  const r = await fixture();
+  try {
+    await withEnv(delegatedEnv, async () => {
+      const call = harness(r.cwd, noDialog);
+      assert.notEqual((await call('owed_plan', { plan: 'eased.json', note: 'not needed' })).isError, true);
+      assert.notEqual((await call('owed_rule', { text: 'small commits', nodes: '*', as: 'owner:pi' })).isError, true);
+    });
+    const all = await entries(r.cwd), p = all.find(e => e.kind === 'plan')!, rule = all.find(e => e.kind === 'rule')!;
+    const report = renderReport(await ops.report({ cwd: r.cwd }));
+    assert.match(report, new RegExp(`\\nDowngrades ΔO⁻\\n  #${p.seq} owner:pi \\(delegated\\) a: `));
+    assert.match(report, new RegExp(`\\nRulings\\n  #${rule.seq} owner:pi \\(delegated\\) \\(all nodes\\): small commits`));
   } finally { await r.cleanup(); }
 });

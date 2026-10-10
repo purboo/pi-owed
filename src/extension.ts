@@ -71,16 +71,23 @@ async function actor(ctx: ExtensionContext, dir: string, value?: string, summary
   const message = [summary ?? 'Execute action as owner', `Repository: ${oneLine(dir)}`, `Identity: owner:${oneLine(p.id)}`, ...free, 'Confirmation will be recorded as pi-confirm.'].join('\n');
   const seconds = confirmTimeout(), ms = Math.min(seconds * 1000, MAX_TIMER_MS), dismiss = new AbortController();
   if (signal?.aborted) throw new OwedError('aborted', 'aborted');
-  let timedOut = false;
-  // owed's timer is created before the dialog's own, so with equal delays it fires first: "timed out" is owed's fact.
-  const timer = seconds ? setTimeout(() => { timedOut = true; dismiss.abort(); }, ms) : undefined;
-  const onAbort = (): void => dismiss.abort();
-  signal?.addEventListener('abort', onAbort, { once: true });
-  let ok: boolean;
-  try { ok = await ctx.ui.confirm('owed: confirm owner decision', message, { ...(seconds ? { timeout: ms } : {}), signal: dismiss.signal }); }
-  finally { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); }
-  if (timedOut) throw new OwedError(confirmTimeoutText(seconds));
-  if (signal?.aborted) throw new OwedError('aborted', 'aborted');
+  // owed decides: the dialog races owed's own timer and the tool call's abort, so a UI that ignores `timeout`/`signal`
+  // (or never answers) cannot hold the call; pi gets one second more than owed's limit, so owed's timer fires first.
+  // A late answer of the dialog is ignored; a timeout or an abort is never read as a confirmation (fail closed).
+  type Outcome = { kind: 'answer'; ok: boolean } | { kind: 'timeout' } | { kind: 'aborted' };
+  let timer: ReturnType<typeof setTimeout> | undefined, onAbort: (() => void) | undefined;
+  const stop = new Promise<Outcome>(res => {
+    if (seconds) timer = setTimeout(() => res({ kind: 'timeout' }), ms);
+    onAbort = () => res({ kind: 'aborted' });
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+  const answer = Promise.resolve().then(() => ctx.ui.confirm('owed: confirm owner decision', message, { ...(seconds ? { timeout: Math.min(ms + 1000, MAX_TIMER_MS) } : {}), signal: dismiss.signal })).then(ok => ({ kind: 'answer' as const, ok: ok === true }));
+  let outcome: Outcome;
+  try { outcome = await Promise.race([stop, answer]); }
+  finally { clearTimeout(timer); if (onAbort) signal?.removeEventListener('abort', onAbort); dismiss.abort(); answer.catch(() => undefined); }
+  if (outcome.kind === 'timeout') throw new OwedError(confirmTimeoutText(seconds));
+  if (outcome.kind === 'aborted' || signal?.aborted) throw new OwedError('aborted', 'aborted');
+  const ok = outcome.ok;
   if (!ok) throw new OwedError('owner did not confirm; action canceled');
   return { cwd: dir, as: p, channel: 'pi-confirm' as const };
 }
