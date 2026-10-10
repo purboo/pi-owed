@@ -136,6 +136,11 @@ export const carriedText = (c: Carried): string => `candidate #${c.seq} carried 
 export const carryLine = (e: Entry): string => e.kind === 'submit' ? `Carried ${e.node}: candidate ${e.facts.commit.slice(0, 12)} (submit #${e.carry}) is still the candidate as #${e.seq}; changed checks are measured again` : '';
 /** N1 (23:4x): the line `owed plan` prints for a carry it skipped. */
 export const notCarriedLine = (x: { node: string; reason: string }): string => `Not carried ${x.node}: ${x.reason}; the writer submits again`;
+/** N3: what `owed amend` and owed_amend print: the plan entry, carries, the rule and the file written. */
+export const amendLines = (r: { node: string; path: string; added: string[]; present: string[]; plan: Entry; rule: Entry; carried: Entry[]; notCarried: { node: string; reason: string }[] }): string[] => [
+  renderEntry(r.plan), ...r.carried.map(carryLine), ...r.notCarried.map(notCarriedLine), renderEntry(r.rule),
+  `Widened writes of ${r.node}: ${r.added.map(p => `+${p}`).join(', ')}${r.present.length ? ` (already in writes: ${r.present.join(', ')})` : ''}; wrote ${r.path}`,
+];
 /** L2: a superseded execution block with its audit line. */
 export type SupersededBlock = Block & { supersededBy: number; text: string };
 /** L2: `#<seq> superseded by plan #<p> (check <id> definition changed|removed)`. */
