@@ -251,7 +251,17 @@ allow:
   - adopt: ["testdata/", "tasks/"]   # the parent may adopt trunk commits that only touch these paths
 ```
 
-A parent plan update (`owed plan`, `owed_plan`) whose downgrades the rules of the **current** plan (the one before the update) all cover needs no owner confirmation. It is still a downgrade: it is listed in ΔO⁻ and every view labels it `by parent:<id> under allowance (plan #S)`, S being the ledger seq of the plan entry that last changed `allow`, so every easing traces to an owner act. Never covered: removing a node or a dependency, weakening trunk invariants, changing setup/closure (or exec), and changing `allow` itself — any change other than deleting whole rules is the owner-only downgrade `trunk: allow changed`. A parent's refusal lists the downgrades no rule covers, each once. `owed brief` lists the downgrades recorded under allowance since `since` with the same label.
+A parent plan update (`owed plan`, `owed_plan`) whose downgrades the rules of the **current** plan (the one before the update) all cover needs no owner confirmation. It is still a downgrade: it is listed in ΔO⁻ and every view labels it `by parent:<id> under allowance (plan #S)`, S being the ledger seq of the plan entry that last changed `allow`, so every easing traces to an owner act. Never covered: removing a node or a dependency, weakening trunk invariants, changing setup/closure (or exec), and changing `allow` itself — any change other than deleting whole rules is the owner-only downgrade `trunk: allow changed`. A parent's refusal lists the downgrades no rule covers, each once; when they only widen writes it adds one line with a ready-to-paste rule for the next plan: `hint: an allow rule {nodes: ["KB4"], writes: ["<new prefixes>"]} in the prior plan would cover this`. `owed brief` lists the downgrades recorded under allowance since `since` with the same label.
+
+Recipe: keep writes strict by default, and at plan time pre-authorize the `writes` prefixes that integration and packaging nodes tend to need (entry files, `package.json`, wiring directories):
+
+```yaml
+allow: [{nodes: ["KB*", "A9-*"], writes: ["app/src/entry/", "package.json"]}]
+```
+
+A writer's writes question on such a node then costs one parent plan update and no owner step.
+
+`owed init` and `owed plan` warn, without refusing or recording anything, for each node of the new plan with no checks and no evidence obligations: `warning: node <id> has no checks: its acceptance rests on review alone`. The CLI prints the warnings after the result; `--json`, `owed_init` and `owed_plan` return them as `warnings: string[]`.
 
 `owed adopt --note TEXT --as parent:<id>` (pi: `owed_adopt` with `as: parent:…`) adopts trunk commits without a prompt when every changed path lies under an `adopt` prefix and the usual no-new-debt guard passes; the refusal names the first path outside. Views show `adopted by parent:<id> under allowance (plan #S)`.
 

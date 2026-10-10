@@ -525,6 +525,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
     ...(otherQuoted.length ? [`Active rank-1 review block(s) by other reviewers on the obligations you record (check whether this candidate fixes them; an ok at the rank given below clears them):`, ...otherQuoted] : []),
     `Inspect the actual diff: git diff ${base} ${commit}`,
     'Do not edit files, commit or run owed submit; review only.',
+    `--ok means the candidate meets the node's goal as its title and brief state it, not only that the writer's report or evidence is accurate. If the candidate or the writer's report says the goal is not met, record --block (--needs-parent when the goal itself is in question).`,
     'If the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, record --block --needs-parent and state the decision needed; do not push a guess onto the writer.',
     'Record each verdict in the ledger, choosing --ok or --block (the rank as given; explain a block in the note):',
     ...commands.map(c => `  ${c}`),

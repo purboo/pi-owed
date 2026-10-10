@@ -291,6 +291,18 @@ invalidates a candidate.
   left out when the same downgrade is already listed in its detected wording
   (`review count lowered` under `review count/rank reduced`, `check <id> removed`
   under `<id> check removed`, `writes widened` under `writes scope expanded`, …).
+  When every uncovered item widens writes, the refusal (CLI and `owed_plan`)
+  adds one line (0.6.1 H2.1, `writesHint`): `hint: an allow rule {nodes:
+  ["<ids>"], writes: ["<new prefixes>"]} in the prior plan would cover this`,
+  the new prefixes being those under neither the node's prior writes nor a
+  matching prior rule. Recommended practice: keep writes strict and
+  pre-authorize at plan time the prefixes integration/packaging nodes need
+  (entry files, `package.json`, wiring directories).
+- **Check-less nodes** (0.6.1 H2.2). `owed init` / `owed plan` (CLI and pi
+  tools) warn, refusing and recording nothing, for each node of the new plan
+  with no checks and no evidence obligations: `warning: node <id> has no
+  checks: its acceptance rests on review alone`. The CLI prints them after the
+  result; `--json` and the pi tools return `warnings: string[]`.
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
   `changed` lies under an `adopt` prefix of a rule of the **current** plan and
   `adoptGuard` passes. No owner channel is needed.
@@ -1433,7 +1445,11 @@ not edit files, record verdicts in the ledger, reply with seqs. Before the
 commands it says: "If the brief or plan is ambiguous or contradictory, or the
 fix needs a product or contract decision, record --block --needs-parent and
 state the decision needed; do not push a guess onto the writer." (the command
-lines themselves are unchanged).
+lines themselves are unchanged). Before that line (0.6.1 H2.3) it says that
+`--ok` means the candidate meets the node's goal as its title and brief state
+it, not only that the writer's report or evidence is accurate, and that a
+candidate or report saying the goal is not met is a `--block` (`--needs-parent`
+when the goal itself is in question). The driver does not parse review notes.
 `reviewRuns(state, node)` = `max(review.count, 1 if closure-review is required
 else 0)` runs per candidate; with `k = n - reviewerBase(state, node)`,
 `reviewObligations(state, node, n)` = `review` while `1 ≤ k ≤ review.count`,
