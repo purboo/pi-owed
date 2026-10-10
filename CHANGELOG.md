@@ -1,5 +1,218 @@
 # Changelog
 
+## 0.5.0
+
+- **The main agent is the owner; nothing waits on a human by default (D25).**
+  Owner acts — plan updates with downgrades, `waive`, `defer`, `adopt`,
+  `approve`, owner `evidence`, `init`, decoys, reviews as owner — run with no
+  prompt and no dialog and are recorded with the new channel `delegated`. In pi
+  the default owner is `owner:pi`. The CLI records `delegated` for owner
+  commands (`--as owner:<id>`, or the commands that default to `owner:human`)
+  with or without a TTY, so `--i-am-owner` is no longer needed (still accepted;
+  it records `flag` as before). Every delegated act that eases acceptance says
+  why: `waive`/`defer` `--reason` and `adopt --note` as before, and a plan
+  update with downgrades now needs `owed plan --note TEXT` (pi `owed_plan`
+  `note`; stored in the plan entry's new optional `note`) — refused without
+  one, nothing recorded. `owed brief` starts with *Owner acts (delegated) since
+  <since>*, one line per act with its kind, node, what it eased and the reason
+  (`--json` `delegated`), and `report` marks such entries `(delegated)`: the
+  morning reader audits the hash-chained ledger instead of approving in
+  advance. Driver halts that need the owner read `needs the owner (the main
+  agent decides; owed lists the command)` and end with the exact command or
+  tool call that resolves them.
+- **`OWED_CONFIRM=owner` restores the confirmation gate** of 0.4.1 (TTY
+  prompt, pi dialog; channels `tty`/`pi-confirm`; pi default principal
+  `owner:human`), except that the pi dialog waits at most
+  `OWED_CONFIRM_TIMEOUT` seconds (default 120, `0` = no limit): a timeout
+  refuses with `Owner confirmation not given within <N> s; nothing was
+  recorded.` (code `refused`), Escape refuses `aborted`, and neither is read as
+  a confirmation.
+- **Subagents never act as owner or parent.** In a process with `DSA_CALL` or
+  `DSA_EXEC` set (a pi-durable-subagents call) owed refuses every owner and
+  parent act, in pi tools and the CLI alike, before recording anything:
+  `owner and parent acts are reserved for the main agent; this process is a
+  subagent call (DSA_CALL)`. Reads and `attest` are not refused, writer and
+  reviewer roles are unaffected, and `owed drive` (`parent:drive`) is exempt:
+  D17 starts the detached driver from dsa calls, and the driver never answers,
+  waives, rules, changes the plan or forces anything. This is an accident
+  rail, not a security boundary (a process can unset the variables).
+- **Worktree location and branch names (D19).** Optional plan block
+  `worktrees: {root, branch}`: `root` absolute or relative to the main
+  worktree root (default `.owed/wt`), `branch` a template containing `{node}`
+  and `{attempt}`, optionally `{type}` (default `owed/{node}/{attempt}`); new
+  optional node field `type` (`^[a-z][a-z0-9-]*$`, default `feat`), used only
+  by `{type}`. Dispatch creates `<root>/<node>-<attempt>` (recorded as the
+  physical path, so writer inference matches git's toplevel under a symlinked
+  root) on the expanded branch; a name that fails `git check-ref-format
+  --branch`, or a root equal to the main worktree root, refuses (exit 2) before
+  any effect. `.git/info/exclude` gets the root (escaped so it matches
+  literally) only when it lies inside the main worktree. Submit, rebase, gc,
+  the driver and the views read the branch and worktree recorded in the
+  dispatch entry instead of reconstructing them. Neither key is an obligation:
+  changing them is never a downgrade, invalidates no candidate and affects only
+  later dispatches.
+- **Trunk checked out in another worktree (D19).** A merge fast-forwards the
+  linked worktree that has the trunk branch checked out, and when that
+  worktree has uncommitted tracked changes it refuses before trunk moves:
+  `trunk worktree <path> has uncommitted changes: commit them there, or detach
+  it (git -C <path> switch --detach), then retry`. `owed status`,
+  `owed_status` and `/owed` show `Trunk <name> is checked out at <path>; merges
+  fast-forward it there (keep it clean).` (`--json` `trunkWorktree`). With a
+  root outside the main worktree and the trunk checked out elsewhere,
+  dispatch, merge and gc leave the main worktree's HEAD, index and files
+  untouched.
+- **Execution environment (D20).** Optional plan block `exec: {env, wrap}`.
+  Every process owed starts in a materialized tree (setup, check, red,
+  strength and invariant runs, attribution reruns) gets
+  `{...process.env, ...exec.env, CI: "1", OWED: "1"}` and runs as
+  `[...wrap, "bash", "-lc", <command>]`, with the same cwd, process group,
+  timeout and abort handling. `env` names match `^[A-Za-z_][A-Za-z0-9_]*$`
+  (not `CI` or `OWED`), values are used verbatim; `wrap` is a non-empty argv (a
+  relative `wrap[0]` containing a slash resolves against the materialized
+  tree). With `exec` set, check, red, strength and invariant keys contain
+  `exec: {env?, wrap?}`; without it (or with `exec: {}`) keys are
+  byte-identical to 0.4.1. Changing `exec` is owner-only, like changing
+  `setup`: it invalidates submitted candidates, attribution reruns use the exec
+  of the plan the block was recorded under, and the reducer records the
+  downgrade `*: exec changed; cannot prove obligations were not reduced`
+  (`wrap: ["true"]` would pass everything). `why` shows `Exec: wrap <argv> ·
+  env <NAMES>` (names only). Wrapper contract: run the trailing argv to
+  completion in the given cwd and environment, pass output through, exit with
+  its exit code, and exit 126 or 127 when it cannot run the command
+  (transport, mirror or lease failure). Red runs read 126/127 as `error` and
+  any other non-zero code — including a remote `timeout`'s 124 — as a test
+  failure, so use `red_expect` with wrappers; a wrapper that runs the command
+  elsewhere must bound it there, because owed kills only the local process
+  group. README recipes: slot limiter, dsa lease, shared build cache, remote
+  host.
+- **Owner allowances (D21).** Optional plan block `allow:`, a list of rules:
+  `nodes` (id globs, default `["*"]`) with `review_count`, `review_rank`,
+  `writes` prefixes and/or `checks` globs, or `adopt` prefixes. A parent plan
+  update whose downgrades are all covered by a rule of the **prior** plan is
+  accepted without the owner (a reducer rule, so replay checks it too): review
+  count/rank lowered not below the rule's bound, writes widened inside its
+  prefixes, a check or evidence obligation whose id matches its `checks` globs
+  removed or weakened. Never covered: `approve removed`, `node removed`,
+  `dependency removed`, trunk invariant downgrades, setup/closure/exec
+  changes, and changes of `allow` itself (anything but deleting whole rules is
+  the owner-only downgrade `trunk: allow changed`). Covered downgrades still
+  enter ΔO⁻ and read `by parent:<id> under allowance (plan #S)`; a refused
+  parent update lists the uncovered items. A parent may adopt (`owed adopt
+  --as parent:<id>`, pi `owed_adopt` with `as: parent:…`, no prompt or
+  dialog) when every changed path lies under an `adopt` prefix of the current
+  plan and `adoptGuard` passes; the refusal names the first uncovered path.
+  When the writes item fails, `why` lists the out-of-writes paths (first 20;
+  `--json` `outOfWrites`) and adds `the parent may widen writes in the plan
+  (allowance plan #S)` when an allowance covers them; a ruling never accepts
+  them.
+- **Rulings reach running calls (D22).** The driver sends parent rulings to
+  its writer and reviewer runs that are `running` (never `asking`): a `steer`
+  with the new send reason `ruling` (the `send` entry carries `rulings`, the
+  highest ruling seq it lists) listing each undelivered in-scope ruling as
+  `#<seq> (<nodes>): <text>`, then for a writer `Apply these rulings; they
+  override your packet. If you already submitted, fix and submit again.`, for
+  a reviewer `Judge the candidate against these rulings and record your review
+  with --ack-rulings <seq>.`. Delivered counts the dispatch packet, earlier
+  repair messages and ruling sends (writer) or the review packet and ruling
+  sends (reviewer). It is the lowest row: still at most one action per node per
+  pass, and every other action wins. A dsa rejection (e.g. the call sealed
+  meanwhile) is printed, never halts and is never retried; the rulings then
+  travel as before. A steer is not an acknowledgment: the `rulings` obligation
+  still needs the reviewer's `ack_rulings`.
+- **Run names and answer address (D22).** New launches carry dsa's run `name`
+  (`owed <node>#<attempt> writer`, `owed <node>#<attempt> reviewer <n>`); a
+  re-launch sends its stored spec bytes unchanged (launches recorded before
+  0.5.0 have no name). The asking text (halts, drive output, wake-ups)
+  addresses each question by dsa's call address `questions[].to`
+  (`<wid>/<key>`), else the run id, in both forms: `subagents {action:"send",
+  kind:"answer", to, qid, message}` and `pi-durable-subagents send --request
+  <id> --to <to> --kind answer --qid <qid> --rev <rev> --message @<file>`.
+- **Owner approval and manual evidence (D23).** Node field `approve: owner`
+  adds obligation `approve` (keyed by the candidate's patch, like a review),
+  discharged only by the owner: `owed approve <node> [--note TEXT] [--block]`
+  (pi `owed_approve`); `--block` records an owner block that a later owner
+  approval clears. Node field `evidence: [{id, what, by?}]` (`by` reviewer,
+  the default, parent or owner; the owner always qualifies) adds obligations
+  `evidence:<id>`, discharged by the new entry kind `evidence`: `owed evidence
+  <node> <id> --file PATH... --note TEXT [--as role:id]` (pi `owed_evidence`),
+  at least one file, each hashed (sha256, bytes) when recorded, by a principal
+  of that role who never wrote the node. On a merged node the same command
+  records an informational **receipt** (files optional; e.g. npm version,
+  dist-tag, tarball sha256), listed by `why` and `report`. Candidate pin: the
+  CLI approve preview and the pi `owed_approve`/owner `owed_evidence` dialogs
+  pin the candidate they show; a resubmit, rebase or abandon in between
+  refuses `candidate changed since confirmation; nothing recorded`. Views
+  always mark these manual (`✔ approved (<owner>, <channel>)`, `✔ evidenced
+  (manual) by <who>` with files as `path sha12` and the note; the brief counts
+  `N manual`), never measured. Downgrades: `approve removed` (owner only, never
+  covered by an allowance), `evidence <id> removed` and `evidence <id>
+  weakened` (`by` changed to a role other than owner; coverable by an `allow`
+  `checks` glob). The driver does everything else first and halts (needs the
+  owner for approve, a human for evidence) with the exact command only when
+  nothing else remains.
+- **Observations are facts about keys (D24).** `owed attest` and the genesis
+  attest no longer refuse with `Plan, candidate or trunk changed; retry` when
+  the ledger moves while they measure: under the lock each observation is
+  appended iff its item is still current, otherwise dropped as superseded and
+  listed after the card (`Superseded (not recorded; the item changed while it
+  was measured): …`; `AttestResult.superseded`). A plan edit elsewhere
+  interrupts nothing. `merge` and `adopt` keep the strict rule.
+- **`owed_init`, `owed attest --genesis` (D24).** The pi tool `owed_init
+  {plan}` (owner) refuses an initialized ledger, records genesis for the trunk
+  commit it resolved (pinned), and returns at once while the genesis attest
+  runs in the background in-process (aborted on session shutdown); the session
+  gets one `owed-init` message with the recorded, failed and missing ids when
+  it ends. `owed attest --genesis` measures the genesis invariants still
+  lacking an observation (exit 0 when none is missing, else 1); it takes its
+  own `genesis` lock and never blocks node attests. `owed init` exits 0 once
+  genesis is recorded; an incomplete genesis attest prints `Initialized
+  (genesis #<seq>). Genesis attest incomplete: recorded <ids>; missing <ids>:
+  run owed attest --genesis, or the next attest/merge measures them first.` —
+  never "retry" (a signal still exits 130/143). While genesis items lack
+  observations, `owed status`/`owed_status`/`/owed` show `Genesis: <k>/<n>
+  invariants observed` with `(measuring in this session)` or the `owed attest
+  --genesis` hint, and `owed plan` succeeds with `Warning: genesis attest
+  pending for <ids>`.
+
+**Compatibility.** Plans and ledgers without the new keys (`worktrees`,
+`type`, `exec`, `allow`, `approve`, `evidence`) keep 0.4.1's canonical plan and
+sha, keys and views; the behaviour changes regardless of keys are the ones
+above: owner acts are delegated unless `OWED_CONFIRM=owner`, a delegated
+downgrade needs a note, attest drops superseded observations instead of
+refusing, and `init` succeeds with an incomplete genesis attest. pi-owed 0.4.x
+reading a 0.5 ledger: verify and replay accept `channel: delegated` (0.4.1
+never checked channel values) but show no `(delegated)` marker and no delegated
+section; they ignore the plan entry's `note` and do not require notes on
+delegated downgrades; they ignore `evidence` entries and the plan keys
+`worktrees`, `type`, `exec`, `allow`, `approve` and `evidence` — 0.4.x would
+dispatch to the default paths, run checks without the wrapper and env, and
+drop the approval and evidence obligations, so do not use 0.4.x on a
+repository whose plan uses them. 0.4.x refuses to replay (`Entry #N invalid`,
+so `owed verify` fails) a ledger containing a parent plan update under an
+allowance, a parent adoption, an owner `approve` review or a `ruling` send.
+New errors and exit codes: plan errors for the new blocks and an invalid
+expanded branch name at dispatch exit 2; the subagent refusal, a delegated
+downgrade without a note, the dirty trunk worktree, `candidate changed since
+confirmation`, uncovered parent downgrades or adoptions and the confirmation
+timeout are refusals (exit 1 / code `refused`); `owed attest --genesis` exits 1
+while items are missing; `--as owner:<id>` without a TTY is no longer refused
+(only under `OWED_CONFIRM=owner`).
+
+**Known limitations, deferred to 0.5.1.** The background driver's report and
+merge-halt wording still reads `(needs owner)` instead of the D25 wording.
+Check processes inherit `DSA_*` from owed's environment (the executor does not
+strip them), so an owner or parent owed command inside a check run under a dsa
+call is refused. The CLI's default owner id stays `owner:human` (recorded as
+`delegated`) while pi uses `owner:pi`. Delivered rulings are inferred from
+ledger position, so a ruling recorded while a repair or launch message is being
+built can count as delivered without having been carried (the reviewer's
+`ack_rulings` obligation is unaffected); 0.5.1 records the ruling seqs each
+message carried. An ambiguous branch template (e.g. `{node}{attempt}`) can
+expand to the same name for two attempts (dispatch then fails in `git worktree
+add`), and parent directories created by a failed dispatch stay. A remote
+wrapper is trusted by its argv: the key names the wrapper, not where the
+command ran.
+
 ## 0.4.1
 
 - **Signals end the checks a command started.** While `owed attest`, `merge`,
