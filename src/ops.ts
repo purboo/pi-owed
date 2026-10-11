@@ -1,5 +1,7 @@
 import { readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { serialize, deserialize } from 'node:v8';
+import { performance } from 'node:perf_hooks';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
@@ -7,7 +9,8 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors } from './plan.ts';
 import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER } from './reducer.ts';
-import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
+import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
+import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { unruledBlocks } from './drive.ts';
 import { OwedError } from './errors.ts';
@@ -34,7 +37,11 @@ export interface DispatchPacket { node: string; attempt: number; worktree: strin
 export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard }
 export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[] }
 /** `cacheMismatch` (N4): plan shas whose persistent cache entry disagreed with the YAML blob; verify rewrote them. */
-export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string; cacheMismatch?: string[] }
+/**
+ * `snapshotMismatch` (G1.4): seq of a disk snapshot that matched the chain but differed from the full replay at that seq;
+ * verify deleted it. `code` (G1.5): `version` when the ledger needs a newer owed (the CLI exits 1, not 3).
+ */
+export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string; code?: 'version'; cacheMismatch?: string[]; snapshotMismatch?: number }
 type Context = { cwd: string };
 type Actor = Context & { as: Principal; channel?: Channel };
 const by = (o: Actor): string => `${o.as.role}:${o.as.id}`;
@@ -71,13 +78,78 @@ async function cachedPlan(ledger: Ledger, sha: string): Promise<Plan> {
   planCache.set(k, deepFreeze(p));
   return p;
 }
+/** G1: cachedPlan, synchronously (a plan a state from the replay caches resolves on first use); the cache write is not awaited. */
+function cachedPlanSync(ledger: Ledger, sha: string): Plan {
+  const k = `${ledger.dir}\0${sha}`;
+  let p = planCache.get(k);
+  if (p) return p;
+  const stored = ledger.readPlanCacheSync(sha);
+  if (stored) p = stored as Plan;
+  else { p = parsePlan(ledger.getBlobSync(sha).toString()); void ledger.writePlanCache(sha, p); }
+  planCache.set(k, deepFreeze(p));
+  return p;
+}
 /** Plan shas the ledger names (genesis and plan entries), in ledger order. */
 const planShas = (entries: Entry[]): string[] => [...new Set(entries.flatMap(e => e.kind === 'genesis' || e.kind === 'plan' ? [e.plan] : []))];
+/**
+ * The verified entries, a plan lookup for the plans they (and `extra`) name, and the replayed state. G1: the plans the
+ * fold needs (all of them for a full replay; those named after the cached seq, and `extra`, for a fold from a replay
+ * cache) are read before it as in 0.11; any other named plan is read on first use (cachedPlanSync).
+ */
 async function load(ledger: Ledger, extra: string[] = []) {
-  const entries = await ledger.read(), plans = new Map<string, Plan>();
-  for (const sha of new Set([...planShas(entries), ...extra])) plans.set(sha, await cachedPlan(ledger, sha));
-  const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
-  return { entries, lookup, state: reduce(entries,lookup) };
+  const entries = await ledger.read(), known = new Set([...planShas(entries), ...extra]), plans = new Map<string, Plan>();
+  const lookup = (sha: string): Plan => {
+    let p = plans.get(sha);
+    if (p) return p;
+    if (!known.has(sha)) throw new OwedError(`Missing plan ${sha}`, 'internal');
+    p = cachedPlanSync(ledger, sha); plans.set(sha, p); return p;
+  };
+  const need = async (from: number): Promise<void> => { for (const sha of new Set([...planShas(entries.slice(from)), ...extra])) if (!plans.has(sha)) plans.set(sha, await cachedPlan(ledger, sha)); };
+  return { entries, lookup, state: await replay(ledger,entries,lookup,need) };
+}
+/**
+ * G1.3 (0.12): the in-process replay cache, per ledger dir (at most MEMO_DIRS, least recently used dropped): a
+ * v8-serialized packed state at (seq, hash) and the seq of the disk snapshot this process knows of (-1: none). Kept
+ * serialized, so every load deserializes its own copy and no two results alias.
+ */
+interface Memo { seq: number; hash: string; payload: Buffer; disk: number }
+const memos = new Map<string, Memo>(), MEMO_DIRS = 16;
+/** G1.4: a disk snapshot is (re)written after a load that folded at least this many entries past it, or found none. */
+export const SNAPSHOT_EVERY = 256;
+/** G1.3: the in-process cache is re-serialized after a load that folded at least this many entries past it. */
+const MEMO_EVERY = 32;
+/** @internal Test hooks: counts of the replay paths `load` took (full replays, folds from the cache or a disk snapshot), entries folded and ms spent replaying (after the ledger read). */
+export const replayStats = { full: 0, memo: 0, disk: 0, folded: 0, ms: 0 };
+/** @internal Test hook: forget the in-process replay cache (as a fresh process). */
+export function forgetReplays(): void { memos.clear(); }
+/** @internal Test hook: the ledger's entries and replayed state as an op loads them (no effect beyond the replay caches). */
+export async function readState(o: Context): Promise<{ entries: Entry[]; state: State }> { const { entries, state } = await load(await Ledger.open(o.cwd)); return { entries, state }; }
+const unpacked = (payload: Buffer, lookup: (sha: string) => Plan): State | undefined => { try { return unpackState(deserialize(payload) as PackedState, lookup); } catch { return undefined; } };
+/**
+ * G1.3/G1.4: the state of the verified `entries`. It continues the fold from the in-process cache, else from the disk
+ * snapshot, when the entry of its seq has its hash; any other case is a full replay. Afterwards it refreshes the
+ * in-process cache and, when the fold went at least SNAPSHOT_EVERY entries past the disk snapshot (or there was none),
+ * rewrites the disk snapshot (best effort). Equal to `reduce(entries, lookup)` (G1.1).
+ */
+async function replay(ledger: Ledger, entries: Entry[], lookup: (sha: string) => Plan, need: (from: number) => Promise<void>): Promise<State> {
+  if (!entries.length) { await need(0); return reduce(entries,lookup); }
+  const t0 = performance.now(), at = (seq: number, hash: string): boolean => entries[seq]?.hash === hash;
+  let m = memos.get(ledger.dir), state: State | undefined, via: 'memo' | 'disk' | undefined;
+  if (!(m && at(m.seq,m.hash))) { const d = await ledger.readSnapshot(); m = d && at(d.seq,d.hash) ? { ...d, disk: d.seq } : undefined; via = 'disk'; } else via = 'memo';
+  if (m) { await need(m.seq+1); state = unpacked(m.payload,lookup); }
+  if (!state) { m = undefined; via = undefined; await need(0); }
+  const start = state ? state.seq+1 : 0;
+  if (state) extendState(state,entries.slice(start)); else state = reduce(entries,lookup);
+  replayStats[via ?? 'full']++; replayStats.folded += entries.length-start;
+  let disk = m?.disk ?? -1, next = m;
+  const write = disk < 0 || state.seq-disk >= SNAPSHOT_EVERY;
+  if (!next || write || state.seq-next.seq >= MEMO_EVERY) next = { seq:state.seq, hash:state.head, payload:serialize(packState(state)), disk };
+  // A failed write is not retried before SNAPSHOT_EVERY more entries: the snapshot is best effort.
+  if (write) { await ledger.writeSnapshot(next.seq,next.hash,next.payload); disk = next.seq; }
+  memos.delete(ledger.dir); memos.set(ledger.dir,{ ...next, disk });
+  if (memos.size > MEMO_DIRS) memos.delete(memos.keys().next().value!);
+  replayStats.ms += performance.now()-t0;
+  return state;
 }
 function inited(s: State): State { if (s.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first'); return s; }
 function node(s: State, id: string) { const n = inited(s).nodes[id]; if (!n) throw new OwedError(`Node ${id} does not exist`); return n; }
@@ -116,8 +188,9 @@ function nodeStable(before: State, latest: Awaited<ReturnType<typeof load>>, id:
   }
   if (a?.candidate?.seq === b?.candidate?.seq && a?.candidate?.commit === b?.candidate?.commit) return;
   if (a?.candidate && !b?.candidate) {
-    const prefix = latest.entries.filter(e => e.seq <= before.seq);
-    for (const e of since) { prefix.push(e); if (e.kind === 'plan' && !reduce(prefix,latest.lookup).nodes[id]?.candidate) throw new OwedError(`candidate #${a.candidate.seq} ${a.candidate.commit.slice(0,12)} of ${id} was invalidated by plan #${e.seq} (its spec changed); the writer submits again, then merge`); }
+    // G1.3: the state after each later entry, folded onto a copy of `before` (the state of the entries up to before.seq).
+    let sim: State | undefined;
+    for (const e of since) { sim = sim ? extendState(sim,[e]) : reduceFrom(before,[e],latest.lookup); if (e.kind === 'plan' && !sim.nodes[id]?.candidate) throw new OwedError(`candidate #${a.candidate.seq} ${a.candidate.commit.slice(0,12)} of ${id} was invalidated by plan #${e.seq} (its spec changed); the writer submits again, then merge`); }
   }
   throw new OwedError('Plan, candidate or trunk changed; retry');
 }
@@ -374,7 +447,9 @@ async function planDrafts(o: PlanArgs, ledger: Ledger, p: { plan: Plan; sha: str
  */
 async function withCarries(cwd: string, latest: Awaited<ReturnType<typeof load>>, d: Draft, next: Plan, skipped: NotCarried[] = []): Promise<Draft[]> {
   const s = latest.state, drafts: Draft[] = [d], replay = [...latest.entries];
-  const push = (x: Draft): State => { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); return reduce(replay,latest.lookup); };
+  // G1.3: each draft is folded onto a private copy of the loaded state (not a replay of the whole ledger).
+  let sim: State | undefined;
+  const push = (x: Draft): State => { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); return sim = sim ? extendState(sim,[e]) : reduceFrom(s,[e],latest.lookup); };
   let current = push(d);
   for (const n of Object.values(s.nodes)) {
     const c = n.candidate, slot = n.slot, spec = next.nodes.find(x => x.id === n.id);
@@ -523,9 +598,9 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
 }
 /** The state after appending `drafts` to `latest` (seq, ts and hashes as the append would assign them). */
 function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): State {
-  const replay = [...latest.entries];
-  for (const x of drafts) { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); }
-  return reduce(replay,latest.lookup);
+  const replay = [...latest.entries], more: Entry[] = [];
+  for (const x of drafts) { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); more.push(e); }
+  return reduceFrom(latest.state,more,latest.lookup);
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*'; writer?: boolean }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}) })); }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
@@ -719,13 +794,14 @@ const sameJob = (a: JobRef, b: JobRef): boolean => a.subject === b.subject && a.
  * while it is a genesis job. `nodeJobs` false (the node left the plan) keeps genesis observations only.
  */
 function mergeCurrent(latest: Awaited<ReturnType<typeof load>>, id: string, m: { facts: CandidateFacts; state: StateFacts }, observations: Draft[], nodeJobs: boolean): { state: State; kept: Draft[] } {
-  const replay = [...latest.entries], kept: Draft[] = []; let current = latest.state;
+  const kept: Draft[] = []; let current = latest.state, own = false;
   for (const obs of observations) {
     if (obs.kind !== 'obs') continue;
     const jobs = obs.merging !== undefined ? (nodeJobs ? mergeJobs(current,id,m) : []) : genesisJobs(current);
     if (!jobs.some(j => sameJob(j,obs)) || validateDraft(current,obs).length) continue;
     const entry = {...obs,seq:current.seq+1,ts:new Date().toISOString(),prev:current.head} as Entry;
-    entry.hash=entryHash(entry); replay.push(entry); current=reduce(replay,latest.lookup); kept.push(obs);
+    // G1.3: folded onto a private copy of the loaded state.
+    entry.hash=entryHash(entry); current = own ? extendState(current,[entry]) : reduceFrom(current,[entry],latest.lookup); own = true; kept.push(obs);
   }
   return { state: current, kept };
 }
@@ -735,11 +811,12 @@ function unmeasured(s: State, id: string, m: { facts: CandidateFacts; state: Sta
 }
 /** State after appending `observations` to the loaded ledger, without persisting them (each is guarded in turn). */
 function prospective(latest: Awaited<ReturnType<typeof load>>, observations: Draft[]): State {
-  const replay = [...latest.entries]; let current = latest.state;
+  let current = latest.state, own = false;
   for (const obs of observations) {
     guard(current,obs);
     const entry = {...obs,seq:current.seq+1,ts:new Date().toISOString(),prev:current.head} as Entry;
-    entry.hash=entryHash(entry); replay.push(entry); current=reduce(replay,latest.lookup);
+    // G1.3: folded onto a private copy of the loaded state.
+    entry.hash=entryHash(entry); current = own ? extendState(current,[entry]) : reduceFrom(current,[entry],latest.lookup); own = true;
   }
   return current;
 }
@@ -850,9 +927,20 @@ export async function verify(o: Context): Promise<VerifyResult> {
       if (report) cacheMismatch.push(sha);
       if (report || c.v !== PLAN_CACHE_VERSION) await ledger.writePlanCache(sha, p);
     }
-    const state = reduce(entries, sha => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; });
-    return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}) };
-  } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e)}; }
+    const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
+    // G1.4: the result is the full replay; a disk snapshot that matches the chain is compared with it at its seq, and
+    // deleted (reported) when they differ.
+    const snap = await ledger.readSnapshot();
+    let state: State, snapshotMismatch: number | undefined;
+    if (snap && entries[snap.seq]?.hash === snap.hash) {
+      state = reduce(entries.slice(0,snap.seq+1),lookup);
+      let same = false;
+      try { same = sameReplay(unpackState(deserialize(snap.payload) as PackedState,lookup),state); } catch { same = false; }
+      if (!same) { await ledger.removeSnapshot(); snapshotMismatch = snap.seq; }
+      extendState(state,entries.slice(snap.seq+1));
+    } else state = reduce(entries,lookup);
+    return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}), ...(snapshotMismatch !== undefined ? { snapshotMismatch } : {}) };
+  } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e),...(e instanceof OwedError && e.code === 'version' ? { code:'version' as const } : {})}; }
 }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
 export async function brief(o: Context & {since?:number|string; now?:number}): Promise<Brief> {
