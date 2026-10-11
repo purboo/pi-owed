@@ -978,7 +978,33 @@ changed; retry`): they decide a trunk move on what they measured.
   those whose lease is free when the plan no longer sets `trees: reuse` or when
   their check id is gone (an `inv` tree: no invariant of that id; other kinds:
   no node check of that id), and reports them (`trees`, and `treesKept` for a
-  held lease) — `--dry-run` only reports.
+  held lease) — `--dry-run` only reports. 0.11 (F2.5): `owed gc` also deletes
+  a free node-check tree (kinds check, red, strength) whose check id belongs
+  only to plan nodes that are finished — merged, or abandoned (slot closed)
+  without an open slot — with reason `check <id> belongs only to merged or
+  abandoned nodes`; invariant trees and leased trees are kept as before.
+
+### 7.13 Environment failures (0.11, F2.1)
+
+An observation whose failure says nothing about the code is `error` (no
+verdict, no block) with a note beginning `environment: `:
+- a check, red, strength-mutant or invariant run whose command exited
+  non-zero, whose parsed counts report no failing test (no counts, or
+  `fail` 0), and where `ENOSPC`, `No space left on device` or `Disk quota
+  exceeded` matches in the last 50 non-empty lines of the captured output after
+  dropping TAP test points and subtest titles (lines starting, after
+  indentation, with `ok `, `not ok ` or `# Subtest:`) and cargo `test … ok|FAILED`
+  lines (ruling #1094: a test name is never evidence): note `environment:
+  <matched text>: command exited <code>; last output:` plus the last 5 output
+  lines (as in item 2). A run whose counts report `fail` > 0 is a `fail`, never
+  environment; a passing run, a timeout or a signal is unaffected;
+- a failure before the command runs: tree preparation (worktree add,
+  reused-tree reset/checkout, the closure and test overlays), a spawn failure
+  (`environment: spawn failed: …`) and the plan's `setup` command
+  (`environment: setup failed: <code>`).
+A command that cannot run (exit 126/127) or an unknown count format stays a
+plain `error`. The driver does not count environment errors toward its
+"attest recorded no verdict twice" halt (§12.5).
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
@@ -1131,7 +1157,8 @@ layout left by older dispatches from inside a slot) is kept with reason
 Attempts whose worktree and branch are both gone are skipped, so gc
 is idempotent. Reused measurement trees (§7.12) are never treated as slots
 (never in `removed` or `kept`); gc removes those whose lease is free when the
-plan does not set `exec.trees: reuse` or their check id is gone, listing them in
+plan does not set `exec.trees: reuse`, their check id is gone, or (0.11, F2.5)
+their check belongs only to merged or abandoned nodes (§7.12), listing them in
 `trees: {path, reason}[]` and trees whose lease a live process holds in
 `treesKept` (both present only when non-empty; dry-run removes nothing; no
 ledger entry is appended for them). Result: `{dryRun, removed: {node, attempt, worktree, branch, pinned}[],
@@ -1619,6 +1646,7 @@ drive:
   max: 4                 # concurrent open attempts the driver starts (default 4, integer >= 1)
   repairs: 2             # follow-ups after a failed check / block before halting (default 2, integer >= 0)
   measure: 2             # attests and merges in flight at once (0.7.0; default 2, integer >= 1)
+  min_free_mb: 2048      # free MB the driver needs before it starts a measurement (0.11; default 2048, 0 disables)
   writer:   { agent: worker,   model: "example/model-large:high" }   # default {agent: worker}
   reviewer: { agent: reviewer, model: "example/model-large:high" }   # default {agent: reviewer}
 ```
@@ -1630,6 +1658,8 @@ changing or removing `drive:` is never a downgrade (a plan change by parent).
 `measure` (0.7.0) is kept in the parsed plan only when the YAML sets it
 (`measureCap(plan)` applies the default 2), so a plan that does not use it
 keeps its canonical bytes and sha; a 0.6.x parser refuses a plan that sets it.
+`min_free_mb` (0.11, F2.3) is kept the same way (`minFreeMb(plan)` applies the
+default 2048).
 
 **Node `drive` (0.7.0).** A node may set its own roles:
 
@@ -1817,6 +1847,21 @@ The `review-missing` halt follows only when such a follow-up was sent to the run
 for this candidate and it sealed again without recording (the reason then ends
 `… on candidate #<seq> after verdict follow-up <send id>`), or at once for a
 run sealed `rejected` or `pruned` (a follow-up cannot reach it).
+
+Environment back-off (0.11, F2.2). In the attest rows (9-10) an `error`
+observation whose note starts with `environment: ` (§7.13) does not count
+toward the two errors of "attest recorded no verdict twice". Per measured item
+(subject, obligation, key) its streak is the run of consecutive environment
+errors at the end of its observations since the latest resume of the attempt;
+when an item's streak has n >= 1 entries, the node's next attest waits
+1, 2, 5, 10, then 30 minutes (n = 1, 2, 3, 4, ≥ 5) after the latest such error
+of all its items. While it waits the action is a notify `<node>: environment
+failure #<seq> <obligation>: <note>; attest waits (<n> in a row), retry at
+<ISO>; …` with `once: "environment\u0000<node>\u0000<first seq of the
+streak>"`: the executor prints it once per streak. A non-environment error ends
+a streak (and counts as before); a resume starts it again. `decide` stays pure:
+the clock is `DriveOpts.now` (the executor passes `Date.now()`; absent: no
+back-off).
 
 Review blocks that need a parent ruling (D18, D18b). Once the candidate is
 measured (after the attest rows) and before any repair — the measured repair
@@ -2177,6 +2222,20 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
     later pass decides it again. Actions start in `decide`'s order.
   - Start line: `{"do":"attest"|"merge","node":N,"outcome":"started",
     "at":ISO}` (text `attest N: started`), quiet for wake-ups.
+  - Disk preflight (0.11, F2.3): before it starts the pass's first
+    measurement, the driver reads the free space (statfs: available blocks ×
+    block size) of the repository's git common dir and of `os.tmpdir()`. When
+    one is below `drive.min_free_mb` (default 2048; 0 disables the check) it
+    starts no measurement this pass and emits a repo-level notify (`scope:
+    'repo'`, node `disk`) `disk low: <N> MB free in <path> < <M> MB[; …]; the
+    driver starts no measurement until space is freed`, once per change of the
+    low paths (and again after the disk was fine in between). It wakes.
+  - Disk full (0.11, F2.4): an error escaping a pass of the loop whose code is
+    `ENOSPC` or `EDQUOT` (or whose message says `No space left on device`,
+    `Disk quota exceeded`, `ENOSPC` or `EDQUOT`) does not end the driver: it
+    logs the event `{"event":"disk-full","error":…,"at":ISO}` (text `disk
+    full: <error>; the driver sleeps 60 s and continues`), which wakes, sleeps
+    60 s and continues with the next pass. Any other error still ends the loop.
   - A measurement that ends wakes the loop: its wait ends at once. The next
     pass first handles every ended measurement in the order they ended, before
     it loads the state, with the rules of this section (the report; an attest
@@ -2416,7 +2475,7 @@ polling.
   complete lines appended since. Wake lines: `do: halt` (not with outcome `stale`, 0.11), `do: notify` (asking
   runs, owner-needed, describe failures), outcomes `rejected`, `conflict`,
   `refused` and `error` (refused merges and attest errors also halt), event
-  `events-error`, terminal events `exit`, `killed`, `stopped`, `idle`, and any
+  `events-error`, `disk-full` (0.11), terminal events `exit`, `killed`, `stopped`, `idle`, and any
   line that is not a JSON report. `cursor-reset`, dispatch, launch/send
   applied, attest, busy and pending are quiet; `merge` `merged` does not wake
   alone and is listed in the next message. All wake lines of one read form one

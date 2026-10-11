@@ -1083,7 +1083,7 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
     const named = new Set(planShas(entries).map(sha => `${sha}.json`)), now = Date.now(), planCache: string[] = [];
     for (const f of await ledger.planCacheFiles()) if (!named.has(f) && (!f.endsWith('.tmp') || now - (await ledger.planCacheMtime(f) ?? now) > 60_000)) planCache.push(f);
     if (!dryRun) for (const f of planCache) await ledger.removePlanCache(f);
-    const t = await gcTrees(root,state.plan,dryRun), extra = { ...(t.trees.length ? { trees:t.trees } : {}), ...(t.kept.length ? { treesKept:t.kept } : {}), ...(planCache.length ? { planCache } : {}) };
+    const t = await gcTrees(root,state,dryRun), extra = { ...(t.trees.length ? { trees:t.trees } : {}), ...(t.kept.length ? { treesKept:t.kept } : {}), ...(planCache.length ? { planCache } : {}) };
     if (dryRun || !removed.length) return { dryRun, removed, kept, ...extra };
     await git.git(root, ['worktree', 'prune']);
     const text = `gc removed ${removed.map(i => `${i.node}#${i.attempt} (${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(r => `pinned ${r}`)].filter(Boolean).join(', ')})`).join('; ')}`;
@@ -1095,16 +1095,20 @@ export async function gc(o: Context & { dryRun?: boolean; as?: Principal; channe
  * M2: reused measurement trees gc removes: those whose lease is free when the plan no longer sets `exec.trees: reuse`,
  * or when their check id is gone (an `inv` tree: no invariant of that id; other kinds: no node check of that id). A
  * tree whose lease a live process holds is kept. `dryRun` only reports.
+ * F2.5: a node check's tree also goes when every plan node with that check is finished: merged, or abandoned (its
+ * slot closed) without an open slot. Invariant trees follow the invariants only.
  */
-async function gcTrees(root: string, plan: Plan, dryRun: boolean): Promise<{ trees: GcTree[]; kept: GcTree[] }> {
-  const reuse = plan.exec?.trees === 'reuse', inv = new Set(plan.invariants.map(c => git.treeId(c.id))), checks = new Set(plan.nodes.flatMap(n => n.checks.map(c => git.treeId(c.id))));
+async function gcTrees(root: string, state: State, dryRun: boolean): Promise<{ trees: GcTree[]; kept: GcTree[] }> {
+  const plan = state.plan, reuse = plan.exec?.trees === 'reuse', inv = new Set(plan.invariants.map(c => git.treeId(c.id))), checks = new Set(plan.nodes.flatMap(n => n.checks.map(c => git.treeId(c.id))));
+  const finished = (id: string): boolean => { const n = state.nodes[id]; return !!n && (!!n.merged || (!!n.slot && !n.slot.open)); };
+  const live = new Set(plan.nodes.filter(n => !finished(n.id)).flatMap(n => n.checks.map(c => git.treeId(c.id))));
   const trees: GcTree[] = [], kept: GcTree[] = [];
   // Reclaim tokens older than 1 h and take temp files older than 60 s: their process crashed (SPEC §7.12).
   for (const path of await git.staleTokens(root,dryRun)) trees.push({ path, reason:/\.tmp-[^/]+$/.test(path) ? 'stale lease temp file' : 'stale lease reclaim token' });
   for (const t of await git.reusedTrees(root)) {
-    const gone = !(t.kind === 'inv' ? inv : checks).has(t.id);
-    if (reuse && !gone) continue;
-    const reason = !reuse ? 'the plan does not set exec.trees: reuse' : `${t.kind === 'inv' ? 'invariant' : 'check'} ${t.id} is gone`;
+    const gone = !(t.kind === 'inv' ? inv : checks).has(t.id), done = t.kind !== 'inv' && !gone && !live.has(t.id);
+    if (reuse && !gone && !done) continue;
+    const reason = !reuse ? 'the plan does not set exec.trees: reuse' : done ? `check ${t.id} belongs only to merged or abandoned nodes` : `${t.kind === 'inv' ? 'invariant' : 'check'} ${t.id} is gone`;
     if (!t.free || (!dryRun && !await git.removeReusedTree(root,t.path))) { kept.push({ path:t.path, reason:'lease held by a running measurement' }); continue; }
     trees.push({ path:t.path, reason });
   }

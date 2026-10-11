@@ -172,7 +172,7 @@ exec:
   trees: reuse     # stable measurement worktrees instead of a fresh /tmp tree per run (default fresh)
 ```
 
-`parallel` runs a merge's invariant and merge-result checks side by side instead of one after another; observations are still recorded in job order, and an abort kills every running job. Node attests stay serial (the driver already attests nodes in parallel). `trees: reuse` measures each check in a stable detached worktree `<git common dir>/owed/trees/<kind>-<check id>-<k>`, leased by a pid lock file so concurrent runs of one check get different trees. Before each run owed does `git checkout --detach --force <commit>` and `git clean -ffdx`, then empties each submodule (gitlink) directory inside the tree, never running `git submodule` or touching your config, so your own submodules stay initialized: the content equals a fresh tree (no untracked or ignored file survives), but the path and the mtimes of unchanged files do, so a build cache outside the tree (a shared `CARGO_TARGET_DIR` in `exec.env`) builds incrementally. A tree that cannot be prepared falls back to a fresh one with a note in the log. Neither field is part of any key: changing them re-measures nothing, invalidates no candidate and needs no owner. `owed gc` removes free reuse trees once the plan stops reusing or their check is gone (`--dry-run` lists them). Parallel cargo builds sharing one `CARGO_TARGET_DIR` serialize on cargo's lock: give heavy invariants separate target dirs, or accept that they wait for each other.
+`parallel` runs a merge's invariant and merge-result checks side by side instead of one after another; observations are still recorded in job order, and an abort kills every running job. Node attests stay serial (the driver already attests nodes in parallel). `trees: reuse` measures each check in a stable detached worktree `<git common dir>/owed/trees/<kind>-<check id>-<k>`, leased by a pid lock file so concurrent runs of one check get different trees. Before each run owed does `git checkout --detach --force <commit>` and `git clean -ffdx`, then empties each submodule (gitlink) directory inside the tree, never running `git submodule` or touching your config, so your own submodules stay initialized: the content equals a fresh tree (no untracked or ignored file survives), but the path and the mtimes of unchanged files do, so a build cache outside the tree (a shared `CARGO_TARGET_DIR` in `exec.env`) builds incrementally. A tree that cannot be prepared falls back to a fresh one with a note in the log. Neither field is part of any key: changing them re-measures nothing, invalidates no candidate and needs no owner. `owed gc` removes free reuse trees once the plan stops reusing, their check is gone, or (0.11) their check belongs only to merged or abandoned nodes (`--dry-run` lists them). Parallel cargo builds sharing one `CARGO_TARGET_DIR` serialize on cargo's lock: give heavy invariants separate target dirs, or accept that they wait for each other.
 
 Test counts come from TAP/node:test, cargo, pytest and jest/vitest summary lines; a log with both cargo `test result:` lines and TAP (one check running `cargo test && node --test --test-reporter=tap`) sums them to one `mixed` count, which `min_tests` checks. A non-red check that exits non-zero with no recognizable count or zero tests (a wrong cargo package name, a missing script) is `fail`, and its note carries the last 5 output lines (shown under the item in `owed why` and in the driver's repair message); exit 126/127 with no count (the command never ran) and an exit-0 run with an unknown count under `min_tests` are `error`. cargo summaries count only at column 0, so a `# test result: …` line inside TAP is not a cargo count.
 
@@ -348,6 +348,21 @@ the submitted candidate and affects only later launches (a re-launch resends
 the recorded bytes). `owed why <node>` shows
 `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` for a node that
 sets it. owed 0.6.x ignores a node's `drive` and launches with the plan's drive.
+
+Environment failures wait instead of halting (0.11). A measurement that exits
+non-zero with no failing test counted and `ENOSPC`, `No space left on device` or
+`Disk quota exceeded` in the last 50 output lines (TAP/cargo test-name lines are
+ignored, so a test title is never evidence; any counted failing test makes it a
+plain `fail`), or that fails before its command runs (worktree preparation,
+spawn, `setup`), is recorded
+as `error` with a note starting `environment: `. The driver does not count
+those toward "attest recorded no verdict twice"; it waits 1, 2, 5, 10, then 30
+minutes before the node's next attest (a resume starts again) and notifies once
+per streak. Before it starts a measurement it checks the free space of the git
+common dir and the temp dir against `drive.min_free_mb` (default 2048, 0
+disables) and starts none while either is lower (one `disk low: …` notify per
+change). A disk-full error escaping a pass logs a `disk-full` event (a wake),
+sleeps 60 s and continues.
 
 `--detach` refuses while a driver holds the lock (naming pid, host, start and
 log). Otherwise it keeps the previous log as `.git/owed/drive/log.jsonl.1`,

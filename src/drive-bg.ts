@@ -319,7 +319,8 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
   // G3.4a: trunk drift cleared: quiet, and the drift notify's record is forgotten (an identical later drift wakes).
   if (j.event === 'drift-cleared') return { kind: 'quiet', text, clears: DRIFT_KEY };
   // H1.2: a staying driver's `idle-wait` wakes; it is not terminal (the driver keeps running).
-  if (typeof j.event === 'string') return { kind: TERMINAL.has(j.event) ? 'terminal' : j.event === 'events-error' || j.event === 'idle-wait' ? 'wake' : 'quiet', text };
+  // F2.4: a disk-full pass wakes too; the driver keeps running.
+  if (typeof j.event === 'string') return { kind: TERMINAL.has(j.event) ? 'terminal' : j.event === 'events-error' || j.event === 'idle-wait' || j.event === 'disk-full' ? 'wake' : 'quiet', text };
   if (typeof j.do !== 'string') return { kind: 'wake', text };
   if (j.do === 'merge' && j.outcome === 'merged') return { kind: 'merge', text };
   if (!wakeReport(j)) return { kind: 'quiet', text };
