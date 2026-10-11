@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat, lutimes } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
@@ -7,7 +7,7 @@ import { realpath } from 'node:fs/promises';
 import { H, EMPTY_SHA, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { matchesAny } from './plan.ts';
-import type { Plan, NodeSpec, CandidateFacts, StateFacts, CheckSpec } from './types.ts';
+import type { Plan, NodeSpec, CandidateFacts, StateFacts, CheckSpec, ExecConfig } from './types.ts';
 
 export function git(cwd: string, args: string[], opts?: { input?: string; allowFail?: boolean; env?: Record<string,string> }): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
@@ -87,9 +87,10 @@ async function files(cwd: string, commit: string): Promise<[string, string, stri
 export async function readsDigest(cwd: string, commit: string, globs: string[]): Promise<string> { return H((await files(cwd, commit)).filter(([p]) => matchesAny(p, globs))); }
 async function tree(cwd: string, commit: string): Promise<string> { return (await git(cwd, ['rev-parse', `${commit}^{tree}`])).stdout.trim(); }
 /** The `exec` part of a check/red/strength/inv key (D20): only the non-empty fields, undefined (dropped by canonical JSON) without exec. */
-export function execKey(plan: Plan): { env?: Record<string, string>; wrap?: string[] } | undefined {
+export function execKey(plan: Plan): Pick<ExecConfig, 'env' | 'wrap' | 'touch'> | undefined {
   const env = plan.exec?.env && Object.keys(plan.exec.env).length ? plan.exec.env : undefined, wrap = plan.exec?.wrap?.length ? plan.exec.wrap : undefined;
-  return env || wrap ? { env, wrap } : undefined;
+  const touch = plan.exec?.touch;
+  return env || wrap || touch ? { env, wrap, touch } : undefined;
 }
 async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, closure: string, o: string): Promise<string> {
   return H({ o, id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, closure, reads: await readsDigest(cwd, commit, spec.reads) });
@@ -169,7 +170,7 @@ export async function trunkElsewhere(cwd: string, trunk: string): Promise<string
 }
 export async function addWorktree(cwd: string, path: string, branch: string, base: string): Promise<void> { await git(cwd, ['worktree', 'add', '-b', branch, path, base]); }
 /** 0.9 (M2): a reused measurement tree for one check: `kind` inv/check/red/strength and the check id. */
-export interface ReuseSpec { kind: string; id: string; /** receives the one-line note when a reused tree cannot be prepared */ note?(line: string): void }
+export interface ReuseSpec { kind: string; id: string; touch?: 'reset' | 'always' | 'never'; /** receives the one-line note when a reused tree cannot be prepared */ note?(line: string): void }
 /**
  * A tree at `commit` for one measurement. Fresh (default): a new detached worktree under the system temp dir, removed
  * by dispose. With `reuse` (exec.trees: reuse): the stable tree `<git common dir>/owed/trees/<kind>-<id>-<k>` under the
@@ -178,7 +179,7 @@ export interface ReuseSpec { kind: string; id: string; /** receives the one-line
  */
 export async function materialize(cwd: string, commit: string, reuse?: ReuseSpec): Promise<{ path: string; dispose(): Promise<void> }> {
   if (reuse) {
-    try { return await reusedTree(cwd, commit, reuse.kind, reuse.id); }
+    try { return await reusedTree(cwd, commit, reuse.kind, reuse.id, reuse.touch ?? 'reset'); }
     catch (e) { reuse.note?.(`reused tree for ${reuse.kind} ${reuse.id} unavailable, measuring in a fresh tree: ${(e instanceof Error ? e.message : String(e)).trim().split('\n')[0]}`); }
   }
   const root = await mkdtemp(join(tmpdir(), 'owed-run-')), path = join(root, 'tree');
@@ -305,17 +306,30 @@ async function ownTree(cwd: string, path: string): Promise<boolean> {
   const [t, c] = top.stdout.trim().split('\n');
   return !!t && !!c && await realOr(t) === await realOr(path) && await realOr(resolve(path, c)) === await realOr(await commonDir(cwd));
 }
-async function reusedTree(cwd: string, commit: string, kind: string, id: string): Promise<{ path: string; dispose(): Promise<void> }> {
+/** F6: refresh tracked files without following symlinks outside the tree; gitlinks are directories, not files. */
+async function touchTracked(path: string): Promise<void> {
+  const now = new Date();
+  for (const line of (await git(path, ['ls-files', '-s', '-z'])).stdout.split('\0').filter(Boolean)) {
+    if (line.startsWith('160000 ')) continue;
+    const file = join(path, line.slice(line.indexOf('\t') + 1));
+    await lutimes(file, (await lstat(file)).atime, now);
+  }
+  // Keep Git's stat cache in sync: a later forced checkout of the same commit must not rewrite these files.
+  await git(path, ['update-index', '--refresh']);
+}
+async function reusedTree(cwd: string, commit: string, kind: string, id: string, touch: NonNullable<ReuseSpec['touch']>): Promise<{ path: string; dispose(): Promise<void> }> {
   const dir = await reuseDir(cwd), name = `${kind}-${treeId(id)}`;
   await mkdir(dir, { recursive: true });
   let k = 0;
   for (; !await takeLease(join(dir, `${name}-${k}.lock`)); k++) if (k > 1000) throw new Error('no free reused tree lease');
   const path = join(dir, `${name}-${k}`), lock = `${path}.lock`;
   try {
-    let ready = false;
+    let ready = false, changed = false;
     if (await ownTree(cwd, path)) {
+      const prior = await revParse(path, 'HEAD');
       const co = await git(path, ['checkout', '--detach', '--force', commit], { allowFail: true });
       ready = !co.code && !(await git(path, ['clean', '-ffdx'], { allowFail: true })).code;
+      if (ready) changed = prior !== await revParse(path, 'HEAD');
       // A fresh `git worktree add` tree has empty submodule directories: empty each gitlink dir (never a `git submodule`
       // command: it would edit the shared config and de-initialize the user's submodules).
       if (ready) await emptyGitlinks(path);
@@ -326,6 +340,8 @@ async function reusedTree(cwd: string, commit: string, kind: string, id: string)
       await rm(path, { recursive: true, force: true });
       await git(cwd, ['worktree', 'add', '-f', '--detach', path, commit]);
     }
+    // Still under the lease: no measurement or other preparation can see a partially touched tree.
+    if (touch === 'always' || (touch === 'reset' && changed)) await touchTracked(path);
   } catch (e) { await releaseLease(lock); throw e; }
   return { path, async dispose() { await releaseLease(lock); } };
 }

@@ -52,8 +52,9 @@ export interface DriveConfig { max: number; repairs: number; writer: DriveAgent;
  * starts in a materialized tree. Parsed plans keep only non-empty fields; `exec: {}` is the same as no block.
  * 0.9: `parallel` (jobs one merge, adopt or genesis attest measures at once; default 1) and `trees` (`fresh`, the
  * default, or `reuse`: stable measurement worktrees) are present only when set; they are not part of any key.
+ * 0.11: `touch` (default reset) refreshes tracked mtimes in reused trees and is part of the exec key.
  */
-export interface ExecConfig { env?: Record<string, string>; wrap?: string[]; parallel?: number; trees?: 'fresh' | 'reuse' }
+export interface ExecConfig { env?: Record<string, string>; wrap?: string[]; parallel?: number; trees?: 'fresh' | 'reuse'; touch?: 'reset' | 'always' | 'never' }
 /**
  * One rule of the optional `allow:` block (SPEC §3.4, D21): owner pre-authorized parent downgrades and adoptions.
  * `nodes` = node id globs (default ["*"]); at least one permission is present.
@@ -71,7 +72,7 @@ export interface Plan {
   trunk: string;
   closure: string[];
   setup?: string;
-  exec?: ExecConfig;          // present only when env, wrap, parallel or trees is set
+  exec?: ExecConfig;          // present only when env, wrap, parallel, trees or touch is set
   invariants: CheckSpec[];
   nodes: NodeSpec[];
   drive?: DriveConfig;        // present only when the plan has a `drive:` block (filled with defaults)
