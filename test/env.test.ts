@@ -30,7 +30,7 @@ test('F2.1: a failed run whose output says the disk is full is error with an env
     const ledger = await Ledger.open(r.cwd), ctx = { cwd: r.cwd, plan, ledger };
     const job = (run: string, kind: AttestJob['kind'] = 'check'): AttestJob => ({ kind, subject: 'a', obligation: 'check:unit', key: 'k', commit: base, base, spec: { id: 'unit', run, timeout_s: 60, reads: ['**'], ...(kind === 'red' ? { red: true, tests: [] } : { min_tests: 1 }) } });
     for (const text of ['write /tmp/x: No space left on device', 'Error: ENOSPC: write failed', 'cp: Disk quota exceeded']) {
-      const o = await runJob(ctx, job(`echo '# tests 1'; echo '# pass 0'; echo '# fail 1'; echo '${text}' >&2; exit 1`));
+      const o = await runJob(ctx, job(`echo '# tests 1'; echo '# pass 1'; echo '# fail 0'; echo '${text}' >&2; exit 1`));
       assert.equal(o.verdict, 'error', `${text}: ${o.note}`);
       assert.ok(o.note?.startsWith('environment: '), o.note);
       assert.ok(o.note!.includes(text), o.note);
@@ -43,6 +43,31 @@ test('F2.1: a failed run whose output says the disk is full is error with an env
     assert.equal((await runJob(ctx, job(`echo 'ENOSPC handled'; echo '# tests 1'; echo '# pass 1'`))).verdict, 'pass');
     const fail = await runJob(ctx, job(`echo '# tests 1'; echo '# fail 1'; exit 1`));
     assert.equal(fail.verdict, 'fail'); assert.equal(fail.note?.startsWith('environment: ') ?? false, false);
+    // No counts at all, the pattern on stderr: environment.
+    const bare = await runJob(ctx, job(`echo 'write: No space left on device' >&2; exit 2`));
+    assert.equal(bare.verdict, 'error'); assert.ok(bare.note?.startsWith('environment: '), bare.note);
+  } finally { await r.cleanup(); }
+});
+
+test('F2.1 (ruling #1094, block #1072): a test title or a failing count never makes a failure environmental', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    const base = await r.commit();
+    const plan = parsePlan('version: 1\ntrunk: main\nnodes:\n - id: a\n   writes: [x]\n   checks: [{id: unit, run: "true"}]');
+    const ledger = await Ledger.open(r.cwd), ctx = { cwd: r.cwd, plan, ledger };
+    const job = (run: string): AttestJob => ({ kind: 'check', subject: 'a', obligation: 'check:unit', key: 'k', commit: base, base, spec: { id: 'unit', run, timeout_s: 60, reads: ['**'] } });
+    // A real failing TAP run whose subtest name contains ENOSPC: fail.
+    const tap = await runJob(ctx, job(`printf '%s\\n' 'TAP version 13' '# Subtest: F2.4: an ENOSPC escaping a pass' 'not ok 1 - F2.4: an ENOSPC escaping a pass' '  ---' '  error: expected 1 got 2' '  ...' 'ok 2 - Disk quota exceeded is handled' '1..2' '# tests 2' '# pass 1' '# fail 1'; exit 1`));
+    assert.equal(tap.verdict, 'fail', tap.note); assert.equal(tap.note?.startsWith('environment: ') ?? false, false, tap.note);
+    // Titles only (fail 0 reported, but the words appear only in test points and subtests): not environment.
+    const titles = await runJob(ctx, job(`printf '%s\\n' '# Subtest: ENOSPC case' 'ok 1 - ENOSPC case' 'test disk::enospc ... ok' '# tests 1' '# pass 1' '# fail 0'; exit 1`));
+    assert.equal(titles.verdict, 'fail', titles.note);
+    // fail > 0 with the real error message in the output: still a fail.
+    const counted = await runJob(ctx, job(`echo 'Error: ENOSPC: no space left on device'; echo '# tests 1'; echo '# fail 1'; exit 1`));
+    assert.equal(counted.verdict, 'fail', counted.note);
+    // The pattern older than the last 50 lines: not environment.
+    const old = await runJob(ctx, job(`echo 'No space left on device'; for i in $(seq 60); do echo "line $i"; done; exit 1`));
+    assert.equal(old.verdict, 'fail', old.note);
   } finally { await r.cleanup(); }
 });
 

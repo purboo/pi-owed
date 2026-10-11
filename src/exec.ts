@@ -76,9 +76,23 @@ class EnvironmentError extends Error {}
 async function prepare<T>(step: () => Promise<T>): Promise<T> {
   try { return await step(); } catch (e) { throw e instanceof EnvironmentError ? e : new EnvironmentError(e instanceof Error ? e.message : String(e)); }
 }
-/** F2.1: throws an environment failure when a failed process's output says the disk is full. */
-function diskFull(failed: boolean, log: string, what: string): void {
-  const m = failed ? DISK_FULL.exec(log) : null;
+/**
+ * F2.1 (ruling #1094): the lines an environment pattern is searched in: the last 50 non-empty output lines after
+ * dropping TAP test points and subtest titles (`ok `, `not ok `, `# Subtest:`) and cargo `test … ok|FAILED` lines, so
+ * a test name never counts as evidence.
+ */
+export function environmentLines(log: string): string[] {
+  return log.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').split(/\r?\n|\r/).map(l => l.trimEnd()).filter(l => {
+    const t = l.trimStart();
+    return t && !t.startsWith('ok ') && !t.startsWith('not ok ') && !t.startsWith('# Subtest:') && !/^test .* \.\.\. (?:ok|FAILED)\b/.test(t);
+  }).slice(-50);
+}
+/**
+ * F2.1 (ruling #1094): throws an environment failure when the command exited non-zero, its counts report no failing
+ * test (none parsed, or fail 0), and an environment pattern matches in `environmentLines`. A run with fail > 0 is a fail.
+ */
+function diskFull(code: number | null, counts: Counts | undefined, log: string, what: string): void {
+  const m = code !== null && code !== 0 && (counts?.fail ?? 0) === 0 ? DISK_FULL.exec(environmentLines(log).join('\n')) : null;
   if (m) { const t = lastLines(log); throw new EnvironmentError(`${m[0]}: ${what}; last output:${t.length ? t.map(l => `\n  ${l}`).join('') : ' (none)'}`); }
 }
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
@@ -92,9 +106,9 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
   // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
   const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, note: (line: string) => capture(`${line}\n`) } : undefined;
-  async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string }> {
+  async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string; /** F2.1: the process could not be spawned (an environment failure). */ spawn?: boolean }> {
     return new Promise(resolve => {
-      let output = Buffer.alloc(0), error: string | undefined;
+      let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
       const inherited: NodeJS.ProcessEnv = { ...process.env };
       // A nested Node test runner must not inherit the parent's IPC/reporting mode.
       delete inherited.NODE_TEST_CONTEXT;
@@ -112,10 +126,10 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const abort = () => { error = 'aborted'; kill(); };
       const timer = setTimeout(() => { error = `timeout after ${timeout}s`; kill(); }, timeout * 1000);
       ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
-      p.on('error', e => { error = e.message; });
+      p.on('error', e => { error = e.message; spawnError = true; });
       p.on('close', (code, signal) => {
         clearTimeout(timer); ctx.signal?.removeEventListener('abort', abort); kill();
-        resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString() });
+        resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(spawnError ? { spawn: true } : {}) });
       });
     });
   }
@@ -148,7 +162,8 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
             if (setup.error || setup.code !== 0) throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`);
           }
           const result = await command(spec.run, work.path, spec.timeout_s), counts = parseCounts(result.log);
-          diskFull(!!result.error || result.code !== 0, result.log, `mutant ${path} run ${result.error ?? `exited ${result.code}`}`);
+          if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
+          diskFull(result.code, counts, result.log, `mutant ${path} run exited ${result.code}`);
           if (result.error && !result.error.startsWith('timeout')) throw new Error(result.error);
           const kill = counts?.tests !== 0 && (result.code !== 0 || (counts?.fail ?? 0) > 0);
           if (kill) killed++;
@@ -172,7 +187,8 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const result = await command(spec.run, work.path, spec.timeout_s); obs.exit = result.code;
       obs.counts = parseCounts(result.log);
       // F2.1: a failed run whose output says the disk is full measured the environment, not the code: error, no verdict.
-      diskFull(!!result.error || result.code !== 0, result.log, `command ${result.error ?? `exited ${result.code}`}`);
+      if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
+      diskFull(result.code, obs.counts, result.log, `command exited ${result.code}`);
       if (result.error) throw new Error(result.error);
       // min_tests applies to every non-red run (candidate and invariant runs): on the base tree a new test file often cannot load
       // (missing module/export), so the runner reports a single failing test; a red run needs only a

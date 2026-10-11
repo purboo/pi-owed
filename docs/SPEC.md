@@ -988,15 +988,20 @@ changed; retry`): they decide a trunk move on what they measured.
 
 An observation whose failure says nothing about the code is `error` (no
 verdict, no block) with a note beginning `environment: `:
-- a check, red, strength-mutant or invariant run that fails (non-zero exit,
-  timeout or signal) and whose captured output (the 1 MiB tail owed keeps)
-  contains `ENOSPC`, `No space left on device` or `Disk quota exceeded`: note
-  `environment: <matched text>: command exited <code>; last output:` plus the
-  last 5 output lines (as in item 2). A run that passes while printing the
-  words is unaffected;
+- a check, red, strength-mutant or invariant run whose command exited
+  non-zero, whose parsed counts report no failing test (no counts, or
+  `fail` 0), and where `ENOSPC`, `No space left on device` or `Disk quota
+  exceeded` matches in the last 50 non-empty lines of the captured output after
+  dropping TAP test points and subtest titles (lines starting, after
+  indentation, with `ok `, `not ok ` or `# Subtest:`) and cargo `test … ok|FAILED`
+  lines (ruling #1094: a test name is never evidence): note `environment:
+  <matched text>: command exited <code>; last output:` plus the last 5 output
+  lines (as in item 2). A run whose counts report `fail` > 0 is a `fail`, never
+  environment; a passing run, a timeout or a signal is unaffected;
 - a failure before the command runs: tree preparation (worktree add,
-  reused-tree reset/checkout, the closure and test overlays) and the plan's
-  `setup` command (`environment: setup failed: <code>`).
+  reused-tree reset/checkout, the closure and test overlays), a spawn failure
+  (`environment: spawn failed: …`) and the plan's `setup` command
+  (`environment: setup failed: <code>`).
 A command that cannot run (exit 126/127) or an unknown count format stays a
 plain `error`. The driver does not count environment errors toward its
 "attest recorded no verdict twice" halt (§12.5).
