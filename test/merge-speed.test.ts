@@ -158,7 +158,7 @@ test('M1/M2: the exec parser accepts parallel/trees alone, keeps them only when 
   for (const [exec, msg] of [[{ parallel: 0 }, /exec\.parallel/], [{ parallel: 1.5 }, /exec\.parallel/], [{ parallel: '2' }, /exec\.parallel/], [{ trees: 'shared' }, /exec\.trees/]] as const) assert.throws(() => parsePlan(plan(exec)), msg);
 });
 
-test('M2: a reused tree keeps the mtime of an unchanged file and loses an ignored file', { timeout: 120_000 }, async () => {
+test('M2/F6: a reused tree refreshes unchanged file mtimes on reset and loses an ignored file', { timeout: 120_000 }, async () => {
   const r = await repo();
   try {
     // The invariant records its directory, the mtime of `keep`, and whether the ignored build.out survived, then creates it.
@@ -174,7 +174,7 @@ test('M2: a reused tree keeps the mtime of an unchanged file and loses an ignore
     const dir = await treesDir(r);
     assert.equal(pwd[0], join(await realpathOf(dir), 'inv-u-0'), 'the stable tree <common dir>/owed/trees/inv-u-0');
     assert.equal(pwd[1], pwd[0], 'the same tree is reused');
-    assert.equal(mtime[1], mtime[0], 'an unchanged file keeps its mtime');
+    assert.notEqual(mtime[1], mtime[0], 'default touch: reset refreshes unchanged files when the commit changes');
     assert.deepEqual(ignored, ['absent', 'absent'], 'git clean -ffdx removed the ignored file');
     assert.equal(await exists(join(dir, 'inv-u-0')), true, 'dispose keeps the tree');
     assert.equal(await exists(join(dir, 'inv-u-0.lock')), false, 'dispose releases the lease');

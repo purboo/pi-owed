@@ -499,7 +499,7 @@ const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64
 
 // Conservative local downgrade detection keeps this leaf independent of plan.ts.
 /**
- * Whether the `exec` block differs (D20) in what reaches the keys (`env`, `wrap`); `exec: {}` and no block are the same.
+ * Whether the `exec` block differs (D20/F6) in what reaches the keys (`env`, `wrap`, `touch`); `exec: {}` and no block are the same.
  * 0.9: `parallel` and `trees` only schedule measurement: changing them invalidates and downgrades nothing.
  */
 function execChanged(prev: Plan, next: Plan): boolean { return canonical(execKey(prev) ?? {}) !== canonical(execKey(next) ?? {}); }

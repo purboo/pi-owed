@@ -105,7 +105,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   }
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
   // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
-  const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, note: (line: string) => capture(`${line}\n`) } : undefined;
+  const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, touch: ctx.plan.exec?.touch, note: (line: string) => capture(`${line}\n`) } : undefined;
   async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string; /** F2.1: the process could not be spawned (an environment failure). */ spawn?: boolean }> {
     return new Promise(resolve => {
       let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
@@ -117,7 +117,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       // sets explicitly still applies.
       for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
       // D20: the plan's exec.env over the inherited environment, CI/OWED last; the wrapper argv prefixes bash -lc.
-      const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1' };
+      const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd };
       const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
       const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };

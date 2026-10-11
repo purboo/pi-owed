@@ -5,7 +5,7 @@ import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from '
 import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
-import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors } from './plan.ts';
+import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors } from './plan.ts';
 import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
@@ -168,7 +168,7 @@ async function writerTree(s: State, id: string, dirs: string[], env: NodeJS.Proc
  * not have (G4) and node ids equal ignoring case.
  */
 function planBlob(text: string) {
-  const plan = parsePlan(text), hygiene = [...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan)];
+  const plan = parsePlan(text), hygiene = [...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan), ...execEnvErrors(plan)];
   if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
   const data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
 }
