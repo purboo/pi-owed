@@ -207,6 +207,11 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
     n.dependents = h.dependents.get(n.id) ?? 0;
     if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
   }
+  // F4 (app #27): a node in the state but not in the current plan and not merged is `removed`, never ready.
+  for (const id of dirty === 'all' ? Object.keys(s.nodes) : dirty) {
+    const n = s.nodes[id];
+    if (n && !nodeSpec(s, id)) n.phase = n.merged ? 'merged' : 'removed';
+  }
   s.invariants = s.plan.invariants.map(i => item(s, 'trunk', `inv:${i.id}`, s.trunk.invKeys[i.id] ?? ''));
   const g = h.genesis;
   // Genesis covers the invariants of the genesis plan; invariants added later are
