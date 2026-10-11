@@ -137,6 +137,18 @@ export function planInvalidated(s: State, node: string, after: number): { plan: 
   }
   return undefined;
 }
+/**
+ * F1.2: the `verdict` follow-up to a driver reviewer run `who` that sealed without recording `awaiting` on candidate
+ * `c`: the candidate commit, the obligations still awaiting and per obligation the exact `owed review` command (verdict
+ * and rank placeholders).
+ */
+export function verdictMessage(node: string, c: { seq: number; commit: string }, who: string, awaiting: readonly string[]): string {
+  const c12 = c.commit.slice(0, 12);
+  return [`You finished without recording your verdict on candidate ${c.commit} (submit #${c.seq}) of ${node}.`,
+    `Still awaiting from you: ${awaiting.join(', ')}.`,
+    'Record it now, one command per obligation (choose --ok or --block and the rank your packet asks for):',
+    ...awaiting.map(o => `owed review ${node} --obligation ${o} --candidate ${c12} --as ${who} --ok|--block --rank <N> --note "<why>"`)].join('\n');
+}
 export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node}\` for reviews you already recorded on this candidate, finish the rest.`;
 /**
  * Ending of a halt for a request dsa rejected (D15.1): the id and bytes of a recorded run or send are fixed for the
@@ -452,8 +464,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
   };
   // Row 5: a run asking: notify (question, answer address); the driver never answers.
-  // H1.1b: the report carries rid and the first question's qid/rev; its text is askingText as before.
-  const asking = (l: LaunchEntry, v: RunView): Action => { const q = v.questions?.[0]; return { do: 'notify', node: id, text: askingText(id, l, v), rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) }; };
+  // H1.1b: the report carries rid and the first question's qid/rev; its text is askingText, then (F1.3) `askingRule`.
+  const asking = (l: LaunchEntry, v: RunView): Action => { const q = v.questions?.[0]; return { do: 'notify', node: id, text: `${askingText(id, l, v)} ${askingRule(id)}`, rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) }; };
   // Row 1: halted.
   if (halted(s, id)) return undefined;
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
@@ -624,7 +636,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const reviewers = live.filter(l => l.role === 'reviewer');
     if (!current.length && n.items.some(i => (i.obligation === 'review' || i.obligation === 'closure-review') && i.status === 'D') && reviewers.length < reviewRuns(s, id))
       return reviewerLaunch(s, id, nextReviewerN(s, id), opts.project, opts.root);
-    // Rows 13-14: a sealed reviewer run whose obligations are still awaiting (it recorded no review on them).
+    // Rows 13-14: a sealed reviewer run whose obligations are still awaiting (it recorded no review on them). F1.2: one
+    // `verdict` follow-up per run of this candidate first (not to a rejected or pruned run); the halt only after it.
     const entries = entriesOf(s);
     for (const l of reviewers) {
       const v = view(l);
@@ -633,7 +646,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const awaiting = reviewObligations(s, id, k).filter(o => n.items.find(i => i.obligation === o)?.status === 'D' && !entries.some(e => e.kind === 'review' && e.node === id && e.by === who && e.obligation === o && e.key === c.keys[o]));
       if (!awaiting.length) continue;
       if (statusOf(v) === 'unknown' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
-      return halt(`review-missing: reviewer run ${at(l)} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${statusOf(v) === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
+      const asked = ar.sends.findLast(x => x.rid === l.rid && x.reason === 'verdict' && x.seq > c.seq);
+      if (!asked && statusOf(v) !== 'rejected' && v.state !== 'pruned') return send(l, 'follow-up', 'verdict', verdictMessage(id, c, who, awaiting));
+      return halt(`review-missing: reviewer run ${at(l)} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${asked ? ` after verdict follow-up ${asked.send}` : ''}${statusOf(v) === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
     }
     // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale
     // block (recorded on an earlier candidate) is left to the slot re-review: wait only while a reviewer run of this
@@ -781,6 +796,8 @@ export function resumeLine(s: State, node: string, rid: string): string | undefi
   const dep = r.after !== undefined ? s.nodes[r.after]?.merged : undefined;
   return `The parent resumed this node (#${r.seq})${dep ? ` after ${r.after} merged at ${dep.commit.slice(0, 12)}` : ''}${r.note ? `: ${oneLine(r.note)}` : ''}`;
 }
+/** F1.3: the last sentence of an asking notify: an answer that decides the contract or scope is also recorded as a ruling. */
+export const askingRule = (node: string): string => `If the answer decides the contract or scope, also record it with \`owed rule --nodes ${node} "<decision>"\` so reviewers see it.`;
 /**
  * The asking line of a run (D22.6; halts, drive output and wake-up messages): one line per open question, addressed by
  * dsa's call address `questions[].to` (`<wid>/<key>`), or the run id when dsa reports none, in both the pi `subagents`

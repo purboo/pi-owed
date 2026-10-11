@@ -125,9 +125,9 @@ export interface ActionReport {
 export const NEEDS_OWNER = 'needs the owner (the main agent decides; owed lists the command)';
 /**
  * Reports that wake a following session (D17.7): halts, notifies (questions, owner-needed, describe failures) and the
- * outcomes rejected, conflict, refused and error.
+ * outcomes rejected, conflict, refused and error. F1: a `stale` outcome (a halt included) records nothing and wakes nobody.
  */
-export const wakeReport = (r: { do?: unknown; outcome?: unknown }): boolean => r.do === 'halt' || r.do === 'notify' || ['rejected', 'conflict', 'refused', 'error'].includes(String(r.outcome));
+export const wakeReport = (r: { do?: unknown; outcome?: unknown }): boolean => (r.do === 'halt' && r.outcome !== 'stale') || r.do === 'notify' || ['rejected', 'conflict', 'refused', 'error'].includes(String(r.outcome));
 /**
  * The fact mark of a node (E3.1): the highest seq of the ledger entries naming it (`node`, an observation's `subject`,
  * a ruling listing it) not written by the driver (`parent:drive`: its launches, sends, halts, dispatches, rebases and
@@ -353,7 +353,7 @@ export function reportText(json: object): string {
   }
   if (!('do' in json) || typeof (json as { do: unknown }).do !== 'string') return oneLine(JSON.stringify(json));
   const r = json as ActionReport;
-  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})`) : `${r.do} ${r.node}`;
+  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})`) : `${r.do} ${r.node}`;
   const repeat = typeof r.repeat === 'number' && r.repeat > 0 ? repeatText(r.repeat) : '';
   return `${r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`}${repeat}`;
 }
@@ -617,21 +617,26 @@ export class Driver {
     this.o.log(this.o.json ? JSON.stringify(r) : reportText(r));
   }
 
-  private async halt(node: string, attempt: number, reason: string, needs: 'human' | 'owner' = 'human'): Promise<void> {
-    await ops.halt({ cwd: this.o.cwd, as: DRIVE_PRINCIPAL, node, attempt, reason, needs });
+  private async halt(node: string, attempt: number, reason: string, needs: 'human' | 'owner' = 'human', since?: number): Promise<void> {
+    await ops.halt({ cwd: this.o.cwd, as: DRIVE_PRINCIPAL, node, attempt, reason, needs, ...(since !== undefined ? { since } : {}) });
   }
 
-  /** Executes one action. `applied`: dsa applied a request (run/send) in it. */
+  /**
+   * Executes one action. `applied`: dsa applied a request (run/send) in it. F1 (0.11): the ledger entry of a decided
+   * launch, send, rebase or halt carries `since` = the seq of `s`; when another principal's entry on the node landed
+   * after it, ops records nothing (code `stale`), no dsa call is made, and the outcome is `stale` (no halt, no wake):
+   * the next pass decides again. A re-send of a recorded entry and the verdict halts of dsa answers carry no `since`.
+   */
   private async execute(s: State, a: Action): Promise<{ report: ActionReport; applied: boolean }> {
     const base: ActionReport = { do: a.do, node: a.node, outcome: 'done' };
-    const cwd = this.o.cwd, as = DRIVE_PRINCIPAL;
+    const cwd = this.o.cwd, as = DRIVE_PRINCIPAL, since = s.seq;
     const done = (outcome: string, applied: boolean, detail?: string, extra: Partial<ActionReport> = {}) => ({ report: { ...base, ...extra, outcome, ...(detail ? { detail: oneLine(detail) } : {}) }, applied });
     try {
       switch (a.do) {
         case 'dispatch': { const r = await ops.dispatch({ cwd, as, node: a.node }); return done('done', false, `attempt ${r.attempt} in ${r.worktree}`); }
         case 'launch': {
           const extra = { attempt: a.attempt, role: a.role, rid: a.rid };
-          await ops.launch({ cwd, as, node: a.node, attempt: a.attempt, role: a.role, rid: a.rid, spec: a.spec, labels: a.labels, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}) });
+          await ops.launch({ cwd, as, node: a.node, attempt: a.attempt, role: a.role, rid: a.rid, spec: a.spec, labels: a.labels, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}), since });
           crashPoint('before-dsa', 'launch');
           const r = await this.dsa.run(a.rid, a.spec, a.labels);
           crashPoint('after-dsa', 'launch');
@@ -644,7 +649,7 @@ export class Driver {
         }
         case 'send': {
           const extra = { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason };
-          const id = a.send ?? (await ops.send({ cwd, as, node: a.node, attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, message: a.message, reason: a.reason, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}) })).send;
+          const id = a.send ?? (await ops.send({ cwd, as, node: a.node, attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, message: a.message, reason: a.reason, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}), since })).send;
           crashPoint('before-dsa', 'send');
           const r = await this.dsa.send(id, a.rid, a.sendKind, a.message);
           crashPoint('after-dsa', 'send');
@@ -675,11 +680,12 @@ export class Driver {
         }
         // K6: attest and merge are started by `pass` (`start`), never executed inline.
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
-        case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
-        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
+        case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node, since }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
+        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
         case 'notify': return { report: { ...base, outcome: 'notify', text: a.text, ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
+      if (e instanceof OwedError && e.code === 'stale') return done('stale', false, `${e.message}; decided again next pass`, a.do === 'halt' ? { attempt: a.attempt, needs: a.needs } : a.do === 'launch' ? { attempt: a.attempt, role: a.role, rid: a.rid } : a.do === 'send' ? { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason } : {});
       if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message);
       throw e;
     }
