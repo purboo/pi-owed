@@ -485,7 +485,7 @@ never part of a key.
 | `decoy-commit` | owner | `{digest}` | commitment to a hidden decoy list (§6.5); 64 lowercase hex, not previously committed |
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
 | `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels, rulings?: number}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; `rulings` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the task carried, 0 when none: an integer ≤ the entry's seq, 0 or the seq of a recorded ruling covering the node (§12.5.1); strict fields |
-| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling`; `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; reasons `submit` and `rebase` (0.7) the same, written only when the message carried a ruling; forbidden for other reasons (§12.5.1); strict fields |
+| `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling\|verdict` (`verdict`: 0.11); `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; reasons `submit` and `rebase` (0.7) the same, written only when the message carried a ruling; forbidden for other reasons (§12.5.1); strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
 | `resume` | parent/owner (never `parent:drive`) | `{node, attempt, after?, note?}` | 0.8: clears the node's driver halt without an obligation and starts a new repair epoch (§12.3); `attempt` = the node's open slot; `after` = another plan node: the node waits until it merges; strict fields. owed 0.7.x cannot replay a ledger with a `resume` entry |
 | `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
@@ -1759,6 +1759,33 @@ obligations (review and closure-review); a node with `review.count` > 1 gets
 one run per required principal, each with the next attempt-global `n`
 (`nextReviewerN`), so distinct reviewer ids.
 
+Acting on a current state (0.11, F1, wais #35). A pass loads the ledger state
+(seq S), then describes the runs; a run that records its entry and seals in
+between is seen sealed by a state that lacks the entry. So every ledger entry
+the executor records as the result of `decide` — `launch`, `send`, `rebase`,
+`halt`; not `dispatch`, not measurements, not a re-send of a recorded send, not
+the halts that record a dsa answer (rejected, conflict) or a merge refusal —
+passes `since: S` to ops (`ops.launch/send/rebase/halt`). Under the ledger lock,
+before appending, when an entry with seq > S names the node (its `node` or
+`subject`, a ruling whose nodes include it or are `*`, or any `plan` entry) and
+its `by` is not `parent:drive`, the op records nothing and throws
+`OwedError` code `stale`; for a send the dsa call is not made either. The
+driver reports outcome `stale` (`--json`: `{"do":…,"outcome":"stale"}`; never
+a halt, never a wake) and the next pass decides again on the new state.
+
+Verdict follow-up (0.11, F1.2). Rows 13-14: a sealed driver reviewer run of the
+current candidate whose obligations are still awaiting (no review by its slot
+principal on the candidate's keys) first gets, after the `interrupted`
+follow-up of row 13 when that applies, ONE follow-up with reason `verdict`:
+`You finished without recording your verdict on candidate <commit> (submit
+#<seq>) of <node>.`, `Still awaiting from you: <obligations>.`, then per
+obligation `owed review <node> --obligation <o> --candidate <commit12> --as
+reviewer:drive-<node>-<attempt>-<k> --ok|--block --rank <N> --note "<why>"`.
+The `review-missing` halt follows only when such a follow-up was sent to the run
+for this candidate and it sealed again without recording (the reason then ends
+`… on candidate #<seq> after verdict follow-up <send id>`), or at once for a
+run sealed `rejected` or `pruned` (a follow-up cannot reach it).
+
 Review blocks that need a parent ruling (D18, D18b). Once the candidate is
 measured (after the attest rows) and before any repair — the measured repair
 included, so no repair carries an undecided contract — if any review block on
@@ -1971,7 +1998,11 @@ it gives the reviewer's `owed evidence` command.
   (`<wid>/<key>` from `describe`), or the run id when dsa reports none, in both
   forms: `answer in pi: subagents {action:"send", kind:"answer", to:"<to>",
   qid:"<qid>", message:"…"}; or: pi-durable-subagents send --request <id> --to
-  <to> --kind answer --qid <qid> --rev <rev> --message @<file>`.
+  <to> --kind answer --qid <qid> --rev <rev> --message @<file>`. The row-5
+  notify (0.11, F1.3) ends with one sentence after the asking line(s): `If the
+  answer decides the contract or scope, also record it with \`owed rule --nodes
+  <node> "<decision>"\` so reviewers see it.` (`askingRule`; `askingText` itself
+  is unchanged).
 - **Call address in halts (0.8, L1.4, wais #16).** `RunView.to` is dsa's call
   address `<wid>/<key>` of the run's call (the latest one when describe lists
   several), present only when describe reports both a wid and a call key
@@ -2345,7 +2376,7 @@ polling.
   from the log's size at that moment (no replay). Every top-level pi session
   opened in the repository is therefore woken. A log replaced by rotation
   (other dev/ino, or shorter than the offset) is read from 0 (D17a.4). Every 2 s (unref'd timer) it reads the
-  complete lines appended since. Wake lines: `do: halt`, `do: notify` (asking
+  complete lines appended since. Wake lines: `do: halt` (not with outcome `stale`, 0.11), `do: notify` (asking
   runs, owner-needed, describe failures), outcomes `rejected`, `conflict`,
   `refused` and `error` (refused merges and attest errors also halt), event
   `events-error`, terminal events `exit`, `killed`, `stopped`, `idle`, and any

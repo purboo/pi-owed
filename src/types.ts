@@ -160,7 +160,7 @@ export interface DecoyRevealEntry extends Base, DecoyPayload { kind: 'decoy-reve
 // ---------- driver entries (SPEC §12, D3); appended by role parent (the driver is `parent:drive`) ----------
 export type RunRole = 'writer' | 'reviewer';
 export type SendKind = 'follow-up' | 'steer';
-export type SendReason = 'submit' | 'repair' | 'interrupted' | 'fenced' | 'rebase' | 'review-missing' | 'ruling';
+export type SendReason = 'submit' | 'repair' | 'interrupted' | 'fenced' | 'rebase' | 'review-missing' | 'ruling' | 'verdict';
 /** Intent to start a dsa run, persisted before the dsa call. `spec` = blob hash of the exact spec JSON bytes; `rid` = runId(...); `labels` = runLabels(...). */
 export interface LaunchEntry extends Base { kind: 'launch'; node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string>; /** E4 (0.5.1; absent on 0.5.0 entries): the highest in-scope ruling seq the task carried, 0 when none. */ rulings?: number }
 /** Intent to send a message to a run; `send` = `${rid}:${sendKind}:${seq of this entry}` (the dsa request id); `message` = blob hash of the exact message bytes. */
