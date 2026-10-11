@@ -138,6 +138,23 @@ function decidedOn(entries: Entry[], node: string, since?: number): void {
   if (e) throw new OwedError(`stale: #${e.seq} ${e.kind} by ${e.by} on ${node} was recorded after the state #${since} the driver decided on; nothing recorded`,'stale');
 }
 /**
+ * G3.3 (0.12): for a driver act that appends no entry (the re-send of a recorded send) decided on the state of seq
+ * `since`: throws OwedError code `stale` when a plan entry after `since` removed node `node` from the plan or changed
+ * its spec (plan entries name no node). Nothing is recorded either way.
+ */
+export async function planChangedSince(o: Context & { node: string; since: number }): Promise<void> {
+  const { entries, lookup } = await load(await Ledger.open(o.cwd));
+  const specOf = (sha: string): string | undefined => { const n = lookup(sha).nodes.find(x => x.id === o.node); return n ? canonical(n) : undefined; };
+  const at = entries.findLast(e => e.seq <= o.since && (e.kind === 'genesis' || e.kind === 'plan'));
+  let spec = at && (at.kind === 'genesis' || at.kind === 'plan') ? specOf(at.plan) : undefined;
+  for (const e of entries) {
+    if (e.seq <= o.since || e.kind !== 'plan') continue;
+    const next = specOf(e.plan);
+    if (next !== spec) throw new OwedError(`stale: plan #${e.seq} by ${e.by} ${next === undefined ? 'removed' : 'changed'} ${o.node} after the state #${o.since} the driver decided on; nothing sent`,'stale');
+    spec = next;
+  }
+}
+/**
  * G1: the candidate a caller names (`--candidate`, pi `candidate`): 40 hex or a prefix of at least 7 hex (usage error
  * otherwise), lowercased; undefined when not given.
  */

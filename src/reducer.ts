@@ -634,7 +634,8 @@ export function validateDraft(s: State, d: Draft): string[] {
   if (s.seq === -1) return [...errors, 'genesis must be established first'];
   const n = 'node' in d ? s.nodes[d.node] : undefined;
   const spec = 'node' in d ? nodeSpec(s, d.node) : undefined;
-  if ('node' in d && (!n || (!spec && d.kind !== 'escape'))) errors.push(`Node ${d.node} does not exist`);
+  // Ruling #1176 (0.12, G3.6): `abandon` (only) may close the open slot of a node the current plan removed.
+  if ('node' in d && (!n || (!spec && d.kind !== 'escape' && !(d.kind === 'abandon' && n.phase === 'removed')))) errors.push(`Node ${d.node} does not exist`);
   const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
   const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && underlyingActive(context(s), b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
   switch (d.kind) {

@@ -268,8 +268,10 @@ test('G3.3 executor: the timeline through owed drive and the fake dsa sends one 
     assert.ok(after.some(e => e.kind === 'submit'), 'the writer resubmitted');
     const last = after.filter(e => e.kind === 'halt').at(-1);
     assert.ok(last && last.kind === 'halt' && /repairs exhausted|without submitting a new candidate/.test(last.reason), JSON.stringify(last));
-    const msgs = (await readFile(join(dir, 'log.jsonl'), 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l) as { cmd: string; request?: string });
-    assert.equal(msgs.filter(m => m.cmd === 'send' && m.request === sends[0]!.send).length, 1);
+    const msgs = (await readFile(join(dir, 'log.jsonl'), 'utf8')).split('\n').filter(Boolean).map(l => JSON.parse(l) as { cmd: string; request?: string; replay?: boolean; exit?: number });
+    const repairSends = msgs.filter(m => m.cmd === 'send' && m.request === sends[0]!.send);
+    assert.equal(repairSends.filter(m => !m.replay).length, 1, 'one repair delivered; generation recovery replays the same request');
+    assert.ok(repairSends.length > 1 && repairSends.every(m => m.exit === 0), JSON.stringify(repairSends));
   } finally { await r.cleanup(); }
 });
 
