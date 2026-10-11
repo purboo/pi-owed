@@ -473,7 +473,7 @@ export function driveReviewerSlot(by: string, node: string, attempt: number): nu
   return by.startsWith(prefix) && /^[1-9][0-9]*$/.test(by.slice(prefix.length)) ? Number(by.slice(prefix.length)) : undefined;
 }
 export const SEND_KINDS: readonly SendKind[] = ['follow-up', 'steer'];
-export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing', 'ruling'];
+export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing', 'ruling', 'verdict'];
 const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
 // Conservative local downgrade detection keeps this leaf independent of plan.ts.

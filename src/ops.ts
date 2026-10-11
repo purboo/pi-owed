@@ -6,7 +6,7 @@ import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors } from './plan.ts';
-import { genesisProgress, jobCurrent, invalidates, carryable } from './reducer.ts';
+import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { OwedError } from './errors.ts';
@@ -120,9 +120,21 @@ function nodeStable(before: State, latest: Awaited<ReturnType<typeof load>>, id:
   }
   throw new OwedError('Plan, candidate or trunk changed; retry');
 }
-async function mutate(o: Actor, make: (s: State) => Draft | Promise<Draft>): Promise<Entry> {
+async function mutate(o: Actor, make: (s: State) => Draft | Promise<Draft>, fresh?: { node: string; since?: number }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
-  return ledger.withLock(async () => { const { state } = await load(ledger); const d = await make(state); guard(state,d); return (await ledger.append([d]))[0]!; });
+  return ledger.withLock(async () => { const { state, entries } = await load(ledger); if (fresh) decidedOn(entries,fresh.node,fresh.since); const d = await make(state); guard(state,d); return (await ledger.append([d]))[0]!; });
+}
+/** F1: whether ledger entry `e` names `node`: its `node` or `subject`, a ruling listing it or `*`, or any plan entry. */
+const namesNode = (e: Entry, node: string): boolean => e.kind === 'plan' || (e.kind === 'rule' ? e.nodes === '*' || e.nodes.includes(node) : ('node' in e && e.node === node) || ('subject' in e && e.subject === node));
+/**
+ * F1 (0.11, app #35): a driver act decided on the state of seq `since` (halt, send, launch, rebase) records nothing
+ * when an entry after `since` names the node and was not written by the driver (`parent:drive`): it throws OwedError
+ * code `stale` and the next pass decides again. Called under the ledger lock, before the append; no check without `since`.
+ */
+function decidedOn(entries: Entry[], node: string, since?: number): void {
+  if (since === undefined) return;
+  const e = entries.find(x => x.seq > since && x.by !== DRIVER && namesNode(x,node));
+  if (e) throw new OwedError(`stale: #${e.seq} ${e.kind} by ${e.by} on ${node} was recorded after the state #${since} the driver decided on; nothing recorded`,'stale');
 }
 /**
  * G1: the candidate a caller names (`--candidate`, pi `candidate`): 40 hex or a prefix of at least 7 hex (usage error
@@ -642,9 +654,9 @@ export async function waiverMeaning(o: Context & { entry: Entry }): Promise<stri
 export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items,reason:o.reason})); }
 export async function abandon(o: Actor & { node:string; reason:string }): Promise<Entry> { return mutate(o,s => ({kind:'abandon',by:by(o),channel:o.channel,node:o.node,attempt:node(s,o.node).slot?.attempt ?? 0,reason:o.reason})); }
 export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }
-/** Moves the open slot of a node onto the current trunk (parent/owner or the slot writer); the writer then rebases the same worktree and submits again. */
-export async function rebase(o: Actor & { node:string }): Promise<RebaseResult> {
-  const entry = await mutate(o,s => { const n = node(s,o.node); if (!n.slot?.open) throw new OwedError(`Node ${o.node} has no open writer slot`); return {kind:'rebase',by:by(o),channel:o.channel,node:o.node,attempt:n.slot.attempt,base:s.trunk.commit,from:n.slot.base}; });
+/** Moves the open slot of a node onto the current trunk (parent/owner or the slot writer); the writer then rebases the same worktree and submits again. `since`: as for launch (F1). */
+export async function rebase(o: Actor & { node:string; since?: number }): Promise<RebaseResult> {
+  const entry = await mutate(o,s => { const n = node(s,o.node); if (!n.slot?.open) throw new OwedError(`Node ${o.node} has no open writer slot`); return {kind:'rebase',by:by(o),channel:o.channel,node:o.node,attempt:n.slot.attempt,base:s.trunk.commit,from:n.slot.base}; },{ node:o.node, since:o.since });
   if (entry.kind !== 'rebase') throw new OwedError('unexpected rebase entry','internal');
   const { state } = await load(await Ledger.open(o.cwd)), slot = state.nodes[o.node]!.slot!, previous = slot.rebase?.seq === entry.seq ? slot.rebase.previous : undefined;
   const packet = [`# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `In the worktree run: git rebase --onto ${entry.base} ${entry.from}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
@@ -853,12 +865,14 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
  * Records the intent to start a dsa run (role parent; the driver is `parent:drive`). `spec` is the exact spec JSON
  * bytes, stored as a blob. Idempotent: a launch already recorded with the same rid, node, attempt, role, spec bytes
  * and labels is returned with `created: false`; a different one is refused (a request conflict). `rulings` (E4) is
- * recorded on a new entry only; a recorded entry keeps its own value.
+ * recorded on a new entry only; a recorded entry keeps its own value. `since` (F1): the seq of the state the driver
+ * decided on; a later non-driver entry naming the node refuses with code `stale` (`decidedOn`), also for a recorded launch.
  */
-export async function launch(o: Actor & { node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string>; rulings?: number }): Promise<{ entry: LaunchEntry; created: boolean }> {
+export async function launch(o: Actor & { node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string>; rulings?: number; since?: number }): Promise<{ entry: LaunchEntry; created: boolean }> {
   owner(o); const ledger = await Ledger.open(o.cwd), spec = await ledger.putBlob(o.spec);
   return ledger.withLock(async () => {
     const { state, entries } = await load(ledger);
+    decidedOn(entries, o.node, o.since);
     const prior = entries.find((e): e is LaunchEntry => e.kind === 'launch' && e.rid === o.rid);
     if (prior) {
       if (prior.node !== o.node || prior.attempt !== o.attempt || prior.role !== o.role || prior.spec !== spec || canonical(prior.labels) !== canonical(o.labels)) throw new OwedError(`launch ${o.rid} is already recorded (#${prior.seq}) with other content`);
@@ -868,11 +882,12 @@ export async function launch(o: Actor & { node: string; attempt: number; role: R
     guard(state, d); return { entry: (await ledger.append([d]))[0] as LaunchEntry, created: true };
   });
 }
-/** Records the intent to send `message` (exact bytes, stored as a blob) to run `rid`; the send id `${rid}:${sendKind}:${seq}` is assigned under the lock. */
-export async function send(o: Actor & { node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; rulings?: number }): Promise<SendEntry> {
+/** Records the intent to send `message` (exact bytes, stored as a blob) to run `rid`; the send id `${rid}:${sendKind}:${seq}` is assigned under the lock. `since`: as for launch (F1). */
+export async function send(o: Actor & { node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; rulings?: number; since?: number }): Promise<SendEntry> {
   owner(o); const ledger = await Ledger.open(o.cwd), message = await ledger.putBlob(o.message);
   return ledger.withLock(async () => {
-    const { state } = await load(ledger);
+    const { state, entries } = await load(ledger);
+    decidedOn(entries, o.node, o.since);
     const d: Draft = { kind: 'send', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, rid: o.rid, send: `${o.rid}:${o.sendKind}:${state.seq + 1}`, sendKind: o.sendKind, message, reason: o.reason, ...(o.rulings !== undefined ? { rulings: o.rulings } : {}) };
     guard(state, d); return (await ledger.append([d]))[0] as SendEntry;
   });
@@ -893,9 +908,9 @@ export async function resume(o: Actor & { node: string; after?: string; note?: s
   });
   return { entry, ...(merged ? { merged: true } : {}) };
 }
-/** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. */
-export async function halt(o: Actor & { node: string; attempt: number; reason: string; needs: 'human' | 'owner' }): Promise<HaltEntry> {
-  return await mutate(o, () => ({ kind: 'halt', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, reason: o.reason, needs: o.needs })) as HaltEntry;
+/** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. `since`: as for launch (F1). */
+export async function halt(o: Actor & { node: string; attempt: number; reason: string; needs: 'human' | 'owner'; since?: number }): Promise<HaltEntry> {
+  return await mutate(o, () => ({ kind: 'halt', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, reason: o.reason, needs: o.needs }), { node: o.node, since: o.since }) as HaltEntry;
 }
 
 // ---------- owner approval and manual evidence (D23) ----------
