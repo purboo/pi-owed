@@ -529,8 +529,9 @@ Until then the open slot counts toward `drive.max` (§12.7). Adding the node to 
 phase as before. `dependents` (transitive dependents) is computed once
 per plan. A deep-frozen plan from the lookup (ops' plan cache) is shared by the
 state instead of cloned. The State, queries, views and `validateDraft` decisions
-are those of the 0.10 reducer (test/perf.test.ts compares them with a frozen
-copy at every k-th prefix of fuzz, synthetic and real ledgers).
+are those of the 0.10 reducer, except for removed-node `abandon` above
+(test/perf.test.ts compares them with a frozen copy at every k-th prefix of
+fuzz, synthetic and real ledgers, allowing only that validation difference).
 
 ### 6.1 Node lifecycle
 - `ready` ⟺ every dep has a `merge` entry, node not merged, no open slot.
@@ -1895,8 +1896,10 @@ before and after each later plan entry). Should `stale` (or 0.12's `version`)
 ever reach the CLI or the `owed drive` exit code, it is a refusal: exit 1,
 stderr `Stale: <message>`, never `Internal error`/exit 3 (0.12, G3.1).
 Compatibility: owed < 0.11 cannot replay a ledger with a `send` of reason
-`verdict` (its reducer refuses the unknown reason); 0.12 adds no entry field
-or reason, so its ledgers replay on 0.11 unless they contain 0.11 records.
+`verdict` (its reducer refuses the unknown reason). owed < 0.12 cannot replay
+a ledger with an `abandon` of a node the current plan removed (ruling #1176:
+older reducers reject `Node <id> does not exist`). 0.12 adds no entry field or
+reason; other 0.12 ledgers remain replayable on 0.11.
 
 Verdict follow-up (0.11, F1.2). Rows 13-14: a sealed driver reviewer run of the
 current candidate whose obligations are still awaiting (no review by its slot
@@ -2246,11 +2249,12 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   (or the next `--once` pass, e.g. the pi tool's) does not halt on a lagging
   sealed view: for a sealed or pruned view with a reported generation and no
   expectation in this process, the run's latest recorded follow-up `send` that
-  dsa reports applied, whose generation this process does not know and after
-  which no entry of another principal names the node (its fact mark, §12.8:
-  e.g. a submit shows that generation ran) is sent again with the same id and
-  stored bytes; dsa returns the first outcome,
-  which names the generation it went into. When that generation is newer than
+  dsa reports applied and whose generation this process does not know is sent
+  again with the same id and stored bytes; dsa returns the first outcome.
+  The applied reply is cached per send id (`sentGen`) once per process. Later
+  entries naming the node (e.g. another reviewer's verdict) do not suppress
+  recovery of this run's generation (ruling #1198). The original reply
+  names the generation it went into. When that generation is newer than
   the described one, the view is presented as `running` as below. A reply
   without a generation (forwarded into running work), another outcome or a
   failure leaves the view as described.

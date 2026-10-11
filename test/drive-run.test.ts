@@ -135,7 +135,8 @@ test('D8.3: a kill after the ledger append or after the dsa call re-sends identi
     const sendLog = log.filter(x => x.cmd === 'send');
     assert.ok(sendLog.every(x => x.request === send.send && x.exit === 0), JSON.stringify(sendLog));
     assert.equal(sendLog.filter(x => !x.replay).length, 1, 'one send decided for the id');
-    assert.equal(sendLog.length, 1, 'a send dsa already applied is confirmed by describe, not re-sent');
+    assert.ok(sendLog.length > 1, 'restarted drivers recover the applied follow-up generation with idempotent replays');
+    assert.ok(sendLog.slice(1).every(x => x.replay), 'recovery never delivers the follow-up a second time');
     assert.equal(sha(readFileSync(join(f.dir, 'specs', launch.rid))), launch.spec, 'dsa got the exact stored spec bytes');
     assert.equal(sha(readFileSync(join(f.dir, 'messages', send.send))), send.message, 'dsa got the exact stored message bytes');
   } finally { await f.cleanup(); }
