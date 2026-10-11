@@ -1558,6 +1558,38 @@ worktree (`owed-run-*/tree` under the temp directory): `git worktree remove --fo
 
 ## 11. pi extension
 
+Since 0.12, extension loading eagerly starts one shared native `worker_threads`
+worker per pi process. Every tool execution, `/owed` command, background genesis
+attest and drive follower ledger/git/revalidation operation runs there. The pi
+thread registers schemas, displays owner dialogs and results, and runs the
+follower's two-second timer. The worker loads the installed modules eagerly;
+`index.js` selects `dist/*.js` for npm installs and `src/*.ts` for git installs.
+The native worker needs no optional pi peer packages (schemas are only used by
+the host). An idle worker is unref'd so it does not keep pi alive.
+
+Calls use structured-clone RPC `{id, method, args}` and replies
+`{id, result}` or `{id, error: {code, message}}`. OwedError codes and messages
+are preserved. Abort messages forward the tool signal to the existing abortable
+operations; other operations retain their existing abort behavior. Owner actions
+still preview in the worker, confirm on pi's thread, and commit in the worker;
+the candidate/file pins still refuse a change during the dialog. Watch delivery
+is acknowledged by pi: a busy session or failed delivery retains the batch for
+revalidation on the next tick. Shutdown stops the session's timer and followers
+and aborts its background genesis attest; it does not stop a detached driver.
+A worker crash/exit fails outstanding calls with `owed worker …; retry the call`;
+the next call creates a replacement, without automatically replaying lost calls.
+
+The extension remembers the package version beside its loaded module. Each tool
+result checks the installed package version (cached by manifest stat). A changed
+version appends exactly this last line:
+`owed <installed> is installed but this pi session loaded <loaded>: restart pi to use it.`
+The same line is appended to errors with code `version`, even when the version
+strings match. A replacement worker is refused when the installed version differs
+from the loaded version; startup also checks the version before and after loading
+its modules. This prevents a crashed old session from silently switching to new
+code. A same-process extension reload shares the original worker; after an upgrade,
+restart pi to load the new version.
+
 Tools (exposure direct). Every tool takes an optional `cwd`: an absolute path
 inside the target repository (the session directory when omitted; a relative
 or missing path is an error), so a session started elsewhere can drive any
@@ -1639,7 +1671,7 @@ before any dialog), then, under `OWED_CONFIRM=owner` only, shows the owner dialo
 `Nodes: <n>`, then Repository/Identity and the list field `Invariants:` (one id
 per line); recorded with channel `pi-confirm` (`delegated` without the gate). It appends genesis for exactly the
 confirmed commit (`init` with `measure: false`, `commit` pinned), starts
-`attestGenesis` in the background in-process (an AbortController aborted on
+`attestGenesis` in the shared extension worker (an AbortController aborted on
 `session_shutdown`) and returns at once: details `{entry, genesis: <seq>,
 measuring: <n>}`, text `Initialized (genesis #<seq>). Measuring <n> genesis
 invariants in the background …` (`No invariants to measure.` when none, and then

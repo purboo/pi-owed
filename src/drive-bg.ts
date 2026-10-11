@@ -380,7 +380,8 @@ export interface FollowerOptions {
   log: string; repo: string; pid: number; start?: string;
   /** Byte offset to start at; default the log's size now (no replay). */
   from?: number;
-  deliver: (content: string) => void;
+  /** `step` awaits delivery acknowledgments; `tick` is the synchronous CLI path. */
+  deliver: (content: string) => unknown;
   intervalMs?: number;
   onStop?: () => void;
   /**
@@ -536,7 +537,7 @@ export class Follower {
     const left = batch.filter(p => !dropped.has(p) && !(p.repeatOf !== undefined && resolvedKeys.has(p.repeatOf)));
     if (!left.some(p => p.wake)) { this.pending = [...left, ...rest]; return undefined; }
     const message = this.message(left, dropped.size);
-    try { this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick
+    try { await this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick
     this.pending = rest;
     if (this.ended) this.stop();
     return message;
@@ -563,7 +564,7 @@ export class DriveWatch {
     const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo) } : {};
     const f: Follower = new Follower({ ...o, deliver: this.deliver, ...hooks, ...(this.intervalMs !== undefined ? { intervalMs: this.intervalMs } : {}), onStop: () => { if (this.followers.get(o.log) === f) this.followers.delete(o.log); } });
     this.followers.set(o.log, f);
-    return f.start();
+    return this.intervalMs === 0 ? f : f.start();
   }
   async attach(cwd: string): Promise<Follower | undefined> {
     let dir: string;
