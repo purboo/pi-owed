@@ -50,16 +50,21 @@ function parseNodeDrive(v: unknown, p: string, errors: string[]): NodeDrive | un
 export const MEASURE_DEFAULT = 2;
 /** `drive.measure` of the plan, else MEASURE_DEFAULT (kept out of the parsed plan unless set, so other plans keep their sha). */
 export function measureCap(plan: Plan): number { return plan.drive?.measure ?? MEASURE_DEFAULT; }
+/** F2.3: default of `drive.min_free_mb`: the free space (MB) the driver needs before it starts a measurement. */
+export const MIN_FREE_DEFAULT = 2048;
+/** F2.3: `drive.min_free_mb` of the plan (0 disables the disk preflight), else MIN_FREE_DEFAULT (kept out of the parsed plan unless set). */
+export function minFreeMb(plan: Plan): number { return plan.drive?.min_free_mb ?? MIN_FREE_DEFAULT; }
 /** Parses an optional `drive:` block; unknown keys and bad types are errors. */
 function parseDrive(v: unknown, errors: string[]): DriveConfig {
   const out = structuredClone(DRIVE_DEFAULTS);
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('drive: expected object'); return out; }
   const r = v as Record<string, unknown>;
-  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'writer', 'reviewer'].includes(k)) errors.push(`drive.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'writer', 'reviewer'].includes(k)) errors.push(`drive.${k}: unknown key`);
   const int = (x: unknown, label: string, min: number, dflt: number): number => { if (x === undefined) return dflt; if (typeof x !== 'number' || !Number.isInteger(x) || x < min) { errors.push(`${label}: expected integer >= ${min}`); return dflt; } return x; };
   out.max = int(r.max, 'drive.max', 1, out.max);
   out.repairs = int(r.repairs, 'drive.repairs', 0, out.repairs);
   if (r.measure !== undefined) out.measure = int(r.measure, 'drive.measure', 1, MEASURE_DEFAULT);
+  if (r.min_free_mb !== undefined) out.min_free_mb = int(r.min_free_mb, 'drive.min_free_mb', 0, MIN_FREE_DEFAULT);
   const agent = (x: unknown, label: string, dflt: DriveAgent): DriveAgent => {
     if (x === undefined) return dflt;
     const a = parseAgent(x, label, errors);
