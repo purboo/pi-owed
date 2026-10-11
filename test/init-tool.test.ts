@@ -287,7 +287,7 @@ test('D24.4: session_shutdown aborts the background genesis attest: its check en
     const out = await h.call('init', { plan: 'plan.json' });
     assert.notEqual(out.isError, true, text(out));
     pid = await pidFrom(join(r.root, 'pid'));
-    assert.equal((await ops.status({ cwd: r.cwd })).genesis?.measuring, true);
+    assert.equal(((await h.call('status')).details as ops.StatusView).genesis?.measuring, true);
     await h.handlers.get('session_shutdown')!({}, h.ctx);
     await until(async () => !alive(pid!), 'the check ends', 10_000);
     await until(async () => !(await ops.status({ cwd: r.cwd })).genesis?.measuring, 'the attest ends');
