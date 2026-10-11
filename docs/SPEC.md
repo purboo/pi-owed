@@ -38,6 +38,20 @@ boundaries: a process can unset the variables or change directory.
   longer appears in a genesis or plan entry, and temp files older than 60 s
   (`GcResult.planCache`, a `Plan cache files ... removed` line); nothing is
   recorded in the ledger for them.
+- `snapshot/state.v8` (0.12, G1.4): the disk snapshot, a private derived cache
+  of the replayed State and its replay metadata (§6, Resumable replay) at one
+  ledger entry. One v8-serialized record `{format: "owed-snapshot/1", version:
+  <owed package version>, seq, hash, digest, payload}`: `seq`/`hash` = the last
+  folded entry, `payload` = the v8-serialized packed state (plans named by blob
+  sha, re-resolved through the plan lookup), `digest` = sha256 of the payload.
+  An op uses it only when format, version and digest match and the verified
+  chain's entry `seq` has `hash`; a missing, unreadable, foreign or mismatching
+  snapshot is ignored (and replaced), never an error. It is written atomically
+  (temp file `snapshot/.state.<uuid>.tmp`, then rename; concurrent writers are
+  harmless) after a load that folded at least 256 entries past the snapshot, or
+  found none; a write that fails is ignored. `owed verify` never uses it for
+  its result (§8). It lives in the private owed dir, is never committed and
+  needs no gc: deleting it only costs one full replay.
 - `lock/`: mutual exclusion by atomic `mkdir`; contains `owner.json`
   `{pid, host, ts}`. A lock whose pid is dead on the same host is stale and may be
   broken. All read-check-append sequences run under the lock (§6.4). Other named
@@ -527,6 +541,43 @@ per plan. A deep-frozen plan from the lookup (ops' plan cache) is shared by the
 state instead of cloned. The State, queries, views and `validateDraft` decisions
 are those of the 0.10 reducer (test/perf.test.ts compares them with a frozen
 copy at every k-th prefix of fuzz, synthetic and real ledgers).
+
+Resumable replay (0.12, G1). `reduce(entries, plans)` stays the reference.
+`reduceFrom(base, more, plans)` returns the state of `entries(base) ++ more`
+without mutating `base`: one structured clone of the state and its replay
+metadata (internal sharing between state and entries kept; deep-frozen plans
+shared, other plans cloned) continues the fold; `extendState(s, more)`
+continues the fold of a state its caller owns alone. Every such state equals
+the full replay of the same entries (`sameReplay`: `util.isDeepStrictEqual` on
+the state and on its replay metadata without the plan lookup function), with
+the same `validateDraft` decisions and views (test/snapshot.test.ts: every k of
+fuzz ledgers, every 97th k of a 10 000-entry synthetic ledger and real ledger
+copies). The replay metadata names plans by sha (`planObjs`: the plan object
+per genesis/plan sha, resolved once per replay; observation plans by sha), so
+`packState`/`unpackState` move a state through v8 serialization with plans
+re-resolved through a lookup. No query relies on object identity between state
+fields and entries beyond the sharing a single clone keeps (reviewed in 0.12:
+entries are compared by `seq`). Ops (§8) load through two caches: an
+in-process cache per ledger dir (a serialized packed state at (seq, hash),
+refreshed after a load that folded 32 or more entries past it) and the disk
+snapshot (§1). When the verified entries contain an entry with the cached seq
+and hash, the fold continues from it (in-process first, then disk); any other
+change is a full replay. Every load deserializes its own copy, so results of
+successive loads never alias. Draft simulations (carry submits, merge-result
+and adoption observations, amend's ruling, the merge CAS's plan check) fold the
+drafts onto a private copy of the loaded state instead of replaying the
+ledger.
+
+Entries of a newer owed (0.12, G1.5). Replay refuses an entry this owed cannot
+interpret — an unknown `kind`; an unknown value of an enumerated field (`send`
+`reason` or `sendKind`, `obs` `verdict`, `review` `obligation`, `verdict` or
+`needs`, `launch` `role`, `halt` `needs`, `escape` `class`); an unknown field on
+a `rule` (a ruling flag) — with OwedError code `version` and the text `ledger
+entry #<seq> (<kind>[ <field> <value>]) needs a newer owed than <x.y.z>:
+upgrade owed and restart pi sessions that load it` (CLI exit 1, §10). Every
+other invalid entry keeps its error (`Entry #<seq> invalid: ...`). Before 0.12
+an unknown kind was ignored and an unknown enumerated value failed as an
+invalid entry.
 
 ### 6.1 Node lifecycle
 - `ready` ⟺ every dep has a `merge` entry, node not merged, no open slot.
@@ -1065,7 +1116,7 @@ status(o: {cwd}): Promise<StatusView>
 why(o: {cwd, node}): Promise<ReceiptCard>
 report(o: {cwd, since?: number | string}): Promise<Report>
 brief(o: {cwd, since?: number | string, now?: number}): Promise<Brief>
-verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay
+verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay; G1.4: {snapshotMismatch?: seq} when a disk snapshot matching the chain differed from the full replay at its seq (deleted); {code: 'version'} on a G1.5 refusal
 escape(o: {cwd, node, merge, class, note, evidence?, as, channel?}): Promise<Entry>
 decoyDigest(text: string): {digest}                      // pure helper; parses the reveal JSON, writes nothing
 decoyCommit(o: {cwd, digest, as, channel}): Promise<Entry>
@@ -1508,8 +1559,12 @@ parent commands are refused (§2.1). Exit codes: 0 ok, 1 refused
 by a guard (message says which obligation), 2 usage error, 3 internal error,
 75 busy (a lock is held: the node's attest is already running, or a lock wait
 timed out, §7.11; stderr `Busy: <message>`; retry later), 130/143 aborted by a
-signal. With `--json` a failing command also prints one line `{"error":
-<message>, "code": "refused"|"usage"|"internal"|"busy"|"aborted"}` on stdout;
+signal; a ledger entry of a newer owed (§6, G1.5, code `version`) exits 1
+with the message alone on stderr (also `verify`, which otherwise exits 3 on a
+failure). `verify` prints `snapshotMismatch: <seq> (...)` after its pass line
+when it deleted a disk snapshot that differed from its replay (§1). With
+`--json` a failing command also prints one line `{"error":
+<message>, "code": "refused"|"usage"|"internal"|"busy"|"aborted"|"version"}` on stdout;
 stderr text and exit codes are the same as without `--json` (the `owed drive`
 `--json` loop instead ends with its exit record, §12.8).
 
