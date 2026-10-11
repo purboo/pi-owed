@@ -294,9 +294,13 @@ exec:                            # optional; unknown keys and bad types are erro
   wrap: ["/abs/tmp/qa/heavy.sh"]                  # non-empty argv prefix of non-empty strings
   parallel: 4                    # 0.9: jobs one merge/adopt/genesis attest measures at once (integer >= 1, default 1)
   trees: reuse                   # 0.9: fresh (default) | reuse: stable measurement worktrees (§7.12)
+  touch: reset                   # 0.11: reset (default) | always | never; tracked mtimes in reused trees
 ```
 
 `env` names match `^[A-Za-z_][A-Za-z0-9_]*$` and may not be `CI` or `OWED`;
+a newly recorded plan (`init`, `plan`, `amend`) may also not set `OWED_TREE`
+(0.11). Replay does not check it, so a ledger whose older plan sets it still
+verifies; at run time owed's `OWED_TREE` overrides the plan's value;
 values are strings used verbatim (no `$VAR` or `~` expansion). The parsed plan
 keeps only non-empty fields: `exec: {}` and `exec: {env: {}}` are the same as
 no block (same plan blob, keys and views). `wrap: []` is an error.
@@ -314,13 +318,17 @@ exactly as in 0.4.1; a plan with `exec` needs owed ≥ 0.5.0 to replay.
 `parallel` and `trees` (0.9) only schedule measurement: they are not part of
 `execKey` (§4.1), of any check key or of the L2 check definition, and the
 comparison above (candidate invalidation, the `exec changed` ΔO⁻ item) looks at
-`env` and `wrap` only. Changing them therefore supersedes nothing, re-measures
+`env`, `wrap` and explicitly set `touch` only. Changing `parallel` or `trees`
+therefore supersedes nothing, re-measures
 nothing and needs no owner authority (a parent may set them). An `exec:` block
 holding only `parallel` and/or `trees` is valid; the parsed plan keeps each of
 them only when it is set (`parallel: 1` and `trees: fresh` written explicitly
 are kept, and change the plan blob, not any key). A plan setting them needs owed
 ≥ 0.9.0 to replay. `parallel` must be an integer ≥ 1; `trees` is `fresh` or
-`reuse`.
+`reuse`. `touch` is `reset` (default), `always` or `never`, kept in the plan
+only when explicitly set, and requires owed ≥ 0.11.0. It affects reused trees
+only (§7.12), but an explicit value always enters `execKey`: changing it needs
+owner authority and new evidence, including when setting the default explicitly.
 
 ### 3.3 Owner approval and manual evidence (D23)
 
@@ -457,9 +465,10 @@ All keys are sha256 hex over canonical JSON.
 
 ### 4.1 `exec` in keys (D20)
 
-When the plan's `exec` has a non-empty `env` or `wrap`, every check, red,
-strength and invariant key above also contains `exec: {env?, wrap?}` (only the
-non-empty fields). Otherwise the field is absent and keys are byte-identical
+When the plan's `exec` has a non-empty `env` or `wrap`, or an explicit `touch`,
+every check, red, strength and invariant key above also contains
+`exec: {env?, wrap?, touch?}` (only the non-empty/explicit fields). Otherwise
+the field is absent and keys are byte-identical
 to 0.4.1 (`exec: {}` = no block). Writes, closure-review, review and rulings
 keys never contain it. The key names the wrapper argv, not where the wrapper
 ran: a remote-host wrapper is trusted by its argv. `exec.parallel` and `exec.trees` (0.9, §7.12) are
@@ -797,7 +806,7 @@ moved ref silently.
 2. Materialize C clean: `git worktree add --detach <tmp> <C>`; restore closure
    globs from B (files in B overwrite; closure files only in C are deleted);
    run `setup`; run each check with `bash -lc` (prefixed by `exec.wrap`, §7.9),
-   a timeout (kill process group), env `CI=1 OWED=1` (plus `exec.env`, §7.9); capture combined output to a blob; parse test counts
+   a timeout (kill process group), env `CI=1 OWED=1 OWED_TREE=<absolute tree path>` (plus `exec.env`, §7.9); capture combined output to a blob; parse test counts
    (TAP `# pass N`/`# tests N`, node:test, pytest `N passed`, cargo
    `test result: ok. N passed`); zero tests with a known format = fail;
    `min_tests` unmet = fail; unknown format with `min_tests` set = error.
@@ -977,11 +986,26 @@ changed; retry`): they decide a trunk move on what they measured.
   submodule directories: the content equals a fresh tree. owed never runs a
   `git submodule` command and never changes the shared config or a modules
   directory, so the user's initialized submodules are untouched. Then the
-  overlays as for a fresh tree. What
-  survives is the path and the mtimes of files the checkout did not change, so a
-  build cache outside the tree (a shared `CARGO_TARGET_DIR`) builds
-  incrementally; a cache inside the tree (an ignored `target/`) does not
-  survive. A missing or broken tree is recreated (`git worktree add -f
+  overlays as for a fresh tree. The path stays stable. Under the lease, before
+  overlays and setup, `exec.touch: reset` (0.11, default) sets every tracked
+  file's mtime to now whenever the commit differs from that of the tree's last
+  complete preparation (a recreated tree counts as changed).
+  `always` does so before every reused measurement (each strength mutant too),
+  even on the same commit; `never` keeps Git's behavior. Symlinks are touched
+  without following their targets, and gitlink directories are skipped.
+  A build cache outside the tree survives; an ignored `target/` inside does not.
+  A cache shared by several trees (a common `CARGO_TARGET_DIR`) can link
+  artifacts from another checkout: use a per-tree directory or `touch: always`.
+  Every setup, wrapper and measurement process gets `OWED_TREE` = the absolute
+  materialized tree path (fresh, reused or fresh fallback), overriding inherited
+  values and a value from `exec.env`. Preparation is all-or-nothing: a marker in
+  the tree's private git dir records the commit of the last complete
+  preparation (written after touch); it is removed before checkout, so when
+  checkout, clean, touch or any later step fails, the next lease redoes the
+  whole preparation, touch included. For example, in the command that builds, use
+  `export CARGO_TARGET_DIR="$OWED_TREE/../target-$(basename "$OWED_TREE")"`;
+  `exec.env` values do not expand shell variables. `touch` has no effect on fresh
+  trees. A missing or broken tree is recreated (`git worktree add -f
   --detach`); a failure to prepare one falls back to a fresh tree with a
   one-line note in the observation log and never fails the measurement. The end
   of a run releases the lease and keeps the tree. Each strength mutant prepares
