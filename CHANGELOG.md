@@ -1,5 +1,101 @@
 # Changelog
 
+## 0.11.0
+
+The app feedback #12 and #27-#36 reported halts and wrong verdicts that
+owed caused itself. The parent's diagnosis changed two of the asks. #35 is
+a driver race, not reviewers forgetting: in all three `review-missing`
+halts the review was recorded 33-60 s before the halt, by a run that
+recorded and sealed between the pass's state load and its describe. #29 is
+not a semantic merge conflict but nondeterminism: the attribution rerun
+of the same merge tree passed, because reused trees linked stale build
+artifacts (#32b), fixed by F6 plus a waiver that reaches merge keys (F3).
+
+- **Fresh act (F1; app #35).** Every `launch`, `send`, `rebase` and
+  `halt` the driver records as the result of `decide` passes `since: S`,
+  the seq of the state the pass loaded. Under the ledger lock, an entry
+  after S that names the node (its `node` or `subject`, a ruling covering
+  it or `*`, or any `plan` entry) and is not by `parent:drive` makes the op
+  record nothing and throw `OwedError` code `stale`; a send then makes no
+  dsa call. The driver reports outcome `stale` (no halt, no wake) and the
+  next pass decides again. Rows 13-14: a sealed reviewer run whose
+  obligations still await gets ONE follow-up with the new reason
+  `verdict`, naming the candidate, the awaiting obligations and the exact
+  `owed review` command; `review-missing` halts only after it sealed again
+  without recording (at once for a `rejected` or `pruned` run). The asking
+  notify ends with a hint to record a contract or scope answer with
+  `owed rule --nodes <node> "<decision>"`.
+- **Environment failures wait (F2; app #36, #12).** Per ruling #1094, a
+  measurement is `error` with a note starting `environment: ` only when it
+  failed before its command ran (tree preparation, spawn, `setup`), or when
+  it exited non-zero with no failing test counted and `ENOSPC`, `No space
+  left on device` or `Disk quota exceeded` appears in the last 50 output
+  lines after dropping TAP test points, subtest titles and cargo test
+  lines (a test name is never evidence). The driver does not count these
+  toward "attest recorded no verdict twice"; the node's next attest backs
+  off 1, 2, 5, 10, then 30 min (a resume restarts the streak), with one
+  notify per streak. `drive.min_free_mb` (default 2048, 0 disables) gates
+  starting measurements on free space in the git common dir and the temp
+  dir (`disk low: …`, once per change). A disk-full error escaping a pass
+  logs a waking `disk-full` event, sleeps 60 s and continues. `owed gc`
+  also removes free node-check trees whose check belongs only to merged or
+  abandoned nodes.
+- **Waiver reaches merge keys (F3; app #34, #29, #12).** The blocks an
+  owner waiver cites in `accept_risk` are cleared whatever their key,
+  merge keys included; every cited seq must be an active or flaky exec or
+  judgment block of the waiver's node and obligation. A merge-result fail
+  cited this way no longer counts on its key, so a pass on that key (the
+  attribution rerun) satisfies `owed merge`. The waiver's own key binding
+  is unchanged, and the confirmation and result text say the obligation is
+  no longer measured on the waived key.
+- **Removed nodes and routing fixes (F4; app #27, #31, #33c, #34).** A
+  node absent from the current plan and not merged has phase `removed`:
+  never ready, dispatched or selected by the driver. `owed resume` refuses
+  when an active needs-parent review block awaits a ruling, naming
+  `owed rule --nodes <node> "<decision>"`. A failed send's report names
+  node, kind, reason and target. The `min_tests` loop warning skips
+  `cargo test` commands. A timed-out describe is retried once per pass, and
+  a node in a `resume --after` wait gets no `describe-failed` notify.
+- **Writer rulings and waits during merges (F5; app #33a, #33b).**
+  `owed rule --writer` (pi `owed_rule` `writer: true`) records `writer:
+  true`; recorded after a named node's open submit it invalidates that
+  candidate (a new submit is needed, the same commit is fine), and the
+  driver delivers it as a `ruling` follow-up to a sealed writer or a steer
+  to a running one. Reviewers still acknowledge it; `*` rulings and rulings
+  without `--writer` are unchanged. When a merge measuring at the time of
+  a `resume --after` ends refused, the driver reports `waiting` and records
+  no halt.
+- **Reused trees never link stale artifacts (F6; app #32b).**
+  `exec.touch: reset | always | never` (default `reset`, reused trees only):
+  `reset` sets every tracked file's mtime to now when a reused tree changes
+  commit, `always` before every reused measurement, `never` keeps Git's
+  behavior. An explicitly set `touch` is part of the exec key (owner act,
+  fresh evidence). Every setup, wrapper and measurement process gets
+  `OWED_TREE` = the absolute tree path, so checks can keep per-tree build
+  dirs (`export CARGO_TARGET_DIR="$OWED_TREE/../target-$(basename
+  "$OWED_TREE")"`). Per ruling #1095, a newly recorded plan (`init`,
+  `plan`, `amend`) may not set `OWED_TREE` in `exec.env` (replay does not
+  check it; owed's value overrides it at run time), and reused-tree
+  preparation is all-or-nothing: a marker of the last complete preparation
+  is removed before checkout and written after touch, so any failed step
+  is redone in full on the next lease.
+
+**Compatibility.** A ledger with a `send` of reason `verdict` or a plan
+setting `exec.touch` needs owed >= 0.11.0 to verify and replay; 0.10
+replays a `writer` ruling as an ordinary one and has no `removed` phase.
+Upgrade the CLI, the pi extension and remote executors together. Plans
+without `touch` keep byte-identical keys. Checks that relied on a shared
+`CARGO_TARGET_DIR` across reused trees should move to per-tree dirs or
+`touch: always`.
+
+**Deferred.** #22 merge train; #23 measure on the merged trunk; parent
+answers recorded automatically (F1.3 is the interim); the carry and amend
+nits from 0.10; moving pi tools off pi's main thread; a driver restart
+loses cached run generations; `stale` is reported as an internal error
+(exit 3) by cli/drive-run; a send decided before a plan entry removes its
+node is not refused as stale; spec-reporter test titles are not filtered
+by the environment classifier.
+
 ## 0.10.0
 
 The app feedback #24-#26 reported parent round trips that owed caused
