@@ -412,15 +412,16 @@ export class Driver {
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
       // K6: a node with a measurement in flight gets no action this pass: its runs are not described.
-      if (!n.slot?.open || halted(s, n.id) || measuring.has(n.id)) continue;
+      if (!n.slot?.open || n.phase === 'removed' || halted(s, n.id) || measuring.has(n.id)) continue;
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
       if (!ar) continue;
       for (const l of ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq))) {
         try {
-          const { view, gen } = await this.dsa.inspect(l.rid);
+          // F4 (app #34): a describe that timed out is retried once in this pass before it is reported.
+          const { view, gen } = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
           runs.set(l.rid, this.current(view, gen));
           if (view.state === 'absent') await blob(l.spec);
-        } catch (e) { this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }, s); }
+        } catch (e) { if (!waitingFor(s, n.id)) this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }, s); }
       }
       // G3.7: the files the previous candidate conflicts on, only when row 8 sends a rebase instruction (review #680 b).
       const rb = n.slot.rebase;
@@ -519,7 +520,7 @@ export class Driver {
       this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
     }
     const head = (await ledger.read()).at(-1)?.hash;
-    const open = Object.values(s.nodes).some(n => n.slot?.open);
+    const open = Object.values(s.nodes).some(n => n.slot?.open && n.phase !== 'removed');
     return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting };
   }
 
@@ -685,8 +686,10 @@ export class Driver {
         case 'notify': return { report: { ...base, outcome: 'notify', text: a.text, ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
-      if (e instanceof OwedError && e.code === 'stale') return done('stale', false, `${e.message}; decided again next pass`, a.do === 'halt' ? { attempt: a.attempt, needs: a.needs } : a.do === 'launch' ? { attempt: a.attempt, role: a.role, rid: a.rid } : a.do === 'send' ? { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason } : {});
-      if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message);
+      // F4 (app #31): a failed send names its node, kind and target like any other send line.
+      const extra = a.do === 'send' ? { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason, ...(a.send ? { send: a.send } : {}) } : {};
+      if (e instanceof OwedError && e.code === 'stale') return done('stale', false, `${e.message}; decided again next pass`, a.do === 'halt' ? { attempt: a.attempt, needs: a.needs } : a.do === 'launch' ? { attempt: a.attempt, role: a.role, rid: a.rid } : extra);
+      if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message, extra);
       throw e;
     }
   }

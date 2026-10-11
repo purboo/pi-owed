@@ -1,4 +1,5 @@
-// N4: frozen copy of src/views.ts at 360f0c8 bound to the frozen base reducer, the reference of test/perf.test.ts. Do not edit.
+// N4: frozen copy of src/views.ts at 360f0c8 bound to the frozen base reducer, the reference of test/perf.test.ts. Do not edit,
+// except to carry an intended semantic change of a later contract (marked with its id): 0.11 F4 (removed nodes).
 import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Plan, Rule, SlotRebase, State } from '../../src/types.ts';
 import type { AdoptPreview, GcResult } from '../../src/ops.ts';
 import type { TrunkDrift } from '../../src/git.ts';
@@ -208,7 +209,7 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
     (groups[n.phase] ??= []).push(n.id);
     if (n.phase === 'ready' || n.phase === 'dispatched') pending['parent+writer']!.push({subject:n.id,obligation:n.phase === 'ready' ? 'dispatch' : 'submit',key:'',status:'D',mark:'⊥',discharger:n.phase === 'ready' ? 'parent' : 'writer',evidence:[],detail:n.phase === 'ready' ? 'parent can dispatch work' : 'writer must submit a candidate'});
   }
-  for (const i of [...Object.values(s.nodes).filter(n => !n.merged).flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(withBlockNotes(s, i));
+  for (const i of [...Object.values(s.nodes).filter(n => !n.merged && n.phase !== 'removed' /* 0.11 F4 */).flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(withBlockNotes(s, i));
   const ready = Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), overlaps: Record<string, string[]> = {};
   for (const id of ready) { const o = overlapping(s, id); if (o.length) overlaps[id] = o; }
   const halts = Object.keys(s.nodes).flatMap(id => halted(s, id) ?? []), launches: Record<string, LaunchEntry[]> = {};
@@ -224,7 +225,7 @@ function genesisStatus(s: State): { genesis?: GenesisStatus } {
   const g = genesisProgress(s);
   return g.pending.length ? { genesis: { observed: g.observed.length, total: g.ids.length, pending: g.pending } } : {};
 }
-const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged' };
+const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged', removed: 'removed from the plan' /* 0.11 F4 */ };
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
 function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[]; hint?: string }): string {
   if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${haltClear(i.subject)}`;
@@ -450,7 +451,7 @@ const candidate12 = (s: State, node: string): string | undefined => { const n = 
 const candidateFlag = (s: State, node: string): string => { const c = candidate12(s, node); return c ? ` --candidate ${c}` : ''; };
 const waiveCommand = (node: string, obligation: string, risks: number[], flag = ''): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}${flag}`;
 /** Hint for a node without an open writer slot: nothing can be cleared on an old candidate, only on a new attempt. */
-const dispatchHint = (n: NodeState): string => n.merged ? `${n.id} is merged; no attempt can clear this` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
+const dispatchHint = (n: NodeState): string => n.merged ? `${n.id} is merged; no attempt can clear this` : n.phase === 'removed' /* 0.11 F4 */ ? `${n.id} is not in the current plan; it is never dispatched (add it to the plan to work on it again)` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
 /** D23: the command that records manual evidence `id` of `node` as principal `as`; `candidate` (G1.3): the commit (prefix) it names. */
 export const evidenceCommand = (node: string, id: string, as: string, candidate?: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}${candidate ? ` --candidate ${candidate}` : ''}`;
 /**
@@ -465,7 +466,7 @@ export function ownerCommands(s: State, node: string): string[] {
   if (!n) return [];
   const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && countsBlock(b)).map(b => b.seq);
   const live = !!(n.slot?.open && n.candidate);
-  if (!live && n.merged && !n.slot?.open) return [];
+  if (!live && (n.merged || n.phase === 'removed' /* 0.11 F4 */) && !n.slot?.open) return [];
   const items = live ? n.items.filter(i => i.status === 'D') : [];
   const later = live ? '' : 'after the writer submits a candidate: ';
   const out = n.slot?.open ? [] : [`owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];

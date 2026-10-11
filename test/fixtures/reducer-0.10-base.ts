@@ -1,4 +1,5 @@
-// N4: frozen copy of src/reducer.ts at 360f0c8 (0.10 trunk: carry, cas-retry, amend; equal to e01d451), the reference of test/perf.test.ts. Do not edit.
+// N4: frozen copy of src/reducer.ts at 360f0c8 (0.10 trunk: carry, cas-retry, amend; equal to e01d451), the reference of test/perf.test.ts. Do not edit,
+// except to carry an intended semantic change of a later contract (marked with its id): 0.11 F4 (removed nodes).
 import { matchesGlob } from 'node:path';
 import { H, ZERO, canonical, sha256 } from '../../src/canon.ts';
 import { OwedError } from '../../src/errors.ts';
@@ -144,6 +145,8 @@ function refresh(s: State): void {
     n.dependents = seen.size;
     if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
   }
+  // 0.11 F4 (intended change): a node in the state but not in the plan and not merged is `removed`.
+  for (const n of Object.values(s.nodes)) if (!s.plan.nodes.some(x => x.id === n.id)) n.phase = n.merged ? 'merged' : 'removed';
   s.invariants = s.plan.invariants.map(i => item(s, 'trunk', `inv:${i.id}`, s.trunk.invKeys[i.id] ?? ''));
   const g = context(s).genesis;
   // Genesis covers the invariants of the genesis plan; invariants added later are
