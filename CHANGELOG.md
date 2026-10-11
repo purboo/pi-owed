@@ -1,5 +1,106 @@
 # Changelog
 
+## 0.12.0
+
+The app pi-zip performance report (N4) showed ledger replay freezing pi's
+UI even after 0.10's reducer speed-up. App feedback §38 in
+`/tmp/dsa/owed-feedback-2026-10-10.md` added the in-memory extension version
+skew and the low-disk shared-build-dir pattern. This release delivers G1
+snapshot replay, G2 tool workers and G3's non-blocking 0.11 review nits,
+with the parent's rulings #1176, #1198 and #1200.
+
+- **Resumable replay and snapshots (G1; pi-zip N4).** `reduce` remains
+  the full-replay reference; `reduceFrom` folds new entries onto a private
+  copy of the state and its replay metadata, preserving internal sharing.
+  State, metadata, views and draft-validation decisions match full replay.
+  Loads use a per-ledger in-process memo, then `snapshot/state.v8`, when
+  the cached seq/hash matches the verified chain; otherwise they replay
+  from scratch. Results never alias, and draft simulations fold only the
+  added entries. Snapshots record the format, owed version, seq, hash and
+  payload digest, and are written atomically after at least 256 further
+  entries or when none exists. Missing, corrupt or mismatching snapshots
+  are cache misses, never operation failures. `owed verify` always uses
+  full replay; a matching-chain snapshot that differs is deleted and
+  reported as `snapshotMismatch: <seq>` in text and JSON. Per ruling #1200,
+  deletion also invalidates the memo with an epoch and a publication queue:
+  a load started before invalidation cannot republish stale state. Old
+  plans are loaded lazily, but missing/unreadable plan errors are never
+  swallowed by views. Unknown entry kinds, every closed enum value and
+  unknown ruling flags refuse replay with code `version`, an upgrade/restart
+  message and CLI exit 1 (including `verify`); other invalid entries keep
+  their errors.
+
+  Measured on bench against 0.11.0, with warm disk snapshots:
+
+  | Ledger / operation | 0.11.0 | 0.12.0 |
+  |--------------------|--------|--------|
+  | App, 2229 entries, `status` | about 1.04 s | 293 ms (about 28%) |
+  | Synthetic, 10000 entries / 200 nodes, `status` | 1.53 s | 378 ms |
+
+  Cold replay stays within +10% of 0.11.0; an in-process load after
+  appending one entry spends <= 50 ms replaying. Interleaved confirmation
+  runs measured warm app at 293/1083 ms (27.1%) and synthetic at
+  378/1612 ms, with cold overhead +6.3% and +6.4%, respectively.
+- **Tools off pi's main thread (G2; pi-zip N4, app §38).** Extension
+  loading eagerly starts one shared `worker_threads` worker per pi
+  process. Tool calls, `/owed`, drive-watch revalidation and background
+  genesis attests run there; schemas, owner dialogs, rendering and watcher
+  timers stay on pi's thread. Structured-clone RPC preserves OwedError
+  codes/messages and forwards aborts to existing abortable operations.
+  Owner actions retain preview/dialog/commit order and changed-candidate
+  refusal. A crash fails outstanding calls without replaying them; the
+  next call replaces the worker only if the installed version still
+  matches the session's loaded version. Tools append
+  `owed <installed> is installed but this pi session loaded <loaded>: restart pi to use it.`
+  on version skew or a `version` error. Both compiled `dist/ext-worker.js`
+  and git-install source loading work without optional pi peers. On a
+  2201-entry ledger, tool calls in the worker keep pi responsive: about
+  0.5 ms main-thread stall versus 115-179 ms in-process.
+- **0.11 review fixes (G3).** `stale` is a refusal (exit 1), not an
+  internal error (exit 3), in the CLI and driver; the CLI's `version` exit
+  mapping comes from G1, as ruling #1198 assigns. A restarted driver
+  recovers follow-up generations per run, not per node: it asks dsa for
+  the latest applied follow-up's original reply using the same request id
+  and stored bytes, cached once per send id per process. Another reviewer's
+  later verdict cannot suppress recovery or cause a premature
+  `review-missing` halt (#1198). A recorded send's re-send is refused as
+  stale if a later plan removed or changed the node, even though plan
+  entries name no node. Environment classification filters spec-reporter
+  titles (`✔`, `✖`, `▶`) as well as TAP/cargo titles, and its error note
+  shows the filtered matching lines, not the unfiltered tail. Ruling
+  re-sends after resume include the same active/flaky block lines as the
+  original follow-up. A removed node's open slot counts toward `drive.max`
+  until abandoned; ruling #1176 lets `owed abandon <node>` close that slot
+  without re-adding the node, changing no other removed-node operation.
+  Failed-send text names the node as a word. `reuseHooks.beforeTouch`
+  remains a documented test-only seam. The skill documents app's
+  low-disk alternative to per-tree build dirs: shared dirs serialized by
+  `flock`, a per-dir last-checkout marker and tracked-file touch when the
+  builder changes, leaving `exec.touch` at its default so keys stay stable.
+
+**Compatibility.** Files under the ledger dir's `snapshot/` are private,
+derived caches, safe to delete; deletion only costs a full replay. 0.12
+adds no entry field or send reason, so its ledgers remain replayable by
+0.11 unless they contain an `abandon` of a node the plan removed: owed
+< 0.12 rejects that entry (#1176). The existing pre-0.11 limits for
+`send` reason `verdict` and `writer` rulings still apply. The explicit
+newer-entry refusal with code `version` (exit 1) exists only from 0.12 on;
+earlier owed does not provide that forward-compatibility error. Upgrade
+the CLI, pi extension and remote executors together, and restart existing
+pi sessions to load the installed version.
+
+**Deferred.** #22 merge train; #23 measure on the merged trunk; parent
+answers recorded automatically; the carry and amend nits from 0.10.
+Tool-worker review #1182: a crashed worker does not replay `session_start`,
+so drive-follower recovery waits for the next session start and in-flight
+background genesis attests are lost, not automatically resumed; non-OwedError
+tool exceptions become `Refused` results with code `internal` rather than
+being thrown to pi; a refused replacement repeats the restart line; a
+same-process `/reload` after upgrading refuses extension loading instead
+of retaining old tools (restart pi); the in-process non-blocking test's
+margin above 100 ms is modest. Snapshot review #1218 and nits review #1206
+reported no further unfixed product nits after rulings #1200 and #1198.
+
 ## 0.11.0
 
 The app feedback #12 and #27-#36 reported halts and wrong verdicts that
