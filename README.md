@@ -349,9 +349,12 @@ the recorded bytes). `owed why <node>` shows
 `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` for a node that
 sets it. owed 0.6.x ignores a node's `drive` and launches with the plan's drive.
 
-Environment failures wait instead of halting (0.11). A measurement that fails
-with `ENOSPC`, `No space left on device` or `Disk quota exceeded` in its output,
-or fails before its command runs (worktree preparation, `setup`), is recorded
+Environment failures wait instead of halting (0.11). A measurement that exits
+non-zero with no failing test counted and `ENOSPC`, `No space left on device` or
+`Disk quota exceeded` in the last 50 output lines (TAP/cargo test-name lines are
+ignored, so a test title is never evidence; any counted failing test makes it a
+plain `fail`), or that fails before its command runs (worktree preparation,
+spawn, `setup`), is recorded
 as `error` with a note starting `environment: `. The driver does not count
 those toward "attest recorded no verdict twice"; it waits 1, 2, 5, 10, then 30
 minutes before the node's next attest (a resume starts again) and notifies once
