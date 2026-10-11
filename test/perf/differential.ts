@@ -61,6 +61,15 @@ export function variants(d: Draft, nodes: string[]): Draft[] {
 }
 export interface Mismatch { at: number; what: string; base: string; cur: string }
 /**
+ * The one intended decision change since 0.10 (0.12, ruling #1176): `abandon` on a node the current plan removed is
+ * no longer refused as `Node <id> does not exist`; every other error of the draft stays the same.
+ */
+export function intendedChange(s: State, d: Draft, base: unknown, cur: unknown): boolean {
+  if (d.kind !== 'abandon' || s.nodes[d.node]?.phase !== 'removed' || !Array.isArray(base) || !Array.isArray(cur)) return false;
+  const gone = `Node ${d.node} does not exist`;
+  return base.includes(gone) && canonical(base.filter(x => x !== gone)) === canonical(cur);
+}
+/**
  * Reduces `entries` with both reducers at every k-th prefix and the full ledger; compares snapshots and the
  * validateDraft decisions on variants of the next entry. Returns the first mismatch, or undefined.
  */
@@ -78,8 +87,8 @@ export function compare(entries: Entry[], lookup: (sha: string) => Plan, k: numb
     if (next) {
       const { seq: _s, ts: _t, prev: _p, hash: _h, ...draft } = next;
       for (const d of variants(draft as Draft, Object.keys(sb.nodes))) {
-        const eb = canonical(attempt(() => BASE.r.validateDraft(sb, d))), ec = canonical(attempt(() => CUR.r.validateDraft(sc, d)));
-        if (eb !== ec) return { at: cut, what: `validateDraft ${canonical(d)}`, base: eb, cur: ec };
+        const rb = attempt(() => BASE.r.validateDraft(sb, d)), rc = attempt(() => CUR.r.validateDraft(sc, d)), eb = canonical(rb), ec = canonical(rc);
+        if (eb !== ec && !intendedChange(sb, d, rb, rc)) return { at: cut, what: `validateDraft ${canonical(d)}`, base: eb, cur: ec };
       }
     }
   }
@@ -161,7 +170,7 @@ export function fuzzLedger(seed: number, steps: number): { entries: Entry[]; loo
     let x = r() * total, i = 0; while (x >= weights[i]!) { x -= weights[i]!; i++; }
     const d = (i === 4 || i === 6 ? helpful() : undefined) ?? makers[i]!();
     const eb = BASE.r.validateDraft(s, d), ec = CUR.r.validateDraft(sc, d);
-    if (canonical(eb) !== canonical(ec)) return { entries, lookup, mismatch: { at: entries.length, what: `validateDraft ${canonical(d)}`, base: canonical(eb), cur: canonical(ec) } };
+    if (canonical(eb) !== canonical(ec) && !intendedChange(s, d, eb, ec)) return { entries, lookup, mismatch: { at: entries.length, what: `validateDraft ${canonical(d)}`, base: canonical(eb), cur: canonical(ec) } };
     if (!eb.length) append(d);
   }
   return { entries, lookup };

@@ -521,7 +521,11 @@ It is never in the ready list, `dispatch` is refused (`dispatch requires a ready
 node with no open slot`), status shows it
 under `removed from the plan` and leaves its items out of the pending queue, and
 the driver never selects it (no dispatch, and no action on an open slot it may
-still have; abandon that slot). Adding the node to the plan again recomputes its
+still have; abandon that slot). `abandon` is the one entry kind `validateDraft`
+accepts on a removed node (0.12, ruling #1176): `owed abandon <node>` closes
+its open slot without re-adding the node (the attempt must be the open slot's);
+every other entry naming it is still refused (`Node <id> does not exist`).
+Until then the open slot counts toward `drive.max` (§12.7). Adding the node to the plan again recomputes its
 phase as before. `dependents` (transitive dependents) is computed once
 per plan. A deep-frozen plan from the lookup (ops' plan cache) is shared by the
 state instead of cloned. The State, queries, views and `validateDraft` decisions
