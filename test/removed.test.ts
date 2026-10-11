@@ -127,7 +127,7 @@ test('F4.3 (#31): a send that fails names node, kind, reason and target in its n
     assert.equal(fail.outcome, 'error');
     assert.deepEqual({ node: fail.node, sendKind: fail.sendKind, reason: fail.reason, rid: fail.rid }, { node: 'a', sendKind: 'follow-up', reason: 'submit', rid: runId(d.project!, 'a', 1, 'writer') });
     assert.ok(!lines.some(l => /undefined/.test(l)), lines.join('\n'));
-    assert.ok(lines.some(l => l.startsWith(`send follow-up (submit) to ${runId(d.project!, 'a', 1, 'writer')}: error — timed out waiting for the ledger lock`)), lines.join('\n'));
+    assert.ok(lines.some(l => l.startsWith(`send follow-up (submit) for node a to ${runId(d.project!, 'a', 1, 'writer')}: error — timed out waiting for the ledger lock`)), lines.join('\n'));
     await new Driver({ cwd: r.cwd, json: true, log: l => json.push(l), dsa, session: null, handleSignals: false }).pass();
     const j = json.map(l => JSON.parse(l)).find(x => x.do === 'send');
     assert.ok(j && j.node === 'a' && j.sendKind === 'follow-up' && typeof j.rid === 'string', json.join('\n'));

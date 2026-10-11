@@ -155,6 +155,8 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     const error=e instanceof OwedError ? e : new OwedError(e instanceof Error ? e.message : String(e),'internal');
     // K1: with --json a failure is also one line {"error", "code"} on stdout; stderr and the exit code are unchanged.
     if(argv.includes('--json')) io.log(JSON.stringify({ error:error.message, code:error.code }));
+    // G3.1 (0.12): a stale act is a refusal (nothing recorded), not an internal error.
+    if(error.code === 'stale') { io.error(`Stale: ${error.message.replace(/^stale: /,'')}`); return 1; }
     if(error.code === 'aborted') { if(error.message !== 'aborted') io.error(error.message); io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
     io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : error.code === 'busy' ? 'Busy' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : error.code === 'busy' ? 75 : 3;
   } finally { got.unhandle?.(); }
