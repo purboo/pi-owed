@@ -66,6 +66,35 @@ const LIMIT = 1024 * 1024;
 export function lastLines(log: string, n = 5): string[] {
   return log.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').split(/\r?\n|\r/).map(l => l.trimEnd()).filter(l => l.trim()).slice(-n).map(l => l.slice(0, 200));
 }
+/** F2.1: the note prefix of an observation whose failure is the environment's (disk full, tree preparation), not the code's. */
+export const ENVIRONMENT = 'environment: ';
+/** F2.1: output of a failed process that says the disk (or quota) is full. */
+export const DISK_FULL = /ENOSPC|No space left on device|Disk quota exceeded/;
+/** F2.1: a failure owed records with the `environment: ` note prefix (verdict error). */
+class EnvironmentError extends Error {}
+/** F2.1: runs a tree preparation step (worktree add/reset/checkout, overlay, setup); its failure is an environment failure. */
+async function prepare<T>(step: () => Promise<T>): Promise<T> {
+  try { return await step(); } catch (e) { throw e instanceof EnvironmentError ? e : new EnvironmentError(e instanceof Error ? e.message : String(e)); }
+}
+/**
+ * F2.1 (ruling #1094): the lines an environment pattern is searched in: the last 50 non-empty output lines after
+ * dropping TAP test points and subtest titles (`ok `, `not ok `, `# Subtest:`) and cargo `test … ok|FAILED` lines, so
+ * a test name never counts as evidence.
+ */
+export function environmentLines(log: string): string[] {
+  return log.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').split(/\r?\n|\r/).map(l => l.trimEnd()).filter(l => {
+    const t = l.trimStart();
+    return t && !t.startsWith('ok ') && !t.startsWith('not ok ') && !t.startsWith('# Subtest:') && !/^test .* \.\.\. (?:ok|FAILED)\b/.test(t);
+  }).slice(-50);
+}
+/**
+ * F2.1 (ruling #1094): throws an environment failure when the command exited non-zero, its counts report no failing
+ * test (none parsed, or fail 0), and an environment pattern matches in `environmentLines`. A run with fail > 0 is a fail.
+ */
+function diskFull(code: number | null, counts: Counts | undefined, log: string, what: string): void {
+  const m = code !== null && code !== 0 && (counts?.fail ?? 0) === 0 ? DISK_FULL.exec(environmentLines(log).join('\n')) : null;
+  if (m) { const t = lastLines(log); throw new EnvironmentError(`${m[0]}: ${what}; last output:${t.length ? t.map(l => `\n  ${l}`).join('') : ' (none)'}`); }
+}
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   const start = Date.now();
   const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
@@ -77,9 +106,9 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
   // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
   const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, note: (line: string) => capture(`${line}\n`) } : undefined;
-  async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string }> {
+  async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string; /** F2.1: the process could not be spawned (an environment failure). */ spawn?: boolean }> {
     return new Promise(resolve => {
-      let output = Buffer.alloc(0), error: string | undefined;
+      let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
       const inherited: NodeJS.ProcessEnv = { ...process.env };
       // A nested Node test runner must not inherit the parent's IPC/reporting mode.
       delete inherited.NODE_TEST_CONTEXT;
@@ -97,10 +126,10 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const abort = () => { error = 'aborted'; kill(); };
       const timer = setTimeout(() => { error = `timeout after ${timeout}s`; kill(); }, timeout * 1000);
       ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
-      p.on('error', e => { error = e.message; });
+      p.on('error', e => { error = e.message; spawnError = true; });
       p.on('close', (code, signal) => {
         clearTimeout(timer); ctx.signal?.removeEventListener('abort', abort); kill();
-        resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString() });
+        resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(spawnError ? { spawn: true } : {}) });
       });
     });
   }
@@ -122,16 +151,19 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (ctx.signal?.aborted) throw new Error('aborted');
         capture(`\n=== mutant ${path} ===\n`);
         const patch = (await git(ctx.cwd, ['cat-file', 'blob', `${job.base}:${path}`])).stdout;
-        work = await materialize(ctx.cwd, job.commit, reuse);
+        work = await prepare(() => materialize(ctx.cwd, job.commit, reuse));
         try {
-          await overlay(ctx.cwd, work.path, job.base, ctx.plan.closure, 'replace');
+          const tree = work.path;
+          await prepare(() => overlay(ctx.cwd, tree, job.base, ctx.plan.closure, 'replace'));
           const applied = await git(work.path, ['apply', '--whitespace=nowarn', '-'], { input: patch, allowFail: true });
           if (applied.code) { capture(applied.stderr); results.push(`survived ${path}: patch does not apply: ${applied.stderr.trim().split('\n')[0] ?? ''}`); continue; }
           if (ctx.plan.setup) {
             const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
-            if (setup.error || setup.code !== 0) throw new Error(`setup failed: ${setup.error ?? setup.code}`);
+            if (setup.error || setup.code !== 0) throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`);
           }
           const result = await command(spec.run, work.path, spec.timeout_s), counts = parseCounts(result.log);
+          if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
+          diskFull(result.code, counts, result.log, `mutant ${path} run exited ${result.code}`);
           if (result.error && !result.error.startsWith('timeout')) throw new Error(result.error);
           const kill = counts?.tests !== 0 && (result.code !== 0 || (counts?.fail ?? 0) > 0);
           if (kill) killed++;
@@ -144,15 +176,19 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       capture(`\n${['Mutants:', ...results.map(l => `- ${l}`), obs.note].join('\n')}\n`);
     } else {
       const spec = job.spec; if (!spec) throw new Error('missing check spec');
-      work = await materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit, reuse);
-      if (job.kind === 'red') await overlay(ctx.cwd, work.path, job.commit, spec.tests ?? [], 'add');
-      await overlay(ctx.cwd, work.path, job.kind === 'inv' ? job.commit : job.base, ctx.plan.closure, 'replace');
+      work = await prepare(() => materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit, reuse));
+      const tree = work.path;
+      if (job.kind === 'red') await prepare(() => overlay(ctx.cwd, tree, job.commit, spec.tests ?? [], 'add'));
+      await prepare(() => overlay(ctx.cwd, tree, job.kind === 'inv' ? job.commit : job.base, ctx.plan.closure, 'replace'));
       if (ctx.plan.setup) {
         const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
-        if (setup.error || setup.code !== 0) { obs.exit = setup.code; throw new Error(`setup failed: ${setup.error ?? setup.code}`); }
+        if (setup.error || setup.code !== 0) { obs.exit = setup.code; throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`); }
       }
       const result = await command(spec.run, work.path, spec.timeout_s); obs.exit = result.code;
       obs.counts = parseCounts(result.log);
+      // F2.1: a failed run whose output says the disk is full measured the environment, not the code: error, no verdict.
+      if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
+      diskFull(result.code, obs.counts, result.log, `command exited ${result.code}`);
       if (result.error) throw new Error(result.error);
       // min_tests applies to every non-red run (candidate and invariant runs): on the base tree a new test file often cannot load
       // (missing module/export), so the runner reports a single failing test; a red run needs only a
@@ -176,7 +212,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (!countOK) obs.note = red ? 'zero tests' : countNote(obs.counts, spec.min_tests, result.code);
       }
     }
-  } catch (e) { obs.verdict = 'error'; obs.note = e instanceof Error ? e.message : String(e); capture(`\n${obs.note}\n`); }
+  } catch (e) { obs.verdict = 'error'; obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`; capture(`\n${obs.note}\n`); }
   finally {
     if (work) { try { await work.dispose(); } catch (e) { obs.verdict = 'error'; obs.note = `worktree cleanup: ${String(e)}`; capture(obs.note); } }
   }

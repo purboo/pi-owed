@@ -270,13 +270,14 @@ test('M2: reuse trees are never slots: no gc slot item, no kept report, no trunk
     const g = await ops.gc({ cwd: r.cwd, dryRun: true, as: parent });
     const text = JSON.stringify([g.removed, g.kept]);
     assert.equal(text.includes(dir), false, `no slot item or kept report names a reuse tree: ${text}`);
-    assert.equal(g.trees, undefined); assert.equal(g.treesKept, undefined);
+    // 0.11 (F2.5): the tree of the merged node's check goes; the invariant tree stays.
+    assert.deepEqual(g.trees?.map(t => t.path), [join(dir, 'check-ca-0')]); assert.equal(g.treesKept, undefined);
     assert.deepEqual(g.removed.map(i => `${i.node}#${i.attempt}`), ['a#1']);
     // A new dispatch works next to them and gc removes only the slot.
     const done = await ops.gc({ cwd: r.cwd, as: parent });
     assert.deepEqual(done.removed.map(i => i.worktree), [a.worktree]);
     assert.equal(await exists(join(dir, 'inv-u-0')), true);
-    assert.equal((await stat(join(dir, 'check-ca-0'))).isDirectory(), true);
+    assert.equal(await exists(join(dir, 'check-ca-0')), false, 'F2.5: a merged node\'s check tree is removed');
   } finally { await r.cleanup(); }
 });
 
