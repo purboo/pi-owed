@@ -265,7 +265,12 @@ export function reduceFrom(base: State, more: Entry[], plans: PlanLookup): State
 export function extendState(s: State, more: Entry[]): State { fold(s, more); return s; }
 /** The entry kinds this owed interprets (G1.5): any other kind needs a newer owed. */
 const KINDS: readonly string[] = ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume'];
-/** G1.5: enumerated fields per kind and their known values; a present field with another value needs a newer owed. */
+/**
+ * G1.5 closed entry enum audit (types.ts): Base.channel, send.sendKind/reason, obs.verdict, review.obligation/verdict/
+ * needs, launch.role, halt.needs, escape.class. `by`, other obligations and counts.format are open strings, not enums;
+ * boolean flags (rule.writer, attribution, closureTouched) retain their existing invalid-type errors.
+ */
+const CHANNELS: readonly string[] = ['tty', 'pi-confirm', 'flag', 'delegated'];
 let enumCache: Record<string, Record<string, readonly unknown[]>> | undefined;
 const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCache ??= {
   send: { sendKind: SEND_KINDS, reason: SEND_REASONS },
@@ -286,6 +291,7 @@ export function newerEntry(e: Entry): OwedError | undefined {
   const x = e as unknown as Record<string, unknown>, kind = x.kind;
   const refuse = (what: string): OwedError => new OwedError(`ledger entry #${shown(x.seq)} (${what}) needs a newer owed than ${OWED_VERSION}: upgrade owed and restart pi sessions that load it`, 'version');
   if (typeof kind !== 'string' || !KINDS.includes(kind)) return refuse(shown(kind));
+  if (x.channel !== undefined && !CHANNELS.includes(x.channel as string)) return refuse(`${kind} channel ${shown(x.channel)}`);
   for (const [field, known] of Object.entries(enums()[kind] ?? {})) if (x[field] !== undefined && !known.includes(x[field])) return refuse(`${kind} ${field} ${shown(x[field])}`);
   if (kind === 'rule') { const extra = Object.keys(x).find(k => x[k] !== undefined && !RULE_FIELDS.includes(k)); if (extra !== undefined) return refuse(`rule ${extra} ${shown(x[extra])}`); }
   return undefined;
