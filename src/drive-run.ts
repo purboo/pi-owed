@@ -24,7 +24,7 @@ import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
-import type { Plan, Principal, RunView, State } from './types.ts';
+import type { Plan, Principal, RunView, SendEntry, State } from './types.ts';
 
 /**
  * Trunk drift (review ruling #559, option c): the trunk ref no longer equals the ledger trunk. It is a repository fact,
@@ -189,6 +189,12 @@ class Facts {
   readonly refused = new Map<string, string>();
   /** rid → generation a follow-up applied in this process started; a describe of an older, sealed generation is stale. */
   readonly expectGen = new Map<string, number>();
+  /**
+   * G3.2 (0.12): send id of a follow-up → the generation it went into, as dsa answered this process (null: none, e.g.
+   * forwarded into running work). A follow-up recorded in the ledger but not in this map (a restarted driver) is asked
+   * again with the same id and bytes: dsa returns the first outcome, which names its generation.
+   */
+  readonly sentGen = new Map<string, number | null>();
   /** rid → latest generation describe reported. */
   readonly lastGen = new Map<string, number>();
   /** rid → state of the latest view describe reported in this process (G3.6). */
@@ -383,7 +389,8 @@ export function reportText(json: object): string {
   }
   if (!('do' in json) || typeof (json as { do: unknown }).do !== 'string') return oneLine(JSON.stringify(json));
   const r = json as ActionReport;
-  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason}) to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})`) : `${r.do} ${r.node}`;
+  // G3.6 (0.12): a failed send (outcome error) names its node as a word.
+  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason})${r.outcome === 'error' ? ` for node ${r.node}` : ''} to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})`) : `${r.do} ${r.node}`;
   const repeat = typeof r.repeat === 'number' && r.repeat > 0 ? repeatText(r.repeat) : '';
   return `${r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`}${repeat}`;
 }
@@ -445,17 +452,15 @@ export class Driver {
       if (!n.slot?.open || n.phase === 'removed' || halted(s, n.id) || measuring.has(n.id)) continue;
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
       if (!ar) continue;
+      const raw = new Map<string, { view: RunView; gen?: number }>();
       for (const l of ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq))) {
         try {
           // F4 (app #34): a describe that timed out is retried once in this pass before it is reported.
-          const { view, gen } = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
-          runs.set(l.rid, this.current(view, gen));
-          if (view.state === 'absent') await blob(l.spec);
+          const r = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
+          raw.set(l.rid, r);
+          if (r.view.state === 'absent') await blob(l.spec);
         } catch (e) { if (!waitingFor(s, n.id)) this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }, s); }
       }
-      // G3.7: the files the previous candidate conflicts on, only when row 8 sends a rebase instruction (review #680 b).
-      const rb = n.slot.rebase;
-      if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
       // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a
       // crash after the call); only an undecided one is re-sent (with the stored bytes and the same id, D13.1).
       // A rejected send (dsa's durable request state; cached once terminal) is passed to decide every pass: a rejected
@@ -471,8 +476,41 @@ export class Driver {
         } catch { /* unknown: re-send; dsa returns the first outcome for the same id */ }
         await blob(x.message);
       }
+      // G3.2: after the sends are confirmed, so a restarted driver knows which follow-ups dsa applied.
+      const mark = factMark(s, n.id);
+      for (const [rid, r] of raw) {
+        await this.restartGen(ar.sends, r, mark, ledger);
+        runs.set(rid, this.current(r.view, r.gen));
+      }
+      // G3.7: the files the previous candidate conflicts on, only when row 8 sends a rebase instruction (review #680 b).
+      const rb = n.slot.rebase;
+      if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
     }
     return { runs, blobs, rejected, conflicts };
+  }
+
+  /**
+   * G3.2 (0.12): what a follow-up applied by an earlier driver process (a restart, or the previous `--once` pass) lets
+   * this one expect. For a sealed (or pruned) view with a reported generation and no expectation yet, the run's latest
+   * follow-up send in the ledger that dsa reported applied and whose generation this process does not know is asked
+   * again with the same id and stored bytes; dsa answers with the first outcome, naming the generation it went into.
+   * When that generation is newer than the described one, the view is the previous generation's: `expectGen` is set
+   * as if the follow-up had been applied in this process. Failures and other outcomes leave the view as described.
+   * Not asked when a later entry of another principal names the node (`mark`, its fact mark: e.g. the writer submitted
+   * after the follow-up), since then that generation has visibly run.
+   */
+  private async restartGen(sends: readonly SendEntry[], r: { view: RunView; gen?: number }, mark: number, ledger: Ledger): Promise<void> {
+    const rid = r.view.rid;
+    if ((r.view.state !== 'sealed' && r.view.state !== 'pruned') || r.gen === undefined || this.facts.expectGen.has(rid)) return;
+    const x = sends.findLast(x => x.rid === rid && x.sendKind === 'follow-up');
+    if (!x || mark > x.seq || !this.facts.applied.has(x.send) || this.facts.sentGen.has(x.send)) return;
+    try {
+      const bytes = await ledger.getBlob(x.message);
+      const a = await this.dsa.send(x.send, rid, 'follow-up', bytes);
+      if (a.outcome !== 'applied') return;
+      this.facts.sentGen.set(x.send, a.generation ?? null);
+      if (a.generation !== undefined && a.generation > r.gen) this.facts.expectGen.set(rid, a.generation);
+    } catch { /* unknown: the view stays as described */ }
   }
 
   /**
@@ -710,6 +748,9 @@ export class Driver {
         }
         case 'send': {
           const extra = { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason };
+          // G3.3 (0.12): a re-send of a recorded send (no new entry, so no `since` check in ops) decided on `s` is stale
+          // when a later plan entry removed or changed the node.
+          if (a.send) await ops.planChangedSince({ cwd, node: a.node, since });
           const id = a.send ?? (await ops.send({ cwd, as, node: a.node, attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, message: a.message, reason: a.reason, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}), since })).send;
           crashPoint('before-dsa', 'send');
           const r = await this.dsa.send(id, a.rid, a.sendKind, a.message);
@@ -724,6 +765,7 @@ export class Driver {
               const forwarded = r.generation === undefined && (seen === 'running' || seen === 'asking' || seen === 'queued');
               const gen = r.generation ?? (!forwarded && last !== undefined ? last + 1 : undefined);
               if (gen !== undefined) this.facts.expectGen.set(a.rid, gen);
+              this.facts.sentGen.set(id, gen ?? null);
             }
             return done('applied', true, a.send ? 're-sent' : undefined, x);
           }
@@ -881,7 +923,9 @@ export async function drive(o: DriveOptions): Promise<number> {
   }
 }
 const exitRecord = (code: number, reason: ExitReason, error?: string): string => JSON.stringify({ event: 'exit', code, reason, at: new Date().toISOString(), ...(error !== undefined ? { error } : {}) });
-const errorCode = (e: unknown): number => e instanceof OwedError ? (e.code === 'refused' ? 1 : e.code === 'usage' ? 2 : 3) : 3;
+/** CLI exit code of a driver failure: refused, stale and version (refusals, G3.1 0.12) 1, usage 2, else 3. */
+const REFUSALS: readonly string[] = ['refused', 'stale', 'version'];
+const errorCode = (e: unknown): number => e instanceof OwedError ? (REFUSALS.includes(e.code) ? 1 : e.code === 'usage' ? 2 : 3) : 3;
 /** `record`: write the exit record (`--json` loop); `reason`: how the loop ended; `written`: the record is out. */
 interface LoopEnd { record?: boolean; reason?: ExitReason; written?: boolean }
 
