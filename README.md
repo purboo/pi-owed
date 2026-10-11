@@ -158,7 +158,7 @@ A plan may give every process owed starts in a materialized tree — `setup`, ch
 
 ```yaml
 exec:
-  env: { CARGO_TARGET_DIR: /abs/shared/target }   # strings, used verbatim (no $VAR expansion); not CI, OWED or OWED_TREE
+  env: { CARGO_TARGET_DIR: /abs/shared/target }   # strings, used verbatim (no $VAR expansion); not CI or OWED; a new plan may not set OWED_TREE
   wrap: ["/abs/tmp/qa/heavy.sh"]                   # argv prefix: owed runs [...wrap, "bash", "-lc", <command>]
 ```
 

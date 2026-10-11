@@ -317,6 +317,10 @@ async function touchTracked(path: string): Promise<void> {
   // Keep Git's stat cache in sync: a later forced checkout of the same commit must not rewrite these files.
   await git(path, ['update-index', '--refresh']);
 }
+/** The completion marker of a reused tree, inside its private git dir (not in the tree; removed with the worktree). */
+async function preparedMarker(path: string): Promise<string> { return join((await git(path, ['rev-parse', '--absolute-git-dir'])).stdout.trim(), 'owed-prepared'); }
+/** Test seam: `beforeTouch` runs right before the touch of a reused tree (tests inject a failure there). */
+export const reuseHooks: { beforeTouch?: (path: string) => Promise<void> | void } = {};
 async function reusedTree(cwd: string, commit: string, kind: string, id: string, touch: NonNullable<ReuseSpec['touch']>): Promise<{ path: string; dispose(): Promise<void> }> {
   const dir = await reuseDir(cwd), name = `${kind}-${treeId(id)}`;
   await mkdir(dir, { recursive: true });
@@ -324,12 +328,15 @@ async function reusedTree(cwd: string, commit: string, kind: string, id: string,
   for (; !await takeLease(join(dir, `${name}-${k}.lock`)); k++) if (k > 1000) throw new Error('no free reused tree lease');
   const path = join(dir, `${name}-${k}`), lock = `${path}.lock`;
   try {
-    let ready = false, changed = false;
+    let ready = false, prior = '';
     if (await ownTree(cwd, path)) {
-      const prior = await revParse(path, 'HEAD');
+      // F6 (ruling #1095): preparation is all-or-nothing. The marker names the commit of the last COMPLETE preparation;
+      // it is removed first and rewritten only after touch, so a failed preparation is redone in full next time.
+      const marker = await preparedMarker(path);
+      prior = await readFile(marker, 'utf8').catch(() => '');
+      await rm(marker, { force: true });
       const co = await git(path, ['checkout', '--detach', '--force', commit], { allowFail: true });
       ready = !co.code && !(await git(path, ['clean', '-ffdx'], { allowFail: true })).code;
-      if (ready) changed = prior !== await revParse(path, 'HEAD');
       // A fresh `git worktree add` tree has empty submodule directories: empty each gitlink dir (never a `git submodule`
       // command: it would edit the shared config and de-initialize the user's submodules).
       if (ready) await emptyGitlinks(path);
@@ -341,7 +348,9 @@ async function reusedTree(cwd: string, commit: string, kind: string, id: string,
       await git(cwd, ['worktree', 'add', '-f', '--detach', path, commit]);
     }
     // Still under the lease: no measurement or other preparation can see a partially touched tree.
-    if (touch === 'always' || (touch === 'reset' && changed)) await touchTracked(path);
+    const head = await revParse(path, 'HEAD');
+    if (touch === 'always' || (touch === 'reset' && prior !== head)) { await reuseHooks.beforeTouch?.(path); await touchTracked(path); }
+    await writeFile(await preparedMarker(path), head);
   } catch (e) { await releaseLease(lock); throw e; }
   return { path, async dispose() { await releaseLease(lock); } };
 }

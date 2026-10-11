@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { lstat, lutimes, mkdir, readFile, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { repo } from './helpers/repo.ts';
-import { candidateFacts, git, materialize, reuseDir, stateFacts } from '../src/git.ts';
-import { parsePlan } from '../src/plan.ts';
+import { candidateFacts, git, materialize, reuseDir, reuseHooks, stateFacts } from '../src/git.ts';
+import { execEnvErrors, parsePlan } from '../src/plan.ts';
 import { runJob } from '../src/exec.ts';
 import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
@@ -21,11 +21,59 @@ async function ageTracked(path: string, names: string[]): Promise<void> {
   await git(path, ['update-index', '--refresh']);
 }
 
-test('F6: touch parses all three policies, rejects invalid values, and reserves OWED_TREE', () => {
+test('F6: touch parses all three policies and rejects invalid values; OWED_TREE is refused only when recorded', () => {
   for (const touch of ['reset', 'always', 'never']) assert.deepEqual(planOf({ touch }).exec, { touch });
   assert.equal(planOf().exec, undefined);
   for (const touch of ['sometimes', '', null, 0, true, []]) assert.throws(() => planOf({ touch }), /exec\.touch: expected reset, always or never/);
-  assert.throws(() => planOf({ env: { OWED_TREE: '/wrong' } }), /exec\.env\.OWED_TREE: reserved/);
+  // Ruling #1095: replay parses it; recording a new plan refuses it (see the ledger test below).
+  assert.deepEqual(planOf({ env: { OWED_TREE: '/wrong' } }).exec, { env: { OWED_TREE: '/wrong' } });
+  assert.deepEqual(execEnvErrors(planOf({ env: { OWED_TREE: '/wrong' } })), ['exec.env.OWED_TREE: reserved (owed sets it to the measurement tree)']);
+  assert.deepEqual(execEnvErrors(planOf({ env: { X: '1' } })), []);
+});
+
+test('F6 (#1095): a ledger whose old plan sets exec.env.OWED_TREE verifies; new plans refuse it; owed overrides it at run time', async () => {
+  const r = await repo();
+  try {
+    await r.put('keep', 'one'); const commit = await r.commit();
+    const owner = { role: 'owner', id: 'test' } as const;
+    const old = { version: 1, trunk: 'main', closure: [], exec: { env: { OWED_TREE: '/wrong' } }, invariants: [{ id: 'i', run: `test "$OWED_TREE" = "$PWD" || exit 1; ${PASS}` }], nodes: [] };
+    // A historical ledger: the genesis was recorded by an older owed that accepted the name.
+    const ledger = await Ledger.open(r.cwd), plan = parsePlan(JSON.stringify(old)), sha = await ledger.putBlob(JSON.stringify(old));
+    const state = await stateFacts(r.cwd, plan, commit);
+    await ledger.withLock(() => ledger.append([{ kind: 'genesis', by: 'owner:test', channel: 'flag', trunk: 'main', commit, plan: sha, state } as never]));
+    const v = await ops.verify({ cwd: r.cwd });
+    assert.equal(v.ok, true, JSON.stringify(v));
+    assert.equal((await ops.status({ cwd: r.cwd })).trunk.commit, commit);
+    // Recording a new plan that sets it is refused and records nothing.
+    const n = (await ledger.read()).length;
+    await assert.rejects(ops.planSet({ cwd: r.cwd, plan: JSON.stringify({ ...old, invariants: [] }), as: owner, channel: 'flag' }), /exec\.env\.OWED_TREE: reserved/);
+    assert.equal((await ledger.read()).length, n);
+    // At run time owed's value wins over the plan's.
+    const job: AttestJob = { kind: 'inv', subject: 'trunk', obligation: 'inv:i', key: 'k', base: commit, commit, spec: plan.invariants[0]! };
+    const result = await runJob({ cwd: r.cwd, plan, ledger }, job);
+    assert.equal(result.verdict, 'pass', result.note);
+  } finally { await r.cleanup(); }
+});
+
+test('F6 (#1095): a touch failure is redone in full: a retry on the same commit refreshes mtimes', async () => {
+  const r = await repo();
+  try {
+    await r.put('keep', 'one\n'); const base = await r.commit(); await r.put('change', 'two\n'); const commit = await r.commit();
+    const notes: string[] = [], reuse = { kind: 'check', id: 'retry', note: (l: string) => notes.push(l) };
+    const first = await materialize(r.cwd, base, reuse);
+    await ageTracked(first.path, ['keep']); await first.dispose();
+    reuseHooks.beforeTouch = () => { reuseHooks.beforeTouch = undefined; throw new Error('injected transient ENOSPC'); };
+    const failed = await materialize(r.cwd, commit, reuse);
+    try { assert.notEqual(failed.path, first.path, 'falls back to a fresh tree'); } finally { await failed.dispose(); }
+    assert.match(notes.join('\n'), /injected transient ENOSPC/);
+    assert.equal(reuseHooks.beforeTouch, undefined, 'the touch was attempted');
+    const start = Date.now(), retry = await materialize(r.cwd, commit, reuse);
+    try {
+      assert.equal(retry.path, first.path);
+      assert.equal(await readFile(join(retry.path, 'change'), 'utf8'), 'two\n');
+      assert.ok(await mtime(join(retry.path, 'keep')) >= start - 2, 'the retry on the same commit touches again');
+    } finally { await retry.dispose(); }
+  } finally { reuseHooks.beforeTouch = undefined; await r.cleanup(); }
 });
 
 test('F6: every explicit touch policy binds check/red/strength/invariant keys; other obligations stay unchanged', async () => {
