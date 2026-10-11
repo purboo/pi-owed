@@ -297,7 +297,10 @@ exec:                            # optional; unknown keys and bad types are erro
   touch: reset                   # 0.11: reset (default) | always | never; tracked mtimes in reused trees
 ```
 
-`env` names match `^[A-Za-z_][A-Za-z0-9_]*$` and may not be `CI`, `OWED` or `OWED_TREE`;
+`env` names match `^[A-Za-z_][A-Za-z0-9_]*$` and may not be `CI` or `OWED`;
+a newly recorded plan (`init`, `plan`, `amend`) may also not set `OWED_TREE`
+(0.11). Replay does not check it, so a ledger whose older plan sets it still
+verifies; at run time owed's `OWED_TREE` overrides the plan's value;
 values are strings used verbatim (no `$VAR` or `~` expansion). The parsed plan
 keeps only non-empty fields: `exec: {}` and `exec: {env: {}}` are the same as
 no block (same plan blob, keys and views). `wrap: []` is an error.
@@ -985,7 +988,8 @@ changed; retry`): they decide a trunk move on what they measured.
   directory, so the user's initialized submodules are untouched. Then the
   overlays as for a fresh tree. The path stays stable. Under the lease, before
   overlays and setup, `exec.touch: reset` (0.11, default) sets every tracked
-  file's mtime to now whenever checkout changes the commit the tree last held.
+  file's mtime to now whenever the commit differs from that of the tree's last
+  complete preparation (a recreated tree counts as changed).
   `always` does so before every reused measurement (each strength mutant too),
   even on the same commit; `never` keeps Git's behavior. Symlinks are touched
   without following their targets, and gitlink directories are skipped.
@@ -994,7 +998,11 @@ changed; retry`): they decide a trunk move on what they measured.
   artifacts from another checkout: use a per-tree directory or `touch: always`.
   Every setup, wrapper and measurement process gets `OWED_TREE` = the absolute
   materialized tree path (fresh, reused or fresh fallback), overriding inherited
-  values. For example, in the command that builds, use
+  values and a value from `exec.env`. Preparation is all-or-nothing: a marker in
+  the tree's private git dir records the commit of the last complete
+  preparation (written after touch); it is removed before checkout, so when
+  checkout, clean, touch or any later step fails, the next lease redoes the
+  whole preparation, touch included. For example, in the command that builds, use
   `export CARGO_TARGET_DIR="$OWED_TREE/../target-$(basename "$OWED_TREE")"`;
   `exec.env` values do not expand shell variables. `touch` has no effect on fresh
   trees. A missing or broken tree is recreated (`git worktree add -f

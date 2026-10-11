@@ -187,7 +187,14 @@ export function manualDowngrades(node: string, prev: NodeSpec, next: NodeSpec): 
 }
 
 /** Environment names owed sets itself; `exec.env` may not override them (D20). */
-const RESERVED_ENV = ['CI', 'OWED', 'OWED_TREE'];
+const RESERVED_ENV = ['CI', 'OWED'];
+/**
+ * F6 (ruling #1095): `exec.env.OWED_TREE` is refused only when a plan is recorded, not on replay, so ledgers whose
+ * older plans set it still verify; at run time owed's OWED_TREE overrides the plan value.
+ */
+export function execEnvErrors(plan: Pick<Plan, 'exec'>): string[] {
+  return plan.exec?.env?.OWED_TREE !== undefined ? ['exec.env.OWED_TREE: reserved (owed sets it to the measurement tree)'] : [];
+}
 /**
  * Parses an optional `exec:` block (D20); unknown keys and bad types are errors. Returns undefined when neither
  * `env` nor `wrap` is non-empty and none of `parallel`, `trees`, `touch` is set, so `exec: {}` equals no block (plan blob,
