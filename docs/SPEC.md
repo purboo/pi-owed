@@ -471,7 +471,7 @@ never part of a key.
 |---|---|---|---|
 | `genesis` | owner | `{trunk, commit, plan}` (plan = blob sha) | names s₀ and the plan |
 | `plan` | owner/parent | `{prior, plan, rev?, path?, note?}` | new plan; must cite current plan sha (CAS); downgrade needs owner, unless the parent's downgrades are all covered by an allowance of the prior plan (§3.4); `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
-| `rule` | owner/parent | `{text, nodes: string[] \| "*"}` | ruling; in scope for those nodes |
+| `rule` | owner/parent | `{text, nodes: string[] \| "*", writer?: boolean}` | ruling; in scope for those nodes; `writer: true` invalidates named open candidates (§6.2) |
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
@@ -578,6 +578,18 @@ copy at every k-th prefix of fuzz, synthetic and real ledgers).
    shown as manual, never as measured; the executor never runs it.
    The approve and evidence keys are added to the submit facts by `owed
    submit`; the ledger refuses a submit whose keys are not derived from its patch.
+
+**Writer rulings (0.11, F5).** `owed rule --nodes <node> --writer "<decision>"`
+(pi `owed_rule` with `writer: true`) records the optional boolean `writer` on
+the ruling. Under the ledger lock, replay invalidates each named node's open
+candidate when the ruling follows its submit. The slot and blocks stay; a new
+submit is required and may name the same commit. Earlier rulings do not
+invalidate later submits. A wildcard `*` remains general guidance and does not
+invalidate candidates; an omitted or false `writer` preserves ordinary rulings.
+The next action for a sealed writer is a `ruling` follow-up carrying the ruling;
+a running writer receives a `ruling` steer. Reviewers of the invalidated
+candidate are obsolete. Delivering the ruling does not acknowledge it: the
+new candidate still owes the normal reviewer acknowledgment.
 
 ### 6.3 Status of an item
 - Executor verdicts on the same item join in the lattice ⊥ < pass, fail < ⊤
@@ -1543,7 +1555,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
 | `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
-| `owed_rule` | `text`, `nodes`, `as` | ruling |
+| `owed_rule` | `text`, `nodes`, `writer?`, `as` | ruling; `writer: true` requires named nodes to submit again |
 | `owed_amend` | `node`, `writes` (`+path` each), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
 | `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | initialize the ledger (§11.1) |
@@ -1762,7 +1774,10 @@ must name the node's current open slot (node and attempt), and so must a halt.
     node) → {after, resume} | undefined`). A later resume replaces an earlier
     one (one without `after` ends the wait); an abandon or a new dispatch ends
     it. A waiting node is skipped like a halted one (no launch, send, halt,
-    attest or merge); only asking runs are still reported (row 5).
+    attest or merge); only asking runs are still reported (row 5). If a merge
+    already measuring ends refused after such a resume, the driver reloads the
+    waiting state when handling the refusal, reports outcome `waiting`, and
+    records no halt or rebase. Observations already recorded remain in the ledger.
   The first writer follow-up the driver sends after a resume (any reason;
   `resumeLine`) starts with the line `The parent resumed this node
   (#<seq>)[ after <dep> merged at <commit12>][: <note>]` (the note on one line).
