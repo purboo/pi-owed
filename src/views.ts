@@ -285,7 +285,19 @@ export function waiverText(s: State, e: WaiveEntry): string {
     : `not in effect: ${item.detail}`;
   const unmeasured = measured && !observationsOf(s, e.node, o, e.key).some(x => x.verdict !== 'error') ? '; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail adds a block that suspends the waiver until it clears' : '';
   const flaky = (e.accept_risk ?? []).filter(seq => { const b = n?.blocks.find(x => x.seq === seq); return !!b && b.kind === 'exec' && wasFlaky(s, b, e.seq); });
-  return `waived ${o} for candidate #${c?.seq ?? '?'} ${c?.commit.slice(0, 12) ?? '?'} (key ${k}): ${effect}; ${scope}; ${again}${unmeasured}${flaky.map(seq => `; the flaky block #${seq} stays recorded as accepted risk`).join('')}`;
+  return `waived ${o} for candidate #${c?.seq ?? '?'} ${c?.commit.slice(0, 12) ?? '?'} (key ${k}): ${effect}; ${scope}; ${again}${unmeasured}${flaky.map(seq => `; the flaky block #${seq} stays recorded as accepted risk`).join('')}${acceptedText(s, e, !!unmeasured)}`;
+}
+/**
+ * 0.11 F3 (app #34, #12): what --accept-risk does, said plainly: the cited blocks are cleared whatever their key, the
+ * obligation is no longer measured on the waived key, and a cited fail on a merge key no longer counts against the merge.
+ */
+function acceptedText(s: State, e: WaiveEntry, unmeasured: boolean): string {
+  const seqs = e.accept_risk ?? [];
+  if (!seqs.length) return '';
+  const all = entriesOf(s), o = e.obligation;
+  const merge = seqs.flatMap(seq => { const x = all.find(y => y.seq === seq); return x?.kind === 'obs' && x.merging !== undefined && x.key !== e.key ? [x] : []; });
+  return `; --accept-risk clears ${seqs.map(x => `#${x}`).join(', ')} whatever ${seqs.length === 1 ? 'its key' : 'their keys'}${unmeasured ? '' : `, and ${o} is no longer measured on key ${e.key.slice(0, 12)}`}`
+    + merge.map(x => `; #${x.seq} failed on merge key ${x.key.slice(0, 12)}: that fail no longer counts there, so a pass there satisfies owed merge, and owed merge measures the key again when it has no other verdict`).join('');
 }
 /** An exec block that an attribution rerun passed (flaky) before entry `before`, as the reducer marks it. */
 const wasFlaky = (s: State, b: Block, before: number): boolean => entriesOf(s).some(x => x.kind === 'obs' && x.attribution && x.verdict === 'pass' && x.subject === b.node && x.obligation === b.obligation && x.key === b.key && x.seq > b.seq && x.seq < before);
