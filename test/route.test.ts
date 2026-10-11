@@ -91,6 +91,25 @@ test('F5 sealed writer gets one ruling follow-up even while its obsolete reviewe
   assert.equal(r.state().nodes.a!.candidate, undefined);
 });
 
+test('F5 resume after a writer-ruling halt sends the writer the ruling again instead of repeating the halt', () => {
+  const r = rig(), rule = r.rule(true), first = r.act();
+  assert.ok(first?.do === 'send' && first.reason === 'ruling');
+  r.record(first);
+  const h = r.act();
+  assert.ok(h?.do === 'halt', JSON.stringify(h));
+  if (h?.do !== 'halt') return;
+  r.add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason: h.reason, needs: h.needs } as Draft);
+  assert.equal(r.act(), undefined, 'halted');
+  r.add({ kind: 'resume', by: 'parent:test', node: 'a', attempt: 1, note: 'try again' } as Draft);
+  const again = r.act();
+  assert.ok(again?.do === 'send' && again.rid === W && again.reason === 'ruling' && again.sendKind === 'follow-up', JSON.stringify(again));
+  assert.equal(again.rulings, rule.seq);
+  assert.match(again.message, /The parent resumed this node/);
+  assert.match(again.message, /cover the empty registry/);
+  r.record(again);
+  assert.equal(r.act()?.do, 'halt', 'a second silent seal after the fresh follow-up halts again');
+});
+
 test('F5 running writer gets a ruling steer once, then the same commit can resume the review route', () => {
   const r = rig(), rule = r.rule(true), a = r.act('running');
   assert.equal(r.state().nodes.a!.candidate, undefined);
