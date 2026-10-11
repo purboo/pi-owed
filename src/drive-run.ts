@@ -739,6 +739,9 @@ export class Driver {
     } catch (e) {
       if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
       return async () => {
+        // F5: a resume may land while the merge measures or awaits reaping. Decide its refusal on that state.
+        const waiting = waitingFor(await loadState(this.ledger!), node);
+        if (waiting) return [report('waiting', `merge refused (${e.message}); ${waitingText(node, waiting.after, waiting.resume)}`)];
         if (e.message === MERGE_TRANSIENT) return [report('retry', `merge refused (${e.message}); retry next pass`)];
         // K4: a key the plan update introduced was not measured (the measured observations were kept): the next pass
         // merges again and measures only what lacks a verdict. Never a halt.

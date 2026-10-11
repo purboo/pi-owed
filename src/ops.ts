@@ -527,7 +527,7 @@ function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): St
   for (const x of drafts) { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); }
   return reduce(replay,latest.lookup);
 }
-export async function rule(o: Actor & { text: string; nodes: string[] | '*' }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes })); }
+export async function rule(o: Actor & { text: string; nodes: string[] | '*'; writer?: boolean }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}) })); }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
   // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
   // Resolved first, so an unverifiable layout is refused before any ledger, exclude or worktree effect.
