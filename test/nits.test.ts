@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { sha256 } from '../src/canon.ts';
 import { main } from '../src/cli.ts';
-import { decide, type Action, type DriveOpts } from '../src/drive.ts';
+import { decide, reviewerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
 import { Driver, drive, stateOf, DRIVE_PRINCIPAL, type ActionReport } from '../src/drive-run.ts';
 import { Dsa, DsaError, type EventsResult, type RunResult, type SendKind, type SendResult } from '../src/dsa.ts';
 import { OwedError } from '../src/errors.ts';
@@ -143,6 +143,50 @@ test('G3.2: after a restart, a sent but not yet visible follow-up generation is 
     const h = es.filter(e => e.kind === 'halt');
     assert.equal(h.length, 1, JSON.stringify(es.slice(-3)));
     assert.match((h[0] as { reason: string }).reason, /without submitting a candidate after follow-up/);
+  } finally { await f.cleanup(); }
+});
+
+test('G3.2 (ruling #1198): reviewer 2 verdict after reviewer 1 follow-up does not suppress reviewer 1 generation recovery after restart', { timeout: 120_000 }, async () => {
+  const f = await driverRig(planOf(nodeOf('a', { review: { count: 2, min_rank: 1 } })));
+  try {
+    await f.pass();
+    let s = await stateOf(f.cwd);
+    await commitAt(s.nodes.a!.slot!.worktree, { 'a.txt': 'candidate\n' });
+    await ops.submit({ cwd: f.cwd, as: { role: 'writer', id: 'a#1' }, node: 'a' });
+    await ops.attest({ cwd: f.cwd, node: 'a' });
+    s = await stateOf(f.cwd);
+    const writer = s.nodes.a!.runs[0]!.launches.find(l => l.role === 'writer')!;
+    f.dsa.views.set(writer.rid, { rid: writer.rid, state: 'sealed', status: 'ok' });
+    const reviewers: string[] = [];
+    for (const n of [1, 2]) {
+      const l = reviewerLaunch(await stateOf(f.cwd), 'a', n, writer.labels.owed!, f.cwd);
+      await ops.launch({ cwd: f.cwd, as: DRIVE_PRINCIPAL, ...l });
+      await f.dsa.run(l.rid);
+      reviewers.push(l.rid);
+    }
+    const [r1, r2] = reviewers as [string, string];
+    f.dsa.views.set(r1, { rid: r1, state: 'sealed', status: 'ok' });
+    const first = await f.pass();
+    const send = (await f.entries()).find(e => e.kind === 'send');
+    assert.ok(send?.kind === 'send' && send.rid === r1 && send.reason === 'verdict', JSON.stringify(first));
+    assert.equal(f.dsa.real.get(r1), 2);
+    assert.equal(f.dsa.described.get(r1), 1, 'describe still lags the applied follow-up');
+    const review = await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'drive-a-1-2' }, node: 'a', verdict: 'ok', rank: 1, note: 'reviewer 2 is done' });
+    assert.ok(review.seq > send.seq, 'another principal names the node after reviewer 1 follow-up');
+    f.dsa.views.set(r2, { rid: r2, state: 'sealed', status: 'ok' });
+
+    const restarted = new Driver({ cwd: f.cwd, log: () => {}, dsa: f.dsa, session: null, handleSignals: false, max: 1 });
+    for (let i = 0; i < 3; i++) {
+      const out = (await restarted.pass()).actions;
+      assert.deepEqual(out, [], `lagging reviewer 1 must be presented as running: ${JSON.stringify(out)}`);
+      assert.equal((await f.entries()).filter(e => e.kind === 'halt').length, 0);
+    }
+    assert.deepEqual(f.dsa.sends.map(x => x.id), [send.send, send.send], 'one idempotent recovery per process, despite multiple passes');
+    assert.equal((await f.entries()).filter(e => e.kind === 'send').length, 1, 'no new follow-up');
+    assert.equal(f.dsa.real.get(r1), 2, 'recovery did not open another generation');
+    f.dsa.described.set(r1, 2);
+    const finished = (await restarted.pass()).actions;
+    assert.ok(finished.some(a => a.do === 'halt' && /review-missing/.test(a.detail ?? '')), JSON.stringify(finished));
   } finally { await f.cleanup(); }
 });
 

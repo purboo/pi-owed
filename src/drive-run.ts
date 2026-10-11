@@ -477,9 +477,8 @@ export class Driver {
         await blob(x.message);
       }
       // G3.2: after the sends are confirmed, so a restarted driver knows which follow-ups dsa applied.
-      const mark = factMark(s, n.id);
       for (const [rid, r] of raw) {
-        await this.restartGen(ar.sends, r, mark, ledger);
+        await this.restartGen(ar.sends, r, ledger);
         runs.set(rid, this.current(r.view, r.gen));
       }
       // G3.7: the files the previous candidate conflicts on, only when row 8 sends a rebase instruction (review #680 b).
@@ -496,14 +495,14 @@ export class Driver {
    * again with the same id and stored bytes; dsa answers with the first outcome, naming the generation it went into.
    * When that generation is newer than the described one, the view is the previous generation's: `expectGen` is set
    * as if the follow-up had been applied in this process. Failures and other outcomes leave the view as described.
-   * Not asked when a later entry of another principal names the node (`mark`, its fact mark: e.g. the writer submitted
-   * after the follow-up), since then that generation has visibly run.
+   * Ruling #1198: later entries on the node cannot prove that this run's generation finished (e.g. another reviewer
+   * records a verdict). Cache the applied reply in `sentGen`, so recovery is idempotent and happens once per process.
    */
-  private async restartGen(sends: readonly SendEntry[], r: { view: RunView; gen?: number }, mark: number, ledger: Ledger): Promise<void> {
+  private async restartGen(sends: readonly SendEntry[], r: { view: RunView; gen?: number }, ledger: Ledger): Promise<void> {
     const rid = r.view.rid;
     if ((r.view.state !== 'sealed' && r.view.state !== 'pruned') || r.gen === undefined || this.facts.expectGen.has(rid)) return;
     const x = sends.findLast(x => x.rid === rid && x.sendKind === 'follow-up');
-    if (!x || mark > x.seq || !this.facts.applied.has(x.send) || this.facts.sentGen.has(x.send)) return;
+    if (!x || !this.facts.applied.has(x.send) || this.facts.sentGen.has(x.send)) return;
     try {
       const bytes = await ledger.getBlob(x.message);
       const a = await this.dsa.send(x.send, rid, 'follow-up', bytes);
