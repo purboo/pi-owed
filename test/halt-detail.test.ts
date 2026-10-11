@@ -130,7 +130,7 @@ test('K2.3: waivers say what they mean and their true scope; why shows a waived 
     const json = JSON.parse(waived.stdout) as { kind: string; meaning: string; seq: number };
     assert.equal(json.kind, 'waive');
     const k12 = keyA.slice(0, 12);
-    const meaningA = `waived check:unit for candidate #${candA.seq} ${candA.commit.slice(0, 12)} (key ${k12}): in effect now; owed counts check:unit as waived, not measured, for every candidate of a whose check:unit key is ${k12}, in this or a later attempt, while no unaccepted active block remains on check:unit; a later block suspends the waiver and clearing that block restores it; a change to the check definition, setup, exec, closure or the content of its reads changes the key, and owed measures it again; the flaky block #${fa.seq} stays recorded as accepted risk`;
+    const meaningA = `waived check:unit for candidate #${candA.seq} ${candA.commit.slice(0, 12)} (key ${k12}): in effect now; owed counts check:unit as waived, not measured, for every candidate of a whose check:unit key is ${k12}, in this or a later attempt, while no unaccepted active block remains on check:unit; a later block suspends the waiver and clearing that block restores it; a change to the check definition, setup, exec, closure or the content of its reads changes the key, and owed measures it again; the flaky block #${fa.seq} stays recorded as accepted risk; --accept-risk clears #${fa.seq} whatever its key, and check:unit is no longer measured on key ${k12}`;
     assert.equal(json.meaning, meaningA);
     // K2.3 why: the waived item.
     const whyW = (await cli(x.cwd, ['why', 'a'])).stdout;

@@ -75,7 +75,16 @@ function dependentCounts(plan: Plan): Map<string, number> {
   }
   return out;
 }
-const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => observations(s, subject, obligation, key).some(e => e.verdict !== 'error');
+/**
+ * 0.11 F3 (wais #34): a failing merge-result observation of a node (`merging`) whose block an owner waiver cites in its
+ * `accept_risk` no longer counts for its (merge) key: it is neither a conflicting fail nor a verdict, so a pass on that
+ * key satisfies the merge and a key left without another verdict is measured again. An observation on the waiver's own
+ * key (a candidate key, or a merge key equal to it) is never discounted: the waiver works there through W as before.
+ */
+const waivedFail = (s: State, e: ObsEntry): boolean => e.verdict === 'fail' && e.merging !== undefined && e.merging === e.subject && listed(context(s).waives, e.subject).some(w => w.kind === 'waive' && w.node === e.subject && w.obligation === e.obligation && w.key !== e.key && w.seq > e.seq && (w.accept_risk ?? []).includes(e.seq));
+/** The observations that count for an item: all of them, less the waived merge-key fails (F3). */
+const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => observations(s, subject, obligation, key).filter(e => !waivedFail(s, e));
+const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => counted(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
 function required(spec: NodeSpec, facts: CandidateFacts): string[] {
   return [...spec.checks.flatMap(c => [`check:${c.id}`, ...(c.red ? [`red:${c.id}`] : []), ...(c.mutants ? [`strength:${c.id}`] : [])]), 'writes', ...(facts.closureTouched ? ['closure-review'] : []), ...(spec.review.count > 0 ? ['review'] : []), ...(spec.approve ? ['approve'] : []), ...(spec.evidence ?? []).map(e => `evidence:${e.id}`), 'rulings'];
@@ -144,7 +153,7 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
     out.detail = `${obligation} requires manual evidence by ${need}${ev ? `: ${ev.what}` : ''}`;
     if (found.length) out.status = 'E';
   } else {
-    const obs = observations(s, subject, obligation, key);
+    const obs = counted(s, subject, obligation, key);
     const pass = obs.some(e => e.verdict === 'pass');
     const fail = obs.some(e => e.verdict === 'fail');
     out.evidence = obs.map(e => e.seq);

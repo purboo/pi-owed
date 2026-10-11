@@ -616,7 +616,24 @@ copy at every k-th prefix of fuzz, synthetic and real ledgers).
     Block; it clears by the same rules. It is *resolved* (`parentRuling`) by the
     first `rule` whose node list names its node (not `*`) with a seq above the
     block's; until then it awaits a parent ruling (§12.5).
-  - A waiver or ok on another key never clears a block (a4.1 ruling 1).
+  - A waiver or ok on another key never clears a block (a4.1 ruling 1): a waiver
+    clears blocks only while its own key is the current candidate's key for its
+    obligation. The blocks it cites in `accept_risk` are cleared **whatever their
+    key** (0.11 F3, wais #34): every cited seq must be an active or flaky exec or
+    judgment block of the waiver's node and obligation, so a block of another node,
+    another obligation or an already cleared block is refused. This includes a
+    block from a failing **merge-result** observation (`merging`) on a merge key.
+  - Waived merge-key fail (0.11 F3): an executor `obs fail` with `merging` set whose
+    seq an owner waiver of its node and obligation cites in `accept_risk` no longer
+    counts on its key: it is neither a conflicting fail (⊤) nor a verdict. So a pass
+    on that key (for example the attribution rerun) satisfies the merge, and a key
+    left without another verdict is measured again by `owed merge` (a new fail adds
+    a new block). An observation on the waiver's own key (the candidate key, or a
+    merge key equal to it, e.g. `writes` on an unchanged base) is never discounted:
+    the waiver works there through W as before. The waiver's result text (`meaning`) and the owner
+    confirmation say that the cited blocks are cleared whatever their key, that the
+    obligation is no longer measured on the waived key, and, per cited merge-key
+    fail, that a pass on that merge key satisfies `owed merge` (wais #12).
 - W ⟺ item not in E, owner `waive` on the same key, and every active block on
   (n, o) is cited in its `accept_risk`. Invariant items are never in W.
 - D = O ∖ (E ∪ W); each D item gets a discharger:
