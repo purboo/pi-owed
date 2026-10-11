@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { sha256 } from '../src/canon.ts';
 import { main } from '../src/cli.ts';
 import { decide, type Action, type DriveOpts } from '../src/drive.ts';
-import { Driver, drive, DRIVE_PRINCIPAL, type ActionReport } from '../src/drive-run.ts';
+import { Driver, drive, stateOf, DRIVE_PRINCIPAL, type ActionReport } from '../src/drive-run.ts';
 import { Dsa, DsaError, type EventsResult, type RunResult, type SendKind, type SendResult } from '../src/dsa.ts';
 import { OwedError } from '../src/errors.ts';
 import { runJob } from '../src/exec.ts';
@@ -287,11 +287,15 @@ test('G3.6: an open slot of a removed node still counts toward drive.max until a
   assert.equal(s.nodes.b!.phase, 'removed');
   assert.deepEqual(decide(s, s.plan, new Map(), opts(1)), [], 'b\'s writer may still run: max 1 is taken');
   assert.deepEqual(decide(s, s.plan, new Map(), opts(2)).map(a => `${a.do} ${a.node}`), ['dispatch a']);
-  // The reducer refuses entries naming a node outside the plan: the slot is abandoned with b back in the plan.
-  add({ kind: 'plan', by: 'owner:human', channel: 'tty', prior: 'p2', plan: 'p1', downgrades: [] });
-  add({ kind: 'abandon', by: 'parent:main', node: 'b', attempt: 1 } as Draft);
-  add({ kind: 'plan', by: 'owner:human', channel: 'tty', prior: 'p1', plan: 'p2', downgrades: [] });
+  // Ruling #1176: abandon (and only abandon) is accepted on the open slot of the removed node.
+  assert.match(validateDraft(s, { kind: 'halt', by: 'parent:drive', node: 'b', attempt: 1, reason: 'x', needs: 'human' } as Draft).join('; '), /Node b does not exist/);
+  assert.match(validateDraft(s, { kind: 'abandon', by: 'parent:main', node: 'b', attempt: 2 } as Draft).join('; '), /attempt must match the current open writer slot/);
+  const abandon = { kind: 'abandon', by: 'parent:main', node: 'b', attempt: 1 } as Draft;
+  assert.deepEqual(validateDraft(s, abandon), []);
+  add(abandon);
   s = state();
+  assert.equal(s.nodes.b!.slot!.open, false);
+  assert.match(validateDraft(s, abandon).join('; '), /attempt must match the current open writer slot/, 'no open slot left: refused again');
   assert.equal(s.nodes.b!.phase, 'removed');
   assert.deepEqual(decide(s, s.plan, new Map(), opts(1)).map(a => `${a.do} ${a.node}`), ['dispatch a'], 'abandoned: the slot is free');
 });
@@ -316,4 +320,28 @@ test('G3.6: the text line of a failed send names its node as a word', { timeout:
     assert.equal(line?.startsWith(`send follow-up (submit) for node a to ${rid}: error — timed out waiting for the ledger lock`), true, lines.join('\n'));
     assert.ok(line!.split(/\s+/).includes('a'), line);
   } finally { await r.cleanup(); }
+});
+
+test('G3.6 (ruling #1176): `owed abandon` closes the open slot of a removed node without re-adding it; the slot no longer counts toward drive.max', { timeout: 120_000 }, async () => {
+  const r = await repo(), cwd = process.cwd();
+  try {
+    await r.put('README', 'x\n'); await r.commit();
+    await ops.init({ cwd: r.cwd, as: owner, channel: 'flag', plan: JSON.stringify(planOf(nodeOf('a'), nodeOf('b'))) });
+    await ops.dispatch({ cwd: r.cwd, as: parent, node: 'b' });
+    await ops.planSet({ cwd: r.cwd, as: owner, channel: 'flag', plan: JSON.stringify(planOf(nodeOf('a'))) });
+    const dsa = new GenDsa();
+    const pass = async () => (await new Driver({ cwd: r.cwd, log: () => {}, dsa, session: null, handleSignals: false, max: 1 }).pass()).actions;
+    assert.equal((await stateOf(r.cwd)).nodes.b!.phase, 'removed');
+    assert.deepEqual((await pass()).filter(a => a.do === 'dispatch'), [], 'b\'s open slot takes max 1');
+    await assert.rejects(ops.resume({ cwd: r.cwd, as: parent, node: 'b', note: 'x' }), /Node b does not exist/, 'other entry kinds stay refused');
+    process.chdir(r.cwd);
+    const err: string[] = [];
+    assert.equal(await main(['abandon', 'b', '--note', 'removed from the plan'], { log: () => {}, error: t => err.push(t) }), 0, err.join('\n'));
+    process.chdir(cwd);
+    const es = await (await Ledger.open(r.cwd)).read();
+    assert.equal(es.at(-1)!.kind, 'abandon');
+    const st = (await stateOf(r.cwd)).nodes.b!;
+    assert.equal(st.phase, 'removed'); assert.equal(st.slot?.open, false);
+    assert.deepEqual((await pass()).filter(a => a.do === 'dispatch').map(a => a.node), ['a']);
+  } finally { process.chdir(cwd); await r.cleanup(); }
 });
