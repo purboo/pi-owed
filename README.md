@@ -472,7 +472,16 @@ writer's next follow-up starts with `The parent resumed this node (#<seq>) after
 <other> merged at <commit>: <why>`. Use `owed rule --nodes <node> "<decision>"`
 instead when the writer and reviewers must follow and acknowledge a decision (a
 changed requirement, a contract answer): a ruling is an obligation, a resume is
-not. owed 0.7.x cannot read a ledger with a `resume` entry: upgrade the CLI, the
+not. Add `--writer` (pi `owed_rule` parameter `writer: true`) when the decision
+requires the writer to act: a ruling recorded after a named node's open submit
+invalidates that candidate and requires a new submit, even of the same commit.
+The driver sends the ruling to a sealed writer as a `ruling` follow-up or to a
+running writer as a steer; reviewers still acknowledge it. A `*` ruling remains
+general guidance and does not invalidate candidates. Without `--writer`, ruling
+routing is unchanged. If a merge already measuring refuses after a
+`resume --after` starts a wait, the driver reports `waiting` and records no halt.
+
+owed 0.7.x cannot read a ledger with a `resume` entry: upgrade the CLI, the
 pi extension and every driver together.
 
 ## Development

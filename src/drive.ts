@@ -525,9 +525,11 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // below then run up to `rulingFirst` (after row 5).
   const owner = ownerNeeded(s, id), writer = ar.launches.find(l => l.role === 'writer');
   const writerView = writer && runs.get(writer.rid);
+  const last = lastSubmit(s, id);
+  const writerRule = !c && last ? s.rules.findLast(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last.seq) : undefined;
   const rulingDue = (): boolean => !!writer && !!writerView && isSealed(writerView)
     && (!!rulingFollowUp(s, id, opts.rejected) || ar.sends.some(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up' && !opts.applied.has(x.send)));
-  if (owner && !rulingDue()) return ownerNotify(s, id, owner);
+  if (owner && !rulingDue() && !writerRule) return ownerNotify(s, id, owner);
   // Row 2: writer launch missing.
   if (!writer) return writerLaunch(s, id, opts.project);
   if (live.some(l => !runs.has(l.rid))) return undefined;
@@ -558,6 +560,24 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 5: a run asking (`asking`).
   for (const l of live) if (view(l).state === 'asking') return asking(l, view(l));
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
+  // F5: an explicit writer ruling takes priority over the generic resubmit/repair route.
+  // Reviewers of the invalidated candidate are obsolete; delivery never acknowledges the ruling.
+  if (writerRule) {
+    if (wSealed) {
+      const f = rulingFollowUp(s, id, opts.rejected);
+      if (f) return send(writer, 'follow-up', 'ruling', f.message, f.rulings);
+      const sent = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up' && x.seq > writerRule.seq);
+      if (sent && sent.seq > resumed) return halt(`writer run ${at(writer)} finished ruling follow-up ${sent.send} without submitting a new candidate (writer ruling #${writerRule.seq})`);
+      // A resume after that follow-up starts a new wait: deliver the writer rulings again instead of repeating the halt.
+      if (sent) {
+        const rules = s.rules.filter(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last!.seq);
+        return send(writer, 'follow-up', 'ruling', [`Parent rulings for ${id} (apply them; they override your packet):`, ...rules.map(r => `#${r.seq} (${(r.nodes as string[]).join(', ')}): ${oneLine(r.text)}`), `Then commit and run \`owed submit ${id}\` (the same commit may be submitted again).`].join('\n'), carried(rules));
+      }
+    } else {
+      const steer = rulingSteer(s, n, ar, live, view);
+      if (steer) return steer;
+    }
+  }
   /**
    * K5.2: a sealed writer lacking a ruling that names the node gets one ruling follow-up (not a repair), but never while
    * a reviewer run of the current candidate is unsealed, and never when the current candidate has no active block or
