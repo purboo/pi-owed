@@ -273,24 +273,30 @@ test('row 12: review awaiting → launch reviewer n (reviewer agent, repo root, 
   assert.equal(act(two, runsOf(okWriter(), view(R(1), 'running'), view(R(2), 'queued'))), undefined);
 });
 
-test('row 13: reviewer sealed unknown with its obligation awaiting → one interrupted follow-up, then review-missing halt', () => {
+test('row 13: reviewer sealed unknown with its obligation awaiting → one interrupted follow-up, one verdict follow-up (F1.2), then review-missing halt', () => {
   const r = submitted(); r.pass(); r.launchReviewer(1);
   const runs = runsOf(okWriter(), view(R(1), 'sealed', { status: 'unknown' }));
   assert.deepEqual(act(r, runs), { do: 'send', node: 'a', attempt: 1, rid: R(1), sendKind: 'follow-up', reason: 'interrupted',
     message: 'You were interrupted; check `owed why a` for reviews you already recorded on this candidate, finish the rest.' });
   r.send(R(1), 'interrupted');
+  const v = act(r, runs, { applied: applied(r) });
+  assert.ok(v?.do === 'send' && v.reason === 'verdict' && v.rid === R(1) && v.sendKind === 'follow-up', JSON.stringify(v));
+  r.send(R(1), 'verdict');
   const a = act(r, runs, { applied: applied(r) });
   assert.ok(a?.do === 'halt' && a.needs === 'human');
-  assert.match(a.reason, /^review-missing: reviewer run owed:hash0:a:1:reviewer:1 sealed unknown without recording review on candidate #\d+/);
+  assert.match(a.reason, /^review-missing: reviewer run owed:hash0:a:1:reviewer:1 sealed unknown without recording review on candidate #\d+ after verdict follow-up /);
 });
 
-test('row 14: reviewer sealed otherwise with its obligation awaiting → halt review-missing; recorded → no halt', () => {
+test('row 14: reviewer sealed otherwise with its obligation awaiting → one verdict follow-up (F1.2), then halt review-missing; recorded → no halt', () => {
   const r = submitted(); r.pass(); r.launchReviewer(1);
-  const a = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })));
+  const v = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })));
+  assert.ok(v?.do === 'send' && v.reason === 'verdict' && v.rid === R(1), JSON.stringify(v));
+  r.send(R(1), 'verdict');
+  const a = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), { applied: applied(r) });
   assert.ok(a?.do === 'halt' && /^review-missing: .*sealed ok without recording review/.test(a.reason));
-  assert.ok((act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'budget' }))) as { reason: string }).reason.includes('sealed failed: budget'));
+  assert.ok((act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'budget' })), { applied: applied(r) }) as { reason: string }).reason.includes('sealed failed: budget'));
   r.review('ok');
-  assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' }))), { do: 'merge', node: 'a' });
+  assert.deepEqual(act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'ok' })), { applied: applied(r) }), { do: 'merge', node: 'a' });
 });
 
 test('row 15: review block → repair follow-up, counted against the same repairs cap', () => {
@@ -695,7 +701,10 @@ test('D15.1 (widened): describe reporting a reviewer run rejected halts review-m
   const c = r.state().nodes.a!.candidate!;
   const a = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'rejected', error: 'unknown agent reviewer' })));
   assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'human', reason: `review-missing: reviewer run ${R(1)} sealed rejected: unknown agent reviewer without recording review on candidate #${c.seq}; ${rejectedFixed('a')}` });
-  // Any other sealed status of the reviewer keeps the plain review-missing text.
-  const f = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'x' })));
+  // Any other sealed status of the reviewer first gets the verdict follow-up (F1.2), then the plain review-missing text.
+  const v = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'x' })));
+  assert.ok(v?.do === 'send' && v.reason === 'verdict', JSON.stringify(v));
+  r.send(R(1), 'verdict');
+  const f = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'x' })), { applied: applied(r) });
   assert.ok(f?.do === 'halt' && !f.reason.includes('owed abandon'), JSON.stringify(f));
 });

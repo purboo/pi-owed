@@ -263,7 +263,7 @@ test('D22.6: the asking text addresses the question by dsa\'s call address (pi t
   const r = rig(); r.dispatch(); r.launchWriter(); r.submit();
   const withTo = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q1-1', rev: 2, question: 'Which API?\nline two', to: 'w7/main' }] })));
   assert.ok(withTo?.do === 'notify');
-  assert.equal(withTo.text, `a: writer run ${W()} asks (qid q1-1, rev 2): Which API?\\nline two — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", to:"w7/main", qid:"q1-1", message:"…"}; or: pi-durable-subagents send --request <id> --to w7/main --kind answer --qid q1-1 --rev 2 --message @<file>`);
+  assert.equal(withTo.text, `a: writer run ${W()} asks (qid q1-1, rev 2): Which API?\\nline two — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", to:"w7/main", qid:"q1-1", message:"…"}; or: pi-durable-subagents send --request <id> --to w7/main --kind answer --qid q1-1 --rev 2 --message @<file> If the answer decides the contract or scope, also record it with \`owed rule --nodes a "<decision>"\` so reviewers see it.`);
   assert.ok(!withTo.text.includes(`--to ${W()}`), 'not the rid');
   const without = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q', rev: 1, question: 'scope?' }, { qid: 'q2', rev: 1, question: 'two', to: 'w7/main' }] })));
   assert.ok(without?.do === 'notify');
