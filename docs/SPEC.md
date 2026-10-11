@@ -418,6 +418,8 @@ invalidates a candidate.
   cargo `test result:` lines are summed. Nothing is refused or recorded.
   In 0.10 (N2), both warning kinds skip nodes merged in the current ledger on
   `owed plan`; invariant warnings remain. `owed init` warnings are unchanged.
+  In 0.11 (F4, wais #31) a looped check whose command runs `cargo test` (also
+  `cargo +<toolchain> test`) gets no warning: its `test result:` lines are summed.
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
   `changed` lies under an `adopt` prefix of a rule of the **current** plan and
   `adoptGuard` passes. No owner channel is needed.
@@ -502,7 +504,16 @@ recomputes the derived fields (items, accepted, phase, dependents, stale halt)
 only of the nodes the entry can change: every node for genesis, plan and merge
 entries, the named nodes (or every node for `*`) for a ruling, the subject of an
 observation, the node of any other entry with one; trunk invariants and
-`genesisDone` every time. `dependents` (transitive dependents) is computed once
+`genesisDone` every time.
+
+Removed nodes (0.11, F4, wais #27). A node in the state but absent from the
+current plan and not merged has phase `removed` (a merged one stays `merged`).
+It is never in the ready list, `dispatch` is refused (`dispatch requires a ready
+node with no open slot`), status shows it
+under `removed from the plan` and leaves its items out of the pending queue, and
+the driver never selects it (no dispatch, and no action on an open slot it may
+still have; abandon that slot). Adding the node to the plan again recomputes its
+phase as before. `dependents` (transitive dependents) is computed once
 per plan. A deep-frozen plan from the lookup (ops' plan cache) is shared by the
 state instead of cloned. The State, queries, views and `validateDraft` decisions
 are those of the 0.10 reducer (test/perf.test.ts compares them with a frozen
@@ -1693,7 +1704,11 @@ must name the node's current open slot (node and attempt), and so must a halt.
   (pi `owed_resume`) records `{kind: "resume", node, attempt, after?, note?}`
   by a parent or the owner (writer, reviewer, executor and `parent:drive` are
   refused), on the node's open slot (refused without one; `attempt` must be
-  the open attempt); `after` must name another node of the plan. It adds no
+  the open attempt); `after` must name another node of the plan. (0.11, F4,
+  wais #33c) It is refused while a review block that needs a parent ruling
+  awaits one on the current candidate (else the latest submit) of the attempt —
+  the driver would halt again at once — naming `owed rule --nodes <node>
+  "<decision>"`. It adds no
   obligation (the `rulings` item and every other item are unchanged) and:
   - clears the node's halt (as any non-driver entry on the node does);
   - starts a new repair epoch: `repairEpoch` takes the latest resume of the
@@ -2082,7 +2097,12 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `describe --key <send id>` (`applied`/`rejected` are taken as dsa's decision;
   only an `absent`/`pending` send is re-sent); read the stored blobs a retry
   needs; `decide`; execute the actions in order. A failed describe leaves that
-  node without an action this pass.
+  node without an action this pass. (0.11, F4) A describe that timed out is
+  retried once in the same pass before the `describe-failed` notify; a node
+  waiting after `resume --after` gets no `describe-failed` notify. A failed
+  send's report (outcome `error`, e.g. a ledger lock timeout) names the node,
+  send kind, reason and target run like any other send line. Nodes in phase
+  `removed` (§6) are not described and do not keep the driver from `idle`.
 - **Persist before submit.** `launch`: `ops.launch` (idempotent on identical
   content) then `dsa run --request <rid> --spec -` with the exact spec bytes;
   `send`: `ops.send` (assigns the send id) then `dsa send --request <id>`; a

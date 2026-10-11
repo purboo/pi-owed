@@ -212,6 +212,15 @@ function submitBlocks(s: State, node: string): Block[] {
   return n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active' && b.seq > n.slot!.dispatchSeq && b.key === last.facts.keys[b.obligation]);
 }
 /**
+ * F4 (wais #33c): the needs-parent review blocks the driver halts on until a ruling names the node: on the current
+ * candidate's keys (D18), else on the latest submit's (row 8). Empty without an open slot. `owed resume` refuses on them.
+ */
+export function unruledBlocks(s: State, node: string): Block[] {
+  const n = s.nodes[node], c = n?.candidate;
+  if (!n?.slot?.open) return [];
+  return c ? n.blocks.filter(b => b.kind === 'judgment' && b.key === c.keys[b.obligation] && awaitingRuling(s, b)) : submitBlocks(s, node).filter(b => awaitingRuling(s, b));
+}
+/**
  * G3.7 / review #680 (b): whether row 8 can use the conflict list of `node` this pass (so the executor computes it only
  * then): the slot was rebased after its latest submit and recorded a previous candidate, no current candidate, the
  * writer run is sealed ok, and no rebase or repair follow-up was sent after the rebase entry.
@@ -440,7 +449,8 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   if (s.seq < 0) return [];
   const plan = s.plan;
   const out: Action[] = [];
-  const open = Object.values(s.nodes).filter(n => n.slot?.open).sort(byStatusOrder);
+  // F4 (wais #27): a node removed from the plan is never selected, not even its open slot.
+  const open = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').sort(byStatusOrder);
   for (const n of open) { if (opts.measuring?.has(n.id)) continue; const a = slotAction(s, runs, opts, n); if (a) out.push(a); }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
