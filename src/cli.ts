@@ -142,7 +142,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
       case 'brief': { const v=value('since'), r=await ops.brief({cwd,since:v && /^\d+$/.test(v) ? Number(v) : v}); result=r; text=renderBrief(r); break; }
       case 'escape': { const cls=value('class',true)!; if(!['missing','false-pass','reuse','weak','waiver'].includes(cls)) usage('--class must be missing, false-pass, reuse, weak or waiver'); result=await ops.escape({...actor,node,merge:integer('merge',true)!,class:cls as EscapeClass,note:value('note',true)!,evidence:value('evidence')}); break; }
       case 'decoy': { const file=resolve(cwd,args[1]!); if(args[0] === 'digest') { const r=ops.decoyDigest(await readFile(file,'utf8')); result=r; text=r.digest; } else if(args[0] === 'commit') result=await ops.decoyCommit({...actor,channel:channel!,digest:args[1]!}); else result=await ops.decoyReveal({...actor,channel:channel!,payload:await readFile(file,'utf8')}); break; }
-      case 'verify': { const r=await ops.verify({cwd}); result=r; text=r.ok ? `Ledger verification passed: ${r.entries} entries` : `Ledger verification failed:${r.error}`; exit=r.ok ? 0 : 3; break; }
+      case 'verify': { const r=await ops.verify({cwd}); result=r; text=r.ok ? `Ledger verification passed: ${r.entries} entries${r.snapshotMismatch !== undefined ? `\nsnapshotMismatch: ${r.snapshotMismatch} (the disk snapshot differed from the full replay at #${r.snapshotMismatch}; deleted)` : ''}` : `Ledger verification failed:${r.error}`; exit=r.ok ? 0 : r.code === 'version' ? 1 : 3; break; }
       case 'gc': { const r=await ops.gc({...actor,dryRun:opts.has('dry-run')}); result=r; text=renderGc(r); break; }
     }
     if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon','approve','evidence'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }
@@ -158,6 +158,8 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     // G3.1 (0.12): a stale act is a refusal (nothing recorded), not an internal error.
     if(error.code === 'stale') { io.error(`Stale: ${error.message.replace(/^stale: /,'')}`); return 1; }
     if(error.code === 'aborted') { if(error.message !== 'aborted') io.error(error.message); io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
+    // G1.5: `version` (the ledger needs a newer owed) is a refusal to replay: exit 1, its own text.
+    if(error.code === 'version') { io.error(error.message); return 1; }
     io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : error.code === 'busy' ? 'Busy' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : error.code === 'busy' ? 75 : 3;
   } finally { got.unhandle?.(); }
 }

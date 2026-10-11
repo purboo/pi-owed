@@ -77,12 +77,14 @@ async function tampered(file: string, patch: Record<string, unknown> = {}): Prom
 const phaseOfB = async (cwd: string): Promise<string> => (await call<Status>(cwd, ['status'])).nodes.b!.phase;
 
 test('plan cache: written on the first parse, then read instead of the YAML; verify bypasses it, reports and rewrites a mismatch', { timeout: 120_000 }, async () => {
-  const { r, sha, file } = await inited();
+  const { r, dir, sha, file } = await inited();
   try {
     const c = JSON.parse(await readFile(file, 'utf8')) as { v: string; sha: string; plan: Plan };
     assert.equal(c.v, PLAN_CACHE_VERSION); assert.equal(c.sha, sha); assert.deepEqual(c.plan, parsePlan(planText));
     assert.equal(await phaseOfB(r.cwd), 'blocked');
     await tampered(file);
+    // G1 (0.12): the disk snapshot holds the replayed state, so without it the next load replays with the cached plan.
+    const { rm } = await import('node:fs/promises'); await rm(join(dir, 'snapshot'), { recursive: true, force: true });
     assert.equal(await phaseOfB(r.cwd), 'ready', 'a cache hit replaces the YAML parse');
     const v = await call<{ ok: boolean; cacheMismatch?: string[] }>(r.cwd, ['verify']);
     assert.equal(v.ok, true); assert.deepEqual(v.cacheMismatch, [sha]);

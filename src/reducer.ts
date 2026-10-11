@@ -1,6 +1,7 @@
 import { matchesGlob } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
-import { OwedError } from './errors.ts';
+import { OWED_VERSION, OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
 import { execKey } from './git.ts';
 import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
@@ -19,7 +20,12 @@ interface Indexes {
   /** seq of the latest plan entry */ lastPlan?: number;
   /** transitive dependents per node id of the current plan (recomputed when the plan changes) */ dependents: Map<string, number>;
 }
-interface History extends Indexes { entries: Entry[]; plans: PlanLookup; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, Plan>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
+/**
+ * G1 (0.12): `planObjs` = the plan object the state keeps per genesis/plan sha (`own` of the lookup's plan, resolved once
+ * per replay; undefined = not resolved yet, after `unpackState`: resolved through `plans` on first use); `obsPlans` names the plan in force at each executor observation by its sha. Neither holds a plan by
+ * value elsewhere, so a packed state (`packState`) carries plan shas only and every plan object is shared or re-resolved.
+ */
+interface History extends Indexes { entries: Entry[]; plans: PlanLookup; planObjs: Map<string, Plan | undefined>; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, string>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
@@ -217,7 +223,7 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
   // Genesis covers the invariants of the genesis plan; invariants added later are
   // judged by the no-new-debt rule on the first merge that carries their key.
   // Invariants removed later by the owner (a visible downgrade) are exempt.
-  s.genesisDone = !!g && context(s).plans(g.plan).invariants.filter(i => s.plan.invariants.some(c => c.id === i.id)).every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
+  s.genesisDone = !!g && lawPlan(h, g.plan).invariants.filter(i => s.plan.invariants.some(c => c.id === i.id)).every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
 }
 
 /**
@@ -225,22 +231,86 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
  * it; any other is cloned as before, so a caller's later change cannot reach the state.
  */
 const own = (p: Plan): Plan => Object.isFrozen(p) && Object.isFrozen(p.nodes) ? p : structuredClone(p);
+/** G1: the plan object of sha `sha` the state keeps (resolved through the lookup once per replay, then shared). */
+function lawPlan(h: History, sha: string): Plan {
+  let p = h.planObjs.get(sha);
+  if (!p) { p = own(h.plans(sha)); h.planObjs.set(sha, p); }
+  return p;
+}
+/** The plan in force at executor observation `seq` (attribution reruns, supersede). */
+const obsPlan = (h: History, seq: number): Plan | undefined => { const sha = h.obsPlans.get(seq); return sha === undefined ? undefined : lawPlan(h, sha); };
+function blank(plans: PlanLookup): State {
+  const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [], adoptions: [] };
+  const h: History = { entries: [], plans, planObjs: new Map(), obsPlans: new Map(), mergeCatches: new Set(), shadow: new Map(), bySeq: new Map(), obs: new Map(), reviews: new Map(), evidence: new Map(), waives: new Map(), launches: new Map(), dependents: new Map() };
+  Object.defineProperty(s, history, { value: h });
+  return s;
+}
 /** Replay is deterministic; non-enumerable metadata retains the observations needed by pure queries. */
 export function reduce(entries: Entry[], plans: PlanLookup): State {
-  const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [], adoptions: [] };
-  const h: History = { entries: [], plans, obsPlans: new Map(), mergeCatches: new Set(), shadow: new Map(), bySeq: new Map(), obs: new Map(), reviews: new Map(), evidence: new Map(), waives: new Map(), launches: new Map(), dependents: new Map() };
-  Object.defineProperty(s, history, { value: h });
+  const s = blank(plans);
+  fold(s, entries);
+  return s;
+}
+/**
+ * G1.2 (0.12): the state of `entries(base) ++ more`, without mutating `base`: a copy of `base` (state and replay
+ * metadata, internal sharing kept) continues the fold. Equal (`sameReplay`) to `reduce` of all those entries.
+ * `plans` resolves the plans `more` names; the plans `base` already holds are kept.
+ */
+export function reduceFrom(base: State, more: Entry[], plans: PlanLookup): State {
+  const s = copyState(base, plans);
+  fold(s, more);
+  return s;
+}
+/** G1: continues the fold of `s` itself with `more` (mutates and returns `s`); for a state the caller owns alone. */
+export function extendState(s: State, more: Entry[]): State { fold(s, more); return s; }
+/** The entry kinds this owed interprets (G1.5): any other kind needs a newer owed. */
+const KINDS: readonly string[] = ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume'];
+/**
+ * G1.5 closed entry enum audit (types.ts): Base.channel, send.sendKind/reason, obs.verdict, review.obligation/verdict/
+ * needs, launch.role, halt.needs, escape.class. `by`, other obligations and counts.format are open strings, not enums;
+ * boolean flags (rule.writer, attribution, closureTouched) retain their existing invalid-type errors.
+ */
+const CHANNELS: readonly string[] = ['tty', 'pi-confirm', 'flag', 'delegated'];
+let enumCache: Record<string, Record<string, readonly unknown[]>> | undefined;
+const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCache ??= {
+  send: { sendKind: SEND_KINDS, reason: SEND_REASONS },
+  obs: { verdict: ['pass', 'fail', 'error'] },
+  review: { obligation: ['review', 'closure-review', 'approve'], verdict: ['ok', 'block'], needs: ['parent'] },
+  launch: { role: ['writer', 'reviewer'] },
+  halt: { needs: ['human', 'owner'] },
+  escape: { class: ESCAPE_CLASSES },
+};
+/** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
+const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer'];
+const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
+/**
+ * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
+ * value of an enumerated field (ENUMS), or an unknown field on a ruling (a newer ruling flag).
+ */
+export function newerEntry(e: Entry): OwedError | undefined {
+  const x = e as unknown as Record<string, unknown>, kind = x.kind;
+  const refuse = (what: string): OwedError => new OwedError(`ledger entry #${shown(x.seq)} (${what}) needs a newer owed than ${OWED_VERSION}: upgrade owed and restart pi sessions that load it`, 'version');
+  if (typeof kind !== 'string' || !KINDS.includes(kind)) return refuse(shown(kind));
+  if (x.channel !== undefined && !CHANNELS.includes(x.channel as string)) return refuse(`${kind} channel ${shown(x.channel)}`);
+  for (const [field, known] of Object.entries(enums()[kind] ?? {})) if (x[field] !== undefined && !known.includes(x[field])) return refuse(`${kind} ${field} ${shown(x[field])}`);
+  if (kind === 'rule') { const extra = Object.keys(x).find(k => x[k] !== undefined && !RULE_FIELDS.includes(k)); if (extra !== undefined) return refuse(`rule ${extra} ${shown(x[extra])}`); }
+  return undefined;
+}
+function fold(s: State, entries: Iterable<Entry>): void {
+  const h = context(s);
   for (const original of entries) {
+    const newer = newerEntry(original);
+    if (newer) throw newer;
     const e = structuredClone(original);
     const errors = validateDraft(s, e);
     if (errors.length) throw new OwedError(`Entry #${e.seq} invalid: ${errors.join('; ')}`);
     if (e.kind === 'genesis') {
       h.genesis = e;
-      s.plan = own(plans(e.plan)); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
+      s.plan = lawPlan(h, e.plan); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
       s.trunk = { name: e.trunk, ...e.state, seq: e.seq };
       if (s.plan.allow !== undefined) h.allowSeq = e.seq;
     } else if (e.kind === 'plan') {
-      const next = own(plans(e.plan));
+      const next = lawPlan(h, e.plan);
       const detected = downgradeDetails(s.plan, next);
       // A candidate's facts were computed under the old plan; if its node's
       // obligations, setup, exec or closure changed, the writer must submit again.
@@ -281,7 +351,7 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       slot.rebase = { seq: e.seq, from: e.from, base: e.base, ...(previous ? { previous } : {}) };
       slot.base = e.base; n.candidate = undefined;
     } else if (e.kind === 'obs') {
-      h.obsPlans.set(e.seq, s.plan);
+      h.obsPlans.set(e.seq, s.planSha);
       // A failing merge-result invariant catches a decoy of the merging node only when
       // the same invariant was not already debt (status D, e.g. deferred) on PRE = trunk.
       if (e.merging && e.verdict === 'fail' && (e.subject !== 'trunk' || item(s, 'trunk', e.obligation, s.trunk.invKeys[e.obligation.slice(4)] ?? '').status === 'E')) h.mergeCatches.add(e.seq);
@@ -341,8 +411,45 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
     record(h, e); s.seq = e.seq; s.head = e.hash;
     refresh(s, touched(e));
   }
+}
+
+// ---------- G1 (0.12): copies, packed states and equivalence ----------
+/** A state and its replay metadata as plain structured-cloneable data: plans are named by sha (`plans`), never held. */
+export interface PackedState { state: State; history: Omit<History, 'plans' | 'planObjs'>; plans: string[] }
+/**
+ * G1: `s` with its replay metadata as one structured-cloneable value (no functions, no plan objects). Not a copy: clone
+ * or serialize it (structuredClone, v8.serialize) in one call, which keeps the sharing between state and entries.
+ */
+export function packState(s: State): PackedState {
+  const { plans: _plans, planObjs, ...rest } = context(s);
+  return { state: { ...s, plan: s.planSha ? null as unknown as Plan : s.plan }, history: rest, plans: [...planObjs.keys()] };
+}
+/**
+ * G1: the state of a packed copy (consumed: `p` must be a fresh clone or deserialization). The plan of each sha is
+ * `planOf(sha)`; undefined (the default) resolves it as a replay does, `own(plans(sha))`, on first use (the current plan
+ * at once), so plans no query needs are never read. `plans` also resolves the plans of entries folded later.
+ */
+export function unpackState(p: PackedState, plans: PlanLookup, planOf: (sha: string) => Plan | undefined = () => undefined): State {
+  const planObjs = new Map(p.plans.map(sha => [sha, planOf(sha)] as const)), s = p.state;
+  Object.setPrototypeOf(s.nodes, null);
+  const h: History = { ...p.history, plans, planObjs };
+  if (s.planSha) s.plan = lawPlan(h, s.planSha);
+  Object.defineProperty(s, history, { value: h });
   return s;
 }
+/** G1: a deep copy of `s` with its replay metadata (one structured clone); deep-frozen plans stay shared. */
+export function copyState(s: State, plans?: PlanLookup): State {
+  const h = context(s);
+  return unpackState(structuredClone(packState(s)), plans ?? h.plans, sha => { const p = h.planObjs.get(sha); return p && own(p); });
+}
+/** G1: the replay metadata of `s` without its plan lookup function, every plan resolved (for equivalence checks). */
+export function replayMeta(s: State): Omit<History, 'plans'> {
+  const h = context(s);
+  for (const [sha, p] of h.planObjs) if (!p) lawPlan(h, sha);
+  const { plans: _plans, ...rest } = h; return rest;
+}
+/** G1.1: whether two states are equal as replays: the states and their replay metadata deep-strict-equal. */
+export function sameReplay(a: State, b: State): boolean { return isDeepStrictEqual(a, b) && isDeepStrictEqual(replayMeta(a), replayMeta(b)); }
 
 /**
  * Whether a plan change from `prev` to `next` invalidates an open candidate of node `id`: its node spec (without `type`
@@ -387,7 +494,7 @@ export function checkOf(obligation: string): string | undefined { return /^(?:ch
  */
 function supersede(s: State, h: History, seq: number, next: Plan): void {
   for (const n of Object.values(s.nodes)) for (const b of n.blocks) {
-    const id = checkOf(b.obligation), old = h.obsPlans.get(b.seq);
+    const id = checkOf(b.obligation), old = obsPlan(h, b.seq);
     if (b.kind !== 'exec' || !active(b) || id === undefined || !old) continue;
     if (checkDefinition(old, n.id, id) !== checkDefinition(next, n.id, id)) { h.shadow.set(b.seq, b.state); b.state = 'superseded'; b.supersededBy = seq; }
   }
@@ -942,7 +1049,7 @@ export function attestJobs(s: State, id: string): AttestJob[] {
     const token = `${b.obligation}\0${b.key}`;
     if (seen.has(token)) continue;
     seen.add(token);
-    const plan = context(s).obsPlans.get(b.seq)!;
+    const plan = obsPlan(context(s), b.seq)!;
     const j = job(plan.nodes.find(x => x.id === id), id, b.obligation, b.key, e.commit, e.base ?? e.commit, plan);
     if (j) jobs.push({ ...j, attribution: true });
   }
