@@ -215,6 +215,8 @@ The ledger lives under the Git common directory in `owed/`, shared by the reposi
 
 Parsed plans are cached in `owed/cache/plans/<sha>.json` (0.10), so a status call does not parse every plan version's YAML again. The cache is derived: a damaged, stale or foreign-version entry is ignored and rewritten. `owed verify` parses every plan from YAML and checks each cache entry against it: an entry from another owed version is rewritten silently, while a corrupt entry or one whose content differs is reported in `cacheMismatch` (`--json`) and rewritten; and `owed gc` removes entries for plans the ledger no longer names. Deleting the directory is always safe.
 
+Since 0.12 owed also keeps the replayed state in `owed/snapshot/state.v8`, so a call folds only the entries appended since (a long-running pi session keeps the same in memory). The snapshot is derived and private: one of another owed version, a damaged one or one that does not match the ledger is ignored and rewritten, and deleting it only costs one full replay. `owed verify` always replays the whole ledger; when the snapshot differs from that replay it deletes it and reports `snapshotMismatch: <seq>`. A ledger entry written by a newer owed (an unknown kind or value) is refused with `ledger entry #<seq> (...) needs a newer owed than <version>: upgrade owed and restart pi sessions that load it` (exit 1).
+
 ### Worktree location and branch names
 
 A repository whose rules forbid worktrees inside the main worktree, or prescribe branch names, configures both in the plan:

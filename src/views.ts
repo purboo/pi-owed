@@ -147,7 +147,11 @@ export type SupersededBlock = Block & { supersededBy: number; text: string };
 export function supersededText(s: State, b: Block): string {
   const id = checkOf(b.obligation) ?? b.obligation, p = b.supersededBy ?? -1;
   let removed = false;
-  try { removed = checkDefinition(planAt(s, p + 1), b.node, id) === undefined; } catch { /* no plan in force: keep "definition changed" */ }
+  try { removed = checkDefinition(planAt(s, p + 1), b.node, id) === undefined; }
+  catch (e) {
+    // Only the absence of a plan entry is informational; missing/unreadable plan blobs must fail the view.
+    if (!(e instanceof OwedError && e.code === 'internal' && e.message === `No plan is in force before #${p + 1}`)) throw e;
+  }
   return `#${b.seq} superseded by plan #${p} (check ${id} ${removed ? 'removed' : 'definition changed'})`;
 }
 /** L2: the superseded blocks of `nodes`, in ledger order of the blocks. */

@@ -78,6 +78,8 @@ export function synthLedger(target = 10_000, count = 200, wave = 10): Synth {
       trunk = commit;
     }
   }
+  // The per-node weights round down: pad with valid speech entries so the benchmark reaches its requested size.
+  while (entries.length < target) add({ kind: 'note', by: 'parent:main', text: `padding ${entries.length}` });
   const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new Error(`missing plan ${sha}`); return p; };
   return { entries, plans, lookup };
 }

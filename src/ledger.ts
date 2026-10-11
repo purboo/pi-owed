@@ -1,19 +1,27 @@
 import { mkdir, readFile, open, rm, link, rename, writeFile, stat, readdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import { serialize, deserialize } from 'node:v8';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { H, ZERO, sha256 } from './canon.ts';
 import { git } from './git.ts';
-import { OwedError } from './errors.ts';
+import { OWED_VERSION, OwedError } from './errors.ts';
 import type { Entry, Draft } from './types.ts';
 
 /**
  * N4: the plan cache format and parser version: the cache format number and the owed package version, so an entry
  * written by another release (whose parsePlan may differ) is ignored.
  */
-export const PLAN_CACHE_VERSION = `plan-cache/1 owed/${(() => { try { return String((JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version?: unknown }).version); } catch { return 'unknown'; } })()}`;
+export const PLAN_CACHE_VERSION = `plan-cache/1 owed/${OWED_VERSION}`;
+/** G1.4 (0.12): the format id of the disk snapshot `snapshot/state.v8`. */
+export const SNAPSHOT_FORMAT = 'owed-snapshot/1';
+/**
+ * G1.4: a disk snapshot as read: the seq and entry hash it was folded to and the v8-serialized packed state
+ * (reducer `packState`). `readSnapshot` returns one only when its format, owed version and payload digest match.
+ */
+export interface Snapshot { seq: number; hash: string; payload: Buffer }
 export async function ledgerDir(cwd: string): Promise<string> {
   const dir = process.env.OWED_DIR ? resolve(cwd, process.env.OWED_DIR) : join(resolve(cwd, (await git(cwd, ['rev-parse', '--git-common-dir'])).stdout.trim()), 'owed');
   await mkdir(join(dir, 'blobs'), { recursive: true }); return dir;
@@ -176,10 +184,12 @@ export class Ledger {
    */
   async readPlanCache(sha: string): Promise<unknown> {
     if (!/^[a-f0-9]{64}$/.test(sha)) return undefined;
-    try {
-      const c = JSON.parse(await readFile(join(this.dir, 'cache', 'plans', `${sha}.json`), 'utf8')) as { v?: unknown; sha?: unknown; plan?: unknown };
-      return c && typeof c === 'object' && c.v === PLAN_CACHE_VERSION && c.sha === sha && c.plan && typeof c.plan === 'object' ? c.plan : undefined;
-    } catch { return undefined; }
+    try { return planCacheEntry(sha, await readFile(join(this.dir, 'cache', 'plans', `${sha}.json`), 'utf8')); } catch { return undefined; }
+  }
+  /** G1: readPlanCache, synchronously (a plan resolved on first use by a state from a replay cache). */
+  readPlanCacheSync(sha: string): unknown {
+    if (!/^[a-f0-9]{64}$/.test(sha)) return undefined;
+    try { return planCacheEntry(sha, readFileSync(join(this.dir, 'cache', 'plans', `${sha}.json`), 'utf8')); } catch { return undefined; }
   }
   /** Writes a cache entry atomically (temp file, then rename); never throws (the cache never fails an op). */
   async writePlanCache(sha: string, plan: unknown): Promise<void> {
@@ -207,9 +217,46 @@ export class Ledger {
     try { return (await readdir(join(this.dir, 'cache', 'plans'))).sort(); } catch { return []; }
   }
   async removePlanCache(file: string): Promise<void> { if (!file.includes('/')) await rm(join(this.dir, 'cache', 'plans', file), { force: true }); }
+  /** G1.4: the disk snapshot file. */
+  get snapshotFile(): string { return join(this.dir, 'snapshot', 'state.v8'); }
+  /**
+   * G1.4: the disk snapshot when it is readable and has this format, this owed version and an intact payload (sha256);
+   * undefined otherwise (missing, unreadable, foreign or corrupt: never an error). The caller checks seq and hash
+   * against the verified chain.
+   */
+  async readSnapshot(): Promise<Snapshot | undefined> {
+    try {
+      const o = deserialize(await readFile(this.snapshotFile)) as Record<string, unknown> | null;
+      if (!o || typeof o !== 'object' || o.format !== SNAPSHOT_FORMAT || o.version !== OWED_VERSION || !Number.isInteger(o.seq) || typeof o.hash !== 'string' || !(o.payload instanceof Uint8Array) || o.digest !== sha256(o.payload)) return undefined;
+      return { seq: o.seq as number, hash: o.hash, payload: Buffer.from(o.payload.buffer, o.payload.byteOffset, o.payload.byteLength) };
+    } catch { return undefined; }
+  }
+  /** G1.4: writes the disk snapshot atomically (temp file, then rename); never throws. Returns whether it was written. */
+  async writeSnapshot(seq: number, hash: string, payload: Uint8Array): Promise<boolean> {
+    const dir = join(this.dir, 'snapshot'), temp = join(dir, `.state.${randomUUID()}.tmp`);
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(temp, serialize({ format: SNAPSHOT_FORMAT, version: OWED_VERSION, seq, hash, digest: sha256(payload), payload }));
+      await rename(temp, this.snapshotFile);
+      return true;
+    } catch { await rm(temp, { force: true }).catch(() => undefined); return false; }
+  }
+  /** G1.4: removes the disk snapshot (verify, on a mismatch); never throws. */
+  async removeSnapshot(): Promise<void> { await rm(this.snapshotFile, { force: true }).catch(() => undefined); }
   async getBlob(sha: string): Promise<Buffer> {
     if (!/^[a-f0-9]{64}$/.test(sha)) throw new OwedError('invalid blob hash', 'usage');
     const data = await readFile(join(this.dir, 'blobs', sha));
     if (sha256(data) !== sha) throw new OwedError(`corrupt blob ${sha}`, 'internal'); return data;
   }
+  /** G1: getBlob, synchronously. */
+  getBlobSync(sha: string): Buffer {
+    if (!/^[a-f0-9]{64}$/.test(sha)) throw new OwedError('invalid blob hash', 'usage');
+    const data = readFileSync(join(this.dir, 'blobs', sha));
+    if (sha256(data) !== sha) throw new OwedError(`corrupt blob ${sha}`, 'internal'); return data;
+  }
+}
+/** The plan of a cache entry's text when its `v` and `sha` match (N4), else undefined; throws on invalid JSON. */
+function planCacheEntry(sha: string, text: string): unknown {
+  const c = JSON.parse(text) as { v?: unknown; sha?: unknown; plan?: unknown };
+  return c && typeof c === 'object' && c.v === PLAN_CACHE_VERSION && c.sha === sha && c.plan && typeof c.plan === 'object' ? c.plan : undefined;
 }
