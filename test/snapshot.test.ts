@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { serialize, deserialize } from 'node:v8';
-import { canonical } from '../src/canon.ts';
+import { canonical, H } from '../src/canon.ts';
 import { parsePlan } from '../src/plan.ts';
 // Namespace imports: against an owed without G1 the new names are undefined, so each test fails on its own (red).
 import * as errors from '../src/errors.ts';
@@ -21,6 +21,8 @@ import type { Draft, Entry, Plan, State } from '../src/types.ts';
 import { CUR, frozen, fuzzLedger, snapshot, variants } from './perf/differential.ts';
 import { synthLedger } from './perf/synth.ts';
 import { cli } from './helpers/surface.ts';
+import { supersededText } from '../src/views.ts';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 
 type Lookup = (sha: string) => Plan;
 /**
@@ -111,7 +113,7 @@ test('equivalence: draft simulations fold onto a copy of the loaded state exactl
 
 test('equivalence: synthetic 10 000-entry ledger at every 97th k (snapshot + fold), views at a few cuts', { timeout: 900_000 }, () => {
   const { entries, lookup: raw } = synthLedger(10_000, 200), lookup = frozen(raw);
-  assert.ok(entries.length >= 9_500);
+  assert.equal(entries.length, 10_000, 'the synthetic benchmark must reach at least its requested 10 000 entries');
   const final = reduce(entries, lookup), step = 97;
   let running = reduce([], lookup), k = 0;
   const ends = new Set([0, 97 * 41, 97 * 97]);
@@ -258,6 +260,11 @@ test('verify: compares a matching disk snapshot with its full replay; a differen
     v = await ops.verify({ cwd: t.root });
     assert.equal(v.ok, true); assert.equal(v.snapshotMismatch, snap.seq); assert.equal(v.head, t.entries.at(-1)!.hash);
     assert.equal(await ledger.readSnapshot(), undefined, 'deleted');
+    // No forgetReplays: verify must invalidate the corrupt memo in this process itself.
+    same((await ops.readState({ cwd: t.root })).state, reduce(t.entries, t.lookup), 'same-process load after verify');
+    for (let i = 0; i < 256; i++) await append(t.dir, t.entries, note(i));
+    same((await ops.readState({ cwd: t.root })).state, reduce(t.entries, t.lookup), 'memo cannot republish corruption after +256');
+    same(unpackState(deserialize((await ledger.readSnapshot())!.payload) as PackedState, t.lookup), reduce(t.entries, t.lookup), 'rewritten snapshot is clean');
     assert.equal((await ops.verify({ cwd: t.root })).snapshotMismatch, undefined);
     // CLI: JSON field and text line.
     await tamper();
@@ -267,6 +274,98 @@ test('verify: compares a matching disk snapshot with its full replay; a differen
     const text = await cli(t.root, ['verify']);
     assert.equal(text.code, 0, text.stderr); assert.match(text.stdout, new RegExp(`^snapshotMismatch: ${snap.seq}\\b`, 'm'));
     ops.forgetReplays(); same((await ops.readState({ cwd: t.root })).state, reduce(t.entries, t.lookup), 'after verify deleted it');
+  } finally { await t.cleanup(); }
+});
+
+// A controlled pause at an async replay boundary: no timing sleeps or unowned process cleanup.
+function latch() {
+  let release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  return { waiting, release };
+}
+
+for (const boundary of ['snapshot-read', 'snapshot-write'] as const) {
+  test(`verify: invalidation prevents an in-flight ${boundary} load publishing stale memo or disk state`, { timeout: 60_000 }, async () => {
+    const t = await ledgerDir(400, 10), entered = latch(), resume = latch();
+    const readSnapshot = Ledger.prototype.readSnapshot, writeSnapshot = Ledger.prototype.writeSnapshot;
+    let pending: Promise<unknown> | undefined, verification: Promise<ops.VerifyResult> | undefined;
+    try {
+      const ledger = await Ledger.open(t.root);
+      await ops.readState({ cwd: t.root });
+      const snap = (await ledger.readSnapshot())!, p = deserialize(snap.payload) as PackedState;
+      p.state.nodes.n3!.writers.push('writer:stale-inflight');
+      await ledger.writeSnapshot(snap.seq, snap.hash, serialize(p)); ops.forgetReplays();
+      let pause = true;
+      if (boundary === 'snapshot-read') {
+        Ledger.prototype.readSnapshot = async function () {
+          const result = await readSnapshot.call(this);
+          if (this.dir === t.dir && pause) { pause = false; entered.release(); await resume.waiting; }
+          return result;
+        };
+      } else {
+        // Seed the corrupt memo, then pause a write that would republish it after 256 appended entries.
+        await ops.readState({ cwd: t.root });
+        for (let i = 0; i < 256; i++) await append(t.dir, t.entries, note(i));
+        Ledger.prototype.writeSnapshot = async function (seq, hash, payload) {
+          if (this.dir === t.dir && pause) { pause = false; entered.release(); await resume.waiting; }
+          return writeSnapshot.call(this, seq, hash, payload);
+        };
+      }
+      pending = ops.readState({ cwd: t.root });
+      await entered.waiting;
+      if (boundary === 'snapshot-read') {
+        const v = await ops.verify({ cwd: t.root });
+        assert.equal(v.snapshotMismatch, snap.seq); assert.equal(v.ok, true, v.error);
+        resume.release(); await pending;
+      } else {
+        // Observe verify's snapshot read, then yield until its synchronous comparison queued invalidation/deletion.
+        const observed = latch();
+        Ledger.prototype.readSnapshot = async function () { const result = await readSnapshot.call(this); if (this.dir === t.dir) observed.release(); return result; };
+        verification = ops.verify({ cwd: t.root });
+        await observed.waiting; await nextTurn();
+        resume.release(); await pending;
+        const v = await verification;
+        assert.equal(v.snapshotMismatch, snap.seq); assert.equal(v.ok, true, v.error);
+      }
+      assert.equal(await ledger.readSnapshot(), undefined, 'the stale in-flight load cannot leave a snapshot behind verification');
+      const before = stats();
+      same((await ops.readState({ cwd: t.root })).state, reduce(t.entries, t.lookup), 'load after in-flight invalidation');
+      assert.equal(delta(before, stats()).full, 1, 'no stale memo was published');
+    } finally {
+      resume.release(); await pending?.catch(() => undefined); await verification?.catch(() => undefined);
+      Ledger.prototype.readSnapshot = readSnapshot; Ledger.prototype.writeSnapshot = writeSnapshot;
+      await t.cleanup();
+    }
+  });
+}
+
+test('lazy old plan: why rethrows a missing superseding-plan blob exactly as full replay; no-plan fallback remains informational', { timeout: 60_000 }, async () => {
+  const t = await ledgerDir(400, 10);
+  try {
+    const synth = synthLedger(400, 10), fail = synth.entries.find(e => e.kind === 'obs' && e.subject === 'n0' && e.verdict === 'fail')!;
+    const entries = synth.entries.slice(0, fail.seq + 1), initial = synth.plans.get(entries[0]!.kind === 'genesis' ? entries[0]!.plan : '')!;
+    const superseding = structuredClone(initial); superseding.nodes[0]!.checks[0]!.run += ' changed';
+    const middle = H(superseding);
+    const change = chain(entries, { kind: 'plan', by: 'owner:human', prior: H(initial), plan: middle, downgrades: [], note: 'changed check' });
+    const current = structuredClone(superseding); current.nodes[0]!.title = 'newer plan';
+    const currentSha = H(current);
+    chain(entries, { kind: 'plan', by: 'owner:human', prior: middle, plan: currentSha, downgrades: [], note: 'title' });
+    const plans = new Map([...synth.plans, [middle, superseding], [currentSha, current]]);
+    await writeLedgerDir(t.dir, entries, plans);
+    const lookup = frozen(s => plans.get(s)!), state = reduce(entries, lookup), ledger = await Ledger.open(t.root);
+    const block = state.nodes.n0!.blocks.find(b => b.seq === fail.seq)!;
+    assert.equal(block.supersededBy, change.seq);
+    assert.match(supersededText(state, block), /definition changed/);
+    assert.match(supersededText(reduce([], lookup), { ...block, supersededBy: -1 }), /definition changed/, 'only no-plan is swallowed');
+    // Write without an ops load, so the in-process parsed-plan cache never learned this intermediate plan.
+    await ledger.writeSnapshot(state.seq, state.head, serialize(packState(state)));
+    await rm(join(t.dir, 'blobs', middle)); await rm(join(t.dir, 'cache', 'plans', `${middle}.json`)); ops.forgetReplays();
+    let fullError: unknown;
+    try { ledger.getBlobSync(middle); } catch (e) { fullError = e; }
+    assert.equal((fullError as NodeJS.ErrnoException).code, 'ENOENT');
+    const full = await ops.verify({ cwd: t.root }); // Full replay resolves every plan from its blob before reducing.
+    assert.equal(full.ok, false); assert.equal(full.error, (fullError as Error).message);
+    await assert.rejects(ops.why({ cwd: t.root, node: 'n0' }), (e: unknown) => e instanceof Error && e.message === full.error);
   } finally { await t.cleanup(); }
 });
 
@@ -312,9 +411,41 @@ test('version: an unknown kind, send reason, obs verdict or ruling flag refuses 
   } finally { if (prior === undefined) delete process.env.OWED_DIR; else process.env.OWED_DIR = prior; ops.forgetReplays(); await rm(root, { recursive: true, force: true }); }
 });
 
+test('version: every closed entry enum (including Base.channel on all kinds) rejects unknown values and accepts known values', () => {
+  const { entries, lookup } = synthLedger(400, 10), base = reduce(entries, frozen(lookup));
+  const enums: [string, string, string[]][] = [
+    ['send', 'sendKind', ['follow-up', 'steer']],
+    ['send', 'reason', ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing', 'ruling', 'verdict']],
+    ['obs', 'verdict', ['pass', 'fail', 'error']],
+    ['review', 'obligation', ['review', 'closure-review', 'approve']],
+    ['review', 'verdict', ['ok', 'block']], ['review', 'needs', ['parent']],
+    ['launch', 'role', ['writer', 'reviewer']], ['halt', 'needs', ['human', 'owner']],
+    ['escape', 'class', ['missing', 'false-pass', 'reuse', 'weak', 'waiver']],
+  ];
+  // This list mirrors every Entry kind, including owner review/approve and waive (the channel is inherited by all).
+  for (const kind of ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume']) {
+    enums.push([kind, 'channel', ['tty', 'pi-confirm', 'flag', 'delegated']]);
+  }
+  for (const [kind, field, known] of enums) {
+    for (const value of known) assert.equal(R.newerEntry({ kind, [field]: value } as unknown as Entry), undefined, `${kind}.${field}=${value}`);
+    const tail: Entry[] = [...entries];
+    chain(tail, { kind, by: 'parent:main', [field]: 'guardian-confirm' });
+    const expected = `ledger entry #${entries.length} (${kind} ${field} guardian-confirm) needs a newer owed than ${OWED_VERSION}: upgrade owed and restart pi sessions that load it`;
+    const version = (e: unknown): boolean => e instanceof OwedError && e.code === 'version' && e.message === expected;
+    assert.throws(() => reduce(tail, lookup), version, `${kind}.${field}: full replay`);
+    assert.throws(() => reduceFrom(base, tail.slice(entries.length), lookup), version, `${kind}.${field}: resumed replay`);
+  }
+  // Valid rule channels also replay normally rather than only passing the forward-compatibility gate.
+  for (const channel of ['tty', 'pi-confirm', 'flag', 'delegated'] as const) {
+    const tail = [...entries]; chain(tail, { kind: 'rule', by: 'parent:main', text: 'known channel', nodes: '*', channel });
+    same(reduceFrom(base, tail.slice(entries.length), lookup), reduce(tail, lookup), `valid rule channel ${channel}`);
+  }
+});
+
 test('timing: a warm disk snapshot of a 10 000-entry ledger loads within 5 s; one appended entry folds onto the in-process cache', { timeout: 600_000 }, async () => {
   const t = await ledgerDir(10_000, 200);
   try {
+    assert.equal(t.entries.length, 10_000, 'timing uses a full 10 000-entry benchmark ledger');
     let at = performance.now();
     await ops.readState({ cwd: t.root });
     const cold = performance.now() - at;

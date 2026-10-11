@@ -563,13 +563,21 @@ refreshed after a load that folded 32 or more entries past it) and the disk
 snapshot (§1). When the verified entries contain an entry with the cached seq
 and hash, the fold continues from it (in-process first, then disk); any other
 change is a full replay. Every load deserializes its own copy, so results of
-successive loads never alias. Draft simulations (carry submits, merge-result
+successive loads never alias. Verification deleting a mismatching snapshot
+also drops that dir's memo and increments its invalidation epoch: loads that
+started before invalidation cannot refill the memo or leave a stale snapshot
+behind deletion. Disk/memo publication and verify deletion share a per-dir
+publication queue (no ledger lock acquisition inside it). Old plans from a
+resumed state are loaded on first use; missing/unreadable blobs fail then,
+including superseded-block view rendering (only "no plan in force" is an
+informational fallback). Draft simulations (carry submits, merge-result
 and adoption observations, amend's ruling, the merge CAS's plan check) fold the
 drafts onto a private copy of the loaded state instead of replaying the
 ledger.
 
 Entries of a newer owed (0.12, G1.5). Replay refuses an entry this owed cannot
-interpret — an unknown `kind`; an unknown value of an enumerated field (`send`
+interpret — an unknown `kind`; an unknown value of an enumerated field (every
+entry's `channel`: `tty`, `pi-confirm`, `flag`, `delegated`; `send`
 `reason` or `sendKind`, `obs` `verdict`, `review` `obligation`, `verdict` or
 `needs`, `launch` `role`, `halt` `needs`, `escape` `class`); an unknown field on
 a `rule` (a ruling flag) — with OwedError code `version` and the text `ledger

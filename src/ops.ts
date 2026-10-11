@@ -97,6 +97,8 @@ const planShas = (entries: Entry[]): string[] => [...new Set(entries.flatMap(e =
  * cache) are read before it as in 0.11; any other named plan is read on first use (cachedPlanSync).
  */
 async function load(ledger: Ledger, extra: string[] = []) {
+  // Capture before the first await: verification may invalidate this load while the ledger is being read.
+  const control = replayControl(ledger.dir), epoch = control.epoch;
   const entries = await ledger.read(), known = new Set([...planShas(entries), ...extra]), plans = new Map<string, Plan>();
   const lookup = (sha: string): Plan => {
     let p = plans.get(sha);
@@ -105,7 +107,7 @@ async function load(ledger: Ledger, extra: string[] = []) {
     p = cachedPlanSync(ledger, sha); plans.set(sha, p); return p;
   };
   const need = async (from: number): Promise<void> => { for (const sha of new Set([...planShas(entries.slice(from)), ...extra])) if (!plans.has(sha)) plans.set(sha, await cachedPlan(ledger, sha)); };
-  return { entries, lookup, state: await replay(ledger,entries,lookup,need) };
+  return { entries, lookup, state: await replay(ledger,entries,lookup,need,control,epoch) };
 }
 /**
  * G1.3 (0.12): the in-process replay cache, per ledger dir (at most MEMO_DIRS, least recently used dropped): a
@@ -114,6 +116,25 @@ async function load(ledger: Ledger, extra: string[] = []) {
  */
 interface Memo { seq: number; hash: string; payload: Buffer; disk: number }
 const memos = new Map<string, Memo>(), MEMO_DIRS = 16;
+/** A ledger's invalidation epoch and serialized disk/memo publication barrier (verify deletion shares the barrier). */
+interface ReplayControl { epoch: number; publication: Promise<void> }
+const replayControls = new Map<string, ReplayControl>();
+function replayControl(dir: string): ReplayControl {
+  let c = replayControls.get(dir);
+  if (!c) { c = { epoch: 0, publication: Promise.resolve() }; replayControls.set(dir, c); }
+  return c;
+}
+function publishReplay(c: ReplayControl, act: () => Promise<void>): Promise<void> {
+  const pending = c.publication.then(act);
+  c.publication = pending.catch(() => undefined);
+  return pending;
+}
+/** Drop the memo immediately; any preceding disk publication finishes before deletion, and cannot refill the memo. */
+async function invalidateReplay(ledger: Ledger): Promise<void> {
+  const c = replayControl(ledger.dir);
+  c.epoch++; memos.delete(ledger.dir);
+  await publishReplay(c, () => ledger.removeSnapshot());
+}
 /** G1.4: a disk snapshot is (re)written after a load that folded at least this many entries past it, or found none. */
 export const SNAPSHOT_EVERY = 256;
 /** G1.3: the in-process cache is re-serialized after a load that folded at least this many entries past it. */
@@ -121,7 +142,7 @@ const MEMO_EVERY = 32;
 /** @internal Test hooks: counts of the replay paths `load` took (full replays, folds from the cache or a disk snapshot), entries folded and ms spent replaying (after the ledger read). */
 export const replayStats = { full: 0, memo: 0, disk: 0, folded: 0, ms: 0 };
 /** @internal Test hook: forget the in-process replay cache (as a fresh process). */
-export function forgetReplays(): void { memos.clear(); }
+export function forgetReplays(): void { memos.clear(); for (const c of replayControls.values()) c.epoch++; }
 /** @internal Test hook: the ledger's entries and replayed state as an op loads them (no effect beyond the replay caches). */
 export async function readState(o: Context): Promise<{ entries: Entry[]; state: State }> { const { entries, state } = await load(await Ledger.open(o.cwd)); return { entries, state }; }
 const unpacked = (payload: Buffer, lookup: (sha: string) => Plan): State | undefined => { try { return unpackState(deserialize(payload) as PackedState, lookup); } catch { return undefined; } };
@@ -131,8 +152,10 @@ const unpacked = (payload: Buffer, lookup: (sha: string) => Plan): State | undef
  * in-process cache and, when the fold went at least SNAPSHOT_EVERY entries past the disk snapshot (or there was none),
  * rewrites the disk snapshot (best effort). Equal to `reduce(entries, lookup)` (G1.1).
  */
-async function replay(ledger: Ledger, entries: Entry[], lookup: (sha: string) => Plan, need: (from: number) => Promise<void>): Promise<State> {
+async function replay(ledger: Ledger, entries: Entry[], lookup: (sha: string) => Plan, need: (from: number) => Promise<void>, control: ReplayControl, epoch: number): Promise<State> {
   if (!entries.length) { await need(0); return reduce(entries,lookup); }
+  // New loads wait for a pending verify deletion before reading the disk snapshot.
+  await control.publication;
   const t0 = performance.now(), at = (seq: number, hash: string): boolean => entries[seq]?.hash === hash;
   let m = memos.get(ledger.dir), state: State | undefined, via: 'memo' | 'disk' | undefined;
   if (!(m && at(m.seq,m.hash))) { const d = await ledger.readSnapshot(); m = d && at(d.seq,d.hash) ? { ...d, disk: d.seq } : undefined; via = 'disk'; } else via = 'memo';
@@ -144,10 +167,15 @@ async function replay(ledger: Ledger, entries: Entry[], lookup: (sha: string) =>
   let disk = m?.disk ?? -1, next = m;
   const write = disk < 0 || state.seq-disk >= SNAPSHOT_EVERY;
   if (!next || write || state.seq-next.seq >= MEMO_EVERY) next = { seq:state.seq, hash:state.head, payload:serialize(packState(state)), disk };
-  // A failed write is not retried before SNAPSHOT_EVERY more entries: the snapshot is best effort.
-  if (write) { await ledger.writeSnapshot(next.seq,next.hash,next.payload); disk = next.seq; }
-  memos.delete(ledger.dir); memos.set(ledger.dir,{ ...next, disk });
-  if (memos.size > MEMO_DIRS) memos.delete(memos.keys().next().value!);
+  await publishReplay(control, async () => {
+    if (control.epoch !== epoch) return;
+    // A failed write is not retried before SNAPSHOT_EVERY more entries: the snapshot is best effort.
+    if (write) { await ledger.writeSnapshot(next.seq,next.hash,next.payload); disk = next.seq; }
+    // Verification can invalidate while the disk write awaits I/O. Its queued deletion runs after this write.
+    if (control.epoch !== epoch) return;
+    memos.delete(ledger.dir); memos.set(ledger.dir,{ ...next, disk });
+    if (memos.size > MEMO_DIRS) memos.delete(memos.keys().next().value!);
+  });
   replayStats.ms += performance.now()-t0;
   return state;
 }
@@ -936,7 +964,7 @@ export async function verify(o: Context): Promise<VerifyResult> {
       state = reduce(entries.slice(0,snap.seq+1),lookup);
       let same = false;
       try { same = sameReplay(unpackState(deserialize(snap.payload) as PackedState,lookup),state); } catch { same = false; }
-      if (!same) { await ledger.removeSnapshot(); snapshotMismatch = snap.seq; }
+      if (!same) { await invalidateReplay(ledger); snapshotMismatch = snap.seq; }
       extendState(state,entries.slice(snap.seq+1));
     } else state = reduce(entries,lookup);
     return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}), ...(snapshotMismatch !== undefined ? { snapshotMismatch } : {}) };
