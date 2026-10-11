@@ -207,7 +207,8 @@ export interface Block {
 /** Latest rebase of a slot: `previous` is the last candidate submitted before a rebase (the patch reviewers already saw). */
 export interface SlotRebase { seq: number; from: string; base: string; previous?: { base: string; commit: string; submit: number } }
 export interface Slot { attempt: number; base: string; branch: string; worktree: string; writer: string; dispatchSeq: number; rulings_seen: number; open: boolean; rebase?: SlotRebase }
-export type Phase = 'blocked' | 'ready' | 'dispatched' | 'submitted' | 'accepted' | 'merged';
+/** `removed` (F4, wais #27): the node is in the state but not in the current plan and not merged. */
+export type Phase = 'blocked' | 'ready' | 'dispatched' | 'submitted' | 'accepted' | 'merged' | 'removed';
 export interface NodeState {
   id: string;
   phase: Phase;

@@ -9,6 +9,7 @@ import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErro
 import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER } from './reducer.ts';
 import { reduce, validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
+import { unruledBlocks } from './drive.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
@@ -903,6 +904,9 @@ export async function resume(o: Actor & { node: string; after?: string; note?: s
   const entry = await mutate(o, s => {
     const n = node(s, o.node);
     if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
+    // F4 (wais #33c): the driver would halt again at once on a review block that needs a parent ruling.
+    const unruled = unruledBlocks(s, o.node);
+    if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}), so the driver would halt again at once; record it with owed rule --nodes ${o.node} "<decision>" (the ruling also clears the halt)`);
     merged = o.after !== undefined && !!s.nodes[o.after]?.merged;
     return { kind: 'resume', by: by(o), channel: o.channel, node: o.node, attempt: n.slot.attempt, ...(o.after !== undefined ? { after: o.after } : {}), ...(o.note !== undefined && o.note !== '' ? { note: o.note } : {}) };
   });
