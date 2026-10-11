@@ -255,7 +255,14 @@ export function reduce(entries: Entry[], plans: PlanLookup): State {
       // A parent's downgrades were accepted only because the prior plan's allowances cover them (D21.3).
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       if (allowChanged) h.allowSeq = e.seq;
-    } else if (e.kind === 'rule') s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
+    } else if (e.kind === 'rule') {
+      s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
+      // F5: a writer ruling names the candidates that need a new submit; blocks and keys retain their semantics.
+      if (e.writer && e.nodes !== '*') for (const id of e.nodes) {
+        const n = s.nodes[id];
+        if (n?.slot?.open && n.candidate && e.seq > n.candidate.seq) n.candidate = undefined;
+      }
+    }
     else if (e.kind === 'dispatch') {
       const n = s.nodes[e.node]!;
       const writer = `writer:${e.node}#${e.attempt}`;
@@ -643,7 +650,11 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (downgrade && r === 'owner' && d.channel === 'delegated' && !(typeof d.note === 'string' && d.note.trim())) errors.push('a delegated owner plan update that reduces obligations requires a note saying why (owed plan --note TEXT; owed_plan note)');
       break;
     }
-    case 'rule': allow('owner', 'parent'); if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node'); break;
+    case 'rule':
+      allow('owner', 'parent');
+      if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node');
+      if (d.writer !== undefined && typeof d.writer !== 'boolean') errors.push('rule writer must be a boolean');
+      break;
     case 'dispatch':
       allow('parent', 'owner');
       if (n?.phase !== 'ready' || n.slot?.open) errors.push('dispatch requires a ready node with no open slot');
