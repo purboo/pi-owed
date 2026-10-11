@@ -1,6 +1,12 @@
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
-import { Type } from '@earendil-works/pi-ai';
+import { isMainThread } from 'node:worker_threads';
+import { remoteAPI } from './ext-worker.ts';
+// Pi provides schemas via its loader. Native workers need only the registered callbacks,
+// and must also work in installs without the optional pi peer packages.
+const Type: typeof import('@earendil-works/pi-ai').Type = isMainThread
+  ? (await import('@earendil-works/pi-ai')).Type
+  : new Proxy({}, { get: () => () => ({}) }) as typeof import('@earendil-works/pi-ai').Type;
 import type { Static, TSchema } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import * as ops from './ops.ts';
@@ -118,6 +124,7 @@ const candidateLines = (v: { seq: number; commit: string; base: string; changed:
 function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
 
 export default function owed(pi: ExtensionAPI): void {
+  if (isMainThread) pi = remoteAPI(pi);
   // Wake-ups of the background driver (D17.7): one follower per driver log; the session gets one follow-up message per
   // poll that saw a halt, a question, a refusal or the driver's end. session_shutdown clears the timers only.
   // Background genesis attests started by owed_init in this session (D24.4); session_shutdown aborts them.
@@ -130,10 +137,12 @@ export default function owed(pi: ExtensionAPI): void {
     if (agent.running) return true;
     try { return typeof agent.ctx?.isIdle === 'function' ? !agent.ctx.isIdle() : false; } catch { return false; }
   };
-  const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }), undefined, { busy, revalidate: repo => revalidator({ cwd: repo }) });
+  const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, revalidate: repo => revalidator({ cwd: repo }) });
   if (typeof pi.on === 'function') {
+    // Internal worker tick: the timer lives in pi, all log/git/replay work lives here.
+    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { agent.ctx = ctx; return watch.flush(); });
     pi.on('agent_start', (_event, ctx) => { agent.running = true; agent.ctx = ctx; });
-    pi.on('agent_settled', (_event, ctx) => { agent.running = false; agent.ctx = ctx; void watch.flush(); });
+    pi.on('agent_settled', async (_event, ctx) => { agent.running = false; agent.ctx = ctx; await watch.flush(); });
     // D17a.1: auto-attach only in a session that is not inside a dsa call (dsa writers and reviewers run in worktrees of
     // the same repository and must not be woken by its driver); every top-level session in the repository is woken.
     pi.on('session_start', async (_event, ctx) => { agent.ctx = ctx; if (process.env.DSA_EXEC || process.env.DSA_CALL) return; await watch.attach(ctx.cwd).catch(() => undefined); });
@@ -275,7 +284,7 @@ export default function owed(pi: ExtensionAPI): void {
       void ops.attestGenesis({ cwd: dir, signal: ac.signal }).then(
         g => end(`owed init: genesis attest of ${oneLine(dir)} finished`, g),
         async (e: unknown) => ac.signal.aborted ? undefined : end(`owed init: genesis attest of ${oneLine(dir)} stopped (${oneLine(e instanceof Error ? e.message : String(e))})`, await ops.genesisReport({ cwd: dir }).catch(() => ({ recorded: [], failed: [], missing: r.genesis.missing }))),
-      ).then(content => { if (content) pi.sendMessage({ customType: 'owed-init', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }); }).catch(() => undefined).finally(() => { genesisRuns.delete(ac); });
+      ).then(content => { if (content) return pi.sendMessage({ customType: 'owed-init', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }); }).catch(() => undefined).finally(() => { genesisRuns.delete(ac); });
     }
     const warnings = planWarnings(parsePlan(read.plan));
     return result({ entry: r.entry, genesis: r.entry.seq, measuring: n, warnings }, `${renderEntry(r.entry)}\nInitialized (genesis #${r.entry.seq}). ${n ? `Measuring ${n} genesis invariant${n === 1 ? '' : 's'} in the background in this session; owed_status shows progress and this session gets one message when it ends.` : 'No invariants to measure.'}${warnings.map(w => `\n${w}`).join('')}`);
