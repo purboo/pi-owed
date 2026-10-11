@@ -31,7 +31,7 @@ export type Action =
    * Printed only (asking questions); no ledger write. An asking notify (H1.1b) also names the run (`rid`) and its first
    * open question (`qid`, `rev`; absent when dsa reports none), so a wake can be revalidated at delivery time.
    */
-  | { do: 'notify'; node: string; text: string; rid?: string; qid?: string; rev?: number };
+  | { do: 'notify'; node: string; text: string; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string };
 
 /** A merge of the node's candidate `candidate` (submit seq) that this process saw refused. */
 export interface MergeRefusal {
@@ -84,6 +84,11 @@ export interface DriveOpts {
    * result. They get no action; their open slots still count toward `max`.
    */
   measuring?: ReadonlySet<string>;
+  /**
+   * F2.2: the clock (ms since the epoch) the environment back-off compares with; the executor passes `Date.now()`.
+   * Absent: no back-off (the node attests as soon as it would without one).
+   */
+  now?: number;
 }
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
@@ -386,6 +391,36 @@ export function thresholdHint(s: State, node: string, obligations: readonly stri
   return undefined;
 }
 
+// ---------- environment back-off (0.11, F2.2) ----------
+/** F2.2: an error observation whose note starts with `environment: ` (disk full, tree preparation failed). */
+export const isEnvironment = (o: ObsEntry): boolean => o.verdict === 'error' && (o.note ?? '').startsWith('environment: ');
+/** F2.2: the back-off after the n-th consecutive environment error of an item (n >= 1), in minutes: 1, 2, 5, 10, then 30. */
+export const BACKOFF_MIN = [1, 2, 5, 10, 30] as const;
+export const backoffMs = (n: number): number => BACKOFF_MIN[Math.min(Math.max(n, 1), BACKOFF_MIN.length) - 1]! * 60_000;
+/** F2.2: the wait of a node's next attest: the latest environment error (`latest`), its streak step, retry time and streak start. */
+export interface EnvironmentWait { latest: ObsEntry; step: number; until: number; streak: number }
+/**
+ * F2.2: per item of `jobs` (subject, obligation, key), its streak: the consecutive environment errors at the end of its
+ * observations since the latest resume (`resumed`). The node waits `backoffMs(step)` after the latest such error of all
+ * items; undefined when no item ends in an environment error.
+ */
+export function environmentWait(s: State, jobs: readonly { subject: string; obligation: string; key: string }[], resumed: number): EnvironmentWait | undefined {
+  let best: EnvironmentWait | undefined;
+  for (const j of jobs) {
+    const obs = observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.seq > resumed);
+    let i = obs.length;
+    while (i > 0 && isEnvironment(obs[i - 1]!)) i--;
+    const streak = obs.slice(i);
+    if (!streak.length) continue;
+    const latest = streak.at(-1)!, step = streak.length, until = Date.parse(latest.ts) + backoffMs(step);
+    if (!best || latest.seq > best.latest.seq) best = { latest, step, until, streak: streak[0]!.seq };
+  }
+  return best;
+}
+/** F2.2: the notify of a node whose attest waits after an environment error: the note and the retry time. */
+export const environmentText = (node: string, w: EnvironmentWait): string =>
+  `${node}: environment failure #${w.latest.seq} ${w.latest.obligation}: ${clip(w.latest.note ?? '')}; attest waits (${w.step} in a row), retry at ${new Date(w.until).toISOString()}; the driver does not halt for it (free the disk or fix the setup; owed resume ${node} retries at once)`;
+
 // ---------- driver reviewers ----------
 /**
  * The review slot k of `by` when it is a driver reviewer of the node's current open attempt: `reviewer:drive-<node>-
@@ -610,8 +645,13 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   if (c) {
     // Rows 9-10: measured obligations without a verdict on the candidate's keys, and attribution reruns of blocks from
     // earlier content (a failure of the current content is a repair, not an attest): attest, unless `error` twice.
-    const jobs = attestJobs(s, id).filter(j => !(j.attribution && j.key === c.keys[j.obligation])).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed) }));
-    if (jobs.some(x => x.errors.length < 2)) return { do: 'attest', node: id };
+    // F2.2: an environment error (note `environment: `) does not count toward the two errors; it makes the attest wait.
+    const jobs = attestJobs(s, id).filter(j => !(j.attribution && j.key === c.keys[j.obligation])).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed && !isEnvironment(o)) }));
+    if (jobs.some(x => x.errors.length < 2)) {
+      const wait = opts.now === undefined ? undefined : environmentWait(s, jobs.map(x => x.j), resumed);
+      if (wait && wait.until > opts.now!) return { do: 'notify', node: id, text: environmentText(id, wait), once: `environment\u0000${id}\u0000${wait.streak}` };
+      return { do: 'attest', node: id };
+    }
     if (jobs.length) return halt(`attest recorded no verdict twice: ${jobs.map(x => `${x.j.obligation} (${x.errors.map(o => `#${o.seq} ${o.note ?? `exit ${o.exit}`}`).join('; ')})`).join(', ')}`);
     // Repair: one follow-up per candidate, at most `repairs` per attempt; a writer that finishes it without resubmitting halts.
     // K5.1: the budget counts the repairs since the node's epoch; K5.2: a due ruling follow-up replaces either halt.

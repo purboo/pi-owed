@@ -6,15 +6,17 @@
 // so losing it (a crash, a restart) is harmless: the ledger plus `describe` re-derive the state.
 import { spawn } from 'node:child_process';
 import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { statfs } from 'node:fs/promises';
 import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
-import { parsePlan, driveConfig, measureCap } from './plan.ts';
+import { parsePlan, driveConfig, measureCap, minFreeMb } from './plan.ts';
+import { DISK_FULL } from './exec.ts';
 import { reduce, halted, projectId, waitingFor } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
@@ -46,6 +48,27 @@ export const DRIFT_NODE = 'trunk';
 const driftReport = (s: State, d: git.TrunkDrift): ActionReport => ({ do: 'notify', node: DRIFT_NODE, scope: 'repo', outcome: 'notify', text: driftNotice(s.trunk.name, d), facts: s.trunk.seq });
 /** The key of a report's print and wake records (G3.4b): repo-level reports never share one with a plan node of the same name. */
 export const reportKey = (r: { node?: unknown; scope?: unknown }): string => `${r.scope === 'repo' ? 'repo' : 'node'}\u0000${String(r.node)}`;
+/** F2.3: the node name of the repo-level low-disk notify (`scope: 'repo'`). */
+export const DISK_NODE = 'disk';
+/** F2.3: the text of the low-disk notify: per path below the limit, `disk low: N MB free in <path> < M MB`. */
+export const diskLowText = (low: readonly { path: string; mb: number }[], min: number): string => low.map(l => `disk low: ${l.mb} MB free in ${l.path} < ${min} MB`).join('; ') + '; the driver starts no measurement until space is freed';
+/**
+ * F2.3: the paths among `paths` with less than `min` MB free (statfs: available blocks × block size); a path statfs
+ * cannot read is skipped. Empty when `min` is 0.
+ */
+export async function lowDisk(paths: readonly string[], min: number): Promise<{ path: string; mb: number }[]> {
+  if (min <= 0) return [];
+  const out: { path: string; mb: number }[] = [];
+  for (const path of paths) {
+    try { const f = await statfs(path), mb = Math.floor(Number(f.bavail) * Number(f.bsize) / 1048576); if (mb < min) out.push({ path, mb }); } catch { /* unreadable: not judged */ }
+  }
+  return out;
+}
+/** F2.4: an error that says the disk (or quota) is full: ENOSPC / EDQUOT, or their messages. */
+export const diskFullError = (e: unknown): boolean => {
+  const code = (e as NodeJS.ErrnoException | undefined)?.code, message = e instanceof Error ? e.message : String(e);
+  return code === 'ENOSPC' || code === 'EDQUOT' || DISK_FULL.test(message) || /\bEDQUOT\b/.test(message);
+};
 /** The key of the drift notify's records. */
 export const DRIFT_KEY = reportKey({ node: DRIFT_NODE, scope: 'repo' });
 /**
@@ -103,6 +126,8 @@ export interface DriveOptions {
    * `startingSession()` (`$DSA_SESSION`, ignored inside a dsa call); null: none.
    */
   session?: string | null;
+  /** F2.4: how long the loop sleeps after a disk-full error escaped a pass (default 60 s; tests). */
+  diskFullMs?: number;
 }
 
 /** One executed action as printed (`--json`: one object per line). */
@@ -176,6 +201,10 @@ class Facts {
   readonly wakes = new Map<string, { text: string; facts: number; n: number }>();
   /** A drift notify was emitted and no pass has seen trunk equal to the ledger trunk since (G3.4a). */
   drift = false;
+  /** F2.2: the `once` keys of notifies already printed (the environment back-off: one per streak). */
+  readonly once = new Set<string>();
+  /** F2.3: the low-disk state last notified (paths and limit), undefined while the disk is fine. */
+  disk?: string;
 }
 
 /**
@@ -324,7 +353,7 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number }
+export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number }
 /** 0.8 (L1.5): text of a `waiting` loop event. */
 export const waitingText = (node: string, after: string, resume: number): string => `waiting: ${node} waits for ${after} (resume #${resume})`;
 /** Text of the `idle-wait` line of a staying driver (H1.2). */
@@ -346,6 +375,7 @@ export function reportText(json: object): string {
       case 'events-error': return `events error: ${oneLine(e.error ?? '')}`;
       case 'exit': return `driver exited ${e.code} (${e.reason})${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
       case 'drift-cleared': return 'trunk drift cleared: trunk equals the ledger trunk again';
+      case 'disk-full': return `disk full: ${oneLine(e.error ?? '')}; the driver sleeps 60 s and continues`;
       case 'waiting': return waitingText(oneLine(e.node ?? '?'), oneLine(e.after ?? '?'), e.resume ?? -1);
       case 'session-unsupported': return `dsa does not accept --session (older than pi-durable-subagents 1.0.31): runs start without it and are not listed in pi session ${e.session ?? '?'}${e.reason ? ` (${oneLine(e.reason)})` : ''}`;
       default: return oneLine(JSON.stringify(json));
@@ -473,7 +503,7 @@ export class Driver {
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
     const { runs, blobs, rejected, conflicts } = await this.observe(s, measuring);
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, measuring });
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, measuring, now: Date.now() });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
@@ -495,14 +525,21 @@ export class Driver {
       const e: LoopEvent = { event: 'drift-cleared' };
       this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
     }
+    /** F2.3: whether the disk is low this pass (checked once, before the first measurement it would start). */
+    let low: boolean | undefined;
     for (const a of actions) {
       if (this.stopping) break;
+      // F2.2: a notify with a `once` key (the environment back-off) is printed once per key.
+      if (a.do === 'notify' && a.once !== undefined) { if (this.facts.once.has(a.once)) continue; this.facts.once.add(a.once); }
       if (a.do === 'attest' || a.do === 'merge') {
         // K6: start it in the background; over `drive.measure`, or a second merge: skipped, decided again later.
         const inFlight = [...this.measuring.values()];
         if (inFlight.length >= cap || (a.do === 'merge' && inFlight.some(m => m.do === 'merge'))) continue;
         // Busy back-off: an attest that ended busy waits for the next timed or event pass.
         if (this.busyAt.get(a.node) === this.cycle) continue;
+        // F2.3: below `drive.min_free_mb` in the git common dir or the temp dir: no measurement starts this pass.
+        low ??= await this.diskLow(s, reports);
+        if (low) continue;
         const r = this.start(s, a.do, a.node);
         reports.push(r); this.emit(r, s);
         continue;
@@ -522,6 +559,29 @@ export class Driver {
     const head = (await ledger.read()).at(-1)?.hash;
     const open = Object.values(s.nodes).some(n => n.slot?.open && n.phase !== 'removed');
     return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting };
+  }
+
+  /**
+   * F2.3: checks the free space of the repository's git common dir and of os.tmpdir() against `drive.min_free_mb`;
+   * when low, emits the repo-level notify once per change (paths and limit) and returns true.
+   */
+  private async diskLow(s: State, reports: ActionReport[]): Promise<boolean> {
+    const min = minFreeMb(s.plan);
+    if (min <= 0) return false;
+    const common = await git.commonDir(this.root!).catch(() => undefined);
+    const low = await lowDisk([...(common ? [common] : []), tmpdir()], min), slot = reportKey({ node: DISK_NODE, scope: 'repo' });
+    if (!low.length) {
+      // Cleared: forget the records, so an identical later low disk prints and wakes again.
+      if (this.facts.disk !== undefined) { this.facts.disk = undefined; this.facts.printed.delete(`${slot}:notify`); this.facts.wakes.delete(slot); }
+      return false;
+    }
+    const key = `${min}\u0000${low.map(l => l.path).join('\u0000')}`;
+    if (this.facts.disk !== key) {
+      this.facts.disk = key;
+      const r: ActionReport = { do: 'notify', node: DISK_NODE, scope: 'repo', outcome: 'notify', text: diskLowText(low, min) };
+      reports.push(r); this.emit(r, s);
+    }
+    return true;
   }
 
   // ---------- measurements in flight (K6) ----------
@@ -601,7 +661,7 @@ export class Driver {
    */
   emit(r: ActionReport, s?: State): void {
     if (s && wakeReport(r) && r.scope !== 'repo' && s.nodes[r.node]) r.facts = factMark(s, r.node);
-    if (r.scope === 'repo' && r.do === 'notify') this.facts.drift = true;
+    if (r.scope === 'repo' && r.do === 'notify' && r.node === DRIFT_NODE) this.facts.drift = true;
     const rk = reportKey(r);
     if (!this.o.once && (r.outcome === 'notify' || r.outcome === 'busy')) {
       const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${rk}:${r.outcome}`;
@@ -915,7 +975,17 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
       /** H1.2: the ledger head the idle pass decided on; undefined when the last pass was not idle. */
       let idle: string | undefined;
       for (let burst = 0; burst < 20 && !driver.stopping; burst++) {
-        const r = await driver.pass();
+        let r: PassResult;
+        try { r = await driver.pass(); }
+        catch (e) {
+          // F2.4: a full disk (or quota) is the environment's: the driver does not exit; it reports, sleeps, continues.
+          if (!diskFullError(e)) throw e;
+          const ev: LoopEvent = { event: 'disk-full', error: e instanceof Error ? e.message : String(e), at: new Date().toISOString() };
+          say(reportText(ev), ev);
+          await driver.wait(o.diskFullMs ?? 60_000, stop.signal);
+          driver.tick();
+          continue;
+        }
         if (r.idle && !o.stay) { say('idle: nothing open and nothing ready', { event: 'idle' }); end.reason = 'idle'; return 0; }
         if (r.idle) { idle = r.head; break; }
         idleAt = undefined;
