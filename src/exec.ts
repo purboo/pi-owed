@@ -78,13 +78,13 @@ async function prepare<T>(step: () => Promise<T>): Promise<T> {
 }
 /**
  * F2.1 (ruling #1094): the lines an environment pattern is searched in: the last 50 non-empty output lines after
- * dropping TAP test points and subtest titles (`ok `, `not ok `, `# Subtest:`) and cargo `test … ok|FAILED` lines, so
- * a test name never counts as evidence.
+ * dropping TAP test points and subtest titles (`ok `, `not ok `, `# Subtest:`), node spec-reporter test titles (`✔ `,
+ * `✖ `, `▶ `; G3.4 0.12) and cargo `test … ok|FAILED` lines, so a test name never counts as evidence.
  */
 export function environmentLines(log: string): string[] {
   return log.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').split(/\r?\n|\r/).map(l => l.trimEnd()).filter(l => {
     const t = l.trimStart();
-    return t && !t.startsWith('ok ') && !t.startsWith('not ok ') && !t.startsWith('# Subtest:') && !/^test .* \.\.\. (?:ok|FAILED)\b/.test(t);
+    return t && !t.startsWith('ok ') && !t.startsWith('not ok ') && !t.startsWith('# Subtest:') && !/^[✔✖▶] /.test(t) && !/^test .* \.\.\. (?:ok|FAILED)\b/.test(t);
   }).slice(-50);
 }
 /**
@@ -92,8 +92,10 @@ export function environmentLines(log: string): string[] {
  * test (none parsed, or fail 0), and an environment pattern matches in `environmentLines`. A run with fail > 0 is a fail.
  */
 function diskFull(code: number | null, counts: Counts | undefined, log: string, what: string): void {
-  const m = code !== null && code !== 0 && (counts?.fail ?? 0) === 0 ? DISK_FULL.exec(environmentLines(log).join('\n')) : null;
-  if (m) { const t = lastLines(log); throw new EnvironmentError(`${m[0]}: ${what}; last output:${t.length ? t.map(l => `\n  ${l}`).join('') : ' (none)'}`); }
+  if (code === null || code === 0 || (counts?.fail ?? 0) !== 0) return;
+  const lines = environmentLines(log), m = DISK_FULL.exec(lines.join('\n'));
+  // G3.4 (0.12): the note shows the filtered lines the pattern matched (the last 5, each at most 200 characters).
+  if (m) { const t = lines.filter(l => DISK_FULL.test(l)).slice(-5).map(l => l.trim().slice(0, 200)); throw new EnvironmentError(`${m[0]}: ${what}; matched output:${t.map(l => `\n  ${l}`).join('')}`); }
 }
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   const start = Date.now();

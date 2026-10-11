@@ -320,19 +320,25 @@ export function rulingFollowUp(s: State, node: string, refused?: Refused): { mes
   if (!n || !slot || !ar || !writer) return undefined;
   const rules = undelivered(s, node, ar, writer, refused);
   if (!rules.some(r => r.nodes !== '*')) return undefined;
-  const last = lastSubmit(s, node), c = n.candidate ?? (last ? { ...last.facts, seq: last.seq } : undefined), entries = entriesOf(s);
+  return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
+    ...blockLines(s, node), `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`].join('\n') };
+}
+/**
+ * The block lines of a writer ruling message (`rulingFollowUp`, and the re-send after a resume, G3.5 0.12): the active
+ * blocks on the current candidate's keys (else the latest submit's) with their notes, then (0.8, L3.1) the node's flaky
+ * blocks whatever candidate they came from (the ruling may ask to fix the test); each group under its header.
+ */
+function blockLines(s: State, node: string): string[] {
+  const n = s.nodes[node]!, last = lastSubmit(s, node), c = n.candidate ?? (last ? { ...last.facts, seq: last.seq } : undefined), entries = entriesOf(s);
   const blocks = c ? n.blocks.filter(b => b.state === 'active' && b.key === c.keys[b.obligation]) : [];
   const line = (b: Block): string => {
     const e = entries.find(x => x.seq === b.seq);
     const note = e?.kind === 'review' ? e.note ?? '' : e?.kind === 'obs' ? e.note ?? `exit ${e.exit}` : '';
     return `- #${b.seq} ${b.obligation}${b.kind === 'judgment' ? ` by ${e?.by ?? '?'} rank ${b.rank}` : ''}: ${oneLine(note)}`;
   };
-  // 0.8 (L3.1): the node's flaky blocks too (whatever candidate they came from): the ruling may ask to fix the test.
   const notes = blocks.map(line), flaky = n.blocks.filter(b => b.state === 'flaky').map(line);
-  return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
-    ...(notes.length ? [`Active blocks on your candidate ${c!.commit} (submit #${c!.seq}):`, ...notes] : []),
-    ...(flaky.length ? [`Flaky blocks of ${node} (an attribution rerun of the failing content passed):`, ...flaky] : []),
-    `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`].join('\n') };
+  return [...(notes.length ? [`Active blocks on your candidate ${c!.commit} (submit #${c!.seq}):`, ...notes] : []),
+    ...(flaky.length ? [`Flaky blocks of ${node} (an attribution rerun of the failing content passed):`, ...flaky] : [])];
 }
 /**
  * 0.8 (L3.1): at the stalled point of a candidate whose only debt is `rulings` (every reviewer run of it sealed), the
@@ -490,10 +496,12 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
   const taken = open.map(n => writes(n.id));
+  // G3.6 (0.12, review #1089): a removed node's open slot (its writer may still run) counts toward `max` until abandoned.
+  const removedOpen = Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'removed').length;
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
     const owner = ownerNeeded(s, n.id);
     if (owner) { out.push(ownerNotify(s, n.id, owner)); continue; }
-    if (taken.length >= opts.max || !plan.nodes.some(x => x.id === n.id) || taken.some(w => writesOverlap(writes(n.id), w))) continue;
+    if (taken.length + removedOpen >= opts.max || !plan.nodes.some(x => x.id === n.id) || taken.some(w => writesOverlap(writes(n.id), w))) continue;
     out.push({ do: 'dispatch', node: n.id });
     taken.push(writes(n.id));
   }
@@ -571,7 +579,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       // A resume after that follow-up starts a new wait: deliver the writer rulings again instead of repeating the halt.
       if (sent) {
         const rules = s.rules.filter(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last!.seq);
-        return send(writer, 'follow-up', 'ruling', [`Parent rulings for ${id} (apply them; they override your packet):`, ...rules.map(r => `#${r.seq} (${(r.nodes as string[]).join(', ')}): ${oneLine(r.text)}`), `Then commit and run \`owed submit ${id}\` (the same commit may be submitted again).`].join('\n'), carried(rules));
+        // G3.5 (0.12): with the same active/flaky block lines as `rulingFollowUp`.
+        return send(writer, 'follow-up', 'ruling', [`Parent rulings for ${id} (apply them; they override your packet):`, ...rules.map(r => `#${r.seq} (${(r.nodes as string[]).join(', ')}): ${oneLine(r.text)}`), ...blockLines(s, id), `Then commit and run \`owed submit ${id}\` (the same commit may be submitted again).`].join('\n'), carried(rules));
       }
     } else {
       const steer = rulingSteer(s, n, ar, live, view);

@@ -521,12 +521,17 @@ It is never in the ready list, `dispatch` is refused (`dispatch requires a ready
 node with no open slot`), status shows it
 under `removed from the plan` and leaves its items out of the pending queue, and
 the driver never selects it (no dispatch, and no action on an open slot it may
-still have; abandon that slot). Adding the node to the plan again recomputes its
+still have; abandon that slot). `abandon` is the one entry kind `validateDraft`
+accepts on a removed node (0.12, ruling #1176): `owed abandon <node>` closes
+its open slot without re-adding the node (the attempt must be the open slot's);
+every other entry naming it is still refused (`Node <id> does not exist`).
+Until then the open slot counts toward `drive.max` (§12.7). Adding the node to the plan again recomputes its
 phase as before. `dependents` (transitive dependents) is computed once
 per plan. A deep-frozen plan from the lookup (ops' plan cache) is shared by the
 state instead of cloned. The State, queries, views and `validateDraft` decisions
-are those of the 0.10 reducer (test/perf.test.ts compares them with a frozen
-copy at every k-th prefix of fuzz, synthetic and real ledgers).
+are those of the 0.10 reducer, except for removed-node `abandon` above
+(test/perf.test.ts compares them with a frozen copy at every k-th prefix of
+fuzz, synthetic and real ledgers, allowing only that validation difference).
 
 ### 6.1 Node lifecycle
 - `ready` ⟺ every dep has a `merge` entry, node not merged, no open slot.
@@ -598,7 +603,13 @@ invalidate candidates; an omitted or false `writer` preserves ordinary rulings.
 The next action for a sealed writer is a `ruling` follow-up carrying the ruling;
 a running writer receives a `ruling` steer. Reviewers of the invalidated
 candidate are obsolete. Delivering the ruling does not acknowledge it: the
-new candidate still owes the normal reviewer acknowledgment.
+new candidate still owes the normal reviewer acknowledgment. When the writer
+finishes that ruling follow-up without submitting, the driver halts; after a
+`resume` it sends the writer rulings again (`Parent rulings for <node> (apply
+them; they override your packet):`, the rulings, then — 0.12, G3.5 — the same
+active and flaky block lines as the ruling follow-up of §12.5, then the submit
+instruction). Compatibility: owed < 0.11 cannot replay a ledger with a ruling
+carrying `writer`, nor one with a `send` of reason `verdict` (§12.5).
 
 ### 6.3 Status of an item
 - Executor verdicts on the same item join in the lattice ⊥ < pass, fail < ⊤
@@ -1005,7 +1016,8 @@ changed; retry`): they decide a trunk move on what they measured.
   whole preparation, touch included. For example, in the command that builds, use
   `export CARGO_TARGET_DIR="$OWED_TREE/../target-$(basename "$OWED_TREE")"`;
   `exec.env` values do not expand shell variables. `touch` has no effect on fresh
-  trees. A missing or broken tree is recreated (`git worktree add -f
+  trees. `git.reuseHooks.beforeTouch` is a test-only seam (tests inject a
+  failure right before the touch); it is not a supported interface. A missing or broken tree is recreated (`git worktree add -f
   --detach`); a failure to prepare one falls back to a fresh tree with a
   one-line note in the observation log and never fails the measurement. The end
   of a run releases the lease and keeps the tree. Each strength mutant prepares
@@ -1029,10 +1041,12 @@ verdict, no block) with a note beginning `environment: `:
   `fail` 0), and where `ENOSPC`, `No space left on device` or `Disk quota
   exceeded` matches in the last 50 non-empty lines of the captured output after
   dropping TAP test points and subtest titles (lines starting, after
-  indentation, with `ok `, `not ok ` or `# Subtest:`) and cargo `test … ok|FAILED`
+  indentation, with `ok `, `not ok ` or `# Subtest:`), node spec-reporter test
+  titles (`✔ `, `✖ `, `▶ `; 0.12, G3.4) and cargo `test … ok|FAILED`
   lines (ruling #1094: a test name is never evidence): note `environment:
-  <matched text>: command exited <code>; last output:` plus the last 5 output
-  lines (as in item 2). A run whose counts report `fail` > 0 is a `fail`, never
+  <matched text>: command exited <code>; matched output:` plus the last 5 of
+  those filtered lines in which the pattern matched (0.12: not the unfiltered
+  tail), one per line, indented two spaces, each at most 200 characters. A run whose counts report `fail` > 0 is a `fail`, never
   environment; a passing run, a timeout or a signal is unaffected;
 - a failure before the command runs: tree preparation (worktree add,
   reused-tree reset/checkout, the closure and test overlays), a spawn failure
@@ -1505,7 +1519,8 @@ records `channel: flag`. Under `OWED_CONFIRM=owner` they prompt on a TTY as in
 0.4.1 and refuse without one unless `--i-am-owner`. `plan` takes `--note TEXT`
 (required for a delegated downgrade). In a pi-durable-subagents call owner and
 parent commands are refused (§2.1). Exit codes: 0 ok, 1 refused
-by a guard (message says which obligation), 2 usage error, 3 internal error,
+by a guard (message says which obligation; also code `stale`, stderr `Stale:
+<message>`, 0.12), 2 usage error, 3 internal error,
 75 busy (a lock is held: the node's attest is already running, or a lock wait
 timed out, §7.11; stderr `Busy: <message>`; retry later), 130/143 aborted by a
 signal. With `--json` a failing command also prints one line `{"error":
@@ -1905,6 +1920,18 @@ its `by` is not `parent:drive`, the op records nothing and throws
 `OwedError` code `stale`; for a send the dsa call is not made either. The
 driver reports outcome `stale` (`--json`: `{"do":…,"outcome":"stale"}`; never
 a halt, never a wake) and the next pass decides again on the new state.
+A re-send of a recorded send (row 4: no new entry) decided on S is checked too
+(0.12, G3.3, `ops.planChangedSince`): when a `plan` entry with seq > S removed
+the node from the plan or changed its spec, nothing is sent and the outcome is
+`stale` as above (plan entries name no node, so this compares the node's spec
+before and after each later plan entry). Should `stale` (or 0.12's `version`)
+ever reach the CLI or the `owed drive` exit code, it is a refusal: exit 1,
+stderr `Stale: <message>`, never `Internal error`/exit 3 (0.12, G3.1).
+Compatibility: owed < 0.11 cannot replay a ledger with a `send` of reason
+`verdict` (its reducer refuses the unknown reason). owed < 0.12 cannot replay
+a ledger with an `abandon` of a node the current plan removed (ruling #1176:
+older reducers reject `Node <id> does not exist`). 0.12 adds no entry field or
+reason; other 0.12 ledgers remain replayable on 0.11.
 
 Verdict follow-up (0.11, F1.2). Rows 13-14: a sealed driver reviewer run of the
 current candidate whose obligations are still awaiting (no review by its slot
@@ -2217,8 +2244,12 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   retried once in the same pass before the `describe-failed` notify; a node
   waiting after `resume --after` gets no `describe-failed` notify. A failed
   send's report (outcome `error`, e.g. a ledger lock timeout) names the node,
-  send kind, reason and target run like any other send line. Nodes in phase
-  `removed` (§6) are not described and do not keep the driver from `idle`.
+  send kind, reason and target run like any other send line; its text line
+  names the node as a word (0.12, G3.6: `send <kind> (<reason>) for node
+  <node> to <rid>: error — …`). Nodes in phase
+  `removed` (§6) are not described and do not keep the driver from `idle`,
+  but an open slot of a removed node still counts toward `drive.max` until it
+  is abandoned (0.12, G3.6: its writer may still run).
 - **Persist before submit.** `launch`: `ops.launch` (idempotent on identical
   content) then `dsa run --request <rid> --spec -` with the exact spec bytes;
   `send`: `ops.send` (assigns the send id) then `dsa send --request <id>`; a
@@ -2245,6 +2276,20 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   in the pass that meets it; nothing in memory decides a later pass. What the
   process keeps are caches of dsa's answers (send ids dsa reported applied,
   follow-up generations) and what the loop last printed.
+- **Follow-up generations after a restart** (0.12, G3.2). What a follow-up
+  lets the driver expect is derived from the ledger, so a restarted driver
+  (or the next `--once` pass, e.g. the pi tool's) does not halt on a lagging
+  sealed view: for a sealed or pruned view with a reported generation and no
+  expectation in this process, the run's latest recorded follow-up `send` that
+  dsa reports applied and whose generation this process does not know is sent
+  again with the same id and stored bytes; dsa returns the first outcome.
+  The applied reply is cached per send id (`sentGen`) once per process. Later
+  entries naming the node (e.g. another reviewer's verdict) do not suppress
+  recovery of this run's generation (ruling #1198). The original reply
+  names the generation it went into. When that generation is newer than
+  the described one, the view is presented as `running` as below. A reply
+  without a generation (forwarded into running work), another outcome or a
+  failure leaves the view as described.
 - **Follow-up generations.** A follow-up applied in this process returns the
   generation it started; until `describe` reports that generation (highest
   `calls[].gen`), a sealed view of the run is the previous generation's and is
