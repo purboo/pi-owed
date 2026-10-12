@@ -141,6 +141,72 @@ test('FL2/FL3/FL5: CLI/tool arrays and expect, invariant aliases and unknown val
   } finally {await r.cleanup();}
 });
 
+test('FL3 review #1273: pending report freezes old accepted or unmeasured candidates; terminal and parent paths still work', () => {
+  const accepted = () => {
+    const r = rig(); r.submit(); const c = r.state().nodes.a!.candidate!;
+    r.add({ kind:'obs', by:'executor:owed', subject:'a', obligation:'writes', key:c.keys.writes!, verdict:'pass', exit:0, durationMs:1, commit:c.commit, base:c.base });
+    assert.equal(r.state().nodes.a!.accepted,true);
+    r.resume({ expect:'report' }); r.record(r.act()!); return r;
+  };
+  const r = accepted();
+  for (const state of ['queued','running'] as const) assert.equal(r.act({state}),undefined,`${state} report must not merge the old candidate`);
+  const unmeasured = rig(); unmeasured.submit(); unmeasured.resume({expect:'report'}); unmeasured.record(unmeasured.act()!);
+  assert.equal(unmeasured.act({state:'running'}),undefined,'no attest of the old candidate while report runs');
+  assert.equal(r.act({state:'asking',questions:[{qid:'q',rev:1,question:'parent decision?'}]})?.do,'notify');
+  const report = r.act({result:'findings'}); assert.ok(report?.do==='notify'); assert.ok(report.reportedResume !== undefined);
+  assert.equal(r.act({status:'failed',error:'report failed'})?.do,'halt');
+  const submitted = accepted(); submitted.submit(); assert.equal(submitted.act({state:'running'})?.do,'attest','new submit releases the report');
+  const resumed = accepted(); resumed.resume(); assert.equal(resumed.act({state:'running'})?.do,'merge','parent resume restores the normal accepted route');
+  const abandoned = accepted(); abandoned.add({kind:'abandon',by:'parent:main',node:'a',attempt:1,reason:'stop report'}); assert.equal(reducer.reportRequest(abandoned.state(),'a'),undefined);
+});
+
+test('FL3 review #1273: fake dsa report generation stays queued/running across passes without merge or slot close', {timeout:120_000}, async () => {
+  const r = await repo(); let driver: runtime.Driver | undefined;
+  try {
+    await r.put('README','x'); await r.commit(); const p = basePlan(); p.nodes = [p.nodes[0]!];
+    await ops.init({cwd:r.cwd,as:{role:'owner',id:'pi'},channel:'delegated',plan:JSON.stringify(p),measure:false});
+    const slot = await ops.dispatch({cwd:r.cwd,as:{role:'parent',id:'main'},node:'a'});
+    await commitAt(slot.worktree,{'a/x':'accepted candidate'});
+    await ops.submit({cwd:slot.worktree,as:{role:'writer',id:'a#1'},node:'a'});
+    await ops.attest({cwd:r.cwd,node:'a'}); assert.equal((await ops.status({cwd:r.cwd})).nodes.a!.accepted,true);
+    const resume = await ops.resume({cwd:r.cwd,as:{role:'parent',id:'main'},node:'a',expect:'report'});
+    class Pending extends Dsa {
+      generation = 0; state: RunView['state'] = 'sealed'; sent = new Map<string,number>();
+      override async inspect(rid:string) { return {view:{rid,state:this.state,status:'ok',result:'final report'},gen:this.generation}; }
+      override async run() { return {outcome:'applied' as const,wid:'w',created:true,spec_digest:'s'}; }
+      override async send(id:string) { let generation = this.sent.get(id); if(generation === undefined) { generation = 1; this.sent.set(id,generation); this.state = 'queued'; } return {outcome:'applied' as const,generation,spec_digest:'s'}; }
+      override async request() { return {state:'applied' as const}; }
+    }
+    const fake = new Pending({bin:join(r.root,'no-dsa')}), logs:string[] = [];
+    driver = new runtime.Driver({cwd:r.cwd,max:1,dsa:fake,json:true,once:true,log:l=>logs.push(l)});
+    await driver.pass(); const sent = await driver.pass(); assert.ok(sent.actions.some(a=>a.do==='send' && a.reason==='report'));
+    const ledger = await Ledger.open(r.cwd), count = (await ledger.read()).length;
+    // Also exercise the stale sealed generation: the applied report has generation 1, describe still says 0.
+    for (const [state, generation] of [['sealed',0],['queued',1],['running',1],['running',1],['running',1]] as const) {
+      fake.state = state; fake.generation = generation; const pass = await driver.pass();
+      assert.equal(pass.actions.some(a=>a.do==='merge' || a.do==='attest'),false,`${state} generation ${generation}: no old-candidate measurement`);
+      assert.equal(driver.measuring.size,0); assert.equal(pass.idle,false,'pending report remains live');
+      const status = await ops.status({cwd:r.cwd}); assert.equal(status.nodes.a!.slot!.open,true); assert.equal(status.nodes.a!.merged,undefined);
+      assert.equal((await ledger.read()).length,count,'no merge, halt, rebase or extra send while pending');
+    }
+    fake.state = 'asking'; const ask = await driver.pass(); assert.ok(ask.actions.some(a=>a.do==='notify')); assert.equal(driver.measuring.size,0);
+    fake.state = 'sealed'; const reported = await driver.pass(); assert.ok(reported.actions.some(a=>a.do==='notify')); assert.match(logs.join('\n'),/final report/);
+    assert.deepEqual((await ops.status({cwd:r.cwd})).reported,[{node:'a',resume:resume.entry.seq}]);
+    assert.equal((await ledger.read()).length,count); assert.equal((await ops.status({cwd:r.cwd})).nodes.a!.slot!.open,true);
+  } finally {
+    if(driver) { driver.stopping = true; driver.abort.abort(); await driver.settle(); }
+    await r.cleanup();
+  }
+});
+
+test('FL1 review nit: implicit-only wait names dependency merges, explicit and composed wait text stays accurate', () => {
+  const r = rig(); r.plan(p=>{p.nodes[0]!.deps=['b','c'];});
+  const text = views.renderReceipt(views.receipt(r.state(),r.entries,'a'));
+  assert.ok(!text.includes('when  merges'),text); assert.match(text,/the driver acts again when b, c merge/);
+  r.resume({after:'b'}); assert.match(views.renderReceipt(views.receipt(r.state(),r.entries,'a')),/when b, c merge/);
+  const explicit = rig(); explicit.resume({after:'b'}); assert.match(views.renderReceipt(views.receipt(explicit.state(),explicit.entries,'a')),/when b merges or after another resume/);
+});
+
 test('FL3: changing the node or abandoning releases the receipt, unrelated plans do not; report preserves rebase instruction', () => {
   const r=rig(), e=r.resume({expect:'report'}); r.record(r.act()!);
   r.plan(p=>{p.nodes[1]!.brief='unrelated';}); assert.equal(reducer.reportRequest(r.state(),'a')?.resume,e.seq);
