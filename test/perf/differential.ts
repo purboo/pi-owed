@@ -100,14 +100,23 @@ export function variants(d: Draft, nodes: string[]): Draft[] {
   return out;
 }
 export interface Mismatch { at: number; what: string; base: string; cur: string }
-/**
- * The one intended decision change since 0.10 (0.12, ruling #1176): `abandon` on a node the current plan removed is
- * no longer refused as `Node <id> does not exist`; every other error of the draft stays the same.
- */
+/** Intended changes since 0.10: removed-node abandon (0.12), and AH2's restricted driver abandon (0.14). */
 export function intendedChange(s: State, d: Draft, base: unknown, cur: unknown): boolean {
-  if (d.kind !== 'abandon' || s.nodes[d.node]?.phase !== 'removed' || !Array.isArray(base) || !Array.isArray(cur)) return false;
-  const gone = `Node ${d.node} does not exist`;
-  return base.includes(gone) && canonical(base.filter(x => x !== gone)) === canonical(cur);
+  if (!Array.isArray(base) || !Array.isArray(cur)) return false;
+  let expected = [...base];
+  if (d.by === 'parent:drive') {
+    const old = `${d.kind} by parent:drive: the driver records only dispatch, launch, send, halt, rebase`;
+    if (d.kind !== 'abandon') expected = expected.map(x => x === old ? `${old}, abandon` : x);
+    else {
+      expected = expected.filter(x => x !== old);
+      const n = s.nodes[d.node], dispatched = BASE.r.entriesOf(s).find(e => e.kind === 'dispatch' && e.node === d.node && e.attempt === d.attempt);
+      if (dispatched?.by !== 'parent:drive' || n?.runs.find(r => r.attempt === d.attempt)?.launches.some(l => l.role === 'writer')) expected.push('driver abandon requires its own empty slot with no writer launch');
+      if (s.plan.nodes.some(n => n.id === d.node)) expected.push('driver abandon requires a node that left the plan; live nodes are not stale empty slots');
+      if (typeof d.reason !== 'string' || !d.reason.trim()) expected.push('driver abandon requires a stale cause');
+    }
+  }
+  if (d.kind === 'abandon' && s.nodes[d.node]?.phase === 'removed') expected = expected.filter(x => x !== `Node ${d.node} does not exist`);
+  return canonical(expected) === canonical(cur);
 }
 /**
  * Reduces `entries` with both reducers at every k-th prefix and the full ledger; compares snapshots and the

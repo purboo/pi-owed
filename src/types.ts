@@ -151,6 +151,8 @@ export interface ReviewEntry extends Base { kind: 'review'; node: string; attemp
 export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[] }
 export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string }
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
+/** AH: appended atomically after the abandon it names; older owed refuses this new kind. */
+export interface HoldEntry extends Base { kind: 'hold'; node: string; abandon: number; reason?: string }
 /** Moves the open slot of `node` from base `from` to the current trunk `base`; the open candidate is invalidated. */
 export interface RebaseEntry extends Base { kind: 'rebase'; node: string; attempt: number; base: string; from: string }
 export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts }
@@ -191,9 +193,9 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  * 0.8 (L1): the parent or owner clears the node's driver halt without an obligation and starts a new repair epoch;
  * `after`: the node waits until that node merges. Strict fields.
  */
-export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string }
+export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold' }
 export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
-export type Entry = SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
+export type Entry = SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
@@ -229,7 +231,7 @@ export interface Block {
 export interface SlotRebase { seq: number; from: string; base: string; previous?: { base: string; commit: string; submit: number } }
 export interface Slot { attempt: number; base: string; branch: string; worktree: string; writer: string; dispatchSeq: number; rulings_seen: number; open: boolean; rebase?: SlotRebase }
 /** `removed` (F4, app #27): the node is in the state but not in the current plan and not merged. */
-export type Phase = 'blocked' | 'ready' | 'dispatched' | 'submitted' | 'accepted' | 'merged' | 'removed';
+export type Phase = 'blocked' | 'ready' | 'dispatched' | 'submitted' | 'accepted' | 'merged' | 'removed' | 'held';
 export interface NodeState {
   id: string;
   phase: Phase;
@@ -242,6 +244,8 @@ export interface NodeState {
   dependents: number;         // transitive dependents count (for ready ordering)
   writers: string[];          // every writer principal that ever held a slot of this node
   merged?: { seq: number; commit: string };
+  /** AH: seq of the abandon that holds this node until resume or removal from the plan. */
+  held?: number;
   /** Driver launches and sends per attempt, in attempt order (only attempts with a launch or send). */
   runs: AttemptRuns[];
   /** Active driver halt on the current open attempt (see reducer `halted`). */

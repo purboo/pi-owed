@@ -728,6 +728,7 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
   owner(o); const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
   return ledger.withLock(() => retryCas(ledger, async state => {
     const n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
+    if (n.held !== undefined) throw new OwedError(`${o.node} is held by abandon #${n.held}; release it with owed resume ${o.node}`);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('Node id is unsafe for a worktree path','usage');
     // Overlapping writes of concurrent slots produce conflicts or ambiguous ownership; refuse unless explicitly allowed.
     const overlaps = overlapping(state,o.node);
@@ -850,7 +851,45 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
 /** K2.3: what the recorded waiver `entry` means, from the ledger state right after it (a later entry cannot relabel it; see views.waiverText). */
 export async function waiverMeaning(o: Context & { entry: Entry }): Promise<string> { const e = o.entry; if (e.kind !== 'waive') throw new OwedError('not a waiver','internal'); const {entries,lookup} = await load(await Ledger.open(o.cwd)); return waiverText(reduce(entries.filter(x => x.seq <= e.seq),lookup),e); }
 export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,s => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items.map(i => ({ ...i, id: invariantId(s.plan,i.id) })),reason:o.reason})); }
-export async function abandon(o: Actor & { node:string; reason:string }): Promise<Entry> { return mutate(o,s => ({kind:'abandon',by:by(o),channel:o.channel,node:o.node,attempt:node(s,o.node).slot?.attempt ?? 0,reason:o.reason})); }
+export async function abandon(o: Actor & { node:string; reason:string; hold?: boolean }): Promise<Entry> {
+  owner(o); const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => {
+    const latest = await load(ledger), s = latest.state;
+    const d: Draft = { kind:'abandon', by:by(o), channel:o.channel, node:o.node, attempt:node(s,o.node).slot?.attempt ?? 0, reason:o.reason };
+    guard(s,d);
+    const drafts: Draft[] = [d];
+    if (o.hold) {
+      const h: Draft = { kind:'hold', by:by(o), channel:o.channel, node:o.node, abandon:s.seq + 1, ...(o.reason ? { reason:o.reason } : {}) };
+      guard(replayed(latest,drafts),h); drafts.push(h);
+    }
+    return (await ledger.append(drafts))[0]!;
+  });
+}
+
+/** AH2: close only the driver's own never-launched attempt after a stale launch; dispatch lock precedes ledger lock. */
+export async function closeStaleSlot(o: Context & { node:string; attempt:number }): Promise<string | undefined> {
+  const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => ledger.withLock(async () => {
+    const { state:s, entries } = await load(ledger), n = s.nodes[o.node], slot = n?.slot;
+    const d = entries.find(e => e.kind === 'dispatch' && e.node === o.node && e.attempt === o.attempt);
+    if (!slot || slot.attempt !== o.attempt || d?.by !== DRIVER || n!.runs.find(r => r.attempt === o.attempt)?.launches.some(l => l.role === 'writer')) return undefined;
+    const cause = !s.plan.nodes.some(x => x.id === o.node) ? 'node left the plan' : n!.held !== undefined ? `held by abandon #${n!.held}` : !slot.open ? 'attempt was abandoned' : undefined;
+    if (!cause) return undefined;
+    if (slot.open) {
+      const a: Draft = { kind:'abandon', by:DRIVER, node:o.node, attempt:o.attempt, reason:`stale writer launch: ${cause}` };
+      guard(s,a); await ledger.append([a]);
+    }
+    // No launch intent means no writer could have run through the driver. Keep commits, dirty/locked trees and
+    // ambiguous branch registrations; never force removal. The ref deletion compares against the recorded base.
+    const trees = await git.listWorktrees(root), tree = trees.find(w => resolve(w.path) === resolve(slot.worktree));
+    const nested = trees.some(w => w !== tree && resolve(w.path).startsWith(`${resolve(slot.worktree)}${sep}`));
+    if (tree && !tree.locked && !nested && await git.revParse(tree.path,'HEAD') === slot.base && await git.isClean(tree.path)) {
+      const r = await git.git(root,['worktree','remove',tree.path],{ allowFail:true });
+      if (!r.code && !entries.some(e => e.kind === 'dispatch' && e.branch === slot.branch && (e.node !== o.node || e.attempt !== o.attempt)) && !(await git.listWorktrees(root)).some(w => w.branch === `refs/heads/${slot.branch}`)) await git.git(root,['update-ref','-d',`refs/heads/${slot.branch}`,slot.base],{ allowFail:true });
+    }
+    return cause;
+  }), 'dispatch');
+}
 export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }
 /** Moves the open slot of a node onto the current trunk (parent/owner or the slot writer); the writer then rebases the same worktree and submits again. `since`: as for launch (F1). */
 export async function rebase(o: Actor & { node:string; since?: number }): Promise<RebaseResult> {
@@ -1127,6 +1166,8 @@ export async function launch(o: Actor & { node: string; attempt: number; role: R
   return ledger.withLock(async () => {
     const { state, entries } = await load(ledger);
     decidedOn(entries, o.node, o.since);
+    const dispatched = entries.some(e => e.kind === 'dispatch' && e.node === o.node && e.attempt === o.attempt);
+    if (by(o) === DRIVER && dispatched && (!state.plan.nodes.some(n => n.id === o.node) || state.nodes[o.node]?.held !== undefined || !state.nodes[o.node]?.slot?.open || state.nodes[o.node]?.slot?.attempt !== o.attempt)) throw new OwedError(`stale: writer slot of ${o.node} attempt ${o.attempt} was removed, held or abandoned; nothing launched`, 'stale');
     const prior = entries.find((e): e is LaunchEntry => e.kind === 'launch' && e.rid === o.rid);
     if (prior) {
       if (prior.node !== o.node || prior.attempt !== o.attempt || prior.role !== o.role || prior.spec !== spec || canonical(prior.labels) !== canonical(o.labels)) throw new OwedError(`launch ${o.rid} is already recorded (#${prior.seq}) with other content`);
@@ -1156,6 +1197,10 @@ type ResumeArgs = Actor & { node: string; after?: string | string[]; expect?: 'r
 function resumeDraft(o: ResumeArgs, s: State): Extract<Draft, { kind:'resume' }> {
   if (o.as.role !== 'parent' && o.as.role !== 'owner') throw new OwedError(`resume insufficient permissions; requires parent/owner (got ${o.as.role})`);
   const n = node(s,o.node);
+  if (!n.slot?.open && n.held !== undefined) {
+    if (o.after !== undefined || o.expect !== undefined) throw new OwedError('hold release does not take --after or --expect; dispatch a new attempt first', 'usage');
+    return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot!.attempt, release:'hold', ...(o.note ? { note:o.note } : {}) };
+  }
   if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
   const unruled = unruledBlocks(s,o.node);
   if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}), so the driver would halt again at once; record it with owed rule --nodes ${o.node} "<decision>" (the ruling also clears the halt)`);
