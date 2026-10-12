@@ -2,7 +2,7 @@ import { matchesGlob } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
-import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
+import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades } from './plan.ts';
 import { execKey } from './git.ts';
 import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
 
@@ -124,7 +124,23 @@ export function overlapping(s: State, id: string): string[] {
 }
 /** Detail of a satisfied `rulings` item when no ruling is in scope for the node (shown as "no rulings apply"). */
 export const NO_RULINGS = 'no ruling is in scope for this node';
-function item(s: State, subject: string, obligation: string, key: string): ItemView {
+/** KR2: a merging fix node cannot use its own exemptions, even before its merge is recorded. */
+export function activeKnownRed(s: State, invId: string, merging?: string): { test: string; fix: string }[] {
+  return (s.plan.invariants.find(i => i.id === invId)?.known_red ?? []).filter(e => e.fix !== merging && !!nodeSpec(s, e.fix) && !s.nodes[e.fix]?.merged);
+}
+/** KR3: names excluded from IR2's trunk comparison when their fix node merges. */
+export function fixOwnedKnownRed(s: State, invId: string, merging: string): string[] {
+  return (s.plan.invariants.find(i => i.id === invId)?.known_red ?? []).filter(e => e.fix === merging).map(e => e.test);
+}
+/** Seq of the current plan law (genesis or latest plan), never part of an obligation key. */
+export function knownRedPlanSeq(s: State): number { return context(s).lastPlan ?? context(s).genesis?.seq ?? -1; }
+function knownRedItem(s: State, obligation: string, failures: ObsEntry[], merging?: string): string | undefined {
+  const entries = activeKnownRed(s, obligation.slice(4), merging), names = [...new Set(failures.flatMap(e => e.failed ?? []))];
+  if (!failures.length || !failures.every(testOnlyFailure) || !names.every(name => entries.some(e => e.test === name))) return undefined;
+  const fixes = [...new Set(entries.filter(e => names.includes(e.test)).map(e => e.fix))];
+  return `${obligation} known red: ${names.join(', ')} (fix: ${fixes.join(', ')}; plan #${knownRedPlanSeq(s)})`;
+}
+function item(s: State, subject: string, obligation: string, key: string, merging?: string): ItemView {
   const node = s.nodes[subject];
   const spec = nodeSpec(s, subject);
   const blocks = node?.blocks.filter(b => b.obligation === obligation && active(b)) ?? [];
@@ -167,7 +183,11 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
     const fail = obs.some(e => e.verdict === 'fail');
     out.evidence = obs.map(e => e.seq);
     if (pass && fail) Object.assign(out, { mark: '⊤', discharger: 'owner', detail: `${obligation} conflicting pass and fail observations on the same key` });
-    else if (fail) Object.assign(out, { mark: '✘', discharger: 'writer', detail: `${obligation} current content failed` });
+    else if (fail) {
+      const detail = subject === 'trunk' && obligation.startsWith('inv:') ? knownRedItem(s, obligation, obs.filter(e => e.verdict === 'fail'), merging) : undefined;
+      if (detail) return { ...out, status: 'W', mark: '⚠', discharger: undefined, detail, evidence: [...out.evidence, knownRedPlanSeq(s)] };
+      Object.assign(out, { mark: '✘', discharger: 'writer', detail: `${obligation} current content failed` });
+    }
     else if (pass) out.status = 'E';
   }
   if (blocks.length) {
@@ -718,7 +738,7 @@ const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64
  */
 function execChanged(prev: Plan, next: Plan): boolean { return canonical(execKey(prev) ?? {}) !== canonical(execKey(next) ?? {}); }
 function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
-  const result: Downgrade[] = [];
+  const result: Downgrade[] = knownRedDowngrades(prev, next);
   const add = (node: string, what: string): void => { result.push({ node, what }); };
   const checks = (node: string, a: Plan['invariants'], b: Plan['invariants']): void => {
     for (const c of a) {
@@ -1397,9 +1417,11 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
   }
   const invItems = s.plan.invariants.map(i => {
     const key = m.state.invKeys[i.id] ?? '';
-    const v = item(s, 'trunk', `inv:${i.id}`, key);
-    if (!key) reasons.push(`invariant ${i.id} missing merge obligation key`);
-    else if (key !== s.trunk.invKeys[i.id] && v.status !== 'E') {
+    const v = item(s, 'trunk', `inv:${i.id}`, key, id);
+    const owned = fixOwnedKnownRed(s, i.id, id), stillFail = [...new Set(counted(s, 'trunk', `inv:${i.id}`, key).filter(e => e.verdict === 'fail').flatMap(e => (e.failed ?? []).filter(name => owned.includes(name))))];
+    if (stillFail.length) reasons.push(`${id} is the fix node of known-red ${stillFail.join(', ')} on inv:${i.id}, which still fail on the merge result`);
+    else if (!key) reasons.push(`invariant ${i.id} missing merge obligation key`);
+    else if (key !== s.trunk.invKeys[i.id] && v.status === 'D') {
       const d = s.deferred.findLast(d => d.node === id && d.id === i.id && d.key === key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
       if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner deferred, still debt` });
       else {

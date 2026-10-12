@@ -14,7 +14,7 @@ function parts(path: string, o: EditFields): string[] {
   const p = path.split('.');
   if (p.some(x => !x || ['__proto__','prototype','constructor'].includes(x))) usage(`Invalid edit path: ${path}`);
   if (o.invariant !== undefined) {
-    if (p.length !== 1 || !checkFields.includes(p[0]!)) usage(`Invalid invariant edit path: ${path}; use a check field other than id`);
+    if (p.length !== 1 || ![...checkFields, 'known_red'].includes(p[0]!)) usage(`Invalid invariant edit path: ${path}; use a check field other than id`);
   } else {
     const simple = ['title','brief','deps','writes','later'];
     const valid = p.length === 1 && simple.includes(p[0]!) || p.length === 2 && p[0] === 'review' && ['count','min_rank'].includes(p[1]!) || p[0] === 'drive' && p.length >= 2 || p[0] === 'checks' && (p.length === 2 || p.length === 3 && checkFields.includes(p[2]!));
