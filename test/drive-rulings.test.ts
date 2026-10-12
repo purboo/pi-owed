@@ -132,7 +132,7 @@ test('D22.2a: the ruling steer is the lowest row: attest, repairs and a fence go
   for (let i = 0; i < 3; i++) {
     const a = act(r, runs({ lastFence: fence }), { applied: applied(r) });
     assert.ok(a?.do === 'send' && a.reason === 'ruling' && a.rulings === later.seq, JSON.stringify(a));
-    assert.equal(a.message.includes(`#${late.seq} `), a.rid === W(), 'the writer also lacks `late`; the reviewers had it in their packet');
+    assert.ok(a.message.includes(`#${late.seq} `), 'AN3: reviewer acknowledgment hints include all in-scope rulings, including packet rulings');
     order.push(a.rid); r.record(a);
   }
   assert.deepEqual(order, [W(), R(1), R(2)]);
@@ -158,8 +158,8 @@ test('D22.2: a running reviewer gets rulings recorded after its launch, with the
   assert.equal(a?.do, 'notify');
   const b = act(r, runsOf(sealed, view(R(1), 'running'), view(R(2), 'running')));
   assert.deepEqual(b, { do: 'send', node: 'a', attempt: 1, rid: R(1), sendKind: 'steer', reason: 'ruling', rulings: late.seq,
-    message: ['New parent rulings for a:', `#${late.seq} (*): judge error bodies too`, `Judge the candidate against these rulings and record your review with --ack-rulings ${late.seq}.`].join('\n') });
-  assert.equal(rulingMessage('a', 'reviewer', [r.state().rules.find(x => x.seq === late.seq)!]), b.message);
+    message: ['New parent rulings for a:', `#${early.seq} (a): before the reviewer launch`, `#${late.seq} (*): judge error bodies too`, `Judge the candidate against these rulings and record your review with --ack-rulings ${late.seq}.`].join('\n') });
+  assert.equal(rulingMessage('a', 'reviewer', r.state().rules), b.message);
   r.record(b);
   const c = act(r, runsOf(sealed, view(R(1), 'running'), view(R(2), 'running')), { applied: applied(r) });
   assert.ok(c?.do === 'send' && c.rid === R(2) && c.rulings === late.seq);
