@@ -121,10 +121,10 @@ test('QT1 owner approval halt retains D25.6 owner text while evidence halts use 
   } finally { await r.cleanup(); }
 });
 
-function follower(r: Awaited<ReturnType<typeof fixture>>) {
+function follower(r: Awaited<ReturnType<typeof fixture>>, dsa?: Dsa) {
   const log = join(r.root, 'follow.jsonl'); writeFileSync(log, '');
   const got: string[] = [], busy = { value: true };
-  const f = new Follower({ log, repo: r.cwd, pid: process.pid, start: procStart(process.pid), busy: () => busy.value, revalidate: revalidator({ cwd: r.cwd }), deliver: c => got.push(c) });
+  const f = new Follower({ log, repo: r.cwd, pid: process.pid, start: procStart(process.pid), busy: () => busy.value, revalidate: revalidator({ cwd: r.cwd, dsa }), deliver: c => got.push(c) });
   const line = (o: object) => appendFileSync(log, `${JSON.stringify(o)}\n`);
   return { f, got, busy, line };
 }
@@ -141,7 +141,7 @@ function driftCheck(line: object) {
 }
 
 for (const legacy of [false, true]) {
-  test(`QT2 ${legacy ? 'legacy' : 'repo-scoped'} drift adopted before delivery is dropped and counted`, { timeout: 60_000 }, async () => {
+  test(`QT2 ${legacy ? 'legacy drift stays delivered' : 'repo-scoped drift is dropped and counted'} after adoption before delivery`, { timeout: 60_000 }, async () => {
     const r = await fixture(), follow = follower(r);
     try {
       const wake = await drift(r.cwd, legacy);
@@ -151,8 +151,13 @@ for (const legacy of [false, true]) {
       follow.busy.value = false;
       const message = await follow.f.step();
       assert.ok(message, 'the unrelated idle wake is still delivered');
-      assert.doesNotMatch(message, /moved outside owed/);
-      assert.match(message, /\n\(1 wake\(s\) resolved before delivery\)$/);
+      if (legacy) {
+        assert.ok(message.includes(wake.text), 'unscoped legacy drift is never dropped as drift');
+        assert.doesNotMatch(message, /resolved before delivery/);
+      } else {
+        assert.doesNotMatch(message, /moved outside owed/);
+        assert.match(message, /\n\(1 wake\(s\) resolved before delivery\)$/);
+      }
       assert.equal(follow.got.length, 1);
       assert.equal((await ops.status({ cwd: r.cwd })).drift, undefined);
       assert.doesNotMatch(`${renderStatus(await ops.status({ cwd: r.cwd }))}\n${renderBrief(await ops.brief({ cwd: r.cwd }))}`, /moved outside owed/);
@@ -193,10 +198,10 @@ test('QT2 failed ledger read keeps the drift wake at delivery', { timeout: 60_00
   } finally { follow.f.stop(); await r.cleanup(); }
 });
 
-test('QT2 restored ref drops even an unmarked legacy drift; advanced trunk seq drops an old wake despite new drift', { timeout: 60_000 }, async () => {
+test('QT2 restored ref drops even an unmarked repo-scoped drift; advanced trunk seq drops an old wake despite new drift', { timeout: 60_000 }, async () => {
   const r = await fixture();
   try {
-    const s = await stateOf(r.cwd), wake = await drift(r.cwd, true);
+    const s = await stateOf(r.cwd), wake = await drift(r.cwd);
     const { facts: _facts, ...unmarked } = wake;
     await git(r.cwd, ['update-ref', 'refs/heads/main', s.trunk.commit]);
     assert.deepEqual(await revalidator({ cwd: r.cwd })([driftCheck(unmarked)]), [false]);
@@ -208,6 +213,47 @@ test('QT2 restored ref drops even an unmarked legacy drift; advanced trunk seq d
     const current = { ...wake, facts: (await stateOf(r.cwd)).trunk.seq };
     assert.deepEqual(await revalidator({ cwd: r.cwd })([driftCheck(current)]), [true]);
   } finally { await r.cleanup(); }
+});
+
+test('QT2 unscoped plan node trunk open question is delivered when trunk ref equals ledger commit (#1378)', { timeout: 60_000 }, async () => {
+  const r = await fixture(plan({ id: 'trunk' }));
+  class Asking extends Dsa {
+    open = true;
+    override async inspect(rid: string) {
+      return { view: { rid, state: this.open ? 'asking' : 'running', questions: this.open ? [{ qid: 'q1', rev: 1, question: 'which port?' }] : [] } as RunView };
+    }
+  }
+  const dsa = new Asking(), follow = follower(r, dsa);
+  try {
+    await ops.dispatch({ cwd: r.cwd, node: 'trunk', as: parent });
+    const ledger = await Ledger.open(r.cwd), project = (await ledger.read())[0]!.hash.slice(0, 12);
+    const rid = runId(project, 'trunk', 1, 'writer');
+    await ops.launch({ cwd: r.cwd, as: DRIVE_PRINCIPAL, node: 'trunk', attempt: 1, role: 'writer', rid, spec: '{}', labels: runLabels(project, 'trunk', 1, 'writer') });
+    const lines: string[] = [], driver = new Driver({ cwd: r.cwd, dsa, session: null, json: true, log: l => lines.push(l) });
+    await driver.pass();
+    const wake = lines.map(l => JSON.parse(l)).find(l => l.do === 'notify' && l.node === 'trunk');
+    assert.ok(wake);
+    assert.equal(wake.scope, undefined);
+    assert.deepEqual([wake.rid, wake.qid, wake.rev], [rid, 'q1', 1]);
+    const s = await stateOf(r.cwd);
+    assert.equal((await git(r.cwd, ['rev-parse', 'refs/heads/main'])).stdout.trim(), s.trunk.commit);
+    assert.equal((await dsa.describe(rid)).questions?.length, 1, 'the question really is still open');
+    follow.line(wake);
+    assert.equal(await follow.f.step(), undefined, 'held while busy');
+    follow.busy.value = false;
+    const message = await follow.f.step();
+    assert.ok(message?.includes(wake.text), 'a current question on plan node trunk must be delivered');
+    assert.equal(follow.got.length, 1);
+    const check = classifyLine(JSON.stringify(wake)).check!;
+    assert.equal(check.drift, undefined);
+    assert.equal(check.node, 'trunk');
+    // Normal question and node revalidation still apply, independent of the trunk ref.
+    dsa.open = false;
+    assert.deepEqual(await revalidator({ cwd: r.cwd, dsa })([check]), [false], 'answered question is dropped');
+    dsa.open = true;
+    await ops.rule({ cwd: r.cwd, as: parent, nodes: ['trunk'], text: 'use port 8080' });
+    assert.deepEqual(await revalidator({ cwd: r.cwd, dsa })([check]), [false], 'advanced node fact drops the old wake');
+  } finally { follow.f.stop(); await r.cleanup(); }
 });
 
 test('QT2 failed trunk-ref read keeps a current drift wake', { timeout: 60_000 }, async () => {
