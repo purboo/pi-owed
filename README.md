@@ -32,7 +32,7 @@ For the standalone CLI:
 npm i -g pi-owed
 ```
 
-Reload pi after installing. `/owed` shows status; `/owed why <node>` explains an acceptance decision. Tools: `owed_status`, `owed_why`, `owed_report`, `owed_brief`, `owed_verify`, `owed_dispatch`, `owed_submit`, `owed_rebase`, `owed_attest`, `owed_review`, `owed_merge`, `owed_adopt`, `owed_abandon`, `owed_gc`, `owed_rule`, `owed_answer`, `owed_plan`, `owed_waive`, `owed_defer`, `owed_escape` and `owed_decoy`; each accepts an absolute `cwd` inside the target repository, so a session started elsewhere can drive it (docs/SPEC.md §11 lists the parameters). Owner confirmation dialogs show free text (notes, reasons, rulings, evidence) after the Repository and Identity lines, escaped onto one line. Those dialogs appear only under `OWED_CONFIRM=owner`, and wait at most `OWED_CONFIRM_TIMEOUT` seconds (default 120, `0` = no limit): a timeout records nothing (`Owner confirmation not given within N s; nothing was recorded.`). By default owner tools are delegated to the main agent (`owner:pi`, channel `delegated`, no dialog); `owed_plan` takes `note`, which a delegated downgrade requires. In a pi-durable-subagents call (`DSA_CALL`/`DSA_EXEC` set) owed refuses owner and parent acts in tools and CLI alike, and refuses a review or evidence on a node from inside that node's open slot worktree (run reviews from the repository root) — accident rails, not security boundaries. `parent:drive` is the driver's identity only: `--as parent:drive` / `as: "parent:drive"` is refused, and the ledger refuses entries by it other than dispatch, launch, send, halt and rebase. The `owed` skill describes the full agent workflow. A subagents/dsa runner is a separate integration: dispatch returns a ready-to-use call specification with `agent: worker`, the slot worktree as `cwd`, and `isolation: none`.
+Reload pi after installing. `/owed` shows status; `/owed why <node>` explains an acceptance decision. Tools: `owed_status`, `owed_why`, `owed_report`, `owed_brief`, `owed_verify`, `owed_dispatch`, `owed_submit`, `owed_rebase`, `owed_attest`, `owed_review`, `owed_merge`, `owed_adopt`, `owed_abandon`, `owed_gc`, `owed_rule`, `owed_answer`, `owed_plan`, `owed_waive`, `owed_defer`, `owed_escape` and `owed_decoy`; each accepts an absolute `cwd` inside the target repository, so a session started elsewhere can drive it (docs/SPEC.md §11 lists the parameters). Owner confirmation dialogs show free text (notes, reasons, rulings, evidence) after the Repository and Identity lines, escaped onto one line. Those dialogs appear only under `OWED_CONFIRM=owner`, and wait at most `OWED_CONFIRM_TIMEOUT` seconds (default 120, `0` = no limit): a timeout records nothing (`Owner confirmation not given within N s; nothing was recorded.`). By default owner tools are delegated to the main agent (`owner:pi`, channel `delegated`, no dialog); `owed_plan` takes `note`, which a delegated downgrade requires. In a pi-durable-subagents call (`DSA_CALL`/`DSA_EXEC` set) owed refuses owner and parent acts in tools and CLI alike, and refuses a review or evidence on a node from inside that node's open slot worktree (run reviews from the repository root) — accident rails, not security boundaries. `parent:drive` is the driver's identity only: `--as parent:drive` / `as: "parent:drive"` is refused, and the ledger refuses entries by it other than dispatch, launch, send, halt, rebase and abandon of its own stale never-launched slot. The `owed` skill describes the full agent workflow. A subagents/dsa runner is a separate integration: dispatch returns a ready-to-use call specification with `agent: worker`, the slot worktree as `cwd`, and `isolation: none`.
 
 ## Five-minute quickstart
 
@@ -404,6 +404,23 @@ to work as before.
 To widen one node's writes without rewriting the plan by hand, run `owed amend <node> --writes +path[,+path...] --note "<limit>" [--plan <file>]` (pi `owed_amend`). It appends the paths to the node's `writes` in the plan file (default: the file the latest plan entry recorded; comments and layout are kept), records it as `owed plan` would (same authority: the owner, or a parent under an `allow` rule; open candidates are carried), and in the same lock records a ruling `writes of <node> widened by plan #P: +<paths>. Limit: <limit>`, which the writer receives and reviewers acknowledge. It refuses, recording nothing and leaving the file unchanged, when the file has unrecorded edits, the node is unknown or merged, a path lacks `+`, or the note is empty.
 
 `owed abandon <node> --note TEXT` closes the open slot with a note.
+Use `owed abandon <node> --hold --note "decision pending"` (pi
+`owed_abandon {node, hold: true, note?}`) to prevent re-dispatch: abandon and
+its new `hold` entry are appended atomically. Status and why show `held by
+abandon #N`; dispatch names `owed resume <node>`, which releases the hold
+with a resume entry carrying `release: "hold"` and no open slot. Normal
+readiness rules apply afterwards; held nodes do not satisfy dependencies.
+Hold release takes neither `--after` nor `--expect`; dispatch a new attempt
+first. To retire a node, remove it from the plan first, then abandon its slot;
+while deciding, use `--hold`. Removing the node makes its hold moot.
+Hold entries and `resume.release` require 0.14; 0.13 refuses both with code
+`version`. From 0.14 unknown abandon fields also return `version`; abandon
+itself has no `hold` field. Historical ledgers and acceptance keys are unchanged.
+If a driver's writer launch is stale because its node left the plan, was held
+or abandoned, it closes its own never-launched empty slot without halting or
+notifying. Clean, unlocked worktrees at the base are removed; commits and
+uncommitted changes keep their worktree and branch. Parent-dispatched slots
+and attempts with any writer launch intent remain untouched.
 
 ## Trunk commits made outside owed
 

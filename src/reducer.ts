@@ -209,14 +209,14 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
     const n = s.nodes[spec.id] ??= emptyNode(spec.id);
     n.items = n.candidate ? nodeItems(s, n.id, n.candidate) : [];
     n.accepted = !!n.candidate && (!!n.slot?.open || !!n.merged) && n.items.every(i => i.status !== 'D') && !n.blocks.some(b => binding(b, spec));
-    n.phase = n.merged ? 'merged' : n.slot?.open ? n.candidate ? n.accepted ? 'accepted' : 'submitted' : 'dispatched' : !spec.later && spec.deps.every(d => s.nodes[d]?.merged) ? 'ready' : 'blocked';
+    n.phase = n.merged ? 'merged' : n.slot?.open ? n.candidate ? n.accepted ? 'accepted' : 'submitted' : 'dispatched' : n.held !== undefined ? 'held' : !spec.later && spec.deps.every(d => s.nodes[d]?.merged) ? 'ready' : 'blocked';
     n.dependents = h.dependents.get(n.id) ?? 0;
     if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
   }
   // F4 (wais #27): a node in the state but not in the current plan and not merged is `removed`, never ready.
   for (const id of dirty === 'all' ? Object.keys(s.nodes) : dirty) {
     const n = s.nodes[id];
-    if (n && !nodeSpec(s, id)) n.phase = n.merged ? 'merged' : 'removed';
+    if (n && !nodeSpec(s, id)) { n.phase = n.merged ? 'merged' : 'removed'; delete n.held; }
   }
   s.invariants = s.plan.invariants.map(i => item(s, 'trunk', `inv:${i.id}`, s.trunk.invKeys[i.id] ?? ''));
   const g = h.genesis;
@@ -264,7 +264,7 @@ export function reduceFrom(base: State, more: Entry[], plans: PlanLookup): State
 /** G1: continues the fold of `s` itself with `more` (mutates and returns `s`); for a state the caller owns alone. */
 export function extendState(s: State, more: Entry[]): State { fold(s, more); return s; }
 /** The entry kinds this owed interprets (G1.5): any other kind needs a newer owed. */
-const KINDS: readonly string[] = ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
+const KINDS: readonly string[] = ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'hold', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
 /**
  * G1.5 closed entry enum audit (types.ts): Base.channel, send.sendKind/reason, obs.verdict, review.obligation/verdict/
  * needs, launch.role, halt.needs, escape.class. `by`, other obligations and counts.format are open strings, not enums;
@@ -302,9 +302,15 @@ export function newerEntry(e: Entry): OwedError | undefined {
     if (extra !== undefined) return refuse(`obs ${extra} ${shown(x[extra])}`);
   }
   // FL2/FL3: from 0.13 unknown resume shapes are compatibility errors, not silently interpreted.
+  if (kind === 'abandon' || kind === 'hold') {
+    const known = kind === 'abandon' ? ['node', 'attempt', 'reason'] : ['node', 'abandon', 'reason'];
+    const extra = Object.keys(x).find(k => x[k] !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !known.includes(k));
+    if (extra) return refuse(`${kind} ${extra}`);
+  }
   if (kind === 'resume') {
     const extra = Object.keys(x).find(k => x[k] !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS.resume.includes(k));
     if (extra) return refuse(`resume ${extra}`);
+    if (x.release !== undefined && x.release !== 'hold') return refuse(`resume release ${shown(x.release)}`);
     if (x.expect !== undefined && x.expect !== 'report') return refuse(`resume expect ${shown(x.expect)}`);
     if (x.after !== undefined && typeof x.after !== 'string' && (!Array.isArray(x.after) || x.after.some(v => typeof v !== 'string'))) return refuse('resume after shape');
   }
@@ -359,6 +365,8 @@ function fold(s: State, entries: Iterable<Entry>): void {
       s.nodes[e.node]!.candidate = { ...e.facts, seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
     }
     else if (e.kind === 'abandon') { s.nodes[e.node]!.slot!.open = false; s.nodes[e.node]!.candidate = undefined; }
+    else if (e.kind === 'hold') { if (nodeSpec(s, e.node)) s.nodes[e.node]!.held = e.abandon; }
+    else if (e.kind === 'resume' && e.release === 'hold') { delete s.nodes[e.node]!.held; }
     else if (e.kind === 'rebase') {
       const n = s.nodes[e.node]!, slot = n.slot!;
       const previous = n.candidate ? { base: n.candidate.base, commit: n.candidate.commit, submit: n.candidate.seq } : slot.rebase?.previous;
@@ -518,7 +526,7 @@ function supersede(s: State, h: History, seq: number, next: Plan): void {
 const DRIVE_KINDS: readonly string[] = ['launch', 'send', 'halt'];
 export const DRIVER = 'parent:drive';
 /** The entry kinds the driver records as DRIVER (drive-run.ts); validateDraft refuses any other kind by it (G2.3). */
-const DRIVER_WRITES: readonly string[] = ['dispatch', 'launch', 'send', 'halt', 'rebase'];
+const DRIVER_WRITES: readonly string[] = ['dispatch', 'launch', 'send', 'halt', 'rebase', 'abandon'];
 /**
  * A halt is cleared by a later entry on its node by a principal other than the driver: a human, parent,
  * writer or reviewer action (submit, review, rebase, abandon, waive, defer, escape, a ruling naming the
@@ -780,8 +788,8 @@ export function validateDraft(s: State, d: Draft): string[] {
   if (s.seq === -1) return [...errors, 'genesis must be established first'];
   const n = 'node' in d ? s.nodes[d.node] : undefined;
   const spec = 'node' in d ? nodeSpec(s, d.node) : undefined;
-  // Ruling #1176 (0.12, G3.6): `abandon` (only) may close the open slot of a node the current plan removed.
-  if ('node' in d && (!n || (!spec && d.kind !== 'escape' && !(d.kind === 'abandon' && n.phase === 'removed')))) errors.push(`Node ${d.node} does not exist`);
+  // Ruling #1176 (0.12): abandon may close a removed node's slot; AH hold may follow it atomically.
+  if ('node' in d && (!n || (!spec && d.kind !== 'escape' && !((d.kind === 'abandon' || d.kind === 'hold') && n.phase === 'removed')))) errors.push(`Node ${d.node} does not exist`);
   const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
   const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && underlyingActive(context(s), b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
   switch (d.kind) {
@@ -816,6 +824,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     case 'dispatch':
       allow('parent', 'owner');
+      if (n?.held !== undefined) errors.push(`${d.node} is held by abandon #${n.held}; release it with owed resume ${d.node}`);
       if (n?.phase !== 'ready' || n.slot?.open) errors.push('dispatch requires a ready node with no open slot');
       if (!Number.isInteger(d.attempt) || d.attempt !== (n?.slot?.attempt ?? 0) + 1) errors.push('attempt must increase consecutively starting at 1');
       if (d.base !== s.trunk.commit) errors.push('dispatch base must be the current trunk');
@@ -867,7 +876,22 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (!d.reason.trim() || !d.items.length) errors.push('defer must list obligations and give a reason');
       if (d.items.some(i => !i.key || !s.plan.invariants.some(c => c.id === i.id))) errors.push('defer must reference valid invariants and keys');
       break;
-    case 'abandon': allow('parent', 'owner'); slot(); break;
+    case 'abandon':
+      allow('parent', 'owner'); slot();
+      if (d.by === DRIVER) {
+        const dispatched = context(s).entries.find(e => e.kind === 'dispatch' && e.node === d.node && e.attempt === d.attempt);
+        if (dispatched?.by !== DRIVER || n?.runs.find(r => r.attempt === d.attempt)?.launches.some(l => l.role === 'writer')) errors.push('driver abandon requires its own empty slot with no writer launch');
+        if (spec) errors.push('driver abandon requires a node that left the plan; live nodes are not stale empty slots');
+        if (typeof d.reason !== 'string' || !d.reason.trim()) errors.push('driver abandon requires a stale cause');
+      }
+      break;
+    case 'hold': {
+      allow('parent', 'owner');
+      const prior = context(s).entries.at(-1);
+      if (!prior || prior.kind !== 'abandon' || prior.seq !== d.abandon || prior.node !== d.node || prior.attempt !== n?.slot?.attempt || prior.by !== d.by || prior.channel !== d.channel || n?.slot?.open) errors.push('hold must immediately follow the same actor abandon of this node slot');
+      if (d.reason !== undefined && typeof d.reason !== 'string') errors.push('hold reason must be a string');
+      break;
+    }
     case 'rebase':
       if (!['parent', 'owner'].includes(r) && d.by !== n?.slot?.writer) errors.push('rebase requires parent/owner or the slot writer');
       slot();
@@ -960,7 +984,10 @@ export function validateDraft(s: State, d: Draft): string[] {
     case 'resume':
       // 0.8 (L1.1): parent or owner only; the driver (parent:drive) is refused above (DRIVER_WRITES).
       allow('parent', 'owner');
-      if (n && !n.slot?.open) errors.push(`resume requires an open slot of ${d.node}; ${d.node} has none`);
+      if (d.release === 'hold') {
+        if (n?.held === undefined || n.slot?.open || d.attempt !== n.slot?.attempt) errors.push('resume release requires a held node with no open slot and its last attempt');
+        if (d.after !== undefined || d.expect !== undefined) errors.push('hold release does not take after or expect; dispatch a new attempt first');
+      } else if (n && !n.slot?.open) errors.push(`resume requires an open slot of ${d.node}; ${d.node} has none`);
       else slot();
       if (d.after !== undefined && (typeof d.after !== 'string' && (!Array.isArray(d.after) || !d.after.length || d.after.some(x => typeof x !== 'string')))) errors.push('resume after must be a node string or a non-empty string array');
       else for (const id of afterNodes(d.after)) {
@@ -1032,7 +1059,7 @@ function carriedErrors(s: State, d: Draft & { node: string; rulings?: number }, 
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
