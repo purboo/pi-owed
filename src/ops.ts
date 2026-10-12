@@ -1158,17 +1158,36 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel?
 export async function status(o: Context): Promise<StatusView> {
   const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = inited(reduceFrom(loaded.state,[],loaded.lookup)), entries = loaded.entries;
   await applyReports(ledger,state);
-  const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit), trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
+  const view = await summaryStatusView(o.cwd,ledger.dir,state,entries,Date.now());
+  const trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
+  if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
+  return {...view,...(trunkWorktree ? {trunkWorktree} : {})};
+}
+/** SQ: both status and brief use the same current merge diagnostics and defer scope. */
+async function summaryStatusView(cwd: string, dir: string, state: State, entries: Entry[], now: number): Promise<StatusView> {
+  const drift = await git.trunkDrift(cwd,state.trunk.name,state.trunk.commit);
   const mergeChecks: ItemView[] = [];
   if (!drift) {
     const subjects = new Set(entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.probe === 'trunk' && e.commit === state.trunk.commit).map(e => e.subject));
-    for (const id of subjects) mergeChecks.push(...await currentTrunkRedChecks(o.cwd,state,id));
+    for (const id of subjects) mergeChecks.push(...await currentTrunkRedChecks(cwd,state,id));
   }
-  const lock = readLock(ledger.dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
-  const view = statusView(inited(state),entries,mergeChecks,Date.now(),driverRunning);
-  if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
-  if (drift && view.summary) view.summary.needs.unshift({ node:'trunk', reason:driftText(drift), command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : `owed why trunk` });
-  return {...view,...(drift ? {drift} : {}),...(trunkWorktree ? {trunkWorktree} : {})};
+  const currentDefers: State['deferred'] = [];
+  for (const id of new Set(state.deferred.map(d => d.node))) {
+    const n = state.nodes[id], defers = state.deferred.filter(d => d.node === id);
+    if (!n?.slot?.open || !n.candidate || n.merged) {
+      currentDefers.push(...defers.filter(d => state.invariants.some(i => i.key === d.key && i.obligation === `inv:${d.id}` && i.mark === '⏸' && i.evidence.includes(d.seq))));
+      continue;
+    }
+    if (drift) continue;
+    const built = await git.buildMerge(cwd,state.trunk.commit,n.candidate.commit,`owed merge ${id}`);
+    if ('conflicts' in built) continue;
+    const m = await mergeFacts(cwd,state,id,built.commit), guard = mergeGuard(state,id,m);
+    currentDefers.push(...defers.filter(d => guard.invItems.some(i => i.key === d.key && i.obligation === `inv:${d.id}` && i.mark === '⏸' && i.evidence.includes(d.seq))));
+  }
+  const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
+  const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers);
+  if (drift && view.summary) view.summary.needs.unshift({ node:'trunk', reason:driftText(drift), command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : 'owed why trunk' });
+  return {...view,...(drift ? {drift} : {})};
 }
 /** Read-only merge diagnostics: Git supplies the current key; probes alone never create an item. */
 async function currentTrunkRedChecks(cwd: string, s: State, id: string): Promise<ItemView[]> {
@@ -1272,11 +1291,8 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
   const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = reduceFrom(loaded.state,[],loaded.lookup), entries = loaded.entries, lookup = loaded.lookup, since = o.since ?? -1; inited(state);
   await applyReports(ledger,state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
-  const lock = readLock(ledger.dir);
-  const b = briefView(state,entries,since,o.now ?? Date.now(),mergeCoverage(entries,lookup),lock.state === 'live' || lock.state === 'foreign');
-  const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
-  if (drift && b.summary) b.summary.needs.unshift({node:'trunk',reason:driftText(drift),command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : 'owed why trunk'});
-  return b;
+  const now = o.now ?? Date.now(), view = await summaryStatusView(o.cwd,ledger.dir,state,entries,now);
+  return briefView(state,entries,since,now,mergeCoverage(entries,lookup),undefined,view.summary);
 }
 
 // ---------- driver entries (SPEC §12, D3): persisted before the dsa call ----------

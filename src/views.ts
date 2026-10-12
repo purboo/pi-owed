@@ -227,7 +227,7 @@ function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
 export const allowanceLabel = (d: { by: string; allowance?: number }): string => d.allowance === undefined ? '' : `by ${d.by} under allowance (plan #${d.allowance})`;
-export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false): StatusView {
+export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: State['deferred'] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key)): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
     (groups[n.phase] ??= []).push(n.id);
@@ -249,11 +249,11 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   const held = Object.values(s.nodes).filter(n => n.phase === 'held').map(n => ({ node:n.id, abandon:n.held! }));
   const trunkRed = trunkInvariantReds(s);
   const view: StatusView = { ...(trunkRed.length ? { trunkRed } : {}), ...(held.length ? { held } : {}), ...(reported.length ? { reported } : {}), ...(later.length ? { later } : {}), ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
-  view.summary = summaryView(s, entries, view, now, driverRunning);
+  view.summary = summaryView(s, entries, view, now, driverRunning, currentDefers);
   return view;
 }
 /** SQ: derive presentation only; no ledger state, keys or acceptance rules change. */
-function summaryView(s: State, entries: Entry[], v: StatusView, now: number, driverRunning: boolean): SummaryView {
+function summaryView(s: State, entries: Entry[], v: StatusView, now: number, driverRunning: boolean, currentDefers: State['deferred']): SummaryView {
   const needs: SummaryView['needs'] = [], debt: string[] = [];
   const add = (node: string, reason: string, command: string) => {
     if (!needs.some(n => n.node === node && n.command === command)) needs.push({ node, reason: oneLine(reason), command });
@@ -314,7 +314,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
   }
   for (const i of v.invariants) if (i.status === 'D' && (i.discharger === 'parent' || i.detail.startsWith('trunk-red:'))) debt.push(`${i.obligation}: ${oneLine(i.detail)}`);
   for (const n of Object.values(v.nodes).filter(n => !n.merged && n.slot?.open)) for (const i of n.items.filter(i => i.status === 'W')) debt.push(`${n.id}/${i.obligation}: waived — ${oneLine(i.detail.replace(/ \((?:flag weak confirmation|delegated)\)$/, ''))}`);
-  for (const d of s.deferred) if (s.trunk.invKeys[d.id] === d.key || s.nodes[d.node]?.slot?.open) debt.push(`${d.node}/inv:${d.id}: owner defer`);
+  for (const d of currentDefers) debt.push(`${d.node}/inv:${d.id}: owner defer`);
   needs.sort((a,b) => (s.nodes[b.node]?.dependents ?? 0) - (s.nodes[a.node]?.dependents ?? 0) || a.node.localeCompare(b.node) || a.command.localeCompare(b.command));
   return { merged: Object.values(v.nodes).filter(n => n.merged).length, needs, progress, debt: [...new Set(debt)] };
 }
@@ -669,7 +669,7 @@ function currentNeeds(s: State, b: Block): boolean {
   return b.needs === 'parent' && b.kind === 'judgment' && !!n?.slot?.open && !!n.candidate && n.candidate.keys[b.obligation] === b.key;
 }
 /** Pure morning brief over a reduced state. `since` limits the Merged section; the other sections show current state. */
-export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now(), coverage?: Map<number, string[]>, driverRunning = false): Brief {
+export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now(), coverage?: Map<number, string[]>, driverRunning = false, summary?: SummaryView): Brief {
   const included = (e: Entry): boolean => typeof since === 'number' ? e.seq > since : Date.parse(e.ts) > Date.parse(since);
   const ts = (seq: number): string => entries.find(e => e.seq === seq)?.ts ?? '';
   const nodes = Object.values(s.nodes), open = nodes.filter(n => !n.merged);
@@ -700,7 +700,7 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
   const allowanceDowngrades = s.downgrades.filter(d => { const e = entries.find(x => x.seq === d.seq); return d.allowance !== undefined && !!e && included(e); });
   const later = s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).map(n => n.id);
   const reported = open.flatMap(n => { const resume = reportedOf(s,n.id); return resume === undefined ? [] : [{ node:n.id, resume }]; });
-  return { summary: statusView(s, entries, [], now, driverRunning).summary, trunk: s.trunk, invariants: s.invariants, since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress, later, reported,
+  return { summary: summary ?? statusView(s, entries, [], now, driverRunning).summary, trunk: s.trunk, invariants: s.invariants, since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress, later, reported,
     ...(coverage ? { unguarded: entries.filter((e): e is Extract<Entry, { kind: 'merge' }> => e.kind === 'merge').slice(-10).map(e => ({ node:e.node, seq:e.seq, paths:coverage.get(e.seq) ?? [] })) } : {}),
     totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: open.filter(n => waitingFor(s,n.id) || (n.phase === 'blocked' && !later.includes(n.id))).length, later: later.length, reported: reported.length } };
 }
