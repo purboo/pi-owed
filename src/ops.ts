@@ -17,6 +17,7 @@ import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
+import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
@@ -1175,6 +1176,13 @@ export async function recordReport(ledger: Ledger, node: string, resume: number)
     try { await writeFile(temp,JSON.stringify(reports)); await rename(temp,file); } finally { await unlink(temp).catch(() => undefined); }
   });
 }
+/** MT: ledger entries and recorded plan blobs only; no repository or run-state query. */
+export async function reportMetrics(o: Context & MetricsWindow): Promise<Metrics> {
+  const since = metricsBound(o.since,'since'), until = metricsBound(o.until,'until');
+  const {state,entries,lookup} = await load(await Ledger.open(o.cwd)); inited(state);
+  return computeMetrics(entries,new Map(planShas(entries).map(sha => [sha,lookup(sha)])),{since,until});
+}
+
 export async function report(o: Context & {since?:number|string}): Promise<Report> {
   const {state,entries,lookup} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
