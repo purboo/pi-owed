@@ -1,4 +1,6 @@
-import { parseDocument, stringify, isMap, isSeq, isNode, type YAMLMap } from 'yaml';
+import { parseDocument, stringify, isMap, isSeq, isNode, isAlias, isScalar, visit, type YAMLMap } from 'yaml';
+import { canonical } from './canon.ts';
+import { parsePlan } from './plan.ts';
 import { OwedError } from './errors.ts';
 
 /** ED1: YAML values, with paths relative to a node or invariant. */
@@ -20,7 +22,7 @@ function parts(path: string, o: EditFields): string[] {
   }
   return p;
 }
-/** ED1: edit only the target map's source range; bytes outside it retain their original layout. */
+/** ED1: preserve the target's source range when safe; flow containers and anchors need Document context. */
 export function editText(text: string, o: EditFields): string {
   if ((o.node === undefined) === (o.invariant === undefined)) usage('edit requires exactly one node or --invariant');
   if (o.node_new && o.invariant !== undefined) usage('--node-new requires a node');
@@ -52,14 +54,16 @@ export function editText(text: string, o: EditFields): string {
     if (eq < 1) usage(`--set needs path=yaml: ${assignment}`);
     const p = parts(assignment.slice(0,eq),o), value = parseDocument(assignment.slice(eq+1));
     if (value.errors.length) usage(`Invalid YAML value for ${p.join('.')}: ${value.errors.map(e => e.message).join('; ')}`);
-    const v = value.toJS();
     if (p[0] === 'checks' && p.length === 2 && o.invariant === undefined) {
-      if (!isMap(value.contents)) usage(`checks.${p[1]} needs a whole mapping`);
-      if (Object.keys(v).some(k => k !== 'id' && !checkFields.includes(k))) usage(`checks.${p[1]} mapping has an unknown field`);
-      if (v.id !== undefined && v.id !== p[1]) usage(`checks.${p[1]} mapping has a different id`);
-      value.set('id',p[1]);
+      const mapping: unknown = value.contents;
+      if (!isMap(mapping)) usage(`checks.${p[1]} needs a whole mapping`);
+      if (mapping.items.some(pair => !isScalar(pair.key) || typeof pair.key.value !== 'string' || pair.key.value !== 'id' && !checkFields.includes(pair.key.value))) usage(`checks.${p[1]} mapping has an unknown field`);
+      const id = mapping.get('id',true);
+      if (id !== undefined && (!isScalar(id) || id.value !== p[1])) usage(`checks.${p[1]} mapping has a different id`);
+      mapping.set('id',p[1]);
     }
-    const at = locate(p,true)!, prior = at.map.getIn(at.path,true), next = doc.createNode(value.toJS());
+    // Keep YAML nodes (especially aliases) so they resolve against the plan's Document, not the value's.
+    const at = locate(p,true)!, prior = at.map.getIn(at.path,true), next = value.contents?.clone() ?? doc.createNode(null);
     if (isNode(prior)) { next.comment = prior.comment; next.commentBefore = prior.commentBefore; next.spaceBefore = prior.spaceBefore; }
     if ((isMap(prior) && isMap(next)) || (isSeq(prior) && isSeq(next))) next.flow = prior.flow;
     at.map.setIn(at.path,next);
@@ -68,20 +72,28 @@ export function editText(text: string, o: EditFields): string {
     const at = locate(parts(path,o),false);
     if (!at || !at.map.deleteIn(at.path)) usage(`Cannot unset missing edit path: ${path}`);
   }
-  // A new node is appended without re-emitting the existing nodes.
+  if (o.node_new) list.add(target);
+  const documentText = doc.toString({ lineWidth:0 }), intended = canonical(parsePlan(documentText));
+  const checked = (next: string): string => {
+    if (canonical(parsePlan(next)) !== intended) throw new OwedError('cannot edit the plan: serialized YAML differs from the intended plan','internal');
+    return next;
+  };
+  let contextual = !!list.flow || isMap(doc.contents) && !!doc.contents.flow;
+  visit(target,(_key,node) => { if (isAlias(node) || isNode(node) && 'anchor' in node && node.anchor) contextual = true; });
+  if (contextual) return checked(documentText);
+  // A new block node is appended without re-emitting the existing nodes.
   if (o.node_new) {
-    if (list.flow) { list.add(target); const range = list.range!; return text.slice(0,range[0]) + stringify(list,{ lineWidth:0 }).trimEnd() + text.slice(range[1]); }
     const first = list.items[0] as { range?: [number,number,number] } | undefined;
     const start = first?.range?.[0] ?? list.range![0], line = text.lastIndexOf('\n',start)+1;
     const indent = /^ */.exec(text.slice(line,start))![0];
     const rendered = stringify(target,{ lineWidth:0 }).trimEnd().split('\n').map((s,i) => `${indent}${i ? '  ' : '- '}${s}`).join('\n') + '\n';
     const end = list.range![2];
-    return text.slice(0,end) + (end && text[end-1] !== '\n' ? '\n' : '') + rendered + text.slice(end);
+    return checked(text.slice(0,end) + (end && text[end-1] !== '\n' ? '\n' : '') + rendered + text.slice(end));
   }
   const range = target.range!;
   const startLine = text.lastIndexOf('\n',range[0])+1, indent = ' '.repeat(range[0]-startLine);
   const rendered = stringify(target,{ lineWidth:0 }).trimEnd().split('\n').map((s,i) => i ? indent+s : s).join('\n') + '\n';
-  return text.slice(0,range[0]) + rendered + text.slice(range[2]);
+  return checked(text.slice(0,range[0]) + rendered + text.slice(range[2]));
 }
 /** ED2: a compact diff of the changed region, accompanied by structured downgrade items in preview. */
 export function editDiff(path: string, before: string, after: string): string {

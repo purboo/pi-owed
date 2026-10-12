@@ -36,10 +36,10 @@ nodes:
     writes: [test/b]   # exact spacing
 `;
 const entries = async (cwd: string) => (await Ledger.open(cwd)).read();
-async function setup() {
+async function setup(text = PLAN) {
   const r = await repo(); await seed(r.cwd);
-  const file = join(r.root,'plan.yaml'); await writeFile(file,PLAN);
-  await ops.init({ cwd:r.cwd, plan:PLAN, as:owner, channel:'delegated', measure:false });
+  const file = join(r.root,'plan.yaml'); await writeFile(file,text);
+  await ops.init({ cwd:r.cwd, plan:text, as:owner, channel:'delegated', measure:false });
   await ops.planSet({ cwd:r.cwd, as:parent, ...await ops.readPlan({ cwd:r.cwd, path:file }) });
   return { r, file, cwd:r.cwd, as:parent, note:'Exercise the edit contract' };
 }
@@ -184,4 +184,50 @@ test('ED1: whole checks and field unsets resolve ids, including a flow node and 
   const n = parsePlan(next).nodes[0]!; assert.equal(n.title,'x=y'); assert.equal(n.checks[0]?.timeout_s,600); assert.equal(n.checks[0]?.min_tests,1);
   assert.ok(next.endsWith(text.slice(text.indexOf('  - id: b'))));
   const removed = editText(next,{node:'a',unset:['checks.c']}); assert.equal(parsePlan(removed).nodes[0]!.checks.length,0);
+});
+
+test('ED1 regression #1265: edits inside flow sequences reparse to the intended plan, including new nodes', async () => {
+  const text = '# flow plan\nversion: 1\ntrunk: main\ninvariants: []\nnodes: [{id: a, writes: [test/a]}, {id: b, writes: [test/b]}] # nodes comment\n';
+  const s = await setup(text);
+  try {
+    const expected = parsePlan(text); expected.nodes[0]!.title = 'Updated';
+    await ops.edit({...s,node:'a',set:['title=Updated']});
+    const next = await readFile(s.file,'utf8');
+    assert.deepEqual(parsePlan(next),expected); assert.match(next,/# flow plan/); assert.match(next,/# nodes comment/);
+    const added = editText(next,{node:'c',node_new:true,set:['writes=[test/c]']});
+    assert.deepEqual(parsePlan(added).nodes.map(n => n.id),['a','b','c']);
+    assert.equal((await ops.verify({cwd:s.cwd})).ok,true);
+  } finally { await s.r.cleanup(); }
+});
+
+test('ED1 regression #1265: existing external anchors and aliases resolve in the parsed Document', async () => {
+  const text = '# anchored plan\nversion: 1\ntrunk: main\nclosure: &paths [test/a] # shared paths\ninvariants:\n  - id: unit\n    run: "true"\n    reads: *paths\nnodes:\n  - id: a # target\n    writes: *paths\n  - id: b\n    writes: [test/b]\n';
+  const s = await setup(text);
+  try {
+    const expected = parsePlan(text); expected.nodes[0]!.title = 'Updated';
+    await ops.edit({...s,node:'a',set:['title=Updated']});
+    let next = await readFile(s.file,'utf8'); assert.deepEqual(parsePlan(next),expected);
+    assert.match(next,/&paths/); assert.match(next,/\*paths/); assert.match(next,/# shared paths/); assert.match(next,/# target/);
+    const edited = editText(next,{invariant:'unit',set:['timeout_s=30']});
+    expected.invariants[0]!.timeout_s = 30; assert.deepEqual(parsePlan(edited),expected);
+    const assigned = editText(next,{node:'a',set:['writes=*paths','checks.extra={run: "true", reads: *paths}']});
+    const assignedPlan = parsePlan(assigned);
+    assert.deepEqual(assignedPlan.nodes[0]!.writes,['test/a']); assert.deepEqual(assignedPlan.nodes[0]!.checks[0]!.reads,['test/a']);
+    // An anchor on the target must remain defined for aliases on other nodes.
+    next = text.replace('writes: *paths\n  - id: b','writes: &owned [test/a]\n  - id: b').replace('writes: [test/b]','writes: *owned');
+    const anchored = editText(next,{node:'a',set:['title=Updated']});
+    assert.deepEqual(parsePlan(anchored).nodes.map(n => n.writes),[['test/a'],['test/a']]);
+    assert.equal((await ops.verify({cwd:s.cwd})).ok,true);
+  } finally { await s.r.cleanup(); }
+});
+
+test('ED2 regression #1265: owner dry-run prints its preview in non-TTY mode without confirmation', async () => {
+  const s = await setup(), confirm = process.env.OWED_CONFIRM;
+  try {
+    const count = (await entries(s.cwd)).length;
+    process.env.OWED_CONFIRM = 'owner';
+    const res = await cli(s.cwd,['edit','a','--set','writes=[test/]','--note','preview','--dry-run','--as','owner:pi']);
+    assert.equal(res.code,0,res.stderr); assert.match(res.stdout,/--- .*plan.yaml/); assert.match(res.stdout,/Downgrades:.*a/);
+    assert.doesNotMatch(res.stderr,/confirm|TTY/); await unchanged(s,count);
+  } finally { if (confirm === undefined) delete process.env.OWED_CONFIRM; else process.env.OWED_CONFIRM = confirm; await s.r.cleanup(); }
 });

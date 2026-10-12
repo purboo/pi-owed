@@ -263,8 +263,12 @@ mapping; id inferred) and `checks.<id>.<field>`. Repeat `--set path=yaml` and
 `--unset path`; sets run in order before unsets. `--node-new` adds a node from
 `deps`, `title`, `brief`, `writes` and checks. `--invariant ID` edits a top-level
 invariant field. The source is `--plan FILE`, else the latest plan entry's path;
-unrecorded semantic file changes refuse. Comments in the target are kept and
-text outside it keeps its layout. `--dry-run` prints the diff and downgrades.
+unrecorded semantic file changes refuse. Comments are kept and text outside a
+simple block target keeps its layout. Flow containers and targets using anchors
+or aliases use whole-Document serialization; spacing may be normalized. Results
+must re-parse to the intended plan before writing. `--dry-run` prints the diff
+and downgrades without owner confirmation, even with `OWED_CONFIRM=owner` in
+a non-TTY process.
 
 One ledger lock records the plan (same authority, downgrade guard and candidate
 carries as `owed plan`), then optional `--rule TEXT` naming the node, then
