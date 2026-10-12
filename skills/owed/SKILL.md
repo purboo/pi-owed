@@ -52,6 +52,10 @@ The `owed_why` / `owed why <node>` card lists keys and evidence for each obligat
 
 The status pending queues are grouped by discharger: parent+writer handle dispatch, submission, and repairs; executor handles attest; reviewer provides independent judgment; owner handles risks and downgrades. Resolve specific obligations from the queues instead of repeatedly trying merge.
 
+Policy for future work: `owed rule --nodes "*" --prospective "<policy>"` (pi `owed_rule` field `prospective: boolean`) records `prospective: true`, binding only attempts dispatched later; older unsealed writer/reviewer runs get one informational notify without a new ack, while sealed runs receive no such policy on later follow-ups. Do not combine with `--writer`; owed 0.13 and earlier refuse the new rule field with code `version`.
+
+An ordinary `*` ruling with only `rulings` debt gets a reviewer re-ack follow-up (or a reviewer launch when none exists), with the candidate and `--ack-rulings <seq>`; block if the writer must change something. Report "Status changes" omit nodes merged by the window's end. Owner reviews use `--rank 3`.
+
 Rules that must not be broken:
 
 - Do not edit closure files to make checks pass; the executor pins the check closure from base. Necessary, genuine closure changes must explicitly receive closure-review acceptance.

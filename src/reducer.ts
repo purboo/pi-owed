@@ -109,8 +109,11 @@ export function manualKeys(spec: NodeSpec, patch: string): Record<string, string
 export const isManual = (obligation: string): boolean => obligation === 'approve' || obligation.startsWith('evidence:');
 /** `by` is a writer of node n (any attempt), or shares a writer's id (as for reviews). */
 const isWriter = (n: NodeState | undefined, by: string): boolean => !!n && (n.writers.includes(by) || n.writers.some(w => w.slice(w.indexOf(':') + 1) === by.slice(by.indexOf(':') + 1)));
+/** PR1: prospective policy binds only attempts dispatched after the ruling. */
+export const ruleApplies = (s: State, node: string, r: Rule): boolean => (r.nodes === '*' || r.nodes.includes(node)) && (!r.prospective || (s.nodes[node]?.slot?.dispatchSeq ?? -1) > r.seq);
+export const applicableRules = (s: State, node: string): Rule[] => s.rules.filter(r => ruleApplies(s, node, r));
 function latestRule(s: State, node: string): number {
-  return Math.max(-1, ...s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node)).map(r => r.seq));
+  return Math.max(-1, ...applicableRules(s, node).map(r => r.seq));
 }
 /** Two `writes` prefix lists overlap when some prefix of one starts with a prefix of the other (a path could match both). */
 export const writesOverlap = (a: string[], b: string[]): boolean => a.some(p => b.some(q => p.startsWith(q) || q.startsWith(p)));
@@ -282,7 +285,7 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
   escape: { class: ESCAPE_CLASSES },
 };
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
-const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'answer'];
+const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
 const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'note', 'runs', 'noisy', 'failed'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
@@ -346,7 +349,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       if (allowChanged) h.allowSeq = e.seq;
     } else if (e.kind === 'rule') {
-      s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.answer !== undefined ? { answer: e.answer } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
+      s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.prospective !== undefined ? { prospective: e.prospective } : {}), ...(e.answer !== undefined ? { answer: e.answer } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       // F5: a writer ruling names the candidates that need a new submit; blocks and keys retain their semantics.
       if (e.writer && e.nodes !== '*') for (const id of e.nodes) {
         const n = s.nodes[id];
@@ -536,7 +539,7 @@ const DRIVER_WRITES: readonly string[] = ['dispatch', 'launch', 'send', 'halt', 
 function clearsHalt(e: Entry, node: string): boolean {
   if (e.kind === 'dispatch' && e.node === node) return true;
   if (DRIVE_KINDS.includes(e.kind) || e.by === DRIVER || role(e.by) === 'executor') return false;
-  return ('node' in e && e.node === node) || (e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(node));
+  return ('node' in e && e.node === node) || (e.kind === 'rule' && !e.prospective && e.nodes !== '*' && e.nodes.includes(node));
 }
 /** Every replayed entry of the state, in ledger order (pure; the state's replay metadata). */
 export function entriesOf(s: State): readonly Entry[] { return context(s).entries; }
@@ -554,7 +557,7 @@ export function planAt(s: State, seq: number): Plan {
  * block does not need a parent ruling or none exists yet.
  */
 export function parentRuling(s: State, b: Block): Rule | undefined {
-  return b.needs === 'parent' ? s.rules.find(r => r.seq > b.seq && r.nodes !== '*' && r.nodes.includes(b.node)) : undefined;
+  return b.needs === 'parent' ? applicableRules(s, b.node).find(r => r.seq > b.seq && r.nodes !== '*' && r.nodes.includes(b.node)) : undefined;
 }
 /** An active review block that needs a parent ruling and has none yet (D18). */
 export function awaitingRuling(s: State, b: Block): boolean { return b.needs === 'parent' && b.state === 'active' && !parentRuling(s, b); }
@@ -596,7 +599,7 @@ export function reportRequest(s: State, node: string): { resume: number; send: S
   if (!send) return undefined;
   if (entriesOf(s).some(e => e.seq > send.seq && (
     (e.kind === 'submit' && e.node === node) ||
-    (e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(node)) ||
+    (e.kind === 'rule' && !e.prospective && e.nodes !== '*' && e.nodes.includes(node)) ||
     (e.kind === 'plan' && canonical(nodeSpec({ ...s, plan: planAt(s, e.seq) }, node)) !== canonical(nodeSpec({ ...s, plan: planAt(s, e.seq + 1) }, node)))
   ))) return undefined;
   return { resume: r.seq, send };
@@ -809,6 +812,8 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('owner', 'parent');
       if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node');
       if (d.writer !== undefined && typeof d.writer !== 'boolean') errors.push('rule writer must be a boolean');
+      if (d.prospective !== undefined && typeof d.prospective !== 'boolean') errors.push('rule prospective must be a boolean');
+      if (d.prospective && d.writer) errors.push('--prospective cannot be combined with --writer');
       // AN2: an answer names one launch of the node's current open attempt; delivery never invalidates a candidate.
       if (d.answer !== undefined) {
         const a = d.answer;
@@ -859,7 +864,8 @@ export function validateDraft(s: State, d: Draft): string[] {
     case 'review':
       allow('reviewer', 'owner'); slot(); current(d.obligation, d.key, true);
       if (n?.writers.includes(d.by) || n?.writers.some(w => w.slice(w.indexOf(':') + 1) === d.by.slice(d.by.indexOf(':') + 1))) errors.push('review reviewer must not be the writer of any attempt of this node');
-      if (r === 'owner' ? d.rank !== 3 : ![1, 2].includes(d.rank)) errors.push('review rank: reviewer must use 1..2, owner must use 3');
+      if (r === 'owner' && d.rank !== 3) errors.push('owner reviews use --rank 3');
+      else if (r !== 'owner' && ![1, 2].includes(d.rank)) errors.push('review rank: reviewer must use 1..2, owner must use 3');
       if (d.ack_rulings !== undefined && (!Number.isInteger(d.ack_rulings) || d.ack_rulings > Math.max(0, ...s.rules.map(x => x.seq)))) errors.push('ack_rulings must not reference future rulings');
       if (d.needs !== undefined && (d.needs !== 'parent' || d.verdict !== 'block')) errors.push("review needs must be 'parent' and only on a block verdict");
       if (d.obligation === 'approve' && r !== 'owner') errors.push('approve can only be recorded by the owner');

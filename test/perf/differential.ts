@@ -100,10 +100,13 @@ export function variants(d: Draft, nodes: string[]): Draft[] {
   return out;
 }
 export interface Mismatch { at: number; what: string; base: string; cur: string }
-/** Intended changes since 0.10: removed-node abandon (0.12), and AH2's restricted driver abandon (0.14). */
+/** Intended changes since 0.10: removed-node abandon (0.12), AH2's restricted driver abandon and PR5's owner rank hint (0.14). */
 export function intendedChange(s: State, d: Draft, base: unknown, cur: unknown): boolean {
   if (!Array.isArray(base) || !Array.isArray(cur)) return false;
   let expected = [...base];
+  if (d.kind === 'review' && d.by.startsWith('owner:') && d.rank !== 3) {
+    expected = expected.map(x => x === 'review rank: reviewer must use 1..2, owner must use 3' ? 'owner reviews use --rank 3' : x);
+  }
   if (d.by === 'parent:drive') {
     const old = `${d.kind} by parent:drive: the driver records only dispatch, launch, send, halt, rebase`;
     if (d.kind !== 'abandon') expected = expected.map(x => x === old ? `${old}, abandon` : x);
