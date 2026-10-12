@@ -156,7 +156,7 @@ for (const legacy of [false, true]) {
         assert.doesNotMatch(message, /resolved before delivery/);
       } else {
         assert.doesNotMatch(message, /moved outside owed/);
-        assert.match(message, /\n\(1 wake\(s\) resolved before delivery\)$/);
+        assert.match(message, /\n\(1 wake\(s\) resolved before delivery\)\nNext: owed status \/ owed why <node>$/);
       }
       assert.equal(follow.got.length, 1);
       assert.equal((await ops.status({ cwd: r.cwd })).drift, undefined);
