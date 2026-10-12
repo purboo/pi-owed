@@ -1091,6 +1091,62 @@ changed; retry`): they decide a trunk move on what they measured.
   without an open slot — with reason `check <id> belongs only to merged or
   abandoned nodes`; invariant trees and leased trees are kept as before.
 
+### RC1 Repeated measurements (0.13)
+
+A check or invariant may set `repeat: {runs: N, need: K}` with integers
+`1 <= K <= N <= 9`; omitted `need` defaults to N and is normalized to N.
+`repeat` is refused on `red: true` or `mutants` checks. The check/invariant
+key includes `repeat: {runs, need}` only when present; keys without repeat
+stay unchanged. A changed repeat definition requires owner authority or a
+matching check allowance, like a changed command.
+
+The executor prepares one tree (including overlays and setup) and runs the
+command sequentially there, each under its own `timeout_s`. Each run uses
+its own counts and `min_tests`; counts are never summed across runs. It stops
+at K passing runs or when K is unreachable within N runs. A command error,
+abort or environment failure stops immediately with observation `error`, not
+a failed vote. Merge-time, genesis and adopt invariant jobs use the same rule.
+
+One `obs` records the aggregate verdict, last run's exit/counts, total duration
+and combined log; `runs` records every executed run in order with `{verdict,
+exit, counts?, durationMs, log, note?, failed?}` (log is that run's blob digest).
+The tree is disposed only after voting ends. `noisy: true` means executed runs
+include both pass and fail; otherwise it is false. It is descriptive, never a
+separate failing observation or block. `why` and driver attest/merge reports
+show `noisy (2/3 passed)` using the number of executed runs, not the maximum N.
+
+### RC2 Counts protocol (0.13)
+
+A log line `owed-counts {"pass":2,"fail":1,"failed":["latency gate"],"skip":0}`
+provides counts with format `owed`. Its JSON must be an object with non-negative
+integer `pass` and `fail`, optional non-negative integer `skip`, and optional
+string-array `failed`. `tests` is pass + fail + skip. The last valid such line
+wins over TAP/cargo/pytest/jest/vitest and any mixed counts. A malformed line is
+ignored and the observation (and repeat run) note says so; no valid line means
+the existing parsers and no-count semantics still apply. Only for format
+`owed`, fail > 0 also makes a non-red run fail despite exit 0; other formats
+keep their existing exit semantics. Zero tests and min_tests apply as before.
+
+### RC3 Failing names (0.13)
+
+Counts and observations retain up to 50 failing names from `owed`'s `failed`,
+TAP `not ok N - name` and cargo `test name ... FAILED` lines; diagnostic cargo
+lines inside TAP are not names. Repeated observations retain a capped ordered
+union across executed runs in `failed`. A failed item's note, `why`, driver halt
+detail and repair message list names first, then a log tail of at most 15
+non-empty lines (ANSI stripped, each at most 200 characters). Failures without
+names also receive a bounded tail; existing count-failure notes and the
+5-line no-count command-failure note remain unchanged.
+
+Compatibility (RC1–RC3, ruling #1243): use owed >= 0.13 for repeat and the
+`obs` fields `runs`, `noisy`, `failed`, and `counts.failed`/format `owed`.
+Published 0.12 does not reject unknown check fields: parsePlan silently drops
+`repeat`, then replays these observations by their aggregate verdict only,
+ignoring run/noise/name metadata. It cannot be retrofitted to refuse them, so
+do not operate a repeat ledger with 0.12. From 0.13, unknown top-level obs
+fields are refused with code `version` (upgrade/restart), as unknown rule
+fields already are; this prevents silent interpretation of later obs additions.
+
 ### 7.13 Environment failures (0.11, F2.1)
 
 An observation whose failure says nothing about the code is `error` (no

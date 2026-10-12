@@ -370,7 +370,8 @@ function execEvidence(s: State, n: NodeState, items: readonly { obligation: stri
     for (const seq of seqs) {
       const o = entries.find(e => e.seq === seq);
       if (seen.has(seq) || o?.kind !== 'obs' || o.verdict !== 'fail') continue;
-      seen.add(seq); out.push(clip(`#${o.seq} ${o.obligation}: ${o.note ?? `exit ${o.exit}`}`));
+      // RC3: keep every bounded failed name and the (at most 15-line) tail ahead of generic clipping.
+      seen.add(seq); out.push(o.failed?.length ? `#${o.seq} ${o.obligation}: ${o.note ?? `failed tests: ${o.failed.map(oneLine).join(', ')}`}` : clip(`#${o.seq} ${o.obligation}: ${o.note ?? `exit ${o.exit}`}`));
     }
   }
   return out.sort((a, b) => Number(a.slice(1, a.indexOf(' '))) - Number(b.slice(1, b.indexOf(' '))));
