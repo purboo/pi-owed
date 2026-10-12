@@ -48,7 +48,7 @@ async function candidate(r: Awaited<ReturnType<typeof fixture>>) {
 }
 async function surfaces(cwd: string): Promise<string[]> {
   const outputs: string[] = [];
-  for (const command of [['why', 'a'], ['status'], ['brief'], ['report']]) {
+  for (const command of [['why', 'a'], ['status', '--full'], ['brief'], ['report']]) {
     const out = await cli(cwd, command);
     assert.equal(out.code, 0, out.stderr);
     assert.doesNotMatch(out.stdout, /human/i);

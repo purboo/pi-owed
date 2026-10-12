@@ -158,7 +158,7 @@ test('dispatch refuses overlapping writes of an open slot unless --allow-overlap
     assert.match(refused.stderr, /writes of c overlap the open slot of a/);
     const status = await call<{ ready: string[]; overlaps: Record<string, string[]> }>(r.cwd, ['status']);
     assert.deepEqual(status.overlaps, { c: ['a'] });
-    assert.match((await cli(r.cwd, ['status'])).stdout, /Ready \(by dependent count\): .*c \(writes overlap open slot of a\)/);
+    assert.match((await cli(r.cwd, ['status', '--full'])).stdout, /Ready \(by dependent count\): .*c \(writes overlap open slot of a\)/);
     const b = await call<{ entry: Entry }>(r.cwd, ['dispatch', 'b']);
     assert.equal('overlaps' in b.entry, false, 'disjoint writes record nothing');
     const c = await call<{ entry: Entry }>(r.cwd, ['dispatch', 'c', '--allow-overlap']);

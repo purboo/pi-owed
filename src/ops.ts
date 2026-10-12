@@ -16,6 +16,7 @@ import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
+import { readLock } from './drive-bg.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
@@ -1163,8 +1164,10 @@ export async function status(o: Context): Promise<StatusView> {
     const subjects = new Set(entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.probe === 'trunk' && e.commit === state.trunk.commit).map(e => e.subject));
     for (const id of subjects) mergeChecks.push(...await currentTrunkRedChecks(o.cwd,state,id));
   }
-  const view = statusView(inited(state),entries,mergeChecks);
+  const lock = readLock(ledger.dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
+  const view = statusView(inited(state),entries,mergeChecks,Date.now(),driverRunning);
   if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
+  if (drift && view.summary) view.summary.needs.unshift({ node:'trunk', reason:driftText(drift), command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : `owed why trunk` });
   return {...view,...(drift ? {drift} : {}),...(trunkWorktree ? {trunkWorktree} : {})};
 }
 /** Read-only merge diagnostics: Git supplies the current key; probes alone never create an item. */
@@ -1269,7 +1272,11 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
   const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = reduceFrom(loaded.state,[],loaded.lookup), entries = loaded.entries, lookup = loaded.lookup, since = o.since ?? -1; inited(state);
   await applyReports(ledger,state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
-  return briefView(state,entries,since,o.now ?? Date.now(),mergeCoverage(entries,lookup));
+  const lock = readLock(ledger.dir);
+  const b = briefView(state,entries,since,o.now ?? Date.now(),mergeCoverage(entries,lookup),lock.state === 'live' || lock.state === 'foreign');
+  const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
+  if (drift && b.summary) b.summary.needs.unshift({node:'trunk',reason:driftText(drift),command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : 'owed why trunk'});
+  return b;
 }
 
 // ---------- driver entries (SPEC §12, D3): persisted before the dsa call ----------

@@ -69,7 +69,7 @@ test('D19.6 acceptance: outside root, templated branch, trunk in a linked worktr
     const before = await snapshot();
     assert.ok(before.status.includes('test/b.cjs') && before.status.includes('notes.txt'), 'fixture: main worktree is dirty');
     await call(r.cwd, ['init', plan, '--i-am-owner']);
-    const status = await cli(r.cwd, ['status']);
+    const status = await cli(r.cwd, ['status', '--full']);
     assert.equal(status.code, 0, status.stderr);
     assert.ok(status.stdout.split('\n').includes(`Trunk dev is checked out at ${dev}; merges fast-forward it there (keep it clean).`), status.stdout);
     assert.equal((await call<StatusView>(r.cwd, ['status'])).trunkWorktree, dev);

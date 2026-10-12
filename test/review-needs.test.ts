@@ -5,7 +5,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-w
 import { sha256 } from '../src/canon.ts';
 import { decide, needsRulingHalt, repairMessage, reviewerLaunch, writerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, entriesOf, halted, validateDraft, parentRuling } from '../src/reducer.ts';
-import { receipt, renderReceipt, renderStatus, reviewPacket, statusView } from '../src/views.ts';
+import { receipt, renderReceipt, renderStatusFull as renderStatus, reviewPacket, statusView } from '../src/views.ts';
 import owed from '../src/extension.ts';
 import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
@@ -263,7 +263,7 @@ test('CLI: review --block --needs-parent records needs; --ok --needs-parent is r
     const plain = await cli(r.cwd, ['review', 'a', '--block', '--rank', '1', '--note', 'typo', '--as', 'reviewer:r2']);
     assert.equal(plain.code, 0, plain.stderr);
     assert.equal('needs' in (await last(r.cwd)), false);
-    const st = await cli(r.cwd, ['status']);
+    const st = await cli(r.cwd, ['status', '--full']);
     assert.ok(st.stdout.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${e.seq} review (needs a parent ruling): which API?; record owed rule --nodes a "<decision>"`), st.stdout);
     assert.equal((await cli(r.cwd, ['rule', 'general', '--nodes', '*'])).code, 0);
     assert.match((await cli(r.cwd, ['why', 'a'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(needs a parent ruling\\)`));

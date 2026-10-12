@@ -54,7 +54,7 @@ test('FL1: newly added dependencies suppress submit, repair, ruling and missing-
   assert.equal(ask?.do,'notify');
   assert.match(ask?.do==='notify'?ask.text:'',/asks/);
   assert.match(views.renderReceipt(views.receipt(r.state(),r.entries,'a')),/waiting \(deps: b, c\)/);
-  assert.match(views.renderStatus(views.statusView(r.state(),r.entries)),/waiting \(deps: b, c\)/);
+  assert.match(views.renderStatusFull(views.statusView(r.state(),r.entries)),/waiting \(deps: b, c\)/);
 });
 
 test('FL1: running writer gets one notify per dependency-adding plan, with durable retry bytes', () => {
@@ -115,7 +115,7 @@ test('FL3: describe keeps final result; failing/rejected writer is not falsely r
 test('FL4: later is parsed, not ready/dispatched or keyed, and status/brief list backlog; removing later makes it ready', () => {
   const p=basePlan(); p.nodes[1]!.later=true; const parsed=plans.parsePlan(JSON.stringify(p)); assert.equal(parsed.nodes[1]!.later,true);
   const r=rig(); r.plan(p=>{p.nodes[1]!.later=true;}); assert.equal(r.state().nodes.b!.phase,'blocked'); assert.ok(!views.statusView(r.state()).ready.includes('b'));
-  assert.match(views.renderStatus(views.statusView(r.state())),/Backlog \(later\): b/); assert.match(views.renderBrief(views.briefView(r.state(),r.entries)),/Backlog \(later\)/);
+  assert.match(views.renderStatusFull(views.statusView(r.state())),/Backlog \(later\): b/); assert.match(views.renderBrief(views.briefView(r.state(),r.entries)),/Backlog \(later\)/);
   const prev=basePlan(), next=structuredClone(prev); next.nodes[0]!.later=true; assert.equal(reducer.invalidates(prev,next,'a'),false);
   r.plan(p=>{delete p.nodes[1]!.later;}); assert.equal(r.state().nodes.b!.phase,'ready');
   assert.throws(()=>plans.parsePlan(JSON.stringify({...p,nodes:[{...p.nodes[0],later:'true'}]})),/later/);

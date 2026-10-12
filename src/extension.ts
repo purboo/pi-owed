@@ -168,7 +168,7 @@ export default function owed(pi: ExtensionAPI): void {
       } });
   }
   const card = async (dir: string, id: string, data: unknown) => result(data, renderReceipt(await ops.why({ cwd: dir, node: id })));
-  tool('status', 'View status, ready nodes and pending queues.', Type.Object({ as, cwd }), async (_p, _ctx, dir) => { const r = await ops.status({ cwd: dir }); return result(r, renderStatus(r)); });
+  tool('status', 'View outcome, next actions and progress; full keeps all evidence and audit lines.', Type.Object({ as, cwd, full: Type.Optional(Type.Boolean()) }), async (p, _ctx, dir) => { const r = await ops.status({ cwd: dir }); return result(r, renderStatus(r, { full:p.full })); });
   tool('why', 'View a node receipt card, evidence and rejection reasons.', Type.Object({ node, as, cwd }), async (p, _ctx, dir) => { const r = await ops.why({ cwd: dir, node: p.node }); return result(r, renderReceipt(r)); });
   tool('report', 'View merges, debt, waivers, owner decisions, escapes and decoys.', Type.Object({ since, as, cwd }), async (p, _ctx, dir) => { const r = await ops.report({ cwd: dir, since: p.since }); return result(r, renderReport(r)); });
   tool('brief', 'Morning brief: owner decisions with the exact command, merges since `since`, rejected or blocked nodes, work in progress and totals.', Type.Object({ since, cwd }), async (p, _ctx, dir) => { const r = await ops.brief({ cwd: dir, since: p.since }); return result(r, renderBrief(r)); });
