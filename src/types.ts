@@ -138,6 +138,8 @@ export interface ObsEntry extends Base {
   base?: string;
   attribution?: boolean;     // rerun of an earlier failing item
   merging?: string;          // node whose `owed merge` appended this obs (merge-result checks/invariants)
+  /** 0.14 TR: informational node-check measurement on trunk; never counts as an obligation or block. */
+  probe?: 'trunk';
   note?: string;
   /** RC1: every executed repeat run (in order), each with its own log digest. */
   runs?: MeasurementRun[];
