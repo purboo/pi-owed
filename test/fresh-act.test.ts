@@ -18,7 +18,7 @@ import { commitAt } from './helpers/surface.ts';
 const owner = { role: 'owner', id: 'human' } as const, parent = { role: 'parent', id: 'main' } as const;
 const node = (id: string, o: Record<string, unknown> = {}) => ({ id, writes: [`${id}.txt`], checks: [], review: { count: 1, min_rank: 1 }, ...o });
 const planOf = (...nodes: object[]) => ({ version: 1, trunk: 'main', closure: [], invariants: [], nodes });
-const RULE_HINT = (n: string) => `If the answer decides the contract or scope, also record it with \`owed rule --nodes ${n} "<decision>"\` so reviewers see it.`;
+const RULE_HINT = (_n: string) => 'This records one answer ruling and delivers it to the asking run; reviewers still acknowledge it.';
 
 /** In-process dsa: views set by the test; `before` hooks run inside `inspect` (between the pass's load and its describe). */
 class StubDsa extends Dsa {
@@ -238,7 +238,7 @@ test('F1.2: a verdict follow-up answered by a review: no halt, the node merges',
   } finally { await f.cleanup(); }
 });
 
-test('F1.3: the asking notify ends with the ruling sentence', { timeout: 120_000 }, async () => {
+test('AN1: the asking notify ends with the answer ruling sentence', { timeout: 120_000 }, async () => {
   const f = await setup();
   try {
     await f.pass(); await f.pass();

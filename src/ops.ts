@@ -21,7 +21,7 @@ import type { ReceiptCard, StatusView, Report } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
 import type { Brief } from './views.ts';
-import type { AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State, SubmitEntry } from './types.ts';
+import type { AnswerRef, RuleEntry, AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
 /** An item a job measured: its observation was not recorded because the item was no longer current (D24.1). */
@@ -701,6 +701,23 @@ function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): St
   const replay = [...latest.entries], more: Entry[] = [];
   for (const x of drafts) { const e = { ...x, seq:replay.length ? replay.at(-1)!.seq+1 : 0, ts:new Date().toISOString(), prev:replay.at(-1)?.hash ?? '' } as Entry; e.hash = entryHash(e); replay.push(e); more.push(e); }
   return reduceFrom(latest.state,more,latest.lookup);
+}
+export { answer } from './answer.ts';
+
+/** AN2: record once under the ledger lock; retries use the original entry and bytes. */
+export async function answerRule(o: Actor & { node: string; text: string; answer: AnswerRef }): Promise<RuleEntry> {
+  const ledger = await Ledger.open(o.cwd); owner(o);
+  return ledger.withLock(async () => {
+    const { state, entries } = await load(ledger);
+    if (!['parent', 'owner'].includes(o.as.role)) throw new OwedError('answer requires parent or owner');
+    const prior = entries.find((e): e is RuleEntry => e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(o.node) && e.answer?.rid === o.answer.rid && e.answer.qid === o.answer.qid);
+    if (prior) {
+      if (prior.text !== o.text) throw new OwedError(`Answer rule #${prior.seq} already records different text for this rid/qid; retry with its original answer`);
+      return prior;
+    }
+    const draft: Draft = { kind: 'rule', by: by(o), channel: o.channel, nodes: [o.node], writer: false, text: o.text, answer: o.answer };
+    guard(state, draft); return (await ledger.append([draft]))[0] as RuleEntry;
+  });
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*'; writer?: boolean }): Promise<Entry> { return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}) })); }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
