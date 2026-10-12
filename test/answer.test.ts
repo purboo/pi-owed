@@ -205,6 +205,85 @@ test('AN3: other reviewer receives the answer and must acknowledge; later attemp
   } finally { await f.cleanup(); }
 });
 
+// Review #1266: exercise real ops state transitions and the messages actually selected by decide.
+async function nextAction(f: Awaited<ReturnType<typeof fixture>>) {
+  const { state, entries } = await ops.readState(f);
+  const applied = new Set(entries.flatMap(e => e.kind === 'send' ? [e.send] : []));
+  return decide(state, state.plan, f.dsa.views, { max: 1, repairs: 2, project: f.project, root: f.cwd, applied, rejected: new Map() }).find(a => a.node === 'a');
+}
+async function sendAction(f: Awaited<ReturnType<typeof fixture>>, action: Awaited<ReturnType<typeof nextAction>>) {
+  assert.ok(action?.do === 'send', JSON.stringify(action));
+  const entry = await ops.send({ cwd: f.cwd, as: parent, node: action.node, attempt: action.attempt, rid: action.rid, sendKind: action.sendKind, reason: action.reason, message: action.message, rulings: action.rulings });
+  await f.dsa.send(entry.send, entry.rid, entry.sendKind, action.message);
+  return entry;
+}
+async function submitted(f: Awaited<ReturnType<typeof fixture>>) {
+  await commitAt(f.slot.worktree, { 'a.txt': 'v2' });
+  await ops.submit({ cwd: f.slot.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a' });
+  await ops.attest({ cwd: f.cwd, node: 'a' });
+}
+
+for (const changedBrief of [false, true]) test(`AN3 #1266: ${changedBrief ? 'brief-change resubmit' : 'review-block repair'} never carries the writer answer`, async () => {
+  const f = await fixture();
+  try {
+    await submitted(f);
+    await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'block', rank: 1, note: 'Fix validation', needs: 'parent' });
+    const answer = await ops.answer(f.opts);
+    // An answer to another run is ordinary guidance for this writer and must not be filtered out.
+    const other = await f.reviewer(); f.dsa.ask(other.rid, 'review-question');
+    const otherAnswer = await ops.answer({ ...f.opts, rid: other.rid, text: 'Check validation against v2' });
+    if (changedBrief) {
+      const { state } = await ops.readState(f);
+      const plan = structuredClone(state.plan); plan.nodes[0]!.brief = 'Validate the v2 contract';
+      await ops.planSet({ cwd: f.cwd, as: parent, plan: JSON.stringify(plan) });
+      assert.equal((await ops.readState(f)).state.nodes.a!.candidate, undefined);
+    }
+    f.dsa.views.set(f.writer.rid, { rid: f.writer.rid, state: 'sealed', status: 'ok' });
+    f.dsa.views.set(other.rid, { rid: other.rid, state: 'sealed', status: 'ok' });
+    const action = await nextAction(f);
+    assert.ok(action?.do === 'send' && action.reason === 'repair' && action.rid === f.writer.rid, JSON.stringify(action));
+    assert.ok(!action.message.includes(answer.entry.text), action.message);
+    assert.ok(!action.message.includes(f.opts.text), action.message);
+    assert.ok(action.message.includes(otherAnswer.entry.text) && action.message.includes('Fix validation'), action.message);
+    assert.equal(action.rulings, otherAnswer.entry.seq);
+    if (changedBrief) assert.ok(action.message.includes('The plan changed'), action.message);
+    const sent = await sendAction(f, action);
+    assert.equal(sent.rulings, otherAnswer.entry.seq);
+    assert.ok(!f.dsa.sends.at(-1)!.message.includes(answer.entry.text));
+  } finally { await f.cleanup(); }
+});
+
+for (const sealed of [false, true]) for (const earlier of [false, true]) test(`AN3 #1266: reviewer ${sealed ? 'follow-up' : 'steer'} acknowledges its answer${earlier ? ' and earlier guidance' : ' alone'} without stalling`, async () => {
+  const f = await fixture();
+  try {
+    await submitted(f);
+    const reviewer = await f.reviewer();
+    // This reviewer had a verdict before the new rulings, so a sealed run reaches the ruling follow-up path.
+    const who = { role: 'reviewer' as const, id: 'drive-a-1-1' };
+    await ops.review({ cwd: f.cwd, as: who, node: 'a', verdict: 'ok', rank: 1, note: 'initial review' });
+    f.dsa.ask(reviewer.rid, 'review-question');
+    const older = earlier ? await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'Earlier guidance' }) : undefined;
+    const answer = await ops.answer({ ...f.opts, rid: reviewer.rid, text: 'Validate v2' });
+    // The writer already received both, leaving only the reviewer's acknowledgment outstanding.
+    await ops.send({ cwd: f.cwd, as: parent, node: 'a', attempt: 1, rid: f.writer.rid, sendKind: 'steer', reason: 'ruling', message: 'Earlier guidance; Validate v2', rulings: answer.entry.seq });
+    f.dsa.views.set(f.writer.rid, { rid: f.writer.rid, state: 'sealed', status: 'ok' });
+    f.dsa.views.set(reviewer.rid, { rid: reviewer.rid, state: sealed ? 'sealed' : 'running', status: 'ok' });
+    const action = await nextAction(f);
+    assert.ok(action?.do === 'send' && action.reason === 'ruling' && action.rid === reviewer.rid, JSON.stringify(action));
+    assert.equal(action.sendKind, sealed ? 'follow-up' : 'steer');
+    const ack = Number(action.message.match(/--ack-rulings (\d+)/)?.[1]);
+    // Follow the real message's instruction, not a seq supplied independently by the test.
+    await sendAction(f, action);
+    if (!sealed) assert.equal(await nextAction(f), undefined, 'do not repeatedly request ack while the reviewer is running');
+    await ops.review({ cwd: f.cwd, as: who, node: 'a', verdict: 'ok', rank: 1, note: 'followed ruling hint', ack_rulings: ack });
+    f.dsa.views.set(reviewer.rid, { rid: reviewer.rid, state: 'sealed', status: 'ok' });
+    assert.equal((await ops.readState(f)).state.nodes.a!.items.find(i => i.obligation === 'rulings')!.status, 'E', `hint must cover answer #${answer.entry.seq}, not only #${older?.seq ?? 0}`);
+    assert.equal((await nextAction(f))?.do, 'merge', 'the driver must not stall after following the ack hint');
+    assert.ok((!older || action.message.includes('Earlier guidance')) && action.message.includes(answer.entry.text), action.message);
+    assert.equal(ack, answer.entry.seq);
+  } finally { await f.cleanup(); }
+});
+
 const fakeScript = `#!/usr/bin/env node
 import {readFileSync, writeFileSync} from 'node:fs';
 const a=process.argv.slice(2), get=k=>a[a.indexOf(k)+1], file=process.env.ANSWER_STATE, s=JSON.parse(readFileSync(file));
