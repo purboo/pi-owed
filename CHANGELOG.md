@@ -1,5 +1,140 @@
 # Changelog
 
+## 0.14.0
+
+This release delivers the merged nodes bigdiff (BD), policy (PR), hold (AH)
+and trunkred (TR). Origins: wais feedback (2026-10-12) in
+`/tmp/dsa/owed-requirements.md`, the 15:5x items 1–3 and 16:4x items 4–5:
+KX-DRIVING-PROFILE; R122 and ruling #3856 on LY-ROAD-K;
+KX-REC-FOCUS #3917/#3925/#3926; KX-RUNTIME-GC #3896/#3919.
+The parent's rulings below pin the behavior where the original asks changed.
+
+- **Large candidates without buffered review diffs (BD;
+  KX-DRIVING-PROFILE, 409 MiB evidence).** `owed submit` streams the full
+  binary diff through a UTF-8 decoder into the review hash, never building
+  the diff string. The patch hash stays identical to 0.13, including invalid
+  UTF-8 replacement and multibyte characters split across chunks; an empty
+  diff keeps its existing hash. All buffered `git()` calls bound combined
+  stdout/stderr to 256 MiB by default (clamped to the runtime's string limit).
+  Oversize output is refused with code `refused`, naming the Git subcommand,
+  even with `allowFail`, instead of `ERR_STRING_TOO_LONG`. Other diffs,
+  plan `show` and mutant `cat-file blob` reads are covered; the streamed
+  review diff has no stdout buffering bound and retains bounded stderr.
+  Optional top-level plan `limits: {file_mib, diff_mib}` accepts positive
+  finite MiB values, including fractions. Submit inspects changed blob ids
+  and sizes without reading content: `file_mib` bounds the largest changed
+  candidate file and `diff_mib` their summed full blob sizes, once per
+  changed path, including mode changes. Deleted files and gitlinks add zero;
+  an exact limit is allowed. Exceeding a limit refuses with code `refused`,
+  the limit and up to five largest changed files with sizes, recording
+  nothing; the writer gets the ordinary submit refusal. Without either
+  limit there is no size check. Limits enter no acceptance key, invalidate
+  no existing candidate and are not rechecked at merge or carry.
+- **Prospective policy and ruling re-acknowledgment (PR; R122,
+  LY-ROAD-K #3856; ruling #1431).** `owed rule --prospective` (pi
+  `owed_rule` field `prospective: boolean`) records `prospective: true` and
+  binds only attempts dispatched after that ruling, not merely later
+  submissions. Later packets and `rulings_seen` include it normally; older
+  attempts keep their acknowledgment scope, halt and repair budget. Each
+  unsealed writer/reviewer run of an older open attempt receives one
+  informational `notify`, with no follow-up or re-ack obligation; retries
+  reuse the same request while unsealed, never halting for a refused notice.
+  Sealed runs receive no prospective policy on later follow-ups and are
+  never relaunched for it. Removed nodes receive no prospective notices
+  (#1431); the parent closes their remaining slots. `--prospective` with
+  `--writer` is a usage error and records nothing; omission or false keeps
+  ordinary ruling behavior. When an ordinary ruling, including `*`, leaves
+  only `rulings` owed, the driver follows up with the latest reviewer or
+  launches one, quoting the rulings, candidate commit and `--ack-rulings
+  <seq>`. Without a review/closure-review obligation, it instead sends the
+  writer one `ruling` follow-up per set and waits for resubmission of the
+  same commit or a changed one, rather than a stalled-owner halt (#1431).
+  Resubmit acknowledges only recorded writer ruling follow-ups, not later
+  unsent rulings, prospective notices or executor carries. An unaddressable
+  writer retains the normal run/send refusal route. Report "Status changes"
+  omit nodes merged by the end of the window, removing merged-node ruling
+  noise. Owner reviews at other ranks refuse with `owner reviews use --rank 3`.
+- **Abandon without immediate re-dispatch (AH; KX-REC-FOCUS
+  #3917/#3925/#3926; ruling #1403).** `owed abandon <node> --hold` (pi
+  `owed_abandon` field `hold: boolean`) appends a separate entry kind
+  `hold` with `{node, by, channel, abandon, reason?}` in the same ledger
+  lock immediately after abandon; `hold.abandon` references the preceding
+  abandon's sequence. Abandon itself has no new field. Status and why show
+  `held by abandon #N`.
+  A held node is not ready, the driver never dispatches it, and dispatch
+  refuses with `owed resume <node>`. Resume releases it without an open
+  slot using `release: "hold"`; normal readiness rules then apply. Release
+  takes neither `--after` nor `--expect`; held nodes do not satisfy
+  dependencies. Removing a node from the plan makes its hold moot. To
+  retire a node, remove it first and then abandon its slot; use `--hold`
+  while deciding. If the driver's own writer launch is stale because the
+  node left the plan, was held or abandoned, it closes only its own attempt
+  with no writer launch intent, without a halt or notice. Clean, unlocked,
+  non-nested worktrees still at their base are removed with guarded branch
+  deletion; commits or uncommitted changes keep their worktree and branch.
+  Parent-dispatched slots and attempts with writer launch intent are left
+  alone. From 0.14 unknown abandon fields also raise code `version` (#1403).
+- **Trunk-red merge diagnostics, not writer repairs (TR; KX-RUNTIME-GC
+  #3896/#3919: candidate 21/21, merge tree 18/21 and the same three failures
+  on trunk; rulings #1432/#1458).** Before refusing a measured or reused
+  merge-result node-check failure, `owed merge` measures that check on
+  current trunk alone, under the same lease, setup and execution settings,
+  with closure pinned from trunk and its own trunk check key. The executor
+  records `obs.probe: "trunk"`, subject = node and commit/base = trunk;
+  non-error probes on the same key and trunk commit are reused. Probes
+  never satisfy or block obligations or count as decoy catches; invariants,
+  red and strength checks get no probes. A failing probe classifies the
+  refusal as `trunk-red` if every merge-tree failed name occurs in its
+  names, or neither result has names. A passing probe or mismatched names
+  keeps the ordinary refusal. The message starts `trunk-red: check:X fails
+  on trunk <short> without <node> (<names>)`, identifies both observation
+  sequences and says the candidate is not shown to be the cause. The
+  driver halts needing the parent before attribution or a writer repair,
+  including after restart. Parent options are a fixing node, a configured
+  `owed sweep --commit <trunk>` for its bisect/escape proposal, or
+  `owed waive <node> check:X --reason "<why the risk is acceptable>"
+  --accept-risk <merge-tree obs seq>`. Classification compares check/merge
+  keys, not raw base commits: unrelated trunk moves outside reads/closure
+  retain the reusable failure, while a current-trunk probe decides its
+  classification (#1432). Even after attribution cleared the original
+  block, `accept_risk` may cite that merge-result fail only when its key
+  equals the current merge key; the waiver binds that key alone (#1458).
+  Other cleared/stale observations and probes remain invalid waiver risks.
+  Status/why name both observations and route trunk-red to the parent,
+  including a separate `mergeChecks` item in why and a parent pending item
+  in status for the accepted-candidate/reused-failure path (#1458). Waiving
+  that key removes the diagnostic; it does not claim a measured pass.
+  Existing merge CAS and current-plan/key guards discard stale results.
+
+### Compatibility
+
+Use owed 0.14 for `rule.prospective`, the new `hold` entry kind,
+`resume.release: "hold"`, `obs.probe` and the new cleared-merge-failure
+waiver scope. Owed 0.13 refuses the new rule/observation/resume fields and
+unknown `hold` kind with code `version`; it silently ignores unknown
+abandon fields, which is why hold is a separate kind (#1403). From 0.14,
+unknown abandon and hold fields also raise `version`.
+
+Published 0.12 already refuses unknown ruling fields, so it also refuses
+`rule.prospective` (including false) and the unknown `hold` kind with code
+`version`; it does **not** silently ignore prospective policy. It ignores
+unknown observation fields such as `probe`, so it cannot safely interpret
+trunk probes. Pre-0.12 readers may silently ignore unknown rule/observation
+fields and unknown kinds (0.11 does not interpret `hold`), rather than
+provide a `version` refusal; never use them to operate a hold or probe ledger. Owed 0.13 ignores top-level plan `limits`
+(as do earlier readers), so enforcing size policy requires 0.14+.
+
+Streaming hashes preserve 0.13 patch/review identities. The other additions
+change no existing acceptance keys; histories without new entries/fields
+retain their 0.13 replayed states and keys. Upgrade CLI, pi extension,
+drivers and remote executors together, and restart existing pi sessions.
+
+### Deferred
+
+Merge train #22; measure on merged trunk #23; milestone-level evidence;
+periodic re-measurement of reused verdicts; worker crash not replaying
+`session_start`. None is claimed as delivered in this release.
+
 ## 0.13.0
 
 This release delivers the merged nodes lease (LE), waits (FL), repeat (RC),
