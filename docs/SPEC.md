@@ -312,7 +312,9 @@ An invariant failure decided solely by named failing tests (the shared IR2
 predicate: fail verdict, non-empty `failed`, no timeout, error, zero/unknown
 count or unmet `min_tests`, including repeat runs) becomes **W**, mark **⚠**,
 when every failing name is active. It is satisfied for merges and acceptance,
-not a measured pass or an invariant waiver. Its detail is
+not a measured pass or an invariant waiver. Invariant `why` receipts set
+`accepted: true` for E or W, and false for D (including lapsed or missing-fix
+failures). Its detail is
 `inv:<id> known red: <names> (fix: <nodes>; plan #<seq>)`; evidence includes the
 executor observations and current genesis/plan seq. An extra unlisted name,
 unknown names or any other failure keeps the ordinary evaluation; conflicts
@@ -1136,11 +1138,15 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
   `caught` — an executor `obs` with verdict `fail` (execution block or
   rejecting obs) or a `review` with verdict `block` (judgment block) on the node
   before any merge of it; or a failure seen while merging it: an executor `obs`
-  with `merging: <node>` and verdict `fail` on an invariant or check whose item
-  was not already failing on PRE (the trunk item at that obs is in E — not debt,
-  deferred debt, ⊥ or missing). Pre-existing trunk debt, deferred or not, never
-  counts as a catch. This holds for a refused merge and for a later merge after
-  an owner `defer`. `escaped` — a merge of the node with no such entry before
+  with `merging: <node>` and verdict `fail` on a node check, or on an invariant
+  previously satisfied on PRE (E or active known-red W) whose merge-result item
+  is D. PRE=W → D is a catch, including a fix node whose own exemption is
+  inactive on its merge result; PRE=W → W is not a catch. Result classification
+  includes the observation being recorded and the merging-node context, so a
+  fail verdict alone does not count a still-satisfied known-red item as caught.
+  PRE=E retains its ordinary rejection behavior. Pre-existing trunk D debt,
+  deferred or not, never counts as a catch. This holds for a refused merge and
+  for a later merge after an owner `defer`. `escaped` — a merge of the node with no such entry before
   it; `pending` — neither yet. `decidedBy` is the deciding seq.
 - A node listed in more than one reveal counts once: the decoy of the earliest
   commitment (lowest `decoy-commit` seq) wins, whatever the order of the reveals.
@@ -1162,8 +1168,9 @@ moved ref silently.
   `{seq, by, channel, prior, commit, commits, changed, note}` in ledger order.
 - **No new debt** (`adoptGuard`, also checked on replay): for each invariant,
   key on the adopted state; if equal to its key on the current trunk the status
-  is inherited; otherwise, when the item on the current trunk is E, the item on
-  the adopted key must be E. An invariant that is already debt on the current
+  is inherited; otherwise, when the item on the current trunk is satisfied
+  (E or active known-red W), the item on the adopted key must also be satisfied
+  (E or W). An invariant that is already debt on the current
   trunk (D: failing, ⊥, ⊤ or deferred) does not block. Genesis observations must
   be finished (§6.4 rule 4). There is no owner `defer` for an adoption: the owner
   fixes trunk and adopts again. The refusal names each failing invariant with the

@@ -10,6 +10,7 @@ import { parsePlan, planDowngrades } from '../src/plan.ts';
 import { editText } from '../src/edit.ts';
 import { candidateFacts, stateFacts } from '../src/git.ts';
 import { Ledger } from '../src/ledger.ts';
+import { canonical, sha256 } from '../src/canon.ts';
 import type { CandidateFacts, Draft, Entry, KnownRed, ObsEntry, Plan, StateFacts } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
@@ -200,6 +201,91 @@ test('KR CLI/ledger: owner edit records downgrade atomically; refusal preserves 
     assert.equal((await ops.report({ cwd: r.cwd, since: law.seq })).knownRed?.[0]!.plan, law.seq);
     assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
   } finally { await r.cleanup(); }
+});
+
+test('review #1516: invariant receipt accepts active W and fixed E, but rejects lapsed/missing-fix D', async () => {
+  const r = await repo();
+  try {
+    await r.put('src/x', 'x'); await r.commit();
+    await ops.init({ cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(rawPlan([{ test: 'old failure', fix: 'fix' }])), measure: false });
+    const ledger = await Ledger.open(r.cwd), initial = (await ops.readState({ cwd: r.cwd })).state;
+    const key = initial.trunk.invKeys.unit!;
+    const append = (drafts: Draft[]) => ledger.withLock(() => ledger.append(drafts));
+    await append([{ kind: 'obs', by: 'executor:owed', subject: 'trunk', obligation: 'inv:unit', key,
+      verdict: 'fail', exit: 1, durationMs: 1, commit: initial.trunk.commit, ...failFields() }]);
+    for (const node of ['unit', 'inv:unit']) {
+      const card = await ops.why({ cwd: r.cwd, node });
+      assert.equal(card.items[0]!.status, 'W'); assert.equal(card.accepted, true, `${node}: active known red is accepted`);
+      const json = await cli(r.cwd, ['why', node, '--json']);
+      assert.equal(json.code, 0, json.stderr); assert.equal(JSON.parse(json.stdout).accepted, true);
+    }
+    const d = await ops.dispatch({ cwd: r.cwd, node: 'fix', as: parent });
+    await commitAt(d.worktree, { 'src/x': 'fixed' });
+    await ops.submit({ cwd: d.worktree, node: 'fix', as: { role: 'writer', id: 'fix#1' } });
+    const current = (await ops.readState({ cwd: r.cwd })).state, candidate = current.nodes.fix!.candidate!;
+    const fixed = await stateFacts(r.cwd, current.plan, candidate.commit);
+    await append([
+      { kind: 'obs', by: 'executor:owed', subject: 'fix', obligation: 'writes', key: candidate.keys.writes!, verdict: 'pass', exit: 0, durationMs: 1, commit: candidate.commit },
+      { kind: 'obs', by: 'executor:owed', subject: 'trunk', obligation: 'inv:unit', key: fixed.invKeys.unit!, verdict: 'pass', exit: 0, durationMs: 1, commit: fixed.commit },
+      { kind: 'merge', by: 'executor:owed', node: 'fix', attempt: 1, prior: current.trunk.commit, commit: fixed.commit, facts: candidate, state: fixed },
+    ]);
+    let card = await ops.why({ cwd: r.cwd, node: 'inv:unit' });
+    assert.equal(card.items[0]!.status, 'E'); assert.equal(card.accepted, true);
+    assert.deepEqual(reducer.activeKnownRed((await ops.readState({ cwd: r.cwd })).state, 'unit'), []);
+    await append([{ kind: 'obs', by: 'executor:owed', subject: 'trunk', obligation: 'inv:unit', key: fixed.invKeys.unit!,
+      verdict: 'fail', exit: 1, durationMs: 1, commit: fixed.commit, ...failFields() }]);
+    card = await ops.why({ cwd: r.cwd, node: 'unit' });
+    assert.equal(card.items[0]!.status, 'D'); assert.equal(card.accepted, false, 'lapsed list cannot accept a recurrence');
+    // A legal plan removal drops its owned entries too: the parser refuses dangling fix references.
+    const missing = rawPlan(); missing.nodes = missing.nodes.filter(n => n.id !== 'fix');
+    await ops.planSet({ cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(missing), note: 'Remove retired fix and its lapsed debt list' });
+    assert.equal((await ops.readState({ cwd: r.cwd })).state.plan.nodes.some(n => n.id === 'fix'), false);
+    card = await ops.why({ cwd: r.cwd, node: 'inv:unit' });
+    assert.equal(card.items[0]!.status, 'D'); assert.equal(card.accepted, false, 'missing fix cannot accept debt');
+  } finally { await r.cleanup(); }
+});
+
+test('review #1516: adoption treats W as satisfied on both trunk and adopted keys', () => {
+  for (const prior of ['E', 'W', 'D'] as const) for (const next of ['E', 'W', 'D'] as const) {
+    const r = rig();
+    r.obs('inv0', prior === 'E' ? {} : failFields(prior === 'W' ? ['old failure'] : ['unlisted']));
+    r.obs('invAdopt', next === 'E' ? {} : failFields(next === 'W' ? ['old failure'] : ['unlisted']));
+    const guard = reducer.adoptGuard(r.state(), sf('adopted', 'invAdopt'));
+    assert.equal(guard.invItems[0]!.status, next);
+    assert.equal(guard.ok, prior === 'D' || next !== 'D', `${prior} -> ${next}`);
+    assert.deepEqual(guard.failed, prior !== 'D' && next === 'D' ? ['unit'] : []);
+  }
+});
+
+function decoyRig(node = 'other') {
+  const r = rig(), payload = { nonce: 'knownred-decoy-regression', decoys: [{ node, defect: 'new invariant failure' }] };
+  r.add({ kind: 'decoy-commit', by: 'owner:pi', digest: sha256(canonical(payload)) });
+  r.obs('inv0', failFields()); r.open(node);
+  return { ...r, reveal: () => r.add({ kind: 'decoy-reveal', by: 'owner:pi', ...payload }) };
+}
+
+test('review #1516: decoy PRE=W -> D is caught, including late reveal and fix-owned merge failure', () => {
+  for (const late of [false, true]) for (const node of ['other', 'fix']) {
+    const r = decoyRig(node);
+    if (!late) r.reveal();
+    const caught = r.obs('invM', { ...failFields(node === 'fix' ? ['old failure'] : ['old failure', 'new failure']), merging: node });
+    if (late) r.reveal();
+    assert.deepEqual(r.state().decoys.map(d => [d.outcome, d.decidedBy]), [['caught', caught]], `${node}, late=${late}`);
+    const initial = reducer.reduce(r.entries.slice(0, 1), () => plan());
+    assert.equal(reducer.sameReplay(r.state(), reducer.reduceFrom(initial, r.entries.slice(1), () => plan())), true);
+  }
+});
+
+test('review #1516: decoy PRE=W -> W is not caught and escapes on merge', () => {
+  for (const late of [false, true]) {
+    const r = decoyRig();
+    if (!late) r.reveal();
+    r.obs('invM', { ...failFields(), merging: 'other' });
+    if (late) r.reveal();
+    assert.equal(r.state().decoys[0]!.outcome, 'pending');
+    const merged = r.add({ kind: 'merge', by: 'executor:owed', node: 'other', attempt: 1, prior: 's0', commit: 'cm', facts: facts('other', 'cm'), state: sf('cm', 'invM') });
+    assert.deepEqual(r.state().decoys.map(d => [d.outcome, d.decidedBy]), [['escaped', merged]]);
+  }
 });
 
 test('KR integration: unrelated merge accepts listed failure; fix merge refuses then passes; lapse survives replay', async () => {
