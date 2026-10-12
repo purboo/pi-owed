@@ -29,7 +29,33 @@ function cargoCounts(log: string): Counts | undefined {
   const cargo = [...log.matchAll(/^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/gm)];
   return cargo.length ? cargo.reduce<Counts>((c, m) => ({ format: 'cargo', tests: (c.tests ?? 0) + Number(m[1]) + Number(m[2]) + Number(m[3]), pass: (c.pass ?? 0) + Number(m[1]), fail: (c.fail ?? 0) + Number(m[2]), skip: (c.skip ?? 0) + Number(m[3]) }), {}) : undefined;
 }
-export function parseCounts(log: string): Counts | undefined {
+/** RC2/RC3: last valid owed-counts line wins; malformed lines are ignored and noted by the executor. */
+export function parseCounts(log: string, malformed?: (note: string) => void): Counts | undefined {
+  let owed: Counts | undefined;
+  const integer = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
+  for (const line of log.split(/\r?\n/)) {
+    if (!/^\s*owed-counts(?:\s|$)/.test(line)) continue;
+    try {
+      const c: unknown = JSON.parse(line.replace(/^\s*owed-counts\s*/, ''));
+      if (!c || typeof c !== 'object' || Array.isArray(c)) throw new Error('expected object');
+      const x = c as Record<string, unknown>;
+      if (!integer(x.pass) || !integer(x.fail) || (x.skip !== undefined && !integer(x.skip)) || (x.failed !== undefined && (!Array.isArray(x.failed) || x.failed.some(n => typeof n !== 'string')))) throw new Error('invalid counts');
+      owed = { format: 'owed', tests: x.pass + x.fail + ((x.skip as number | undefined) ?? 0), pass: x.pass, fail: x.fail, ...(x.skip !== undefined ? { skip: x.skip as number } : {}), ...(x.failed !== undefined ? { failed: (x.failed as string[]).slice(0, 50) } : {}) };
+    } catch { malformed?.('malformed owed-counts line ignored'); }
+  }
+  if (owed) return owed;
+  const counts = standardCounts(log);
+  if (counts && ['tap', 'cargo', 'mixed'].includes(counts.format ?? '')) {
+    const failed = failingNames(log);
+    if (failed.length) counts.failed = failed;
+  }
+  return counts;
+}
+/** RC3: TAP test points and column-0 cargo results, never diagnostic cargo lines inside TAP. */
+function failingNames(log: string): string[] {
+  return [...log.matchAll(/^\s*not ok \d+\s*-\s*(.+)$|^test (.+) \.\.\. FAILED\s*$/gm)].map(m => m[1] ?? m[2]!).slice(0, 50);
+}
+function standardCounts(log: string): Counts | undefined {
   const tap = tapCounts(log), cargo = cargoCounts(log);
   // E2.1: cargo `test result:` lines and TAP in one log (e.g. `cargo test && node --test --test-reporter=tap`) sum to one
   // `mixed` count. A field the TAP part does not report (a bare `1..N` plan) stays absent rather than undercounted.
@@ -101,7 +127,7 @@ function diskFull(code: number | null, counts: Counts | undefined, log: string, 
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   const start = Date.now();
   const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
-  let bytes = Buffer.alloc(0), truncated = false;
+  let bytes = Buffer.alloc(0), truncated = false, protocolWarnings = 0;
   function capture(data: Buffer | string): void {
     bytes = Buffer.concat([bytes, Buffer.isBuffer(data) ? data : Buffer.from(data)]);
     if (bytes.length > LIMIT) { truncated = true; bytes = bytes.subarray(bytes.length - LIMIT); }
@@ -164,7 +190,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
             const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
             if (setup.error || setup.code !== 0) throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`);
           }
-          const result = await command(spec.run, work.path, spec.timeout_s), counts = parseCounts(result.log);
+          const result = await command(spec.run, work.path, spec.timeout_s), counts = parseCounts(result.log, () => { protocolWarnings++; });
           if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
           diskFull(result.code, counts, result.log, `mutant ${path} run exited ${result.code}`);
           if (result.error && !result.error.startsWith('timeout')) throw new Error(result.error);
@@ -187,38 +213,83 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
         if (setup.error || setup.code !== 0) { obs.exit = setup.code; throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`); }
       }
-      const result = await command(spec.run, work.path, spec.timeout_s); obs.exit = result.code;
-      obs.counts = parseCounts(result.log);
-      // F2.1: a failed run whose output says the disk is full measured the environment, not the code: error, no verdict.
-      if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
-      diskFull(result.code, obs.counts, result.log, `command exited ${result.code}`);
-      if (result.error) throw new Error(result.error);
-      // min_tests applies to every non-red run (candidate and invariant runs): on the base tree a new test file often cannot load
-      // (missing module/export), so the runner reports a single failing test; a red run needs only a
-      // recognizable failure (non-zero exit, red_expect match, not a known-format zero-test run).
-      const red = job.kind === 'red';
-      // A red run must fail as a test, not because the command could not run: bash (or the exec.wrap wrapper, D20) exits 126 (not executable) or 127
-      // (not found), which red_expect may still match. That is no counterfactual: error, not pass (D15.4).
-      if (red && (result.code === 126 || result.code === 127)) throw new Error(`red run command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})`);
-      // E2.2: a non-red command that exits non-zero without running a recognizable test (unknown count or zero) is a
-      // failed command, not an unparseable log: fail, with its last output lines as the note.
-      // Exit 126/127 with no count: the command never ran, so it says nothing about the code — error, not fail.
-      const tail = (): string => { const t = lastLines(result.log); return `; last output:${t.length ? t.map(l => `\n  ${l}`).join('') : ' (none)'}`; };
-      if (!red && (result.code === 126 || result.code === 127) && !obs.counts) throw new Error(`command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})${tail()}`);
-      if (!red && result.code !== 0 && (!obs.counts || obs.counts.tests === 0)) {
-        obs.verdict = 'fail';
-        obs.note = `command exited ${result.code} ${obs.counts ? 'after zero tests' : 'with no recognizable test count'}${tail()}`;
-      } else {
-        if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
-        const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
-        obs.verdict = (red ? result.code !== null && result.code !== 0 && (!spec.red_expect || new RegExp(spec.red_expect).test(result.log)) : result.code === 0) && countOK ? 'pass' : 'fail';
-        if (!countOK) obs.note = red ? 'zero tests' : countNote(obs.counts, spec.min_tests, result.code);
+      // RC1: prepare once, execute sequentially in this same tree; errors stop without turning into failed votes.
+      const repeat = spec.repeat, runs = repeat?.runs ?? 1, need = repeat?.need ?? runs;
+      if (repeat && (job.kind === 'red' || spec.red || spec.mutants)) throw new Error('repeat is not allowed on red or mutants checks');
+      if (repeat) obs.runs = [];
+      let passed = 0;
+      const failed = new Set<string>();
+      for (let index = 0; index < runs; index++) {
+        if (ctx.signal?.aborted) throw new Error('aborted');
+        const runStart = Date.now();
+        if (repeat) capture(`\n=== run ${index + 1}/${runs} ===\n`);
+        const result = await command(spec.run, work.path, spec.timeout_s); obs.exit = result.code;
+        obs.note = undefined; obs.verdict = 'error';
+        const warnings: string[] = [];
+        obs.counts = parseCounts(result.log, note => { warnings.push(note); protocolWarnings++; });
+        const runFailed = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(result.log);
+        for (const name of runFailed) if (failed.size < 50) failed.add(name);
+        if (failed.size) obs.failed = [...failed];
+        try {
+          // F2.1: a failed run whose output says the disk is full measured the environment, not the code.
+          if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
+          diskFull(result.code, obs.counts, result.log, `command exited ${result.code}`);
+          if (result.error) throw new Error(result.error);
+          // min_tests applies to candidate and invariant runs, never to the red counterfactual.
+          const red = job.kind === 'red';
+          // D15.4: a red command that could not run is no counterfactual, even if red_expect matches.
+          if (red && (result.code === 126 || result.code === 127)) throw new Error(`red run command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})`);
+          // E2.2: non-zero without a recognizable test is fail; 126/127 with no counts is error.
+          const tail = (): string => { const t = lastLines(result.log); return `; last output:${t.length ? t.map(l => `\n  ${l}`).join('') : ' (none)'}`; };
+          if (!red && (result.code === 126 || result.code === 127) && !obs.counts) throw new Error(`command could not run (exit ${result.code}: ${result.code === 126 ? 'not executable' : 'not found'})${tail()}`);
+          if (!red && result.code !== 0 && (!obs.counts || obs.counts.tests === 0)) {
+            obs.verdict = 'fail';
+            obs.note = `command exited ${result.code} ${obs.counts ? 'after zero tests' : 'with no recognizable test count'}${tail()}`;
+          } else {
+            if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
+            const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
+            const exitOK = red ? result.code !== null && result.code !== 0 && (!spec.red_expect || new RegExp(spec.red_expect).test(result.log)) : result.code === 0;
+            // RC2: owed-counts is the command's explicit verdict too; existing formats keep their exit semantics.
+            obs.verdict = exitOK && countOK && (red || obs.counts?.format !== 'owed' || obs.counts.fail === 0) ? 'pass' : 'fail';
+            if (!countOK) obs.note = red ? 'zero tests' : countNote(obs.counts, spec.min_tests, result.code);
+          }
+          // RC3: failed names first, followed by a bounded tail, for a failed command even if counts passed.
+          if (!red && obs.verdict === 'fail' && !obs.note) {
+            const tail = lastLines(result.log, 15);
+            obs.note = `command exited ${result.code}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
+          }
+          if (!red && obs.verdict === 'fail' && runFailed.length) {
+            const tail = lastLines(result.log, 15);
+            obs.note = `failed tests: ${runFailed.join(', ')}${obs.note && !obs.note.includes('last output:') ? `; ${obs.note}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
+          }
+        } catch (e) {
+          obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`;
+          throw e;
+        } finally {
+          if (warnings.length) obs.note = `${obs.note ? `${obs.note}; ` : ''}${warnings.length} malformed owed-counts line(s) ignored`;
+          if (repeat) {
+            obs.runs!.push({ verdict: obs.verdict, exit: result.code, counts: obs.counts, durationMs: Date.now() - runStart, log: await ctx.ledger.putBlob(result.log), ...(obs.note ? { note: obs.note } : {}), ...(runFailed.length ? { failed: runFailed } : {}) });
+            obs.noisy = obs.runs!.some(r => r.verdict === 'pass') && obs.runs!.some(r => r.verdict === 'fail');
+          }
+        }
+        if (obs.verdict === 'pass') passed++;
+        if (passed >= need || passed + runs - index - 1 < need) {
+          obs.verdict = passed >= need ? 'pass' : 'fail';
+          if (repeat && obs.verdict === 'fail' && failed.size) {
+            const tail = lastLines(result.log, 15);
+            const reason = obs.note?.split('; last output:')[0]?.replace(/^failed tests: [^;]*;?\s*/, '');
+            obs.note = `failed tests: ${[...failed].join(', ')}${reason ? `; ${reason}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
+          }
+          break;
+        }
       }
+      if (obs.noisy) obs.note = `${obs.note ? `${obs.note}; ` : ''}noisy (${passed}/${obs.runs!.length} passed)`;
     }
   } catch (e) { obs.verdict = 'error'; obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`; capture(`\n${obs.note}\n`); }
   finally {
     if (work) { try { await work.dispose(); } catch (e) { obs.verdict = 'error'; obs.note = `worktree cleanup: ${String(e)}`; capture(obs.note); } }
   }
+  if (protocolWarnings && !obs.note?.includes('malformed owed-counts')) obs.note = `${obs.note ? `${obs.note}; ` : ''}${protocolWarnings} malformed owed-counts line(s) ignored`;
   obs.log = await ctx.ledger.putBlob(truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes);
   obs.durationMs = Date.now() - start; return obs;
 }

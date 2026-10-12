@@ -828,7 +828,12 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       // A job of the latest state this run did not measure (a key the plan update introduced) refuses; a retry measures it.
       const missed = spec ? unmeasured(current,o.node,lm,observations) : [];
       if (missed.length) reasons.push(`not measured: ${missed.map(j => `${j.subject}/${j.obligation} (key ${j.key.slice(0,12)})`).join(', ')} (the plan changed while merge measured); run owed merge again: it measures only what lacks a verdict`);
-      if (reasons.length || !g) { if (kept.length) await ledger.append(kept); throw new OwedError(reasons.join('; ')); }
+      if (reasons.length || !g) {
+        if (kept.length) await ledger.append(kept);
+        // RC3: merge failures also reach the driver halt; preserve failed names and their bounded log tail.
+        const failures = kept.flatMap(e => e.kind === 'obs' && e.verdict === 'fail' && e.failed?.length ? [`${e.subject}/${e.obligation}: ${e.note ?? `failed tests: ${e.failed.join(', ')}`}`] : []);
+        throw new OwedError([...failures, ...reasons].join('; '));
+      }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
       const entry = (await ledger.append([...kept,d])).at(-1)!;

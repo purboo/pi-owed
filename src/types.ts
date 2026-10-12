@@ -17,6 +17,8 @@ export interface CheckSpec {
   red_expect?: string;
   mutants?: string[];         // globs of mutant patch files inside the plan closure (read from the base)
   min_kill?: number;          // fraction of mutants that must be killed, in (0,1]; default 1
+  /** RC1: K passing runs out of at most N (1 <= need <= runs <= 9); not on red or mutants checks. */
+  repeat?: { runs: number; need?: number };
 }
 export interface NodeSpec {
   id: string;
@@ -100,7 +102,9 @@ export interface StateFacts { commit: string; tree: string; invKeys: Record<stri
 // ---------- ledger ----------
 export type Verdict = 'pass' | 'fail' | 'error';
 /** format: 'tap' | 'cargo' | 'jest/vitest' | 'pytest' | 'mixed' (cargo + TAP in one log, E2.1) | 'mutants'. */
-export interface Counts { tests?: number; pass?: number; fail?: number; skip?: number; format?: string }
+export interface Counts { tests?: number; pass?: number; fail?: number; skip?: number; format?: string; /** RC3: at most 50 failing test names. */ failed?: string[] }
+/** RC1: one command run, before repeat decides the observation's verdict. Errors stop measurement, never count as votes. */
+export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[] }
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; state: StateFacts }
@@ -128,6 +132,12 @@ export interface ObsEntry extends Base {
   attribution?: boolean;     // rerun of an earlier failing item
   merging?: string;          // node whose `owed merge` appended this obs (merge-result checks/invariants)
   note?: string;
+  /** RC1: every executed repeat run (in order), each with its own log digest. */
+  runs?: MeasurementRun[];
+  /** RC1: executed runs include both pass and fail. */
+  noisy?: boolean;
+  /** RC3: at most 50 failing names (union across repeat runs). */
+  failed?: string[];
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent' }

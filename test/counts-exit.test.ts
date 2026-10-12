@@ -117,7 +117,7 @@ test('E2.2: exit 0 with an unknown count and min_tests stays an error; red runs 
   // Without min_tests an exit-0 run with an unknown count still passes; a counted failing run is a plain fail.
   assert.equal((await run('echo all good', { min_tests: undefined })).verdict, 'pass');
   const counted = await run("echo '# tests 6'; echo '# pass 5'; echo '# fail 1'; exit 1");
-  assert.equal(counted.verdict, 'fail'); assert.equal(counted.note, undefined);
+  assert.equal(counted.verdict, 'fail'); assert.match(counted.note ?? '', /^command exited 1; last output:/); // RC3: bounded failure tail.
   // Red: an unknown count is accepted, a zero-test run rejected, exit 127 is an error — exactly as before.
   const red = await run("echo 'not ok 1 - load'; exit 101", { red_expect: 'not ok' }, 'red');
   assert.equal(red.verdict, 'pass', red.note); assert.equal(red.note, undefined);
@@ -158,10 +158,10 @@ const TAP_WITH_CARGO_TEXT = ['TAP version 13',
   '1..2', '# tests 2', '# pass 1', '# fail 1', ''].join('\n');
 
 test('#557: cargo summaries count only at column 0 — a TAP comment or an indented YAML diagnostic stays format tap', async () => {
-  assert.deepEqual(parseCounts(TAP_WITH_CARGO_TEXT), { format: 'tap', tests: 2, pass: 1, fail: 1 });
+  assert.deepEqual(parseCounts(TAP_WITH_CARGO_TEXT), { format: 'tap', tests: 2, pass: 1, fail: 1, failed: ['b'] }); // RC3: names, never diagnostic cargo.
   assert.deepEqual(parseCounts('TAP version 13\n# test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured\nok 1 - a\n1..1\n'), { format: 'tap', tests: 1 });
   // Column-0 cargo lines still sum with TAP.
-  assert.deepEqual(parseCounts(`test result: ok. 3 passed; 0 failed; 0 ignored;\n${TAP_WITH_CARGO_TEXT}`), { format: 'mixed', tests: 5, pass: 4, fail: 1 });
+  assert.deepEqual(parseCounts(`test result: ok. 3 passed; 0 failed; 0 ignored;\n${TAP_WITH_CARGO_TEXT}`), { format: 'mixed', tests: 5, pass: 4, fail: 1, failed: ['b'] });
   // Real node:test output: one test prints a cargo summary (node emits it as a `# ` comment), another fails with one in
   // its assertion message (an indented YAML diagnostic). Two tests: min_tests 5 is not met.
   await r.put('test/echo.test.mjs', "import test from 'node:test';\nimport assert from 'node:assert/strict';\n"
@@ -173,7 +173,8 @@ test('#557: cargo summaries count only at column 0 — a TAP comment or an inden
   assert.match(log, /^# test result: ok\. 40 passed/m, log);
   assert.equal(obs.counts?.format, 'tap', JSON.stringify(obs.counts));
   assert.equal(obs.counts?.tests, 2);
-  assert.equal(obs.verdict, 'fail'); assert.equal(obs.note, 'min_tests unmet: counted 2 (1 pass, 1 fail) < min_tests 5; exit 0');
+  assert.equal(obs.verdict, 'fail'); assert.ok(obs.note?.startsWith('failed tests: fails; min_tests unmet: counted 2 (1 pass, 1 fail) < min_tests 5; exit 0; last output:')); // RC3: names first.
+  assert.deepEqual(obs.failed, ['fails']);
 });
 
 test('#557: a non-red run that exits 126 or 127 with no count is an error (the command never ran), with the last output lines', async () => {
@@ -190,7 +191,7 @@ test('#557: a non-red run that exits 126 or 127 with no count is an error (the c
   }
   // With a recognizable count a 127 exit is a counted failing run (fail), as before.
   const counted = await run("echo '# tests 6'; echo '# pass 6'; owed-no-such-command-x");
-  assert.equal(counted.exit, 127); assert.equal(counted.verdict, 'fail'); assert.equal(counted.note, undefined);
+  assert.equal(counted.exit, 127); assert.equal(counted.verdict, 'fail'); assert.match(counted.note ?? '', /^command exited 127; last output:/); // RC3: bounded failure tail.
   // Every other non-zero exit with no count is still fail.
   assert.equal((await run('echo broken; exit 2')).verdict, 'fail');
 });
