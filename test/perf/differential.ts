@@ -29,8 +29,11 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   out.allowanceSeq = r.allowanceSeq(s); out.projectId = attempt(() => r.projectId(s));
   out.adoptGuard = attempt(() => r.adoptGuard(s, { commit: 'adopted', tree: 'adopted-tree', invKeys: { ...s.trunk.invKeys } }));
   out.planAt = attempt(() => r.planAt(s, s.seq + 1)); out.entries = r.entriesOf(s).length;
+  // QT1 intentionally changes only the rendered human halt wording, never the ledger value or acceptance state.
+  const rendered = (text: string): string => m === BASE ? text.replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
+    'halted by driver #$1 (attempt $2), needs the parent (the main agent acts; owed lists the command):') : text;
   // FL1/FL4 intentionally change waiting presentation, not historical acceptance state/keys.
-  // Adapt only the frozen view's waiting fields; all other queries and text still compare exactly.
+  // Adapt only the frozen view's waiting fields and QT1 halt text; everything else compares exactly.
   const wait = (id: string): cur.Waiting | undefined => {
     const old = r.waitingFor(s,id), spec = s.plan.nodes.find(n => n.id === id);
     const deps = s.nodes[id]?.slot?.open && spec ? spec.deps.filter(d => !s.nodes[d]?.merged) : [];
@@ -48,12 +51,12 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       const w = wait(node);
       if (w?.deps?.length) text = text.replace(`⏳ ${node}: waiting for ${w.after} (resume #${w.resume})`,`⏳ ${node}: ${curViews.waitingLine(w)}`);
     }
-    return text;
+    return rendered(text);
   });
   out.brief = attempt(() => {
     const brief = v.briefView(s,prefix,-1,Date.UTC(2027,0,1));
     if (m === BASE) brief.totals.waiting = Object.values(s.nodes).filter(n => !n.merged && (wait(n.id) || n.phase === 'blocked')).length;
-    return v.renderBrief(brief);
+    return rendered(v.renderBrief(brief));
   });
   out.escapes = attempt(() => v.escapeSummary(s));
   for (const id of ids) {
@@ -74,9 +77,9 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
         const at = lines.findIndex(l => !l.startsWith('Exec:') && !l.startsWith('Drive:') && !l.startsWith('↻') && !l.startsWith('⏸') && lines.indexOf(l) > 0);
         const nodes = [...new Set([...(w.deps ?? []), ...(w.after ? w.after.split(', ') : [])])];
         lines.splice(at < 0 ? 1 : at,0,`⏳ ${curViews.waitingLine(w)}; the driver acts again when ${nodes.join(', ')} ${nodes.length > 1 ? 'merge' : 'merges'} or after another resume`);
-        return lines.join('\n');
+        return rendered(lines.join('\n'));
       }
-      return v.renderReceipt(card);
+      return rendered(v.renderReceipt(card));
     });
     q.owner = attempt(() => v.ownerCommands(s, id));
     if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(s, id));

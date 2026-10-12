@@ -150,6 +150,8 @@ export interface ActionReport {
 
 /** D25.6: how a halt or refusal that needs the owner is worded in the driver's output. */
 export const NEEDS_OWNER = 'needs the owner (the main agent decides; owed lists the command)';
+/** QT1: the ledger still says `human`; the main agent resolves the rendered parent halt. */
+export const NEEDS_PARENT = 'needs the parent (the main agent acts; owed lists the command)';
 /**
  * Reports that wake a following session (D17.7): halts, notifies (questions, owner-needed, describe failures) and the
  * outcomes rejected, conflict, refused and error. F1: a `stale` outcome (a halt included) records nothing and wakes nobody.
@@ -400,7 +402,7 @@ export function reportText(json: object): string {
   if (!('do' in json) || typeof (json as { do: unknown }).do !== 'string') return oneLine(JSON.stringify(json));
   const r = json as ActionReport;
   // G3.6 (0.12): a failed send (outcome error) names its node as a word.
-  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason})${r.outcome === 'error' ? ` for node ${r.node}` : ''} to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt} (needs ${r.needs})`) : `${r.do} ${r.node}`;
+  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason})${r.outcome === 'error' ? ` for node ${r.node}` : ''} to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt}, ${NEEDS_PARENT}`) : `${r.do} ${r.node}`;
   const repeat = typeof r.repeat === 'number' && r.repeat > 0 ? repeatText(r.repeat) : '';
   return `${r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`}${repeat}`;
 }
@@ -943,7 +945,7 @@ export class Driver {
           return [report('retry', `merge refused (${e.message}); retry next pass`), ...(d ? [driftReport(now, d)] : [])];
         }
         await this.halt(node, attempt, `merge refused: ${e.message}`);
-        return [report('refused', `${e.message}; halted (needs human)`)];
+        return [report('refused', `${e.message}; halted (${NEEDS_PARENT})`)];
       };
     }
   }

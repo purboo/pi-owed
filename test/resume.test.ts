@@ -271,7 +271,7 @@ test('L1.5: why and status suggest owed resume for a halt; the wake message with
     await writeFile(log, `${JSON.stringify({ do: 'notify', node: 'x', outcome: 'notify', text: 'x asks' })}\n`, { flag: 'a' });
     assert.deepEqual(f.tick()?.split('\n'), ['owed drive (/r):', 'x asks', 'Next: owed status / owed why <node>'], 'no halt: no hint');
     await writeFile(log, `${JSON.stringify({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail: 'stuck' })}\n`, { flag: 'a' });
-    assert.deepEqual(f.tick()?.split('\n'), ['owed drive (/r):', 'halt h attempt 1 (needs human): halted — stuck', haltHintText, 'Next: owed status / owed why <node>']);
+    assert.deepEqual(f.tick()?.split('\n'), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — stuck', haltHintText, 'Next: owed status / owed why <node>']);
     assert.equal(haltHintText, 'To clear a halt without an obligation: owed resume <node> --note "<why>" (add --after <node> to wait until that node merges); owed rule gives the writer and reviewers guidance they must acknowledge');
     f.stop();
   } finally { await rm(dir, { recursive: true, force: true }); }

@@ -132,11 +132,13 @@ agent's owner acts first (§9).
    node). The reason's own trailing `needs the owner` is not repeated.
    The driver's output line of a halt needing the owner reads `halt <node>
    attempt <n>, needs the owner (the main agent decides; owed lists the
-   command): halted — <reason>` (a human halt keeps `(needs human)`); the
-   halt rows of `status`, `why`, `report` and entry lines read `halted by
-   driver #<seq> (attempt <n>), needs the owner (the main agent decides; owed
-   lists the command): <reason>` (a human halt keeps `(attempt <n>, needs
-   human)`). Trunk drift is never a node halt (§12.7 Trunk drift). The
+   command): halted — <reason>`; other halts use `needs the parent (the main
+   agent acts; owed lists the command)` (QT1). The halt rows of `status`, `why`,
+   `brief`, `report` and entry lines use the same owner/parent wording.
+   The ledger value `needs: 'human'` is unchanged: rendering only, no new entry
+   shape or compatibility/version change. Evidence-only halts name the plan's
+   role (`--as <by>:<id>`) and add `or --as owner:pi` (D23); no person is asked.
+   Trunk drift is never a node halt (§12.7 Trunk drift). The
    commands of the brief, report and these texts omit `--as` where the command
    already defaults to the owner (waive, defer, adopt, approve, init) and use
    `--as owner:cli` where a role must be stated (owner review, owner evidence);
@@ -2165,8 +2167,9 @@ The single-string resume entry and historical replay/acceptance keys are unchang
 ### 12.4 Views
 
 - **Status**: a `Halted (driver):` section lists halted nodes with
-  `needs: human` (`⏸ <node>: halted by driver #seq (attempt N, needs human):
-  <reason>`); a halt with `needs: owner` appears instead under *Pending owner*
+  `needs: human` (`⏸ <node>: halted by driver #seq (attempt N), needs the parent
+  (the main agent acts; owed lists the command): <reason>`); a halt with
+  `needs: owner` appears instead under *Pending owner*
   (`⏸ halted <node> — driver halted attempt N (#seq): <reason>; cleared by …`).
   `Driver runs (open attempts):` lists the launches of each open slot's current
   attempt (`<node> attempt N: #seq <role> <rid>`). Both sections are shown only
@@ -2995,10 +2998,17 @@ polling.
     dropped when the node's current fact mark (`factMark`) is higher: someone
     acted on the node, and a condition that still holds is reported again by
     the driver's next pass with the new mark. A failed ledger read keeps it.
-    Terminal lines, drift lines (node `trunk`), `idle-wait` and lines without a
-    fact mark are never dropped. The ledger is read and each run described at
-    most once per delivery. A dropped wake that is still its key's latest
-    record (E3.1) also drops that record's repeat ride-along, and later repeats
+    Only a scoped trunk-drift notify (`scope: 'repo'`, node `trunk`) is dropped
+    when the trunk ref equals the ledger trunk commit now, or when the ledger
+    trunk seq is higher than the line's `facts` (QT2: adopt/merge happened).
+    Failed ledger/ref reads keep the line. Unscoped lines are never dropped as
+    drift (#1378): legacy drift lines are delivered as before, while a plan node
+    named `trunk` follows normal node fact/question revalidation.
+    A still-current drift is delivered, and dropped drift lines count in (c).
+    Status and brief show no drift when trunk equals the ledger trunk commit.
+    Terminal lines, `idle-wait` and other lines without a fact mark are never
+    dropped. The ledger, trunk ref and each run are read at most once per delivery.
+    A dropped wake that is still its key's latest record (E3.1) also drops that record's repeat ride-along, and later repeats
     of it do not ride along (they are as stale); a new fact of the node wakes.
   - (c) If lines were dropped, the delivered message ends with a last line
     `(<n> wake(s) resolved before delivery)` (after `Next: …`), counting only

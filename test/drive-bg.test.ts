@@ -304,7 +304,7 @@ test('D17.7: Follower: no replay, quiet lines do not wake, merges ride along, an
     appendFileSync(log, '{"do":"halt","node":"c","outcome":"halted","attempt":1,"needs":"hu');
     assert.equal(f.tick(), undefined, 'an incomplete line waits');
     appendFileSync(log, 'man","detail":"stalled: x"}\n');
-    assert.match(f.tick()!, /\nhalt c attempt 1 \(needs human\): halted — stalled: x\n/);
+    assert.match(f.tick()!, /\nhalt c attempt 1, needs the parent \(the main agent acts; owed lists the command\): halted — stalled: x\n/);
     put({ do: 'launch', node: 'd', outcome: 'rejected', role: 'writer', rid: 'r3', detail: 'fault; halted' });
     assert.match(f.tick()!, /launch d writer r3: rejected — fault; halted/);
     put('Refused: something odd');
@@ -634,7 +634,7 @@ test('D17a.8: a failing sendMessage keeps the batch for the next tick; the follo
     assert.equal(f.tick(), undefined, 'delivery failed');
     put({ do: 'notify', node: 'c', outcome: 'notify', text: 'c asks' });
     fail = false;
-    assert.deepEqual(f.tick()!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1 (needs human): halted — first', 'c asks', haltHintText, 'Next: owed status / owed why <node>']);
+    assert.deepEqual(f.tick()!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1, needs the parent (the main agent acts; owed lists the command): halted — first', 'c asks', haltHintText, 'Next: owed status / owed why <node>']);
     put({ event: 'stopped' }); put({ event: 'exit', code: 0, reason: 'stopped', at: 'T' });
     fail = true;
     assert.equal(f.tick(), undefined);
