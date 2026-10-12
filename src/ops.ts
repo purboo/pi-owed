@@ -1211,7 +1211,7 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   }
   if (o.node.startsWith('inv:') || (!state.nodes[o.node] && state.plan.invariants.some(i => i.id === o.node))) {
     const id = invariantId(state.plan,o.node), item = state.invariants.find(i => i.obligation === `inv:${id}`)!;
-    return { node: `inv:${id}`, phase: 'merged', accepted: item.status === 'E', items: [{ ...item, observations: entries.filter(e => item.evidence.includes(e.seq)) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] };
+    return { node: `inv:${id}`, phase: 'merged', accepted: item.status !== 'D', items: [{ ...item, observations: entries.filter(e => item.evidence.includes(e.seq)) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] };
   }
   const view = reduceFrom(state,[],lookup); await applyReports(ledger,view);
   node(view,o.node);

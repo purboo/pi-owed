@@ -140,7 +140,7 @@ function knownRedItem(s: State, obligation: string, failures: ObsEntry[], mergin
   const fixes = [...new Set(entries.filter(e => names.includes(e.test)).map(e => e.fix))];
   return `${obligation} known red: ${names.join(', ')} (fix: ${fixes.join(', ')}; plan #${knownRedPlanSeq(s)})`;
 }
-function item(s: State, subject: string, obligation: string, key: string, merging?: string): ItemView {
+function item(s: State, subject: string, obligation: string, key: string, merging?: string, pending?: ObsEntry): ItemView {
   const node = s.nodes[subject];
   const spec = nodeSpec(s, subject);
   const blocks = node?.blocks.filter(b => b.obligation === obligation && active(b)) ?? [];
@@ -179,6 +179,7 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
     if (found.length) out.status = 'E';
   } else {
     const obs = counted(s, subject, obligation, key);
+    if (pending) obs.push(pending);
     const pass = obs.some(e => e.verdict === 'pass');
     const fail = obs.some(e => e.verdict === 'fail');
     out.evidence = obs.map(e => e.seq);
@@ -418,9 +419,12 @@ function fold(s: State, entries: Iterable<Entry>): void {
       slot.base = e.base; n.candidate = undefined;
     } else if (e.kind === 'obs') {
       h.obsPlans.set(e.seq, s.planSha);
-      // A failing merge-result invariant catches a decoy of the merging node only when
-      // the same invariant was not already debt (status D, e.g. deferred) on PRE = trunk.
-      if (e.merging && e.verdict === 'fail' && (e.subject !== 'trunk' || item(s, 'trunk', e.obligation, s.trunk.invKeys[e.obligation.slice(4)] ?? '').status === 'E')) h.mergeCatches.add(e.seq);
+      // A merge-result failure catches an invariant decoy only when PRE was satisfied
+      // (E or known-red W) and the result is D; an unchanged known-red W is not a catch.
+      if (e.merging && e.verdict === 'fail' && e.by === 'executor:owed') {
+        const pre = e.subject === 'trunk' ? item(s, 'trunk', e.obligation, s.trunk.invKeys[e.obligation.slice(4)] ?? '') : undefined;
+        if (!pre || pre.status !== 'D' && item(s, 'trunk', e.obligation, e.key, e.merging, e).status === 'D') h.mergeCatches.add(e.seq);
+      }
       const n = s.nodes[e.subject];
       if (n && e.probe === undefined) {
         const matches = n.blocks.filter(b => b.kind === 'exec' && underlying(h, b) === 'active' && b.obligation === e.obligation && b.key === e.key);
@@ -1326,8 +1330,8 @@ export function adoptJobs(s: State, st: StateFacts): AttestJob[] {
 }
 export interface AdoptGuard { ok: boolean; reasons: string[]; failed: string[]; invItems: ItemView[] }
 /**
- * No new debt for an adoption (SPEC §6.6): an invariant whose key changed on the adopted state must be E there
- * when it was E on the current trunk; debt already on the trunk (D: failing, ⊥, deferred, ⊤) does not block.
+ * No new debt for an adoption (SPEC §6.6): an invariant whose key changed on the adopted state must be satisfied
+ * (E or known-red W) there when it was satisfied on trunk; existing D debt (failing, ⊥, deferred, ⊤) does not block.
  */
 export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
   const reasons: string[] = [], failed: string[] = [];
@@ -1335,7 +1339,7 @@ export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
     const key = st.invKeys[i.id] ?? '', o = `inv:${i.id}`;
     const v = item(s, 'trunk', o, key);
     if (!key) reasons.push(`invariant ${i.id} missing adopt obligation key`);
-    else if (key !== s.trunk.invKeys[i.id] && v.status !== 'E' && item(s, 'trunk', o, s.trunk.invKeys[i.id] ?? '').status === 'E') {
+    else if (key !== s.trunk.invKeys[i.id] && v.status === 'D' && item(s, 'trunk', o, s.trunk.invKeys[i.id] ?? '').status !== 'D') {
       failed.push(i.id);
       reasons.push(`invariant ${i.id} new debt: satisfied on the current trunk but not on the adopted commit (${v.detail})`);
     }
