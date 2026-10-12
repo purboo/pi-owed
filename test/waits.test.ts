@@ -1,7 +1,7 @@
 // FL1-FL5 (0.13): behavioral regressions; namespace imports keep the base's red failure an assertion.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import * as policy from '../src/drive.ts';
@@ -213,6 +213,47 @@ test('FL3: changing the node or abandoning releases the receipt, unrelated plans
   r.plan(p=>{p.nodes[0]!.brief='continue';}); assert.equal(reducer.reportRequest(r.state(),'a'),undefined);
   const r2=rig(); r2.resume({expect:'report'}); r2.record(r2.act()!); r2.add({kind:'abandon',by:'parent:main',node:'a',attempt:1,reason:'stop'}); assert.equal(reducer.reportRequest(r2.state(),'a'),undefined);
   const r3=rig(); r3.plan(p=>{p.nodes[0]!.deps=['b'];}); r3.resume({expect:'report'}); r3.merge('b'); const slot=r3.state().nodes.a!.slot!; r3.add({kind:'rebase',by:'parent:drive',node:'a',attempt:1,base:r3.state().trunk.commit,from:slot.base}); const a=r3.act(); assert.ok(a?.do==='send'); assert.equal(a.reason,'report'); assert.match(a.message,/git rebase --onto/); assert.ok(!a.message.includes('then `owed submit'));
+});
+
+test('FL2/FL3 integration: owed edit --resume validates atomically, normalizes lists and replays report expectations', {timeout:120_000}, async () => {
+  const r = await repo();
+  try {
+    await r.put('README','x'); await r.commit();
+    const p = basePlan(), file = join(r.root,'plan.yaml'), text = JSON.stringify(p);
+    await writeFile(file,text);
+    await ops.init({cwd:r.cwd,as:{role:'owner',id:'pi'},channel:'delegated',plan:text,measure:false});
+    await ops.planSet({cwd:r.cwd,as:{role:'parent',id:'main'},...await ops.readPlan({cwd:r.cwd,path:file})});
+    await ops.dispatch({cwd:r.cwd,as:{role:'parent',id:'main'},node:'a'});
+    const ledger = await Ledger.open(r.cwd), count = (await ledger.read()).length;
+    const edit = ['edit','a','--set','title=Report after deps','--resume','--note','wait and diagnose'];
+    for (const [option, value, error] of [
+      ['--after','a',/node itself/],
+      ['--after','missing',/unknown node/],
+      ['--after','b,',/unknown node/],
+      ['--expect','candidate',/expect must be report/],
+    ] as const) {
+      const result = await cli(r.cwd,[...edit,option,value,'--json']);
+      assert.equal(result.code,option === '--expect' ? 2 : 1,result.stdout); assert.match(result.stderr + result.stdout,error);
+      assert.equal((await ledger.read()).length,count,'invalid resume appends no plan or resume');
+      assert.equal(await readFile(file,'utf8'),text,'invalid resume does not edit the plan file');
+    }
+    await assert.rejects(ops.edit({cwd:r.cwd,as:{role:'parent',id:'main'},node:'a',set:['title=Invalid'],resume:true,after:[],note:'invalid list'}),/non-empty/);
+    assert.equal((await ledger.read()).length,count); assert.equal(await readFile(file,'utf8'),text);
+    const result = await cli(r.cwd,[...edit,'--after',' b, c,b ','--expect','report','--json']);
+    assert.equal(result.code,0,result.stderr);
+    const recorded = JSON.parse(result.stdout) as ops.EditResult;
+    assert.ok(recorded.resume?.kind === 'resume');
+    assert.deepEqual(recorded.resume.after,['b','c']); assert.equal(recorded.resume.expect,'report');
+    const entries = await ledger.read(), lookup = new Map<string,Plan>();
+    assert.deepEqual(entries.slice(count).map(e=>e.kind),['plan','resume'],'edit keeps its atomic entry order');
+    for (const e of entries) if(e.kind === 'plan' || e.kind === 'genesis') lookup.set(e.plan,plans.parsePlan((await ledger.getBlob(e.plan)).toString()));
+    const state = reducer.reduce(entries,sha=>lookup.get(sha)!);
+    assert.deepEqual(reducer.resumeOf(state,'a')?.after,['b','c']); assert.equal(reducer.resumeOf(state,'a')?.expect,'report');
+    assert.deepEqual(reducer.waitingFor(state,'a'),{after:'b, c',resume:recorded.resume.seq});
+    assert.equal(state.plan.nodes[0]!.title,'Report after deps');
+    assert.deepEqual((await ops.status({cwd:r.cwd})).waiting,[{node:'a',after:'b, c',resume:recorded.resume.seq}]);
+    assert.equal((await ops.verify({cwd:r.cwd})).ok,true,'edit resume survives full ledger replay');
+  } finally { await r.cleanup(); }
 });
 
 test('FL2/FL3 compatibility: unknown resume shapes/fields produce version, and 0.12 single resume is unchanged', () => {
