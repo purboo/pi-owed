@@ -408,7 +408,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       else for (const b of n.blocks) if (active(b) && b.kind === 'judgment' && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && (e.rank > (b.rank ?? 0) || (e.rank >= (b.rank ?? 0) && e.by === listed(h.bySeq, b.seq)[0]?.by) || (e.obligation === 'approve' && role(e.by) === 'owner'))) { b.state = 'cleared'; b.clearedBy = e.seq; }
     } else if (e.kind === 'waive') {
       const n = s.nodes[e.node]!;
-      for (const b of n.blocks) if (underlyingActive(h, b) && b.obligation === e.obligation && e.key === n.candidate?.keys[e.obligation] && e.accept_risk?.includes(b.seq)) {
+      for (const b of n.blocks) if (underlyingActive(h, b) && b.obligation === e.obligation && (e.key === n.candidate?.keys[e.obligation] || e.key === b.key) && e.accept_risk?.includes(b.seq)) {
         if (b.state === 'superseded') h.shadow.set(b.seq, 'cleared'); // L2: the block stays superseded
         else { b.state = 'cleared'; b.clearedBy = e.seq; }
       }
@@ -533,6 +533,17 @@ function supersede(s: State, h: History, seq: number, next: Plan): void {
     if (b.kind !== 'exec' || !active(b) || id === undefined || !old) continue;
     if (checkDefinition(old, n.id, id) !== checkDefinition(next, n.id, id)) { h.shadow.set(b.seq, b.state); b.state = 'superseded'; b.supersededBy = seq; }
   }
+}
+
+/** Current binding risk, including L2's shadow state during historical replay. */
+export function activeRisk(s: State, node: string, obligation: string, seq: number): boolean {
+  return !!s.nodes[node]?.blocks.some(b => b.seq === seq && b.obligation === obligation && underlyingActive(context(s), b));
+}
+/** A merge-result failure on a supplied, Git-verified merge key; never a diagnostic probe. */
+export function mergeRisk(s: State, node: string, obligation: string, seq: number, key: string): ObsEntry | undefined {
+  const e = listed(context(s).bySeq, seq).find((e): e is ObsEntry => e.kind === 'obs');
+  const old = e && obsPlan(context(s), e.seq), id = checkOf(obligation);
+  return e?.by === 'executor:owed' && e.probe === undefined && e.verdict === 'fail' && e.subject === node && e.merging === node && e.obligation === obligation && e.key === key && obligation.startsWith('check:') && id && old && checkDefinition(old, node, id) === checkDefinition(s.plan, node, id) && canonical(old.closure) === canonical(s.plan.closure) ? e : undefined;
 }
 
 /** TR2/3: match valid failure evidence by check key; its base may predate an unrelated trunk move. */
@@ -902,12 +913,16 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.needs !== undefined && (d.needs !== 'parent' || d.verdict !== 'block')) errors.push("review needs must be 'parent' and only on a block verdict");
       if (d.obligation === 'approve' && r !== 'owner') errors.push('approve can only be recorded by the owner');
       break;
-    case 'waive':
-      allow('owner'); current(d.obligation, d.key);
+    case 'waive': {
+      // The owner-declared key is computed and checked on the current merge tree by ops.waive.
+      // Replay checks its provenance without needing Git: a cited, non-active merge fail on that key.
+      const mergeKeyRisk = d.accept_risk?.some(seq => !activeRisk(s, d.node, d.obligation, seq) && mergeRisk(s, d.node, d.obligation, seq, d.key));
+      allow('owner'); current(d.obligation, mergeKeyRisk ? n?.candidate?.keys[d.obligation] ?? '' : d.key);
       if (d.obligation.startsWith('inv:') || d.node === 'trunk') errors.push('invariant can never be waived');
       if (!d.reason.trim()) errors.push('waive requires a reason');
-      if (d.accept_risk?.some(seq => !n?.blocks.some(b => b.seq === seq && b.obligation === d.obligation && underlyingActive(context(s), b)))) errors.push('accept_risk must reference active blocks for this obligation');
+      if (d.accept_risk?.some(seq => activeRisk(s, d.node, d.obligation, seq) ? !!mergeKeyRisk && n?.blocks.find(b => b.seq === seq)?.key !== d.key : !mergeRisk(s, d.node, d.obligation, seq, d.key))) errors.push('accept_risk must reference active blocks for this obligation');
       break;
+    }
     case 'defer':
       allow('owner');
       if (!n?.slot?.open || !n.candidate) errors.push('defer requires a current candidate');

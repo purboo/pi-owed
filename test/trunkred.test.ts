@@ -55,6 +55,22 @@ else echo '# tests 1'; echo '# pass 1'; fi\n`;
   } catch (e) { await r.cleanup(); throw e; }
 }
 const observations = async (r: Awaited<ReturnType<typeof fixture>>) => (await r.ledger.read()).filter((e): e is ObsEntry => e.kind === 'obs');
+async function reusedFailure(trunkPass = false) {
+  const r = await fixture(['old bug'], ['old bug'], { trunkPass });
+  try {
+    await r.refusal();
+    const original = (await observations(r)).find(e => e.merging === 'a')!;
+    const currentTrunk = await commitAt(r.cwd, { unrelated: 'outside reads and closure' });
+    await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'unrelated trunk move' });
+    assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    const message = await r.refusal();
+    const es = await observations(r), probe = es.findLast(e => e.probe === 'trunk')!;
+    assert.equal(es.filter(e => e.merging === 'a').length, 1, 'the merge failure was reused');
+    assert.equal((await r.state()).nodes.a!.blocks.find(b => b.seq === original.seq)!.state, 'cleared');
+    return { ...r, original, currentTrunk, message, probe };
+  } catch (e) { await r.cleanup(); throw e; }
+}
+
 const driveOptions = (root: string): DriveOpts => ({ max: 1, repairs: 2, project: 'fixture', root, applied: new Set(), rejected: new Map() });
 
 test('TR1/2/4: named merge failures contained in trunk failures record a probe and parent diagnosis', async () => {
@@ -173,6 +189,118 @@ test('TR1/2 ruling #1432: an unchanged merge key reuses an old-base failure with
     const s = await r.state();
     assert.ok(reducer.trunkRedOf(s, original.seq, original.key));
     assert.equal(reducer.trunkRedOf(s, original.seq, `${original.key}-stale`), undefined, 'another merge key cannot borrow this failure');
+  } finally { await r.cleanup(); }
+});
+
+test('TR ruling #1458: reused cleared failure appears in why and status on the current merge key', async () => {
+  const r = await reusedFailure();
+  try {
+    assert.match(r.message, /^trunk-red:/);
+    const why = await ops.why({ cwd: r.cwd, node: 'a' }), status = await ops.status({ cwd: r.cwd });
+    const mergeCheck = why.mergeChecks?.find(i => i.obligation === 'check:runtime');
+    assert.ok(mergeCheck, 'why must include the refused merge check');
+    assert.equal(mergeCheck.key, r.original.key); assert.equal(mergeCheck.discharger, 'parent');
+    assert.equal(mergeCheck.status, 'D'); assert.ok(mergeCheck.evidence.includes(r.original.seq));
+    assert.ok(status.pending['parent+writer']!.some(i => i.key === r.original.key && i.discharger === 'parent'));
+    for (const text of [renderReceipt(why), renderStatus(status)]) {
+      assert.match(text, /trunk-red:/);
+      assert.match(text, new RegExp(`merge-tree obs #${r.original.seq}, trunk probe #${r.probe.seq}`));
+      assert.match(text, new RegExp(`owed waive a check:runtime --accept-risk ${r.original.seq}`));
+      assert.doesNotMatch(text, /writer fixes and runs owed submit/);
+    }
+    assert.equal((await r.state()).nodes.a!.accepted, true, 'diagnostics preserve candidate acceptance');
+    const blocks = (await r.state()).nodes.a!.blocks;
+    assert.equal(blocks.length, 1); assert.equal(blocks[0]!.state, 'cleared', 'probes create no execution blocks');
+  } finally { await r.cleanup(); }
+});
+
+test('TR ruling #1458: accepting a reused cleared merge failure binds the merge key and merge passes', async () => {
+  for (const trunkPass of [false, true]) {
+    const r = await reusedFailure(trunkPass);
+    try {
+      const before = await r.state();
+      const w = await ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'accept current merge failure', accept_risk: [r.original.seq], as: owner, channel: 'delegated' });
+      assert.ok(w.kind === 'waive'); assert.equal(w.key, r.original.key);
+      assert.notEqual(w.key, before.nodes.a!.candidate!.keys['check:runtime']);
+      assert.match(await ops.waiverMeaning({ cwd: r.cwd, entry: w }), /on merge key.*applies only to that key/);
+      assert.equal((await ops.why({ cwd: r.cwd, node: 'a' })).mergeChecks, undefined);
+      assert.doesNotMatch(renderStatus(await ops.status({ cwd: r.cwd })), /trunk-red:/);
+      const result = await ops.merge({ cwd: r.cwd, node: 'a', as: parent });
+      assert.equal(result.entry.kind, 'merge');
+      assert.equal((await observations(r)).filter(e => e.merging === 'a').length, 1, 'the accepted key is not remeasured');
+      assert.equal((await r.state()).nodes.a!.phase, 'merged');
+    } finally { await r.cleanup(); }
+  }
+});
+
+test('TR ruling #1458: a merge-key waiver does not waive a different candidate or merge key', async () => {
+  const r = await reusedFailure();
+  try {
+    const w = await ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'accept only this merge key', accept_risk: [r.original.seq], as: owner, channel: 'delegated' });
+    assert.ok(w.kind === 'waive');
+    await commitAt(r.a.worktree, { impl: 'candidate-v2' });
+    await ops.submit({ cwd: r.a.worktree, node: 'a', as: writer });
+    assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    assert.equal((await ops.why({ cwd: r.cwd, node: 'a' })).mergeChecks, undefined, 'old probe cannot attach an old failure to the new key');
+    const n = (await r.state()).nodes.a!;
+    assert.notEqual(n.candidate!.keys['check:runtime'], w.key);
+    assert.equal(n.items.find(i => i.obligation === 'check:runtime')!.status, 'E', 'candidate is measured, not waived');
+    assert.match(await r.refusal(), /^trunk-red:/);
+    const failed = (await observations(r)).findLast(e => e.merging === 'a')!;
+    assert.notEqual(failed.key, w.key); assert.ok(failed.seq > w.seq);
+  } finally { await r.cleanup(); }
+});
+
+test('TR ruling #1458: changed trunk reads make a cleared merge failure stale and refuse its risk', async () => {
+  const r = await reusedFailure();
+  try {
+    await commitAt(r.cwd, { flag: 'different broken bytes' });
+    await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'change check reads' });
+    const before = await r.ledger.read();
+    await assert.rejects(ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'stale risk', accept_risk: [r.original.seq], as: owner, channel: 'delegated' }), /accept_risk must reference active blocks for this obligation/);
+    assert.deepEqual(await r.ledger.read(), before, 'refused risk records nothing');
+    assert.equal((await ops.why({ cwd: r.cwd, node: 'a' })).mergeChecks, undefined);
+    assert.doesNotMatch(renderStatus(await ops.status({ cwd: r.cwd })), /trunk-red:/);
+  } finally { await r.cleanup(); }
+});
+
+test('TR ruling #1458: cleared ordinary failures, attribution results and probes cannot be accepted as merge risks', async () => {
+  const r = await reusedFailure();
+  try {
+    const { seq, ts, prev, hash, merging, ...ordinary } = r.original;
+    const e = (await r.ledger.withLock(() => r.ledger.append([ordinary])))[0]!;
+    await ops.attest({ cwd: r.cwd, node: 'a' });
+    assert.equal((await r.state()).nodes.a!.blocks.find(b => b.seq === e.seq)!.state, 'cleared');
+    const attribution = (await observations(r)).findLast(e => e.attribution)!;
+    const before = await r.ledger.read();
+    for (const accept_risk of [[e.seq], [attribution.seq], [r.probe.seq], [r.original.seq, r.probe.seq], [999]]) {
+      await assert.rejects(ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'invalid reference', accept_risk, as: owner, channel: 'delegated' }), /accept_risk must reference active blocks for this obligation/);
+    }
+    await assert.rejects(ops.waive({ cwd: r.cwd, node: 'a', obligation: 'writes', reason: 'wrong obligation', accept_risk: [r.original.seq], as: owner, channel: 'delegated' }), /accept_risk must reference active blocks for this obligation/);
+    assert.deepEqual(await r.ledger.read(), before, 'invalid lists are rejected atomically');
+  } finally { await r.cleanup(); }
+});
+
+test('TR ruling #1458: a cleared merge risk cannot broaden a mixed list to another active key', async () => {
+  const r = await reusedFailure();
+  try {
+    await commitAt(r.a.worktree, { impl: 'candidate-v2' });
+    await ops.submit({ cwd: r.a.worktree, node: 'a', as: writer });
+    await ops.attest({ cwd: r.cwd, node: 'a' });
+    await r.refusal();
+    const other = (await observations(r)).findLast(e => e.merging === 'a')!;
+    assert.notEqual(other.key, r.original.key);
+    await ops.submit({ cwd: r.a.worktree, node: 'a', commit: r.candidate, as: writer });
+    const before = await r.ledger.read();
+    await assert.rejects(ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'mixed keys', accept_risk: [r.original.seq, other.seq], as: owner, channel: 'delegated' }), /accept_risk must reference active blocks for this obligation/);
+    assert.deepEqual(await r.ledger.read(), before);
+    const activeOnly = await ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'accept active block as before', accept_risk: [other.seq], as: owner, channel: 'delegated' });
+    assert.ok(activeOnly.kind === 'waive');
+    assert.equal(activeOnly.key, (await r.state()).nodes.a!.candidate!.keys['check:runtime']);
+    assert.equal((await r.state()).nodes.a!.blocks.find(b => b.seq === other.seq)!.state, 'cleared');
+    assert.match(renderReceipt(await ops.why({ cwd: r.cwd, node: 'a' })), /trunk-red:/, 'accepting the other active key did not accept this merge failure');
+    await ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'accept just the current merge key', accept_risk: [r.original.seq], as: owner, channel: 'delegated' });
+    assert.equal((await ops.merge({ cwd: r.cwd, node: 'a', as: parent })).entry.kind, 'merge');
   } finally { await r.cleanup(); }
 });
 

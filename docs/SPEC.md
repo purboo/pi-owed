@@ -625,13 +625,33 @@ both observation sequences and says this candidate is not shown to be the
 cause. The parent can fix trunk with a fixing node (or run the configured
 `owed sweep --commit <trunk>` for its bisect/escape proposal), or accept the
 merge failure with `owed waive <node> check:X --accept-risk <merge-tree obs seq>`.
-The existing waiver semantics reach merge keys (0.11); the probe itself is
-never the risk to waive.
+Active/flaky block risks retain the existing 0.11 behavior. If attribution has
+cleared the original block, `accept_risk` may still cite that node's merge-result
+fail for this check, but only if its key equals the key the current merge would
+use. `waive` builds the current merge tree and verifies the key under the ledger
+lock, checks trunk-ref drift before and after the calculation, and stores that
+merge key in the existing `waive.key`. Replay verifies the cited merge-failure
+provenance and check/closure definition against the owner-declared key. This
+waiver applies only to that key, so the cached failure can be accepted without
+remeasurement; a changed key is not waived. A list using this exception must cite
+only risks on that merge key; an active risk on another key needs the ordinary
+active-block waiver separately. Other cleared/stale observations, including
+ordinary failures and attribution results, and all probes are refused with
+`accept_risk must reference active blocks for this obligation`. The probe itself
+is never a risk to waive, and this exception creates no execution block.
 
 `status` and `why` mark the merge failure's item as trunk-red, with
 `discharger: "parent"` and both observation sequences in `detail`; the block's
-clear hint gives parent options instead of a writer repair. The driver halts
-needing the parent using its existing wording, before attribution attest or
+clear hint gives parent options instead of a writer repair. When the original
+block is cleared, the queries calculate the current merge key and show the
+still-failing merge item independently of the accepted candidate: `why` has an
+optional `mergeChecks` array of item views (with their observations), rendered
+under `Merge checks:`; `status` includes the item in the parent pending queue.
+Both name the merge-result and current-trunk probe seqs. These read-only
+projections do not change the candidate's acceptance or create debt from a
+probe alone; a stale failure on another merge key is not projected. Once the
+merge key is waived, the diagnostic disappears and that key can merge.
+The driver halts needing the parent using its existing wording, before attribution attest or
 any writer follow-up, including after restart. These are diagnostics, not
 acceptance or a waiver. Classification is recomputed against current trunk
 and the current check/closure definition; moving trunk invalidates the old
@@ -641,8 +661,8 @@ trunk move; the new current-trunk probe decides its classification.
 
 Compatibility: owed 0.13 refuses the new `obs.probe` field with code
 `version`; owed 0.12 and older ignore the field and cannot safely interpret
-probes. Upgrade before replaying it. Ledgers without probes retain
-the 0.13 obligation states, keys and views.
+probes. Upgrade before replaying it. Existing histories without probes retain their 0.13 replayed states and keys;
+new merge-key waivers require 0.14's validation and scope interpretation.
 
 ## 6. Reducer (pure: entries → State)
 
@@ -895,11 +915,14 @@ merge receipts and the rulings audit list are still reported (0.14, PR4).
     first `rule` whose node list names its node (not `*`) with a seq above the
     block's; until then it awaits a parent ruling (§12.5).
   - A waiver or ok on another key never clears a block (a4.1 ruling 1): a waiver
-    clears blocks only while its own key is the current candidate's key for its
-    obligation. The blocks it cites in `accept_risk` are cleared **whatever their
-    key** (0.11 F3, wais #34): every cited seq must be an active or flaky exec or
+    candidate waiver clears blocks only while its own key is the current
+    candidate's key for its obligation. A TR merge-key waiver (§5) clears only
+    cited blocks on its own key. The blocks a candidate waiver cites in
+    `accept_risk` are cleared **whatever their key** (0.11 F3, wais #34): every cited seq must be an active or flaky exec or
     judgment block of the waiver's node and obligation, so a block of another node,
-    another obligation or an already cleared block is refused. This includes a
+    another obligation or an already cleared block is refused, except a
+    merge-result fail verified on the current merge key as specified in TR (§5).
+    This includes a
     block from a failing **merge-result** observation (`merging`) on a merge key.
   - Waived merge-key fail (0.11 F3): an executor `obs fail` with `merging` set whose
     seq an owner waiver of its node and obligation cites in `accept_risk` no longer
