@@ -777,14 +777,24 @@ A rejected or conflicting notice never halts; a pending notice retries with
 the same request id only while the run remains unsealed. Sealed runs receive
 no such policy on later follow-ups and are never relaunched for it. Prospective
 policy also does not reset an older attempt's repair budget, clear its halt or
-resolve its needs-parent block.
+resolve its needs-parent block. Removed nodes receive no prospective notices,
+even if their slot remains open; the parent owns closing those slots (ruling #1431).
 
 **Wildcard re-ack (0.14, PR3).** When a candidate's only debt is `rulings`, an
 undelivered ordinary `*` ruling follows the named-ruling route: send one
 `ruling` follow-up to its latest driver reviewer run, or launch a reviewer
 when none exists. The message lists the rulings, candidate commit and
 `--ack-rulings <seq>`; the reviewer may block if the writer must change
-something. Prospective notices on older attempts do not enter this route.
+something. If the candidate has no `review` or `closure-review` obligation
+(`review.count: 0`, no closure change), the driver instead sends the undelivered
+rulings to its writer as a `ruling` follow-up, including the candidate and
+`owed submit <node>` (the same commit is allowed). It sends once per ruling set
+and waits for that resubmit without a stalled-owner halt; an unaddressable writer
+run may still halt under the normal run/send refusal rules. A writer resubmit
+records the `rulings` seq of its existing writer ruling follow-ups in the slot's
+`rulings_seen`; it does not acknowledge later unsent rulings, prospective notices
+or executor carry submits. This uses existing ledger fields and changes no keys
+(ruling #1431). Prospective notices on older attempts do not enter this route.
 
 Owner reviews use `--rank 3`; another rank is refused with
 `owner reviews use --rank 3`.

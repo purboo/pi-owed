@@ -498,13 +498,13 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   if (s.seq < 0) return [];
   const plan = s.plan;
   const out: Action[] = [];
-  // F4: ordinary work excludes nodes removed from the plan; PR2 notices may still reach their open runs.
+  // F4 / ruling #1431: removed nodes get no action, including prospective notices; the parent closes their slots.
   const open = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').sort(byStatusOrder);
-  for (const n of Object.values(s.nodes).filter(n => n.slot?.open).sort(byStatusOrder)) {
+  for (const n of open) {
     const ar = n.runs.find(r => r.attempt === n.slot!.attempt) ?? { attempt: n.slot!.attempt, launches: [], sends: [] };
     const notice = prospectiveNotice(s, n, ar, runs, opts);
     if (notice) { out.push(notice); continue; }
-    if (n.phase === 'removed' || opts.measuring?.has(n.id)) continue;
+    if (opts.measuring?.has(n.id)) continue;
     const a = slotAction(s, runs, opts, n); if (a) out.push(a);
   }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
@@ -621,6 +621,15 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // FL3 (review #1273): the report generation owns this slot until it finishes, even when the old candidate
   // is accepted. Questions above and sealed failure routes below stay live; a new submit/parent act ends reportRequest.
   if (report && !wSealed) return undefined;
+  // Ruling #1431: with only rulings debt and no review obligation, even a non-ok sealed writer gets one
+  // ruling follow-up, then we wait for resubmit. Unaddressable runs/sends have already followed rows 3-4.
+  const pending = n.items.filter(i => i.status === 'D');
+  if (c && pending.length === 1 && pending[0]!.obligation === 'rulings' && !n.items.some(i => i.obligation === 'review' || i.obligation === 'closure-review') && !n.blocks.some(b => b.state === 'active' || b.state === 'flaky')) {
+    const seen = Math.max(slot.rulings_seen, ...ar.sends.filter(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up').map(x => x.rulings ?? -1));
+    const rules = rulingsInScope(s, id).filter(r => r.seq > seen);
+    if (rules.length) return send(writer, 'follow-up', 'ruling', [`New parent rulings for ${id}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`), `Apply these rulings to candidate ${c.commit} (submit #${c.seq}), then run \`owed submit ${id}\` (the same commit may be submitted again). This candidate has no review obligation; resubmitting records the delivered rulings as seen.`].join('\n'), carried(rules));
+    return undefined; // Sent once for this set; a finished generation does not turn its resubmit wait into owner debt.
+  }
   // F5: an explicit writer ruling takes priority over the generic resubmit/repair route.
   // Reviewers of the invalidated candidate are obsolete; delivery never acknowledges the ruling.
   if (writerRule) {

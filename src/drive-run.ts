@@ -464,11 +464,11 @@ export class Driver {
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
       // K6: while measuring, describe only the runs PR2 needs for prospective notices.
-      if (!n.slot?.open) continue;
+      if (!n.slot?.open || n.phase === 'removed') continue;
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
       if (!ar) continue;
       const policy = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
-      const normal = n.phase !== 'removed' && !halted(s, n.id) && !measuring.has(n.id);
+      const normal = !halted(s, n.id) && !measuring.has(n.id);
       const noticeDue = (rid: string): boolean => {
         const notices = ar.sends.filter(x => x.rid === rid && x.reason === 'ruling' && x.sendKind === 'notify');
         const seen = Math.max(-1, ...notices.map(x => x.rulings ?? -1));

@@ -20,9 +20,11 @@ const parent = { role: 'parent', id: 'test' } as const;
 const owner = { role: 'owner', id: 'test' } as const;
 const plan: Plan = { version: 1, trunk: 'main', closure: [], invariants: [], lease: false, nodes: ['a', 'b'].map(id => ({ id, deps: [], writes: [`${id}.txt`], checks: [], review: { count: 1, min_rank: 1 } })) };
 const W = runId('hash0', 'a', 1, 'writer'), R = runId('hash0', 'a', 1, 'reviewer', 1);
-function rig(reviewers = true) {
+function rig(reviewers = true, count = 1) {
   const entries: Entry[] = [], blobs = new Map<string, string>();
-  const state = () => reduce(entries, () => plan);
+  const initial = structuredClone(plan); initial.nodes[0]!.review.count = count;
+  const plans = new Map([['p', initial]]);
+  const state = () => reduce(entries, sha => plans.get(sha)!);
   const add = (d: Draft) => {
     assert.deepEqual(validateDraft(state(), d), [], JSON.stringify(d));
     const seq = entries.length, e = { ...d, seq, ts: new Date(1767225600000 + seq * 1000).toISOString(), prev: 'x', hash: `hash${seq}` } as Entry;
@@ -49,8 +51,12 @@ function rig(reviewers = true) {
     const launch = reviewerLaunch(state(), 'a', 1, 'hash0', '/repo');
     add({ kind: 'launch', by: 'parent:drive', node: 'a', attempt: 1, role: 'reviewer', rid: R, spec: blob(launch.spec), labels: launch.labels, rulings: launch.rulings });
   }
-  review();
-  return { entries, blobs, state, add, dispatch, rule, record, review, runs, act };
+  if (count > 0) review();
+  const remove = () => {
+    const next = structuredClone(initial); next.nodes = next.nodes.filter(n => n.id !== 'a'); plans.set('removed', next);
+    return add({ kind: 'plan', by: 'owner:test', channel: 'delegated', prior: state().planSha, plan: 'removed', downgrades: [], note: 'Retire a' });
+  };
+  return { entries, blobs, state, add, dispatch, rule, record, review, runs, act, remove };
 }
 
 test('PR1 prospective policy leaves old attempts accepted, excludes old review packets and binds later dispatches', () => {
@@ -151,15 +157,122 @@ test('PR3 wildcard debt launches a reviewer when only an external review exists'
   assert.match(JSON.parse(a.spec).task, new RegExp(`--ack-rulings ${rule.seq}`));
 });
 
-async function fixture() {
-  const r = await repo();
-  await r.put('plan.json', JSON.stringify(plan)); await r.commit();
-  await ops.init({ cwd: r.cwd, as: owner, channel: 'flag', plan: JSON.stringify(plan) });
+async function fixture(count = 1) {
+  const r = await repo(), configured = structuredClone(plan); configured.nodes[0]!.review.count = count;
+  await r.put('plan.json', JSON.stringify(configured)); await r.commit();
+  await ops.init({ cwd: r.cwd, as: owner, channel: 'flag', plan: JSON.stringify(configured) });
   const slot = await ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' });
   await commitAt(slot.worktree, { 'a.txt': 'a\n' });
   await ops.submit({ cwd: slot.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a' });
   return { ...r, slot };
 }
+
+test('PR3 #1431 zero-review debt sends one writer ruling follow-up per set; same-commit resubmit sees only delivered rulings', () => {
+  for (const nodes of ['*', ['a']] as const) {
+    const r = rig(false, 0), rule = r.rule(false, nodes === '*' ? '*' : [...nodes]);
+    const facts = r.state().nodes.a!.candidate!, views = r.runs();
+    const send = r.act(views);
+    assert.ok(send?.do === 'send' && send.rid === W && send.reason === 'ruling' && send.sendKind === 'follow-up', JSON.stringify(send));
+    assert.equal(send.rulings, rule.seq); assert.match(send.message, /owed submit a.*same commit/);
+    r.record(send);
+    assert.equal(r.act(views), undefined, 'a sealed writer that has not resubmitted does not cause an owner halt or a duplicate send');
+    r.add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts });
+    assert.equal(r.state().nodes.a!.slot!.rulings_seen, rule.seq);
+    assert.equal(r.act(views)?.do, 'merge');
+    const later = r.rule(), again = r.act(r.runs('running'));
+    assert.ok(again?.do === 'send' && again.sendKind === 'follow-up' && again.rulings === later.seq);
+    r.record(again);
+    const unsent = r.rule();
+    r.add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts });
+    assert.equal(r.state().nodes.a!.slot!.rulings_seen, later.seq);
+    assert.equal(r.state().nodes.a!.items.find(i => i.obligation === 'rulings')?.status, 'D');
+    assert.equal((r.act() as { rulings?: number }).rulings, unsent.seq);
+  }
+});
+
+test('PR3 #1431 zero-review debt does not halt a non-ok sealed writer; unaddressable or rejected sends still halt', () => {
+  for (const status of ['error', 'rejected', 'unknown'] as const) {
+    const r = rig(false, 0); r.rule();
+    const views = new Map([[W, { rid: W, state: 'sealed' as const, status }]]);
+    const a = r.act(views);
+    assert.ok(a?.do === 'send' && a.reason === 'ruling' && a.sendKind === 'follow-up', JSON.stringify(a));
+    const recorded = r.record(a);
+    assert.equal(r.act(views), undefined, 'finished ruling follow-up waits for resubmit');
+    const rejected = r.act(views, new Set(), new Map([[recorded.send, 'target no longer exists']]));
+    assert.ok(rejected?.do === 'halt');
+  }
+  const r = rig(false, 0); r.rule();
+  const gone = r.act(r.runs('pruned'), new Set(), new Map([[W, 'pruned']]));
+  assert.ok(gone?.do === 'halt');
+});
+
+test('PR3 #1431 writer resubmits never replace review/closure-review acknowledgments', () => {
+  for (const count of [0, 1]) {
+    const r = rig(false, count), rule = r.rule(), facts = r.state().nodes.a!.candidate!;
+    r.record({ do: 'send', node: 'a', attempt: 1, rid: W, reason: 'ruling', sendKind: 'follow-up', message: 'Apply the policy', rulings: rule.seq });
+    r.add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts: count ? facts : { ...facts, closureTouched: true, keys: { ...facts.keys, 'closure-review': 'kc' } } });
+    assert.equal(r.state().nodes.a!.slot!.rulings_seen, -1);
+    assert.equal(r.state().nodes.a!.items.find(i => i.obligation === 'rulings')?.status, 'D');
+  }
+});
+
+test('PR2 #1431 removed open nodes get no prospective notification or other driver action', () => {
+  const r = rig(), rule = r.rule(true); r.remove();
+  assert.equal(r.state().nodes.a!.phase, 'removed');
+  assert.equal(r.act(r.runs('running', 'running')), undefined);
+  assert.equal(r.state().nodes.a!.slot!.open, true, 'the parent owns closing the removed slot');
+  assert.equal(r.state().rules.at(-1)?.seq, rule.seq);
+});
+
+test('PR3 #1431 real submit preserves keys, acknowledges zero-review writer follow-up and enables merge', { timeout: 60_000 }, async () => {
+  const f = await fixture(0);
+  try {
+    const ledger = await Ledger.open(f.cwd), genesis = (await ledger.read())[0]!;
+    const project = genesis.hash.slice(0, 12), rid = runId(project, 'a', 1, 'writer');
+    await ops.launch({ cwd: f.cwd, as: { role: 'parent', id: 'drive' }, node: 'a', attempt: 1, role: 'writer', rid, spec: '{}', labels: runLabels(project, 'a', 1, 'writer'), rulings: 0 });
+    await ops.attest({ cwd: f.cwd, node: 'a' });
+    const before = await ops.why({ cwd: f.cwd, node: 'a' });
+    const rule = await ops.rule({ cwd: f.cwd, as: parent, nodes: '*', text: 'Read the policy before submitting again' });
+    class WriterDsa extends Dsa {
+      override async inspect(id: string) { return { view: { rid: id, state: 'sealed' as const, status: 'ok' as const } }; }
+      override async send(_id: string, _rid: string, kind: 'follow-up' | 'steer' | 'notify' | 'answer', message: string) {
+        assert.equal(kind, 'follow-up'); assert.match(message, /owed submit a.*same commit/);
+        return { outcome: 'applied' as const, spec_digest: sha256(message) };
+      }
+    }
+    const driver = new Driver({ cwd: f.cwd, log() {}, dsa: new WriterDsa(), session: null, max: 1 });
+    assert.ok((await driver.pass()).actions.some(a => a.do === 'send' && a.reason === 'ruling'));
+    await ops.submit({ cwd: f.slot.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a' });
+    const after = await ops.why({ cwd: f.cwd, node: 'a' });
+    assert.deepEqual(after.items.map(i => i.key), before.items.map(i => i.key));
+    assert.equal(after.accepted, true);
+    const lookup = () => ({ ...plan, nodes: plan.nodes.map(n => n.id === 'a' ? { ...n, review: { count: 0, min_rank: 1 } } : n) });
+    assert.equal(reduce(await ledger.read(), lookup).nodes.a!.slot!.rulings_seen, rule.seq);
+    assert.equal((await ops.merge({ cwd: f.cwd, as: parent, node: 'a' })).entry.kind, 'merge');
+  } finally { await f.cleanup(); }
+});
+
+test('PR2 #1431 executor does not inspect or send to removed nodes with a pending notice', { timeout: 60_000 }, async () => {
+  const f = await fixture();
+  try {
+    const ledger = await Ledger.open(f.cwd), genesis = (await ledger.read())[0]!, project = genesis.hash.slice(0, 12);
+    const rid = runId(project, 'a', 1, 'writer');
+    await ops.launch({ cwd: f.cwd, as: { role: 'parent', id: 'drive' }, node: 'a', attempt: 1, role: 'writer', rid, spec: '{}', labels: runLabels(project, 'a', 1, 'writer'), rulings: 0 });
+    await ops.rule({ cwd: f.cwd, as: parent, nodes: '*', text: 'future policy', prospective: true });
+    await ops.planSet({ cwd: f.cwd, as: owner, channel: 'delegated', plan: JSON.stringify({ ...plan, nodes: [] }), note: 'Retire the nodes' });
+    const before = (await ledger.read()).length;
+    class RemovedDsa extends Dsa {
+      inspections = 0; sends = 0;
+      override async inspect(id: string) { this.inspections++; return { view: { rid: id, state: 'running' as const } }; }
+      override async send() { this.sends++; return { outcome: 'applied' as const, spec_digest: sha256('notice') }; }
+    }
+    const dsa = new RemovedDsa(), driver = new Driver({ cwd: f.cwd, log() {}, dsa, session: null, max: 1 });
+    assert.deepEqual((await driver.pass()).actions, []);
+    assert.equal(dsa.inspections, 0, 'removed runs must not be inspected');
+    assert.equal(dsa.sends, 0, 'removed runs must not receive notices');
+    assert.equal((await ledger.read()).length, before);
+  } finally { await f.cleanup(); }
+});
 
 test('PR1 CLI and pi tool record prospective; --writer combination is usage and records nothing', { timeout: 60_000 }, async () => {
   const f = await fixture();

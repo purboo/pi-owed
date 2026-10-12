@@ -365,7 +365,14 @@ function fold(s: State, entries: Iterable<Entry>): void {
     } else if (e.kind === 'submit') {
       // N1: a carry submit names the plan entry that carried it (the latest one before it) and the submit it carried.
       const plan = e.carry !== undefined ? h.lastPlan : undefined;
-      s.nodes[e.node]!.candidate = { ...e.facts, seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
+      const n = s.nodes[e.node]!, spec = nodeSpec(s, e.node);
+      // Ruling #1431: a writer resubmit without review obligations acknowledges its recorded ruling follow-ups,
+      // never a later unsent ruling, a prospective notify, or an executor carry.
+      if (e.by === n.slot?.writer && spec?.review.count === 0 && !e.facts.closureTouched) {
+        const ar = n.runs.find(r => r.attempt === e.attempt), writer = ar?.launches.find(l => l.role === 'writer');
+        if (writer) n.slot.rulings_seen = Math.max(n.slot.rulings_seen, ...ar!.sends.filter(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up').map(x => x.rulings ?? -1));
+      }
+      n.candidate = { ...e.facts, seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
     }
     else if (e.kind === 'abandon') { s.nodes[e.node]!.slot!.open = false; s.nodes[e.node]!.candidate = undefined; }
     else if (e.kind === 'hold') { if (nodeSpec(s, e.node)) s.nodes[e.node]!.held = e.abandon; }
