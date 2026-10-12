@@ -539,7 +539,7 @@ never part of a key.
 |---|---|---|---|
 | `genesis` | owner | `{trunk, commit, plan}` (plan = blob sha) | names s₀ and the plan |
 | `plan` | owner/parent | `{prior, plan, rev?, path?, note?}` | new plan; must cite current plan sha (CAS); downgrade needs owner, unless the parent's downgrades are all covered by an allowance of the prior plan (§3.4); `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
-| `rule` | owner/parent | `{text, nodes: string[] \| "*", writer?: boolean}` | ruling; in scope for those nodes; `writer: true` invalidates named open candidates (§6.2) |
+| `rule` | owner/parent | `{text, nodes: string[] \| "*", writer?: boolean, answer?: {rid, qid, rev}}` | ruling; in scope for those nodes; `writer: true` invalidates named open candidates (§6.2); AN2 answer: one node, `writer: false`, recorded before dsa delivery (§12.5) |
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
@@ -1286,6 +1286,7 @@ edit(o: {cwd, node? | invariant?, set?, unset?, node_new?, note, plan?, rule?, w
 editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
 rule(o: {cwd, text, nodes, as}): Promise<Entry>
+answer(o: {cwd, node, text, qid?, rid?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
@@ -1700,7 +1701,11 @@ ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
 [--plan <file>]` (§3 Amend), `edit <node> --set path=yaml ... [--unset path ...]
 [--node-new] [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
 --note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
---note WHY` (§3 ED1/ED2), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
+--note WHY` (§3 ED1/ED2), `rule <text> --nodes a,b|*`,
+`answer <node> [--qid Q] [--rid R] "<text>"` (AN1–AN2, parent/owner;
+prints the answer rule seq and delivery request id; `--json` returns
+`{entry, request, delivery}`; a failed delivery refuses with the recorded rule
+seq and exact retry command), `dispatch <node> [--allow-overlap]`,
 `submit <node> [--commit X]`, `rebase <node>` (parent, or the slot writer when
 run inside its worktree), `attest <node> [--rerun]`,
 `review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings]`
@@ -1855,6 +1860,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
 | `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
+| `owed_answer` | `node`, `text`, `qid?`, `rid?`, `as?` (default `parent:pi`; parent/owner) | AN1–AN2: record and deliver an answer ruling; returns `{entry, request, delivery}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `as` | ruling; `writer: true` requires named nodes to submit again |
 | `owed_edit` | `node?` or `invariant?`, `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
 | `owed_amend` | `node`, `writes` (`+path` each), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
@@ -2398,16 +2404,42 @@ it gives the reviewer's `owed evidence` command.
   1.0.27): `owed <node>#<attempt> writer` / `owed <node>#<attempt> reviewer <n>`
   (`runName`), next to the labels. A re-launch of a recorded launch sends its
   stored spec bytes unchanged (a launch recorded before 0.5.0 has no name).
-- **Answer address (D22.6).** The asking line (notify, drive output, wake-ups)
-  addresses each open question by dsa's call address `questions[].to`
-  (`<wid>/<key>` from `describe`), or the run id when dsa reports none, in both
-  forms: `answer in pi: subagents {action:"send", kind:"answer", to:"<to>",
-  qid:"<qid>", message:"…"}; or: pi-durable-subagents send --request <id> --to
-  <to> --kind answer --qid <qid> --rev <rev> --message @<file>`. The row-5
-  notify (0.11, F1.3) ends with one sentence after the asking line(s): `If the
-  answer decides the contract or scope, also record it with \`owed rule --nodes
-  <node> "<decision>"\` so reviewers see it.` (`askingRule`; `askingText` itself
-  is unchanged).
+- **Answer in one act (0.13, AN1–AN3, app §65).**
+  `owed answer <node> [--qid Q] [--rid R] "<text>"` (pi
+  `owed_answer {node, text, qid?, rid?}`) is a parent or owner act; the driver
+  never answers. It describes the writer and reviewer launches of the node's
+  current open attempt and selects one open question. With one matching
+  question, qid may be omitted; qid may repeat across runs, so rid
+  disambiguates. No matching question or ambiguity refuses, listing all open
+  questions (role, rid, qid, rev and text), and records nothing. A describe
+  failure refuses rather than selecting from incomplete results.
+  Under one ledger lock it records one `rule` naming the node,
+  `writer: false`, text `Answer to <role> question <qid>: <text>`, and
+  `answer: {rid, qid, rev}` (nonempty ids, positive integer rev). The rid must
+  name a launch of that node's current open attempt. It then sends dsa
+  `kind: answer` to the rid with qid, the described rev, the original answer
+  text and request id `owed-answer-<rule seq>`. No candidate is invalidated.
+  Concurrent duplicate answers reuse the recorded entry. An explicit rid/qid
+  retry reuses its rule and original rev even after the question disappears
+  or the slot closes; different text for that pair refuses. Use `--` before
+  answer text beginning with `--` (the retry command always includes it). Any delivery
+  failure reports the recorded seq and an exactly shell-quoted retry command;
+  the rule remains. Dsa deduplicates the stable send id and returns its first
+  outcome. Nothing is rolled back and no separate `send` entry is appended.
+  The answer is delivered to its target rid: no ruling steer or ruling
+  follow-up includes it for that run. Earlier undelivered ordinary rulings
+  are still delivered; an answer never advances the delivery watermark past
+  a gap. Other runs (reviewers and later attempts) receive it as a normal
+  ruling. Delivery does not discharge `rulings`: reviewers still acknowledge.
+  Compatibility: owed < 0.13 refuses a rule with `answer` with code `version`
+  (the unknown ruling field rule of 0.12, §5).
+- **Answer address (D22.6, updated by AN1).** The asking line (notify, drive
+  output, wake-ups) prints one line per open question with role, rid, qid,
+  rev and question text, followed by `owed answer <node> --rid <rid> --qid
+  <qid> "<text>"` and `owed_answer {node, rid, qid, text:"…"}`. The dsa call
+  address remains visible as ` (to:"<wid>/<key>")`, falling back to the rid.
+  The row-5 notice ends with `This records one answer ruling and delivers it
+  to the asking run; reviewers still acknowledge it.` (`askingRule`).
 - **Call address in halts (0.8, L1.4, app #16).** `RunView.to` is dsa's call
   address `<wid>/<key>` of the run's call (the latest one when describe lists
   several), present only when describe reports both a wid and a call key

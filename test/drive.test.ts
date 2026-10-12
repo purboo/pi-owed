@@ -168,7 +168,7 @@ test('row 5: writer asking → notify with the question and answer address; the 
   const r = submitted();
   const a = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q1', rev: 3, question: 'Which API?\nline two' }], lastFence: { reason: 'x', at: T0 } })));
   assert.ok(a?.do === 'notify', 'outranks attest and fenced');
-  assert.match(a.text, /^a: writer run owed:hash0:a:1:writer asks \(qid q1, rev 3\): Which API\?\\nline two — the driver never answers; answer in pi: subagents \{action:"send", kind:"answer", to:"owed:hash0:a:1:writer", qid:"q1", message:"…"\}; or: pi-durable-subagents send --request <id> --to owed:hash0:a:1:writer --kind answer --qid q1 --rev 3/);
+  assert.ok(a.text.startsWith('a: writer run owed:hash0:a:1:writer asks (qid q1, rev 3): Which API?\\nline two — the driver never answers; answer: owed answer a --rid owed:hash0:a:1:writer --qid q1 "<text>"'), a.text);
   // A reviewer run of the current candidate asking is notified too.
   const q = submitted(); q.pass(); q.launchReviewer(1);
   const b = act(q, runsOf(okWriter(), view(R(1), 'asking', { questions: [{ qid: 'r', rev: 1, question: 'scope?' }] })));
