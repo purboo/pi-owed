@@ -454,7 +454,8 @@ export class Driver {
   }
 
   /**
-   * Describe the live runs of every open, not halted attempt; ask dsa about recorded sends not yet confirmed; read the
+   * Describe live runs of open attempts, plus any run with a prospective notice due even while halted or measuring;
+   * ask dsa about recorded sends not yet confirmed; read the
    * stored bytes `decide` may need for retries. `rejected`: the attempt's sends dsa decided rejected (every pass; cached
    * once terminal) and the runs and sends rejected in this process.
    */
@@ -462,12 +463,19 @@ export class Driver {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
-      // K6: a node with a measurement in flight gets no action this pass: its runs are not described.
-      if (!n.slot?.open || n.phase === 'removed' || halted(s, n.id) || measuring.has(n.id)) continue;
+      // K6: while measuring, describe only the runs PR2 needs for prospective notices.
+      if (!n.slot?.open || n.phase === 'removed') continue;
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
       if (!ar) continue;
+      const policy = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
+      const normal = !halted(s, n.id) && !measuring.has(n.id);
+      const noticeDue = (rid: string): boolean => {
+        const notices = ar.sends.filter(x => x.rid === rid && x.reason === 'ruling' && x.sendKind === 'notify');
+        const seen = Math.max(-1, ...notices.map(x => x.rulings ?? -1));
+        return policy.some(r => r.seq > seen) || notices.some(x => !this.facts.applied.has(x.send) && !this.facts.refused.has(x.send));
+      };
       const raw = new Map<string, { view: RunView; gen?: number }>();
-      for (const l of ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq))) {
+      for (const l of ar.launches.filter(l => (normal && (l.role === 'writer' || (!!c && l.seq > c.seq))) || noticeDue(l.rid))) {
         try {
           // F4 (wais #34): a describe that timed out is retried once in this pass before it is reported.
           const r = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
@@ -831,6 +839,11 @@ export class Driver {
           // steer. Review #784 F1: it does not count as delivered, so the writer's next follow-up (submit, rebase, repair
           // or ruling) carries its rulings; reviewers get them through the rulings obligation. A rejected ruling
           // follow-up halts like any other send (as decide would on the next pass).
+          if ((r.outcome === 'rejected' || r.outcome === 'conflict') && a.reason === 'ruling' && a.sendKind === 'notify') {
+            const reason = r.outcome === 'rejected' ? r.reason : 'dsa request-conflict';
+            this.facts.refused.set(id, reason);
+            return done(r.outcome, false, `${reason}; prospective notice not retried, no halt`, x);
+          }
           if (r.outcome === 'rejected' && a.reason === 'waiting') return done('rejected', false, `${r.reason}; waiting notice not retried`, x);
           if (r.outcome === 'rejected' && a.reason === 'ruling' && a.sendKind === 'steer') return done('rejected', false, `${r.reason}; not retried as a steer (the writer's next follow-up carries these rulings; reviewers get them through the rulings obligation)`, x);
           // 0.8 (L1.4): the halt names the run's call address when describe reported one.

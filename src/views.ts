@@ -2,7 +2,7 @@ import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntr
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny, driveConfig } from './plan.ts';
-import { NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
@@ -390,7 +390,7 @@ function entryLine(e: Entry): string {
     case 'hold': return `${head} held ${e.node} by abandon #${e.abandon}${e.reason ? `: ${e.reason}` : ''}`;
     case 'abandon': return `${head} abandoned ${e.node} attempt ${e.attempt}${e.reason ? `: ${e.reason}` : ''}`;
     case 'plan': return `${head} updated plan${e.path ? ` from ${e.path}${e.rev ? ` at ${e.rev.slice(0, 12)}` : ''}` : ''}${e.downgrades.length ? `, downgrades ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ')}` : ''}${e.note ? `: ${oneLine(e.note)}` : ''}`;
-    case 'rule': return `${head} ruling (${e.nodes === '*' ? 'all nodes' : e.nodes.join(', ')}): ${e.text}`;
+    case 'rule': return `${head} ${e.prospective ? 'prospective ' : ''}ruling (${e.nodes === '*' ? 'all nodes' : e.nodes.join(', ')}): ${e.text}`;
     case 'review': return `${head} reviewed ${e.node}/${e.obligation ?? 'review'} ${e.verdict} rank=${e.rank}${e.note ? `: ${e.note}` : ''}`;
     case 'escape': return `${head} recorded escape ${e.node} (merge #${e.merge}, ${e.class} ${escapeLabels[e.class]}): ${e.note}${e.evidence ? ` [${e.evidence}]` : ''}`;
     case 'adopt': return `${head} adopted trunk ${e.trunk} ${e.prior.slice(0, 12)}..${e.commit.slice(0, 12)} (${plural(e.commits, 'commit')} made outside owed, ${plural(e.changed.length, 'changed path')}): ${e.note}`;
@@ -424,7 +424,7 @@ export function renderReport(v: Report): string {
     ...(v.superseded?.length ? list('Superseded blocks (not active; the plan changed their check)', v.superseded.map(b => `${b.node}/${b.obligation} ${b.text}`)) : []),
     ...list('Waivers', v.waivers.map(entryLine)),
     ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.allowance !== undefined ? allowanceLabel(d) : `${d.by}${d.channel === 'delegated' ? ' (delegated)' : ''}`} ${i.node}: ${i.what}`))),
-    ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by}${r.channel === 'delegated' ? ' (delegated)' : ''} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
+    ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by}${r.prospective ? ' (prospective)' : ''}${r.channel === 'delegated' ? ' (delegated)' : ''} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
     ...list('Owner decisions needed', v.decisions.map(itemText)),
     ...list('Owner actions', v.ownerActions.map(entryLine)),
     ...adoptionSections(v.adoptions, list, 'Trunk adoptions (owner decisions: commits made outside owed)', 'Trunk adoptions under allowance (parent adoptions: commits made outside owed)'),
@@ -698,7 +698,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   const runs = reviewRuns(s, node), first = reviewerBase(s, node) + 1, k = n - first + 1;
   if (!Number.isInteger(n) || k < 1 || k > runs) throw new OwedError(`Node ${node} candidate #${st.candidate.seq} has ${runs} reviewer run(s)${runs ? ` (n = ${first}${runs > 1 ? `..${first + runs - 1}` : ''})` : ''}; run ${n} does not exist for it`);
   const { attempt, base } = st.slot, commit = st.candidate.commit, who = driveReviewer(node, attempt, k), c12 = commit.slice(0, 12);
-  const rulings = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
+  const rulings = applicableRules(s, node);
   const rulingsItem = st.items.find(i => i.obligation === 'rulings');
   const ack = rulingsItem && rulingsItem.status === 'D' && rulings.length ? ` --ack-rulings ${Math.max(...rulings.map(r => r.seq))}` : '';
   const rank = (o: 'review' | 'closure-review'): number => o === 'closure-review' ? 2 : Math.max(1, spec.review.min_rank);
