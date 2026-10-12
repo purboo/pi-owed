@@ -383,13 +383,26 @@ test('SW repair 3: head and first-bad confirmations bound noisy probes; a one-sh
   } finally { await r.done(); }
 });
 
+test('SW integrated counts protocol keeps the merged parser verdict and names, ignoring diagnostic and malformed lines', async () => {
+  const output=['owed-counts {"pass":0,"fail":1,"failed":["real"]}','  owed-counts {"pass":0,"fail":1,"failed":["diagnostic"]}','owed-counts {"pass":0,"fail":1,"skip":-1,"failed":["invalid"]}'].join('\n');
+  const r=await rig([],{sweep:{run:`printf '%s\\n' '${output}'`,timeout_s:10}});
+  try {
+    const result=await sw(r.cwd);
+    assert.equal(result.entry.verdict,'fail'); assert.deepEqual(result.entry.failed,['real']);
+    assert.deepEqual(result.entry.counts,{format:'owed',tests:1,pass:0,fail:1,failed:['real']});
+    assert.deepEqual(result.steps[0]?.failed,['real']);
+    assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
+  } finally { await r.done(); }
+});
+
 test('SW sweep ledger validates strict fields/authority and replays through the snapshot without acceptance effects', async () => {
   const r=await rig();
   try {
     const run=await sw(r.cwd), {entries,state}=await ops.readState({cwd:r.cwd});
-    const draft={kind:'sweep',by:'executor:owed',commit:r.base,verdict:'pass',log:run.entry.log,failed:[]} as Draft;
+    const draft={kind:'sweep',by:'executor:owed',commit:r.base,verdict:'pass',log:run.entry.log,failed:[]} as Extract<Draft,{kind:'sweep'}>;
     assert.deepEqual(validateDraft(state,draft),[]);
-    for(const extra of [{key:'bad'},{by:'parent:drive'},{commit:'bad'},{verdict:'maybe'},{log:'bad'},{failed:[42]},{bisect:false},{counts:{fail:-1}},{unexpected:1}]) assert.ok(validateDraft(state,{...draft,...extra} as Draft).length,JSON.stringify(extra));
+    assert.deepEqual(validateDraft(state,{...draft,counts:{format:'owed',tests:1,pass:0,fail:1,failed:['missed']}}),[]);
+    for(const extra of [{counts:{failed:[42]}},{key:'bad'},{by:'parent:drive'},{commit:'bad'},{verdict:'maybe'},{log:'bad'},{failed:[42]},{bisect:false},{counts:{fail:-1}},{unexpected:1}]) assert.ok(validateDraft(state,{...draft,...extra} as Draft).length,JSON.stringify(extra));
     const lookup=()=>parsePlan(JSON.stringify(r.plan)); assert.ok(sameReplay(unpackState(packState(state),lookup),reduce(entries,lookup)));
     const future=newerEntry({...run.entry,verdict:'future'} as unknown as Entry); assert.equal(future?.code,'version'); assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
   } finally { await r.done(); }
