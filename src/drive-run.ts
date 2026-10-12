@@ -25,7 +25,7 @@ import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
-import type { Plan, Principal, RunView, SendEntry, State } from './types.ts';
+import type { Entry, Plan, Principal, RunView, SendEntry, State } from './types.ts';
 
 /**
  * Trunk drift (review ruling #559, option c): the trunk ref no longer equals the ledger trunk. It is a repository fact,
@@ -808,6 +808,7 @@ export class Driver {
     const available = dsaAvailable(this.dsa.bin), hold = lease && !machineLeased() && available;
     const argv = [...this.owed, 'attest', node, ...(!lease || !available ? ['--no-lease'] : [])], cwd = this.root!;
     const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(detail ? { detail: oneLine(detail) } : {}) });
+    const measuredSince = (await this.ledger!.read()).length;
     const ok = (r: ActionReport): Ended => ({ finish: async () => [r] });
     const busy = (detail: string): Ended => { const r = report('busy', detail); return { finish: async () => [r], busy: r }; };
     const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; } });
@@ -821,11 +822,17 @@ export class Driver {
     } else {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
-    if (ran.exit === 0 || ran.exit === 1) return ok(report('done', `${ran.exit === 0 ? 'accepted' : 'not accepted yet'}${hold || machineLeased() ? '; lease: machine (shared)' : ''}`));
+    if (ran.exit === 0 || ran.exit === 1) return ok(report('done', `${ran.exit === 0 ? 'accepted' : 'not accepted yet'}${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`));
     if (ran.exit === 75) return busy(busyDetail(node, tail(ran.stderr || ran.stdout)));
     return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
   }
 
+  /** RC1: latest observation of each item measured by this action; descriptive only, never a new verdict. */
+  private async noisyDetail(node: string, since: number): Promise<string> {
+    const latest = new Map<string, Extract<Entry, { kind: 'obs' }>>();
+    for (const e of await this.ledger!.read()) if (e.seq >= since && e.kind === 'obs' && (e.subject === node || e.merging === node)) latest.set(`${e.subject}/${e.obligation}`, e);
+    return [...latest].flatMap(([item, e]) => e.noisy && e.runs ? [`; ${item} noisy (${e.runs.filter(r => r.verdict === 'pass').length}/${e.runs.length} passed)`] : []).join('');
+  }
   /**
    * `ops.merge` in this process (the CLI refuses `--as parent:drive`), aborted by a stop at once (D16a.1); resolves with
    * how the loop handles the result. Refusals (D14.2): `rebase needed` rebases; the transient refusal (the ledger moved
@@ -851,13 +858,16 @@ export class Driver {
 
   private async merge(node: string, attempt: number, signal?: AbortSignal): Promise<() => Promise<ActionReport[]>> {
     const cwd = this.o.cwd, as = DRIVE_PRINCIPAL;
-    const report = (outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(detail) });
+    const measuredSince = (await this.ledger!.read()).length;
+    let noisy = '';
+    const report = (outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(`${detail}${noisy}`) });
     try {
       const r = leaseResult(await ops.merge({ cwd, as, node, signal }));
-      return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}${leaseText(r).replace('\n', '; ')}`)];
+      return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}${leaseText(r).replace('\n', '; ')}${await this.noisyDetail(node, measuredSince)}`)];
     } catch (e) {
       if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
       return async () => {
+        noisy = await this.noisyDetail(node, measuredSince);
         // F5: a resume may land while the merge measures or awaits reaping. Decide its refusal on that state.
         const waiting = waitingFor(await loadState(this.ledger!), node);
         if (waiting) return [report('waiting', `merge refused (${e.message}); ${waitingText(node, waiting.after, waiting.resume)}`)];
