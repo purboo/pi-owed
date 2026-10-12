@@ -183,11 +183,17 @@ test('L3.1: at the stalled point a clean candidate owing only `rulings` sends th
   x.record(l);
   // Its packet carries the ruling: once launched, no follow-up repeats it.
   assert.equal(act(x, sealed(view(R1, 'running'))), undefined);
-  // A node without a review obligation has no reviewer to ack it: the stalled halt stays.
+  // Ruling #1431: without a review obligation, one writer follow-up asks for a resubmit instead of stalling.
   const y = started();
-  y.submit(); y.pass(); y.rule('a late note');
-  const hy = act(y);
-  assert.ok(hy?.do === 'halt' && hy.reason.startsWith('stalled: rulings'), JSON.stringify(hy));
+  y.submit(); y.pass(); const ry = y.rule('a late note');
+  const fy = act(y);
+  assert.ok(isSend(fy, 'ruling') && fy.rid === W && fy.sendKind === 'follow-up' && fy.rulings === ry.seq, JSON.stringify(fy));
+  assert.match(fy.message, /owed submit a.*same commit/);
+  y.record(fy);
+  assert.equal(act(y), undefined, 'wait for resubmit without a duplicate or owner halt');
+  y.submit(); y.pass();
+  assert.equal(y.state().nodes.a!.slot!.rulings_seen, ry.seq);
+  assert.deepEqual(act(y), { do: 'merge', node: 'a' });
 });
 
 test('L3.1 review #914 F1: a recorded ruling follow-up dsa did not apply (pending, or a crash before dsa) on an owner-needed node is re-sent with the same id; only to a sealed writer', () => {
