@@ -2998,10 +2998,12 @@ polling.
     dropped when the node's current fact mark (`factMark`) is higher: someone
     acted on the node, and a condition that still holds is reported again by
     the driver's next pass with the new mark. A failed ledger read keeps it.
-    A trunk-drift notify (`scope: 'repo'`, node `trunk`; or node `trunk` without
-    scope from an older driver) is dropped when the trunk ref equals the ledger
-    trunk commit now, or when the ledger trunk seq is higher than the line's
-    `facts` (QT2: adopt/merge happened). Failed ledger/ref reads keep the line.
+    Only a scoped trunk-drift notify (`scope: 'repo'`, node `trunk`) is dropped
+    when the trunk ref equals the ledger trunk commit now, or when the ledger
+    trunk seq is higher than the line's `facts` (QT2: adopt/merge happened).
+    Failed ledger/ref reads keep the line. Unscoped lines are never dropped as
+    drift (#1378): legacy drift lines are delivered as before, while a plan node
+    named `trunk` follows normal node fact/question revalidation.
     A still-current drift is delivered, and dropped drift lines count in (c).
     Status and brief show no drift when trunk equals the ledger trunk commit.
     Terminal lines, `idle-wait` and other lines without a fact mark are never

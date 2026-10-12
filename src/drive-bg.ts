@@ -324,8 +324,8 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
   if (typeof j.do !== 'string') return { kind: 'wake', text };
   if (j.do === 'merge' && j.outcome === 'merged') return { kind: 'merge', text };
   if (!wakeReport(j)) return { kind: 'quiet', text };
-  // QT2: drift wakes use the ledger trunk seq, not a plan node's fact mark. Other repo wakes stay unchanged.
-  const drift = j.do === 'notify' && j.node === DRIFT_NODE && (j.scope === 'repo' || j.scope === undefined);
+  // QT2 (#1378): only scoped drift wakes use the ledger trunk seq. Unscoped `trunk` may be a real plan node.
+  const drift = j.do === 'notify' && j.node === DRIFT_NODE && j.scope === 'repo';
   const node = typeof j.node === 'string' && j.scope !== 'repo' && !drift ? j.node : undefined;
   const check: WakeCheck = {
     ...(drift ? { drift: true as const, ...(typeof j.facts === 'number' ? { facts: j.facts } : {}) } : {}),
