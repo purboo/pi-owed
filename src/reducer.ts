@@ -264,7 +264,7 @@ export function reduceFrom(base: State, more: Entry[], plans: PlanLookup): State
 /** G1: continues the fold of `s` itself with `more` (mutates and returns `s`); for a state the caller owns alone. */
 export function extendState(s: State, more: Entry[]): State { fold(s, more); return s; }
 /** The entry kinds this owed interprets (G1.5): any other kind needs a newer owed. */
-const KINDS: readonly string[] = ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume'];
+const KINDS: readonly string[] = ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
 /**
  * G1.5 closed entry enum audit (types.ts): Base.channel, send.sendKind/reason, obs.verdict, review.obligation/verdict/
  * needs, launch.role, halt.needs, escape.class. `by`, other obligations and counts.format are open strings, not enums;
@@ -274,6 +274,7 @@ const CHANNELS: readonly string[] = ['tty', 'pi-confirm', 'flag', 'delegated'];
 let enumCache: Record<string, Record<string, readonly unknown[]>> | undefined;
 const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCache ??= {
   send: { sendKind: SEND_KINDS, reason: SEND_REASONS },
+  sweep: { verdict: ['pass', 'fail', 'error'] },
   obs: { verdict: ['pass', 'fail', 'error'] },
   review: { obligation: ['review', 'closure-review', 'approve'], verdict: ['ok', 'block'], needs: ['parent'] },
   launch: { role: ['writer', 'reviewer'] },
@@ -881,6 +882,16 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.commit !== d.facts.commit || d.commit !== d.state.commit) errors.push('merge commit does not match facts');
       if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state }).reasons);
       break;
+    case 'sweep':
+      if (d.by !== 'executor:owed') errors.push('sweep may only be written by executor:owed');
+      if (typeof d.commit !== 'string' || !/^[0-9a-f]{40}$/.test(d.commit)) errors.push('sweep commit must be a full commit oid');
+      if (!['pass', 'fail', 'error'].includes(d.verdict)) errors.push('sweep verdict must be pass, fail or error');
+      if (d.key !== undefined && !blobHash(d.key)) errors.push('sweep key must be a definition hash');
+      if (!blobHash(d.log)) errors.push('sweep log must be a blob hash');
+      if (!Array.isArray(d.failed) || d.failed.length > 50 || d.failed.some(x => typeof x !== 'string')) errors.push('sweep failed must list at most 50 names');
+      if (d.bisect !== undefined && d.bisect !== true) errors.push('sweep bisect must be true when present');
+      if (d.counts !== undefined && (!d.counts || typeof d.counts !== 'object' || Array.isArray(d.counts) || Object.entries(d.counts).some(([k, v]) => k === 'format' ? typeof v !== 'string' : k === 'failed' ? !Array.isArray(v) || v.length > 50 || v.some(n=>typeof n !== 'string') : !['tests', 'pass', 'fail', 'skip'].includes(k) || !Number.isInteger(v) || (v as number) < 0))) errors.push('sweep counts must be non-negative integer counts');
+      break;
     case 'note': break;
     case 'adopt': {
       // D21.4: a parent may adopt when every changed path lies under an `adopt` prefix of the current plan's rules.
@@ -900,7 +911,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     }
   }
-  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt' || d.kind === 'launch' || d.kind === 'send' || d.kind === 'halt' || d.kind === 'evidence' || d.kind === 'resume') {
+  if (d.kind === 'escape' || d.kind === 'decoy-commit' || d.kind === 'decoy-reveal' || d.kind === 'adopt' || d.kind === 'launch' || d.kind === 'send' || d.kind === 'halt' || d.kind === 'evidence' || d.kind === 'resume' || d.kind === 'sweep') {
     const extra = Object.entries(d).filter(([k, v]) => v !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS[d.kind].includes(k)).map(([k]) => k);
     if (extra.length) errors.push(`${d.kind} has unknown fields: ${extra.join(', ')}`);
   }
@@ -1021,7 +1032,7 @@ function carriedErrors(s: State, d: Draft & { node: string; rulings?: number }, 
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume', readonly string[]> = { resume: ['node', 'attempt', 'after', 'expect', 'note'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on

@@ -374,6 +374,7 @@ function entryLine(e: Entry): string {
   const head = `#${e.seq} ${e.by}${e.channel === 'flag' ? ' (flag weak confirmation)' : e.channel === 'delegated' ? ' (delegated)' : ''}`;
   switch (e.kind) {
     case 'obs': return `${head} observed ${e.subject}/${e.obligation} ${e.verdict}${noise(e)}${e.note ? `: ${e.note}` : ''}`;
+    case 'sweep': return `${head} sweep ${e.commit.slice(0, 12)}: ${e.verdict}${e.bisect ? ' (bisect)' : ''}; log ${e.log}${e.failed.length ? `; failed: ${e.failed.join(', ')}` : ''}`;
     case 'merge': return `${head} merged ${e.node} → ${e.commit.slice(0, 12)}`;
     case 'waive': return `${head} waived ${e.node}/${e.obligation}: ${e.reason}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(x => `#${x}`).join(', ')})` : ''}`;
     case 'defer': return `${head} deferred ${e.node} post-merge invariants ${e.items.map(i => i.id).join(', ')}: ${e.reason}`;
@@ -472,6 +473,7 @@ export interface Brief {
   delegated: BriefDelegated[];
   later: string[];
   reported: { node: string; resume: number }[];
+  unguarded?: { node: string; seq: number; paths: string[] }[];
   totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number; later: number; reported: number };
 }
 const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
@@ -549,7 +551,7 @@ function currentNeeds(s: State, b: Block): boolean {
   return b.needs === 'parent' && b.kind === 'judgment' && !!n?.slot?.open && !!n.candidate && n.candidate.keys[b.obligation] === b.key;
 }
 /** Pure morning brief over a reduced state. `since` limits the Merged section; the other sections show current state. */
-export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now()): Brief {
+export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now(), coverage?: Map<number, string[]>): Brief {
   const included = (e: Entry): boolean => typeof since === 'number' ? e.seq > since : Date.parse(e.ts) > Date.parse(since);
   const ts = (seq: number): string => entries.find(e => e.seq === seq)?.ts ?? '';
   const nodes = Object.values(s.nodes), open = nodes.filter(n => !n.merged);
@@ -581,6 +583,7 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
   const later = s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).map(n => n.id);
   const reported = open.flatMap(n => { const resume = reportedOf(s,n.id); return resume === undefined ? [] : [{ node:n.id, resume }]; });
   return { since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress, later, reported,
+    ...(coverage ? { unguarded: entries.filter((e): e is Extract<Entry, { kind: 'merge' }> => e.kind === 'merge').slice(-10).map(e => ({ node:e.node, seq:e.seq, paths:coverage.get(e.seq) ?? [] })) } : {}),
     totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: open.filter(n => waitingFor(s,n.id) || (n.phase === 'blocked' && !later.includes(n.id))).length, later: later.length, reported: reported.length } };
 }
 /** D25.5: one delegated owner entry as kind, node, what it did and its note or reason. */
@@ -612,6 +615,7 @@ export function renderBrief(v: Brief): string {
     ...(v.delegated?.length ? section(`Owner acts (delegated) since ${since}`, v.delegated.map(delegatedText)) : []),
     ...section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)),
     ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.manualItems?.length ? `, ${m.manualItems.length} manual (${m.manualItems.join(', ')})` : ''}${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
+    ...(v.unguarded?.length ? section('Unguarded paths (last 10 merges)', v.unguarded.map(m => `${m.node} #${m.seq}: ${m.paths.join(', ') || 'none'}`)) : []),
     ...adoptionSections(v.adoptions, section, 'Adopted outside owed (owner decisions)', 'Adopted outside owed (parent adoptions under allowance)'),
     ...(v.allowanceDowngrades?.length ? section('Downgrades under allowance', v.allowanceDowngrades.flatMap(d => d.items.map(i => `#${d.seq} ${allowanceLabel(d)} ${i.node}: ${i.what}`))) : []),
     ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),

@@ -391,7 +391,7 @@ test('#785 (2): the driver\'s own merge appending while a pass observes is no tr
     await d.settle();
     const out = lines.join('\n');
     assert.doesNotMatch(out, /moved outside owed|rewound|drift/, out);
-    assert.match(out, /^merge a: merged — trunk [0-9a-f]{12}; lease: machine \(shared\)$/m, out);
+    assert.match(out, /^merge a: merged — trunk [0-9a-f]{12}; lease: machine \(shared\); Unguarded paths: none$/m, out);
     assert.ok(merged(await f.entries(), 'a'));
     assert.deepEqual(halts(await f.entries()), []);
   } finally { await f.done(); }
