@@ -132,7 +132,7 @@ test('D22.2a: the ruling steer is the lowest row: attest, repairs and a fence go
   for (let i = 0; i < 3; i++) {
     const a = act(r, runs({ lastFence: fence }), { applied: applied(r) });
     assert.ok(a?.do === 'send' && a.reason === 'ruling' && a.rulings === later.seq, JSON.stringify(a));
-    assert.equal(a.message.includes(`#${late.seq} `), a.rid === W(), 'the writer also lacks `late`; the reviewers had it in their packet');
+    assert.ok(a.message.includes(`#${late.seq} `), 'AN3: reviewer acknowledgment hints include all in-scope rulings, including packet rulings');
     order.push(a.rid); r.record(a);
   }
   assert.deepEqual(order, [W(), R(1), R(2)]);
@@ -158,8 +158,8 @@ test('D22.2: a running reviewer gets rulings recorded after its launch, with the
   assert.equal(a?.do, 'notify');
   const b = act(r, runsOf(sealed, view(R(1), 'running'), view(R(2), 'running')));
   assert.deepEqual(b, { do: 'send', node: 'a', attempt: 1, rid: R(1), sendKind: 'steer', reason: 'ruling', rulings: late.seq,
-    message: ['New parent rulings for a:', `#${late.seq} (*): judge error bodies too`, `Judge the candidate against these rulings and record your review with --ack-rulings ${late.seq}.`].join('\n') });
-  assert.equal(rulingMessage('a', 'reviewer', [r.state().rules.find(x => x.seq === late.seq)!]), b.message);
+    message: ['New parent rulings for a:', `#${early.seq} (a): before the reviewer launch`, `#${late.seq} (*): judge error bodies too`, `Judge the candidate against these rulings and record your review with --ack-rulings ${late.seq}.`].join('\n') });
+  assert.equal(rulingMessage('a', 'reviewer', r.state().rules), b.message);
   r.record(b);
   const c = act(r, runsOf(sealed, view(R(1), 'running'), view(R(2), 'running')), { applied: applied(r) });
   assert.ok(c?.do === 'send' && c.rid === R(2) && c.rulings === late.seq);
@@ -263,13 +263,13 @@ test('D22.6: the asking text addresses the question by dsa\'s call address (pi t
   const r = rig(); r.dispatch(); r.launchWriter(); r.submit();
   const withTo = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q1-1', rev: 2, question: 'Which API?\nline two', to: 'w7/main' }] })));
   assert.ok(withTo?.do === 'notify');
-  assert.equal(withTo.text, `a: writer run ${W()} asks (qid q1-1, rev 2): Which API?\\nline two — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", to:"w7/main", qid:"q1-1", message:"…"}; or: pi-durable-subagents send --request <id> --to w7/main --kind answer --qid q1-1 --rev 2 --message @<file> If the answer decides the contract or scope, also record it with \`owed rule --nodes a "<decision>"\` so reviewers see it.`);
+  assert.equal(withTo.text, `a: writer run ${W()} asks (qid q1-1, rev 2): Which API?\\nline two — the driver never answers; answer: owed answer a --rid ${W()} --qid q1-1 "<text>"; in pi: owed_answer {node:"a", rid:"${W()}", qid:"q1-1", text:"…"} (to:"w7/main") This records one answer ruling and delivers it to the asking run; reviewers still acknowledge it.`);
   assert.ok(!withTo.text.includes(`--to ${W()}`), 'not the rid');
   const without = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q', rev: 1, question: 'scope?' }, { qid: 'q2', rev: 1, question: 'two', to: 'w7/main' }] })));
   assert.ok(without?.do === 'notify');
   const [one, two] = without.text.split('\n');
-  assert.ok(one!.endsWith(`answer in pi: subagents {action:"send", kind:"answer", to:"${W()}", qid:"q", message:"…"}; or: pi-durable-subagents send --request <id> --to ${W()} --kind answer --qid q --rev 1 --message @<file>`), one);
-  assert.ok(two!.includes('to:"w7/main"') && two!.includes('--to w7/main'), two);
+  assert.ok(one!.includes(`owed answer a --rid ${W()} --qid q "<text>"`) && one!.endsWith(` (to:"${W()}")`), one);
+  assert.ok(two!.includes('to:"w7/main"') && two!.includes('--qid q2'), two);
   const l = r.state().nodes.a!.runs[0]!.launches[0]!;
   assert.match(askingText('a', l, { rid: W(), state: 'asking' }), /is asking \(no question reported; see pi-durable-subagents describe --key /);
 });

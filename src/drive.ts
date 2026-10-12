@@ -104,6 +104,9 @@ export function launchSpec(o: { agent: string; model?: string; cwd: string; task
 export const runName = (node: string, attempt: number, role: RunRole, n?: number): string => `owed ${node}#${attempt} ${role}${role === 'reviewer' ? ` ${n}` : ''}`;
 /** Rulings covering `node` (`--nodes` names it, or `*`), in ledger order. */
 const rulingsInScope = (s: State, node: string): Rule[] => s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
+/** AN3: writer delivery excludes answers to that run, not answers to other runs or acknowledgment scope. */
+const writerRid = (s: State, node: string): string | undefined => s.nodes[node]?.runs.find(a => a.attempt === s.nodes[node]?.slot?.attempt)?.launches.find(l => l.role === 'writer')?.rid;
+const deliversRule = (r: Rule, rid: string | undefined): boolean => r.answer === undefined || r.answer.rid !== rid;
 /** E4: the `rulings` field of a message carrying `rules`: their highest seq, 0 when none (seq 0 is the genesis, never a ruling). */
 const carried = (rules: readonly { seq: number }[]): number => Math.max(0, ...rules.map(r => r.seq));
 /** The rulings a writer's dispatch packet carries: those covering the node recorded before its dispatch. */
@@ -177,10 +180,10 @@ export function repairFollowUp(s: State, node: string): { message: string; rulin
   const n = s.nodes[node]!, c = n.candidate!, entries = entriesOf(s), quoted: Rule[] = [];
   const notes = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active').map(b => {
     const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
-    if (ruled) quoted.push(ruled);
-    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${b.needs === 'parent' ? (ruled ? ` (needed a parent ruling; ruling #${ruled.seq}: ${oneLine(ruled.text)})` : ' (needs a parent ruling)') : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
+    if (ruled && deliversRule(ruled, writerRid(s, node))) quoted.push(ruled);
+    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${b.needs === 'parent' ? (ruled ? ` (needed a parent ruling; ruling #${ruled.seq}${deliversRule(ruled, writerRid(s, node)) ? `: ${oneLine(ruled.text)}` : ''})` : ' (needs a parent ruling)') : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
   });
-  const since = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq), rulings = since.map(r => `- #${r.seq} ${oneLine(r.text)}`);
+  const since = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq && deliversRule(r, writerRid(s, node))), rulings = since.map(r => `- #${r.seq} ${oneLine(r.text)}`);
   // K5.2: the rulings come first.
   return { rulings: carried([...since, ...quoted]), message: [...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
     `owed found problems with your candidate ${c.commit} (submit #${c.seq}) of ${node}, attempt ${n.slot!.attempt}.`,
@@ -246,10 +249,10 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
   const n = s.nodes[node]!, slot = n.slot!, last = lastSubmit(s, node)!, entries = entriesOf(s), quoted: Rule[] = [];
   const notes = resubmitBlocks(s, node).map(b => {
     const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
-    if (ruled) quoted.push(ruled);
+    if (ruled && deliversRule(ruled, writerRid(s, node))) quoted.push(ruled);
     return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${ruled ? ` (needed a parent ruling; ruling #${ruled.seq})` : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
   });
-  const since = rulingsInScope(s, node).filter(r => r.seq > slot.dispatchSeq);
+  const since = rulingsInScope(s, node).filter(r => r.seq > slot.dispatchSeq && deliversRule(r, writerRid(s, node)));
   const rules = [...since, ...quoted.filter(q => !since.some(r => r.seq === q.seq))].sort((a, b) => a.seq - b.seq);
   const rb = slot.rebase && slot.rebase.seq > last.seq ? slot.rebase : undefined;
   return { rulings: carried(rules), message: [
@@ -298,7 +301,7 @@ const repairsSince = (s: State, node: string, ar: AttemptRuns): { count: number;
  */
 const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntry, refused?: Refused): Rule[] => {
   const d = deliveredRulings(s, node, ar, writer, refused);
-  return rulingsInScope(s, node).filter(r => r.seq > d);
+  return rulingsInScope(s, node).filter(r => r.seq > d && r.answer?.rid !== writer.rid);
 };
 /**
  * K5.2: a writer follow-up (`submit`, `rebase`) with the undelivered in-scope rulings first; `rulings` (their highest
@@ -353,9 +356,10 @@ function reviewerRuling(s: State, n: NodeState, ar: AttemptRuns, reviewers: read
   const l = reviewers.at(-1);
   const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
   if (!l) return inScope.some(r => r.nodes !== '*' && r.seq > acked) ? reviewerLaunch(s, n.id, nextReviewerN(s, n.id), opts.project, opts.root) : undefined;
-  const delivered = deliveredRulings(s, n.id, ar, l, opts.rejected), rules = inScope.filter(r => r.seq > delivered);
-  if (!rules.some(r => r.nodes !== '*')) return undefined;
-  const top = carried(rules);
+  const delivered = deliveredRulings(s, n.id, ar, l, opts.rejected);
+  if (!inScope.some(r => r.nodes !== '*' && r.seq > delivered) && !answerAckDue(s, n, ar, l, opts.rejected)) return undefined;
+  // AN3 / #1266: acknowledgment covers every in-scope ruling, including already delivered answers.
+  const rules = inScope, top = carried(rules);
   return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'follow-up', reason: 'ruling', rulings: top, message: [`New parent rulings for ${n.id}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
     `Re-review the current candidate ${c.commit} (submit #${c.seq}) in their light and record your verdict with --ack-rulings ${top}; block if the writer must change something.`].join('\n') };
 }
@@ -579,7 +583,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       if (sent && sent.seq > resumed) return halt(`writer run ${at(writer)} finished ruling follow-up ${sent.send} without submitting a new candidate (writer ruling #${writerRule.seq})`);
       // A resume after that follow-up starts a new wait: deliver the writer rulings again instead of repeating the halt.
       if (sent) {
-        const rules = s.rules.filter(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last!.seq);
+        const rules = s.rules.filter(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last!.seq && deliversRule(r, writer.rid));
         // G3.5 (0.12): with the same active/flaky block lines as `rulingFollowUp`.
         return send(writer, 'follow-up', 'ruling', [`Parent rulings for ${id} (apply them; they override your packet):`, ...rules.map(r => `#${r.seq} (${(r.nodes as string[]).join(', ')}): ${oneLine(r.text)}`), ...blockLines(s, id), `Then commit and run \`owed submit ${id}\` (the same commit may be submitted again).`].join('\n'), carried(rules));
       }
@@ -834,10 +838,24 @@ export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: Lau
   const launch = l.rulings ?? (l.role === 'writer' ? -1 : before(l.seq));
   // K5.2: every writer send that records `rulings` (submit, rebase, repair, ruling follow-ups) delivered them.
   const base = l.role === 'writer' ? Math.max(s.nodes[node]!.slot!.rulings_seen, launch, ...sends.map(x => x.rulings ?? (x.reason === 'repair' ? before(x.seq) : -1))) : launch;
-  return Math.max(base, ...sends.filter(x => x.reason === 'ruling').map(x => x.rulings ?? -1));
+  // AN3: advance only across delivered rules; a later answer must not hide an earlier ordinary ruling.
+  let delivered = Math.max(base, ...sends.filter(x => x.reason === 'ruling').map(x => x.rulings ?? -1));
+  for (const r of inScope.filter(r => r.seq > delivered)) {
+    if (r.answer?.rid !== l.rid) break;
+    delivered = r.seq;
+  }
+  return delivered;
 }
 /** Send ids dsa rejected (`DriveOpts.rejected`): they delivered nothing (review #784 F1). */
 type Refused = { has(id: string): boolean };
+/** AN3: receiving an answer does not acknowledge it; request an ack once per answer on this candidate. */
+function answerAckDue(s: State, n: NodeState, ar: AttemptRuns, l: LaunchEntry, refused?: Refused): boolean {
+  const c = n.candidate;
+  if (!c) return false;
+  const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
+  const requested = Math.max(-1, ...ar.sends.filter(x => x.rid === l.rid && x.reason === 'ruling' && !refused?.has(x.send)).map(x => x.rulings ?? -1));
+  return rulingsInScope(s, n.id).some(r => r.answer?.rid === l.rid && r.seq > Math.max(acked, requested));
+}
 /** Steer message of undelivered rulings (D22.2): one line per ruling `#<seq> (<nodes>): <text>`, then what to do. */
 export function rulingMessage(node: string, role: RunRole, rules: readonly Rule[]): string {
   const top = Math.max(...rules.map(r => r.seq));
@@ -854,8 +872,10 @@ function rulingSteer(s: State, n: NodeState, ar: AttemptRuns, live: readonly Lau
   const order = [...live].sort((a, b) => (a.role === 'writer' ? 0 : reviewerN(a)) - (b.role === 'writer' ? 0 : reviewerN(b)));
   for (const l of order) {
     if (view(l).state !== 'running') continue;
-    const delivered = deliveredRulings(s, n.id, ar, l), rules = inScope.filter(r => r.seq > delivered);
-    if (!rules.length) continue;
+    const delivered = deliveredRulings(s, n.id, ar, l), pending = inScope.filter(r => r.seq > delivered && deliversRule(r, l.rid));
+    if (!pending.length && !(l.role === 'reviewer' && answerAckDue(s, n, ar, l))) continue;
+    // A reviewer follows a complete acknowledgment hint; writer delivery alone is target-filtered.
+    const rules = l.role === 'reviewer' ? inScope : pending;
     return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'steer', message: rulingMessage(n.id, l.role, rules), reason: 'ruling', rulings: Math.max(...rules.map(r => r.seq)) };
   }
   return undefined;
@@ -876,18 +896,16 @@ export function resumeLine(s: State, node: string, rid: string): string | undefi
   const dep = r.after !== undefined ? s.nodes[r.after]?.merged : undefined;
   return `The parent resumed this node (#${r.seq})${dep ? ` after ${r.after} merged at ${dep.commit.slice(0, 12)}` : ''}${r.note ? `: ${oneLine(r.note)}` : ''}`;
 }
-/** F1.3: the last sentence of an asking notify: an answer that decides the contract or scope is also recorded as a ruling. */
-export const askingRule = (node: string): string => `If the answer decides the contract or scope, also record it with \`owed rule --nodes ${node} "<decision>"\` so reviewers see it.`;
+/** AN1: the last sentence of an asking notify explains the single-act answer and reviewer acknowledgment. */
+export const askingRule = (_node: string): string => 'This records one answer ruling and delivers it to the asking run; reviewers still acknowledge it.';
 /**
- * The asking line of a run (D22.6; halts, drive output and wake-up messages): one line per open question, addressed by
- * dsa's call address `questions[].to` (`<wid>/<key>`), or the run id when dsa reports none, in both the pi `subagents`
- * tool form and the CLI form.
+ * The asking line (D22.6, AN1): one line per open question with the owed CLI/tool selectors and the dsa call address.
  */
 export function askingText(node: string, l: LaunchEntry, v: RunView): string {
   const qs = v.questions ?? [];
   if (!qs.length) return `${node}: ${l.role} run ${l.rid}${callAt(v)} is asking (no question reported; see pi-durable-subagents describe --key ${l.rid}); the driver never answers`;
   return qs.map(q => {
     const to = q.to ?? v.to ?? l.rid;
-    return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", ${toArg(to)}, qid:${JSON.stringify(q.qid)}, message:"…"}; or: pi-durable-subagents send --request <id> --to ${to} --kind answer --qid ${q.qid} --rev ${q.rev} --message @<file>`;
+    return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer: owed answer ${node} --rid ${l.rid} --qid ${q.qid} "<text>"; in pi: owed_answer {node:${JSON.stringify(node)}, rid:${JSON.stringify(l.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}${callAt({ ...v, to })}`;
   }).join('\n');
 }

@@ -141,7 +141,7 @@ test('E4.1: a reviewer launch records the rulings of its packet; a ruling record
   const runs = runsOf(sealedOk(), view(R(1), 'running'), view(R(2), 'running'));
   const steer = act(r, runs);
   assert.deepEqual(steer, { do: 'send', node: 'a', attempt: 1, rid: R(1), sendKind: 'steer', reason: 'ruling', rulings: raced.seq,
-    message: ['New parent rulings for a:', `#${raced.seq} (*): raced past the packet`, `Judge the candidate against these rulings and record your review with --ack-rulings ${raced.seq}.`].join('\n') });
+    message: ['New parent rulings for a:', `#${early.seq} (a): in the packet`, `#${raced.seq} (*): raced past the packet`, `Judge the candidate against these rulings and record your review with --ack-rulings ${raced.seq}.`].join('\n') });
   r.record(steer);
   assert.equal(act(r, runs, { applied: applied(r) }), undefined, 'reviewer 2 had it in its packet');
 });
@@ -183,7 +183,7 @@ test('E4.1: entries without the field (written by 0.5.0) keep the position rule'
   assert.equal(act(q, runs), undefined);
   const z = q.rule('after');
   const steer = act(q, runs);
-  assert.ok(steer?.do === 'send' && steer.rid === R(1) && steer.rulings === z.seq && !steer.message.includes(`#${y.seq} `), JSON.stringify(steer));
+  assert.ok(steer?.do === 'send' && steer.rid === R(1) && steer.rulings === z.seq && steer.message.includes(`#${y.seq} `), JSON.stringify(steer));
 });
 
 // ---------- E4.2: reducer validation ----------
