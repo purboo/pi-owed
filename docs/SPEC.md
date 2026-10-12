@@ -245,6 +245,51 @@ refusal records nothing and leaves the file unchanged. Like `owed plan` (N2), am
 retries a CAS refusal up to 3 attempts while the ledger's plan sha is unchanged;
 each attempt re-reads the ledger and the file, and a failed attempt removes its
 temporary file.
+**Atomic field edits (0.13, ED1–ED3, app §65).**
+`owed edit <node> --set <path>=<yaml> ... [--unset <path> ...]
+[--node-new] [--rule "<text>" [--writer]]
+[--resume [--after a,b] [--expect report]] --note "<why>"
+[--dry-run] [--plan <file>]` edits the latest recorded plan file (or `--plan`,
+relative to cwd). Node paths are `title`, `brief`, `deps`, `writes`, `later`,
+`review.count`, `review.min_rank`, node overrides under `drive.*`,
+`checks.<id>` (a whole mapping; its id is inferred from the path), and
+`checks.<id>.<field>`. `--set` and `--unset` may repeat; assignments split at
+only the first `=`, and values are YAML. Sets run in argument order, then unsets;
+unknown paths, an unset of a missing field, malformed YAML and a mismatched
+check id refuse. `--node-new` adds a node from `deps`, `title`, `brief`, `writes`
+and check assignments; it refuses an existing id. An invariant edit is
+`owed edit --invariant <id> --set <field>=<yaml> --note "<why>"`; its id cannot
+change, and rule/resume options apply only to node edits.
+
+ED1 uses the `yaml` Document API and re-emits only the target map when safe,
+retaining its comments and keeping every byte outside it. Targets inside flow
+containers or containing anchors/aliases use whole-Document serialization so
+flow punctuation and references stay in context; comments are kept, but spacing
+may be normalized. Assignment values remain YAML nodes, so an alias can refer
+to an anchor elsewhere in the plan. A new block node appends to the nodes
+sequence. Every result is re-parsed and compared with the intended edited plan
+before it can be written; malformed YAML or a lost reference refuses. The final plan passes
+the same parser and hygiene checks as `owed plan`. Unrecorded semantic file
+changes refuse; comment-only edits are kept. ED2 uses the same plan drafting,
+guard, authority and N1 carries as `owed plan`/`amend`. One ledger lock guards
+and appends the plan, any carry submits, the optional rule naming the node
+(`writer` when requested), and the optional resume, in that order. All parent
+acts use the same principal/channel; carries remain `executor:owed`.
+The resume uses the prospective plan and ruling, requires an open slot and
+follows the normal resume validation, including `after` and `expect` (§12).
+A non-empty note is required, also satisfying delegated owner downgrade rules.
+The temporary file is prepared before the append and renamed over the source
+afterward, preserving its mode. A refusal records nothing, leaves the source
+unchanged and removes the temporary file. A rename failure after the append
+reports the recorded seq range and the recovery file, as amend does.
+`--dry-run` prints the textual diff and structured downgrades without writes
+or owner confirmation, including `--as owner:pi` with `OWED_CONFIRM=owner` in
+a non-TTY process. ED3 leaves `owed amend` unchanged.
+
+Compatibility: ED adds no ledger entry kinds or fields; its plan, carry, rule
+and resume entries use their existing schemas. Plan fields or resume options
+introduced elsewhere in 0.13 follow their own compatibility rules.
+
 Invariants removed by the owner no longer need their genesis observation.
 
 **Checks prepare their own artifacts** (0.8, L2.5, app #19). owed measures every
@@ -1237,6 +1282,8 @@ plain `error`. The driver does not count environment errors toward its
 init(o: {cwd, plan: string, as: Principal, channel, signal?}): Promise<InitResult>      // genesis + genesis attest of invariants; signal: §7.8
 readPlan(o: {cwd, path, rev?}): Promise<{plan, rev?, path}>   // plan text from the working tree, or from commit `rev` (`git show rev:path`); path repository-relative
 planSet(o: {cwd, plan, rev?, path?, note?, as, channel?}): Promise<Entry>   // records rev/path (and note: why, D25.5) in the plan entry
+edit(o: {cwd, node? | invariant?, set?, unset?, node_new?, note, plan?, rule?, writer?, resume?, after?, expect?, dry_run?, as, channel?}): Promise<EditResult | EditPreview> // ED2: one lock; dry_run previews only
+editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
 rule(o: {cwd, text, nodes, as}): Promise<Entry>
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
@@ -1650,7 +1697,10 @@ is checked out in the main worktree or nowhere.
 `plan <plan.yaml> [--rev <commit-ish>]` (path relative to the cwd; with
 `--rev` the file is read from that commit, so a plan kept in trunk is the
 ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
-[--plan <file>]` (§3 Amend), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
+[--plan <file>]` (§3 Amend), `edit <node> --set path=yaml ... [--unset path ...]
+[--node-new] [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
+--note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
+--note WHY` (§3 ED1/ED2), `rule <text> --nodes a,b|*`, `dispatch <node> [--allow-overlap]`,
 `submit <node> [--commit X]`, `rebase <node>` (parent, or the slot writer when
 run inside its worktree), `attest <node> [--rerun]`,
 `review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings]`
@@ -1806,6 +1856,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `as` | ruling; `writer: true` requires named nodes to submit again |
+| `owed_edit` | `node?` or `invariant?`, `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
 | `owed_amend` | `node`, `writes` (`+path` each), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
 | `owed_init` | `plan` (path relative to `cwd`), `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | initialize the ledger (§11.1) |

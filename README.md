@@ -286,6 +286,41 @@ When trunk moves under an open slot, there is no need to abandon and redispatch.
 
 A plan change that alters a node's spec, `setup`, `exec` or `closure` invalidates its open candidate, because the keys were computed under the old plan. Since 0.10, when the node's spec changed only in `checks`, `writes`, `type` or `drive` (plan-wide `setup`, `exec` and `closure` changes do not matter), `owed plan` carries the candidate in the same lock: it appends a carry submit by `executor:owed` for the same commit at the same base with keys recomputed under the new plan, and prints `Carried <node>: …` (a carry it cannot make, e.g. the commit is gone, prints `Not carried <node>: <reason>` and JSON `notCarried`; that candidate stays invalidated). Reviews and other evidence on unchanged keys still count; the next attest measures only the changed checks (or `writes`). `owed why` and `owed status` show `candidate #C carried by plan #P from submit #S`. Any other change (`brief`, `deps`, `review`, `title`, `approve`, `evidence`) still needs the writer to submit again, and the driver tells it so: `plan #P changed this node's spec (<fields>); resubmit …` (reason `submit`), not a rebase. A ledger with a carry submit needs owed ≥ 0.10.0 to replay.
 
+Use `owed edit` (pi `owed_edit`) for atomic field changes:
+
+```sh
+owed edit auth-api --set 'checks.unit.timeout_s=120' --unset drive.writer.model \
+  --rule 'Keep the public API unchanged.' --resume --note 'Bound the unit check'
+owed edit auth-api --set 'review.min_rank=2' --note 'Require a senior review' --dry-run
+owed edit follow-up --node-new --set 'deps=[auth-api]' --set 'title=Verify integration' \
+  --set 'writes=[test/integration/]' --note 'Add the integration task'
+owed edit --invariant unit --set 'timeout_s=120' --note 'Bound invariant execution' --as owner:pi
+```
+
+Node paths are `title`, `brief`, `deps`, `writes`, `later`, `review.count`,
+`review.min_rank`, node overrides under `drive.*`, `checks.<id>` (a whole YAML
+mapping; id inferred) and `checks.<id>.<field>`. Repeat `--set path=yaml` and
+`--unset path`; sets run in order before unsets. `--node-new` adds a node from
+`deps`, `title`, `brief`, `writes` and checks. `--invariant ID` edits a top-level
+invariant field. The source is `--plan FILE`, else the latest plan entry's path;
+unrecorded semantic file changes refuse. Comments are kept and text outside a
+simple block target keeps its layout. Flow containers and targets using anchors
+or aliases use whole-Document serialization; spacing may be normalized. Results
+must re-parse to the intended plan before writing. `--dry-run` prints the diff
+and downgrades without owner confirmation, even with `OWED_CONFIRM=owner` in
+a non-TTY process.
+
+One ledger lock records the plan (same authority, downgrade guard and candidate
+carries as `owed plan`), then optional `--rule TEXT` naming the node, then
+optional `--resume` on its open slot. `--writer` requires the rule and requests
+writer action. Resume accepts `--after a,b` and `--expect report` with their
+normal waiting/report behavior. A refusal records nothing and leaves the file
+unchanged; the replacement file is prepared before the append and installed
+afterward. Tool parameters are `node` or `invariant`, `set`/`unset` string arrays,
+`note`, optional `node_new`, `plan`, `rule`, `writer`, `resume`, `after` (string or
+string array), `expect: "report"`, `dry_run`, `as` and `cwd`. `owed amend` continues
+to work as before.
+
 To widen one node's writes without rewriting the plan by hand, run `owed amend <node> --writes +path[,+path...] --note "<limit>" [--plan <file>]` (pi `owed_amend`). It appends the paths to the node's `writes` in the plan file (default: the file the latest plan entry recorded; comments and layout are kept), records it as `owed plan` would (same authority: the owner, or a parent under an `allow` rule; open candidates are carried), and in the same lock records a ruling `writes of <node> widened by plan #P: +<paths>. Limit: <limit>`, which the writer receives and reviewers acknowledge. It refuses, recording nothing and leaving the file unchanged, when the file has unrecorded edits, the node is unknown or merged, a path lacks `+`, or the note is empty.
 
 `owed abandon <node> --note TEXT` closes the open slot with a note.
