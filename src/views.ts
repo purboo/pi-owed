@@ -353,7 +353,8 @@ const haltClear = (node: string): string => `cleared by any later action on the 
 export const waitingLine = (w: Waiting): string => [w.deps?.length ? `waiting (deps: ${w.deps.join(', ')})` : '', w.after ? `waiting for ${w.after} (resume #${w.resume})` : ''].filter(Boolean).join('; ');
 /** D25.6 (review ruling #559): an owner halt reads `needs the owner (the main agent decides; owed lists the command)`. */
 const NEEDS_OWNER_TEXT = 'needs the owner (the main agent decides; owed lists the command)';
-const haltText = (h: HaltEntry): string => h.needs === 'owner' ? `halted by driver #${h.seq} (attempt ${h.attempt}), ${NEEDS_OWNER_TEXT}: ${oneLine(h.reason)}` : `halted by driver #${h.seq} (attempt ${h.attempt}, needs ${h.needs}): ${oneLine(h.reason)}`;
+const NEEDS_PARENT_TEXT = 'needs the parent (the main agent acts; owed lists the command)';
+const haltText = (h: HaltEntry): string => `halted by driver #${h.seq} (attempt ${h.attempt}), ${h.needs === 'owner' ? NEEDS_OWNER_TEXT : NEEDS_PARENT_TEXT}: ${oneLine(h.reason)}`;
 const launchText = (l: LaunchEntry): string => `#${l.seq} ${l.role} ${l.rid}`;
 /** ` (needs a parent ruling)` / ` (ruled #<seq>)` after a current-candidate needs-parent block (D18.5, D18b.4); empty otherwise. */
 const rulingMark = (b: { ruling?: 'needed' | number }): string => b.ruling === undefined ? '' : b.ruling === 'needed' ? ' (needs a parent ruling)' : ` (ruled #${b.ruling})`;
@@ -391,7 +392,7 @@ function entryLine(e: Entry): string {
     case 'launch': return `${head} recorded driver launch of ${e.node} attempt ${e.attempt} ${e.role} ${e.rid}`;
     case 'send': return `${head} recorded driver ${e.sendKind} (${e.reason}${e.rulings ? ` through #${e.rulings}` : ''}) to ${e.rid}: ${e.send}`;
     case 'resume': return `${head} resumed ${e.node}${e.after !== undefined ? ` after ${e.after}` : ''}${e.expect ? ` (expect ${e.expect})` : ''}`;
-    case 'halt': return e.needs === 'owner' ? `${head} halted ${e.node} attempt ${e.attempt}, ${NEEDS_OWNER_TEXT}: ${oneLine(e.reason)}` : `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${oneLine(e.reason)}`;
+    case 'halt': return `${head} halted ${e.node} attempt ${e.attempt}, ${e.needs === 'owner' ? NEEDS_OWNER_TEXT : NEEDS_PARENT_TEXT}: ${oneLine(e.reason)}`;
     case 'evidence': return e.merge !== undefined ? `${head} recorded receipt ${e.node}/${e.id} (merge #${e.merge}): ${evidenceText(e)}` : `${head} recorded manual evidence ${e.node}/evidence:${e.id}: ${evidenceText(e)}`;
     case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
     case 'decoy-reveal': return `${head} revealed decoys ${e.decoys.map(d => d.node).join(', ')}`;

@@ -58,14 +58,14 @@ test('E3.1 Follower: a node wake with the same text and fact mark does not wake 
     const got: string[] = [];
     const f = new Follower({ log, repo: '/r', pid: process.pid, start: procStart(process.pid), deliver: c => got.push(c) });
     line(halt(5));
-    assert.match(f.tick() ?? '', /\nhalt h attempt 1 \(needs human\): halted — attest recorded no verdict twice\n/);
+    assert.match(f.tick() ?? '', /\nhalt h attempt 1, needs the parent \(the main agent acts; owed lists the command\): halted — attest recorded no verdict twice\n/);
     line(halt(5));
     assert.equal(f.tick(), undefined, 'the same halt text with no new ledger entries for h does not wake');
     line({ ...halt(5), repeat: 1 });   // the loop driver's own repeat mark changes nothing
     assert.equal(f.tick(), undefined);
     line({ do: 'notify', node: 'x', outcome: 'notify', text: 'x asks', facts: 1 });
     const m = f.tick() ?? '';
-    assert.deepEqual(m.split('\n'), ['owed drive (/r):', 'halt h attempt 1 (needs human): halted — attest recorded no verdict twice (repeat 2, no new ledger entries)', 'x asks', 'Next: owed status / owed why <node>'], 'only the latest repeat of h rides along with the next wake');
+    assert.deepEqual(m.split('\n'), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — attest recorded no verdict twice (repeat 2, no new ledger entries)', 'x asks', 'Next: owed status / owed why <node>'], 'only the latest repeat of h rides along with the next wake');
     line(halt(7));
     assert.doesNotMatch(f.tick() ?? 'no wake', /repeat/, 'a higher fact mark (new ledger entries for h) wakes as a new fact');
     line(halt(7, 'repairs exhausted'));
@@ -110,7 +110,7 @@ test('E3.1 loop driver: wake lines carry the fact mark; a repeat is marked; a no
   assert.equal(parse().repeat, undefined);
   d.emit(haltReport(), r.state());
   assert.equal(parse().repeat, 1);
-  assert.equal(run.reportText(parse()), 'halt a attempt 1 (needs human): halted — stuck (repeat 1, no new ledger entries)');
+  assert.equal(run.reportText(parse()), 'halt a attempt 1, needs the parent (the main agent acts; owed lists the command): halted — stuck (repeat 1, no new ledger entries)');
   const o = r.obs('1');
   d.emit(haltReport(), r.state());
   assert.equal(parse().facts, o);
@@ -134,7 +134,7 @@ test('E3.1 loop driver: wake lines carry the fact mark; a repeat is marked; a no
 // ---------- E3.2 ----------
 test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --as owner:human', () => {
   assert.equal(run.reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'stalled: x' }), `halt a attempt 2, ${OWNER}: halted — stalled: x`);
-  assert.equal(run.reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'human', detail: 'x' }), 'halt a attempt 2 (needs human): halted — x');
+  assert.equal(run.reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'human', detail: 'x' }), 'halt a attempt 2, needs the parent (the main agent acts; owed lists the command): halted — x');
   // Brief and owner commands: the owner review command states owner:cli; nothing suggests owner:human.
   const r = rig();
   r.dispatch('a', 'parent:main'); r.submit('1'); r.obs('1');
