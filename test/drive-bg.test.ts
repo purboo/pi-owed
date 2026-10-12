@@ -298,7 +298,7 @@ test('D17.7: Follower: no replay, quiet lines do not wake, merges ride along, an
     assert.equal(f.tick(), undefined, 'a merge alone does not wake');
     put({ do: 'notify', node: 'b', outcome: 'notify', text: 'b: writer run r2 asks (qid q1-1, rev 1): which db?' });
     const m1 = f.tick()!;
-    assert.deepEqual(m1.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk abc', 'b: writer run r2 asks (qid q1-1, rev 1): which db?', 'Next: owed status / owed why <node>']);
+    assert.deepEqual(m1.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk abc', 'b: writer run r2 asks (qid q1-1, rev 1): which db?', 'Next: owed status / owed why <node>']);
     put({ do: 'notify', node: 'b', outcome: 'notify', text: 'b: writer run r2 asks (qid q1-1, rev 1): which db?' });
     assert.match(f.tick() ?? '', /\nb: writer run r2 asks \(qid q1-1, rev 1\): which db\?\n/, 'no dedupe across reads (D17a.5): the same line in a later read wakes again');
     appendFileSync(log, '{"do":"halt","node":"c","outcome":"halted","attempt":1,"needs":"hu');
@@ -351,7 +351,7 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
     const first = h.messages[0]!;
     assert.equal(first.message.customType, 'owed-drive'); assert.equal(first.message.display, true);
     assert.deepEqual(first.options, { triggerTurn: true, deliverAs: 'followUp' });
-    assert.match(first.message.content, /^owed drive \(.+\):\n/);
+    assert.match(first.message.content, /^Needs you: k — .+ → .+\nDriver continues \(\d+ in progress\)\nDetails:\nowed drive \(.+\):\n/);
     assert.match(first.message.content, /launch k writer \S+: rejected — fault; halted/);
     assert.doesNotMatch(first.message.content, /launch m |dispatch |attest |merge /);
     assert.match(first.message.content, /\nNext: owed status \/ owed why <node>$/);
@@ -634,7 +634,7 @@ test('D17a.8: a failing sendMessage keeps the batch for the next tick; the follo
     assert.equal(f.tick(), undefined, 'delivery failed');
     put({ do: 'notify', node: 'c', outcome: 'notify', text: 'c asks' });
     fail = false;
-    assert.deepEqual(f.tick()!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1, needs the parent (the main agent acts; owed lists the command): halted — first', 'c asks', haltHintText, 'Next: owed status / owed why <node>']);
+    assert.deepEqual(f.tick()!.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1, needs the parent (the main agent acts; owed lists the command): halted — first', 'c asks', haltHintText, 'Next: owed status / owed why <node>']);
     put({ event: 'stopped' }); put({ event: 'exit', code: 0, reason: 'stopped', at: 'T' });
     fail = true;
     assert.equal(f.tick(), undefined);

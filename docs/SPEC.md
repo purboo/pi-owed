@@ -3165,8 +3165,9 @@ polling.
   applied, attest, busy and pending are quiet; `merge` `merged` does not wake
   alone and is listed in the next message. All wake lines of one read form one
   `pi.sendMessage({customType: "owed-drive", display: true, content},
-  {triggerTurn: true, deliverAs: "followUp"})`, content = `owed drive
-  (<repo>):`, the carried merges and wake lines in log order, (0.8) when at
+  {triggerTurn: true, deliverAs: "followUp"})`. In 0.15 its plain summary
+  precedes `Details:` (§12.8.1); Details keeps the 0.14 `owed drive (<repo>):`
+  header, carried merges and wake lines in log order, and (0.8) when at
   least one wake line is a halt the line `To clear a halt without an
   obligation: owed resume <node> --note "<why>" (add --after <node> to wait
   until that node merges); owed rule gives the writer and reviewers guidance
@@ -3203,6 +3204,49 @@ polling.
   `Driver: not running (no driver output yet)`, `Driver: not running`, or for another host `Driver: lock held by pid P on
   host H since T`.
 
+### 12.8.1 Notices (0.15, QN)
+
+- **Answered questions (QN1).** The driver checks ledger answer rules before
+  reporting an asking run. A rule with the same `answer.rid` and `answer.qid`
+  covers open revisions no newer than `answer.rev`. Covered questions are
+  omitted from the question text and its structured selectors. If all are
+  covered, the driver logs `<node>: answered #<seq>, waiting for the run to
+  resume`, with runtime outcome `answered` (quiet, no ledger write or wake).
+  Delivery revalidation also drops question wakes covered by an answer rule,
+  even if dsa still reports `asking` or describe fails.
+  `drive.answer_grace_s` is an optional non-negative integer in seconds,
+  default 900 (0 means immediately); it is not part of any obligation key.
+  If the covered question stays open for that long after the rule's ledger
+  timestamp, the driver wakes once per `(rid, qid)` in that driver run:
+  `<node>: answer #<seq> recorded <age>s ago but run <rid> still shows question
+  <qid>; retry delivery: <answerRetry command>`. The command retries the
+  original answer bytes and request, without recording another rule. This
+  runtime notify carries `answerRetry: true`; delivery checks that its question
+  is still open but does not drop it merely because it was answered.
+  Compatibility: `answer_grace_s` requires a 0.15 plan parser; older owed
+  rejects it as an unknown drive key. QN adds no ledger entry kind or field.
+  Plans without the field retain their 0.14 canonical shape and keys.
+- **Earlier drivers (QN2).** JSON loop log lines carry `driver: {pid, start?,
+  at}` (process identity and lock start time), including terminal events
+  `stopped`, `exit`, `killed` and `idle`. At delivery the follower reads the
+  repository driver lock again. When a different, newer live driver owns it,
+  the old terminal line does not wake alone or stop the follower. It rides
+  along with the next wake as `earlier driver (pid P, started T) <event>;
+  driver pid Q (started U) is running`. Held terminal lines and explicit
+  follows of a replacement driver preserve that ride-along. A terminal line
+  of the current owner, or with no live owner, wakes as before. Legacy lines
+  use the identity of the follower that read them.
+- **Plain wake text (QN3).** A message starts with one line per affected node,
+  `Needs you: <node> — <decision in words> → <one command>`, followed by
+  `Done: <merged nodes>` when present, then `Driver continues (<n> in progress)`
+  or `Driver stopped: <reason>`. `inProgress` on action log lines counts open
+  slots and supplies the status count. The exact previous report text, seqs,
+  run ids, dsa addresses, keys, leases, repeat counters and full commands stay
+  under `Details:`. The halt hint and any resolved-wake count also belong
+  there. `Next: owed status / owed why <node>` is always last. These fields
+  are runtime log metadata only, not ledger data; JSON tool outputs retain
+  their existing fields.
+
 ### 12.9 Live wakes, staying driver and ready hint (0.6.1, H1)
 
 - **Live wakes (H1.1).** Cause (app, 2026-10-10): the parent read a question
@@ -3222,9 +3266,11 @@ polling.
     rid), `qid` and `rev` of the run's FIRST listed open question (fields of the
     log line, not ledger fields; the text is unchanged, it may list several
     questions). Such a line is dropped when `describe --key <rid>` no longer
-    lists that qid/rev as an open question; a failed describe keeps it. Using
-    the first question is sound because the loop prints a notify again when its
-    text changes: when the first of two questions is answered, the held line is
+    lists that qid/rev as an open question, or (0.15, QN1) when a ledger answer rule
+    covers its rid/qid/revision. A failed describe keeps it unless an answer
+    rule already resolves it. Answered questions are omitted by the driver,
+    so its selectors name the first unanswered open question. When the first
+    of two questions is answered, the held line is
     dropped and the next pass prints the line of the remaining question, which
     is delivered. An asking line without a reported question carries `rid` only
     and is never dropped by describe. A node-scoped line with a fact mark is
@@ -3239,17 +3285,18 @@ polling.
     named `trunk` follows normal node fact/question revalidation.
     A still-current drift is delivered, and dropped drift lines count in (c).
     Status and brief show no drift when trunk equals the ledger trunk commit.
-    Terminal lines, `idle-wait` and other lines without a fact mark are never
-    dropped. The ledger, trunk ref and each run are read at most once per delivery.
+    Terminal lines follow QN2's current-owner check; `idle-wait` and other
+    lines without a fact mark are never dropped. The ledger, trunk ref and each run are read at most once per delivery.
     A dropped wake that is still its key's latest record (E3.1) also drops that record's repeat ride-along, and later repeats
     of it do not ride along (they are as stale); a new fact of the node wakes.
-  - (c) If lines were dropped, the delivered message ends with a last line
-    `(<n> wake(s) resolved before delivery)` (after `Next: …`), counting only
+  - (c) If lines were dropped, Details includes the line
+    `(<n> wake(s) resolved before delivery)` (before the final `Next: …`), counting only
     that delivery's drops; the count is not carried over. If no wake line is
     left, nothing is delivered and the session is not woken; merges and repeats
     ride along with the next message as before. A failed `sendMessage` keeps
     the whole batch (revalidated again next tick).
-  - (d) CLI mode and a follower without the pi hooks are unchanged (`tick`).
+  - (d) CLI mode and a follower without the pi hooks still use `tick` without
+    question revalidation; QN2 ownership checks and QN3 rendering apply to both paths.
 - **Stay (H1.2).** `owed drive --stay` (loop, or with `--detach`; not with
   `--once`, `--status`, `--stop`: usage error) and `owed_drive` action start
   `stay: true` (refused with other actions) are opt-in. When a pass is idle a
