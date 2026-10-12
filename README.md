@@ -665,7 +665,8 @@ after that rule; their packet and `rulings_seen` include it normally. Existing
 attempts keep their current rulings obligation. Each unsealed writer and
 reviewer run of an older open attempt receives one informational `notify`,
 with no follow-up or new acknowledgment. Sealed runs receive no such policy
-on later follow-ups and are never relaunched for it. `--prospective` cannot
+on later follow-ups and are never relaunched for it. Removed nodes receive no
+notices; the parent closes their remaining slots. `--prospective` cannot
 be combined with `--writer` (usage error, nothing recorded). Compatibility:
 owed 0.13 and earlier refuse rule entries with `prospective`, including false,
 with code `version`; upgrade all readers first. Omission or false retains the
@@ -675,7 +676,11 @@ When an ordinary `*` ruling leaves a candidate owing only `rulings`, the
 driver sends the re-ack follow-up to the latest driver reviewer, or launches
 a reviewer if none exists. The message includes the rulings, candidate commit
 and `--ack-rulings <seq>`; the reviewer may block if the writer must change
-something. `owed report`'s "Status changes" omit nodes merged by the end of
+something. Without a review/closure-review obligation, it instead sends the
+writer one ruling follow-up per set, asking for `owed submit <node>` (the same
+commit is allowed). The resubmit advances `rulings_seen` only through recorded
+writer ruling follow-ups, not later unsent rulings or prospective notices; the
+driver waits rather than issuing a stalled-owner halt. `owed report`'s "Status changes" omit nodes merged by the end of
 the window, so later rulings do not add merged-node rulings noise. Owner
 reviews use `--rank 3`; other ranks are refused with that instruction.
 
