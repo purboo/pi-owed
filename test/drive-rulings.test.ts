@@ -263,13 +263,13 @@ test('D22.6: the asking text addresses the question by dsa\'s call address (pi t
   const r = rig(); r.dispatch(); r.launchWriter(); r.submit();
   const withTo = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q1-1', rev: 2, question: 'Which API?\nline two', to: 'w7/main' }] })));
   assert.ok(withTo?.do === 'notify');
-  assert.equal(withTo.text, `a: writer run ${W()} asks (qid q1-1, rev 2): Which API?\\nline two — the driver never answers; answer in pi: subagents {action:"send", kind:"answer", to:"w7/main", qid:"q1-1", message:"…"}; or: pi-durable-subagents send --request <id> --to w7/main --kind answer --qid q1-1 --rev 2 --message @<file> If the answer decides the contract or scope, also record it with \`owed rule --nodes a "<decision>"\` so reviewers see it.`);
+  assert.equal(withTo.text, `a: writer run ${W()} asks (qid q1-1, rev 2): Which API?\\nline two — the driver never answers; answer: owed answer a --rid ${W()} --qid q1-1 "<text>"; in pi: owed_answer {node:"a", rid:"${W()}", qid:"q1-1", text:"…"} (to:"w7/main") This records one answer ruling and delivers it to the asking run; reviewers still acknowledge it.`);
   assert.ok(!withTo.text.includes(`--to ${W()}`), 'not the rid');
   const without = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q', rev: 1, question: 'scope?' }, { qid: 'q2', rev: 1, question: 'two', to: 'w7/main' }] })));
   assert.ok(without?.do === 'notify');
   const [one, two] = without.text.split('\n');
-  assert.ok(one!.endsWith(`answer in pi: subagents {action:"send", kind:"answer", to:"${W()}", qid:"q", message:"…"}; or: pi-durable-subagents send --request <id> --to ${W()} --kind answer --qid q --rev 1 --message @<file>`), one);
-  assert.ok(two!.includes('to:"w7/main"') && two!.includes('--to w7/main'), two);
+  assert.ok(one!.includes(`owed answer a --rid ${W()} --qid q "<text>"`) && one!.endsWith(` (to:"${W()}")`), one);
+  assert.ok(two!.includes('to:"w7/main"') && two!.includes('--qid q2'), two);
   const l = r.state().nodes.a!.runs[0]!.launches[0]!;
   assert.match(askingText('a', l, { rid: W(), state: 'asking' }), /is asking \(no question reported; see pi-durable-subagents describe --key /);
 });

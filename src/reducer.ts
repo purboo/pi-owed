@@ -281,7 +281,7 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
   escape: { class: ESCAPE_CLASSES },
 };
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
-const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer'];
+const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'answer'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
 const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'note', 'runs', 'noisy', 'failed'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
@@ -332,7 +332,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       if (allowChanged) h.allowSeq = e.seq;
     } else if (e.kind === 'rule') {
-      s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
+      s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.answer !== undefined ? { answer: e.answer } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       // F5: a writer ruling names the candidates that need a new submit; blocks and keys retain their semantics.
       if (e.writer && e.nodes !== '*') for (const id of e.nodes) {
         const n = s.nodes[id];
@@ -768,6 +768,18 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('owner', 'parent');
       if (d.nodes !== '*' && d.nodes.some(id => !nodeSpec(s, id))) errors.push('rule references a nonexistent node');
       if (d.writer !== undefined && typeof d.writer !== 'boolean') errors.push('rule writer must be a boolean');
+      // AN2: an answer names one launch of the node's current open attempt; delivery never invalidates a candidate.
+      if (d.answer !== undefined) {
+        const a = d.answer;
+        if (!a || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).some(k => !['rid', 'qid', 'rev'].includes(k)) || typeof a.rid !== 'string' || !a.rid.trim() || typeof a.qid !== 'string' || !a.qid.trim() || !Number.isInteger(a.rev) || a.rev < 1) errors.push('rule answer must be {rid, qid, rev} with nonempty ids and a positive integer rev');
+        if (!Array.isArray(d.nodes) || d.nodes.length !== 1 || d.writer !== false) errors.push('answer rule requires one node and writer: false');
+        else {
+          const target = s.nodes[d.nodes[0]!], launch = target?.slot?.open ? target.runs.find(x => x.attempt === target.slot!.attempt)?.launches.find(x => x.rid === a?.rid) : undefined;
+          if (!launch) errors.push('answer rid must name a launch of the node current open attempt');
+          else if (typeof d.text !== 'string' || !d.text.startsWith(`Answer to ${launch.role} question ${a.qid}: `) || !d.text.slice(`Answer to ${launch.role} question ${a.qid}: `.length).trim()) errors.push('answer rule text must name the role and question and include the answer');
+        }
+        if (s.rules.some(x => x.answer?.rid === a?.rid && x.answer?.qid === a?.qid)) errors.push('answer for this rid/qid is already recorded; retry its send');
+      }
       break;
     case 'dispatch':
       allow('parent', 'owner');

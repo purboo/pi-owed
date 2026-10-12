@@ -9,6 +9,7 @@ const Type: typeof import('@earendil-works/pi-ai').Type = isMainThread
   : new Proxy({}, { get: () => () => ({}) }) as typeof import('@earendil-works/pi-ai').Type;
 import type { Static, TSchema } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { answerText } from './answer.ts';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
@@ -235,6 +236,11 @@ export default function owed(pi: ExtensionAPI): void {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'run gc');
     const r = await ops.gc({ ...await actor(ctx, dir, who, `${p.dry_run ? 'Report' : 'Remove'} worktrees and branches of finished attempts`, {}, signal), dryRun: !!p.dry_run });
     return result(r, renderGc(r));
+  });
+  tool('answer', 'Answer one open writer or reviewer question (AN1–AN2): record one ruling and send the answer through dsa. Omit qid only when one question matches; rid disambiguates runs. Retry the same rid/qid and text to resend the original request without a new rule. Parent or owner only; reviewers still acknowledge the ruling.', Type.Object({ node, text: reason, qid: Type.Optional(Type.String({ minLength: 1 })), rid: Type.Optional(Type.String({ minLength: 1 })), as, cwd }), async (p, ctx, dir, signal) => {
+    const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'answer a question');
+    const r = await ops.answer({ ...await actor(ctx, dir, who, `Answer question for ${oneLine(p.node)}`, { Answer: p.text }, signal), node: p.node, text: p.text, ...(p.qid !== undefined ? { qid: p.qid } : {}), ...(p.rid !== undefined ? { rid: p.rid } : {}) });
+    return result(r, answerText(p.node, r));
   });
   tool('rule', 'Record a ruling for the applicable nodes. writer: invalidate named open candidates and ask their writers to apply it and submit again (the same commit is allowed); reviewers still acknowledge it.', Type.Object({ text: reason, nodes: Type.Union([Type.Literal('*'), Type.Array(node)]), writer: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const r = await ops.rule({ text: p.text, nodes: p.nodes, ...(p.writer !== undefined ? { writer: p.writer } : {}), ...await actor(ctx, dir, p.as, `Ruling for ${JSON.stringify(p.nodes)}`, { Ruling: p.text }, signal) }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
