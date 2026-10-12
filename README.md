@@ -187,6 +187,23 @@ owed decoy reveal decoys.json            # owner; later, when the outcome should
 
 A decoy is **caught** if its node received an execution failure or a review block before any merge, or if a merge of it observed a failure (every observation appended by `owed merge <node>` records `merging: <node>`) on an invariant or check that was not already failing on trunk — pre-existing trunk debt, deferred or not, never counts — whether the merge was refused or later went through after an owner deferral. It is **escaped** if it merged without any of these, and **pending** otherwise. `owed report` ends with an Escapes section: counts by class, decoy outcomes and the escape rate, escaped / (caught + escaped).
 
+## Advisory escape sweeps (0.13)
+
+A plan can run a broader suite after work settles:
+
+```yaml
+sweep:
+  run: node --test --test-reporter=tap 'test/**/*.test.ts'
+  timeout_s: 900                 # default 600
+  reads: ["app/**", "test/**"]   # optional description; no acceptance key
+```
+
+`owed sweep [--commit C]` (pi: `owed_sweep {commit?, lease?, cwd?}`) measures a fresh detached tree of trunk by default, or the named commit. It uses the shared machine lease, setup and execution wrapper/environment; `--no-lease`, tool `lease: false`, or plan `lease: false` skips acquisition. It records an informational `sweep` entry with the full commit, `verdict: pass|fail|error`, parsed counts when available, log blob digest and up to 50 failed test names (`failed`). It exits 0 for pass, 1 for fail/error; acquisition busy exits 75. Sweeps never change acceptance keys or merge obligations.
+
+A staying driver runs the sweep when there is no ready node and no measurement in flight, at most once per trunk commit, including across driver restarts. A busy machine retries on a later pass. Failed sweeps wake the parent; with an earlier green ancestor, owed bisects the first-parent recorded owed merges, records each probe as `sweep` with `bisect: true`, and proposes the exact `owed escape <node> --merge <seq> --class missing --note ...` command plus “promote <failing names> to an invariant”. It records no escape and never blocks a merge. Without a green ancestor it reports the failure alone; measurement errors stop the bisect without naming an unproven merge. If an adopted tip fails but the last owed merge passes, no owed merge is blamed.
+
+Each merge also reports **Unguarded paths**: changed paths matched by no invariant `reads`. Reports collapse their parent directories to globs such as `app/bundles/**`, dropping globs subsumed by shorter reported directories; root files remain literal. For `app/bundles/foo/a.ts` and `app/bundles/bar/b.ts`, it reports `app/bundles/foo/**` and `app/bundles/bar/**`, without widening to the common ancestor `app/bundles/**`. The CLI/tool merge output and driver merge report include this list, and `owed brief` lists the last 10 merges using the plan in force at each merge. This is advisory coverage information. Compatibility: owed before 0.13 refuses the new `sweep` entry kind with code `version`; existing entry kinds acquire no new fields.
+
 ## Execution environment: env and wrapper
 
 A plan may give every process owed starts in a materialized tree — `setup`, checks, red runs, strength runs, invariants and attribution reruns — extra environment variables and a wrapper:

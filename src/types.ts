@@ -71,6 +71,7 @@ export interface AllowRule {
   checks?: string[];          // parent may remove/weaken node checks whose id matches these globs
   adopt?: string[];           // parent may adopt trunk commits whose changed paths all lie under these prefixes
 }
+export interface SweepSpec { run: string; timeout_s: number; reads?: string[] }
 export interface Plan {
   version: 1;
   trunk: string;
@@ -78,6 +79,7 @@ export interface Plan {
   setup?: string;
   /** LE3: machine leasing defaults on; false disables it repository-wide. Never part of any item key. */
   lease?: boolean;
+  sweep?: SweepSpec;          // advisory trunk measurements, never part of an item key
   exec?: ExecConfig;          // present only when env, wrap, parallel, trees or touch is set
   invariants: CheckSpec[];
   nodes: NodeSpec[];
@@ -188,7 +190,8 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  * `after`: the node waits until that node merges. Strict fields.
  */
 export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string }
-export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
+export interface SweepEntry extends Base { kind: 'sweep'; commit: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
+export type Entry = SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 

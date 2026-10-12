@@ -13,6 +13,8 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, ty
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
+import { unguardedPaths, mergeCoverage } from './sweep.ts';
+export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { OwedError } from './errors.ts';
@@ -37,7 +39,7 @@ export interface InitPreview { trunk: string; commit: string; planSha: string; n
 export interface AttestGenesisResult extends GenesisAttest { observations: Entry[]; lease?: string }
 export interface DispatchPacket { node: string; attempt: number; worktree: string; branch: string; packet: string; entry: Entry; subagent: { agent: 'worker'; cwd: string; task: string } }
 export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard; lease?: string }
-export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[]; lease?: string }
+export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[]; unguarded: string[]; lease?: string }
 /** `cacheMismatch` (N4): plan shas whose persistent cache entry disagreed with the YAML blob; verify rewrote them. */
 /**
  * `snapshotMismatch` (G1.4): seq of a disk snapshot that matched the chain but differed from the full replay at that seq;
@@ -908,7 +910,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
       const entry = (await ledger.append([...kept,d])).at(-1)!;
-      return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D')};
+      return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D'),unguarded:unguardedPaths(current.plan,lm.facts.changed)};
     },undefined,o.signal);
   },'merge',o.signal);
 }
@@ -1105,10 +1107,10 @@ export async function verify(o: Context): Promise<VerifyResult> {
 }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
 export async function brief(o: Context & {since?:number|string; now?:number}): Promise<Brief> {
-  const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = reduceFrom(loaded.state,[],loaded.lookup), entries = loaded.entries, since = o.since ?? -1; inited(state);
+  const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = reduceFrom(loaded.state,[],loaded.lookup), entries = loaded.entries, lookup = loaded.lookup, since = o.since ?? -1; inited(state);
   await applyReports(ledger,state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
-  return briefView(state,entries,since,o.now ?? Date.now());
+  return briefView(state,entries,since,o.now ?? Date.now(),mergeCoverage(entries,lookup));
 }
 
 // ---------- driver entries (SPEC §12, D3): persisted before the dsa call ----------

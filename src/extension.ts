@@ -16,6 +16,7 @@ import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades, planWarnings, invariantId } from './plan.ts';
 import { adoptPrefixes, uncoveredDowngrades, writesHint } from './reducer.ts';
 import { OwedError } from './errors.ts';
+import { renderSweep, unguardedText } from './sweep.ts';
 import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
@@ -218,7 +219,8 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.evidence({ ...a, node: p.node, id: p.id, files, note: p.note, named: p.candidate, from: [ctx.cwd], ...(expect ? { expect } : {}), ...(at?.candidate ? { candidate: { seq: at.candidate.seq, commit: at.candidate.commit } } : {}) });
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
-  tool('merge', 'Run the merge guard, measure the merge tree under the shared machine lease and advance trunk with CAS. lease: false skips the lease.', Type.Object({ node, lease: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`, {}, signal), node: p.node, signal, lease: p.lease }); return result(r, `${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}${leaseText(r)}`); });
+  tool('sweep', 'Run the configured advisory sweep on a detached trunk tree (or commit), under the shared machine lease. Failures propose an escape after bisect; no merge gate or automatic escape.', Type.Object({ commit: Type.Optional(Type.String()), lease: Type.Optional(Type.Boolean()), cwd }), async (p, _ctx, dir, signal) => { const r = await ops.sweep({ cwd:dir, commit:p.commit, lease:p.lease, signal }); return result(r, renderSweep(r)); });
+  tool('merge', 'Run the merge guard, measure the merge tree under the shared machine lease and advance trunk with CAS. lease: false skips the lease.', Type.Object({ node, lease: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`, {}, signal), node: p.node, signal, lease: p.lease }); return result(r, `${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}${leaseText(r)}\n${unguardedText(r.unguarded)}`); });
   tool('abandon', 'Close the open writer slot of a node (parent or owner); the node can then be dispatched again. note (or its older name reason) is recorded.', Type.Object({ node, note: Type.Optional(Type.String()), reason: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'abandon');
     if (p.note !== undefined && p.reason !== undefined) throw new OwedError('abandon takes note (or its older name reason), not both', 'usage');
