@@ -132,7 +132,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
         break;
       }
       case 'answer': { const r=await ops.answer({...actor,node,text:args[1]!,qid:value('qid'),rid:value('rid')}); result=r; text=answerText(node,r); break; }
-      case 'rule': { const nodes=value('nodes',true)!; result=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(','),...(opts.has('writer') ? {writer:true} : {})}); break; }
+      case 'rule': { if(opts.has('prospective') && opts.has('writer')) usage('--prospective cannot be combined with --writer'); const nodes=value('nodes',true)!; result=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(','),...(opts.has('writer') ? {writer:true} : {}),...(opts.has('prospective') ? {prospective:true} : {})}); break; }
       case 'dispatch': { const r=await ops.dispatch({...actor,node,allowOverlap:opts.has('allow-overlap')}); result=r; text=`${r.packet}\n\n---\nDispatched ${r.node} attempt ${r.attempt}\nworktree: ${r.worktree}\nbranch: ${r.branch}\nwriter: commit in the worktree, then run owed submit ${r.node}`; break; }
       case 'submit': result=await ops.submit({...actor,node,commit:value('commit')}); break;
       case 'rebase': { const r=await ops.rebase({...actor,node}); result=r; text=`${renderEntry(r.entry)}\n${r.packet}\n${renderReceipt(await ops.why({cwd,node}))}`; break; }
