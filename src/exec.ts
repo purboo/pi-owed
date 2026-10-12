@@ -34,9 +34,10 @@ export function parseCounts(log: string, malformed?: (note: string) => void): Co
   let owed: Counts | undefined;
   const integer = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
   for (const line of log.split(/\r?\n/)) {
-    if (!/^\s*owed-counts(?:\s|$)/.test(line)) continue;
+    // RC2 (#1274): only column-0 protocol; TAP comments/diagnostics are silent non-protocol text.
+    if (!/^owed-counts(?:\s|$)/.test(line)) continue;
     try {
-      const c: unknown = JSON.parse(line.replace(/^\s*owed-counts\s*/, ''));
+      const c: unknown = JSON.parse(line.replace(/^owed-counts\s*/, ''));
       if (!c || typeof c !== 'object' || Array.isArray(c)) throw new Error('expected object');
       const x = c as Record<string, unknown>;
       if (!integer(x.pass) || !integer(x.fail) || (x.skip !== undefined && !integer(x.skip)) || (x.failed !== undefined && (!Array.isArray(x.failed) || x.failed.some(n => typeof n !== 'string')))) throw new Error('invalid counts');
@@ -254,11 +255,11 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
             if (!countOK) obs.note = red ? 'zero tests' : countNote(obs.counts, spec.min_tests, result.code);
           }
           // RC3: failed names first, followed by a bounded tail, for a failed command even if counts passed.
-          if (!red && obs.verdict === 'fail' && !obs.note) {
+          if (obs.verdict === 'fail' && !obs.note) {
             const tail = lastLines(result.log, 15);
             obs.note = `command exited ${result.code}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
           }
-          if (!red && obs.verdict === 'fail' && runFailed.length) {
+          if (obs.verdict === 'fail' && runFailed.length) {
             const tail = lastLines(result.log, 15);
             obs.note = `failed tests: ${runFailed.join(', ')}${obs.note && !obs.note.includes('last output:') ? `; ${obs.note}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
           }

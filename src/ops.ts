@@ -8,7 +8,7 @@ import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors } from './plan.ts';
-import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER } from './reducer.ts';
+import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER, entriesOf } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
@@ -830,8 +830,14 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       if (missed.length) reasons.push(`not measured: ${missed.map(j => `${j.subject}/${j.obligation} (key ${j.key.slice(0,12)})`).join(', ')} (the plan changed while merge measured); run owed merge again: it measures only what lacks a verdict`);
       if (reasons.length || !g) {
         if (kept.length) await ledger.append(kept);
-        // RC3: merge failures also reach the driver halt; preserve failed names and their bounded log tail.
-        const failures = kept.flatMap(e => e.kind === 'obs' && e.verdict === 'fail' && e.failed?.length ? [`${e.subject}/${e.obligation}: ${e.note ?? `failed tests: ${e.failed.join(', ')}`}`] : []);
+        // RC3 (#1274): report evidence deciding unsatisfied items on the guarded merge keys, including reused obs.
+        const bySeq = new Map(entriesOf(current).map(e => [e.seq, e])), seen = new Set<number>();
+        const failures = [...(g?.nodeItems ?? []), ...(g?.invItems ?? [])].flatMap(i => i.status !== 'D' ? [] : i.evidence.flatMap(seq => {
+          const e = bySeq.get(seq);
+          if (seen.has(seq) || e?.kind !== 'obs' || e.verdict !== 'fail' || e.subject !== i.subject || e.obligation !== i.obligation || e.key !== i.key) return [];
+          seen.add(seq);
+          return e.note || e.failed?.length ? [`${e.subject}/${e.obligation}: ${e.note ?? `failed tests: ${e.failed!.join(', ')}`}`] : [];
+        }));
         throw new OwedError([...failures, ...reasons].join('; '));
       }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);

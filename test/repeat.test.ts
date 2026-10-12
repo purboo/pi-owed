@@ -31,6 +31,72 @@ async function fixture() {
   const job: AttestJob = { kind: 'check', subject: 'a', obligation: 'check:x', key: 'k', base, commit, spec: plan.nodes[0]!.checks[0] };
   return { ...r, plan, ledger, job, run: (run: string, extra: Partial<CheckSpec> = {}, kind: AttestJob['kind'] = 'check') => runJob({ cwd: r.cwd, plan, ledger }, { ...job, kind, spec: { ...job.spec!, run, ...extra } }) };
 }
+test('RC2 #1274: only column-0 owed-counts is protocol, never a real TAP diagnostic', async () => {
+  const f = await fixture();
+  try {
+    const code = "import test from 'node:test'; import assert from 'node:assert/strict'; test('real diagnostic failure', () => assert.fail('line one\\nowed-counts {\"pass\":0,\"fail\":0}\\nline three'));";
+    await f.put('test/diagnostic.mjs', code); const commit = await f.commit();
+    const obs = await runJob({ cwd: f.cwd, plan: f.plan, ledger: f.ledger }, { ...f.job, base: commit, commit, kind: 'red', spec: { ...f.job.spec!, run: 'node --test --test-reporter=tap test/diagnostic.mjs', red_expect: 'real diagnostic failure' } });
+    const log = (await f.ledger.getBlob(obs.log!)).toString(), warnings: string[] = [];
+    assert.match(log, /^    owed-counts /m, 'real node TAP diagnostic contains the example');
+    assert.equal(parseCounts(log, n => warnings.push(n))?.format, 'tap');
+    assert.equal(obs.counts?.tests, 1); assert.equal(obs.verdict, 'pass'); assert.equal(obs.note, undefined);
+    for (const line of [' owed-counts {"pass":0,"fail":0}', '\towed-counts broken', '# owed-counts broken']) {
+      assert.equal(parseCounts(`${line}\n# tests 1\n# pass 1\n# fail 0`, n => warnings.push(n))?.format, 'tap');
+    }
+    assert.equal(warnings.length, 0, 'indented/comment occurrences are silently ignored');
+    assert.deepEqual(parseCounts('owed-counts {"pass":2,"fail":1}\r\n'), { format: 'owed', tests: 3, pass: 2, fail: 1 });
+    assert.equal(parseCounts('owed-counts\t{"pass":1,"fail":0}')?.format, 'owed');
+    parseCounts('owed-counts broken', n => warnings.push(n)); assert.equal(warnings.length, 1, 'malformed column-0 protocol is still noted');
+  } finally { await f.cleanup(); }
+});
+
+test('RC3 #1274: a red_expect mismatch has failing names before its bounded tail', async () => {
+  const f = await fixture();
+  try {
+    const run = "for n in $(seq 1 30); do echo \"line $n\"; done; echo 'not ok 1 - unrelated failing test'; echo '# tests 1'; echo '# pass 0'; echo '# fail 1'; exit 1";
+    const obs = await f.run(run, { red_expect: 'expected failure only' }, 'red');
+    assert.equal(obs.verdict, 'fail'); assert.deepEqual(obs.failed, ['unrelated failing test']);
+    assert.ok(obs.note?.startsWith('failed tests: unrelated failing test;'), obs.note);
+    assert.match(obs.note!, /last output:/); assert.ok(obs.note!.split('\n').length <= 16);
+    assert.doesNotMatch(obs.note!, /\n  line 1\n/);
+    const pass = await f.run(run, { red_expect: 'unrelated failing test' }, 'red');
+    assert.equal(pass.verdict, 'pass'); assert.equal(pass.note, undefined, 'successful red semantics stay unchanged');
+  } finally { await f.cleanup(); }
+});
+
+test('RC3 #1274: reused failed invariant keeps names and tail on second merge and driver halt', { timeout: 60_000 }, async () => {
+  const r = await repo();
+  try {
+    const run = `if [ ! -f src/value ]; then ${owedCount(1, 0)}; else echo 'stored diagnostic tail'; ${owedCount(0, 1, ['reused merge gate'])}; exit 1; fi`;
+    const plan = planWith({ run, min_tests: 1, reads: ['src/**'] }, true);
+    await r.put('README', 'base'); const base = await r.commit();
+    await ops.init({ cwd: r.cwd, plan, as: owner, channel: 'delegated' });
+    const d = await ops.dispatch({ cwd: r.cwd, node: 'a', as: parent });
+    await commitAt(d.worktree, { 'src/value': 'new' });
+    await ops.submit({ cwd: d.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    await ops.attest({ cwd: r.cwd, node: 'a' });
+    const ledger = await Ledger.open(r.cwd), before = await ledger.read(), project = before[0]!.hash.slice(0, 12), rid = runId(project, 'a', 1, 'writer');
+    await ops.launch({ cwd: r.cwd, as: DRIVE_PRINCIPAL, node: 'a', attempt: 1, role: 'writer', rid, spec: '{}', labels: runLabels(project, 'a', 1, 'writer') });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), e => {
+        assert.ok(e instanceof Error); assert.match(e.message, /failed tests: reused merge gate; last output:/); assert.match(e.message, /stored diagnostic tail/); return true;
+      });
+    }
+    const countFailed = async () => (await ledger.read()).filter(e => e.kind === 'obs' && e.merging === 'a' && e.obligation === 'inv:x').length;
+    assert.equal(await countFailed(), 1, 'second refusal reuses the stored observation, never reruns');
+    class SealedDsa extends Dsa { override async inspect(rid: string) { return { view: { rid, state: 'sealed' as const, status: 'ok' } }; } }
+    const driver = new Driver({ cwd: r.cwd, log: () => {}, handleSignals: false, session: null, dsa: new SealedDsa({ bin: '/no-dsa-rc3' }), max: 1 });
+    const start = await driver.pass(); assert.ok(start.actions.some(a => a.do === 'merge' && a.outcome === 'started'), JSON.stringify(start.actions));
+    assert.equal(await driver.drain(30_000), true);
+    const report = (await driver.pass()).actions.find(a => a.do === 'merge');
+    assert.equal(report?.outcome, 'refused'); assert.match(report?.detail ?? '', /failed tests: reused merge gate/); assert.match(report?.detail ?? '', /stored diagnostic tail/);
+    const halt = (await ledger.read()).findLast(e => e.kind === 'halt');
+    assert.ok(halt?.kind === 'halt'); assert.match(halt.reason, /failed tests: reused merge gate; last output:/); assert.match(halt.reason, /stored diagnostic tail/);
+    assert.equal(await countFailed(), 1); assert.equal((await ops.status({ cwd: r.cwd })).trunk.commit, base);
+  } finally { await r.cleanup(); }
+});
+
 // State is inside the measurement tree: a new materialization or repeated setup would reset it.
 const sequence = (verdicts: string) => `n=$(cat counter 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > counter; v=$(printf '${verdicts}' | cut -c "$n"); if [ "$v" = p ]; then ${owedCount(1, 0)}; else ${owedCount(0, 1, ['latency gate'])}; exit 1; fi`;
 

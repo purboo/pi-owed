@@ -200,10 +200,17 @@ invariants:
 (and optional skip) are non-negative integers; failed is an optional string
 array (at most 50 names retained). The last valid line overrides every other
 count format, with `format: owed` and tests = pass + fail + skip. Malformed
-lines are ignored and noted. Only this explicit format makes fail > 0 reject
+column-0 protocol lines are ignored and noted. The token must start at column 0
+and be followed by whitespace and a JSON object. Indented examples and comments
+are silently ignored: `    owed-counts {"pass":0,"fail":0}` in a TAP diagnostic,
+or `# owed-counts {"pass":0,"fail":0}`, never overrides real test counts.
+Only this explicit format makes fail > 0 reject
 an exit-0 run; other formats are unchanged. TAP `not ok N - name` and cargo
 `test name ... FAILED` also supply names. Failed notes, `why`, halts and repair
-messages show them first, then a tail of at most 15 lines.
+messages show them first, then a tail of at most 15 lines. Failed red checks
+(including `red_expect` mismatches) get the same note; successful red runs stay
+unchanged. Merge refusals and halts retain names and the short tail when reusing
+a stored failing measurement, not only when measuring it for the first time.
 
 Use owed >= 0.13 for these fields: published 0.12 silently drops repeat while
 parsing a plan and replays observations by aggregate verdict only (it ignores
