@@ -155,7 +155,9 @@ test('LE2 driver lease refusal halts as an error, never busy and never starts me
 test('LE3 opt-outs, missing dsa and OWED_LEASED=1 skip acquisition without changing keys', { timeout: 90_000 }, async () => {
   const f = await rig({ lease: false });
   try {
-    const off = parsePlan(JSON.stringify(f.plan)), on = parsePlan(JSON.stringify({ ...f.plan, lease: true }));
+    const spec = { id: 'key', run: 'true', reads: ['a.txt'] };
+    const plan = { ...f.plan, invariants: [spec], nodes: [{ ...f.plan.nodes[0]!, checks: [spec] }] };
+    const off = parsePlan(JSON.stringify(plan)), on = parsePlan(JSON.stringify({ ...plan, lease: true }));
     assert.equal((off as { lease?: boolean }).lease, false);
     assert.throws(() => parsePlan(JSON.stringify({ ...f.plan, lease: 'false' })), /lease: expected boolean/);
     assert.deepEqual(await git.stateFacts(f.cwd, off, 'HEAD'), await git.stateFacts(f.cwd, on, 'HEAD'));
@@ -167,7 +169,13 @@ test('LE3 opt-outs, missing dsa and OWED_LEASED=1 skip acquisition without chang
     await ops.planSet({ cwd: f.cwd, as: parent, plan: JSON.stringify({ ...f.plan, lease: true }) });
     await ops.attest({ cwd: f.cwd, node: 'a', lease: false } as Parameters<typeof ops.attest>[0]);
     process.env.OWED_DSA = f.path('missing'); await ops.attest({ cwd: f.cwd, node: 'a' });
-    process.env.OWED_DSA = f.bin; process.env.OWED_LEASED = '1';
+    process.env.OWED_DSA = f.bin;
+    const unleasedChecks = (await git.candidateFacts(f.cwd, on, on.nodes[0]!, slot.base, c.commit, 1)).keys;
+    const unleasedInvariants = (await git.stateFacts(f.cwd, on, c.commit)).invKeys;
+    assert.ok(unleasedChecks['check:key']); assert.ok(unleasedInvariants.key);
+    process.env.OWED_LEASED = '1';
+    assert.deepEqual((await git.candidateFacts(f.cwd, on, on.nodes[0]!, slot.base, c.commit, 1)).keys, unleasedChecks);
+    assert.deepEqual((await git.stateFacts(f.cwd, on, c.commit)).invKeys, unleasedInvariants);
     const inherited = await ops.attest({ cwd: f.cwd, node: 'a' }); assert.equal((inherited as { lease?: string }).lease, 'machine (shared)');
     assert.equal(f.holds().length, 0);
   } finally { await f.done(); }
