@@ -228,13 +228,15 @@ function genesisStatus(s: State): { genesis?: GenesisStatus } {
   return g.pending.length ? { genesis: { observed: g.observed.length, total: g.ids.length, pending: g.pending } } : {};
 }
 const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by dependencies', dispatched: 'dispatched', submitted: 'submitted', accepted: 'accepted', merged: 'merged', removed: 'removed from the plan' };
+/** RC1: noisy is descriptive, not a conflicting ledger verdict. */
+const noise = (e: Entry): string => e.kind === 'obs' && e.noisy && e.runs ? ` noisy (${e.runs.filter(r => r.verdict === 'pass').length}/${e.runs.length} passed)` : '';
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
 function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[]; hint?: string }): string {
   if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${haltClear(i.subject)}`;
   if (i.status === 'W') return waivedText(i);
   if (isManual(i.obligation)) return manualText(i);
   const label = i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
-  const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
+  const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)}${noise(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${(i.blockNotes ?? []).map(b => ` — note #${b.seq}: ${b.note}`).join('')}${i.hint ? ` — ${i.hint}` : ''}${failNotes(i.observations ?? [])}`;
 }
 /** K2.2: the note of an exec block's failing observation on one line, at most 200 characters. */
@@ -309,7 +311,7 @@ const wasFlaky = (s: State, b: Block, before: number): boolean => entriesOf(s).s
 function waivedText(i: ItemView & { observations?: Entry[] }): string {
   const obs = i.observations ?? [], w = obs.findLast(e => e.kind === 'waive');
   const channel = w?.channel ? ` (${w.channel}${w.channel === 'flag' ? ' weak confirmation' : ''})` : '';
-  const rest = obs.filter(e => e !== w).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : `#${e.seq}`).join('; ');
+  const rest = obs.filter(e => e !== w).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)}${noise(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : `#${e.seq}`).join('; ');
   return `${i.mark} ${i.subject}/${i.obligation} waived (not measured for this candidate) by ${w?.by ?? 'the owner'}: ${w?.kind === 'waive' ? oneLine(w.reason) : i.detail}${channel}${rest ? ` [${rest}]` : ''}${failNotes(obs)}`;
 }
 /** 0.5.1 (E2 ruling 3): each fail observation's note under its item, `  note #<seq>:` then the note as recorded, indented. */
@@ -362,6 +364,7 @@ const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'ow
 function entryLine(e: Entry): string {
   const head = `#${e.seq} ${e.by}${e.channel === 'flag' ? ' (flag weak confirmation)' : e.channel === 'delegated' ? ' (delegated)' : ''}`;
   switch (e.kind) {
+    case 'obs': return `${head} observed ${e.subject}/${e.obligation} ${e.verdict}${noise(e)}${e.note ? `: ${e.note}` : ''}`;
     case 'merge': return `${head} merged ${e.node} → ${e.commit.slice(0, 12)}`;
     case 'waive': return `${head} waived ${e.node}/${e.obligation}: ${e.reason}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(x => `#${x}`).join(', ')})` : ''}`;
     case 'defer': return `${head} deferred ${e.node} post-merge invariants ${e.items.map(i => i.id).join(', ')}: ${e.reason}`;

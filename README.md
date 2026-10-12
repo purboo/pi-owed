@@ -177,6 +177,46 @@ exec:
 
 Test counts come from TAP/node:test, cargo, pytest and jest/vitest summary lines; a log with both cargo `test result:` lines and TAP (one check running `cargo test && node --test --test-reporter=tap`) sums them to one `mixed` count, which `min_tests` checks. A non-red check that exits non-zero with no recognizable count or zero tests (a wrong cargo package name, a missing script) is `fail`, and its note carries the last 5 output lines (shown under the item in `owed why` and in the driver's repair message); exit 126/127 with no count (the command never ran) and an exit-0 run with an unknown count under `min_tests` are `error`. cargo summaries count only at column 0, so a `# test result: …` line inside TAP is not a cargo count.
 
+**Repeated measurements (0.13, RC1).** Checks and invariants may set
+`repeat: {runs: 3, need: 2}` (integers `1 <= need <= runs <= 9`; need defaults
+to runs). This is part of their key and is not allowed on red or mutants checks.
+Commands run sequentially in the same prepared tree; stop when the required
+passes are reached or unreachable. Counts and `min_tests` apply per run, never
+to the sum; execution/environment errors stop with `error`, not failed votes.
+The observation's `runs` retains each verdict, exit, counts, duration and log
+digest; `noisy: true` marks disagreeing runs. `why` and driver measurement
+reports show e.g. `noisy (2/3 passed)`. This also works at merge time:
+
+```yaml
+invariants:
+  - id: timing
+    run: ./check-timing.sh
+    min_tests: 1
+    repeat: {runs: 2, need: 1}
+```
+
+**Custom counts and failing names (0.13, RC2–RC3).** A command may print
+`owed-counts {"pass":2,"fail":1,"failed":["latency gate"],"skip":0}`. Pass/fail
+(and optional skip) are non-negative integers; failed is an optional string
+array (at most 50 names retained). The last valid line overrides every other
+count format, with `format: owed` and tests = pass + fail + skip. Malformed
+column-0 protocol lines are ignored and noted. The token must start at column 0
+and be followed by whitespace and a JSON object. Indented examples and comments
+are silently ignored: `    owed-counts {"pass":0,"fail":0}` in a TAP diagnostic,
+or `# owed-counts {"pass":0,"fail":0}`, never overrides real test counts.
+Only this explicit format makes fail > 0 reject
+an exit-0 run; other formats are unchanged. TAP `not ok N - name` and cargo
+`test name ... FAILED` also supply names. Failed notes, `why`, halts and repair
+messages show them first, then a tail of at most 15 lines. Failed red checks
+(including `red_expect` mismatches) get the same note; successful red runs stay
+unchanged. Merge refusals and halts retain names and the short tail when reusing
+a stored failing measurement, not only when measuring it for the first time.
+
+Use owed >= 0.13 for these fields: published 0.12 silently drops repeat while
+parsing a plan and replays observations by aggregate verdict only (it ignores
+runs/noisy/failed metadata). From 0.13 an unknown top-level obs field refuses
+with code `version`, requiring an upgrade and pi session restart.
+
 Recipes (sketches; adapt paths):
 
 - **Slot limiter** — at most 5 heavy runs at once on this machine, `wrap: ["/abs/tmp/qa/heavy.sh"]`:

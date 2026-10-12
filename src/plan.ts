@@ -305,6 +305,15 @@ export function parsePlan(text: string): Plan {
         if (typeof c.min_kill !== 'number' || !(c.min_kill > 0 && c.min_kill <= 1)) errors.push(`${p}.min_kill: expected a number in (0, 1]`); else out.min_kill = c.min_kill;
         if (out.mutants === undefined) errors.push(`${p}: min_kill requires mutants`);
       }
+      // RC1: normalize the default need so explicit and implicit defaults share a key.
+      if (c.repeat !== undefined) {
+        const repeat = obj(c.repeat, `${p}.repeat`);
+        for (const k of Object.keys(repeat)) if (k !== 'runs' && k !== 'need') errors.push(`${p}.repeat.${k}: unknown key`);
+        const runs = num(repeat.runs, `${p}.repeat.runs`, 1), need = num(repeat.need === undefined ? runs : repeat.need, `${p}.repeat.need`, 1);
+        if (runs > 9 || need > runs) errors.push(`${p}.repeat: expected 1 <= need <= runs <= 9`);
+        if (out.red || out.mutants !== undefined) errors.push(`${p}.repeat: not allowed on red or mutants checks`);
+        out.repeat = { runs, need };
+      }
       return out;
     });
   };

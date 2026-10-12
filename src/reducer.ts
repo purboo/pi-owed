@@ -282,6 +282,8 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
 };
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer'];
+/** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'note', 'runs', 'noisy', 'failed'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -294,6 +296,10 @@ export function newerEntry(e: Entry): OwedError | undefined {
   if (x.channel !== undefined && !CHANNELS.includes(x.channel as string)) return refuse(`${kind} channel ${shown(x.channel)}`);
   for (const [field, known] of Object.entries(enums()[kind] ?? {})) if (x[field] !== undefined && !known.includes(x[field])) return refuse(`${kind} ${field} ${shown(x[field])}`);
   if (kind === 'rule') { const extra = Object.keys(x).find(k => x[k] !== undefined && !RULE_FIELDS.includes(k)); if (extra !== undefined) return refuse(`rule ${extra} ${shown(x[extra])}`); }
+  if (kind === 'obs') {
+    const extra = Object.keys(x).find(k => x[k] !== undefined && !OBS_FIELDS.includes(k));
+    if (extra !== undefined) return refuse(`obs ${extra} ${shown(x[extra])}`);
+  }
   return undefined;
 }
 function fold(s: State, entries: Iterable<Entry>): void {
@@ -619,7 +625,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
       if (!d) { add(node, `${c.id} check removed`); continue; }
       if (c.red && !d.red) add(node, `${c.id} red disabled`);
       if ((d.min_tests ?? 0) < (c.min_tests ?? 0)) add(node, `${c.id} min_tests reduced`);
-      const fields = (['run', 'timeout_s', 'reads', 'tests', 'red_expect'] as const).filter(field => canonical(c[field]) !== canonical(d[field]));
+      const fields = (['run', 'timeout_s', 'reads', 'tests', 'red_expect', 'repeat'] as const).filter(field => canonical(c[field]) !== canonical(d[field]));
       if (fields.length) add(node, `${c.id} check definition changed (${fields.join(', ')}); owed cannot compare commands, so this needs owner authority or an allow rule; to avoid it, add the new command as a new check id`);
       if (c.mutants && (canonical(c.mutants) !== canonical(d.mutants) || (d.min_kill ?? 1) < (c.min_kill ?? 1))) add(node, `${c.id} mutants removed or changed, or min_kill reduced`);
     }
@@ -649,7 +655,7 @@ function allowWidened(prev: Plan, next: Plan): boolean {
 /** Rules of `plan` whose node globs match node id `node` (path.matchesGlob on the id). */
 const rulesFor = (plan: Plan, node: string): AllowRule[] => (plan.allow ?? []).filter(r => r.nodes.some(g => matchesGlob(node, g)));
 /** Check-weakening items of downgradeDetails (`<id><suffix>`) and of plan.ts planDowngrades (`check <id><suffix>`). */
-const DETECTED_CHECK = [/ check removed$/, / red disabled$/, / min_tests reduced$/, / check definition changed; cannot prove obligations were not reduced$/, / check definition changed \((?:run|timeout_s|reads|tests|red_expect)(?:, (?:run|timeout_s|reads|tests|red_expect))*\); owed cannot compare commands, so this needs owner authority or an allow rule; to avoid it, add the new command as a new check id$/, / mutants removed or changed, or min_kill reduced$/];
+const DETECTED_CHECK = [/ check removed$/, / red disabled$/, / min_tests reduced$/, / check definition changed; cannot prove obligations were not reduced$/, / check definition changed \((?:run|timeout_s|reads|tests|red_expect|repeat)(?:, (?:run|timeout_s|reads|tests|red_expect|repeat))*\); owed cannot compare commands, so this needs owner authority or an allow rule; to avoid it, add the new command as a new check id$/, / mutants removed or changed, or min_kill reduced$/];
 const CLAIMED_CHECK = [' removed', ' red disabled', ' min_tests lowered', ' mutants removed', ' min_kill lowered'];
 /**
  * Whether a rule of the prior plan `prev` covers downgrade `d` of the update to `next` (D21.2). Covered: review
