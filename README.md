@@ -130,6 +130,39 @@ ignores the plan limits, so use 0.14+ to enforce them.
 - **Oracle strength:** a node check may list `mutants` (globs of patch files inside the closure) and `min_kill` (fraction in (0, 1], default 1). The node then owes `strength:<check id>`: for each mutant patch, read from the base and never from the candidate, owed applies it to the materialized candidate and runs the check. A mutant is killed when the run exits non-zero or reports failing tests; a zero-test run or a patch that does not apply is not a kill. The obligation passes when killed/total reaches `min_kill`; the receipt shows `strength k/n` and the log lists every mutant.
 - **Merge guard:** owed tests the prospective merge tree, checks node obligations and invariant debt, then advances the trunk with a compare-and-swap guard. An accepted candidate alone does not guarantee its merge is safe.
 
+### Trunk invariants already red (0.15)
+
+After adding or changing an invariant, run `owed attest --trunk [--no-lease]`
+(pi: `owed_attest {trunk: true}`, no node). It records executor `refresh`
+`{commit, state: StateFacts}` on the ledger trunk, replaces its invariant keys
+without moving trunk commit/seq, then measures the changed keys as trunk
+observations. It is abortable and leased; an interrupted refresh resumes on
+retry. No changed keys means `Nothing to refresh on trunk` and no new entries.
+JSON returns `refresh?`, `changed`, `observations`, `superseded`, `failed`,
+`missing`, `lease?`; completion exits 0 even for failing tests, missing results
+exit 1. Merge does this automatically before measuring, retaining refresh and
+trunk observations on refusal; the driver refreshes on an otherwise quiet pass.
+
+A merge failing only named tests already failed on recorded trunk can proceed
+without defer. Timeouts, errors, unnamed failures, zero/unknown counts,
+`min_tests` failures and any new failed name still refuse. New names read
+`invariant <id> new debt: new failures <new> (trunk already failed: <old>)`;
+unknown names keep the ordinary measured-pass/defer refusal. Fix-node-owned
+known-red names are not rescued. Owner defers and adopt keep their rules.
+The new trunk remains D with discharger `parent`, detail `trunk-red: inv:<id>
+already failed on trunk before <node> (<names>); merge #<seq>`.
+
+`owed status` and `owed why trunk` explain `inv:<id> red on trunk since
+<merge/refresh #seq> (<names>); not caused by any open node`, with options to
+assign a fix node, list `known_red` names with that fix node via `owed edit
+--invariant <id> ...`, or run `owed sweep --commit <trunk>` to find the culprit.
+Status JSON may add `trunkRed: [{obligation, key, text}]`. The driver wakes the
+parent once per invariant/key and does not halt writers for this debt. Before
+refresh, status says `inv:<id> not measured on trunk yet — owed attest --trunk`.
+Compatibility: owed 0.14 and older refuse the new `refresh` entry with code
+`version`; upgrade CLI, extension and drivers together and restart pi. Ledgers
+without it retain their 0.14 replay (apart from the actionable missing-key text).
+
 When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. If the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. The driver halts needing the parent before a writer repair. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for its bisect/escape proposal, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq>` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. `why` shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
 
 `status` groups pending work by owner, parent+writer, reviewer, and executor. Resolve the named obligation with its assigned role. `report --since <sequence-or-ISO-time>` summarizes merges, E/W/D changes, rulings, downgrades, and owner decisions.
