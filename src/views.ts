@@ -535,8 +535,8 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
   return `${waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag)}${flakyHint && blocks.some(b => b.state === 'flaky') ? `; ${flakyRuleHint(i.subject)}` : ''}`;
 }
 /** TR: parent choices; the failing merge observation is the waiver risk, never the probe. */
-export function trunkRedHint(s: State, seq: number): string | undefined {
-  const r = trunkRedOf(s, seq);
+export function trunkRedHint(s: State, seq: number, key?: string): string | undefined {
+  const r = trunkRedOf(s, seq, key);
   if (!r) return undefined;
   return `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}; this candidate is not shown to be the cause; parent: fix trunk with a fixing node${s.plan.sweep ? `, or owed sweep --commit ${s.trunk.commit} for its bisect/escape proposal` : ''}; or owed waive ${r.merge.subject} ${r.merge.obligation} --accept-risk ${r.merge.seq}`;
 }
@@ -547,7 +547,7 @@ export function trunkRedHint(s: State, seq: number): string | undefined {
  */
 function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
-  const trunkRed = trunkRedHint(s, b.seq);
+  const trunkRed = trunkRedHint(s, b.seq, b.key);
   if (trunkRed) return trunkRed;
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && countsBlock(x)).map(x => x.seq);

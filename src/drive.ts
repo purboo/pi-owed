@@ -569,7 +569,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   }
   // TR3: route trunk-red to the parent before attribution attests or any writer follow-up, including after restart.
   if (c) {
-    const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(s,b.seq) ?? []);
+    const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(s,b.seq,b.key) ?? []);
     if (trunkRed.length) return halt(`merge refused: ${trunkRed.join('; ')}`);
   }
   // FL1: dependencies merged after dispatch: use the existing rebase route exactly once before other work.

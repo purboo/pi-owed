@@ -635,10 +635,13 @@ needing the parent using its existing wording, before attribution attest or
 any writer follow-up, including after restart. These are diagnostics, not
 acceptance or a waiver. Classification is recomputed against current trunk
 and the current check/closure definition; moving trunk invalidates the old
-probe for this purpose.
+probe for this purpose. A merge-result fail whose key still matches the guarded
+merge key remains valid evidence even when its base predates an unrelated
+trunk move; the new current-trunk probe decides its classification.
 
-Compatibility: owed 0.13 and older refuses the new `obs.probe` field with
-code `version`; upgrade before replaying it. Ledgers without probes retain
+Compatibility: owed 0.13 refuses the new `obs.probe` field with code
+`version`; owed 0.12 and older ignore the field and cannot safely interpret
+probes. Upgrade before replaying it. Ledgers without probes retain
 the 0.13 obligation states, keys and views.
 
 ## 6. Reducer (pure: entries → State)
