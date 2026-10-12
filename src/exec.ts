@@ -210,6 +210,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       obs.verdict = pass ? 'pass' : 'fail'; obs.exit = pass ? 0 : 1; obs.note = `strength ${killed}/${paths.length} killed (min_kill ${minKill})`;
       capture(`\n${['Mutants:', ...results.map(l => `- ${l}`), obs.note].join('\n')}\n`);
     } else {
+      if (job.kind !== 'red') obs.execution = { completed:false, countOK:false };
       const spec = job.spec; if (!spec) throw new Error('missing check spec');
       work = await prepare(() => materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit, reuse));
       const tree = work.path;
@@ -223,7 +224,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const repeat = spec.repeat, runs = repeat?.runs ?? 1, need = repeat?.need ?? runs;
       if (repeat && (job.kind === 'red' || spec.red || spec.mutants)) throw new Error('repeat is not allowed on red or mutants checks');
       if (repeat) obs.runs = [];
-      let passed = 0;
+      let passed = 0, allCompleted = true, allCountsOK = true;
       const failed = new Set<string>();
       for (let index = 0; index < runs; index++) {
         if (ctx.signal?.aborted) throw new Error('aborted');
@@ -236,11 +237,15 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         const runFailed = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(result.log);
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
         if (failed.size) obs.failed = [...failed];
+        // IR2: facts about this run remain independent of failure names and display-note separators.
+        const execution = { completed:false, countOK:false };
         try {
           // F2.1: a failed run whose output says the disk is full measured the environment, not the code.
           if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
           diskFull(result.code, obs.counts, result.log, `command exited ${result.code}`);
           if (result.error) throw new Error(result.error);
+          execution.completed = result.code !== null;
+          execution.countOK = obs.counts?.tests !== undefined && obs.counts.tests > 0 && (spec.min_tests === undefined || obs.counts.tests >= spec.min_tests);
           // min_tests applies to candidate and invariant runs, never to the red counterfactual.
           const red = job.kind === 'red';
           // D15.4: a red command that could not run is no counterfactual, even if red_expect matches.
@@ -269,12 +274,15 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
             obs.note = `failed tests: ${runFailed.join(', ')}${obs.note && !obs.note.includes('last output:') ? `; ${obs.note}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
           }
         } catch (e) {
+          execution.completed = false;
           obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`;
           throw e;
         } finally {
+          allCompleted &&= execution.completed; allCountsOK &&= execution.countOK;
+          if (job.kind !== 'red') obs.execution = { completed:allCompleted, countOK:allCountsOK };
           if (warnings.length) obs.note = `${obs.note ? `${obs.note}; ` : ''}${warnings.length} malformed owed-counts line(s) ignored`;
           if (repeat) {
-            obs.runs!.push({ verdict: obs.verdict, exit: result.code, counts: obs.counts, durationMs: Date.now() - runStart, log: await ctx.ledger.putBlob(result.log), ...(obs.note ? { note: obs.note } : {}), ...(runFailed.length ? { failed: runFailed } : {}) });
+            obs.runs!.push({ verdict: obs.verdict, exit: result.code, counts: obs.counts, durationMs: Date.now() - runStart, log: await ctx.ledger.putBlob(result.log), ...(obs.note ? { note: obs.note } : {}), ...(runFailed.length ? { failed: runFailed } : {}), execution });
             obs.noisy = obs.runs!.some(r => r.verdict === 'pass') && obs.runs!.some(r => r.verdict === 'fail');
           }
         }
@@ -291,9 +299,9 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       }
       if (obs.noisy) obs.note = `${obs.note ? `${obs.note}; ` : ''}noisy (${passed}/${obs.runs!.length} passed)`;
     }
-  } catch (e) { obs.verdict = 'error'; obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`; capture(`\n${obs.note}\n`); }
+  } catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`; capture(`\n${obs.note}\n`); }
   finally {
-    if (work) { try { await work.dispose(); } catch (e) { obs.verdict = 'error'; obs.note = `worktree cleanup: ${String(e)}`; capture(obs.note); } }
+    if (work) { try { await work.dispose(); } catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `worktree cleanup: ${String(e)}`; capture(obs.note); } }
   }
   if (protocolWarnings && !obs.note?.includes('malformed owed-counts')) obs.note = `${obs.note ? `${obs.note}; ` : ''}${protocolWarnings} malformed owed-counts line(s) ignored`;
   obs.log = await ctx.ledger.putBlob(truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes);

@@ -109,8 +109,10 @@ export interface StateFacts { commit: string; tree: string; invKeys: Record<stri
 export type Verdict = 'pass' | 'fail' | 'error';
 /** format: 'tap' | 'cargo' | 'jest/vitest' | 'pytest' | 'mixed' (cargo + TAP in one log, E2.1) | 'mutants'. */
 export interface Counts { tests?: number; pass?: number; fail?: number; skip?: number; format?: string; /** RC3: at most 50 failing test names. */ failed?: string[] }
+/** IR2 (0.15): executor facts, not parsed from display notes; absent in historical observations. */
+export interface ExecutionResult { completed: boolean; countOK: boolean }
 /** RC1: one command run, before repeat decides the observation's verdict. Errors stop measurement, never count as votes. */
-export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[] }
+export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[]; execution?: ExecutionResult }
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; state: StateFacts }
@@ -134,6 +136,8 @@ export interface ObsEntry extends Base {
   verdict: Verdict;
   exit: number | null;
   counts?: Counts;
+  /** IR2: all executed runs completed without timeout/error and met their count/min_tests requirement. */
+  execution?: ExecutionResult;
   log?: string;              // blob sha of the combined output
   durationMs: number;
   commit: string;            // commit the item was evaluated on

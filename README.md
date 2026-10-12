@@ -144,8 +144,12 @@ exit 1. Merge does this automatically before measuring, retaining refresh and
 trunk observations on refusal; the driver refreshes on an otherwise quiet pass.
 
 A merge failing only named tests already failed on recorded trunk can proceed
-without defer. Timeouts, errors, unnamed failures, zero/unknown counts,
-`min_tests` failures and any new failed name still refuse. New names read
+without defer only when both failed-name lists are complete. Truncated lists
+refuse with `failed names truncated; cannot prove the failure is old`.
+The executor's structured `execution: {completed, countOK}` (also on repeat
+runs), not display notes, proves the merge failure is test-only; old observations
+without it cannot provide that proof. Timeouts, errors, unnamed failures,
+zero/unknown counts, `min_tests` failures and any new failed name still refuse. New names read
 `invariant <id> new debt: new failures <new> (trunk already failed: <old>)`;
 unknown names keep the ordinary measured-pass/defer refusal. Fix-node-owned
 known-red names are not rescued. Owner defers and adopt keep their rules.
@@ -157,11 +161,14 @@ already failed on trunk before <node> (<names>); merge #<seq>`.
 assign a fix node, list `known_red` names with that fix node via `owed edit
 --invariant <id> ...`, or run `owed sweep --commit <trunk>` to find the culprit.
 Status JSON may add `trunkRed: [{obligation, key, text}]`. The driver wakes the
-parent once per invariant/key and does not halt writers for this debt. Before
-refresh, status says `inv:<id> not measured on trunk yet — owed attest --trunk`.
-Compatibility: owed 0.14 and older refuse the new `refresh` entry with code
-`version`; upgrade CLI, extension and drivers together and restart pi. Ledgers
-without it retain their 0.14 replay (apart from the actionable missing-key text).
+parent once per invariant/key and does not halt writers for this debt. Its
+`inv:<id>` notice carries `invariantRed: {obligation, key}`, separate from drift;
+pi delivery revalidates that the current trunk item on that key is still red.
+Before refresh, status says `inv:<id> not measured on trunk yet — owed attest --trunk`.
+Compatibility: owed 0.14 refuses the new `refresh` entry and unknown obs
+`execution` field with code `version`; upgrade CLI, extension and drivers
+together and restart pi. Historical ledgers without the new fields retain their
+0.14 replay (apart from the actionable missing-key text).
 
 When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. If the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. The driver halts needing the parent before a writer repair. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for its bisect/escape proposal, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq>` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. `why` shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
 
