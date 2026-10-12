@@ -5,12 +5,13 @@
 import { spawn } from 'node:child_process';
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync } from 'node:fs';
 import { hostname } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
+import { answeredQuestion } from './drive.ts';
 import { Dsa } from './dsa.ts';
 import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
@@ -330,6 +331,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
   const check: WakeCheck = {
     ...(drift ? { drift: true as const, ...(typeof j.facts === 'number' ? { facts: j.facts } : {}) } : {}),
     ...(node !== undefined && typeof j.facts === 'number' ? { node, facts: j.facts } : {}),
+    ...(j.answerRetry === true ? { answerRetry: true as const } : {}),
     ...(j.do === 'notify' && typeof j.rid === 'string' && typeof j.qid === 'string' && typeof j.rev === 'number' ? { rid: j.rid, qid: j.qid, rev: j.rev } : {}),
   };
   const checked = { ...(check.node !== undefined || check.qid !== undefined || check.drift ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
@@ -344,7 +346,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
  * (the ledger trunk seq), and `rid`/`qid`/`rev` (an asking notify's first open question). Terminal lines and other lines
  * without a fact mark or question carry none and are never dropped.
  */
-export interface WakeCheck { node?: string; facts?: number; drift?: true; rid?: string; qid?: string; rev?: number }
+export interface WakeCheck { node?: string; facts?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
 export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
 /**
@@ -378,6 +380,9 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
         if (s?.nodes[c.node] && factMark(s, c.node) > c.facts) return false;
       }
       if (c.rid !== undefined && c.qid !== undefined) {
+        state ??= stateOf(o.cwd).catch(() => undefined);
+        const s = await state;
+        if (!c.answerRetry && s && answeredQuestion(s, c.rid, c.qid, c.rev)) return false;
         const rid = c.rid;
         if (!views.has(rid)) { client ??= dsa(); const d = client; views.set(rid, d.describe(rid).then(v => (v.questions ?? []).map(q => ({ qid: q.qid, rev: q.rev })), () => undefined)); }
         const open = await views.get(rid)!;
@@ -389,7 +394,7 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
 }
 
 export interface FollowerOptions {
-  log: string; repo: string; pid: number; start?: string;
+  log: string; repo: string; pid: number; start?: string; since?: string;
   /** Byte offset to start at; default the log's size now (no replay). */
   from?: number;
   /** `step` awaits delivery acknowledgments; `tick` is the synchronous CLI path. */
@@ -424,6 +429,28 @@ export const resolvedText = (n: number): string => `(${n} wake(s) resolved befor
  */
 /** The record of the last wake taken for one reportKey (E3.1); `resolved`: that wake was dropped at delivery (H1.1b). */
 type Rec = { base: string; facts: number; n: number; resolved?: boolean };
+/** QN3: the plain decision and one command; complete original text stays in Details. */
+function plainNeed(j: Record<string, unknown>, text: string): string | undefined {
+  if (typeof j.node !== 'string') return undefined;
+  const node = oneLine(j.node), source = String(j.text ?? j.detail ?? text);
+  const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
+  const chosen = retry ?? source.match(/(?:answer: |(?:with|or):? )(owed [^;\n`]+?)(?= \| |;|\n|`|$)/)?.[1]?.trim();
+  const command = chosen && !chosen.includes('\n') ? chosen : `owed why ${node}`;
+  let reason: string;
+  if (j.answerRetry) reason = 'recorded answer still needs delivery';
+  else if (j.qid) reason = `decide ${source.match(/asks \(qid [^)]*\): (.*?) —/)?.[1] ?? 'the run’s open question'}`;
+  else if (source.includes(': reported (')) reason = 'review the reported findings';
+  else if (source.includes('needs the owner')) reason = source.includes('flaky') ? 'decide whether to accept the conflicting measurement'
+    : source.includes('review') ? 'resolve the rejected or required owner review' : 'decide the outstanding owner obligation';
+  else if (/\b(?:writer|reviewer) run\b|cannot re-(?:send|launch)|\bdsa rejected\b/.test(source)) reason = 'resolve the run failure';
+  else reason = oneLine(source).split(/;|\n/)[0]!.replace(/^.*?: (?:halted — )?/, '')
+    .replace(/#[0-9]+/g, '').replace(/\(to:[^)]*\)/g, '').replace(/\(repeat .*?\)/g, '')
+    .replace(/\b(?:rid|qid|key|lease|seq)\s+\S+/g, '').trim() || 'resolve the blocked work';
+  return `Needs you: ${node} — ${reason} → ${command}`;
+}
+type DriverIdentity = { pid: number; start?: string; at?: string };
+type PendingLine = { text: string; wake: boolean; repeatOf?: string; key?: string; rec?: Rec; check?: WakeCheck; halt?: true; json?: Record<string, unknown>; terminal?: { driver: DriverIdentity; event: string }; earlier?: boolean };
+
 export class Follower {
   private readonly o: FollowerOptions;
   private offset: number;
@@ -431,7 +458,8 @@ export class Follower {
   private file?: { dev: number; ino: number };
   private timer?: NodeJS.Timeout;
   /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed or held delivery. */
-  private pending: { text: string; wake: boolean; repeatOf?: string; key?: string; rec?: Rec; check?: WakeCheck; halt?: true }[] = [];
+  private pending: PendingLine[] = [];
+  private inProgress = 0;
   /** reportKey → the last wake taken for delivery (text without the repeat suffix, fact mark) and its repeats since (E3.1). */
   private readonly last = new Map<string, Rec>();
   /** A terminal line (or the pid-gone notice) is pending: stop once it is delivered. */
@@ -446,6 +474,10 @@ export class Follower {
     this.offset = o.from ?? size;
   }
   get pid(): number { return this.o.pid; }
+  /** A new driver of the same log keeps held lines and ride-alongs from its predecessor. */
+  reconnect(o: { pid: number; start?: string; since?: string }): this {
+    Object.assign(this.o, o); this.ended = false; this.last.clear(); return this;
+  }
   /** The follower runs with the pi hooks (H1.1): the timer calls `step`. */
   private get live(): boolean { return this.o.busy !== undefined || this.o.revalidate !== undefined; }
   start(): this {
@@ -482,12 +514,15 @@ export class Follower {
     // Liveness first: a driver found gone has written everything it ever will before the read below.
     const alive = pidAlive(this.o.pid, this.o.start), seen = new Set<string>();
     for (const line of this.read()) {
-      const c = classifyLine(line);
+      const c = classifyLine(line), json = parseObject(line);
+      if (typeof json?.inProgress === 'number') this.inProgress = json.inProgress;
+      if (typeof (json?.counts as { open?: number } | undefined)?.open === 'number') this.inProgress = (json!.counts as { open: number }).open;
       if (c.clears !== undefined) { this.last.delete(c.clears); this.pending = this.pending.filter(p => p.repeatOf !== c.clears); }
       if (c.kind === 'quiet') continue;
-      if (c.kind === 'merge') { this.pending.push({ text: c.text, wake: false }); continue; }
-      if (seen.has(c.text)) continue;
-      seen.add(c.text);
+      if (c.kind === 'merge') { this.pending.push({ text: c.text, wake: false, ...(json ? { json } : {}) }); continue; }
+      const seenKey = c.kind === 'terminal' ? `${c.text}\u0000${JSON.stringify(json?.driver ?? { pid: this.o.pid, start: this.o.start })}` : c.text;
+      if (seen.has(seenKey)) continue;
+      seen.add(seenKey);
       if (c.fact) {
         const f = c.fact, prior = this.last.get(f.key);
         if (prior && prior.base === f.base && f.facts <= prior.facts) {
@@ -501,18 +536,46 @@ export class Follower {
         }
         this.last.set(f.key, { base: f.base, facts: f.facts, n: 0 });
       }
-      this.pending.push({ text: c.text, wake: true, ...(c.fact ? { key: c.fact.key, rec: this.last.get(c.fact.key)! } : {}), ...(c.check ? { check: c.check } : {}), ...(c.halt ? { halt: c.halt } : {}) });
+      this.pending.push({ text: c.text, wake: true, ...(json ? { json } : {}), ...(c.kind === 'terminal' ? { terminal: { driver: json?.driver as DriverIdentity ?? { pid: this.o.pid, start: this.o.start, at: this.o.since }, event: c.text } } : {}), ...(c.fact ? { key: c.fact.key, rec: this.last.get(c.fact.key)! } : {}), ...(c.check ? { check: c.check } : {}), ...(c.halt ? { halt: c.halt } : {}) });
       if (c.kind === 'terminal') this.ended = true;
     }
-    if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true }); }
+    if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true, terminal: { driver: { pid: this.o.pid, start: this.o.start, at: this.o.since }, event: 'ended without an exit record' } }); }
   }
-  private message(lines: readonly { text: string; wake?: boolean; halt?: true }[], resolved = 0): string {
-    return [`owed drive (${this.o.repo}):`, ...lines.map(p => p.text), ...(lines.some(p => p.wake && p.halt) ? [haltHintText] : []), 'Next: owed status / owed why <node>', ...(resolved ? [resolvedText(resolved)] : [])].join('\n');
+  /** QN2: recheck ownership at delivery, including terminal lines held while pi was busy. */
+  private terminals(): void {
+    let held: LockState;
+    try { held = readLock(dirname(dirname(this.o.log))); } catch { return; }
+    if (held.state !== 'live' && held.state !== 'foreign') return;
+    const owner = held.owner;
+    for (const p of this.pending) {
+      const old = p.terminal?.driver;
+      if (!old || (old.pid === owner.pid && (old.start === undefined || owner.start === undefined || old.start === owner.start))) continue;
+      if (old.at && Date.parse(owner.at) <= Date.parse(old.at)) continue;
+      p.wake = false; p.earlier = true;
+      p.text = `earlier driver (pid ${old.pid}, started ${old.at ?? old.start ?? 'unknown'}) ${p.terminal!.event}; driver pid ${owner.pid} (started ${owner.at}) is running`;
+    }
+    this.ended = this.pending.some(p => p.wake && p.terminal);
+    if (this.pending.some(p => p.earlier)) Object.assign(this.o, { pid: owner.pid, start: owner.start, since: owner.at });
+  }
+  private message(lines: readonly PendingLine[], resolved = 0): string {
+    const needs = new Map<string, string>(), done: string[] = [];
+    for (const p of lines) {
+      if (p.json?.do === 'merge' && p.json.outcome === 'merged' && typeof p.json.node === 'string') done.push(p.json.node);
+      if (p.wake && p.json) { const need = plainNeed(p.json, p.text); if (need) needs.set(String(p.json.node), need); }
+    }
+    const terminal = lines.findLast(p => p.wake && p.terminal);
+    const reason = terminal?.json?.event === 'exit' ? String(terminal.json.error ?? terminal.json.reason ?? 'exited') : terminal?.terminal?.event;
+    const status = terminal ? `Driver stopped: ${oneLine(reason!)}` : `Driver continues (${this.inProgress} in progress)`;
+    return [...needs.values(), ...(done.length ? [`Done: ${[...new Set(done)].join(', ')}`] : []), status,
+      'Details:', `owed drive (${this.o.repo}):`, ...lines.map(p => p.text),
+      ...(lines.some(p => p.wake && p.halt) ? [haltHintText] : []), ...(resolved ? [resolvedText(resolved)] : []),
+      'Next: owed status / owed why <node>'].join('\n');
   }
   /** One poll without the pi hooks (CLI-era behavior, D17.7); returns the message delivered, if any. */
   tick(): string | undefined {
     if (this.stopped) return undefined;
     this.collect();
+    this.terminals();
     if (!this.pending.some(p => p.wake)) return undefined;
     const message = this.message(this.pending);
     try { this.o.deliver(message); } catch { return undefined; }   // kept: retried next tick
@@ -534,6 +597,7 @@ export class Follower {
   private async stepOnce(): Promise<string | undefined> {
     if (this.stopped) return undefined;
     this.collect();
+    this.terminals();
     if (this.o.busy?.() || !this.pending.some(p => p.wake)) return undefined;
     const batch = this.pending.slice(), wakes = batch.filter(p => p.wake && p.check);
     let keep: boolean[] = wakes.map(() => true);
@@ -547,6 +611,7 @@ export class Follower {
     const resolvedKeys = new Set<string>();
     for (const p of dropped) if (p.key !== undefined && p.rec && this.last.get(p.key) === p.rec) { p.rec.resolved = true; resolvedKeys.add(p.key); }
     const left = batch.filter(p => !dropped.has(p) && !(p.repeatOf !== undefined && resolvedKeys.has(p.repeatOf)));
+    this.terminals();
     if (!left.some(p => p.wake)) { this.pending = [...left, ...rest]; return undefined; }
     const message = this.message(left, dropped.size);
     try { await this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick
@@ -571,8 +636,9 @@ export class DriveWatch {
   private readonly hooks?: WatchHooks;
   constructor(deliver: (content: string) => void, intervalMs?: number, hooks?: WatchHooks) { this.deliver = deliver; this.intervalMs = intervalMs; if (hooks) this.hooks = hooks; }
   get size(): number { return this.followers.size; }
-  follow(o: { log: string; repo: string; pid: number; start?: string; from?: number }): Follower {
-    this.followers.get(o.log)?.stop();
+  follow(o: { log: string; repo: string; pid: number; start?: string; since?: string; from?: number }): Follower {
+    const previous = this.followers.get(o.log);
+    if (previous && !previous.stopped) return previous.reconnect(o);
     const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo) } : {};
     const f: Follower = new Follower({ ...o, deliver: this.deliver, ...hooks, ...(this.intervalMs !== undefined ? { intervalMs: this.intervalMs } : {}), onStop: () => { if (this.followers.get(o.log) === f) this.followers.delete(o.log); } });
     this.followers.set(o.log, f);
@@ -586,7 +652,7 @@ export class DriveWatch {
     const log = logPath(dir), have = this.followers.get(log);
     if (have && have.pid === lock.owner.pid) return have;
     const repo = await git.mainRoot(cwd).catch(() => cwd);
-    return this.follow({ log, repo, pid: lock.owner.pid, ...(lock.owner.start ? { start: lock.owner.start } : {}) });
+    return this.follow({ log, repo, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}) });
   }
   /** One step of every follower now (agent_settled, H1.1a); the messages delivered. */
   async flush(): Promise<string[]> {

@@ -575,11 +575,33 @@ dsa call, start still works but prints `note: started from inside a dsa call; if
 that call's processes are contained, the driver may end with it — prefer
 starting it from a top-level session or systemd-run --user`.
 
+Notices start with `Needs you: <node> — <decision> → <one command>`, then
+`Done: <merged nodes>` when any, and `Driver continues (<n> in progress)` or
+`Driver stopped: <reason>`. Full original log text, run ids, seqs, repeat counts,
+commands and the halt hint stay under `Details:`; `Next: owed status / owed why
+<node>` stays last. Action log `inProgress` counts open slots.
+
+An answer recorded with `owed answer` suppresses the question in both the driver
+and pi delivery, even while the run remains `asking` in the model queue. The
+quiet log says `<node>: answered #<seq>, waiting for the run to resume` (runtime
+outcome `answered`). If that question remains open after `drive.answer_grace_s`
+(non-negative seconds, default 900, 0 = immediately), one reminder per rid/qid
+in that driver run gives the exact answer retry command. Its `answerRetry: true`
+log flag keeps this reminder deliverable while the answered question stays open.
+The field changes no obligation key; plans omitting it replay as before, and
+older plan parsers reject it as an unknown drive key. No new ledger entry is added.
+
+Each JSON loop log line carries `driver: {pid, start?, at}`. A terminal line
+from an earlier driver is checked against the current repository owner at delivery:
+when a newer driver runs, it rides along with the next message as `earlier driver
+(pid P, started T) <event>; driver pid Q (started U) is running`. Current-owner
+terminal lines, and those with no live owner, still wake normally.
+
 In pi a wake is never handed to the session while its agent is running: the
 follower holds it until the agent settles, then drops what was resolved
 meanwhile (a question no longer open in dsa, a node line whose node gained
-ledger entries) and delivers the rest, ending with `(<n> wake(s) resolved before
-delivery)`; if nothing is left the session is not woken. With `--stay`
+ledger entries) and delivers the rest, with `(<n> wake(s) resolved before
+delivery)` in Details; if nothing is left the session is not woken. With `--stay`
 (`owed_drive` `stay: true`) an idle driver does not exit: it wakes the session
 once (`idle: nothing open and nothing ready; staying until the ledger changes
 (owed drive --stop ends it)`), keeps the lock and resumes when the ledger
