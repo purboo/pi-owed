@@ -611,6 +611,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   if (reportResume?.expect === 'report' && resumeLine(s, id, writer.rid) && wSealed && wStatus === 'ok') return send(writer, 'follow-up', 'report', REPORT_MESSAGE);
   const report = reportRequest(s, id);
   if (report && wSealed && wStatus === 'ok') return { do: 'notify', node: id, rid: writer.rid, reportedResume: report.resume, once: `report\u0000${id}\u0000${report.resume}`, text: `${id}: reported (resume #${report.resume})\n${reportTail(w.result ?? '')}` };
+  // FL3 (review #1273): the report generation owns this slot until it finishes, even when the old candidate
+  // is accepted. Questions above and sealed failure routes below stay live; a new submit/parent act ends reportRequest.
+  if (report && !wSealed) return undefined;
   // F5: an explicit writer ruling takes priority over the generic resubmit/repair route.
   // Reviewers of the invalidated candidate are obsolete; delivery never acknowledges the ruling.
   if (writerRule) {

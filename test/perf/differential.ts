@@ -72,7 +72,8 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
         delete card.waiting;
         const text = v.renderReceipt(card), lines = text.split('\n');
         const at = lines.findIndex(l => !l.startsWith('Exec:') && !l.startsWith('Drive:') && !l.startsWith('↻') && !l.startsWith('⏸') && lines.indexOf(l) > 0);
-        lines.splice(at < 0 ? 1 : at,0,`⏳ ${curViews.waitingLine(w)}; the driver acts again when ${w.after} merges or after another resume`);
+        const nodes = [...new Set([...(w.deps ?? []), ...(w.after ? w.after.split(', ') : [])])];
+        lines.splice(at < 0 ? 1 : at,0,`⏳ ${curViews.waitingLine(w)}; the driver acts again when ${nodes.join(', ')} ${nodes.length > 1 ? 'merge' : 'merges'} or after another resume`);
         return lines.join('\n');
       }
       return v.renderReceipt(card);
