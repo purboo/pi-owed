@@ -14,7 +14,7 @@ export function countNote(counts: Counts | undefined, minTests: number | undefin
   const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
   return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
 }
-export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; signal?: AbortSignal; onProgress?(msg: string): void }
+export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void }
 function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
   for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
@@ -152,13 +152,18 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
       p.stdout.on('data', collect); p.stderr.on('data', collect);
-      const kill = () => { if (p.pid) { try { process.kill(-p.pid, 'SIGKILL'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
-      const abort = () => { error = 'aborted'; kill(); };
+      let escalation: NodeJS.Timeout | undefined;
+      const kill = (sig: NodeJS.Signals = 'SIGKILL') => { if (p.pid) { try { process.kill(-p.pid, sig); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
+      const abort = () => {
+        error = 'aborted';
+        if (ctx.abortGraceMs) { kill('SIGTERM'); escalation = setTimeout(() => kill(), ctx.abortGraceMs); }
+        else kill();
+      };
       const timer = setTimeout(() => { error = `timeout after ${timeout}s`; kill(); }, timeout * 1000);
       ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
       p.on('error', e => { error = e.message; spawnError = true; });
       p.on('close', (code, signal) => {
-        clearTimeout(timer); ctx.signal?.removeEventListener('abort', abort); kill();
+        clearTimeout(timer); clearTimeout(escalation); ctx.signal?.removeEventListener('abort', abort); kill();
         resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(spawnError ? { spawn: true } : {}) });
       });
     });
