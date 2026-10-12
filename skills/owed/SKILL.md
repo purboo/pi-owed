@@ -21,7 +21,7 @@ Every `owed_*` tool takes an optional `cwd`: the absolute path of a directory in
 
 Start with `owed_brief` (CLI `owed brief [--since seq|ISO]`): outcome and Needs you first, then owner audit acts, merges since `since`, rejected or blocked nodes and how to clear them, work in progress with its age, and totals.
 
-Default `owed status` / `owed_status` shows outcome, parent/owner next actions, progress and current debt; use `owed status --full` / `owed_status {full:true}` for all evidence and historical audit lines (JSON retains existing fields).
+Default `owed status` / `owed_status` shows outcome, parent/owner next actions, progress and current debt; use `owed status --full` / `owed_status {full:true}` for all evidence and historical audit lines (JSON retains existing fields). Status and brief share current merge diagnostics; a defer stays in Debt only while it still applies to the current merge invariant key.
 After an upgrade, the pi restart hint appears once per session per installed version; full status and mismatch refusals retain it.
 
 For measured workflow outcomes, use `owed report --metrics [--since seq|ISO] [--until seq|ISO] [--json]` (0.15): merged nodes, interruptions/merge, decision vs no-decision halts, merge timing, first-pass acceptance and repairs/merge, computed only from the ledger and plan blobs; since is exclusive, until inclusive.

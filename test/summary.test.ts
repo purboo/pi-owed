@@ -7,11 +7,14 @@ import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
 import * as ops from '../src/ops.ts';
+import * as git from '../src/git.ts';
+import { Ledger } from '../src/ledger.ts';
+import { parsePlan } from '../src/plan.ts';
 import { reduce } from '../src/reducer.ts';
 import { briefView, renderBrief, renderStatus, statusView } from '../src/views.ts';
 import type { Entry, ItemView, NodeState, Plan } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
-import { cli } from './helpers/surface.ts';
+import { cli, commitAt } from './helpers/surface.ts';
 
 const now = Date.UTC(2026, 0, 1, 0, 5);
 const parent = { role:'parent' as const, id:'pi' };
@@ -163,4 +166,77 @@ test('SQ4 version hints occur once per session and installed version; full and m
       }
     } finally { for (const session of sessions) await session.shutdown(); await mod.toolWorker().worker?.terminate(); }
   } finally { await rm(copy,{recursive:true,force:true}); await r.cleanup(); }
+});
+
+test('SQ repair #1517.1 status and brief share a reused trunk-red merge diagnosis', async () => {
+  const r=await repo();
+  try {
+    const run=`if grep -q broken flag; then echo 'owed-counts {"pass":0,"fail":1,"failed":["old bug"]}'; exit 1; else echo '# tests 1'; echo '# pass 1'; fi`;
+    await commitAt(r.cwd,{flag:'clean',impl:'base'});
+    await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify({version:1,trunk:'main',lease:false,closure:[],invariants:[],nodes:[{id:'a',writes:['impl'],checks:[{id:'runtime',run,reads:['flag','impl'],min_tests:1}]}]})});
+    const a=await ops.dispatch({cwd:r.cwd,node:'a',as:parent});
+    await commitAt(a.worktree,{impl:'candidate'});
+    await ops.submit({cwd:a.worktree,node:'a',as:{role:'writer',id:'a#1'}});
+    assert.equal((await ops.attest({cwd:r.cwd,node:'a'})).accepted,true);
+    await commitAt(r.cwd,{flag:'broken'});
+    await ops.adopt({cwd:r.cwd,as:owner,channel:'delegated',note:'fixture trunk change'});
+    await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}),/^OwedError: trunk-red:/);
+    // Moving outside reads clears the old block while retaining the merge failure key.
+    await commitAt(r.cwd,{unrelated:'outside reads'});
+    await ops.adopt({cwd:r.cwd,as:owner,channel:'delegated',note:'unrelated trunk move'});
+    assert.equal((await ops.attest({cwd:r.cwd,node:'a'})).accepted,true);
+    await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}),/^OwedError: trunk-red:/);
+    const ledger=await Ledger.open(r.cwd), before=await ledger.read();
+    const status=await ops.status({cwd:r.cwd}), brief=await ops.brief({cwd:r.cwd});
+    assert.equal(status.nodes.a!.accepted,true);
+    assert.equal(status.summary!.needs.length,1);
+    assert.match(status.summary!.needs[0]!.reason,/trunk-red:/);
+    assert.deepEqual(brief.summary!.needs,status.summary!.needs);
+    const prefix=(text:string)=>text.split('\n').slice(0,3).join('\n');
+    assert.equal(prefix(renderBrief(brief)),prefix(renderStatus(status)));
+    assert.deepEqual(await ledger.read(),before,'summary queries record no acceptance evidence');
+  } finally { await r.cleanup(); }
+});
+
+test('SQ repair #1517.2 A defer becomes history after B fixes the current merge invariant key', async () => {
+  const r=await repo();
+  try {
+    const plan={version:1,trunk:'main',lease:false,closure:[],invariants:[{id:'health',run:'test ! -e bad.txt || test -e fix.txt',reads:['bad.txt','fix.txt']}],nodes:[{id:'a',writes:['bad.txt'],checks:[]},{id:'b',writes:['fix.txt'],checks:[]}]};
+    await r.commit();
+    await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify(plan)});
+    const a=await ops.dispatch({cwd:r.cwd,node:'a',as:parent});
+    await commitAt(a.worktree,{'bad.txt':'broken'});
+    await ops.submit({cwd:a.worktree,node:'a',as:{role:'writer',id:'a#1'}});
+    assert.equal((await ops.attest({cwd:r.cwd,node:'a'})).accepted,true);
+    await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}),/invariant health new debt/);
+    const deferral=await cli(r.cwd,['defer','a','health','--reason','repair later','--i-am-owner']);
+    assert.equal(deferral.code,0,deferral.stderr);
+    const ledger=await Ledger.open(r.cwd), deferred=(await ledger.read()).findLast(e=>e.kind==='defer')!;
+    assert.equal(deferred.kind,'defer');
+    assert.match(renderStatus(await ops.status({cwd:r.cwd})),/a\/inv:health: owner defer/);
+    assert.ok((await ops.brief({cwd:r.cwd})).summary!.debt.includes('a/inv:health: owner defer'));
+    const b=await ops.dispatch({cwd:r.cwd,node:'b',as:parent});
+    await commitAt(b.worktree,{'fix.txt':'fixed'});
+    await ops.submit({cwd:b.worktree,node:'b',as:{role:'writer',id:'b#1'}});
+    assert.equal((await ops.attest({cwd:r.cwd,node:'b'})).accepted,true);
+    await ops.merge({cwd:r.cwd,node:'b',as:parent});
+    const status=await ops.status({cwd:r.cwd});
+    assert.equal(status.nodes.a!.slot!.open,true);
+    const built=await git.buildMerge(r.cwd,status.trunk.commit,status.nodes.a!.candidate!.commit,'owed merge a');
+    assert.ok(!('conflicts' in built));
+    const facts=await git.stateFacts(r.cwd,parsePlan(JSON.stringify(plan)),built.commit);
+    assert.notEqual(facts.invKeys.health,deferred.kind==='defer' ? deferred.items[0]!.key : undefined);
+    assert.doesNotMatch(renderStatus(status),/a\/inv:health: owner defer/);
+    assert.ok(!(await ops.brief({cwd:r.cwd})).summary!.debt.includes('a/inv:health: owner defer'));
+    assert.match(renderStatus(status,{full:true}),new RegExp(`#${deferred.seq} defer`),'full retains the owner audit history');
+    assert.ok((await ledger.read()).some(e=>e.seq===deferred.seq),'the historical deferral remains in the ledger');
+    await r.put('removed-plan.json',JSON.stringify({...plan,nodes:plan.nodes.filter(n=>n.id!=='a')}));
+    const removed=await cli(r.cwd,['plan','removed-plan.json','--i-am-owner','--note','retire the still-open candidate']);
+    assert.equal(removed.code,0,removed.stderr);
+    const retired=await ops.status({cwd:r.cwd});
+    assert.equal(retired.nodes.a!.phase,'removed');
+    assert.equal(retired.nodes.a!.slot!.open,true);
+    assert.doesNotMatch(renderStatus(retired),/a\/inv:health: owner defer/);
+    assert.ok(!(await ops.brief({cwd:r.cwd})).summary!.debt.includes('a/inv:health: owner defer'));
+  } finally { await r.cleanup(); }
 });

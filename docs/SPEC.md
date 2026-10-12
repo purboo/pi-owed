@@ -1945,7 +1945,11 @@ while genesis items lack observations.
   hold or the current plan, clamped at zero. Ready/later nodes are not progress.
   `Debt:` appears only when there are trunk-red invariants, active known-red
   entries (test, fix node and plan sequence), current owner defers or waivers
-  of open nodes. Empty sections are omitted. The last line is
+  of open nodes. Status and brief share current merge diagnostics, including
+  reused trunk-red failures. A defer is current only when the current merge
+  guard still honours its invariant key and evidence; an open slot alone does
+  not keep a stale defer in Debt. Historical owner audit remains in full status.
+  Empty sections are omitted. The last line is
   `Details: owed status --full · owed why <node>`.
   `status --full` (pi `full: true`) preserves exactly the 0.14 renderer plus
   IR/KR lines; historical flag/delegated confirmation, superseded and carried
