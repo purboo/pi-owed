@@ -14,7 +14,7 @@ export interface DsaEvent {
   id: string; cursor: string; ts?: number; type: string; wid?: string; request?: string; labels?: Record<string, string>;
   key?: string; gen?: number; call?: string; [field: string]: unknown;
 }
-export type SendKind = 'follow-up' | 'steer' | 'answer' | 'model';
+export type SendKind = 'follow-up' | 'steer' | 'notify' | 'answer' | 'model';
 
 export type Rejected = { outcome: 'rejected'; reason: string; spec_digest?: string };
 export type Conflict = { outcome: 'conflict'; spec_digest?: string; state?: string; wid?: string };
@@ -342,6 +342,7 @@ export function toRunView(rid: string, d: Json): RunView {
   const error = typeof d.error === 'string' ? d.error : calls.map(c => c.error).find((e): e is string => typeof e === 'string');
   const questions = Array.isArray(d.questions) ? (d.questions as Json[]).map(q => ({ qid: str(q.qid), rev: Number(q.rev), question: str(q.text ?? q.question), ...(typeof q.to === 'string' ? { to: q.to } : {}) })) : undefined;
   const f = d.lastFence as Json | undefined;
-  return { ...base, state, ...(status ? { status } : {}), ...(error ? { error } : {}), ...(questions?.length ? { questions } : {}),
+  const result = typeof d.result === 'string' ? d.result : calls.map(c => c.result ?? c.output).filter((v): v is string => typeof v === 'string').join('\n');
+  return { ...base, state, ...(result ? { result } : {}), ...(status ? { status } : {}), ...(error ? { error } : {}), ...(questions?.length ? { questions } : {}),
     ...(f && typeof f === 'object' ? { lastFence: { reason: str(f.reason), at: Number(f.at), ...(typeof f.exec === 'string' ? { exec: f.exec } : {}) } } : {}) };
 }

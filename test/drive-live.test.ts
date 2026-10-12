@@ -28,7 +28,8 @@ const NEW = bg as unknown as {
   revalidator(o: { cwd: string; dsa?: Dsa }): (checks: readonly unknown[]) => Promise<boolean[]>;
   Follower: new (o: Json) => { tick(): string | undefined; step(): Promise<string | undefined>; stop(): void; stopped: boolean };
 };
-const IDLE_WAIT = 'idle: nothing open and nothing ready; staying until the ledger changes (owed drive --stop ends it)';
+const LEGACY_IDLE_WAIT = 'idle: nothing open and nothing ready; staying until the ledger changes (owed drive --stop ends it)';
+const IDLE_WAIT = 'idle: 0 ready, 0 open, 0 waiting, 0 reported, 0 later; staying until the ledger changes (owed drive --stop ends it)';
 const sleepMs = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function until(fn: () => boolean | Promise<boolean>, ms: number, what: string): Promise<void> {
   const end = Date.now() + ms;
@@ -186,7 +187,7 @@ test('H1.1b/c revalidation: a fact-advanced halt is dropped; an open question, d
     state.busy = false;
     const m = await fo.step();
     assert.deepEqual(m?.split('\n'), ['owed drive (/r):', 'merge m: merged — trunk 1', 'q: writer run rid-q asks (qid q1-1, rev 1): which port?', 'trunk main moved outside owed',
-      'halt h attempt 1 (needs human): halted — older driver, no mark', IDLE_WAIT, bg.haltHintText, 'Next: owed status / owed why <node>', '(1 wake(s) resolved before delivery)']);
+      'halt h attempt 1 (needs human): halted — older driver, no mark', LEGACY_IDLE_WAIT, bg.haltHintText, 'Next: owed status / owed why <node>', '(1 wake(s) resolved before delivery)']);
     assert.equal(got.length, 1);
     // Only dropped lines left: nothing is delivered; a merge read with them rides along with the next message.
     line({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail: 'stale again', facts: mark });
@@ -278,7 +279,7 @@ test('H1.1d CLI-era follower (no pi hooks): no hold, no revalidation; tick deliv
     appendFileSync(log, `${JSON.stringify(askLine('a', 'rid-x', { qid: 'gone', rev: 1 }, 'a asks', 0))}\n`);
     assert.match(fo.tick() ?? '', /\na asks\nNext: owed status \/ owed why <node>$/);
     assert.equal(bg.classifyLine(JSON.stringify({ event: 'idle-wait', at: 'x' })).kind, 'wake', 'idle-wait wakes, not terminal');
-    assert.equal(run.reportText({ event: 'idle-wait', at: 'x' }), IDLE_WAIT);
+    assert.equal(run.reportText({ event: 'idle-wait', at: 'x' }), LEGACY_IDLE_WAIT);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

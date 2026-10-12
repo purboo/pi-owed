@@ -29,18 +29,54 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   out.allowanceSeq = r.allowanceSeq(s); out.projectId = attempt(() => r.projectId(s));
   out.adoptGuard = attempt(() => r.adoptGuard(s, { commit: 'adopted', tree: 'adopted-tree', invKeys: { ...s.trunk.invKeys } }));
   out.planAt = attempt(() => r.planAt(s, s.seq + 1)); out.entries = r.entriesOf(s).length;
-  out.status = attempt(() => v.renderStatus(v.statusView(s, prefix)));
-  out.brief = attempt(() => v.renderBrief(v.briefView(s, prefix, -1, Date.UTC(2027, 0, 1))));
+  // FL1/FL4 intentionally change waiting presentation, not historical acceptance state/keys.
+  // Adapt only the frozen view's waiting fields; all other queries and text still compare exactly.
+  const wait = (id: string): cur.Waiting | undefined => {
+    const old = r.waitingFor(s,id), spec = s.plan.nodes.find(n => n.id === id);
+    const deps = s.nodes[id]?.slot?.open && spec ? spec.deps.filter(d => !s.nodes[d]?.merged) : [];
+    return deps.length ? { after:old?.after ?? '', resume:old?.resume ?? r.resumeOf(s,id)?.seq ?? -1, deps } : old;
+  };
+  out.status = attempt(() => {
+    const status = v.statusView(s,prefix);
+    if (m === BASE) {
+      const waiting = ids.flatMap(node => { const w = wait(node); return w ? [{node,...w}] : []; });
+      if (waiting.length) status.waiting = waiting;
+      status.pending['parent+writer'] = status.pending['parent+writer']!.filter(i => i.obligation !== 'submit' || !wait(i.subject));
+    }
+    let text = v.renderStatus(status);
+    if (m === BASE) for (const node of ids) {
+      const w = wait(node);
+      if (w?.deps?.length) text = text.replace(`⏳ ${node}: waiting for ${w.after} (resume #${w.resume})`,`⏳ ${node}: ${curViews.waitingLine(w)}`);
+    }
+    return text;
+  });
+  out.brief = attempt(() => {
+    const brief = v.briefView(s,prefix,-1,Date.UTC(2027,0,1));
+    if (m === BASE) brief.totals.waiting = Object.values(s.nodes).filter(n => !n.merged && (wait(n.id) || n.phase === 'blocked')).length;
+    return v.renderBrief(brief);
+  });
   out.escapes = attempt(() => v.escapeSummary(s));
   for (const id of ids) {
     const n = s.nodes[id]!, q: Record<string, unknown> = {};
     q.attestJobs = attempt(() => r.attestJobs(s, id).map(j => [j, r.jobCurrent(s, j)]));
-    q.overlapping = attempt(() => r.overlapping(s, id)); q.halted = r.halted(s, id); q.resume = r.resumeOf(s, id); q.waiting = r.waitingFor(s, id);
+    q.overlapping = attempt(() => r.overlapping(s, id)); q.halted = r.halted(s, id); q.resume = r.resumeOf(s, id); q.waiting = m === BASE ? wait(id) : r.waitingFor(s, id);
     q.nextReviewerN = r.nextReviewerN(s, id); q.reviewerBase = r.reviewerBase(s, id);
     q.observations = n.items.map(i => r.observationsOf(s, i.subject, i.obligation, i.key).map(e => e.seq));
     q.blocks = n.blocks.map(b => [r.parentRuling(s, b)?.seq, r.awaitingRuling(s, b)]);
     if (n.candidate) q.mergeGuard = attempt(() => r.mergeGuard(s, id, { facts: { ...n.candidate!, base: s.trunk.commit }, state: { commit: n.candidate!.commit, tree: n.candidate!.tree, invKeys: { ...s.trunk.invKeys } } }));
-    q.receipt = attempt(() => v.renderReceipt(v.receipt(s, prefix, id)));
+    q.receipt = attempt(() => {
+      const card = v.receipt(s,prefix,id);
+      if (m === BASE && wait(id)) {
+        const w = wait(id)!;
+        // The new line is the FL1 contract; the rest remains the historical renderer.
+        delete card.waiting;
+        const text = v.renderReceipt(card), lines = text.split('\n');
+        const at = lines.findIndex(l => !l.startsWith('Exec:') && !l.startsWith('Drive:') && !l.startsWith('↻') && !l.startsWith('⏸') && lines.indexOf(l) > 0);
+        lines.splice(at < 0 ? 1 : at,0,`⏳ ${curViews.waitingLine(w)}; the driver acts again when ${w.after} merges or after another resume`);
+        return lines.join('\n');
+      }
+      return v.renderReceipt(card);
+    });
     q.owner = attempt(() => v.ownerCommands(s, id));
     if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(s, id));
     out[`node:${id}`] = q;

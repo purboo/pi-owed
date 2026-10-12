@@ -2,7 +2,7 @@ import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntr
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny, driveConfig } from './plan.ts';
-import { NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor } from './reducer.ts';
+import { NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
@@ -26,7 +26,9 @@ export interface ReceiptCard {
   /** Active driver halt of the open attempt (SPEC §12). */
   halt?: HaltEntry;
   /** 0.8 (L1.2): the open attempt waits for node `after` to merge (resume entry `resume`). */
-  waiting?: { after: string; resume: number };
+  waiting?: Waiting;
+  reported?: number;
+  later?: boolean;
   /** `Exec: wrap <argv> · env <NAMES>` when the plan has an `exec` block (D20.5); env values are not shown. */
   exec?: string;
   /** K3: `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` (effective values) when the node sets `drive`. */
@@ -54,7 +56,9 @@ export interface StatusView {
   /** Nodes whose open attempt the driver halted (SPEC §12); needs owner halts also appear under Pending owner. */
   halted: HaltEntry[];
   /** 0.8 (L1.5): open attempts waiting for another node to merge; present only when there are any. */
-  waiting?: { node: string; after: string; resume: number }[];
+  waiting?: (Waiting & { node: string })[];
+  reported?: { node: string; resume: number }[];
+  later?: string[];
   /** Driver launches of each open slot's current attempt, by node. */
   launches: Record<string, LaunchEntry[]>;
   /** Active review blocks on the current candidates of open attempts that need a parent ruling and have none yet (D18, D18b.4), with the reviewer's note. */
@@ -171,6 +175,8 @@ export function receipt(s: State, entries: readonly Entry[], node: string): Rece
     downgrades: s.downgrades.filter(d => d.items.some(i => i.node === node || i.node === '*')),
     ...(halted(s, node) ? { halt: halted(s, node) } : {}),
     ...(waitingFor(s, node) ? { waiting: waitingFor(s, node) } : {}),
+    ...(reportedOf(s, node) !== undefined ? { reported: reportedOf(s, node) } : {}),
+    ...(s.plan.nodes.find(x => x.id === node)?.later ? { later: true } : {}),
     ...(s.plan.exec ? { exec: execText(s.plan) } : {}),
     ...(s.plan.nodes.find(x => x.id === node)?.drive ? { drive: driveText(s.plan, node) } : {}),
     ...(entries.some(e => e.kind === 'evidence' && e.node === node && e.merge !== undefined) ? { receipts: entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.node === node && e.merge !== undefined) } : {}),
@@ -209,7 +215,7 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
     (groups[n.phase] ??= []).push(n.id);
-    if (n.phase === 'ready' || n.phase === 'dispatched') pending['parent+writer']!.push({subject:n.id,obligation:n.phase === 'ready' ? 'dispatch' : 'submit',key:'',status:'D',mark:'⊥',discharger:n.phase === 'ready' ? 'parent' : 'writer',evidence:[],detail:n.phase === 'ready' ? 'parent can dispatch work' : 'writer must submit a candidate'});
+    if (!waitingFor(s,n.id) && reportedOf(s,n.id) === undefined && !s.plan.nodes.find(x => x.id === n.id)?.later && (n.phase === 'ready' || n.phase === 'dispatched')) pending['parent+writer']!.push({subject:n.id,obligation:n.phase === 'ready' ? 'dispatch' : 'submit',key:'',status:'D',mark:'⊥',discharger:n.phase === 'ready' ? 'parent' : 'writer',evidence:[],detail:n.phase === 'ready' ? 'parent can dispatch work' : 'writer must submit a candidate'});
   }
   for (const i of [...Object.values(s.nodes).filter(n => !n.merged && n.phase !== 'removed').flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(withBlockNotes(s, i));
   const ready = Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), overlaps: Record<string, string[]> = {};
@@ -219,9 +225,11 @@ export function statusView(s: State, entries: Entry[] = []): StatusView {
   for (const n of Object.values(s.nodes)) { const runs = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined; if (runs?.launches.length) launches[n.id] = runs.launches; }
   const all = entriesOf(s), needsRuling = Object.values(s.nodes).filter(n => n.slot?.open).flatMap(n => n.blocks.filter(b => currentNeeds(s, b) && awaitingRuling(s, b)).map(b => { const e = all.find(x => x.seq === b.seq); return { ...b, note: e?.kind === 'review' ? e.note ?? '' : '' }; }));
   const waiting = Object.keys(s.nodes).sort().flatMap(id => { const w = waitingFor(s, id); return w ? [{ node: id, ...w }] : []; });
+  const reported = Object.keys(s.nodes).sort().flatMap(node => { const resume = reportedOf(s,node); return resume === undefined ? [] : [{ node, resume }]; });
+  const later = s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).map(n => n.id);
   const superseded = supersededOf(s, Object.values(s.nodes).filter(n => !n.merged));
   const carried = Object.values(s.nodes).flatMap(n => { const c = carriedOf(n); return c ? [{ node: n.id, ...c }] : []; });
-  return { ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
+  return { ...(reported.length ? { reported } : {}), ...(later.length ? { later } : {}), ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
 }
 function genesisStatus(s: State): { genesis?: GenesisStatus } {
   const g = genesisProgress(s);
@@ -342,7 +350,7 @@ export const resumeHint = (node = '<node>'): string => `to clear it without an o
 /** How a driver halt is cleared (SPEC §12, D3), with the resume hint (0.8, L1.5). */
 const haltClear = (node: string): string => `cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, resume, a ruling naming it), or a new attempt; ${resumeHint(node)}`;
 /** 0.8 (L1.5): `waiting for <dep> (resume #<seq>)`. */
-export const waitingLine = (w: { after: string; resume: number }): string => `waiting for ${w.after} (resume #${w.resume})`;
+export const waitingLine = (w: Waiting): string => [w.deps?.length ? `waiting (deps: ${w.deps.join(', ')})` : '', w.after ? `waiting for ${w.after} (resume #${w.resume})` : ''].filter(Boolean).join('; ');
 /** D25.6 (review ruling #559): an owner halt reads `needs the owner (the main agent decides; owed lists the command)`. */
 const NEEDS_OWNER_TEXT = 'needs the owner (the main agent decides; owed lists the command)';
 const haltText = (h: HaltEntry): string => h.needs === 'owner' ? `halted by driver #${h.seq} (attempt ${h.attempt}), ${NEEDS_OWNER_TEXT}: ${oneLine(h.reason)}` : `halted by driver #${h.seq} (attempt ${h.attempt}, needs ${h.needs}): ${oneLine(h.reason)}`;
@@ -355,10 +363,10 @@ function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
 export function renderReceipt(v: ReceiptCard): string {
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${v.waiting.after} merges or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${v.waiting.after} merges or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView): string {
-  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(itemText), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -380,7 +388,7 @@ function entryLine(e: Entry): string {
     case 'adopt': return `${head} adopted trunk ${e.trunk} ${e.prior.slice(0, 12)}..${e.commit.slice(0, 12)} (${plural(e.commits, 'commit')} made outside owed, ${plural(e.changed.length, 'changed path')}): ${e.note}`;
     case 'launch': return `${head} recorded driver launch of ${e.node} attempt ${e.attempt} ${e.role} ${e.rid}`;
     case 'send': return `${head} recorded driver ${e.sendKind} (${e.reason}${e.rulings ? ` through #${e.rulings}` : ''}) to ${e.rid}: ${e.send}`;
-    case 'resume': return `${head} resumed ${e.node}${e.after !== undefined ? ` after ${e.after}` : ''}`;
+    case 'resume': return `${head} resumed ${e.node}${e.after !== undefined ? ` after ${e.after}` : ''}${e.expect ? ` (expect ${e.expect})` : ''}`;
     case 'halt': return e.needs === 'owner' ? `${head} halted ${e.node} attempt ${e.attempt}, ${NEEDS_OWNER_TEXT}: ${oneLine(e.reason)}` : `${head} halted ${e.node} attempt ${e.attempt} (needs ${e.needs}): ${oneLine(e.reason)}`;
     case 'evidence': return e.merge !== undefined ? `${head} recorded receipt ${e.node}/${e.id} (merge #${e.merge}): ${evidenceText(e)}` : `${head} recorded manual evidence ${e.node}/evidence:${e.id}: ${evidenceText(e)}`;
     case 'decoy-commit': return `${head} committed decoys ${e.digest.slice(0, 12)}`;
@@ -461,7 +469,9 @@ export interface Brief {
   allowanceDowngrades: State['downgrades'];
   /** D25.5: owner entries with channel `delegated` after `since`, in ledger order (the brief's first section, shown when there are any). */
   delegated: BriefDelegated[];
-  totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number };
+  later: string[];
+  reported: { node: string; resume: number }[];
+  totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number; later: number; reported: number };
 }
 const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
 const obligationFlag = (o: string): string => o === 'closure-review' ? ' --obligation closure-review' : '';
@@ -567,8 +577,10 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
   const adoptions = s.adoptions.filter(a => { const e = entries.find(x => x.seq === a.seq); return !!e && included(e); });
   const delegated = entries.filter(e => e.channel === 'delegated' && e.by.startsWith('owner:') && included(e)).map(delegatedAct);
   const allowanceDowngrades = s.downgrades.filter(d => { const e = entries.find(x => x.seq === d.seq); return d.allowance !== undefined && !!e && included(e); });
-  return { since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress,
-    totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: count('blocked') } };
+  const later = s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).map(n => n.id);
+  const reported = open.flatMap(n => { const resume = reportedOf(s,n.id); return resume === undefined ? [] : [{ node:n.id, resume }]; });
+  return { since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress, later, reported,
+    totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: open.filter(n => waitingFor(s,n.id) || (n.phase === 'blocked' && !later.includes(n.id))).length, later: later.length, reported: reported.length } };
 }
 /** D25.5: one delegated owner entry as kind, node, what it did and its note or reason. */
 function delegatedAct(e: Entry): BriefDelegated {
@@ -602,8 +614,10 @@ export function renderBrief(v: Brief): string {
     ...adoptionSections(v.adoptions, section, 'Adopted outside owed (owner decisions)', 'Adopted outside owed (parent adoptions under allowance)'),
     ...(v.allowanceDowngrades?.length ? section('Downgrades under allowance', v.allowanceDowngrades.flatMap(d => d.items.map(i => `#${d.seq} ${allowanceLabel(d)} ${i.node}: ${i.what}`))) : []),
     ...section('Rejected or blocked', v.rejected.map(b => `${b.node}/${b.obligation} ${b.kind === 'exec' ? `failing obs #${b.failingObs}` : `review block #${b.seq} by ${b.reviewer ?? '?'} rank ${b.rank}`}${b.state === 'flaky' ? ' (flaky: a rerun passed)' : ''} → ${b.clear}`)),
+    ...(v.later?.length ? section('Backlog (later)',v.later) : []),
+    ...(v.reported?.length ? section('Reported',v.reported.map(r => `${r.node}: reported (resume #${r.resume})`)) : []),
     ...section('In progress', v.inProgress.map(p => `${p.node} ${p.phase} (attempt ${p.attempt}): dispatched ${age(p.ageMs)} ago${p.submitAgeMs !== undefined ? `, submitted ${age(p.submitAgeMs)} ago` : ''}`)),
-    `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies`].join('\n');
+    `Total: ${v.totals.merged} merged, ${v.totals.acceptedUnmerged} accepted-unmerged, ${v.totals.blocked} blocked, ${v.totals.ready} ready, ${v.totals.waiting} waiting on dependencies${v.totals.reported || v.totals.later ? `, ${v.totals.reported} reported, ${v.totals.later} later` : ''}`].join('\n');
 }
 
 // ---------- dispatch packet ----------
