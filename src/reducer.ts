@@ -88,8 +88,8 @@ function dependentCounts(plan: Plan): Map<string, number> {
  * key (a candidate key, or a merge key equal to it) is never discounted: the waiver works there through W as before.
  */
 const waivedFail = (s: State, e: ObsEntry): boolean => e.verdict === 'fail' && e.merging !== undefined && e.merging === e.subject && listed(context(s).waives, e.subject).some(w => w.kind === 'waive' && w.node === e.subject && w.obligation === e.obligation && w.key !== e.key && w.seq > e.seq && (w.accept_risk ?? []).includes(e.seq));
-/** The observations that count for an item: all of them, less the waived merge-key fails (F3). */
-const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => observations(s, subject, obligation, key).filter(e => !waivedFail(s, e));
+/** The observations that count for an item: exclude diagnostic probes and waived merge-key fails (F3). */
+const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e));
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => counted(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
 function required(spec: NodeSpec, facts: CandidateFacts): string[] {
@@ -183,6 +183,8 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
     const waiver = listed(context(s).waives, subject).findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
     if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : waiver.channel === 'delegated' ? ' (delegated)' : ''}` };
   }
+  const trunkRed = blocks.flatMap(b => trunkRedOf(s, b.seq) ?? []);
+  if (out.status === 'D' && trunkRed.length) Object.assign(out, { discharger: 'parent', detail: trunkRed.map(r => `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}`).join('; ') });
   if (subject === 'trunk') {
     const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key);
     if (defer) Object.assign(out, { mark: '⏸', discharger: 'owner', detail: `${obligation} deferred, still debt`, evidence: [...out.evidence, defer.seq] });
@@ -196,11 +198,12 @@ function nodeItems(s: State, id: string, facts: CandidateFacts): ItemView[] {
 /**
  * N4: the nodes whose derived fields (items, accepted, phase, dependents, stale halt) entry `e` can change. Those
  * fields read only the node's own slot, candidate, blocks, writers and entries, the rulings in its scope, the plan and
- * (phase) the merged state of its deps. So a genesis, plan or merge entry touches every node, a ruling the nodes it
- * names, an observation its subject, any other entry with a node its node, and the rest none.
+ * (phase) the merged state of its deps; trunk-red diagnostics also read current trunk. So genesis, plan, merge and
+ * adopt touch every node, a ruling the nodes it names, an observation its subject, any other entry with a node its
+ * node, and the rest none.
  */
 function touched(e: Entry): Set<string> | 'all' {
-  if (e.kind === 'genesis' || e.kind === 'plan' || e.kind === 'merge') return 'all';
+  if (e.kind === 'genesis' || e.kind === 'plan' || e.kind === 'merge' || e.kind === 'adopt') return 'all';
   if (e.kind === 'rule') return e.nodes === '*' ? 'all' : new Set(e.nodes);
   if (e.kind === 'obs') return new Set([e.subject]);
   return 'node' in e ? new Set([e.node]) : new Set();
@@ -278,7 +281,7 @@ let enumCache: Record<string, Record<string, readonly unknown[]>> | undefined;
 const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCache ??= {
   send: { sendKind: SEND_KINDS, reason: SEND_REASONS },
   sweep: { verdict: ['pass', 'fail', 'error'] },
-  obs: { verdict: ['pass', 'fail', 'error'] },
+  obs: { verdict: ['pass', 'fail', 'error'], probe: ['trunk'] },
   review: { obligation: ['review', 'closure-review', 'approve'], verdict: ['ok', 'block'], needs: ['parent'] },
   launch: { role: ['writer', 'reviewer'] },
   halt: { needs: ['human', 'owner'] },
@@ -287,7 +290,7 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'note', 'runs', 'noisy', 'failed'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -388,7 +391,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       // the same invariant was not already debt (status D, e.g. deferred) on PRE = trunk.
       if (e.merging && e.verdict === 'fail' && (e.subject !== 'trunk' || item(s, 'trunk', e.obligation, s.trunk.invKeys[e.obligation.slice(4)] ?? '').status === 'E')) h.mergeCatches.add(e.seq);
       const n = s.nodes[e.subject];
-      if (n) {
+      if (n && e.probe === undefined) {
         const matches = n.blocks.filter(b => b.kind === 'exec' && underlying(h, b) === 'active' && b.obligation === e.obligation && b.key === e.key);
         if (e.attribution && e.verdict !== 'error') for (const b of matches) {
           // L2: an attribution rerun of a superseded block (recorded before 0.8, or by hand) leaves it superseded.
@@ -532,6 +535,27 @@ function supersede(s: State, h: History, seq: number, next: Plan): void {
   }
 }
 
+/** TR2/3: diagnostic only; recomputed for the current trunk and check/closure definition. */
+export function trunkRedOf(s: State, seq: number): { merge: ObsEntry; probe: ObsEntry } | undefined {
+  const e = listed(context(s).bySeq, seq).find((x): x is ObsEntry => x.kind === 'obs');
+  if (!e || e.probe !== undefined || e.verdict !== 'fail' || e.merging !== e.subject || !e.obligation.startsWith('check:') || e.base !== s.trunk.commit) return undefined;
+  const id = e.obligation.slice(6), old = obsPlan(context(s), e.seq);
+  const sameDefinition = (p: Plan | undefined): boolean => !!p && checkDefinition(p, e.subject, id) === checkDefinition(s.plan, e.subject, id) && canonical(p.closure) === canonical(s.plan.closure);
+  if (!sameDefinition(old)) return undefined;
+  const probes = observationsForProbe(s, e.subject, e.obligation).filter(p => p.commit === s.trunk.commit && sameDefinition(obsPlan(context(s), p.seq)));
+  const probe = probes.findLast(p => p.verdict !== 'error');
+  const names = e.failed ?? [], trunkNames = probe?.failed ?? [];
+  if (!probe || probe.verdict !== 'fail' || (names.length ? !names.every(n => trunkNames.includes(n)) : trunkNames.length !== 0)) return undefined;
+  return { merge: e, probe };
+}
+/** Probe lookup is separate from counted observations, even when their keys coincide. */
+function observationsForProbe(s: State, subject: string, obligation: string): ObsEntry[] {
+  return context(s).entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.probe === 'trunk' && e.subject === subject && e.obligation === obligation);
+}
+export function trunkRedText(r: { merge: ObsEntry; probe: ObsEntry }): string {
+  return `trunk-red: ${r.merge.obligation} fails on trunk ${r.probe.commit.slice(0,12)} without ${r.merge.subject} (${r.merge.failed?.join(', ') || 'unknown failed tests'})`;
+}
+
 // ---------- driver (SPEC §12) ----------
 const DRIVE_KINDS: readonly string[] = ['launch', 'send', 'halt'];
 export const DRIVER = 'parent:drive';
@@ -551,7 +575,7 @@ function clearsHalt(e: Entry, node: string): boolean {
 /** Every replayed entry of the state, in ledger order (pure; the state's replay metadata). */
 export function entriesOf(s: State): readonly Entry[] { return context(s).entries; }
 /** Executor observations of one item (subject, obligation, key), in ledger order, including `error` ones. */
-export function observationsOf(s: State, subject: string, obligation: string, key: string): ObsEntry[] { return observations(s, subject, obligation, key); }
+export function observationsOf(s: State, subject: string, obligation: string, key: string): ObsEntry[] { return observations(s, subject, obligation, key).filter(e => e.probe === undefined); }
 /** The plan in force just before entry `seq` (the latest genesis/plan entry below it), e.g. the plan a dispatch packet was built from. */
 export function planAt(s: State, seq: number): Plan {
   const law = context(s).entries.findLast(e => e.seq < seq && (e.kind === 'genesis' || e.kind === 'plan'));
@@ -866,6 +890,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (d.attribution && !target?.blocks.some(b => b.kind === 'exec' && underlying(context(s), b) === 'active' && b.key === d.key && b.obligation === d.obligation && listed(context(s).bySeq, b.seq).some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === d.commit && e.base === d.base))) errors.push('Attribution must match the original key/commit/base of an active execution block');
       }
       if (d.merging !== undefined && (typeof d.merging !== 'string' || !s.nodes[d.merging]?.slot?.open || !s.nodes[d.merging]?.candidate)) errors.push('obs merging must name a node with an open candidate');
+      if (d.probe !== undefined && (d.probe !== 'trunk' || d.subject === 'trunk' || !s.nodes[d.subject]?.slot?.open || !s.nodes[d.subject]?.candidate || !s.plan.nodes.find(n => n.id === d.subject)?.checks.some(c => `check:${c.id}` === d.obligation) || d.commit !== s.trunk.commit || d.base !== s.trunk.commit || d.attribution !== undefined || d.merging !== undefined)) errors.push('trunk probe requires an open node check on current trunk, without attribution or merging');
       if (!d.key) errors.push('obs is missing an obligation key');
       break;
     case 'review':
@@ -1132,7 +1157,7 @@ export function decoyPayloadErrors(p: unknown): string[] {
  */
 function settleDecoy(v: DecoyView, e: Entry, mergeCatches: Set<number>): void {
   if (v.outcome !== 'pending') return;
-  if ((e.kind === 'obs' && e.by === 'executor:owed' && e.verdict === 'fail' && (e.subject === v.node || (e.merging === v.node && mergeCatches.has(e.seq)))) || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
+  if ((e.kind === 'obs' && e.probe === undefined && e.by === 'executor:owed' && e.verdict === 'fail' && (e.subject === v.node || (e.merging === v.node && mergeCatches.has(e.seq)))) || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
   else if (e.kind === 'merge' && e.node === v.node) Object.assign(v, { outcome: 'escaped', decidedBy: e.seq });
 }
 

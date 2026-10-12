@@ -580,7 +580,7 @@ never part of a key.
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
-| `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate |
+| `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?, probe?: "trunk"}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate. `probe: "trunk"` (0.14, TR) measures that node's check on current trunk alone; subject = node, commit/base = trunk, no merging/attribution; diagnostic only, never satisfies or blocks an obligation |
 | `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5); on obligation `approve` (D23, §6.2 item 8) only by the owner (rank 3) |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
 | `defer` | owner | `{node, items: {id, key}[], reason}` | deferral of invariant items for one merge (stays debt) |
@@ -601,6 +601,45 @@ never part of a key.
 
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
 harness, materialization failure) is ⊥: no information, no block.
+
+### Trunk-red merge refusals (0.14, TR)
+
+When a node `check:X` fails on the prospective merge tree (including reused
+merge-result evidence), `owed merge` measures the same check on current trunk
+alone before refusing. It runs under the merge's existing machine lease,
+setup, execution wrapper/environment and closure pinned from trunk, with its
+own check key computed for trunk. The executor records an `obs` with
+`probe: "trunk"`, subject = node and commit/base = trunk. A non-error probe
+with the same key and trunk commit is reused; errors may be retried. Only
+node checks get probes, never invariants, red or strength checks. Probes
+are excluded from obligation verdicts, blocks and decoy outcomes, even if
+their key equals a candidate or merge key. The final merge CAS and current
+plan/key checks discard stale measurements, as for other merge observations.
+
+A failing probe classifies the merge failure as `trunk-red` when every
+merge-tree failed test name is among the probe's failed names, or neither
+observation has names. A passing probe, different names, or names on only
+one side retains the ordinary refusal. The refusal begins
+`trunk-red: check:X fails on trunk <short> without <node> (<names>)`, names
+both observation sequences and says this candidate is not shown to be the
+cause. The parent can fix trunk with a fixing node (or run the configured
+`owed sweep --commit <trunk>` for its bisect/escape proposal), or accept the
+merge failure with `owed waive <node> check:X --accept-risk <merge-tree obs seq>`.
+The existing waiver semantics reach merge keys (0.11); the probe itself is
+never the risk to waive.
+
+`status` and `why` mark the merge failure's item as trunk-red, with
+`discharger: "parent"` and both observation sequences in `detail`; the block's
+clear hint gives parent options instead of a writer repair. The driver halts
+needing the parent using its existing wording, before attribution attest or
+any writer follow-up, including after restart. These are diagnostics, not
+acceptance or a waiver. Classification is recomputed against current trunk
+and the current check/closure definition; moving trunk invalidates the old
+probe for this purpose.
+
+Compatibility: owed 0.13 and older refuses the new `obs.probe` field with
+code `version`; upgrade before replaying it. Ledgers without probes retain
+the 0.13 obligation states, keys and views.
 
 ## 6. Reducer (pure: entries → State)
 

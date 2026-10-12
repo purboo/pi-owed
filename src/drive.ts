@@ -4,7 +4,7 @@
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
 import { applicableRules, attestJobs, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
-import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
@@ -392,7 +392,7 @@ export function thresholdHint(s: State, node: string, obligations: readonly stri
     if (!o.startsWith('check:')) continue;
     const x = o.slice(6), m = spec?.checks.find(c => c.id === x)?.min_tests;
     if (m === undefined) continue;
-    const fails = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === node && e.obligation === o && e.verdict === 'fail' && !e.attribution).slice(-2);
+    const fails = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.probe === undefined && e.subject === node && e.obligation === o && e.verdict === 'fail' && !e.attribution).slice(-2);
     if (fails.length < 2 || (named && named.seq > fails[1]!.seq)) continue;
     const [a, b] = fails as [ObsEntry, ObsEntry];
     const tests = a.counts?.tests;
@@ -566,6 +566,11 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       }
     }
     return undefined;
+  }
+  // TR3: route trunk-red to the parent before attribution attests or any writer follow-up, including after restart.
+  if (c) {
+    const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(s,b.seq) ?? []);
+    if (trunkRed.length) return halt(`merge refused: ${trunkRed.join('; ')}`);
   }
   // FL1: dependencies merged after dispatch: use the existing rebase route exactly once before other work.
   const deps = s.plan.nodes.find(x => x.id === id)?.deps ?? [];
