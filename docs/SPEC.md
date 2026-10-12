@@ -1115,6 +1115,45 @@ A command that cannot run (exit 126/127) or an unknown count format stays a
 plain `error`. The driver does not count environment errors toward its
 "attest recorded no verdict twice" halt (§12.5).
 
+### 7.14 Shared machine lease (0.13, LE)
+
+- **LE1.** `src/lease.ts` wraps a measurement in `pi-durable-subagents hold
+  machine --shared` when dsa is available and inherited `OWED_LEASED` is not
+  `1`. Otherwise it runs directly. Every setup, check (including red,
+  strength and attribution) and invariant process started inside that lease
+  gets `OWED_LEASED=1`, overriding any plan environment value. Neither this
+  marker nor the lease configuration is part of an item key. In-process
+  parallel measurements use independent async contexts, not process-wide env
+  mutation. A nested measurement reuses its surrounding context.
+- **LE2.** The driver attests and merges under a shared machine lease with
+  `--no-wait`. A busy merge is the same `busy` outcome as attest: nothing is
+  queued, no halt is recorded, and a later timed/event pass retries (never
+  the same pass cycle). Merge still calls `ops.merge` in process; a holder
+  child prints `leased` after acquisition and stays alive until stdin closes.
+  Only then may merge measure. Return, throw or abort closes and reaps the
+  holder, with bounded TERM/KILL escalation; parent death closes its pipe
+  too. Holder failure aborts the measurement. The leased attest child gets
+  `OWED_LEASED=1`, so it never queues a nested shared request behind an
+  exclusive waiter. `owed drive --status` lists a refused merge lease as
+  busy in its log tail, no longer as an in-flight measurement.
+- **LE3.** Standalone CLI and tool attest, merge, adopt and genesis attest
+  (including init's extension background attest) wait for a shared machine
+  lease without `--no-wait`. CLI `--no-lease` on init, attest (including
+  `--genesis`), merge or adopt, or tool parameter `lease: false`, skips it.
+  Top-level plan `lease: false` disables acquisition repository-wide;
+  default is on, `lease: true` is allowed, other types are refused. This
+  field is neither an obligation nor part of any existing key. Acquire the
+  machine lease before operation/tree/ledger locks, retaining all existing
+  commit, CAS, observation and rollback boundaries. Init records genesis
+  before leasing its measurement: interrupted measurement remains incomplete,
+  never an unrecorded init. Already inherited `OWED_LEASED=1` still propagates
+  when acquisition is disabled. No new ledger entry or field is introduced.
+- **LE4.** Leased results include `lease: "machine (shared)"` in JSON/tool
+  details and `lease: machine (shared)` in text (driver completion detail,
+  and the extension genesis-completion wake). This metadata is not persisted.
+  Compatibility: older owed keeps replaying existing entries; it ignores the
+  new plan field, so use owed 0.13+ to enforce its execution semantics.
+
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
 ```ts
@@ -2375,7 +2414,9 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   --onto` command; the clause is omitted when git fails.
 - **Attest** runs `pi-durable-subagents hold machine --shared --no-wait --
   owed attest <node>` in the main worktree when dsa is available (else `owed
-  attest <node>` directly); the driver's own process never holds a lease.
+  attest <node>` directly), subject to LE opt-outs (§7.14). The child gets
+  `OWED_LEASED=1` while leased. The driver's merge also holds a shared lease
+  with `--no-wait` through a holder child (§7.14 LE2).
   Exit 75 is hold refusing the lease without queueing anything (`owed attest`
   itself exits 75 only when the node's attest is already running or a lock wait
   timed out, §7.11): the machine is busy; the driver prints hold's message (the
