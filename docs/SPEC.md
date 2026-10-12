@@ -1118,7 +1118,23 @@ show `noisy (2/3 passed)` using the number of executed runs, not the maximum N.
 ### RC2 Counts protocol (0.13)
 
 A log line `owed-counts {"pass":2,"fail":1,"failed":["latency gate"],"skip":0}`
-provides counts with format `owed`. Its JSON must be an object with non-negative
+provides counts with format `owed`. The `owed-counts` token must start at column 0
+and be followed by whitespace and a JSON object (ruling #1274). Leading whitespace
+or a `# ` prefix makes the line non-protocol text, silently ignored, not malformed.
+For example, this real TAP diagnostic never overrides the test count:
+
+```text
+not ok 1 - real diagnostic failure
+  ---
+  error: |-
+    owed-counts {"pass":0,"fail":0}
+  ...
+# tests 1
+# pass 0
+# fail 1
+```
+
+Its JSON must be an object with non-negative
 integer `pass` and `fail`, optional non-negative integer `skip`, and optional
 string-array `failed`. `tests` is pass + fail + skip. The last valid such line
 wins over TAP/cargo/pytest/jest/vitest and any mixed counts. A malformed line is
@@ -1132,7 +1148,12 @@ keep their existing exit semantics. Zero tests and min_tests apply as before.
 Counts and observations retain up to 50 failing names from `owed`'s `failed`,
 TAP `not ok N - name` and cargo `test name ... FAILED` lines; diagnostic cargo
 lines inside TAP are not names. Repeated observations retain a capped ordered
-union across executed runs in `failed`. A failed item's note, `why`, driver halt
+union across executed runs in `failed`. A failed red verdict (including a
+`red_expect` mismatch) gets the same names-first short-tail note; a successful
+red counterfactual stays unchanged. A merge refusal and subsequent driver halt
+carry the stored names and short tail even when the failing merge-key observation
+is reused rather than freshly measured (ruling #1274).
+A failed item's note, `why`, driver halt
 detail and repair message list names first, then a log tail of at most 15
 non-empty lines (ANSI stripped, each at most 200 characters). Failures without
 names also receive a bounded tail; existing count-failure notes and the
