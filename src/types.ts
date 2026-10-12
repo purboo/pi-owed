@@ -36,6 +36,8 @@ export interface NodeSpec {
   evidence?: EvidenceSpec[];
   /** K3: per-node driver agents/models; never an obligation, read by later launches only. Absent = the plan's `drive`. */
   drive?: NodeDrive;
+  /** FL4: backlog, ineligible for dispatch; never part of an obligation key. */
+  later?: boolean;
 }
 /** K3: a node's `drive` override of one role: at least one of `agent` / `model` (an empty object is dropped by the parser). */
 export interface NodeDriveAgent { agent?: string; model?: string }
@@ -48,7 +50,7 @@ export interface EvidenceSpec { id: string; what: string; by: 'reviewer' | 'pare
 /** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
 export interface DriveAgent { agent: string; model?: string }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
-export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number; /** 0.11 (F2.3): free MB below which the driver starts no measurement; present only when the plan sets it (default `MIN_FREE_DEFAULT`, 0 disables). */ min_free_mb?: number }
+export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number; /** 0.11 (F2.3): free MB below which the driver starts no measurement; present only when the plan sets it (default `MIN_FREE_DEFAULT`, 0 disables). */ min_free_mb?: number; /** FL4: idle reminder interval in minutes, default 60; 0 disables. */ idle_rewake_min?: number }
 /**
  * Optional `exec:` block of the plan (SPEC §3, §7, D20): extra environment and an argv prefix for every process owed
  * starts in a materialized tree. Parsed plans keep only non-empty fields; `exec: {}` is the same as no block.
@@ -173,8 +175,8 @@ export interface DecoyCommitEntry extends Base { kind: 'decoy-commit'; digest: s
 export interface DecoyRevealEntry extends Base, DecoyPayload { kind: 'decoy-reveal' }
 // ---------- driver entries (SPEC §12, D3); appended by role parent (the driver is `parent:drive`) ----------
 export type RunRole = 'writer' | 'reviewer';
-export type SendKind = 'follow-up' | 'steer';
-export type SendReason = 'submit' | 'repair' | 'interrupted' | 'fenced' | 'rebase' | 'review-missing' | 'ruling' | 'verdict';
+export type SendKind = 'follow-up' | 'steer' | 'notify';
+export type SendReason = 'submit' | 'repair' | 'interrupted' | 'fenced' | 'rebase' | 'review-missing' | 'ruling' | 'verdict' | 'waiting' | 'report';
 /** Intent to start a dsa run, persisted before the dsa call. `spec` = blob hash of the exact spec JSON bytes; `rid` = runId(...); `labels` = runLabels(...). */
 export interface LaunchEntry extends Base { kind: 'launch'; node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string>; /** E4 (0.5.1; absent on 0.5.0 entries): the highest in-scope ruling seq the task carried, 0 when none. */ rulings?: number }
 /** Intent to send a message to a run; `send` = `${rid}:${sendKind}:${seq of this entry}` (the dsa request id); `message` = blob hash of the exact message bytes. */
@@ -185,7 +187,7 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  * 0.8 (L1): the parent or owner clears the node's driver halt without an obligation and starts a new repair epoch;
  * `after`: the node waits until that node merges. Strict fields.
  */
-export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string; note?: string }
+export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string }
 export type Entry = GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
@@ -239,6 +241,8 @@ export interface NodeState {
   runs: AttemptRuns[];
   /** Active driver halt on the current open attempt (see reducer `halted`). */
   halt?: HaltEntry;
+  /** FL3: runtime receipt (not ledger state), validated against the report follow-up and later parent acts. */
+  reported?: number;
 }
 export interface AttemptRuns { attempt: number; launches: LaunchEntry[]; sends: SendEntry[] }
 export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string; writer?: boolean; answer?: AnswerRef; /** D25: present only for a delegated owner ruling */ channel?: 'delegated' }
@@ -289,6 +293,8 @@ export interface RunView {
   to?: string;
   labels?: Record<string, string>;
   spec_digest?: string;
+  /** FL3: the final text of the run, kept by describe for the report wake-up. */
+  result?: string;
 }
 
 // ---------- executor jobs ----------

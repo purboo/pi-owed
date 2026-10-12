@@ -59,12 +59,13 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   const out = structuredClone(DRIVE_DEFAULTS);
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('drive: expected object'); return out; }
   const r = v as Record<string, unknown>;
-  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'writer', 'reviewer'].includes(k)) errors.push(`drive.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'idle_rewake_min', 'writer', 'reviewer'].includes(k)) errors.push(`drive.${k}: unknown key`);
   const int = (x: unknown, label: string, min: number, dflt: number): number => { if (x === undefined) return dflt; if (typeof x !== 'number' || !Number.isInteger(x) || x < min) { errors.push(`${label}: expected integer >= ${min}`); return dflt; } return x; };
   out.max = int(r.max, 'drive.max', 1, out.max);
   out.repairs = int(r.repairs, 'drive.repairs', 0, out.repairs);
   if (r.measure !== undefined) out.measure = int(r.measure, 'drive.measure', 1, MEASURE_DEFAULT);
   if (r.min_free_mb !== undefined) out.min_free_mb = int(r.min_free_mb, 'drive.min_free_mb', 0, MIN_FREE_DEFAULT);
+  if (r.idle_rewake_min !== undefined) out.idle_rewake_min = int(r.idle_rewake_min, 'drive.idle_rewake_min', 0, 60);
   const agent = (x: unknown, label: string, dflt: DriveAgent): DriveAgent => {
     if (x === undefined) return dflt;
     const a = parseAgent(x, label, errors);
@@ -75,6 +76,14 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   return out;
 }
 
+/** FL4: staying driver reminder interval (minutes); no obligation key. */
+export const idleRewakeMin = (plan: Plan): number => plan.drive?.idle_rewake_min ?? 60;
+/** FL5: command/tool invariant spelling, canonicalized before a ledger write. */
+export function invariantId(plan: Pick<Plan, 'invariants'>, value: string): string {
+  const id = value.startsWith('inv:') ? value.slice(4) : value;
+  if (!plan.invariants.some(i => i.id === id)) throw new OwedError(`Unknown invariant ${value}; valid ids: ${plan.invariants.map(i => `${i.id} (inv:${i.id})`).join(', ') || 'none'}`);
+  return id;
+}
 /** Worktree defaults (SPEC §3, D19): slots in `<main worktree>/.owed/wt/<node>-<attempt>` on branch `owed/<node>/<attempt>`. */
 export const WORKTREE_DEFAULTS: WorktreesConfig = { root: '.owed/wt', branch: 'owed/{node}/{attempt}' };
 /** Default node `type` (fills `{type}` only). */
@@ -327,6 +336,7 @@ export function parsePlan(text: string): Plan {
     if (n.title !== undefined) out.title = str(n.title, `${p}.title`);
     if (n.brief !== undefined) out.brief = str(n.brief, `${p}.brief`);
     if (n.type !== undefined) { if (typeof n.type !== 'string' || !/^[a-z][a-z0-9-]*$/.test(n.type)) errors.push(`${p}.type: expected a string matching ^[a-z][a-z0-9-]*$`); else out.type = n.type; }
+    if (n.later !== undefined) { if (typeof n.later !== 'boolean') errors.push(`${p}.later: expected boolean`); else if (n.later) out.later = true; }
     parseManual(n, p, out, errors);
     if (n.drive !== undefined) { const d = parseNodeDrive(n.drive, p, errors); if (d) out.drive = d; }
     return out;
