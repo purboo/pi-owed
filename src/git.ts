@@ -155,6 +155,10 @@ export function execKey(plan: Plan): Pick<ExecConfig, 'env' | 'wrap' | 'touch'> 
 async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, closure: string, o: string): Promise<string> {
   return H({ o, id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, repeat: spec.repeat ? { runs: spec.repeat.runs, need: spec.repeat.need ?? spec.repeat.runs } : undefined, closure, reads: await readsDigest(cwd, commit, spec.reads) });
 }
+/** TR1: the node check's own key on trunk, with closure pinned from that same commit. */
+export async function trunkCheckKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string): Promise<string> {
+  return checkKey(cwd, plan, spec, commit, await readsDigest(cwd, commit, plan.closure), 'check');
+}
 export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, base: string, commit: string, attempt: number): Promise<CandidateFacts> {
   base = await revParse(cwd, base); commit = await revParse(cwd, commit);
   const changed = (await git(cwd, ['diff', '--no-renames', '--name-only', '-z', base, commit])).stdout.split('\0').filter(Boolean);

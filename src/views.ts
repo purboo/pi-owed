@@ -3,7 +3,7 @@ import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny, driveConfig } from './plan.ts';
 import { applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor, reportedOf, type Waiting } from './reducer.ts';
-import { genesisProgress } from './reducer.ts';
+import { genesisProgress, trunkRedOf, trunkRedText } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
 import type { WaiveEntry } from './types.ts';
@@ -534,6 +534,12 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
   // 0.8 (L3.2): a flaky block also offers a ruling (`ownerCommands` adds it once itself).
   return `${waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag)}${flakyHint && blocks.some(b => b.state === 'flaky') ? `; ${flakyRuleHint(i.subject)}` : ''}`;
 }
+/** TR: parent choices; the failing merge observation is the waiver risk, never the probe. */
+export function trunkRedHint(s: State, seq: number): string | undefined {
+  const r = trunkRedOf(s, seq);
+  if (!r) return undefined;
+  return `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}; this candidate is not shown to be the cause; parent: fix trunk with a fixing node${s.plan.sweep ? `, or owed sweep --commit ${s.trunk.commit} for its bisect/escape proposal` : ''}; or owed waive ${r.merge.subject} ${r.merge.obligation} --accept-risk ${r.merge.seq}`;
+}
 /**
  * How to clear a non-cleared block. A judgment block is described in words: printing a
  * ready-to-run review command with `--as` of the original reviewer would invite another
@@ -541,6 +547,8 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
  */
 function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
+  const trunkRed = trunkRedHint(s, b.seq);
+  if (trunkRed) return trunkRed;
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && countsBlock(x)).map(x => x.seq);
   const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);
