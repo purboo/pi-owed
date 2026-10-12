@@ -17,6 +17,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, driveConfig, measureCap, minFreeMb } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
+import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
 import { reduce, halted, projectId, waitingFor } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
@@ -224,7 +225,7 @@ interface Measurement {
   done: boolean;
   finish?: () => Promise<ActionReport[]>;
 }
-/** How a measurement ended: `finish` handles it on the loop; `busy` (attest only): its report, handled at once instead. */
+/** How a measurement ended: `finish` handles it on the loop; `busy`: its report, handled at once instead. */
 interface Ended { finish: () => Promise<ActionReport[]>; busy?: ActionReport }
 /** Hard stop (SPEC §12.7 Stopping): how long it waits for in-flight measurements after SIGTERM, then after SIGKILL. */
 const HARD_WAIT_MS = 5000, KILL_WAIT_MS = 1000;
@@ -572,7 +573,7 @@ export class Driver {
         // K6: start it in the background; over `drive.measure`, or a second merge: skipped, decided again later.
         const inFlight = [...this.measuring.values()];
         if (inFlight.length >= cap || (a.do === 'merge' && inFlight.some(m => m.do === 'merge'))) continue;
-        // Busy back-off: an attest that ended busy waits for the next timed or event pass.
+        // Busy back-off: a measurement that ended busy waits for the next timed or event pass.
         if (this.busyAt.get(a.node) === this.cycle) continue;
         // F2.3: below `drive.min_free_mb` in the git common dir or the temp dir: no measurement starts this pass.
         low ??= await this.diskLow(s, reports);
@@ -626,12 +627,12 @@ export class Driver {
   private start(s: State, what: 'attest' | 'merge', node: string): ActionReport {
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
     const m: Measurement = { do: what, node, attempt, at, done: false, ended: Promise.resolve() };
-    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt) : this.merge(node, attempt).then(finish => ({ finish }));
+    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false);
     let busy: ActionReport | undefined;
     m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
       .finally(() => {
         m.done = true;
-        // A busy attest (review #785) is not progress and does not wake the loop: its line is printed now (so status no
+        // A busy measurement (LE2, review #785) is not progress and does not wake the loop: its line is printed now (so status no
         // longer lists it) and the node waits for the next timed or event pass.
         if (busy) { this.measuring.delete(node); this.busyAt.set(node, this.cycle); if (!this.hard) this.emit(busy); return; }
         this.ended.push(m); this.waker?.();
@@ -704,9 +705,9 @@ export class Driver {
       const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${rk}:${r.outcome}`;
       if (this.facts.printed.get(slot) === key) return;
       this.facts.printed.set(slot, key);
-    // Any other attest line, `started` included, ends the busy dedup: a started measurement always gets its completion
+    // Any other measurement line, `started` included, ends the busy dedup: a started measurement always gets its completion
     // line (review #785), so status never lists one that ended.
-    } else if (r.do === 'attest') this.facts.printed.delete(`${rk}:busy`);
+    } else if (r.do === 'attest' || r.do === 'merge') this.facts.printed.delete(`${rk}:busy`);
     if (!this.o.once && r.facts !== undefined) {
       const text = reportText({ ...r, repeat: undefined }), last = this.facts.wakes.get(rk);
       if (last && last.text === text && last.facts === r.facts) r.repeat = ++last.n;
@@ -803,15 +804,16 @@ export class Driver {
    * else — an owed error (2/3), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
    * a human on attempt `attempt` (D14.3).
    */
-  private async attest(node: string, attempt: number): Promise<Ended> {
-    const argv = [...this.owed, 'attest', node], cwd = this.root!;
+  private async attest(node: string, attempt: number, lease: boolean): Promise<Ended> {
+    const available = dsaAvailable(this.dsa.bin), hold = lease && !machineLeased() && available;
+    const argv = [...this.owed, 'attest', node, ...(!lease || !available ? ['--no-lease'] : [])], cwd = this.root!;
     const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(detail ? { detail: oneLine(detail) } : {}) });
     const ok = (r: ActionReport): Ended => ({ finish: async () => [r] });
     const busy = (detail: string): Ended => { const r = report('busy', detail); return { finish: async () => [r], busy: r }; };
     const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; } });
     let ran: { exit: number | null; stdout: string; stderr: string };
-    if (dsaAvailable(this.dsa.bin)) {
-      const r = await this.dsa.hold('machine', argv, { shared: true, cwd });
+    if (hold) {
+      const r = await this.dsa.hold('machine', argv, { shared: true, cwd, env: { OWED_LEASED: '1' } });
       if (r.outcome === 'busy') return busy(busyDetail(node, r.reason));
       if (r.outcome === 'signal') return fail(`pi-durable-subagents hold ended by ${r.reason}`);
       if (r.outcome === 'refused') return fail(`pi-durable-subagents hold refused: ${tail(r.reason)}${/--no-wait/.test(r.reason) ? ' (owed drive requires pi-durable-subagents >= 1.0.27 for `hold --no-wait`)' : ''}`);
@@ -819,7 +821,7 @@ export class Driver {
     } else {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
-    if (ran.exit === 0 || ran.exit === 1) return ok(report('done', ran.exit === 0 ? 'accepted' : 'not accepted yet'));
+    if (ran.exit === 0 || ran.exit === 1) return ok(report('done', `${ran.exit === 0 ? 'accepted' : 'not accepted yet'}${hold || machineLeased() ? '; lease: machine (shared)' : ''}`));
     if (ran.exit === 75) return busy(busyDetail(node, tail(ran.stderr || ran.stdout)));
     return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
   }
@@ -831,12 +833,28 @@ export class Driver {
    * invalidated candidate are reported (`superseded`), no halt; a CAS failure (trunk moved during the merge) is a
    * retry line plus the trunk drift notify, never a halt (ruling #559 c); any other refusal halts needing a human.
    */
-  private async merge(node: string, attempt: number): Promise<() => Promise<ActionReport[]>> {
+  /** LE2: busy merge acquisition has the same back-off and status lifecycle as attest, never a halt. */
+  private async leasedMerge(node: string, attempt: number, lease: boolean): Promise<Ended> {
+    try {
+      const finish = await withMachineLease({ cwd: this.root!, lease, dsa: this.dsa, noWait: true, signal: this.abort.signal }, signal => this.merge(node, attempt, signal));
+      return { finish };
+    } catch (e) {
+      if (e instanceof OwedError && e.code === 'busy') {
+        const busy: ActionReport = { do: 'merge', node, outcome: 'busy', detail: busyDetail(node, e.message) };
+        return { finish: async () => [busy], busy };
+      }
+      if (this.abort.signal.aborted) throw e;
+      if (!(e instanceof OwedError || e instanceof DsaError)) throw e;
+      return { finish: async () => { await this.halt(node, attempt, `merge error: ${e.message}`); return [{ do: 'merge', node, outcome: 'error', detail: `${e.message}; halted` }]; } };
+    }
+  }
+
+  private async merge(node: string, attempt: number, signal?: AbortSignal): Promise<() => Promise<ActionReport[]>> {
     const cwd = this.o.cwd, as = DRIVE_PRINCIPAL;
     const report = (outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(detail) });
     try {
-      const r = await ops.merge({ cwd, as, node, signal: this.abort.signal });
-      return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}`)];
+      const r = leaseResult(await ops.merge({ cwd, as, node, signal }));
+      return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}${leaseText(r).replace('\n', '; ')}`)];
     } catch (e) {
       if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
       return async () => {

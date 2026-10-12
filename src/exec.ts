@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import type { Plan, AttestJob, ObsEntry, Counts } from './types.ts';
 import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths } from './git.ts';
+import { leaseEnvironment } from './lease.ts';
 
 /**
  * K2.1: the note of a non-red check that fails on its count: `zero tests; exit <code>`, or `min_tests unmet: counted
@@ -119,7 +120,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       // sets explicitly still applies.
       for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
       // D20: the plan's exec.env over the inherited environment, CI/OWED last; the wrapper argv prefixes bash -lc.
-      const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd };
+      const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment() };
       const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
       const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
       const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };

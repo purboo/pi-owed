@@ -193,7 +193,7 @@ Recipes (sketches; adapt paths):
   done
   ```
   A single slot is just `wrap: ["flock", "/tmp/qa.lock"]`.
-- **dsa machine lease** — share the lease that `pi-durable-subagents` uses for its own heavy work: `wrap: ["pi-durable-subagents", "hold", "machine", "--shared", "--"]`. If `hold` fails before it runs the command, owed sees its exit code: unless that is 126/127, wrap it in a script that maps a lease failure to 127.
+- **dsa machine lease (0.13, LE1–LE4)** — attest, merge, adopt and genesis measurements (including init's background attest) automatically take `pi-durable-subagents hold machine --shared` when dsa is available. Standalone CLI/tools wait; the driver uses `--no-wait` and retries busy attests and merges next pass without halting. Commands inside the lease get `OWED_LEASED=1` and output says `lease: machine (shared)` (JSON/details: `lease: "machine (shared)"`). A wrapper should skip its own lease when that marker is `1`, avoiding a nested request behind an exclusive waiter. Use CLI `--no-lease` on init, attest (also `--genesis`), merge or adopt, tool `lease: false`, or top-level plan `lease: false` to opt out. Default is on; the plan field and automatic environment marker change no item key. Merge's holder is released on completion, throw, abort or parent death.
 - **Checks prepare their own artifacts** — owed measures in a fresh temporary worktree of the candidate or merge tree, so nothing that exists only in slot worktrees (build outputs, caches, `node_modules`) is present. A check or invariant must prepare its own build artifacts, for example through `setup` or its `run` command. When a failure was environmental and the parent fixes the check, that plan update supersedes the old block: no rerun and no owner waiver.
 - **Build cache** — every materialized tree starts without build output. Keep build artifacts per tree, for example `export CARGO_TARGET_DIR="$OWED_TREE/../target-$(basename "$OWED_TREE")"` in the check's `run` command; a common target directory can link artifacts from another checkout (see `touch: always` above). Download caches such as `npm_config_cache` may be shared through `exec.env`. A cache is a trust input: a poisoned cache can make a check pass, so keep it per user and machine.
 - **Remote host** — run checks on another machine:
@@ -311,7 +311,7 @@ The current open slot is never touched, nor a finished worktree that contains an
 reviewers, merge — with [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents)
 (≥ 1.0.27) as the process runner, and stops for decisions. Every intent is
 recorded in the ledger before dsa is called and retried with the same bytes and
-id, so killing the driver at any point is safe. Attest runs under
+id, so killing the driver at any point is safe. Attest and merge run under
 `pi-durable-subagents hold machine --shared --no-wait` and is retried later
 while the machine is busy; with an older dsa that rejects `--no-wait` the
 attempt is halted with that error. One driver per repository
