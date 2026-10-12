@@ -4,7 +4,7 @@ import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
 import { parsePlan, planDowngrades, driveConfig, DRIVE_DEFAULTS } from '../src/plan.ts';
 import { reduce, validateDraft, halted, projectId, runId, runLabels, driveReviewer, nextReviewerN, reviewerBase } from '../src/reducer.ts';
-import { renderStatus, renderReceipt, renderReport, reviewPacket, reviewRuns, reviewObligations, statusView, receipt } from '../src/views.ts';
+import { renderStatusFull as renderStatus, renderReceipt, renderReport, reviewPacket, reviewRuns, reviewObligations, statusView, receipt } from '../src/views.ts';
 import { sha256 } from '../src/canon.ts';
 import type { Draft, Entry, Plan, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';

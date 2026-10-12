@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { decide, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
 import { Dsa, DsaError, type RunResult, type SendResult } from '../src/dsa.ts';
-import { receipt, renderReceipt, renderStatus, statusView } from '../src/views.ts';
+import { receipt, renderReceipt, renderStatusFull as renderStatus, statusView } from '../src/views.ts';
 import { Driver } from '../src/drive-run.ts';
 import { loopWarnings } from '../src/plan.ts';
 import * as ops from '../src/ops.ts';

@@ -142,7 +142,7 @@ test('D24.2/3/5: init with a genesis error reports incomplete (exit 0, no retry)
     assert.equal(init.code, 0, init.stderr);
     assert.ok(init.stdout.includes('Initialized (genesis #0). Genesis attest incomplete: recorded build; missing flaky: run owed attest --genesis, or the next attest/merge measures them first.'), init.stdout);
     assert.doesNotMatch(init.stdout + init.stderr, /retry/i);
-    const status = await cli(r.cwd, ['status']);
+    const status = await cli(r.cwd, ['status', '--full']);
     assert.equal(status.code, 0, status.stderr);
     assert.ok(status.stdout.includes('Genesis: 1/2 invariants observed — run owed attest --genesis (or the next attest/merge measures them); pending: flaky'), status.stdout);
     const json = JSON.parse((await cli(r.cwd, ['status', '--json'])).stdout) as ops.StatusView;
@@ -229,10 +229,10 @@ test('D24.4/5: owed_init confirms with the owner, returns at once, measures in t
     assert.ok(prompt.includes('Invariants:\n  fast\n  bad\n  gated\n'), prompt);
     assert.match(prompt, /Confirmation will be recorded as pi-confirm\./);
     await appears(join(r.root, 'started-inv'));
-    const status = text(await h.call('status'));
+    const status = text(await h.call('status', {full:true}));
     assert.ok(status.includes('Genesis: 2/3 invariants observed (measuring in this session); pending: gated'), status);
     // Another process (the CLI) does not run it: it shows the hint instead.
-    assert.ok((await cli(r.cwd, ['status'])).stdout.includes('Genesis: 2/3 invariants observed — run owed attest --genesis'));
+    assert.ok((await cli(r.cwd, ['status', '--full'])).stdout.includes('Genesis: 2/3 invariants observed — run owed attest --genesis'));
     // A parent plan edit meanwhile is accepted with a warning and does not interrupt the attest.
     const planned = await h.call('plan', { plan: 'plan2.json' });
     assert.notEqual(planned.isError, true, text(planned));
@@ -296,7 +296,7 @@ test('D24.4: session_shutdown aborts the background genesis attest: its check en
     assert.deepEqual((await entries(r.cwd)).map(e => e.kind), ['genesis']);
     const s = (await ops.status({ cwd: r.cwd })).genesis;
     assert.deepEqual(s, { observed: 0, total: 1, pending: ['slow'] });
-    assert.match(text(await h.call('status')), /Genesis: 0\/1 invariants observed — run owed attest --genesis/);
+    assert.match(text(await h.call('status', {full:true})), /Genesis: 0\/1 invariants observed — run owed attest --genesis/);
   } finally { reap(pid); await r.cleanup(); }
 });
 

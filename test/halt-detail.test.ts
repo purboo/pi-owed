@@ -104,7 +104,7 @@ test('K2.2: owed why and owed status show an exec block\'s failing note on its l
     const card = await ops.why({ cwd: x.cwd, node: 'b' });
     assert.equal(card.blocks.find(b => b.seq === fb.seq)?.note, shortB);
     // K2.2 status: the pending item line held by the block carries the note.
-    const status = (await cli(x.cwd, ['status'])).stdout;
+    const status = (await cli(x.cwd, ['status', '--full'])).stdout;
     const itemA = status.split('\n').find(l => l.includes('a/check:unit'));
     assert.ok(itemA?.endsWith(` — note #${fa.seq}: ${noteA}`), status);
     const itemB = status.split('\n').find(l => l.includes('b/check:unit'));

@@ -32,10 +32,10 @@ test('registers direct typed tools and command; status uses ctx.cwd; guards beco
     const h = harness(r.cwd);
     for (const name of ['status', 'why', 'report', 'dispatch', 'submit', 'attest', 'review', 'merge', 'rule', 'plan', 'waive', 'defer']) assert.ok(h.tools.has(`owed_${name}`), `includes owed_${name}`);
     for (const t of h.tools.values()) { assert.equal(t.exposure, 'direct'); assert.equal((t.parameters as { type?: string }).type, 'object'); }
-    const status = await h.call('status'); assert.match(JSON.stringify(status.content), /Trunk main/); assert.ok(status.details);
+    const status = await h.call('status'); assert.match(JSON.stringify(status.content), /owed:.*trunk main/); assert.ok(status.details);
     const missing = await h.call('why', { node: 'missing' }); assert.equal(missing.isError, true); assert.match(JSON.stringify(missing.content), /does not exist/);
     const command = h.commands.get('owed')!;
-    await command.handler('', h.ctx as Parameters<typeof command.handler>[1]); assert.match(h.notices[0]!, /Trunk main/);
+    await command.handler('', h.ctx as Parameters<typeof command.handler>[1]); assert.match(h.notices[0]!, /owed:.*trunk main/);
     await command.handler('why a', h.ctx as Parameters<typeof command.handler>[1]); assert.match(h.notices[1]!, /a: /);
   } finally { await r.cleanup(); }
 });
@@ -111,7 +111,7 @@ test('defer binds confirmed decisions to prospective invariant keys and refuses 
     assert.notEqual((await h.call('attest', { node: 'a' })).isError, true);
     assert.notEqual((await h.call('review', { node: 'a', as: 'reviewer:independent', rank: 1, verdict: 'ok', note: 'independent review' })).isError, true);
     const merged = await h.call('merge', { node: 'a' }); assert.notEqual(merged.isError, true);
-    const status = await h.call('status'); assert.match(JSON.stringify(status.content), /deferred/);
+    const status = await h.call('status', {full:true}); assert.match(JSON.stringify(status.content), /deferred/);
     assert.match(JSON.stringify((await h.call('report')).content), /Merges/);
   } finally { await r.cleanup(); }
 });

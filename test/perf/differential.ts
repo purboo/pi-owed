@@ -46,7 +46,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       if (waiting.length) status.waiting = waiting;
       status.pending['parent+writer'] = status.pending['parent+writer']!.filter(i => i.obligation !== 'submit' || !wait(i.subject));
     }
-    let text = v.renderStatus(status);
+    let text = m === CUR ? curViews.renderStatusFull(status) : v.renderStatus(status);
     if (m === BASE) for (const node of ids) {
       const w = wait(node);
       if (w?.deps?.length) text = text.replace(`⏳ ${node}: waiting for ${w.after} (resume #${w.resume})`,`⏳ ${node}: ${curViews.waitingLine(w)}`);
@@ -56,6 +56,8 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   out.brief = attempt(() => {
     const brief = v.briefView(s,prefix,-1,Date.UTC(2027,0,1));
     if (m === BASE) brief.totals.waiting = Object.values(s.nodes).filter(n => !n.merged && (wait(n.id) || n.phase === 'blocked')).length;
+    // SQ changes only the default prefix; compare the retained morning sections against the frozen renderer.
+    if (m === CUR) delete (brief as curViews.Brief).summary;
     return rendered(v.renderBrief(brief));
   });
   out.escapes = attempt(() => v.escapeSummary(s));

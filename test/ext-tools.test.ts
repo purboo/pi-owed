@@ -46,7 +46,7 @@ test('every tool accepts cwd: a session outside the repository drives dispatch, 
     for (const t of h.tools.values()) assert.ok('cwd' in ((t.parameters as { properties?: object }).properties ?? {}), `${t.name} has a cwd parameter`);
     assert.equal((await h.call('status')).isError, true, 'without cwd the session directory is used');
     const status = await h.call('status', { cwd: r.cwd });
-    assert.notEqual(status.isError, true, text(status)); assert.match(text(status), /Trunk main/);
+    assert.notEqual(status.isError, true, text(status)); assert.match(text(status), /owed:.*trunk main/);
     const relative = await h.call('status', { cwd: 'repo' });
     assert.equal(relative.isError, true); assert.match(text(relative), /absolute/);
     assert.equal((await h.call('status', { cwd: join(r.root, 'missing') })).isError, true);
@@ -73,7 +73,7 @@ test('owed_brief and owed_verify render views; a corrupt ledger is a tool error'
     assert.notEqual((await h.call('dispatch', { node: 'b' })).isError, true);
     const brief = await h.call('brief');
     assert.notEqual(brief.isError, true, text(brief));
-    assert.match(text(brief), /^Brief \(since start\)/); assert.match(text(brief), /In progress \(1\):\n {2}b dispatched \(attempt 1\)/);
+    assert.match(text(brief), /^owed:.*\nNeeds you \(1\):[\s\S]*\nBrief \(since start\)/); assert.match(text(brief), /In progress \(1\):\n {2}b dispatched \(attempt 1\)/);
     assert.deepEqual((brief.details as ops.Brief).inProgress.map(p => p.node), ['b']);
     const later = await h.call('brief', { since: (await entries(r.cwd)).length - 1 });
     assert.match(text(later), /Merged: none/);

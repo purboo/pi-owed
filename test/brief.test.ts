@@ -86,7 +86,7 @@ test('owed brief CLI surface: refused before init, empty ledger view, help and a
     assert.deepEqual([empty.decisions, empty.merged, empty.rejected, empty.inProgress], [[], [], [], []]);
     assert.deepEqual(empty.totals, { merged: 0, acceptedUnmerged: 0, blocked: 0, ready: 6, waiting: 2, reported: 0, later: 0 });
     const text = await run(r.cwd, ['brief']);
-    assert.match(text, /^Brief \(since start\)\nNeeds your decision: none\nMerged: none\nRejected or blocked: none\nIn progress: none\nTotal: 0 merged, 0 accepted-unmerged, 0 blocked, 6 ready, 2 waiting on dependencies\n$/);
+    assert.match(text, /^owed:.*\nNeeds you \(6\):[\s\S]*\nBrief \(since start\)\nMerged: none\nRejected or blocked: none\nIn progress: none\nTotal: 0 merged, 0 accepted-unmerged, 0 blocked, 6 ready, 2 waiting on dependencies\n$/);
     for (const args of [['--since', 'yesterday-ish'], ['extra'], ['--rerun'], ['--since']]) assert.equal((await cli(r.cwd, ['brief', ...args])).code, 2, args.join(' '));
   } finally { await r.cleanup(); }
 });
@@ -121,12 +121,12 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     assert.deepEqual(v.totals, { merged: 1, acceptedUnmerged: 1, blocked: 2, ready: 1, waiting: 1, reported: 0, later: 0 });
 
     const text = await run(r.cwd, ['brief']);
-    const order = ['Needs your decision (2):', 'Merged (1):', 'Rejected or blocked (2):', 'In progress (4):', 'Total: 1 merged, 1 accepted-unmerged, 2 blocked, 1 ready'].map(x => text.indexOf(x));
+    const order = ['Needs you (3):', 'Merged (1):', 'Rejected or blocked (2):', 'In progress (4):', 'Total: 1 merged, 1 accepted-unmerged, 2 blocked, 1 ready'].map(x => text.indexOf(x));
     assert.ok(order.every(i => i >= 0), text);
     assert.deepEqual([...order].sort((x, y) => x - y), order, 'sections in order');
     const lines = text.split('\n');
-    assert.match(lines.find(l => l.includes('b/closure-review ['))!, /\[1 blocked downstream\].*→ owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12}$/);
-    assert.ok(lines.findIndex(l => l.includes('b/closure-review [')) < lines.findIndex(l => l.includes('d/closure-review [')));
+    assert.match(lines.find(l => l.includes('b: closure-review needs'))!, /→ owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12}$/);
+    assert.ok(lines.findIndex(l => l.includes('b: closure-review needs')) < lines.findIndex(l => l.includes('d: closure-review needs')));
     assert.match(lines.find(l => /^ {2}a #\d+ → /.test(l))!, /: 1 measured, 1 waived \(check:a\), 1 reviewed, 1 untested change; reviewers: reviewer:r1$/);
     assert.match(text, new RegExp(`e/check:e failing obs #${eFail} → `));
     assert.match(text, /f dispatched \(attempt 1\): dispatched \d+s ago\n/);
@@ -144,7 +144,7 @@ test('owed brief --since filters only merges by seq or ISO time, and the printed
     assert.deepEqual(later.merged, []);
     assert.equal(later.decisions.length, 2, 'since does not hide current decisions');
     assert.equal(later.rejected.length, 2, 'since does not hide current blocks');
-    assert.match(await run(r.cwd, ['brief', '--since', String(mergeSeq)]), new RegExp(`Brief \\(since #${mergeSeq}\\)\\nNeeds your decision \\(2\\):[\\s\\S]*\\nMerged: none\\n`));
+    assert.match(await run(r.cwd, ['brief', '--since', String(mergeSeq)]), new RegExp(`^owed:.*\\nNeeds you \\(3\\):[\\s\\S]*\\nBrief \\(since #${mergeSeq}\\)\\nMerged: none\\n`));
     // Run the printed command (adding the weak flag only because the fixture has no TTY).
     const command = (await brief()).decisions[0]!.command.split(' ');
     assert.equal(command.shift(), 'owed');
