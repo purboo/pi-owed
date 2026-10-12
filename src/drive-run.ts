@@ -15,10 +15,10 @@ import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
-import { parsePlan, driveConfig, measureCap, minFreeMb } from './plan.ts';
+import { parsePlan, driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
-import { reduce, halted, projectId, waitingFor } from './reducer.ts';
+import { reduce, halted, projectId, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
@@ -176,7 +176,9 @@ export interface PassResult {
   /** The ledger head (hash of the last entry) the pass decided on (H1.2: a staying driver's idle baseline). */
   head: string;
   /** 0.8 (L1.5): open attempts waiting for another node to merge (a resume with `after`), in status order. */
-  waiting: { node: string; after: string; resume: number }[];
+  waiting: (Waiting & { node: string })[];
+  counts: IdleCounts;
+  idleRewakeMin: number;
 }
 
 /**
@@ -276,6 +278,7 @@ async function loadState(ledger: Ledger): Promise<State> {
   for (const e of entries) if ((e.kind === 'genesis' || e.kind === 'plan') && !plans.has(e.plan)) plans.set(e.plan, parsePlan((await ledger.getBlob(e.plan)).toString()));
   const s = reduce(entries, sha => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; });
   if (s.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
+  await ops.applyReports(ledger,s);
   return s;
 }
 
@@ -360,7 +363,12 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number }
+export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
+/** FL4: counts are disjoint for parked nodes; open counts every open slot. */
+export interface IdleCounts { ready: number; open: number; waiting: number; reported: number; later: number }
+export const idleWaitText = (c: IdleCounts): string => `idle: ${c.ready} ready, ${c.open} open, ${c.waiting} waiting, ${c.reported} reported, ${c.later} later; staying until the ledger changes (owed drive --stop ends it)`;
+/** FL4: deterministic timer decision; the loop owns the clock and lifecycle. */
+export const idleRewakeDue = (now: number, last: number, minutes: number): boolean => minutes > 0 && now - last >= minutes * 60_000;
 /** 0.8 (L1.5): text of a `waiting` loop event. */
 export const waitingText = (node: string, after: string, resume: number): string => `waiting: ${node} waits for ${after} (resume #${resume})`;
 /** Text of the `idle-wait` line of a staying driver (H1.2). */
@@ -375,7 +383,7 @@ export function reportText(json: object): string {
     const e = json as LoopEvent;
     switch (e.event) {
       case 'idle': return 'idle: nothing open and nothing ready';
-      case 'idle-wait': return IDLE_WAIT_TEXT;
+      case 'idle-wait': return e.counts ? idleWaitText(e.counts) : IDLE_WAIT_TEXT;
       case 'stopped': return 'stopped';
       case 'killed': return 'killed: second signal, stopped at once';
       case 'cursor-reset': return e.reason !== undefined ? `events: cursor rejected (${oneLine(e.reason)}), reset${e.head ? ` to ${e.head}` : ''}` : `events: cursor expired, reset to ${e.head}`;
@@ -383,7 +391,7 @@ export function reportText(json: object): string {
       case 'exit': return `driver exited ${e.code} (${e.reason})${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
       case 'drift-cleared': return 'trunk drift cleared: trunk equals the ledger trunk again';
       case 'disk-full': return `disk full: ${oneLine(e.error ?? '')}; the driver sleeps 60 s and continues`;
-      case 'waiting': return waitingText(oneLine(e.node ?? '?'), oneLine(e.after ?? '?'), e.resume ?? -1);
+      case 'waiting': return e.deps?.length ? `waiting: ${oneLine(e.node ?? '?')} waiting (deps: ${e.deps.map(oneLine).join(', ')})${e.after ? `; ${waitingText(oneLine(e.node ?? '?'),oneLine(e.after),e.resume ?? -1)}` : ''}` : waitingText(oneLine(e.node ?? '?'), oneLine(e.after ?? '?'), e.resume ?? -1);
       case 'session-unsupported': return `dsa does not accept --session (older than pi-durable-subagents 1.0.31): runs start without it and are not listed in pi session ${e.session ?? '?'}${e.reason ? ` (${oneLine(e.reason)})` : ''}`;
       default: return oneLine(JSON.stringify(json));
     }
@@ -589,14 +597,16 @@ export class Driver {
     // 0.8 (L1.5): the waiting nodes, one quiet line each (the loop prints a node's line once per resume).
     const waiting = Object.keys(s.nodes).sort().flatMap(id => { const w = waitingFor(s, id); return w ? [{ node: id, ...w }] : []; });
     for (const w of waiting) {
-      const e: LoopEvent = { event: 'waiting', node: w.node, after: w.after, resume: w.resume }, slot = `${w.node}:waiting`, key = String(w.resume);
+      const e: LoopEvent = { event: 'waiting', ...w }, slot = `${w.node}:waiting`, key = JSON.stringify(w);
       if (!this.o.once && this.facts.printed.get(slot) === key) continue;
       this.facts.printed.set(slot, key);
       this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
     }
     const head = (await ledger.read()).at(-1)?.hash;
-    const open = Object.values(s.nodes).some(n => n.slot?.open && n.phase !== 'removed');
-    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting };
+    const nodes = Object.values(s.nodes).filter(n => !n.merged && n.phase !== 'removed');
+    const counts: IdleCounts = { ready: nodes.filter(n => n.phase === 'ready').length, open: nodes.filter(n => n.slot?.open).length, waiting: waiting.length, reported: nodes.filter(n => reportedOf(s,n.id) !== undefined).length, later: s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).length };
+    const open = nodes.some(n => n.slot?.open && !waitingFor(s,n.id) && reportedOf(s,n.id) === undefined && !s.plan.nodes.find(x => x.id === n.id)?.later);
+    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting, counts, idleRewakeMin: idleRewakeMin(s.plan) };
   }
 
   /**
@@ -774,6 +784,7 @@ export class Driver {
           // steer. Review #784 F1: it does not count as delivered, so the writer's next follow-up (submit, rebase, repair
           // or ruling) carries its rulings; reviewers get them through the rulings obligation. A rejected ruling
           // follow-up halts like any other send (as decide would on the next pass).
+          if (r.outcome === 'rejected' && a.reason === 'waiting') return done('rejected', false, `${r.reason}; waiting notice not retried`, x);
           if (r.outcome === 'rejected' && a.reason === 'ruling' && a.sendKind === 'steer') return done('rejected', false, `${r.reason}; not retried as a steer (the writer's next follow-up carries these rulings; reviewers get them through the rulings obligation)`, x);
           // 0.8 (L1.4): the halt names the run's call address when describe reported one.
           const to = callAt({ rid: a.rid, state: 'running', ...(this.facts.lastTo.has(a.rid) ? { to: this.facts.lastTo.get(a.rid)! } : {}) });
@@ -785,7 +796,7 @@ export class Driver {
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node, since }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
-        case 'notify': return { report: { ...base, outcome: 'notify', text: a.text, ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
+        case 'notify': if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: 'notify', text: a.text, ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
       // F4 (wais #31): a failed send names its node, kind and target like any other send line.
@@ -1044,7 +1055,8 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
     };
     await poll();
     /** H1.2: start of the current idle period of a staying driver (one `idle-wait` line per period). */
-    let idleAt: string | undefined;
+    let idleAt: string | undefined, idleWake = 0;
+    let counts: IdleCounts = { ready:0, open:0, waiting:0, reported:0, later:0 }, rewake = 60;
     for (;;) {
       /** H1.2: the ledger head the idle pass decided on; undefined when the last pass was not idle. */
       let idle: string | undefined;
@@ -1061,6 +1073,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
           continue;
         }
         if (r.idle && !o.stay) { say('idle: nothing open and nothing ready', { event: 'idle' }); end.reason = 'idle'; return 0; }
+        counts = r.counts; rewake = r.idleRewakeMin;
         if (r.idle) { idle = r.head; break; }
         idleAt = undefined;
         if (!r.progress) break;
@@ -1068,10 +1081,15 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
       if (idle !== undefined && !driver.stopping) {
         // Stay: keep the lock and wait for the ledger head to differ from the head the idle pass decided on (a plan
         // update, a ruling, an abandon…), then pass. An entry appended during that pass is already a change: no wait.
-        if (idleAt === undefined) { idleAt = new Date().toISOString(); say(IDLE_WAIT_TEXT, { event: 'idle-wait', at: idleAt }); }
+        if (idleAt === undefined) { idleAt = new Date().toISOString(); idleWake = Date.now(); const e: LoopEvent = { event: 'idle-wait', at: idleAt, counts }; say(reportText(e), e); }
         const head = idle;
         while (!driver.stopping && ledgerHead(ledger.dir) === head) {
           await driver.wait(o.pollMs ?? 3000, stop.signal);
+          if (!driver.stopping && ledgerHead(ledger.dir) === head && idleRewakeDue(Date.now(),idleWake,rewake)) {
+            idleWake = Date.now(); const e: LoopEvent = { event:'idle-wait', at:new Date(idleWake).toISOString(), counts }; say(reportText(e),e);
+          }
+          // Waiting/reported runs may ask questions, or complete a pending report, without ledger changes.
+          if (counts.open) { await poll(); driver.tick(); break; }
         }
         driver.tick();
       } else {

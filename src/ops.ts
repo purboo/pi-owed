@@ -7,8 +7,8 @@ import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from '
 import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
-import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors } from './plan.ts';
-import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER, entriesOf } from './reducer.ts';
+import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
+import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
@@ -846,7 +846,7 @@ export async function review(o: Actor & { node: string; verdict:'ok'|'block'; ra
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<Entry> { const given = candidateArg(o.named); return mutate(o,s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); return {kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key:candidate(s,o.node).candidate!.keys[o.obligation] ?? '',reason:o.reason,accept_risk:o.accept_risk}; }); }
 /** K2.3: what the recorded waiver `entry` means, from the ledger state right after it (a later entry cannot relabel it; see views.waiverText). */
 export async function waiverMeaning(o: Context & { entry: Entry }): Promise<string> { const e = o.entry; if (e.kind !== 'waive') throw new OwedError('not a waiver','internal'); const {entries,lookup} = await load(await Ledger.open(o.cwd)); return waiverText(reduce(entries.filter(x => x.seq <= e.seq),lookup),e); }
-export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,() => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items,reason:o.reason})); }
+export async function defer(o: Actor & { node:string; items:{id:string;key:string}[]; reason:string; channel:Channel }): Promise<Entry> { return mutate(o,s => ({kind:'defer',by:by(o),channel:o.channel,node:o.node,items:o.items.map(i => ({ ...i, id: invariantId(s.plan,i.id) })),reason:o.reason})); }
 export async function abandon(o: Actor & { node:string; reason:string }): Promise<Entry> { return mutate(o,s => ({kind:'abandon',by:by(o),channel:o.channel,node:o.node,attempt:node(s,o.node).slot?.attempt ?? 0,reason:o.reason})); }
 export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }
 /** Moves the open slot of a node onto the current trunk (parent/owner or the slot writer); the writer then rebases the same worktree and submits again. `since`: as for launch (F1). */
@@ -1025,12 +1025,41 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel?
   },'merge',o.signal);
 }
 export async function status(o: Context): Promise<StatusView> {
-  const ledger = await Ledger.open(o.cwd), {state,entries} = await load(ledger), view = statusView(inited(state),entries);
+  const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = reduceFrom(loaded.state,[],loaded.lookup), entries = loaded.entries;
+  await applyReports(ledger,state);
+  const view = statusView(inited(state),entries);
   if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
   const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit), trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
   return {...view,...(drift ? {drift} : {}),...(trunkWorktree ? {trunkWorktree} : {})};
 }
-export async function why(o: Context & {node:string}): Promise<ReceiptCard> { const {state,entries} = await load(await Ledger.open(o.cwd)); node(state,o.node); return receipt(state,entries,o.node); }
+export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
+  const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
+  if (o.node.startsWith('inv:') || (!state.nodes[o.node] && state.plan.invariants.some(i => i.id === o.node))) {
+    const id = invariantId(state.plan,o.node), item = state.invariants.find(i => i.obligation === `inv:${id}`)!;
+    return { node: `inv:${id}`, phase: 'merged', accepted: item.status === 'E', items: [{ ...item, observations: entries.filter(e => item.evidence.includes(e.seq)) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] };
+  }
+  const view = reduceFrom(state,[],lookup); await applyReports(ledger,view);
+  node(view,o.node); return receipt(view,entries,o.node);
+}
+/** FL3: private runtime receipts, never acceptance evidence or ledger entries. A missing file is a cache miss. */
+export async function applyReports(ledger: Ledger, state: State): Promise<void> {
+  try {
+    const reports = JSON.parse(await readFile(join(ledger.dir,'drive','reports.json'),'utf8')) as Record<string, number>;
+    for (const [id, seq] of Object.entries(reports)) if (reportRequest(state,id)?.resume === seq) state.nodes[id]!.reported = seq;
+  } catch { /* optional runtime cache; the driver can re-derive it from the sealed run */ }
+}
+export async function recordReport(ledger: Ledger, node: string, resume: number): Promise<void> {
+  await ledger.withLock(async () => {
+    const { state } = await load(ledger);
+    if (reportRequest(state,node)?.resume !== resume) return;
+    const dir = join(ledger.dir,'drive'), file = join(dir,'reports.json');
+    let reports: Record<string, number> = {};
+    try { reports = JSON.parse(await readFile(file,'utf8')); } catch { /* first report */ }
+    reports[node] = resume; await mkdir(dir,{ recursive:true });
+    const temp = join(dir,`.reports.${randomUUID()}.tmp`);
+    try { await writeFile(temp,JSON.stringify(reports)); await rename(temp,file); } finally { await unlink(temp).catch(() => undefined); }
+  });
+}
 export async function report(o: Context & {since?:number|string}): Promise<Report> {
   const {state,entries,lookup} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
@@ -1076,7 +1105,8 @@ export async function verify(o: Context): Promise<VerifyResult> {
 }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
 export async function brief(o: Context & {since?:number|string; now?:number}): Promise<Brief> {
-  const {state,entries} = await load(await Ledger.open(o.cwd)), since = o.since ?? -1; inited(state);
+  const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = reduceFrom(loaded.state,[],loaded.lookup), entries = loaded.entries, since = o.since ?? -1; inited(state);
+  await applyReports(ledger,state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
   return briefView(state,entries,since,o.now ?? Date.now());
 }
@@ -1119,21 +1149,21 @@ export async function send(o: Actor & { node: string; attempt: number; rid: stri
  * already merged (the node resumes now).
  */
 type ResumeArgs = Actor & { node: string; after?: string | string[]; expect?: 'report'; note?: string };
-/** ED2: shared resume drafting lets edit validate against its prospective plan and rule without a second lock.
- * FL2/FL3 options are forwarded loosely until the waits node supplies their entry types and guard. */
-function resumeDraft(o: ResumeArgs, s: State): Draft {
+/** ED2/FL2/FL3: both commands draft and normalize resume against their prospective state under the ledger lock. */
+function resumeDraft(o: ResumeArgs, s: State): Extract<Draft, { kind:'resume' }> {
   if (o.as.role !== 'parent' && o.as.role !== 'owner') throw new OwedError(`resume insufficient permissions; requires parent/owner (got ${o.as.role})`);
   const n = node(s,o.node);
   if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
   const unruled = unruledBlocks(s,o.node);
   if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}), so the driver would halt again at once; record it with owed rule --nodes ${o.node} "<decision>" (the ruling also clears the halt)`);
-  return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(o.after !== undefined ? { after:o.after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}) } as Draft;
+  const after = o.after === undefined ? undefined : typeof o.after === 'string' && !o.after.includes(',') ? o.after : [...new Set(afterNodes(o.after).flatMap(x => x.split(',')).map(x => x.trim()))];
+  return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(after !== undefined ? { after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}) };
 }
 export async function resume(o: ResumeArgs): Promise<{ entry: Entry; merged?: boolean }> {
   let merged = false;
   const entry = await mutate(o,s => {
-    const d = resumeDraft(o,s), after = typeof o.after === 'string' ? [o.after] : o.after;
-    merged = !!after?.length && after.every(id => !!s.nodes[id]?.merged);
+    const d = resumeDraft(o,s), after = afterNodes(d.after);
+    merged = !!after.length && after.every(id => !!s.nodes[id]?.merged);
     return d;
   });
   return { entry, ...(merged ? { merged:true } : {}) };

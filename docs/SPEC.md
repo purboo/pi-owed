@@ -2093,6 +2093,63 @@ must name the node's current open slot (node and attempt), and so must a halt.
   gives the writer and reviewers guidance they must follow and acknowledge (the
   `rulings` item becomes owed again).
 
+### 12.3.1 Waiting, reports and backlog (0.13, FL1–FL5)
+
+- **FL1 implicit waiting:** an open slot with unmerged dependencies in the current
+  plan is waiting. `why`, `status` and the driver print `waiting (deps: a, b)`;
+  no submit, repair or ruling follow-up, measurement or missing-candidate halt is
+  sent. Asking runs still use row 5. A dependency-adding plan entry gets one
+  durable `send` of kind `notify`, reason `waiting`, to its running writer:
+  which dependencies are unmerged and `do not submit until told`. The recorded
+  request id and message bytes are reused on retry. When all implicit and
+  explicit waits end, a dependency merged since dispatch/rebase moves the slot
+  onto trunk through the existing rebase route, then its normal rebase follow-up.
+- **FL2 multi-node resume:** `owed resume <node> --after a,b` and tool
+  `owed_resume {after: "a,b" | ["a", "b"]}` record a list; all members must be
+  other current plan nodes. Empty lists, unknown nodes and self are refused.
+  Comma lists are trimmed and deduplicated. A single string remains a string
+  and replays as before. Waiting is the union of this latest resume and current
+  unmerged dependencies; another resume replaces only the explicit wait.
+- **FL3 report:** `owed resume <node> --expect report` / tool `expect: "report"`
+  stores `expect` on the resume. The next writer follow-up has reason `report`
+  (and may carry `rulings`) and asks `report your findings and stop; do not
+  submit unless the parent asks`, rather than asking for a candidate. On a sealed
+  successful result (`ok`/`done`) without a subsequent submit, the driver appends
+  no ledger entry, wakes the session with its last 40 lines (at most 4000 characters), and
+  parks the node as `reported (resume #n)`. It still reports questions. Failed,
+  stopped, cut-off or rejected runs did not deliver a report and retain the
+  existing row 6/7 routes (including halts and their parent wake-up detail).
+  A later submit is handled normally. A rule naming the node, another resume, a plan
+  entry changing the node, or abandon releases it; unrelated acts do not.
+  `drive/reports.json` is an atomic, ledger-lock-protected runtime receipt of
+  node/resume pairs, not an observation or acceptance verdict. Views validate
+  pairs against the report send and subsequent parent acts; a missing receipt
+  can be recovered by describing the sealed run. Stale follow-up generations
+  are never read as the report's outcome (the existing generation recovery).
+- **FL4 backlog and idle:** node `later: true` is never ready or dispatched;
+  removing it makes the node eligible. It changes no check/invariant key and
+  invalidates no candidate. `status`/`brief` list and count `Backlog (later)`;
+  they also list reported nodes. Staying `idle-wait` lines carry `counts` with
+  `ready`, `open` (all open slots), `waiting` (open waiting slots), `reported`
+  and `later`. With only parked slots remaining the driver may idle, but still
+  checks run events/questions. `drive.idle_rewake_min` is a non-negative integer
+  in minutes, default 60; 0 turns reminders off. While the ledger is unchanged
+  and the driver is still idle, another wake is printed at each interval until
+  activity or stop. It is a runtime setting, not an obligation key. Old log
+  lines without counts retain their original text when read.
+- **FL5 invariant spelling:** existing invariant-id entry points (CLI/tool
+  defer) accept both `<id>` and `inv:<id>`; recorded ids are canonical bare ids.
+  Unknown ids list valid bare/prefixed ids. `why <id>` (when not a node id) and
+  `why inv:<id>` reuse the receipt view for a trunk invariant. Invariants still
+  cannot be waived, and no `measure` command is introduced.
+
+Compatibility: owed 0.12 refuses a resume with an `after` array or `expect`
+as an ordinary refusal, not code `version` (accepted compatibility exception).
+From 0.13, unknown resume fields, `expect` values or incompatible `after`
+shapes are code `version`. Older owed refuses new sends of kind `notify` or
+reason `waiting`/`report` with code `version`; these sends require 0.13.
+The single-string resume entry and historical replay/acceptance keys are unchanged.
+
 ### 12.4 Views
 
 - **Status**: a `Halted (driver):` section lists halted nodes with

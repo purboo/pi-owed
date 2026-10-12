@@ -13,7 +13,7 @@ import { answerText } from './answer.ts';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
-import { parsePlan, planDowngrades, planWarnings } from './plan.ts';
+import { parsePlan, planDowngrades, planWarnings, invariantId } from './plan.ts';
 import { adoptPrefixes, uncoveredDowngrades, writesHint } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { leaseText } from './lease.ts';
@@ -226,9 +226,9 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.abandon({ ...await actor(ctx, dir, who, `Abandon the open attempt of node ${oneLine(p.node)}`, { Note: note ?? '(none)' }, signal), node: p.node, reason: note ?? '' });
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
-  tool('resume', 'Clear a driver halt on the open attempt of a node without an obligation (parent or owner; never the driver): the driver acts on its next pass and the repair budget starts again. after: wait until that node merges first (the driver leaves the node alone meanwhile, except asking notices). note: why (the writer gets it with the next follow-up). Use owed_rule instead for guidance the writer and reviewers must acknowledge.', Type.Object({ node, after: Type.Optional(Type.String({ minLength: 1, description: 'Wait until this node merges.' })), note: Type.Optional(Type.String({ description: 'Why (recorded; quoted to the writer).' })), as, cwd }), async (p, ctx, dir, signal) => {
+  tool('resume', 'Clear a driver halt on the open attempt of a node without an obligation (parent or owner; never the driver): the driver acts on its next pass and the repair budget starts again. after: a node, comma-separated string or list; wait until all merge first. expect: report asks for findings without requiring a candidate (the driver leaves the node alone meanwhile, except asking notices). note: why (the writer gets it with the next follow-up). Use owed_rule instead for guidance the writer and reviewers must acknowledge.', Type.Object({ node, after: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })])), expect: Type.Optional(Type.Literal('report')), note: Type.Optional(Type.String({ description: 'Why (recorded; quoted to the writer).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'resume');
-    const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(p.node)}${p.after !== undefined ? ` after ${oneLine(p.after)}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.note !== undefined ? { note: p.note } : {}) });
+    const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(p.node)}${p.after !== undefined ? ` after ${oneLine(String(p.after))}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}), ...(p.note !== undefined ? { note: p.note } : {}) });
     const tail = p.after === undefined ? '' : r.merged ? `\n${p.after} is already merged: ${p.node} resumes now` : `\n${p.node} waits for ${p.after} (resume #${r.entry.seq}); the driver acts again when ${p.after} merges`;
     return result(r.entry, `${renderEntry(r.entry)}${tail}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
@@ -319,7 +319,7 @@ export default function owed(pi: ExtensionAPI): void {
     const m = await git.buildMerge(dir, s.trunk.commit, candidate.commit, `owed merge ${p.node}`);
     if ('conflicts' in m) throw new OwedError('rebase needed');
     const facts = await git.stateFacts(dir, plan, m.commit);
-    const items = p.items.map(id => { const key = facts.invKeys[id]; if (!key) throw new OwedError(`Unknown invariant ${id}`); return { id, key }; });
+    const items = p.items.map(value => { const id = invariantId(plan,value), key = facts.invKeys[id]!; return { id, key }; });
     const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${oneLine(p.node)}: ${p.items.map(oneLine).join(', ')}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`, { Reason: p.reason }, signal);
     const r = await ops.defer({ ...a, channel: a.channel!, node: p.node, reason: p.reason, items }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
   });

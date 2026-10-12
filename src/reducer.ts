@@ -4,7 +4,7 @@ import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
 import { execKey } from './git.ts';
-import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
+import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -55,7 +55,7 @@ function nodeSpec(s: State, id: string): NodeSpec | undefined {
   return m.get(id);
 }
 /** A node spec without its `type` (D19.4) and `drive` (K3): neither is an obligation. */
-const withoutType = (n: NodeSpec | undefined): NodeSpec | undefined => n && { ...n, type: undefined, drive: undefined };
+const withoutType = (n: NodeSpec | undefined): NodeSpec | undefined => n && { ...n, type: undefined, drive: undefined, later: undefined };
 const itemKey = (subject: string, obligation: string, key: string): string => `${subject}\0${obligation}\0${key}`;
 const listed = <K, V>(m: Map<K, V[]>, k: K): V[] => m.get(k) ?? [];
 const push = <K, V>(m: Map<K, V[]>, k: K, v: V): void => { const l = m.get(k); if (l) l.push(v); else m.set(k, [v]); };
@@ -209,7 +209,7 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
     const n = s.nodes[spec.id] ??= emptyNode(spec.id);
     n.items = n.candidate ? nodeItems(s, n.id, n.candidate) : [];
     n.accepted = !!n.candidate && (!!n.slot?.open || !!n.merged) && n.items.every(i => i.status !== 'D') && !n.blocks.some(b => binding(b, spec));
-    n.phase = n.merged ? 'merged' : n.slot?.open ? n.candidate ? n.accepted ? 'accepted' : 'submitted' : 'dispatched' : spec.deps.every(d => s.nodes[d]?.merged) ? 'ready' : 'blocked';
+    n.phase = n.merged ? 'merged' : n.slot?.open ? n.candidate ? n.accepted ? 'accepted' : 'submitted' : 'dispatched' : !spec.later && spec.deps.every(d => s.nodes[d]?.merged) ? 'ready' : 'blocked';
     n.dependents = h.dependents.get(n.id) ?? 0;
     if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
   }
@@ -299,6 +299,13 @@ export function newerEntry(e: Entry): OwedError | undefined {
   if (kind === 'obs') {
     const extra = Object.keys(x).find(k => x[k] !== undefined && !OBS_FIELDS.includes(k));
     if (extra !== undefined) return refuse(`obs ${extra} ${shown(x[extra])}`);
+  }
+  // FL2/FL3: from 0.13 unknown resume shapes are compatibility errors, not silently interpreted.
+  if (kind === 'resume') {
+    const extra = Object.keys(x).find(k => x[k] !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS.resume.includes(k));
+    if (extra) return refuse(`resume ${extra}`);
+    if (x.expect !== undefined && x.expect !== 'report') return refuse(`resume expect ${shown(x.expect)}`);
+    if (x.after !== undefined && typeof x.after !== 'string' && (!Array.isArray(x.after) || x.after.some(v => typeof v !== 'string'))) return refuse('resume after shape');
   }
   return undefined;
 }
@@ -465,7 +472,7 @@ export function invalidates(prev: Plan, next: Plan, id: string): boolean {
   return canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure);
 }
 /** N1: the node spec fields whose change still lets owed carry a candidate (its facts are recomputed). */
-export const CARRY_FIELDS: readonly string[] = ['checks', 'writes', 'type', 'drive'];
+export const CARRY_FIELDS: readonly string[] = ['checks', 'writes', 'type', 'drive', 'later'];
 /**
  * N1: whether an open candidate of node `id`, invalidated by the change from `prev` to `next`, is carried: the node
  * exists in both plans and its spec differs only in `CARRY_FIELDS` (plan-wide setup, exec and closure never prevent it).
@@ -481,7 +488,7 @@ export function carryable(prev: Plan, next: Plan, id: string): boolean {
  */
 export function specChanges(prev: Plan, next: Plan, id: string): string[] {
   const a = (prev.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>, b = (next.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>;
-  const fields = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => k !== 'type' && k !== 'drive' && canonical(a[k]) !== canonical(b[k]));
+  const fields = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => k !== 'type' && k !== 'drive' && k !== 'later' && canonical(a[k]) !== canonical(b[k]));
   return [...fields, ...(prev.setup !== next.setup ? ['setup'] : []), ...(execChanged(prev, next) ? ['exec'] : []), ...(canonical(prev.closure) !== canonical(next.closure) ? ['closure'] : [])];
 }
 /**
@@ -560,10 +567,35 @@ export function resumeOf(s: State, node: string): ResumeEntry | undefined {
  * 0.8 (L1.2): the node is waiting while the latest resume of its open attempt names `after` and that node is not
  * merged; the driver leaves it alone (except asking notices). Undefined otherwise.
  */
-export function waitingFor(s: State, node: string): { after: string; resume: number } | undefined {
-  const r = resumeOf(s, node);
-  return r?.after !== undefined && !s.nodes[r.after]?.merged ? { after: r.after, resume: r.seq } : undefined;
+export function waitingFor(s: State, node: string): Waiting | undefined {
+  const slot = s.nodes[node]?.slot, spec = nodeSpec(s, node);
+  if (!slot?.open || !spec) return undefined;
+  const r = resumeOf(s, node), deps = spec.deps.filter(d => !s.nodes[d]?.merged);
+  const after = afterNodes(r?.after).filter(d => !s.nodes[d]?.merged);
+  if (!deps.length && !after.length) return undefined;
+  // Preserve the 0.8 single-after view shape for historical consumers.
+  return { after: after.join(', '), resume: r?.seq ?? -1, ...(deps.length ? { deps } : {}) };
 }
+export interface Waiting { after: string; resume: number; deps?: string[] }
+/** FL2: a single node stays a string; comma spelling is normalized at command/tool boundaries. */
+export const afterNodes = (after: string | string[] | undefined): string[] => after === undefined ? [] : Array.isArray(after) ? after : [after];
+/** FL3: report follow-up of the latest resume; a later submit or parent act ends the parked receipt. */
+export function reportRequest(s: State, node: string): { resume: number; send: SendEntry } | undefined {
+  const r = resumeOf(s, node), n = s.nodes[node];
+  if (r?.expect !== 'report' || !n?.slot?.open) return undefined;
+  const send = n.runs.find(a => a.attempt === r.attempt)?.sends.find(x => x.reason === 'report' && x.seq > r.seq);
+  if (!send) return undefined;
+  if (entriesOf(s).some(e => e.seq > send.seq && (
+    (e.kind === 'submit' && e.node === node) ||
+    (e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(node)) ||
+    (e.kind === 'plan' && canonical(nodeSpec({ ...s, plan: planAt(s, e.seq) }, node)) !== canonical(nodeSpec({ ...s, plan: planAt(s, e.seq + 1) }, node)))
+  ))) return undefined;
+  return { resume: r.seq, send };
+}
+export const reportedOf = (s: State, node: string): number | undefined => {
+  const request = reportRequest(s, node);
+  return request && s.nodes[node]?.reported === request.resume ? request.resume : undefined;
+};
 /** Stable project id of a ledger: the first 12 hex of the genesis entry hash. */
 export function projectId(s: State): string {
   const g = context(s).genesis;
@@ -606,8 +638,8 @@ export function driveReviewerSlot(by: string, node: string, attempt: number): nu
   const prefix = `reviewer:drive-${node}-${attempt}-`;
   return by.startsWith(prefix) && /^[1-9][0-9]*$/.test(by.slice(prefix.length)) ? Number(by.slice(prefix.length)) : undefined;
 }
-export const SEND_KINDS: readonly SendKind[] = ['follow-up', 'steer'];
-export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing', 'ruling', 'verdict'];
+export const SEND_KINDS: readonly SendKind[] = ['follow-up', 'steer', 'notify'];
+export const SEND_REASONS: readonly SendReason[] = ['submit', 'repair', 'interrupted', 'fenced', 'rebase', 'review-missing', 'ruling', 'verdict', 'waiting', 'report'];
 const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
 
 // Conservative local downgrade detection keeps this leaf independent of plan.ts.
@@ -906,7 +938,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       // D22.1: `rulings` = the highest ruling seq a `ruling` send includes; required for reason ruling, forbidden otherwise.
       if (d.reason === 'ruling') {
         if (!Number.isInteger(d.rulings) || !s.rules.some(r => r.seq === d.rulings && (r.nodes === '*' || r.nodes.includes(d.node)))) errors.push(`send reason ruling requires rulings = the seq of a recorded ruling covering ${d.node}`);
-      } else if (d.reason === 'repair' || d.reason === 'submit' || d.reason === 'rebase') {
+      } else if (d.reason === 'repair' || d.reason === 'submit' || d.reason === 'rebase' || d.reason === 'report') {
         // E4: a repair records the highest in-scope ruling seq its message carried (0 when none); absent on 0.5.0 entries.
         // K5.2 (0.7): a submit or rebase follow-up records it when it carries rulings.
         if (d.rulings !== undefined) errors.push(...carriedErrors(s, d, `send reason ${d.reason}`));
@@ -919,8 +951,12 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('parent', 'owner');
       if (n && !n.slot?.open) errors.push(`resume requires an open slot of ${d.node}; ${d.node} has none`);
       else slot();
-      if (d.after !== undefined && (typeof d.after !== 'string' || !nodeSpec(s, d.after))) errors.push(`resume after names an unknown node: ${String(d.after)}`);
-      else if (d.after === d.node) errors.push('resume after must name another node, not the node itself');
+      if (d.after !== undefined && (typeof d.after !== 'string' && (!Array.isArray(d.after) || !d.after.length || d.after.some(x => typeof x !== 'string')))) errors.push('resume after must be a node string or a non-empty string array');
+      else for (const id of afterNodes(d.after)) {
+        if (!nodeSpec(s, id)) errors.push(`resume after names an unknown node: ${id}`);
+        else if (id === d.node) errors.push('resume after must name another node, not the node itself');
+      }
+      if (d.expect !== undefined && d.expect !== 'report') errors.push('resume expect must be report');
       if (d.note !== undefined && typeof d.note !== 'string') errors.push('resume note must be a string');
       break;
     case 'halt':
@@ -985,7 +1021,7 @@ function carriedErrors(s: State, d: Draft & { node: string; rulings?: number }, 
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume', readonly string[]> = { resume: ['node', 'attempt', 'after', 'note'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume', readonly string[]> = { resume: ['node', 'attempt', 'after', 'expect', 'note'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
