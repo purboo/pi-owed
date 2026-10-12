@@ -1,5 +1,6 @@
 // SW: advisory trunk sweeps. Lease -> sweep operation lock -> short ledger append lock;
 // measurements never hold the ledger lock and never write observations or escapes.
+import { canonical, sha256 } from './canon.ts';
 import { Ledger } from './ledger.ts';
 import { readState } from './ops.ts';
 import { git, revParse, isAncestor } from './git.ts';
@@ -50,65 +51,121 @@ function failingNames(log: string): string[] {
   return [...new Set(owed ?? names)].slice(0, 50);
 }
 
-export async function sweep(o: LeaseOptions & { commit?: string; once?: boolean }): Promise<SweepResult> {
-  const initial = await readState(o);
-  if (initial.state.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
-  if (!initial.state.plan.sweep) throw new OwedError('plan has no sweep configured');
-  return withMachineLease({ ...o, lease: o.lease !== false && initial.state.plan.lease !== false }, signal => leaseResultPromise(signal));
-  async function leaseResultPromise(signal?: AbortSignal): Promise<SweepResult> {
+type SweepDraft = Extract<Draft, { kind: 'sweep' }>;
+/** Independent of acceptance keys and lease acquisition; older unkeyed greens need remeasurement. */
+export const sweepDefinitionKey = (plan: Plan): string => sha256(canonical({ sweep:plan.sweep, setup:plan.setup, exec:plan.exec }));
+
+export async function sweep(o: LeaseOptions & { commit?: string; once?: boolean; onCommit?():void }): Promise<SweepResult> {
+  let recorded:SweepResult | undefined;
+  try {
+    const initial = await readState(o);
+    if (initial.state.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
+    if (!initial.state.plan.sweep) throw new OwedError('plan has no sweep configured');
+    const leaseAbort=new AbortController(); let running=false;
+    const cancelWait=()=>{ if (!running) leaseAbort.abort(o.signal?.reason); };
+    o.signal?.addEventListener('abort',cancelWait,{once:true}); if (o.signal?.aborted) cancelWait();
+    try {
+      return await withMachineLease({...o,signal:leaseAbort.signal,lease:o.lease !== false && initial.state.plan.lease !== false},signal=> {
+        running=true;
+        // Cancel a queued acquisition at once, but retain an acquired holder until the
+        // detached check groups finish their TERM/KILL cleanup.
+        return runLeased(o.signal ? AbortSignal.any([o.signal,...(signal ? [signal] : [])]) : signal);
+      });
+    } finally { o.signal?.removeEventListener('abort',cancelWait); }
+  } catch (e) {
+    // Once append has begun the measurement is complete. Cancellation cannot turn that
+    // committed evidence into a preemption receipt, or erase the append.
+    if (recorded) return recorded;
+    if (o.signal?.aborted && o.signal.reason === 'preempted') {
+      // Acquisition and every detached process have ended before the lease helper returns.
+      const ledger = await Ledger.open(o.cwd);
+      await ledger.withLock(async () => {
+        const d: Draft = {kind:'note',by:'executor:owed',text:'sweep aborted: preempted'};
+        const errors = validateDraft((await readState(o)).state,d); if (errors.length) throw new OwedError(errors.join('; '));
+        await ledger.append([d]);
+      });
+    }
+    throw e;
+  }
+  async function runLeased(signal?: AbortSignal): Promise<SweepResult> {
     const ledger = await Ledger.open(o.cwd);
     return ledger.withLock(async () => {
-      const { state, entries } = await readState(o), spec = state.plan.sweep;
+      const {state,entries} = await readState(o), spec = state.plan.sweep;
       if (!spec) throw new OwedError('plan has no sweep configured');
-      const commit = await revParse(o.cwd, o.commit ?? `refs/heads/${state.trunk.name}`);
+      const commit = await revParse(o.cwd,o.commit ?? `refs/heads/${state.trunk.name}`);
       const prior = entries.findLast((e): e is SweepEntry => e.kind === 'sweep' && e.commit === commit);
-      if (o.once && prior) return leaseResult({ entry: prior, steps: [], skipped: true });
-      // Always materialize the exact detached tree; closure overlays/reuse are check policies, not sweep policies.
-      const plan: Plan = { ...state.plan, closure: [], exec: { ...state.plan.exec, trees: 'fresh' } };
-      const measure = async (at: string, bisect = false): Promise<SweepEntry> => {
-        if (signal?.aborted) throw new OwedError('aborted', 'aborted');
-        const obs = await runJob({ cwd: o.cwd, plan, ledger, signal }, {
-          kind: 'check', subject: 'trunk', obligation: 'sweep', key: 'sweep', commit: at, base: at,
-          spec: { id: 'sweep', ...spec, reads: spec.reads ?? ['**'] },
+      if (o.once && prior) return leaseResult({entry:prior,steps:[],skipped:true});
+      const key = sweepDefinitionKey(state.plan);
+      const plan: Plan = {...state.plan,closure:[],exec:{...state.plan.exec,trees:'fresh'}};
+      const drafts: SweepDraft[] = [], samples = new Map<string,SweepDraft[]>();
+      let limit = Infinity;
+      const budget = Symbol('measurement budget exhausted');
+      const measure = async (at: string): Promise<SweepDraft> => {
+        if (signal?.aborted) throw new OwedError('aborted','aborted');
+        if (drafts.length >= limit || (samples.get(at)?.length ?? 0) >= 2) throw budget;
+        const obs = await runJob({cwd:o.cwd,plan,ledger,signal,abortGraceMs:2000}, {
+          kind:'check',subject:'trunk',obligation:'sweep',key,commit:at,base:at,
+          spec:{id:'sweep',...spec,reads:spec.reads ?? ['**']},
         });
-        if (signal?.aborted) throw new OwedError('aborted', 'aborted');
+        if (signal?.aborted) throw new OwedError('aborted','aborted');
         const log = (await ledger.getBlob(obs.log!)).toString();
-        const d: Extract<Draft, { kind: 'sweep' }> = { kind: 'sweep', by: 'executor:owed', commit: at,
-          verdict: obs.verdict === 'pass' && (obs.counts?.fail ?? 0) > 0 ? 'fail' : obs.verdict,
-          ...(obs.counts ? { counts: obs.counts as Counts } : {}), log: obs.log!, failed: failingNames(log), ...(bisect ? { bisect: true } : {}) };
-        return ledger.withLock(async () => {
-          const latest = await readState(o);
-          const errors = validateDraft(latest.state, d); if (errors.length) throw new OwedError(errors.join('; '));
-          // Stale async results remain evidence about their pinned commit, never a verdict on current trunk.
-          if (signal?.aborted) throw new OwedError('aborted', 'aborted');
-          return (await ledger.append([d]))[0] as SweepEntry;
-        }, undefined, signal);
+        const d: SweepDraft = {kind:'sweep',by:'executor:owed',commit:at,key,
+          verdict:obs.verdict === 'pass' && (obs.counts?.fail ?? 0) > 0 ? 'fail' : obs.verdict,
+          ...(obs.counts ? {counts:obs.counts as Counts} : {}),log:obs.log!,failed:failingNames(log),
+          ...(drafts.length ? {bisect:true} : {})};
+        drafts.push(d); samples.set(at,[...(samples.get(at) ?? []),d]); return d;
       };
-      const entry = await measure(commit), result: SweepResult = { entry, steps: [] };
-      if (entry.verdict !== 'fail') return leaseResult(result);
+      // Commit the complete run atomically. A preempted head or bisect leaves no partial verdicts,
+      // so the driver can retry this head at the next idle period.
+      const finish = (extra: Pick<SweepResult,'first'|'note'> = {}): Promise<SweepResult> => ledger.withLock(async () => {
+        const latest = (await readState(o)).state;
+        for (const d of drafts) { const errors = validateDraft(latest,d); if (errors.length) throw new OwedError(errors.join('; ')); }
+        if (signal?.aborted) throw new OwedError('aborted','aborted');
+        o.onCommit?.();
+        const written = await ledger.append(drafts) as SweepEntry[];
+        recorded=leaseResult({entry:written[0]!,steps:written.slice(1),...extra});
+        return recorded;
+      },undefined,signal);
+      const observations = (): string => [...samples].map(([at,runs]) => `${at.slice(0,12)}=${runs.map(r=>r.verdict).join('/')}`).join(', ');
+      const inconsistent = (why = '') => finish({note:`inconsistent (flaky)${why ? `: ${why}` : ''}; observed verdicts: ${observations()}`});
+      const head = await measure(commit);
+      if (head.verdict !== 'fail') return finish();
+      const repeated = await measure(commit);
+      if (repeated.verdict === 'pass') return finish({note:`flaky at head; observed verdicts: ${observations()}`});
+      if (repeated.verdict !== 'fail') return inconsistent();
       let green: SweepEntry | undefined;
-      for (const e of [...entries].reverse()) if (e.kind === 'sweep' && e.verdict === 'pass' && e.commit !== commit && await isAncestor(o.cwd, e.commit, commit)) { green = e; break; }
-      if (!green) return leaseResult({ ...result, note: 'no green ancestor; failure reported without bisect' });
-      const chain = new Set((await git(o.cwd, ['rev-list', '--first-parent', `${green.commit}..${commit}`])).stdout.trim().split('\n'));
+      for (const e of [...entries].reverse()) if (e.kind === 'sweep' && e.verdict === 'pass' && e.commit !== commit && await isAncestor(o.cwd,e.commit,commit)) { green=e; break; }
+      if (!green) return finish({note:'no green boundary: no green ancestor; failure reported without bisect'});
+      const chain = new Set((await git(o.cwd,['rev-list','--first-parent',`${green.commit}..${commit}`])).stdout.trim().split('\n'));
       const merges = entries.filter((e): e is MergeEntry => e.kind === 'merge' && chain.has(e.commit));
-      if (!merges.length) return leaseResult({ ...result, note: 'no owed merge on the first-parent range' });
-      // If the failing tip was adopted, first establish whether the last owed merge already failed.
-      let hi = merges.length - 1, lo = -1;
-      if (merges[hi]!.commit !== commit) {
-        const end = await measure(merges[hi]!.commit, true); result.steps.push(end);
-        if (end.verdict !== 'fail') return leaseResult({ ...result, note: `bisect stopped: last owed merge sweep ${end.verdict}` });
-      }
-      while (hi - lo > 1) {
-        const mid = Math.floor((lo + hi) / 2), step = await measure(merges[mid]!.commit, true); result.steps.push(step);
-        if (step.verdict === 'error') return leaseResult({ ...result, note: 'bisect stopped on a measurement error' });
-        if (step.verdict === 'pass') lo = mid; else hi = mid;
-      }
-      const first = merges[hi]!;
-      const note = `sweep ${commit.slice(0, 12)} failed; first failing merge ${first.commit.slice(0, 12)}; failing tests: ${entry.failed.join(', ') || 'unknown'}`;
-      result.first = { commit: first.commit, node: first.node, merge: first.seq,
-        command: `owed escape ${quote(first.node)} --merge ${first.seq} --class missing --note ${quote(note)}` };
-      return leaseResult(result);
-    }, 'sweep', signal, { busy: () => 'sweep already running; retry next pass' });
+      if (!merges.length) return finish({note:'no owed merge on the first-parent range'});
+      limit = Math.ceil(Math.log2(merges.length))+4;
+      try {
+        if (green.key !== key && (await measure(green.commit)).verdict !== 'pass') {
+          return finish({note:`no green boundary under current sweep definition; definition/environment change; observed verdicts: ${observations()}`});
+        }
+        let hi=merges.length-1, lo=-1;
+        if (merges[hi]!.commit !== commit) {
+          const end=await measure(merges[hi]!.commit);
+          if (end.verdict !== 'fail') return finish({note:`bisect stopped: last owed merge sweep ${end.verdict}`});
+        }
+        while (hi-lo>1) {
+          const mid=Math.floor((lo+hi)/2), step=await measure(merges[mid]!.commit);
+          if (step.verdict === 'error') return finish({note:'bisect stopped on a measurement error'});
+          if (step.verdict === 'pass') lo=mid; else hi=mid;
+        }
+        const first=merges[hi]!, predecessor=await revParse(o.cwd,`${first.commit}^1`);
+        const confirm = async (at:string, verdict:'pass'|'fail'): Promise<boolean> => {
+          if ((samples.get(at)?.length ?? 0)<2) await measure(at);
+          return samples.get(at)!.every(r=>r.verdict === verdict);
+        };
+        const bad=await confirm(first.commit,'fail'), good=await confirm(predecessor,'pass');
+        if (!bad || !good) return inconsistent();
+        const note=`sweep ${commit.slice(0,12)} failed; first failing merge ${first.commit.slice(0,12)}; failing tests: ${head.failed.join(', ') || 'unknown'}`;
+        return finish({first:{commit:first.commit,node:first.node,merge:first.seq,
+          command:`owed escape ${quote(first.node)} --merge ${first.seq} --class missing --note ${quote(note)}`}});
+      } catch (e) { if (e === budget) return inconsistent('confirmation budget exhausted'); throw e; }
+    },'sweep',signal,{busy:()=> 'sweep already running; retry next pass'});
   }
 }
 export function renderSweep(r: SweepResult): string {

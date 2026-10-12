@@ -190,7 +190,7 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  * `after`: the node waits until that node merges. Strict fields.
  */
 export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string }
-export interface SweepEntry extends Base { kind: 'sweep'; commit: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
+export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
 export type Entry = SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
