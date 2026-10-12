@@ -14,6 +14,7 @@ import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJob
 import { runJob } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unruledBlocks } from './drive.ts';
+import { editText, editDiff, type EditFields } from './edit.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf } from './views.ts';
 import type { ReceiptCard, StatusView, Report } from './views.ts';
@@ -648,6 +649,53 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
     return { node:o.node, file:e.file, path:e.path, added:e.added, present:e.present, plan, rule:ruled, carried:appended.slice(1,-1).filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried };
   });  });
 }
+// ---------- ED: atomic node/check/invariant plan edits ----------
+export type EditArgs = Context & EditFields & { note: string; plan?: string; rule?: string; writer?: boolean; resume?: boolean; after?: string | string[]; expect?: 'report'; dry_run?: boolean };
+export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades> }
+export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string }
+async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<EditPreview> {
+  inited(s);
+  if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('edit needs a non-empty note (--note TEXT)','usage');
+  if (o.writer && o.rule === undefined) throw new OwedError('--writer requires --rule','usage');
+  if ((o.after !== undefined || o.expect !== undefined) && !o.resume) throw new OwedError('--after and --expect require --resume','usage');
+  if (o.invariant !== undefined && (o.rule !== undefined || o.resume)) throw new OwedError('invariant edits do not take --rule or --resume','usage');
+  if (o.rule !== undefined && !o.rule.trim()) throw new OwedError('--rule needs non-empty text','usage');
+  const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
+  if (planBlob(read.plan).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
+  const next = editText(read.plan,o), plan = planBlob(next).plan;
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan) };
+}
+/** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
+export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
+/** ED2: plan + carries + optional ruling + optional resume, guarded together and appended once. */
+export async function edit(o: Actor & EditArgs): Promise<EditResult | EditPreview> {
+  if (o.dry_run) return editPreview(o);
+  owner(o); const ledger = await Ledger.open(o.cwd);
+  return retryCas(ledger,async before => {
+    const { entries } = await load(ledger), e = await prepareEdit(o,entries,before), p = await storePlan(ledger,e.next), notCarried: NotCarried[] = [];
+    return ledger.withLock(async () => {
+      const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:o.note.trim(), notCarried },ledger,p,before);
+      if (await readFile(e.file,'utf8') !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while editing; nothing recorded`);
+      if (o.rule !== undefined) {
+        const rule: Draft = { kind:'rule', by:by(o), channel:o.channel, nodes:[o.node!], text:o.rule, ...(o.writer !== undefined ? { writer:o.writer } : {}) };
+        guard(replayed(latest,drafts),rule); drafts.push(rule);
+      }
+      if (o.resume) {
+        const resume = resumeDraft({ ...o, node:o.node! },replayed(latest,drafts));
+        guard(replayed(latest,drafts),resume); drafts.push(resume);
+      }
+      const temp = join(dirname(e.file),`.${basename(e.file)}.owed-edit-${process.pid}-${randomUUID().slice(0,8)}.tmp`);
+      try { await writeFile(temp,e.next); await chmod(temp,(await stat(e.file)).mode & 0o7777); }
+      catch (x) { await unlink(temp).catch(() => undefined); throw new OwedError(`cannot write ${e.path}: ${(x as NodeJS.ErrnoException).code ?? String(x)}; nothing recorded`); }
+      let appended: Entry[];
+      try { appended = await ledger.append(drafts); } catch (x) { await unlink(temp).catch(() => undefined); throw x; }
+      const plan = appended[0]!;
+      try { await rename(temp,e.file); }
+      catch (x) { throw new OwedError(`edit entries #${plan.seq}-#${appended.at(-1)!.seq} were recorded, but ${e.path} could not be replaced (${(x as NodeJS.ErrnoException).code ?? String(x)}): the recorded plan is in ${temp}: move it over ${e.file}`,'internal'); }
+      return { file:e.file, path:e.path, plan, ...(o.rule !== undefined ? { rule:appended.find(x => x.kind === 'rule')! } : {}), ...(o.resume ? { resume:appended.at(-1)! } : {}), carried:appended.filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, diff:e.diff };
+    });
+  });
+}
 /** The state after appending `drafts` to `latest` (seq, ts and hashes as the append would assign them). */
 function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): State {
   const replay = [...latest.entries], more: Entry[] = [];
@@ -1042,19 +1090,25 @@ export async function send(o: Actor & { node: string; attempt: number; rid: stri
  * obligation and starts a new repair epoch; with `after` the node waits until that node merges. `merged`: `after` is
  * already merged (the node resumes now).
  */
-export async function resume(o: Actor & { node: string; after?: string; note?: string }): Promise<{ entry: Entry; merged?: boolean }> {
+type ResumeArgs = Actor & { node: string; after?: string | string[]; expect?: 'report'; note?: string };
+/** ED2: shared resume drafting lets edit validate against its prospective plan and rule without a second lock.
+ * FL2/FL3 options are forwarded loosely until the waits node supplies their entry types and guard. */
+function resumeDraft(o: ResumeArgs, s: State): Draft {
   if (o.as.role !== 'parent' && o.as.role !== 'owner') throw new OwedError(`resume insufficient permissions; requires parent/owner (got ${o.as.role})`);
+  const n = node(s,o.node);
+  if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
+  const unruled = unruledBlocks(s,o.node);
+  if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}), so the driver would halt again at once; record it with owed rule --nodes ${o.node} "<decision>" (the ruling also clears the halt)`);
+  return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(o.after !== undefined ? { after:o.after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}) } as Draft;
+}
+export async function resume(o: ResumeArgs): Promise<{ entry: Entry; merged?: boolean }> {
   let merged = false;
-  const entry = await mutate(o, s => {
-    const n = node(s, o.node);
-    if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
-    // F4 (wais #33c): the driver would halt again at once on a review block that needs a parent ruling.
-    const unruled = unruledBlocks(s, o.node);
-    if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}), so the driver would halt again at once; record it with owed rule --nodes ${o.node} "<decision>" (the ruling also clears the halt)`);
-    merged = o.after !== undefined && !!s.nodes[o.after]?.merged;
-    return { kind: 'resume', by: by(o), channel: o.channel, node: o.node, attempt: n.slot.attempt, ...(o.after !== undefined ? { after: o.after } : {}), ...(o.note !== undefined && o.note !== '' ? { note: o.note } : {}) };
+  const entry = await mutate(o,s => {
+    const d = resumeDraft(o,s), after = typeof o.after === 'string' ? [o.after] : o.after;
+    merged = !!after?.length && after.every(id => !!s.nodes[id]?.merged);
+    return d;
   });
-  return { entry, ...(merged ? { merged: true } : {}) };
+  return { entry, ...(merged ? { merged:true } : {}) };
 }
 /** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. `since`: as for launch (F1). */
 export async function halt(o: Actor & { node: string; attempt: number; reason: string; needs: 'human' | 'owner'; since?: number }): Promise<HaltEntry> {
