@@ -1,5 +1,159 @@
 # Changelog
 
+## 0.13.0
+
+This release delivers the merged nodes lease (LE), waits (FL), repeat (RC),
+answer (AN), edit (ED), sweep (SW) and quiet (QT). Origins: wais feedback in
+`/tmp/dsa/owed-requirements.md` §65, including the 41h list (2026-10-11)
+and the machine-lock and morning/idle observations (2026-10-12), plus
+`/tmp/dsa/owed-feedback-2026-10-10.md` §39 on escapes found by accident.
+Quiet comes from another owed user's feedback (2026-10-12), not wais.
+The parent's rulings below pin the behavior where the original asks changed.
+
+- **Measurements hold the machine lease (LE; wais §65 machine-lock
+  observation).** Standalone attest, merge, adopt and genesis measurements
+  (including init's background attest) wait under
+  `pi-durable-subagents hold machine --shared` when dsa is available.
+  Driver attests and in-process merges use `--no-wait`: busy means retry
+  on a later pass, never halt. Merge starts only after the holder signals
+  acquisition; return, failure, abort or parent death releases the holder.
+  Setup, checks and invariants get `OWED_LEASED=1` to avoid nested lease
+  acquisition, with isolated async contexts for parallel measurements.
+  Results say `lease: machine (shared)`. The release also strengthens the
+  lease test to compare non-empty check and invariant keys with and without
+  the inherited marker.
+- **Waiting, reports and backlog (FL; wais §65, 41h list #1/#6 and idle
+  observation; ruling #1245).** An open slot with unmerged current-plan
+  dependencies waits automatically: no submit/repair/ruling follow-ups,
+  measurement or missing-candidate halt, while questions remain visible.
+  Adding dependencies to a running writer sends one durable `notify`
+  (not steer) per plan entry; when the waits end, the existing rebase and
+  follow-up route catches the slot up to trunk. `owed resume <node>
+  --after a,b` waits for all named nodes and composes with implicit waits;
+  tools accept a string or string array. `owed resume <node> --expect
+  report` asks for findings, not a candidate. A successful sealed report
+  without a new submit wakes the parent with at most 40 lines/4000 chars,
+  records no acceptance verdict and parks the node as `reported (resume
+  #n)` until a relevant parent act. Failed/interrupted runs retain their
+  recovery routes; a later submit is handled normally. `later: true`
+  parks backlog nodes until removed. Idle wakes list ready/open/waiting/
+  reported/later counts and repeat every `drive.idle_rewake_min` minutes
+  (default 60, 0 off). Existing invariant-id entry points accept `inv:<id>`;
+  `why` can show a trunk invariant, and unknown ids list valid spellings.
+- **Repeated measurements and explicit counts (RC; wais §65, 41h list
+  #2/#3 and flaky invariants; rulings #1243, #1247/#1274).** Checks and
+  invariants accept `repeat: {runs: N, need: K}` with
+  `1 <= K <= N <= 9` (`need` defaults to N). Commands run sequentially
+  in one prepared tree and stop when K passes are reached or unreachable;
+  errors stop as errors, not failed votes. Repeat is part of the
+  check/invariant key (#1243), forbidden on red or mutants checks, and
+  honored for merge-time invariants. Observations retain each run's verdict,
+  exit, counts, duration and log digest; disagreement is descriptive
+  `noisy (2/3 passed)`, not a separate block. The last valid column-0 line
+  `owed-counts {"pass":2,"fail":1,"failed":["latency gate"]}` wins over
+  other count formats; pass/fail and optional skip are non-negative integers.
+  Indented lines and `# ` comments are silent non-protocol text (#1274);
+  malformed protocol lines are ignored and noted. Only the `owed` format's
+  fail > 0 fails a non-red run even on exit 0 (#1247); other formats keep
+  their exit semantics. RC3 keeps up to 50 failing names from owed/TAP/cargo
+  and leads failure notes, `why`, halts and repairs with those names, then
+  a tail of at most 15 lines. Reused failing merge observations retain
+  names and tail, and failed red checks (including `red_expect` mismatch)
+  get the same names-first note (#1274).
+- **Answer in one act (AN; wais §65 morning observation).** Parent/owner
+  `owed answer <node> [--qid Q] [--rid R] "<text>"` discovers one open
+  writer/reviewer question, refusing ambiguity or absence with the open
+  question list. It records one node-scoped rule with `writer: false` and
+  `answer: {rid, qid, rev}`, then delivers dsa kind `answer` with request
+  `owed-answer-<seq>`. Explicit rid/qid retries with the same text reuse
+  the rule and request, even after the question closes; changed text refuses.
+  Delivery failure leaves the rule and reports its seq and exact retry
+  command. Answer delivery is target-specific: the answer is not re-delivered
+  as a writer ruling to the rid it answered, nor does it hide earlier
+  undelivered rulings. Other runs receive it normally. Acknowledgment scope
+  is unchanged: reviewers still acknowledge all in-scope rulings, including
+  answers; reviewer acknowledgment follow-ups retain that complete context.
+- **Atomic plan edits (ED; wais §65, 41h list #4).**
+  `owed edit <node> --set path=yaml ... [--unset path ...] [--node-new]
+  [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
+  --note WHY [--dry-run] [--plan FILE]` edits node fields, checks and
+  drive overrides; `owed edit --invariant ID --set field=yaml --note WHY`
+  edits an invariant. YAML comments are kept; bytes outside the target map
+  stay unchanged when safe, with whole-document serialization for flow
+  containers or anchors/aliases. One ledger lock guards plan/carries,
+  optional ruling and optional resume, using existing authority and downgrade
+  rules. Refusals leave the ledger and file unchanged; file replacement
+  follows the append, and a replacement failure reports the recorded seqs
+  and recovery file. Dry run prints diff/downgrades without writing.
+  `owed amend` remains available.
+- **Advisory sweeps and unguarded paths (SW; wais feedback §39; ruling
+  #1331).** Top-level `sweep: {run, timeout_s, reads?}` enables
+  `owed sweep [--commit C]` on a fresh detached trunk tree, with setup/exec
+  and the shared lease. Completed sweeps record commit, definition key,
+  verdict, counts, log and failed names, never acceptance observations.
+  A staying idle driver schedules sweep/bisect in the background, at most
+  once per trunk commit with completed sweep entries. Any ready driver work
+  preempts it and proceeds in the same pass without waiting (#1331);
+  process cleanup is bounded, releases the lease, and records `sweep
+  aborted: preempted` without partial verdicts, so the next idle period
+  can retry. A head failure is rerun once: a pass reports `flaky at head`,
+  without localization. A green ancestor with a different or missing
+  definition key is re-established under the current sweep/setup/exec
+  definition before bisect. First-parent owed merges are searched, and
+  the failing merge and its actual first parent are confirmed; disagreement
+  or exhausted confirmation budget reports `inconsistent (flaky)` with
+  verdicts and no culprit/proposal. Each commit runs at most twice and
+  localization uses at most `ceil(log2(n)) + 4` measurements (#1331).
+  Only a confirmed boundary proposes the exact `owed escape` command and
+  tests to promote to an invariant; no escape is recorded and no merge is
+  gated. Merge output, driver reports and `brief`'s last 10 merges list
+  touched paths outside invariant reads, grouped by their parent directories
+  with root files literal and redundant descendant globs removed.
+- **Quiet by default (QT; another owed user's feedback, 2026-10-12;
+  ruling #1378).** Rendered halts say `needs the parent (the main agent
+  acts; owed lists the command)` instead of `needs human`; owner wording
+  stays unchanged, and manual evidence offers the plan's role or
+  `--as owner:pi`. Only repo-scoped drift wakes are revalidated at delivery:
+  matching trunk/ledger commits or an advanced ledger trunk seq drop the
+  obsolete wake; failed reads keep it. Unscoped legacy lines, including
+  a node named `trunk`, are delivered rather than dropped as drift (#1378);
+  ordinary node/question revalidation still applies. Status/brief show no
+  drift when trunk matches. The existing "When to use owed" guidance keeps
+  small low-risk fixes direct with one parent adoption, reserving reviewed
+  nodes/red tests for consequential risks and multi-agent waves.
+
+### Compatibility
+
+Use owed 0.13 for ledgers with repeat-keyed observations, answer rulings,
+sweep entries, or edits using the new 0.13 plan/resume shapes. ED itself
+adds no entry kind or field: plain plan/carry/rule/resume edits retain their
+existing schemas. Published 0.12 silently drops plan `repeat` and replays
+its observations by aggregate verdict only, ignoring run/noise/name metadata;
+it cannot be retrofitted to refuse them, so do not operate a repeat ledger
+with 0.12 (#1243). From 0.13, unknown top-level observation fields raise code
+`version` with upgrade/restart guidance. 0.12 refuses new resume `after`
+arrays or `expect` as an ordinary refusal, not `version` (#1245); from 0.13,
+unknown resume fields/expect values/incompatible after shapes use `version`.
+Older owed refuses answer ruling fields, sweep entry kinds and sends of kind
+`notify` or reason `waiting`/`report` with code `version`.
+
+The machine lease, its inherited `OWED_LEASED=1` marker and plan `lease`
+are not in any check/invariant key and introduce no ledger field. Missing
+dsa or an inherited marker runs directly; CLI `--no-lease`, tool
+`lease: false` and plan `lease: false` disable acquisition (default on).
+Standalone measurements wait; driver measurements retry busy on a later
+pass. Older owed replays these entries but does not enforce the new lease
+semantics. Halt wording is rendering-only: ledger `needs: 'human'` is
+unchanged. Upgrade CLI, pi extension and remote executors together, and
+restart existing pi sessions.
+
+### Deferred
+
+Merge train #22; measure on merged trunk #23; milestone-level evidence/debt
+(41h list #5); periodic re-measurement of reused invariant verdicts (wais
+feedback §39.2); worker crash not replaying `session_start`; 0.10 carry/amend
+nits. None is claimed as delivered in this release.
+
 ## 0.12.0
 
 The wais pi-zip performance report (N4) showed ledger replay freezing pi's
