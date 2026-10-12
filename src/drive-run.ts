@@ -848,7 +848,10 @@ export class Driver {
     } catch (e) {
       // F4 (app #31): a failed send names its node, kind and target like any other send line.
       const extra = a.do === 'send' ? { attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, reason: a.reason, ...(a.send ? { send: a.send } : {}) } : {};
-      if (e instanceof OwedError && e.code === 'stale') return done('stale', false, `${e.message}; decided again next pass`, a.do === 'halt' ? { attempt: a.attempt, needs: a.needs } : a.do === 'launch' ? { attempt: a.attempt, role: a.role, rid: a.rid } : extra);
+      if (e instanceof OwedError && e.code === 'stale') {
+        if (a.do === 'launch' && a.role === 'writer') await ops.closeStaleSlot({ cwd, node:a.node, attempt:a.attempt });
+        return done('stale', false, `${e.message}; decided again next pass`, a.do === 'halt' ? { attempt: a.attempt, needs: a.needs } : a.do === 'launch' ? { attempt: a.attempt, role: a.role, rid: a.rid } : extra);
+      }
       if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message, extra);
       throw e;
     }

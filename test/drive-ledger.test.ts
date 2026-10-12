@@ -197,9 +197,9 @@ test('halt clearing: driver entries, notes and executor observations do not clea
     assert.equal(await isHalted(), h3.seq, 'executor observations do not clear');
     await ops.review({ cwd: r.cwd, as: { role: 'reviewer', id: 'r1' }, node: 'a', verdict: 'block', rank: 1, note: 'needs work' });
     assert.equal(await isHalted(), undefined, 'a review clears');
-    // A closed attempt is never halted; a new attempt is free. (0.6.0 G2.3: the driver never abandons; parent:drive cannot.)
+    // A closed attempt is never halted; a new attempt is free. AH permits driver abandon only for its stale empty slots.
     await ops.halt({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, reason: 'fourth', needs: 'human' });
-    await refused(r.cwd, () => ops.abandon({ cwd: r.cwd, as: drive, node: 'a', reason: 'retry' }), /abandon by parent:drive/);
+    await refused(r.cwd, () => ops.abandon({ cwd: r.cwd, as: drive, node: 'a', reason: 'retry' }), /driver abandon requires its own empty slot with no writer launch/);
     await ops.abandon({ cwd: r.cwd, as: { role: 'parent', id: 'main' }, node: 'a', reason: 'retry' });
     const st = (await load(r.cwd)).state;
     assert.equal(halted(st, 'a'), undefined, 'no open attempt, no halt');
