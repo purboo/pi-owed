@@ -183,7 +183,7 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
     const waiver = listed(context(s).waives, subject).findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
     if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : waiver.channel === 'delegated' ? ' (delegated)' : ''}` };
   }
-  const trunkRed = blocks.flatMap(b => trunkRedOf(s, b.seq) ?? []);
+  const trunkRed = blocks.flatMap(b => trunkRedOf(s, b.seq, b.key) ?? []);
   if (out.status === 'D' && trunkRed.length) Object.assign(out, { discharger: 'parent', detail: trunkRed.map(r => `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}`).join('; ') });
   if (subject === 'trunk') {
     const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key);
@@ -535,10 +535,10 @@ function supersede(s: State, h: History, seq: number, next: Plan): void {
   }
 }
 
-/** TR2/3: diagnostic only; recomputed for the current trunk and check/closure definition. */
-export function trunkRedOf(s: State, seq: number): { merge: ObsEntry; probe: ObsEntry } | undefined {
+/** TR2/3: match valid failure evidence by check key; its base may predate an unrelated trunk move. */
+export function trunkRedOf(s: State, seq: number, key?: string): { merge: ObsEntry; probe: ObsEntry } | undefined {
   const e = listed(context(s).bySeq, seq).find((x): x is ObsEntry => x.kind === 'obs');
-  if (!e || e.probe !== undefined || e.verdict !== 'fail' || e.merging !== e.subject || !e.obligation.startsWith('check:') || e.base !== s.trunk.commit) return undefined;
+  if (!e || e.probe !== undefined || e.verdict !== 'fail' || e.merging !== e.subject || !e.obligation.startsWith('check:') || (key !== undefined && e.key !== key)) return undefined;
   const id = e.obligation.slice(6), old = obsPlan(context(s), e.seq);
   const sameDefinition = (p: Plan | undefined): boolean => !!p && checkDefinition(p, e.subject, id) === checkDefinition(s.plan, e.subject, id) && canonical(p.closure) === canonical(s.plan.closure);
   if (!sameDefinition(old)) return undefined;

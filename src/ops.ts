@@ -910,7 +910,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
   return ledger.withLock(async () => {
     const snapshot = await load(ledger), { state } = snapshot, n = candidate(state,o.node);
     if (!n.accepted) {
-      const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq) ?? []);
+      const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
       if (trunkRed.length) throw new OwedError(trunkRed.join('; '));
       throw new OwedError(`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
     }
@@ -972,7 +972,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
           seen.add(seq);
           return e.note || e.failed?.length ? [`${e.subject}/${e.obligation}: ${e.note ?? `failed tests: ${e.failed!.join(', ')}`}`] : [];
         }));
-        const trunkRed = (g?.nodeItems ?? []).filter(i => i.status === 'D').flatMap(i => i.evidence.flatMap(seq => trunkRedHint(current,seq) ?? []));
+        const trunkRed = (g?.nodeItems ?? []).filter(i => i.status === 'D').flatMap(i => i.evidence.flatMap(seq => trunkRedHint(current,seq,i.key) ?? []));
         throw new OwedError([...new Set(trunkRed), ...failures, ...reasons].join('; '));
       }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);

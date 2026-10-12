@@ -151,6 +151,31 @@ test('TR3: moving trunk removes the old classification and measures a probe for 
   } finally { await r.cleanup(); }
 });
 
+test('TR1/2 ruling #1432: an unchanged merge key reuses an old-base failure with the current trunk probe', async () => {
+  const r = await fixture();
+  try {
+    assert.match(await r.refusal(), /^trunk-red:/);
+    const original = (await observations(r)).find(e => e.merging === 'a')!;
+    const trunk = await commitAt(r.cwd, { unrelated: 'outside check reads and closure' });
+    await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'unrelated trunk move' });
+    assert.equal(reducer.trunkRedOf(await r.state(), original.seq), undefined, 'old trunk probe is no longer current');
+    assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    const message = await r.refusal();
+    const es = await observations(r), currentProbe = es.findLast(e => e.probe === 'trunk')!;
+    assert.equal(es.filter(e => e.merging === 'a').length, 1, 'merge failure was reused, not measured again');
+    assert.equal(currentProbe.commit, trunk); assert.equal(currentProbe.base, trunk);
+    assert.notEqual(original.base, trunk);
+    assert.equal(currentProbe.key, es.find(e => e.probe === 'trunk')!.key, 'probe key survives an unrelated move');
+    assert.match(message, new RegExp(`^trunk-red: check:runtime fails on trunk ${trunk.slice(0,12)} without a \\(old bug\\)`));
+    assert.match(message, new RegExp(`merge-tree obs #${original.seq}, trunk probe #${currentProbe.seq}`));
+    assert.match(message, new RegExp(`owed waive a check:runtime --accept-risk ${original.seq}`));
+    assert.match(message, /this candidate is not shown to be the cause; parent: fix trunk/);
+    const s = await r.state();
+    assert.ok(reducer.trunkRedOf(s, original.seq, original.key));
+    assert.equal(reducer.trunkRedOf(s, original.seq, `${original.key}-stale`), undefined, 'another merge key cannot borrow this failure');
+  } finally { await r.cleanup(); }
+});
+
 test('TR1: invariant failures never create a trunk probe', async () => {
   const r = await fixture(['old bug'], ['old bug'], { invariant: true });
   try {
