@@ -72,7 +72,8 @@ String form `role:id` (e.g. `owner:human`, `parent:main`, `writer:auth-api#2`,
 - The driver (`owed drive`, §12) acts as `parent:drive`. That name is the
   driver's only (0.6.0, G2.3): the ledger refuses, on append and on replay, an
   entry by `parent:drive` of any kind the driver never writes (it writes only
-  `dispatch`, `launch`, `send`, `halt` and `rebase`), and the CLI `--as
+  `dispatch`, `launch`, `send`, `halt`, `rebase`, and `abandon` only for its own
+  never-launched stale slot, §12.3 AH2), and the CLI `--as
   parent:drive` and the pi tools' `as: "parent:drive"` are refused for every
   command and tool, reads included (`parent:drive is the driver's identity:
   only owed drive records as it; it cannot be claimed with --as or as`); the
@@ -583,7 +584,8 @@ never part of a key.
 | `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5); on obligation `approve` (D23, §6.2 item 8) only by the owner (rank 3) |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
 | `defer` | owner | `{node, items: {id, key}[], reason}` | deferral of invariant items for one merge (stays debt) |
-| `abandon` | parent/owner | `{node, attempt, reason}` | closes a writer slot; `reason` is the `--note` text |
+| `abandon` | parent/owner; `parent:drive` only for its own never-launched stale slot | `{node, attempt, reason}` | closes a writer slot; `reason` is the `--note` text; `--hold` appends the following entry atomically |
+| `hold` | parent/owner | `{node, abandon, reason?}` | immediately follows the same actor's abandon; `abandon` is its seq; holds the node until resume or removal from the plan |
 | `merge` | executor | `{node, attempt, prior, commit, tree}` | trunk advanced (CAS on prior) |
 | `note` | any | `{text}` | speech, no effect |
 | `adopt` | owner, or parent under an `adopt` allowance (§3.4) | `{trunk, prior, commit, state, changed, commits, note}` | trunk commits made outside owed adopted (§6.6): `prior` = current ledger trunk (CAS), `commit` = `state.commit` = refs/heads/<trunk>, a fast-forward of `prior`; `changed` = `git diff --name-only prior commit`, `commits` = number of commits in `prior..commit`; the trunk state becomes `state` |
@@ -594,7 +596,7 @@ never part of a key.
 | `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels, rulings?: number}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; `rulings` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the task carried, 0 when none: an integer ≤ the entry's seq, 0 or the seq of a recorded ruling covering the node (§12.5.1); strict fields |
 | `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling\|verdict` (`verdict`: 0.11); `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; reasons `submit` and `rebase` (0.7) the same, written only when the message carried a ruling; forbidden for other reasons (§12.5.1); strict fields |
 | `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
-| `resume` | parent/owner (never `parent:drive`) | `{node, attempt, after?, note?}` | 0.8: clears the node's driver halt without an obligation and starts a new repair epoch (§12.3); `attempt` = the node's open slot; `after` = another plan node: the node waits until it merges; strict fields. owed 0.7.x cannot replay a ledger with a `resume` entry |
+| `resume` | parent/owner (never `parent:drive`) | `{node, attempt, after?, note?, release?: "hold"}` | 0.8: clears the node's driver halt without an obligation and starts a new repair epoch (§12.3); `attempt` = the node's open slot; `after` = another plan node: the node waits until it merges; strict fields. owed 0.7.x cannot replay a ledger with a `resume` entry |
 | `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
 
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
@@ -617,8 +619,9 @@ It is never in the ready list, `dispatch` is refused (`dispatch requires a ready
 node with no open slot`), status shows it
 under `removed from the plan` and leaves its items out of the pending queue, and
 the driver never selects it (no dispatch, and no action on an open slot it may
-still have; abandon that slot). `abandon` is the one entry kind `validateDraft`
-accepts on a removed node (0.12, ruling #1176): `owed abandon <node>` closes
+still have; abandon that slot). `abandon` may close an open slot of a removed
+node (0.12, ruling #1176); `hold` may immediately follow that abandon (0.14)
+without restoring readiness. `owed abandon <node>` closes
 its open slot without re-adding the node (the attempt must be the open slot's);
 every other entry naming it is still refused (`Node <id> does not exist`).
 Until then the open slot counts toward `drive.max` (§12.7). Adding the node to the plan again recomputes its
@@ -1341,7 +1344,7 @@ attest(o: {cwd, node, rerun?: boolean, signal?: AbortSignal}): Promise<AttestRes
 review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review", needs?: "parent", named?: string, pin?: {seq, commit}, from?: string[]}): Promise<Entry>   // named: --candidate; pin: an owner dialog's candidate; from: more working directories for the writer-worktree rail
 waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel, named?: string, pin?: {seq, commit}}): Promise<Entry>
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
-abandon(o: {cwd, node, reason, as}): Promise<Entry>      // reason = the --note text
+abandon(o: {cwd, node, reason, hold?: boolean, as}): Promise<Entry> // returns the abandon; hold appends both entries atomically
 merge(o: {cwd, node, as, signal?}): Promise<MergeResult>          // builds M, attests M, guarded CAS; abort: §7.8
 adopt(o: {cwd, commit?, note, as, channel?, signal?}): Promise<AdoptResult>   // owner, or parent under an adopt allowance (§3.4); records trunk commits made outside owed (§6.6); abort: §7.8
 adoptPreview(o: {cwd, commit?}): Promise<AdoptPreview>   // the same preconditions, no effect: {trunk, prior, commit, commits, changed}
@@ -1760,7 +1763,7 @@ run inside its worktree), `attest <node> [--rerun]`,
 `waive <node> <obligation> --reason ... [--accept-risk 12,15]`
 (`review`, `waive`, `approve` and `evidence` also take `--candidate COMMIT`,
 §8 act binding),
-`defer <node> <inv-id...> --reason`, `abandon <node> [--note TEXT]` (older
+`defer <node> <inv-id...> --reason`, `abandon <node> [--hold] [--note TEXT]` (older
 spelling `--reason`; not both), `resume <node> [--after <node>] [--note TEXT]`
 (parent/owner, §12.3; prints `Recorded #<seq> <by> resumed <node>[ after
 <dep>]`, then `<node> waits for <dep> (resume #<seq>); the driver acts again
@@ -1904,7 +1907,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_attest` | `node`, `rerun?`, `as` | attest |
 | `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `as` | merge |
-| `owed_abandon` | `node`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner) |
+| `owed_abandon` | `node`, `hold?: boolean`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner); hold prevents re-dispatch until resume |
 | `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_answer` | `node`, `text`, `qid?`, `rid?`, `as?` (default `parent:pi`; parent/owner) | AN1–AN2: record and deliver an answer ruling; returns `{entry, request, delivery}` (§12.5) |
@@ -2097,6 +2100,36 @@ must name the node's current open slot (node and attempt), and so must a halt.
   attempt (any dispatch of the node). Driver entries (`launch`, `send`, `halt`)
   and executor entries (`obs`, `merge`, which the driver causes) never clear a
   halt. A halt of an attempt that is no longer open is not active.
+- **Abandon hold** (0.14, AH). `owed abandon <node> --hold [--note TEXT]`
+  (pi `owed_abandon {node, hold: true, note?}`) closes the open slot and appends
+  `{kind: "hold", node, abandon: <abandon seq>, reason?}` immediately after the
+  abandon in the same ledger lock and append. The held node is not ready and
+  does not satisfy dependencies. Status and why show `held by abandon #N`;
+  dispatch refuses with `owed resume <node>`. Resume on a held node with no
+  open slot records `{kind: "resume", node, attempt: <last attempt>,
+  release: "hold", note?}` with the existing parent/owner authority, releasing
+  it for a new attempt under normal readiness rules. `--after` and `--expect`
+  require an open attempt and are refused on a hold release. A plan removing
+  the node discards the hold; re-adding it does not restore the old hold.
+  To retire a node, remove it from the plan first, then abandon its slot
+  (allowed since 0.12); use `abandon --hold` while the decision is pending.
+  No acceptance keys change. Ledgers without these entries replay as in 0.13.
+  Compatibility (parent ruling): hold entries need 0.14; 0.13 refuses them
+  with code `version`. The `resume.release` field also needs 0.14; 0.13 refuses
+  this unknown resume field with code `version`. From 0.14, unknown abandon
+  and hold fields are refused with code `version`; abandon has no `hold` field.
+- **Stale empty writer slot** (0.14, AH2). If the driver's launch is stale
+  because its dispatched node left the plan, is held, or was abandoned, and
+  that attempt has no writer launch intent, the driver closes its own empty
+  slot with an abandon by `parent:drive` naming the stale cause. An existing
+  abandon already closes it and is not duplicated. This produces only a
+  quiet stale report, never a halt or notify. Cleanup takes the dispatch lock
+  before the ledger lock and checks the attempt and ownership again. A clean,
+  unlocked worktree still at its base is removed, then its branch is deleted
+  by ref CAS against the base; trees with commits, dirty trees, nested trees,
+  locked trees and ambiguous/checked-out branches are kept. A slot dispatched
+  by another parent, a newer attempt, or any writer launch intent is untouched.
+  A plan change that keeps the node live only retries the launch next pass.
 - **Resume** (0.8, L1). `owed resume <node> [--after <dep>] [--note TEXT]`
   (pi `owed_resume`) records `{kind: "resume", node, attempt, after?, note?}`
   by a parent or the owner (writer, reviewer, executor and `parent:drive` are
