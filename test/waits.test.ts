@@ -92,6 +92,21 @@ test('FL3: report follow-up seals to a bounded notify, no new ledger entry; next
   const r2=rig(); r2.resume({expect:'report'}); r2.record(r2.act()!); r2.submit(); assert.equal(reducer.reportRequest(r2.state(),'a'),undefined); assert.equal(r2.act()?.do,'attest');
 });
 
+test('FL3/AN3 merge: report follow-up filters the writer answer without dropping earlier guidance or other-run answers', () => {
+  const r=rig(), reviewer=reducer.runId('hash0','a',1,'reviewer',1);
+  r.add({kind:'launch',by:'parent:drive',node:'a',attempt:1,role:'reviewer',rid:reviewer,spec:sha256('{}'),labels:reducer.runLabels('hash0','a',1,'reviewer')});
+  const older=r.add({kind:'rule',by:'parent:main',nodes:['a'],text:'Earlier ordinary guidance'});
+  r.add({kind:'rule',by:'parent:main',nodes:['a'],writer:false,text:'Answer to writer question q1: Writer-only answer',answer:{rid:W,qid:'q1',rev:1}});
+  const other=r.add({kind:'rule',by:'parent:main',nodes:['a'],writer:false,text:'Answer to reviewer question q2: Reviewer guidance',answer:{rid:reviewer,qid:'q2',rev:1}});
+  r.resume({expect:'report'});
+  const action=r.act(); assert.ok(action?.do==='send'); assert.equal(action.reason,'report');
+  assert.match(action.message,/Earlier ordinary guidance/); assert.match(action.message,/Reviewer guidance/);
+  assert.doesNotMatch(action.message,/Writer-only answer/); assert.equal(action.rulings,other.seq);
+  assert.ok(action.message.includes(`Ruling #${older.seq}`));
+  r.record(action);
+  const next=r.act({result:'findings'}); assert.ok(next?.do==='notify' && next.reportedResume !== undefined);
+});
+
 test('FL3: describe keeps final result; failing/rejected writer is not falsely reported', () => {
   assert.equal(toRunView('r',{state:'sealed',status:'done',result:'findings',calls:[]}).result,'findings');
   const r=rig(); r.resume({expect:'report'}); r.record(r.act()!); assert.equal(r.act({status:'failed',error:'boom'})?.do,'halt');

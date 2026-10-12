@@ -523,7 +523,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => {
     const line = l.role === 'writer' && sendKind === 'follow-up' ? resumeLine(s, id, l.rid) : undefined;
     if (line && resumeOf(s, id)?.expect === 'report') {
-      const rules = rulingsInScope(s, id).filter(r => r.seq > deliveredRulings(s, id, ar, l, opts.rejected));
+      const rules = undelivered(s, id, ar, l, opts.rejected);
       const rebase = slot.rebase && !ar.sends.some(x => x.seq > slot.rebase!.seq && x.sendKind === 'follow-up')
         ? rebaseMessage(s,id,opts.conflicts?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
       return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${oneLine(r.text)}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
