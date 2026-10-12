@@ -103,6 +103,24 @@ For this small demonstration a person can perform the independent review. In a r
 
 ## How acceptance works
 
+`owed submit` streams the full binary diff when computing the review identity,
+preserving 0.13's UTF-8 decoding (including replacement characters) and hashes.
+Buffered Git calls, including blob `show` and mutant `cat-file`, refuse output
+above 256 MiB with code `refused`, naming the Git subcommand.
+
+Optional top-level plan `limits: {file_mib: 100, diff_mib: 500}` sets positive,
+finite MiB limits (fractions allowed). Submit checks the largest changed file
+against `file_mib` and the sum of added/changed candidate blob sizes against
+`diff_mib`, using Git metadata without reading content. These are full blob
+sizes, counted once per changed path, including mode changes; deleted files and
+gitlinks contribute no bytes. A size above a limit refuses submit with code
+`refused`, listing the limit and up to five largest changed files with sizes;
+nothing is recorded. The writer gets the normal submit refusal. With neither
+limit set there is no size check. Limits enter no acceptance key and changing
+them does not invalidate existing candidates. No new ledger entry fields are
+added; ledgers without limits keep their 0.13 states, keys and views. Older owed
+ignores the plan limits, so use 0.14+ to enforce them.
+
 - **Items and keys:** an item identifies a subject, an obligation, and a content-derived key. Checks use declared read sets and the pinned check closure. Matching keys allow evidence reuse; relevant changes require fresh evidence.
 - **Receipt:** E means evidenced, W means visibly waived by the owner, and D means debt. `why` shows actual logs, counts when available, reviewers, blocks, untested changes, and plan downgrades. Speech and a successful agent exit are not evidence.
 - **Blocks:** execution failures and negative reviews survive new candidates. Attribution reruns explain old execution failures. A judgment block requires the original reviewer at sufficient rank, a higher-rank reviewer, or an explicit owner risk waiver. A different reviewer at the same rank cannot clear it. When the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, the reviewer records `owed review <node> --block --needs-parent ...`: `why` and `status` show the block as needing a parent ruling, and `owed drive` halts instead of sending the writer a repair until the parent records `owed rule --nodes <node> "<decision>"` (a `*` ruling does not count); the driver then repairs with the ruling quoted.

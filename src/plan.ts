@@ -361,6 +361,17 @@ export function parsePlan(text: string): Plan {
     plan.sweep = { run: str(sw.run, 'sweep.run'), timeout_s: num(sw.timeout_s ?? 600, 'sweep.timeout_s', 1) };
     if (sw.reads !== undefined) plan.sweep.reads = strings(sw.reads, 'sweep.reads');
   }
+  if (r.limits !== undefined) {
+    const limits = obj(r.limits, 'limits');
+    plan.limits = {};
+    for (const k of Object.keys(limits)) if (k !== 'file_mib' && k !== 'diff_mib') errors.push(`limits.${k}: unknown key`);
+    for (const k of ['file_mib', 'diff_mib'] as const) {
+      const value = limits[k];
+      if (value === undefined) continue;
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) errors.push(`limits.${k}: expected a positive finite number`);
+      else plan.limits[k] = value;
+    }
+  }
   if (r.drive !== undefined) plan.drive = parseDrive(r.drive, errors);
   if (r.worktrees !== undefined) plan.worktrees = parseWorktrees(r.worktrees, errors);
   if (r.exec !== undefined) { const exec = parseExec(r.exec, errors); if (exec) plan.exec = exec; }
