@@ -17,6 +17,7 @@ import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { parsePlan, driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
+import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
 import { reduce, halted, projectId, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
@@ -133,7 +134,7 @@ export interface DriveOptions {
 
 /** One executed action as printed (`--json`: one object per line). */
 export interface ActionReport {
-  do: Action['do']; node: string; outcome: string; detail?: string;
+  do: Action['do'] | 'sweep'; node: string; outcome: string; detail?: string;
   /** `repo`: a repository-level report (the trunk drift notify), not about the plan node named `node`. */
   scope?: 'repo';
   attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
@@ -416,6 +417,7 @@ export class Driver {
   readonly abort = new AbortController();
   /** K6: measurements in flight by node, in start order; `ended`: those that ended and await `reap`, in end order. */
   readonly measuring = new Map<string, Measurement>();
+  private sweepRun?: Promise<unknown>;
   private readonly ended: Measurement[] = [];
   /** Ends the loop's current `wait` (a measurement ended). */
   private waker?: () => void;
@@ -602,11 +604,37 @@ export class Driver {
       this.facts.printed.set(slot, key);
       this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
     }
+    // SW1: only staying drivers sweep. Open writers may continue; measurements and ready work take precedence.
+    let sweepBusy = false;
+    if (this.o.stay && !this.stopping && !drift && checked && s.plan.sweep && !this.measuring.size && !Object.values(s.nodes).some(n => n.phase === 'ready') && !actions.some(a => a.do === 'dispatch' || a.do === 'attest' || a.do === 'merge')) {
+      const entries = await ledger.read();
+      if (!entries.some(e => e.kind === 'sweep' && e.commit === s.trunk.commit)) {
+        low ??= await this.diskLow(s, reports);
+        if (low) sweepBusy = true;
+        if (!low) try {
+          this.sweepRun = ops.sweep({ cwd:this.root!, commit:s.trunk.commit, once:true, noWait:true, dsa:this.dsa, signal:this.abort.signal });
+          const r = await this.sweepRun as Awaited<ReturnType<typeof ops.sweep>>;
+          this.sweepRun = undefined;
+          if (!r.skipped) {
+            const report: ActionReport = r.entry.verdict === 'pass'
+              ? { do:'sweep', node:'sweep', scope:'repo', outcome:'pass', detail:renderSweep(r) }
+              : { do:'notify', node:'sweep', scope:'repo', outcome:'notify', text:renderSweep(r), facts:r.entry.seq };
+            reports.push(report); this.emit(report); applied = true;
+          }
+        } catch (e) {
+          this.sweepRun = undefined;
+          if (this.abort.signal.aborted) throw e;
+          sweepBusy = true;
+          const report: ActionReport = { do:'sweep', node:'sweep', scope:'repo', outcome:e instanceof OwedError && e.code === 'busy' ? 'busy' : 'error', detail:e instanceof Error ? e.message : String(e) };
+          reports.push(report); this.emit(report);
+        }
+      }
+    }
     const head = (await ledger.read()).at(-1)?.hash;
     const nodes = Object.values(s.nodes).filter(n => !n.merged && n.phase !== 'removed');
     const counts: IdleCounts = { ready: nodes.filter(n => n.phase === 'ready').length, open: nodes.filter(n => n.slot?.open).length, waiting: waiting.length, reported: nodes.filter(n => reportedOf(s,n.id) !== undefined).length, later: s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).length };
     const open = nodes.some(n => n.slot?.open && !waitingFor(s,n.id) && reportedOf(s,n.id) === undefined && !s.plan.nodes.find(x => x.id === n.id)?.later);
-    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting, counts, idleRewakeMin: idleRewakeMin(s.plan) };
+    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !sweepBusy && !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting, counts, idleRewakeMin: idleRewakeMin(s.plan) };
   }
 
   /**
@@ -695,7 +723,7 @@ export class Driver {
   }
   /** Stop at once: waits up to `ms` for the in-flight measurements (only merges: `merges`) to end; true when all did. */
   async drain(ms: number, merges = false): Promise<boolean> {
-    const all = Promise.all([...this.measuring.values()].filter(m => !merges || m.do === 'merge').map(m => m.ended)).then(() => true);
+    const all = Promise.all([...this.measuring.values()].filter(m => !merges || m.do === 'merge').map(m => m.ended).concat(this.sweepRun ? [this.sweepRun.then(() => undefined, () => undefined)] : [])).then(() => true);
     let t: NodeJS.Timeout | undefined;
     const late = new Promise<boolean>(resolve => { t = setTimeout(() => resolve(false), ms); });
     try { return await Promise.race([all, late]); } finally { clearTimeout(t); }
@@ -874,7 +902,7 @@ export class Driver {
     const report = (outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(`${detail}${noisy}`) });
     try {
       const r = leaseResult(await ops.merge({ cwd, as, node, signal }));
-      return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}${leaseText(r).replace('\n', '; ')}${await this.noisyDetail(node, measuredSince)}`)];
+      return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}${leaseText(r).replace('\n', '; ')}; ${unguardedText(r.unguarded)}${await this.noisyDetail(node, measuredSince)}`)];
     } catch (e) {
       if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
       return async () => {
