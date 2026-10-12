@@ -353,7 +353,8 @@ export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
  * The revalidation of a pi delivery (H1.1b), against the ledger of `cwd` and dsa. A line is dropped when the node's
  * current fact mark (`factMark`, the function that produced the mark) is higher than the line's (someone acted on the
  * node; a condition that still holds is reported again by the driver's next pass with the new mark), or when dsa
- * describe of the line's run no longer lists its qid/rev as an open question. Drift wakes are dropped when the ledger
+ * describe of the line's run no longer lists its qid/rev as an open question. One-shot answer retries ignore node fact
+ * changes and require the same open question to remain answered. Drift wakes are dropped when the ledger
  * trunk seq advanced or the trunk ref equals the ledger commit. A failed read or describe keeps the line. The ledger,
  * trunk ref and each run are read at most once per delivery.
  */
@@ -374,7 +375,7 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
           if (await trunk === s.trunk.commit) return false;
         }
       }
-      if (c.node !== undefined && c.facts !== undefined) {
+      if (!c.answerRetry && c.node !== undefined && c.facts !== undefined) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;
         if (s?.nodes[c.node] && factMark(s, c.node) > c.facts) return false;
@@ -382,7 +383,10 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
       if (c.rid !== undefined && c.qid !== undefined) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;
-        if (!c.answerRetry && s && answeredQuestion(s, c.rid, c.qid, c.rev)) return false;
+        if (s) {
+          const answer = answeredQuestion(s, c.rid, c.qid, c.rev);
+          if (c.answerRetry ? !answer : answer) return false;
+        }
         const rid = c.rid;
         if (!views.has(rid)) { client ??= dsa(); const d = client; views.set(rid, d.describe(rid).then(v => (v.questions ?? []).map(q => ({ qid: q.qid, rev: q.rev })), () => undefined)); }
         const open = await views.get(rid)!;

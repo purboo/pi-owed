@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { decide, writerLaunch } from '../src/drive.ts';
 import * as policy from '../src/drive.ts';
-import { Driver, procStart, wakeReport } from '../src/drive-run.ts';
+import { Driver, factMark, procStart, wakeReport } from '../src/drive-run.ts';
 import { projectId } from '../src/reducer.ts';
 import { DriveWatch, Follower, classifyLine, haltHintText, revalidator } from '../src/drive-bg.ts';
 import { answerRetry } from '../src/answer.ts';
@@ -121,6 +121,55 @@ test('QN1 live queue: answer-bound hibernated call stays asking with identical q
     assert.equal(f.view.state, 'asking'); assert.deepEqual(f.view.questions, originalQuestion);
     assert.deepEqual(wakes[0]!.qid, e.answer!.qid); assert.equal(wakes[0]!.rev, e.answer!.rev);
   } finally { Date.now = realNow; await f.cleanup(); }
+});
+
+test('QN1 repair #1514: grace retry held while pi is busy survives owed resume and is delivered exactly once', async () => {
+  const f = await fixture(), l = logFixture(f.root), realNow = Date.now;
+  try {
+    const e = await f.answer();
+    Date.now = () => Date.parse(e.ts) + 900_000;
+    let busy = true;
+    const delivered: string[] = [], lines: Record<string, unknown>[] = [];
+    const follower = new Follower({ log: l.log, repo: f.cwd, pid: process.pid, start: procStart(process.pid),
+      busy: () => busy, deliver: s => delivered.push(s), revalidate: revalidator({ cwd: f.cwd, dsa: f.dsa }) });
+    const driver = new Driver({ cwd: f.cwd, dsa: f.dsa, json: true, session: null, log: s => {
+      const line = JSON.parse(s) as Record<string, unknown>; lines.push(line); l.line(line);
+    } });
+    await driver.pass();
+    const retry = lines.find(x => x.answerRetry)!;
+    assert.ok(retry); assert.equal(retry.qid, 'q1'); assert.equal(retry.rev, 2);
+    assert.equal(await follower.step(), undefined); assert.equal(delivered.length, 0);
+    await ops.resume({ cwd: f.cwd, as: parent, node: 'a', note: 'retry after an unrelated pause' });
+    assert.ok(factMark((await ops.readState(f)).state, 'a') > Number(retry.facts));
+    await driver.pass(); // the driver has consumed its once mark; it cannot replace a dropped retry
+    assert.equal(lines.filter(x => x.answerRetry).length, 1);
+    busy = false;
+    assert.match(await follower.step() ?? '', /recorded answer still needs delivery/);
+    assert.equal(delivered.length, 1); assert.ok(delivered[0]!.includes(answerRetry('a', e)));
+    await driver.pass(); await driver.pass();
+    assert.equal(await follower.step(), undefined); assert.equal(await follower.step(), undefined);
+    assert.equal(delivered.length, 1); assert.equal(lines.filter(x => x.answerRetry).length, 1);
+  } finally { Date.now = realNow; await f.cleanup(); }
+});
+
+test('QN1 repair #1514: retry delivery requires an answered question with the same open qid and rev', async () => {
+  const f = await fixture();
+  try {
+    const validate = revalidator({ cwd: f.cwd, dsa: f.dsa });
+    const check = { node: 'a', facts: factMark((await ops.readState(f)).state, 'a'),
+      rid: f.view.rid, qid: 'q1', rev: 2, answerRetry: true as const };
+    assert.deepEqual(await validate([check]), [false], 'an unanswered question has no answer delivery to retry');
+    await f.answer();
+    assert.deepEqual(await validate([check]), [true]);
+    for (const rev of [1, 3]) {
+      f.view.questions![0]!.rev = rev;
+      assert.deepEqual(await validate([check]), [false], 'a changed revision resolves the held retry');
+    }
+    f.view.questions![0]!.rev = 2; f.view.questions![0]!.qid = 'replacement';
+    assert.deepEqual(await validate([check]), [false]);
+    f.view.questions = [];
+    assert.deepEqual(await validate([check]), [false], 'a closed question resolves the held retry');
+  } finally { await f.cleanup(); }
 });
 
 test('QN1 delivery: a ledger answer drops an asking wake without facts even when describe still asks or fails; retry reminders stay deliverable', async () => {
