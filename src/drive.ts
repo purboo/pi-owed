@@ -32,7 +32,7 @@ export type Action =
    * Printed only (asking questions); no ledger write. An asking notify (H1.1b) also names the run (`rid`) and its first
    * open question (`qid`, `rev`; absent when dsa reports none), so a wake can be revalidated at delivery time.
    */
-  | { do: 'notify'; node: string; text: string; scope?: 'repo'; quiet?: true; answerRetry?: true; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string; /** FL3: runtime receipt, never a ledger entry. */ reportedResume?: number };
+  | { do: 'notify'; node: string; text: string; scope?: 'repo'; quiet?: true; answerRetry?: true; invariantRed?: { obligation: string; key: string }; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string; /** FL3: runtime receipt, never a ledger entry. */ reportedResume?: number };
 
 /** A merge of the node's candidate `candidate` (submit seq) that this process saw refused. */
 export interface MergeRefusal {
@@ -522,7 +522,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
     out.push({ do: 'dispatch', node: n.id });
     taken.push(writes(n.id));
   }
-  for (const red of trunkInvariantReds(s)) out.push({ do:'notify', node:'trunk', scope:'repo', text:red.text, once:`inv-red\u0000${red.obligation}\u0000${red.key}` });
+  for (const red of trunkInvariantReds(s)) out.push({ do:'notify', node:red.obligation, scope:'repo', invariantRed:{obligation:red.obligation,key:red.key}, text:red.text, once:`inv-red\u0000${red.obligation}\u0000${red.key}` });
   return out;
 }
 

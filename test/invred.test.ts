@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { H, sha256 } from '../src/canon.ts';
+import { runJob } from '../src/exec.ts';
 import * as ops from '../src/ops.ts';
 import * as git from '../src/git.ts';
 import * as reducer from '../src/reducer.ts';
@@ -11,6 +13,7 @@ import { parsePlan } from '../src/plan.ts';
 import { renderReceipt, renderStatus } from '../src/views.ts';
 import { decide } from '../src/drive.ts';
 import { Driver } from '../src/drive-run.ts';
+import { Follower, classifyLine, revalidator } from '../src/drive-bg.ts';
 import type { Draft, Entry, ObsEntry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
@@ -45,7 +48,7 @@ async function fixture(run = failure, min_tests = 1) {
 }
 const refresh = (cwd:string,signal?:AbortSignal) => { assert.equal(typeof ops.attestTrunk,'function'); return ops.attestTrunk({cwd,signal}); };
 const opts = (root:string) => ({max:1,repairs:2,project:'fixture',root,applied:new Set<string>(),rejected:new Map<string,string>()});
-const named = (): ObsEntry => ({kind:'obs',by:'executor:owed',subject:'trunk',obligation:'inv:suite',key:'k',verdict:'fail',exit:1,counts:{tests:1,pass:0,fail:1,format:'owed'},failed:['old bug'],durationMs:1,commit:'c',base:'c',seq:1,ts:'',prev:'',hash:''});
+const named = (): ObsEntry => ({kind:'obs',by:'executor:owed',subject:'trunk',obligation:'inv:suite',key:'k',verdict:'fail',exit:1,counts:{tests:1,pass:0,fail:1,format:'owed'},failed:['old bug'],execution:{completed:true,countOK:true},durationMs:1,commit:'c',base:'c',seq:1,ts:'',prev:'',hash:''});
 
 test('IR1: added invariant has actionable not-measured text before refresh', async () => {
   const r=await fixture(); try {
@@ -66,7 +69,7 @@ test('IR1/3: attest --trunk records refresh plus named trunk failure and routes 
     for (const text of [renderStatus(await ops.status({cwd:r.cwd})),renderReceipt(await ops.why({cwd:r.cwd,node:'trunk'}))]) {
       assert.match(text,new RegExp(`inv:suite red on trunk since refresh #${entry.seq} \\(old bug\\)`)); assert.match(text,/not caused by any open node/); assert.match(text,/owed sweep --commit/);
     }
-    const actions=decide(s,s.plan,new Map(),opts(r.cwd)); assert.ok(actions.some(a=>a.do==='notify' && a.node==='trunk')); assert.ok(actions.some(a=>a.do==='dispatch' && a.node==='a')); assert.ok(!actions.some(a=>a.do==='halt'));
+    const actions=decide(s,s.plan,new Map(),opts(r.cwd)); assert.ok(actions.some(a=>a.do==='notify' && a.invariantRed?.obligation==='inv:suite')); assert.ok(actions.some(a=>a.do==='dispatch' && a.node==='a')); assert.ok(!actions.some(a=>a.do==='halt'));
   } finally { await r.cleanup(); }
 });
 test('IR1: no-op refresh is idempotent; changed run rekeys and remeasures only changed invariant', async () => {
@@ -108,11 +111,11 @@ test('IR1b: merge refreshes by itself and keeps refresh observations on refusal'
 });
 test('IR2 predicate: only named test failures qualify; timeout, errors, unknown/zero counts and min_tests do not', () => {
   assert.equal(typeof reducer.testOnlyFailure,'function'); assert.equal(reducer.testOnlyFailure(named()),true);
-  for (const patch of [{verdict:'error'},{failed:[]},{exit:null},{exit:124},{counts:undefined},{counts:{tests:0,fail:1}},{counts:{tests:1,fail:0}},{note:'min_tests unmet: counted 1 < min_tests 2'},{note:'failed tests: old bug; min_tests unmet: counted 1 < min_tests 2; last output:\nfoo'},{note:'timeout after 1s'}] as Partial<ObsEntry>[]) assert.equal(reducer.testOnlyFailure({...named(),...patch}),false,JSON.stringify(patch));
+  for (const patch of [{verdict:'error'},{failed:[]},{exit:null},{exit:124},{counts:undefined},{counts:{tests:0,fail:1}},{counts:{tests:1,fail:0}},{execution:undefined},{execution:{completed:true,countOK:false}},{execution:{completed:false,countOK:true}}] as Partial<ObsEntry>[]) assert.equal(reducer.testOnlyFailure({...named(),...patch}),false,JSON.stringify(patch));
   assert.equal(reducer.testOnlyFailure({...named(),note:'failed tests: old bug; last output:\ntimeout is just diagnostic output'}),true);
   assert.equal(reducer.testOnlyFailure({...named(),failed:['timeout; case'],note:'failed tests: timeout; case; last output:\nnot ok'}),true);
-  assert.equal(reducer.testOnlyFailure({...named(),failed:['timeout; case'],note:'failed tests: timeout; case; min_tests unmet: counted 1 < min_tests 2; last output:\nnot ok'}),false);
-  assert.equal(reducer.testOnlyFailure({...named(),runs:[{verdict:'fail',exit:1,counts:{tests:1,fail:1},failed:['old bug'],log:'l',durationMs:1,note:'min_tests unmet: counted 1 < min_tests 2'}]}),false);
+  assert.equal(reducer.testOnlyFailure({...named(),failed:['timeout; case'],execution:{completed:true,countOK:false},note:'failed tests: timeout; case; min_tests unmet: counted 1 < min_tests 2; last output:\nnot ok'}),false);
+  assert.equal(reducer.testOnlyFailure({...named(),runs:[{verdict:'fail',exit:1,counts:{tests:1,fail:1},failed:['old bug'],log:'l',durationMs:1,execution:{completed:true,countOK:false},note:'min_tests unmet: counted 1 < min_tests 2'}]}),false);
 });
 test('IR4: anonymous, timed-out and below-min_tests failures keep ordinary merge refusal', async () => {
   for (const [run,min] of [[`echo '# tests 1'; echo '# fail 1'; exit 1`,1],[`${failure.replace('exit 1','sleep 3; exit 1')}`,1],[failure,2]] as const) {
@@ -135,7 +138,7 @@ test('IR1c/3: quiet driver refreshes, wakes once per invariant/key, and never ha
     await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',note:'fixture removes ready node for idle pass',plan:JSON.stringify({...r.current,nodes:[]})});
     const lines:string[]=[], d=new Driver({cwd:r.cwd,json:true,log:l=>lines.push(l),handleSignals:false});
     await d.pass(); await d.settle(); await d.pass(); await d.pass();
-    const notices=lines.map(l=>JSON.parse(l)).filter(l=>l.do==='notify' && l.node==='trunk'); assert.equal(notices.length,1); assert.match(notices[0].text,/red on trunk since refresh/);
+    const notices=lines.map(l=>JSON.parse(l)).filter(l=>l.do==='notify' && l.invariantRed?.obligation==='inv:suite'); assert.equal(notices.length,1); assert.match(notices[0].text,/red on trunk since refresh/);
     assert.equal((await r.entries()).filter(e=>e.kind==='refresh').length,1); assert.equal((await r.entries()).filter(e=>e.kind==='halt').length,0);
   } finally { await r.cleanup(); }
 });
@@ -190,6 +193,85 @@ test('IR1: an unchanged invariant definition/key adds no refresh entries or reme
     await ops.planSet({cwd:r.cwd,as:parent,plan:JSON.stringify({...r.current,nodes:[{...r.current.nodes[0]!,title:'unrelated title'}]})});
     const out=await refresh(r.cwd); assert.equal(out.refresh,undefined); assert.equal(out.observations.length,0);
     assert.equal((await r.entries()).filter(e=>e.kind==='refresh').length,before.filter(e=>e.kind==='refresh').length);
+  } finally { await r.cleanup(); }
+});
+for(const side of ['merge','trunk'] as const) test(`IR repair P1: incomplete ${side} failed names cannot inherit truncated old failures`, async () => {
+    const names=Array.from({length:50},(_,i)=>`old bug ${i}`);
+    const emitted=JSON.stringify({pass:0,fail:51,failed:[...names,side==='merge' ? 'new bug' : 'old hidden bug']});
+    const complete=JSON.stringify({pass:0,fail:50,failed:names});
+    const run=`if grep -q extra value; then echo 'owed-counts ${side==='merge' ? emitted : complete}'; else echo 'owed-counts ${side==='trunk' ? emitted : complete}'; fi; exit 1`;
+    const r=await fixture(run); try {
+      await refresh(r.cwd); await r.candidate('extra');
+      await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}),/invariant suite new debt: failed names truncated; cannot prove the failure is old/);
+      const obs=(await r.entries()).filter((e):e is ObsEntry=>e.kind==='obs' && e.subject==='trunk');
+      assert.ok(obs.some(e=>e.counts?.fail===51 && e.failed?.length===50));
+      assert.ok(!(await r.entries()).some(e=>e.kind==='merge'));
+    } finally { await r.cleanup(); }
+});
+test('IR repair P2: display separators in failed names cannot hide structured min_tests failure', async () => {
+  const name='old bug; last output: case', run=`echo 'owed-counts ${JSON.stringify({pass:0,fail:1,failed:[name]})}'; exit 1`;
+  const r=await fixture(run,2); try {
+    await refresh(r.cwd); const obs=(await r.entries()).find((e):e is ObsEntry=>e.kind==='obs' && e.subject==='trunk')!;
+    assert.equal(reducer.testOnlyFailure(obs),false,'min_tests failure is not test-only regardless of display separators');
+    assert.deepEqual(obs.execution,{completed:true,countOK:false});
+    await r.candidate(); await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}),/invariant suite new debt: requires a measured pass/);
+    assert.ok(!(await r.entries()).some(e=>e.kind==='merge'));
+  } finally { await r.cleanup(); }
+});
+test('IR repair P2: trunk-red notice survives classifyLine/revalidator and reaches pi, then resolves', async () => {
+  const r=await fixture(); try {
+    await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',note:'fixture idle notice delivery',plan:JSON.stringify({...r.current,nodes:[]})});
+    const lines:string[]=[], d=new Driver({cwd:r.cwd,json:true,log:l=>lines.push(l),handleSignals:false});
+    await d.pass(); await d.settle(); await d.pass();
+    const line=lines.find(l=>JSON.parse(l).do==='notify' && JSON.parse(l).text?.includes('red on trunk'))!;
+    assert.ok(line); const classified=classifyLine(line); assert.ok(classified.check);
+    assert.deepEqual(await revalidator({cwd:r.cwd})([classified.check]),[true],'normal synchronized trunk must not discard the invariant red wake as drift');
+    assert.equal(classified.check.drift,undefined);
+    const s=await r.state();
+    assert.deepEqual(classified.check.invariantRed,{obligation:'inv:suite',key:s.trunk.invKeys.suite});
+    assert.notEqual(JSON.parse(line).node,'trunk');
+    assert.deepEqual(await revalidator({cwd:r.cwd})([{...classified.check,invariantRed:{obligation:'inv:suite',key:'stale-key'}}]),[false]);
+    const log=join(r.root,'follower-log'), delivered:string[]=[]; await writeFile(log,`${line}\n`);
+    const f=new Follower({log,repo:r.cwd,pid:process.pid,from:0,busy:()=>false,revalidate:revalidator({cwd:r.cwd}),deliver:content=>delivered.push(content)});
+    try { await f.step(); assert.equal(delivered.length,1); assert.match(delivered[0]!,/red on trunk since refresh/); }
+    finally { f.stop(); }
+    const current=(await r.entries()).findLast((e):e is ObsEntry=>e.kind==='obs' && e.obligation==='inv:suite')!;
+    await r.ledger.withLock(()=>r.ledger.append([{kind:'obs',by:'executor:owed',subject:'trunk',obligation:current.obligation,key:current.key,commit:current.commit,base:current.base,verdict:'pass',exit:0,durationMs:0}]));
+    assert.deepEqual(await revalidator({cwd:r.cwd})([classified.check]),[false],'a now non-red item drops the old red notice');
+    await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',note:'fixture removes resolved invariant',plan:JSON.stringify({...r.current,invariants:[],nodes:[]})});
+    assert.deepEqual(await revalidator({cwd:r.cwd})([classified.check]),[false],'a removed invariant no longer wakes pi');
+  } finally { await r.cleanup(); }
+});
+test('IR repair: structured execution facts are required, validated, and independent of log hashes/keys', async () => {
+  const r=await fixture(); try {
+    const s=await r.state(), inv=s.plan.invariants[0]!, key=s.trunk.invKeys.suite ?? (await git.stateFacts(r.cwd,s.plan,s.trunk.commit)).invKeys.suite!;
+    const log='owed-counts {"pass":0,"fail":1,"failed":["old bug"]}\n';
+    const spec={...inv,run:`printf '%s\\n' '${log.trim()}'`};
+    const job={kind:'inv' as const,subject:'trunk',obligation:'inv:suite',key,commit:s.trunk.commit,base:s.trunk.commit,spec};
+    const obs=await runJob({cwd:r.cwd,plan:s.plan,ledger:r.ledger},job);
+    assert.deepEqual(obs.execution,{completed:true,countOK:true}); assert.equal(obs.log,sha256(log));
+    // Exact 0.14 key formula: execution metadata adds no check/merge-key input.
+    const closure=await git.readsDigest(r.cwd,s.trunk.commit,s.plan.closure);
+    const expected=H({o:'inv',id:inv.id,run:inv.run,timeout_s:inv.timeout_s,setup:s.plan.setup,exec:git.execKey(s.plan),min_tests:inv.min_tests,repeat:undefined,closure,reads:await git.readsDigest(r.cwd,s.trunk.commit,inv.reads)});
+    assert.equal((await git.stateFacts(r.cwd,s.plan,s.trunk.commit)).invKeys.suite,expected);
+    const legacy=named(); delete legacy.execution;
+    assert.equal(reducer.testOnlyFailure(legacy),false,'missing structured facts are never test-only');
+    assert.equal(reducer.newerEntry(named()),undefined);
+    for(const execution of [{completed:true},{completed:true,countOK:'yes'},{completed:true,countOK:true,unknown:1}]) {
+      assert.match(reducer.validateDraft(s,{...named(),execution} as unknown as Draft).join(),/obs execution must be/);
+    }
+    const below=await runJob({cwd:r.cwd,plan:s.plan,ledger:r.ledger},{...job,spec:{...spec,min_tests:2}});
+    assert.deepEqual(below.execution,{completed:true,countOK:false}); assert.equal(below.log,obs.log,'count requirement metadata changes no command output digest');
+    const timeout=await runJob({cwd:r.cwd,plan:s.plan,ledger:r.ledger},{...job,spec:{...spec,run:`${spec.run}; sleep 2`,timeout_s:0.05}});
+    assert.equal(timeout.verdict,'error'); assert.equal(timeout.execution?.completed,false);
+    const repeated=await runJob({cwd:r.cwd,plan:s.plan,ledger:r.ledger},{...job,spec:{...spec,repeat:{runs:2,need:1}}});
+    assert.equal(repeated.runs?.length,2); assert.ok(repeated.runs!.every(run=>run.execution?.completed && run.execution.countOK));
+    assert.ok(reducer.failedNamesComplete({...named(),...repeated}));
+    assert.equal(reducer.failedNamesComplete({...named(),...repeated,failed:['old bug','lost']}),false);
+    assert.equal(reducer.failedNamesComplete({...named(),...repeated,runs:repeated.runs!.map(run=>({...run,counts:{...run.counts,fail:51}}))}),false);
+    const names=Array.from({length:50},(_,i)=>`old bug ${i}`);
+    const unionOverflow={...named(),failed:names,runs:[{...repeated.runs![0]!,failed:names,counts:{tests:50,fail:50}},{...repeated.runs![1]!,failed:['new bug'],counts:{tests:1,fail:1}}]};
+    assert.equal(reducer.failedNamesComplete(unionOverflow),false,'complete per-run lists with a truncated aggregate union still cannot prove old failures');
   } finally { await r.cleanup(); }
 });
 test('IR4: 0.14 ledger with no refresh retains facts, views and replay metadata', async () => {

@@ -610,8 +610,18 @@ commit, state: StateFacts}`. `commit` must equal the ledger trunk at that seq,
 current plan's invariant ids. It replaces only `trunk.invKeys`; trunk commit,
 tree and seq stay unchanged. A stale commit is refused. Compatibility: owed
 0.14 and older refuse this new entry kind with code `version`; upgrade CLI,
-pi extension and drivers together. A ledger without refresh entries preserves
-its 0.14 replay states, keys and views, apart from the not-measured text below.
+pi extension and drivers together. Executor check/invariant observations in
+0.15 may also carry `execution: {completed: boolean, countOK: boolean}`;
+repeat runs carry their own execution object. `completed` means the command
+completed without timeout, termination, spawn/preparation/cleanup error;
+`countOK` means a positive recognizable test count met `min_tests` (if set).
+For repeated observations both booleans are the conjunction of the executed
+runs' values. These are executor facts, never inferred from display notes or
+test names, and change no command output/log digest or check/merge key. An
+observation lacking these fields is never test-only. Owed 0.14 refuses unknown
+obs fields with code `version`, including `execution` (verified against
+049ca9c); upgrade readers before writing them. Historical entries without new
+fields retain their states/keys/views, apart from the not-measured text below.
 
 `owed attest --trunk [--no-lease]` takes no node, `--genesis` or `--rerun`.
 The pi tool is `owed_attest {trunk: true}` with no node (optional `lease`).
@@ -636,12 +646,16 @@ refresh through its background measurement lifecycle and shared no-wait lease.
 
 IR2 permits a differing, unsatisfied merge key without defer only if the recorded
 trunk item is decided by an executor fail observation on the trunk commit, both
-observations have nonempty `failed` names, the merge failure is test-only, and
-all merge failed names already occur in trunk's names. `testOnlyFailure(obs)`
-requires verdict fail, names, a completed non-timeout process, nonzero known test
-count and failing count, and no error, zero/unknown-count or `min_tests` failure.
-Repeated failures require that condition for each failing run (passing runs are
-allowed). Failed names and the bounded output tail are not diagnostic reasons.
+observations have nonempty, complete `failed` names, the merge failure is
+test-only, and all merge failed names already occur in trunk's names. Completeness
+requires `counts.fail === failed.length`; repeated failures require complete
+per-failing-run lists plus their exact retained union. Incomplete names on either
+side refuse as `invariant <id> new debt: failed names truncated; cannot prove
+the failure is old`. `testOnlyFailure(obs)` requires verdict fail, names, a
+positive known test/fail count, and structured `execution.completed === true`
+and `execution.countOK === true`. Repeated failures require those facts for each
+failing run (passing runs are allowed); missing structured fields refuse.
+Display notes, failed names and bounded output tails never decide this predicate.
 Fix-node-owned known-red names are excluded by KR3. Otherwise the guard still
 requires a measured pass or owner defer; named new failures read `invariant
 <id> new debt: new failures <a, b> (trunk already failed: <c>)`, with the 0.14
@@ -655,7 +669,11 @@ the names as known_red with that fix node (owed edit --invariant <id> ...), or
 owed sweep --commit <trunk> to find the culprit`. Status JSON may add
 `trunkRed: [{obligation, key, text}]`. The driver wakes the parent once per
 (invariant, key), never halts a writer for this debt, and continues ordinary node
-work. A never-refreshed invariant reads `inv:<id> not measured on trunk yet —
+work. The repo-scoped notice has node `inv:<id>`, not the drift identity `trunk`,
+and `invariantRed: {obligation, key}`. `classifyLine` retains that check;
+before pi delivery the follower keeps it only while the current trunk's invariant
+item on that key remains red (D, ✘). Removal, a changed key or resolved failure
+drops it; a failed ledger read keeps the notice. A never-refreshed invariant reads `inv:<id> not measured on trunk yet —
 owed attest --trunk`, not `missing fact key`.
 
 ### Trunk-red merge refusals (0.14, TR)

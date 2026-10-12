@@ -296,7 +296,7 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -925,6 +925,10 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.merging !== undefined && (typeof d.merging !== 'string' || !s.nodes[d.merging]?.slot?.open || !s.nodes[d.merging]?.candidate)) errors.push('obs merging must name a node with an open candidate');
       if (d.probe !== undefined && (d.probe !== 'trunk' || d.subject === 'trunk' || !s.nodes[d.subject]?.slot?.open || !s.nodes[d.subject]?.candidate || !s.plan.nodes.find(n => n.id === d.subject)?.checks.some(c => `check:${c.id}` === d.obligation) || d.commit !== s.trunk.commit || d.base !== s.trunk.commit || d.attribution !== undefined || d.merging !== undefined)) errors.push('trunk probe requires an open node check on current trunk, without attribution or merging');
       if (!d.key) errors.push('obs is missing an obligation key');
+      for (const measured of [d, ...(d.runs ?? [])]) {
+        const ex = measured.execution;
+        if (ex !== undefined && (!ex || typeof ex !== 'object' || Array.isArray(ex) || typeof ex.completed !== 'boolean' || typeof ex.countOK !== 'boolean' || Object.keys(ex).some(k => !['completed','countOK'].includes(k)))) errors.push('obs execution must be {completed, countOK} booleans');
+      }
       break;
     case 'review':
       allow('reviewer', 'owner'); slot(); current(d.obligation, d.key, true);
@@ -1322,17 +1326,22 @@ export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
 }
 /** IR2: a named test failure, not a timeout, error, zero/unknown count or min_tests failure. */
 export function testOnlyFailure(e: ObsEntry): boolean {
-  const only = (r: Pick<ObsEntry, 'verdict' | 'exit' | 'failed' | 'counts' | 'note'>): boolean => {
+  const only = (r: Pick<ObsEntry, 'verdict' | 'exit' | 'failed' | 'counts' | 'execution'>): boolean => {
     const c = r.counts;
-    // Ignore the bounded output tail and failed-name prefix: names are not diagnostics.
-    let reason = (r.note ?? '').split('; last output:')[0]!;
-    const names = `failed tests: ${r.failed?.join(', ') ?? ''}`;
-    if (reason.startsWith(names)) reason = reason.slice(names.length).replace(/^;\s*/, '');
     return r.verdict === 'fail' && !!r.failed?.length && r.exit !== null && ![126, 127, 124, 137, 143].includes(r.exit)
-      && !!c && (c.tests ?? 0) > 0 && (c.fail ?? 0) > 0 && (r.exit !== 0 || c.format === 'owed')
-      && !/(?:^|;\s*)(?:timeout|environment:|min_tests unmet|zero tests|unknown test count|command could not run|command exited .* (?:after zero tests|with no recognizable test count))/.test(reason);
+      && r.execution?.completed === true && r.execution.countOK === true
+      && !!c && (c.tests ?? 0) > 0 && (c.fail ?? 0) > 0 && (r.exit !== 0 || c.format === 'owed');
   };
   return only(e) && (!e.runs || e.runs.every(r => r.verdict === 'pass' || only(r)));
+}
+/** IR2: counts prove every failing name was retained; repeated runs need complete per-run lists and union. */
+export function failedNamesComplete(e: ObsEntry): boolean {
+  const complete = (r: Pick<ObsEntry, 'failed' | 'counts'>): boolean => !!r.failed?.length && r.counts?.fail === r.failed.length;
+  if (!e.runs) return complete(e);
+  const failures = e.runs.filter(r => r.verdict === 'fail');
+  if (!failures.length || !failures.every(complete)) return false;
+  const union = new Set(failures.flatMap(r => r.failed!));
+  return union.size === e.failed?.length && e.failed.every(name => union.has(name));
 }
 function decidingInvariantFail(s: State, obligation: string, key: string, commit?: string): ObsEntry | undefined {
   const obs = counted(s, 'trunk', obligation, key);
@@ -1340,15 +1349,17 @@ function decidingInvariantFail(s: State, obligation: string, key: string, commit
   return obs.findLast(e => e.verdict === 'fail' && (commit === undefined || e.commit === commit));
 }
 /** IR2 seam: knownred excludes fix-owned names from `trunkNames` here on rebase. */
-export function invariantTrunkComparison(s: State, merging: string, inv: CheckSpec, key: string, commit: string): { inherited: boolean; trunk?: ObsEntry; merge?: ObsEntry; trunkNames: string[]; newNames: string[] } {
+export function invariantTrunkComparison(s: State, merging: string, inv: CheckSpec, key: string, commit: string): { inherited: boolean; trunk?: ObsEntry; merge?: ObsEntry; trunkNames: string[]; newNames: string[]; truncated: boolean } {
   const o = `inv:${inv.id}`, oldKey = s.trunk.invKeys[inv.id] ?? '';
   const trunk = decidingInvariantFail(s, o, oldKey, s.trunk.commit), merge = decidingInvariantFail(s, o, key);
   const trunkNames = trunk?.failed ?? [], names = merge?.failed ?? [];
   const newNames = names.filter(name => !trunkNames.includes(name));
-  return { trunk, merge, trunkNames, newNames, inherited: key !== oldKey && item(s, 'trunk', o, oldKey).mark === '✘' && !!trunkNames.length && !!merge && testOnlyFailure(merge) && !newNames.length };
+  const truncated = !!trunk?.failed?.length && !failedNamesComplete(trunk) || !!merge?.failed?.length && !failedNamesComplete(merge);
+  return { trunk, merge, trunkNames, newNames, truncated, inherited: key !== oldKey && item(s, 'trunk', o, oldKey).mark === '✘' && !!trunk && !!merge && failedNamesComplete(trunk) && failedNamesComplete(merge) && testOnlyFailure(merge) && !newNames.length };
 }
 function invariantDebtReason(id: string, r: ReturnType<typeof invariantTrunkComparison>): string {
-  return r.trunkNames.length && r.merge?.failed?.length && r.newNames.length
+  return r.truncated ? `invariant ${id} new debt: failed names truncated; cannot prove the failure is old`
+    : r.trunkNames.length && r.merge?.failed?.length && r.newNames.length
     ? `invariant ${id} new debt: new failures ${r.newNames.join(', ')} (trunk already failed: ${r.trunkNames.join(', ')})`
     : `invariant ${id} new debt: requires a measured pass on the merge key or owner defer for this node`;
 }

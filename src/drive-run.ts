@@ -140,6 +140,8 @@ export interface ActionReport {
   attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
   /** An asking notify (H1.1b): the first open question of run `rid`; fields of the log line, not of the ledger. */
   qid?: string; rev?: number; answerRetry?: true; inProgress?: number;
+  /** IR3: separate from trunk drift, revalidated against this invariant/key at pi delivery. */
+  invariantRed?: { obligation: string; key: string };
   /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
   facts?: number;
   /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
@@ -881,7 +883,7 @@ export class Driver {
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node, since }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
-        case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
+        case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
       // F4 (app #31): a failed send names its node, kind and target like any other send line.
