@@ -191,7 +191,12 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.rebase({ ...await actor(ctx, dir, who, `Rebase the open slot of node ${oneLine(p.node)} onto trunk`, {}, signal), node: p.node });
     return result(r, `${renderEntry(r.entry)}\n${r.packet}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
-  tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; as does not change executor identity.', Type.Object({ node, rerun: Type.Optional(Type.Boolean()), lease: Type.Optional(Type.Boolean({ description: 'False skips the shared machine lease (default on).' })), as, cwd }), async (p, _ctx, dir, signal) => {
+  tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; trunk: true (no node) refreshes current-plan trunk invariant keys and measures them. as does not change executor identity.', Type.Object({ node: Type.Optional(node), trunk: Type.Optional(Type.Boolean()), rerun: Type.Optional(Type.Boolean()), lease: Type.Optional(Type.Boolean({ description: 'False skips the shared machine lease (default on).' })), as, cwd }), async (p, _ctx, dir, signal) => {
+    if (p.trunk) {
+      if (p.node !== undefined || p.rerun) throw new OwedError('attest trunk takes no node or rerun', 'usage');
+      const r = await ops.attestTrunk({ cwd:dir, signal, lease:p.lease }); return result(r, `${ops.attestTrunkText(r)}${leaseText(r)}`);
+    }
+    if (!p.node) throw new OwedError('attest requires a node or trunk: true', 'usage');
     const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal, lease: p.lease }); return result(r, `${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}${leaseText(r)}`);
   });
   tool('review', 'Independent review; explicitly specify reviewer:id (or owner:id: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), candidate: candidateParam, cwd }), async (p, ctx, dir, signal) => {

@@ -4,7 +4,7 @@ import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades } from './plan.ts';
 import { execKey } from './git.ts';
-import type { AllowRule, AttestJob, Block, CandidateFacts, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
+import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -25,7 +25,7 @@ interface Indexes {
  * per replay; undefined = not resolved yet, after `unpackState`: resolved through `plans` on first use); `obsPlans` names the plan in force at each executor observation by its sha. Neither holds a plan by
  * value elsewhere, so a packed state (`packState`) carries plan shas only and every plan object is shared or re-resolved.
  */
-interface History extends Indexes { entries: Entry[]; plans: PlanLookup; planObjs: Map<string, Plan | undefined>; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, string>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
+interface History extends Indexes { /** IR lineage exists only after a refresh or an inherited trunk-red merge. */ invRed?: Map<string, { key: string; seq: number; kind: 'refresh' | 'merge'; node?: string }>; entries: Entry[]; plans: PlanLookup; planObjs: Map<string, Plan | undefined>; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, string>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
@@ -129,7 +129,7 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
   const spec = nodeSpec(s, subject);
   const blocks = node?.blocks.filter(b => b.obligation === obligation && active(b)) ?? [];
   const out: ItemView = { subject, obligation, key, status: 'D', mark: '⊥', discharger: 'executor', evidence: [], detail: `${obligation} awaiting observation` };
-  if (!key) return { ...out, detail: `${obligation} missing fact key` };
+  if (!key) return { ...out, detail: subject === 'trunk' && obligation.startsWith('inv:') ? `${obligation} not measured on trunk yet — owed attest --trunk` : `${obligation} missing fact key` };
   if (obligation === 'review' || obligation === 'closure-review') {
     const rank = obligation === 'closure-review' ? 2 : spec?.review.min_rank ?? 1;
     const count = obligation === 'closure-review' ? 1 : spec?.review.count ?? 1;
@@ -188,6 +188,12 @@ function item(s: State, subject: string, obligation: string, key: string): ItemV
   if (subject === 'trunk') {
     const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key);
     if (defer) Object.assign(out, { mark: '⏸', discharger: 'owner', detail: `${obligation} deferred, still debt`, evidence: [...out.evidence, defer.seq] });
+    else {
+      const red = context(s).invRed?.get(obligation), fail = decidingInvariantFail(s, obligation, key);
+      if (red?.key === key && fail && out.mark === '✘') Object.assign(out, { discharger: 'parent', detail: red.kind === 'merge'
+        ? `trunk-red: ${obligation} already failed on trunk before ${red.node} (${fail.failed?.join(', ') || 'unknown failed tests'}); merge #${red.seq}`
+        : invariantRedText(s, obligation, red, fail) });
+    }
   }
   return out;
 }
@@ -203,7 +209,7 @@ function nodeItems(s: State, id: string, facts: CandidateFacts): ItemView[] {
  * node, and the rest none.
  */
 function touched(e: Entry): Set<string> | 'all' {
-  if (e.kind === 'genesis' || e.kind === 'plan' || e.kind === 'merge' || e.kind === 'adopt') return 'all';
+  if (e.kind === 'genesis' || e.kind === 'plan' || e.kind === 'merge' || e.kind === 'adopt' || e.kind === 'refresh') return 'all';
   if (e.kind === 'rule') return e.nodes === '*' ? 'all' : new Set(e.nodes);
   if (e.kind === 'obs') return new Set([e.subject]);
   return 'node' in e ? new Set([e.node]) : new Set();
@@ -270,7 +276,7 @@ export function reduceFrom(base: State, more: Entry[], plans: PlanLookup): State
 /** G1: continues the fold of `s` itself with `more` (mutates and returns `s`); for a state the caller owns alone. */
 export function extendState(s: State, more: Entry[]): State { fold(s, more); return s; }
 /** The entry kinds this owed interprets (G1.5): any other kind needs a newer owed. */
-const KINDS: readonly string[] = ['genesis', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'hold', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
+const KINDS: readonly string[] = ['genesis', 'refresh', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'hold', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
 /**
  * G1.5 closed entry enum audit (types.ts): Base.channel, send.sendKind/reason, obs.verdict, review.obligation/verdict/
  * needs, launch.role, halt.needs, escape.class. `by`, other obligations and counts.format are open strings, not enums;
@@ -290,7 +296,7 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -335,6 +341,11 @@ function fold(s: State, entries: Iterable<Entry>): void {
       s.plan = lawPlan(h, e.plan); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
       s.trunk = { name: e.trunk, ...e.state, seq: e.seq };
       if (s.plan.allow !== undefined) h.allowSeq = e.seq;
+    } else if (e.kind === 'refresh') {
+      const changed = refreshChanged(s, e.state);
+      const red = h.invRed ??= new Map();
+      for (const id of changed) red.set(`inv:${id}`, { key: e.state.invKeys[id]!, seq: e.seq, kind: 'refresh' });
+      s.trunk.invKeys = { ...e.state.invKeys };
     } else if (e.kind === 'plan') {
       const next = lawPlan(h, e.plan);
       const detected = downgradeDetails(s.plan, next);
@@ -416,11 +427,15 @@ function fold(s: State, entries: Iterable<Entry>): void {
       for (const i of e.items) s.deferred.push({ seq: e.seq, node: e.node, id: i.id, key: i.key });
     } else if (e.kind === 'merge') {
       const n = s.nodes[e.node]!;
+      const inherited = mergeGuard(s, e.node, { facts: e.facts, state: e.state }).invItems.filter(i => i.key !== s.trunk.invKeys[i.obligation.slice(4)] && i.detail.startsWith('trunk-red:'));
+      if (h.invRed) for (const [o, red] of h.invRed) if (e.state.invKeys[o.slice(4)] !== red.key) h.invRed.delete(o);
+      if (inherited.length) for (const i of inherited) (h.invRed ??= new Map()).set(i.obligation, { key: i.key, seq: e.seq, kind: 'merge', node: e.node });
       n.merged = { seq: e.seq, commit: e.commit }; n.slot!.open = false;
       s.trunk = { name: s.trunk.name, ...e.state, seq: e.seq };
     } else if (e.kind === 'adopt') {
       // Like a merge, the adopted commit becomes the trunk state; open slots are not touched.
       s.trunk = { name: s.trunk.name, ...e.state, seq: e.seq };
+      if (h.invRed) for (const [o, red] of h.invRed) if (e.state.invKeys[o.slice(4)] !== red.key) h.invRed.delete(o);
       s.adoptions.push({ seq: e.seq, by: e.by, ...(e.channel ? { channel: e.channel } : {}), prior: e.prior, commit: e.commit, commits: e.commits, changed: [...e.changed], note: e.note, ...(role(e.by) === 'parent' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}) });
     } else if (e.kind === 'escape') s.escapes.push({ seq: e.seq, by: e.by, node: e.node, merge: e.merge, class: e.class, note: e.note, evidence: e.evidence });
     else if (e.kind === 'decoy-commit') s.decoyCommits.push({ seq: e.seq, digest: e.digest, by: e.by });
@@ -838,6 +853,13 @@ export function validateDraft(s: State, d: Draft): string[] {
   const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
   const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && underlyingActive(context(s), b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
   switch (d.kind) {
+    case 'refresh':
+      if (d.by !== 'executor:owed') errors.push('refresh may only be written by executor:owed');
+      if (d.commit !== s.trunk.commit) errors.push('refresh commit must be the current ledger trunk');
+      if (!d.state || d.state.commit !== d.commit || d.state.tree !== s.trunk.tree) errors.push('refresh commit/tree must match trunk facts');
+      if (!d.state?.invKeys || Object.keys(d.state.invKeys).sort().join() !== s.plan.invariants.map(i => i.id).sort().join() || Object.values(d.state.invKeys).some(k => typeof k !== 'string' || !k)) errors.push('refresh must supply keys for exactly the current plan invariants');
+      errors.push(...Object.keys(d).filter(k => !ENTRY_BASE_FIELDS.includes(k) && !['commit', 'state'].includes(k)).map(k => `refresh unknown field ${k}`));
+      break;
     case 'plan': {
       allow('owner', 'parent');
       if (d.prior !== s.planSha) errors.push('plan prior must reference the current plan sha');
@@ -903,6 +925,10 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.merging !== undefined && (typeof d.merging !== 'string' || !s.nodes[d.merging]?.slot?.open || !s.nodes[d.merging]?.candidate)) errors.push('obs merging must name a node with an open candidate');
       if (d.probe !== undefined && (d.probe !== 'trunk' || d.subject === 'trunk' || !s.nodes[d.subject]?.slot?.open || !s.nodes[d.subject]?.candidate || !s.plan.nodes.find(n => n.id === d.subject)?.checks.some(c => `check:${c.id}` === d.obligation) || d.commit !== s.trunk.commit || d.base !== s.trunk.commit || d.attribution !== undefined || d.merging !== undefined)) errors.push('trunk probe requires an open node check on current trunk, without attribution or merging');
       if (!d.key) errors.push('obs is missing an obligation key');
+      for (const measured of [d, ...(d.runs ?? [])]) {
+        const ex = measured.execution;
+        if (ex !== undefined && (!ex || typeof ex !== 'object' || Array.isArray(ex) || typeof ex.completed !== 'boolean' || typeof ex.countOK !== 'boolean' || Object.keys(ex).some(k => !['completed','countOK'].includes(k)))) errors.push('obs execution must be {completed, countOK} booleans');
+      }
       break;
     case 'review':
       allow('reviewer', 'owner'); slot(); current(d.obligation, d.key, true);
@@ -1206,6 +1232,18 @@ export function attestJobs(s: State, id: string): AttestJob[] {
   }
   return jobs;
 }
+/** IR1: Git-computed current-plan keys that differ from the recorded trunk keys. */
+export function refreshChanged(s: State, facts: StateFacts): string[] {
+  return s.plan.invariants.filter(i => facts.invKeys[i.id] !== s.trunk.invKeys[i.id]).map(i => i.id);
+}
+/** IR1: refresh jobs still lacking a trunk observation (also resumes an interrupted refresh). */
+export function trunkJobs(s: State): AttestJob[] {
+  return s.plan.invariants.flatMap(i => {
+    const key = s.trunk.invKeys[i.id], red = context(s).invRed?.get(`inv:${i.id}`);
+    if (!key || red?.kind !== 'refresh' || red.key !== key || !listed(context(s).bySeq, red.seq).some(e => e.kind === 'refresh' && e.commit === s.trunk.commit) || counted(s, 'trunk', `inv:${i.id}`, key).some(e => e.commit === s.trunk.commit && e.verdict !== 'error')) return [];
+    return [job(undefined, 'trunk', `inv:${i.id}`, key, s.trunk.commit, s.trunk.commit, s.plan)!];
+  });
+}
 export function genesisJobs(s: State): AttestJob[] {
   const g = context(s).genesis;
   if (!g) return [];
@@ -1286,6 +1324,55 @@ export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
   if (!s.genesisDone) reasons.push('genesis invariant initial observations are incomplete');
   return { ok: reasons.length === 0, reasons, failed, invItems };
 }
+/** IR2: a named test failure, not a timeout, error, zero/unknown count or min_tests failure. */
+export function testOnlyFailure(e: ObsEntry): boolean {
+  const only = (r: Pick<ObsEntry, 'verdict' | 'exit' | 'failed' | 'counts' | 'execution'>): boolean => {
+    const c = r.counts;
+    return r.verdict === 'fail' && !!r.failed?.length && r.exit !== null && ![126, 127, 124, 137, 143].includes(r.exit)
+      && r.execution?.completed === true && r.execution.countOK === true
+      && !!c && (c.tests ?? 0) > 0 && (c.fail ?? 0) > 0 && (r.exit !== 0 || c.format === 'owed');
+  };
+  return only(e) && (!e.runs || e.runs.every(r => r.verdict === 'pass' || only(r)));
+}
+/** IR2: counts prove every failing name was retained; repeated runs need complete per-run lists and union. */
+export function failedNamesComplete(e: ObsEntry): boolean {
+  const complete = (r: Pick<ObsEntry, 'failed' | 'counts'>): boolean => !!r.failed?.length && r.counts?.fail === r.failed.length;
+  if (!e.runs) return complete(e);
+  const failures = e.runs.filter(r => r.verdict === 'fail');
+  if (!failures.length || !failures.every(complete)) return false;
+  const union = new Set(failures.flatMap(r => r.failed!));
+  return union.size === e.failed?.length && e.failed.every(name => union.has(name));
+}
+function decidingInvariantFail(s: State, obligation: string, key: string, commit?: string): ObsEntry | undefined {
+  const obs = counted(s, 'trunk', obligation, key);
+  if (obs.some(e => e.verdict === 'pass')) return undefined;
+  return obs.findLast(e => e.verdict === 'fail' && (commit === undefined || e.commit === commit));
+}
+/** IR2 seam: knownred excludes fix-owned names from `trunkNames` here on rebase. */
+export function invariantTrunkComparison(s: State, merging: string, inv: CheckSpec, key: string, commit: string): { inherited: boolean; trunk?: ObsEntry; merge?: ObsEntry; trunkNames: string[]; newNames: string[]; truncated: boolean } {
+  const o = `inv:${inv.id}`, oldKey = s.trunk.invKeys[inv.id] ?? '';
+  const trunk = decidingInvariantFail(s, o, oldKey, s.trunk.commit), merge = decidingInvariantFail(s, o, key);
+  const trunkNames = trunk?.failed ?? [], names = merge?.failed ?? [];
+  const newNames = names.filter(name => !trunkNames.includes(name));
+  const truncated = !!trunk?.failed?.length && !failedNamesComplete(trunk) || !!merge?.failed?.length && !failedNamesComplete(merge);
+  return { trunk, merge, trunkNames, newNames, truncated, inherited: key !== oldKey && item(s, 'trunk', o, oldKey).mark === '✘' && !!trunk && !!merge && failedNamesComplete(trunk) && failedNamesComplete(merge) && testOnlyFailure(merge) && !newNames.length };
+}
+function invariantDebtReason(id: string, r: ReturnType<typeof invariantTrunkComparison>): string {
+  return r.truncated ? `invariant ${id} new debt: failed names truncated; cannot prove the failure is old`
+    : r.trunkNames.length && r.merge?.failed?.length && r.newNames.length
+    ? `invariant ${id} new debt: new failures ${r.newNames.join(', ')} (trunk already failed: ${r.trunkNames.join(', ')})`
+    : `invariant ${id} new debt: requires a measured pass on the merge key or owner defer for this node`;
+}
+function invariantRedText(s: State, obligation: string, red: { kind: 'merge' | 'refresh'; seq: number }, fail: ObsEntry): string {
+  return `${obligation} red on trunk since ${red.kind} #${red.seq} (${fail.failed?.join(', ') || 'unknown failed tests'}); not caused by any open node. Options: assign a fix node (plan), list the names as known_red with that fix node (owed edit --invariant ${obligation.slice(4)} ...), or owed sweep --commit ${s.trunk.commit} to find the culprit`;
+}
+/** IR3: parent diagnostics, separate from the retained trunk-red merge detail. */
+export function trunkInvariantReds(s: State): { obligation: string; key: string; text: string }[] {
+  return s.invariants.flatMap(i => {
+    const red = context(s).invRed?.get(i.obligation), fail = decidingInvariantFail(s, i.obligation, i.key);
+    return i.status === 'D' && i.discharger === 'parent' && red?.key === i.key && fail ? [{ obligation: i.obligation, key: i.key, text: invariantRedText(s, i.obligation, red, fail) }] : [];
+  });
+}
 export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): MergeGuard {
   const reasons: string[] = [];
   const n = s.nodes[id], spec = nodeSpec(s, id);
@@ -1315,7 +1402,11 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
     else if (key !== s.trunk.invKeys[i.id] && v.status !== 'E') {
       const d = s.deferred.findLast(d => d.node === id && d.id === i.id && d.key === key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
       if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner deferred, still debt` });
-      else reasons.push(`invariant ${i.id} new debt: requires a measured pass on the merge key or owner defer for this node`);
+      else {
+        const red = invariantTrunkComparison(s, id, i, key, m.state.commit);
+        if (red.inherited) Object.assign(v, { discharger: 'parent', detail: `trunk-red: inv:${i.id} already failed on trunk before ${id} (${red.merge!.failed!.join(', ')}); merge #${s.seq + 1}` });
+        else reasons.push(invariantDebtReason(i.id, red));
+      }
     }
     return v;
   });

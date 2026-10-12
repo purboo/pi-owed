@@ -8,7 +8,7 @@ import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
-import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
+import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf } from './reducer.ts';
 import { runJob } from './exec.ts';
@@ -38,6 +38,10 @@ export interface GenesisAttest { complete: boolean; recorded: string[]; failed: 
 export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView; genesis: GenesisAttest; lease?: string }
 export interface InitPreview { trunk: string; commit: string; planSha: string; nodes: number; invariants: string[] }
 export interface AttestGenesisResult extends GenesisAttest { observations: Entry[]; lease?: string }
+export interface AttestTrunkResult { refresh?: Entry; changed: string[]; observations: Entry[]; superseded: JobRef[]; failed: string[]; missing: string[]; lease?: string }
+export function attestTrunkText(r: AttestTrunkResult): string {
+  return `${r.refresh ? `Trunk refresh #${r.refresh.seq}: ${r.changed.join(', ')}` : r.observations.length ? 'Trunk refresh resumed' : 'Nothing to refresh on trunk'}; ${r.observations.length} observations recorded${r.failed.length ? `; failed ${r.failed.join(', ')}` : ''}${r.missing.length ? `; missing ${r.missing.join(', ')} — owed attest --trunk` : ''}${supersededText(r.superseded)}`;
+}
 export interface DispatchPacket { node: string; attempt: number; worktree: string; branch: string; packet: string; entry: Entry; subagent: { agent: 'worker'; cwd: string; task: string } }
 export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard; lease?: string }
 export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[]; unguarded: string[]; lease?: string }
@@ -319,7 +323,8 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
   // Records one observation under the lock when its item is still current (D24.1).
   const record = async (job: AttestJob, obs: Draft, lockSignal?: AbortSignal) => ledger.withLock(async () => {
     const { state } = await load(ledger);
-    if (!jobCurrent(state,job)) { out.superseded.push({ subject:job.subject, obligation:job.obligation, key:job.key }); return; }
+    const freshTrunk = job.subject !== 'trunk' || !trunkJobs(snapshot).some(j => sameJob(j,job)) || (job.commit === state.trunk.commit && (await git.stateFacts(cwd,state.plan,state.trunk.commit)).invKeys[job.obligation.slice(4)] === job.key);
+    if (!jobCurrent(state,job) || !freshTrunk) { out.superseded.push({ subject:job.subject, obligation:job.obligation, key:job.key }); return; }
     guard(state,obs); result.push(...await ledger.append([obs]));
   },undefined,lockSignal);
   if (parallel > 1) {
@@ -463,6 +468,30 @@ export async function attestGenesis(o: MeasurementContext): Promise<AttestGenesi
       return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
     },'genesis',signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` }));
   } finally { genesisRuns.delete(run); }
+}
+/** IR1: a shared-machine lease, then trunk-refresh lock, then short ledger locks (never commands under ledger lock). */
+export async function attestTrunk(o: Context & { signal?: AbortSignal; lease?: boolean }): Promise<AttestTrunkResult> {
+  checkAbort(o.signal);
+  if (!measurementScope()) return leased(o, signal => attestTrunk({ ...o, signal }));
+  const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => {
+    const prepared = await ledger.withLock(async () => {
+      const { state } = await load(ledger); inited(state);
+      const facts = await git.stateFacts(o.cwd,state.plan,state.trunk.commit), changed = refreshChanged(state,facts);
+      if (!changed.length) return { changed };
+      const d: Draft = { kind:'refresh', by:'executor:owed', commit:state.trunk.commit, state:facts };
+      guard(state,d); return { changed, refresh:(await ledger.append([d]))[0]! };
+    },undefined,o.signal);
+    const { state } = await load(ledger), jobs = trunkJobs(state);
+    const r = await runJobs(o.cwd,ledger,state,jobs,o.signal,undefined,parallelOf(state.plan));
+    const latest = (await load(ledger)).state;
+    return { ...prepared, observations:r.recorded, superseded:r.superseded, missing:trunkJobs(latest).map(j => j.obligation.slice(4)), failed:trunkInvariantReds(latest).map(i => i.obligation.slice(4)) };
+  },'trunk-refresh',o.signal,{ busy:who => `attest --trunk is already running (${heldBy(who)}); its observations will appear in owed status` });
+}
+/** Read-only driver preflight: current-plan trunk keys or interrupted refresh measurements need work. */
+export async function trunkRefreshPending(o: Context): Promise<boolean> {
+  const { state } = await load(await Ledger.open(o.cwd)); inited(state);
+  return !!trunkJobs(state).length || !!refreshChanged(state,await git.stateFacts(o.cwd,state.plan,state.trunk.commit)).length;
 }
 /** Genesis invariant ids that still lack an observation (empty when not initialized). */
 export async function genesisPending(o: Context): Promise<string[]> { return (await genesisReport(o)).missing; }
@@ -934,13 +963,18 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
   if (!measurementScope()) return leased(o, signal => merge({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
-    const snapshot = await load(ledger), { state } = snapshot, n = candidate(state,o.node);
+    let snapshot = await load(ledger), state = snapshot.state;
+    const n = candidate(state,o.node);
     if (!n.accepted) {
       const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
       if (trunkRed.length) throw new OwedError(trunkRed.join('; '));
       throw new OwedError(`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
     }
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
+    // IR1: trunk measurements persist even if the later merge guard refuses.
+    await attestTrunk({ cwd:o.cwd, signal:o.signal });
+    const refreshed = await load(ledger); nodeStable(state,refreshed,o.node);
+    snapshot = refreshed; state = refreshed.state;
     const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
     if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
     const m = await mergeFacts(o.cwd,state,o.node,built.commit);
@@ -1149,6 +1183,10 @@ async function currentTrunkRedChecks(cwd: string, s: State, id: string): Promise
 }
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
+  if (o.node === 'trunk' && !state.nodes.trunk) {
+    const reds = trunkInvariantReds(state);
+    return { node:'trunk', phase:'merged', accepted:state.invariants.every(i => i.status !== 'D'), items:state.invariants.map(i => ({ ...i, detail:reds.find(r => r.obligation === i.obligation)?.text ?? i.detail, observations:entries.filter(e => i.evidence.includes(e.seq)) })), blocks:[], untested:[], ownerFlags:[], downgrades:[] };
+  }
   if (o.node.startsWith('inv:') || (!state.nodes[o.node] && state.plan.invariants.some(i => i.id === o.node))) {
     const id = invariantId(state.plan,o.node), item = state.invariants.find(i => i.obligation === `inv:${id}`)!;
     return { node: `inv:${id}`, phase: 'merged', accepted: item.status === 'E', items: [{ ...item, observations: entries.filter(e => item.evidence.includes(e.seq)) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] };

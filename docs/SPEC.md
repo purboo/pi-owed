@@ -602,6 +602,80 @@ never part of a key.
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
 harness, materialization failure) is ⊥: no information, no block.
 
+### Trunk invariant refresh and inherited red (0.15, IR)
+
+`refresh` is an executor-only entry `{kind: "refresh", by: "executor:owed",
+commit, state: StateFacts}`. `commit` must equal the ledger trunk at that seq,
+`state.commit/tree` must match it, and `state.invKeys` supplies exactly the
+current plan's invariant ids. It replaces only `trunk.invKeys`; trunk commit,
+tree and seq stay unchanged. A stale commit is refused. Compatibility: owed
+0.14 and older refuse this new entry kind with code `version`; upgrade CLI,
+pi extension and drivers together. Executor check/invariant observations in
+0.15 may also carry `execution: {completed: boolean, countOK: boolean}`;
+repeat runs carry their own execution object. `completed` means the command
+completed without timeout, termination, spawn/preparation/cleanup error;
+`countOK` means a positive recognizable test count met `min_tests` (if set).
+For repeated observations both booleans are the conjunction of the executed
+runs' values. These are executor facts, never inferred from display notes or
+test names, and change no command output/log digest or check/merge key. An
+observation lacking these fields is never test-only. Owed 0.14 refuses unknown
+obs fields with code `version`, including `execution` (verified against
+049ca9c); upgrade readers before writing them. Historical entries without new
+fields retain their states/keys/views, apart from the not-measured text below.
+
+`owed attest --trunk [--no-lease]` takes no node, `--genesis` or `--rerun`.
+The pi tool is `owed_attest {trunk: true}` with no node (optional `lease`).
+Under the shared machine lease and `trunk-refresh` lock, it computes current-plan
+Git facts on the ledger trunk, appends a refresh if any key differs from its
+recorded trunk key, and measures those changed invariants. Observations use
+`subject: "trunk"`, refreshed key, commit/base = trunk, no `merging`. Ledger
+locks cover computation/append and each result append, never command execution;
+a moved trunk or changed plan key drops stale asynchronous observations. An
+abort retains completed entries, drops the interrupted observation and kills
+its process group. A retry resumes unobserved refreshed keys. Nothing to
+refresh prints `Nothing to refresh on trunk; 0 observations recorded` and
+records nothing. JSON adds `{refresh?, changed, observations, superseded,
+failed, missing, lease?}`; `refresh` is the entry, the string lists contain
+invariant ids (superseded contains job refs). Exit 0 means observations complete,
+even when tests failed; missing measurements exit 1.
+
+`owed merge` performs this refresh under its existing lease and merge lock,
+before merge-result measurements; refresh and trunk observations persist even
+when the merge is refused. An otherwise quiet driver pass performs the same
+refresh through its background measurement lifecycle and shared no-wait lease.
+
+IR2 permits a differing, unsatisfied merge key without defer only if the recorded
+trunk item is decided by an executor fail observation on the trunk commit, both
+observations have nonempty, complete `failed` names, the merge failure is
+test-only, and all merge failed names already occur in trunk's names. Completeness
+requires `counts.fail === failed.length`; repeated failures require complete
+per-failing-run lists plus their exact retained union. Incomplete names on either
+side refuse as `invariant <id> new debt: failed names truncated; cannot prove
+the failure is old`. `testOnlyFailure(obs)` requires verdict fail, names, a
+positive known test/fail count, and structured `execution.completed === true`
+and `execution.countOK === true`. Repeated failures require those facts for each
+failing run (passing runs are allowed); missing structured fields refuse.
+Display notes, failed names and bounded output tails never decide this predicate.
+Fix-node-owned known-red names are excluded by KR3. Otherwise the guard still
+requires a measured pass or owner defer; named new failures read `invariant
+<id> new debt: new failures <a, b> (trunk already failed: <c>)`, with the 0.14
+reason when names are unavailable. Adopt and owner defer retain their rules.
+
+An inherited red item stays D, discharger parent, detail `trunk-red: inv:<id>
+already failed on trunk before <node> (<names>); merge #<seq>`. Status and
+`owed why trunk` explain `inv:<id> red on trunk since <merge/refresh #seq>
+(<names>); not caused by any open node. Options: assign a fix node (plan), list
+the names as known_red with that fix node (owed edit --invariant <id> ...), or
+owed sweep --commit <trunk> to find the culprit`. Status JSON may add
+`trunkRed: [{obligation, key, text}]`. The driver wakes the parent once per
+(invariant, key), never halts a writer for this debt, and continues ordinary node
+work. The repo-scoped notice has node `inv:<id>`, not the drift identity `trunk`,
+and `invariantRed: {obligation, key}`. `classifyLine` retains that check;
+before pi delivery the follower keeps it only while the current trunk's invariant
+item on that key remains red (D, ✘). Removal, a changed key or resolved failure
+drops it; a failed ledger read keeps the notice. A never-refreshed invariant reads `inv:<id> not measured on trunk yet —
+owed attest --trunk`, not `missing fact key`.
+
 ### Trunk-red merge refusals (0.14, TR)
 
 When a node `check:X` fails on the prospective merge tree (including reused
@@ -953,7 +1027,8 @@ For node n with accepted candidate C, trunk PRE, merge commit M (tree from
    items from the candidate.
 3. **No new debt**: for each invariant i, key on M; if equal to its key on PRE
    the status is inherited; otherwise it must be E on M, or covered by an owner
-   `defer` for this node (then it stays in D, shown as deferred).
+   `defer` for this node (then it stays in D, shown as deferred), or satisfies
+   the bounded trunk-red comparison below (0.15, IR2).
 4. Genesis observation finished: every invariant has a non-⊥ obs on s₀'s key.
 The merge entry is appended in the same locked step as the guard evaluation.
 

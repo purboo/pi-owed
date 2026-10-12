@@ -113,15 +113,18 @@ test('K4.2/K4.3: an invariant added during the merge is named as not measured; t
     assert.doesNotMatch(message, /inv:wait/);
     assert.equal(await runs(r, 'extra'), 0);
     assert.deepEqual((await ledger.read()).slice(before).map(e => e.kind), ['plan', 'obs'], 'the wait observation is kept');
-    // The retry measures only inv:extra on the merge tree: inv:wait (pass) and check:ca (pass) are reused.
+    // IR1: retry refreshes inv:extra on trunk before measuring the merge tree;
+    // inv:wait (pass) and check:ca (pass) are reused.
     await rm(join(r.root, 'started'), { force: true });
     const mid = (await ledger.read()).length;
     const merged = await ops.merge({ cwd: r.cwd, node: 'a', as: parent });
     assert.equal(merged.entry.kind, 'merge');
     assert.equal(await runs(r, 'wait'), waitRuns + 1, 'inv:wait is not measured again');
-    assert.equal(await runs(r, 'extra'), 1);
+    assert.equal(await runs(r, 'extra'), 2, 'one refreshed trunk observation and one merge-result observation');
     const added = (await ledger.read()).slice(mid);
-    assert.deepEqual(added.map(e => e.kind === 'obs' ? `obs ${e.obligation}` : e.kind), ['obs inv:extra', 'merge']);
+    assert.deepEqual(added.map(e => e.kind === 'obs' ? `obs ${e.obligation}` : e.kind), ['refresh', 'obs inv:extra', 'obs inv:extra', 'merge']);
+    assert.equal((added[1] as Extract<typeof added[number], { kind:'obs' }>).merging, undefined);
+    assert.equal((added[2] as Extract<typeof added[number], { kind:'obs' }>).merging, 'a');
     assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
   } finally { await r.cleanup(); }
 });
@@ -140,8 +143,8 @@ test('K4.2: an existing invariant whose definition changes during the merge: the
     await rm(join(r.root, 'started'), { force: true });
     const mid = (await ledger.read()).length;
     await ops.merge({ cwd: r.cwd, node: 'a', as: parent });
-    assert.equal(await runs(r, 'wait'), waitRuns + 2, 'the retry measures the new key once');
-    assert.deepEqual((await ledger.read()).slice(mid).map(e => e.kind === 'obs' ? `obs ${e.obligation}` : e.kind), ['obs inv:wait', 'merge']);
+    assert.equal(await runs(r, 'wait'), waitRuns + 3, 'IR1 refreshes the new trunk key, then measures the merge key');
+    assert.deepEqual((await ledger.read()).slice(mid).map(e => e.kind === 'obs' ? `obs ${e.obligation}` : e.kind), ['refresh', 'obs inv:wait', 'obs inv:wait', 'merge']);
     assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
   } finally { await r.cleanup(); }
 });

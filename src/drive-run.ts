@@ -140,6 +140,8 @@ export interface ActionReport {
   attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
   /** An asking notify (H1.1b): the first open question of run `rid`; fields of the log line, not of the ledger. */
   qid?: string; rev?: number; answerRetry?: true; inProgress?: number;
+  /** IR3: separate from trunk drift, revalidated against this invariant/key at pi delivery. */
+  invariantRed?: { obligation: string; key: string };
   /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
   facts?: number;
   /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
@@ -621,6 +623,11 @@ export class Driver {
       this.facts.printed.set(slot, key);
       this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
     }
+    // IR1: refresh only on an otherwise quiet pass; run in the existing measurement lifecycle.
+    if (!this.stopping && !drift && checked && !this.measuring.size && !actions.some(a => a.do !== 'notify') && await ops.trunkRefreshPending({ cwd:this.root! })) {
+      low ??= await this.diskLow(s,reports);
+      if (!low && this.busyAt.get('trunk') !== this.cycle) { const r = this.startTrunkRefresh(s); reports.push(r); this.emit(r); }
+    }
     // SW: a staying idle driver schedules the detached sweep and returns without awaiting it.
     let sweepBusy = this.sweepBusyAt === this.cycle;
     if (this.o.stay && !this.o.once && !this.stopping && !drift && checked && s.plan.sweep && !this.sweepRun && !sweepBusy && !this.measuring.size && !Object.values(s.nodes).some(n=>n.phase === 'ready') && !actions.some(a=>a.do !== 'notify')) {
@@ -683,6 +690,24 @@ export class Driver {
     return {do:'sweep',node:'sweep',scope:'repo',outcome:'started',at:new Date().toISOString()};
   }
   // ---------- measurements in flight (K6) ----------
+  private startTrunkRefresh(s: State): ActionReport {
+    const key = '\u0000trunk-refresh';
+    const at = new Date().toISOString(), m: Measurement = { do:'attest', node:'trunk', attempt:0, at, done:false, ended:Promise.resolve() };
+    let busy: ActionReport | undefined;
+    m.ended = withMachineLease({ cwd:this.root!, signal:this.abort.signal, lease:s.plan.lease !== false, noWait:true, dsa:this.dsa }, signal => ops.attestTrunk({ cwd:this.root!, signal }))
+      .then(r => { m.finish = async () => [{ do:'attest', node:'trunk', scope:'repo', outcome:'done', detail:ops.attestTrunkText(r) }]; }, (e:unknown) => {
+        const outcome = e instanceof OwedError && e.code === 'busy' ? 'busy' : this.abort.signal.aborted ? 'aborted' : 'error';
+        const report: ActionReport = { do:'attest', node:'trunk', scope:'repo', outcome, detail:e instanceof Error ? e.message : String(e) };
+        if (outcome === 'busy') busy = report;
+        m.finish = async () => [report];
+      }).finally(() => {
+        m.done = true;
+        if (busy) { this.measuring.delete(key); this.busyAt.set('trunk',this.cycle); if (!this.hard) this.emit(busy); return; }
+        this.ended.push(m); this.waker?.();
+      });
+    this.measuring.set(key,m);
+    return { do:'attest', node:'trunk', scope:'repo', outcome:'started', at };
+  }
   /** Starts the attest or merge of `node` without awaiting it; returns its `started` report. */
   private start(s: State, what: 'attest' | 'merge', node: string): ActionReport {
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
@@ -728,7 +753,7 @@ export class Driver {
     // Each result is handled on its own: an unexpected error of one is rethrown only after the others were handled.
     let failure: { e: unknown } | undefined;
     for (const m of batch) {
-      this.measuring.delete(m.node);
+      for (const [key, active] of this.measuring) if (active === m) this.measuring.delete(key);
       try { reports.push(...await m.finish!()); }
       catch (e) {
         if (!(e instanceof OwedError || e instanceof DsaError)) { failure ??= { e }; continue; }
@@ -858,7 +883,7 @@ export class Driver {
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node, since }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
-        case 'notify': if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
+        case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
       // F4 (wais #31): a failed send names its node, kind and target like any other send line.
