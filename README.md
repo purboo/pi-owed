@@ -108,6 +108,41 @@ For this small demonstration a person can perform the independent review. In a r
 
 Plans are versioned through `owed plan <file>` / `owed_plan`; `owed plan <file> --rev <commit-ish>` reads the file from a commit (for example the plan kept in trunk) and the plan entry records that commit and path. Parents may strengthen or otherwise update a plan; weakening obligations requires an owner decision and remains visible as a downgrade. Pi owner operations require `ctx.ui.confirm`, record `channel: pi-confirm`, and refuse without UI. CLI owner operations prompt on a terminal. The CLI's `--i-am-owner` flag is a weaker human automation channel, recorded visibly; agents must never use it.
 
+## Waiting, reports and backlog (0.13)
+
+An open writer slot automatically waits while any dependency in the current plan
+has not merged: `why`, `status` and the driver show `waiting (deps: a, b)`.
+The driver sends no submit/repair/ruling follow-up and no missing-candidate halt;
+questions still wake the parent. Adding a dependency while the writer runs sends
+one durable `notify` per plan entry saying which dependencies are unmerged and
+`do not submit until told`. When they merge, owed uses its existing slot rebase
+and writer rebase follow-up before continuing.
+
+`owed resume <node> --after a,b --note "wait for both"` (tool `owed_resume`
+`after: "a,b"` or `["a", "b"]`) waits for every member, in addition to implicit
+dependencies. A single string still works; a new resume replaces the explicit wait.
+`owed resume <node> --expect report --note "diagnose first"` (tool
+`expect: "report"`) asks the next writer follow-up to report findings and stop,
+not submit. A successful sealed report without a new submit wakes the parent with
+its last 40 lines (at most 4000 characters), appends no ledger entry, and parks the
+node as `reported (resume #n)`. It stays parked until a rule naming it, another
+resume, a plan entry changing it, or abandon; a new submit proceeds normally.
+Reported receipts live in the driver's private runtime cache, not acceptance keys.
+
+Mark backlog nodes `later: true`: they are never ready or dispatched, and
+`status`/`brief` list and count them as `Backlog (later)`. Remove the field in a
+plan update to make them eligible; no check/invariant key changes. Staying idle
+wake-ups include `ready`, `open`, `waiting`, `reported` and `later` counts.
+`drive.idle_rewake_min` (default 60 minutes, 0 = off) repeats the wake while idle
+with no ledger change. Waiting/reporting slots still surface questions.
+
+Invariant ids in CLI/tool `defer` accept `unit` and `inv:unit`; unknown ids list
+the valid spellings. `owed why inv:unit` (or `why unit` when it is not a node)
+shows its trunk receipt. Invariants still cannot be waived. Compatibility:
+owed 0.12 rejects resume lists/`expect` as an ordinary refusal; from 0.13 unknown
+resume shapes are `version` errors. The new driver send kinds/reasons also
+require 0.13; a single-string resume remains readable as before.
+
 ## Owner approval, manual evidence and receipts
 
 Some acceptance cannot be measured by a check: an external effect the owner must authorize (an npm publish, a push), or a human look at a real page. A node can declare both:

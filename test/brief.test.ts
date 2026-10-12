@@ -84,7 +84,7 @@ test('owed brief CLI surface: refused before init, empty ledger view, help and a
     assert.ok((await cli(r.cwd, ['--help'])).stdout.includes('brief [--since seq|ISO]'), 'help lists brief');
     const empty = await brief();
     assert.deepEqual([empty.decisions, empty.merged, empty.rejected, empty.inProgress], [[], [], [], []]);
-    assert.deepEqual(empty.totals, { merged: 0, acceptedUnmerged: 0, blocked: 0, ready: 6, waiting: 2 });
+    assert.deepEqual(empty.totals, { merged: 0, acceptedUnmerged: 0, blocked: 0, ready: 6, waiting: 2, reported: 0, later: 0 });
     const text = await run(r.cwd, ['brief']);
     assert.match(text, /^Brief \(since start\)\nNeeds your decision: none\nMerged: none\nRejected or blocked: none\nIn progress: none\nTotal: 0 merged, 0 accepted-unmerged, 0 blocked, 6 ready, 2 waiting on dependencies\n$/);
     for (const args of [['--since', 'yesterday-ish'], ['extra'], ['--rerun'], ['--since']]) assert.equal((await cli(r.cwd, ['brief', ...args])).code, 2, args.join(' '));
@@ -118,7 +118,7 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     assert.deepEqual(v.inProgress.map(p => `${p.node}:${p.phase}`).sort(), ['b:submitted', 'd:submitted', 'e:submitted', 'f:dispatched']);
     for (const p of v.inProgress) { assert.ok(p.ageMs >= 0 && p.ageMs < 600_000, `${p.node} age`); assert.equal(p.submitAgeMs !== undefined, p.phase === 'submitted'); }
     // (5) totals.
-    assert.deepEqual(v.totals, { merged: 1, acceptedUnmerged: 1, blocked: 2, ready: 1, waiting: 1 });
+    assert.deepEqual(v.totals, { merged: 1, acceptedUnmerged: 1, blocked: 2, ready: 1, waiting: 1, reported: 0, later: 0 });
 
     const text = await run(r.cwd, ['brief']);
     const order = ['Needs your decision (2):', 'Merged (1):', 'Rejected or blocked (2):', 'In progress (4):', 'Total: 1 merged, 1 accepted-unmerged, 2 blocked, 1 ready'].map(x => text.indexOf(x));

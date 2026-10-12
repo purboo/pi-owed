@@ -372,7 +372,8 @@ export function resumeOf(s: State, node: string): ResumeEntry | undefined {
  */
 export function waitingFor(s: State, node: string): { after: string; resume: number } | undefined {
   const r = resumeOf(s, node);
-  return r?.after !== undefined && !s.nodes[r.after]?.merged ? { after: r.after, resume: r.seq } : undefined;
+  // The historical reducer interprets only 0.10's single-node resume shape.
+  return typeof r?.after === 'string' && !s.nodes[r.after]?.merged ? { after: r.after, resume: r.seq } : undefined;
 }
 /** Stable project id of a ledger: the first 12 hex of the genesis entry hash. */
 export function projectId(s: State): string {

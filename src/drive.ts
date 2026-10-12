@@ -3,7 +3,7 @@
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
-import { attestJobs, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, writesOverlap } from './reducer.ts';
+import { attestJobs, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -31,7 +31,7 @@ export type Action =
    * Printed only (asking questions); no ledger write. An asking notify (H1.1b) also names the run (`rid`) and its first
    * open question (`qid`, `rev`; absent when dsa reports none), so a wake can be revalidated at delivery time.
    */
-  | { do: 'notify'; node: string; text: string; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string };
+  | { do: 'notify'; node: string; text: string; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string; /** FL3: runtime receipt, never a ledger entry. */ reportedResume?: number };
 
 /** A merge of the node's candidate `candidate` (submit seq) that this process saw refused. */
 export interface MergeRefusal {
@@ -478,6 +478,9 @@ const resolveText = (s: State, node: string): string => { const c = ownerCommand
 const ownerNotify = (s: State, node: string, reason: string): Action => ({ do: 'notify', node, text: `${node}: needs the owner (the main agent decides; owed lists the command): ${oneLine(reason.replace(/ needs the owner$/, ''))}; the driver leaves it alone${resolveText(s, node)}` });
 
 // ---------- decide ----------
+/** FL3: bounded writer report, raw text rather than a flattened log tail. */
+export const reportTail = (text: string): string => text.split('\n').slice(-40).join('\n').slice(-4000);
+export const REPORT_MESSAGE = 'report your findings and stop; do not submit unless the parent asks';
 const isSealed = (v: RunView): boolean => v.state === 'sealed' || v.state === 'pruned';
 const statusOf = (v: RunView): string => v.status ?? 'unknown';
 const reviewerN = (l: LaunchEntry): number => Number(l.rid.slice(l.rid.lastIndexOf(':') + 1));
@@ -519,6 +522,12 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // 0.8 (L1.3): the first writer follow-up after a resume starts with the resume line (`resumeLine`).
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => {
     const line = l.role === 'writer' && sendKind === 'follow-up' ? resumeLine(s, id, l.rid) : undefined;
+    if (line && resumeOf(s, id)?.expect === 'report') {
+      const rules = undelivered(s, id, ar, l, opts.rejected);
+      const rebase = slot.rebase && !ar.sends.some(x => x.seq > slot.rebase!.seq && x.sendKind === 'follow-up')
+        ? rebaseMessage(s,id,opts.conflicts?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
+      return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${oneLine(r.text)}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
+    }
     return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
   };
   // Row 5: a run asking: notify (question, answer address); the driver never answers.
@@ -531,7 +540,30 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // candidate submitted before its launch entry); runs of earlier candidates are obsolete.
   const live = ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq));
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
-  if (waitingFor(s, id)) { for (const l of live) { const v = runs.get(l.rid); if (v?.state === 'asking') return asking(l, v); } return undefined; }
+  const waiting = waitingFor(s, id);
+  if (waiting || reportedOf(s, id) !== undefined || s.plan.nodes.find(x => x.id === id)?.later) {
+    for (const l of live) { const v = runs.get(l.rid); if (v?.state === 'asking') return asking(l, v); }
+    // FL1: only the waiting notification is delivered while dependencies block the slot.
+    const writer = ar.launches.find(l => l.role === 'writer'), w = writer && runs.get(writer.rid);
+    if (waiting?.deps?.length && writer && w?.state === 'running') {
+      const change = entriesOf(s).findLast(e => e.kind === 'plan' && e.seq > slot.dispatchSeq && (() => {
+        const before = planAt(s, e.seq).nodes.find(x => x.id === id)?.deps ?? [];
+        return (planAt(s, e.seq + 1).nodes.find(x => x.id === id)?.deps ?? []).some(d => !before.includes(d) && waiting.deps!.includes(d));
+      })());
+      if (change) {
+        const sent = ar.sends.find(x => x.reason === 'waiting' && x.seq > change.seq);
+        if (!sent) return send(writer, 'notify', 'waiting', `plan #${change.seq}: waiting (deps: ${waiting.deps.join(', ')}); do not submit until told. The driver will rebase this slot when all dependencies merge.`);
+        if (!opts.applied.has(sent.send) && !opts.rejected.has(sent.send)) {
+          const bytes = opts.blobs?.get(sent.message);
+          if (bytes !== undefined && sha256(bytes) === sent.message) return { do: 'send', node: id, attempt, rid: sent.rid, sendKind: 'notify', reason: 'waiting', message: bytes, send: sent.send };
+        }
+      }
+    }
+    return undefined;
+  }
+  // FL1: dependencies merged after dispatch: use the existing rebase route exactly once before other work.
+  const deps = s.plan.nodes.find(x => x.id === id)?.deps ?? [];
+  if (slot.base !== s.trunk.commit && deps.some(d => (s.nodes[d]?.merged?.seq ?? -1) > Math.max(slot.dispatchSeq, slot.rebase?.seq ?? -1))) return { do: 'rebase', node: id };
   // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only. 0.8 (L3.1): unless the writer run
   // is sealed and an undelivered ruling names the node, or a ruling send to the writer is recorded but not applied in
   // this process (review #914 F1: dsa pending, or a crash before dsa; row 4 re-sends it with the same id); the rows
@@ -542,7 +574,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const writerRule = !c && last ? s.rules.findLast(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last.seq) : undefined;
   const rulingDue = (): boolean => !!writer && !!writerView && isSealed(writerView)
     && (!!rulingFollowUp(s, id, opts.rejected) || ar.sends.some(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up' && !opts.applied.has(x.send)));
-  if (owner && !rulingDue() && !writerRule) return ownerNotify(s, id, owner);
+  const reportPending = resumeOf(s,id)?.expect === 'report' && (!!writer && (!!resumeLine(s,id,writer.rid) || !!reportRequest(s,id)));
+  if (owner && !rulingDue() && !writerRule && !reportPending) return ownerNotify(s, id, owner);
   // Row 2: writer launch missing.
   if (!writer) return writerLaunch(s, id, opts.project);
   if (live.some(l => !runs.has(l.rid))) return undefined;
@@ -563,7 +596,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const refused = opts.rejected.get(x.send);
     // D22.3: a rejected ruling steer is never retried and never halts; its rulings travel with repairs and reviewer
     // acks. A rejected ruling follow-up (K5.2) halts like any other send.
-    if (refused !== undefined && x.reason === 'ruling' && x.sendKind === 'steer') continue;
+    if (refused !== undefined && ((x.reason === 'ruling' && x.sendKind === 'steer') || x.reason === 'waiting')) continue;
     const xl = live.find(l => l.rid === x.rid)!;
     if (refused !== undefined) return halt(rejectedHalt(id, 'send', `${x.send}${callAt(view(xl))}`, refused));
     const bytes = opts.blobs?.get(x.message);
@@ -573,6 +606,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 5: a run asking (`asking`).
   for (const l of live) if (view(l).state === 'asking') return asking(l, view(l));
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
+  // FL3: a fresh report resume gets the next writer follow-up even with an accepted/failed candidate.
+  const reportResume = resumeOf(s, id);
+  if (reportResume?.expect === 'report' && resumeLine(s, id, writer.rid) && wSealed && wStatus === 'ok') return send(writer, 'follow-up', 'report', REPORT_MESSAGE);
+  const report = reportRequest(s, id);
+  if (report && wSealed && wStatus === 'ok') return { do: 'notify', node: id, rid: writer.rid, reportedResume: report.resume, once: `report\u0000${id}\u0000${report.resume}`, text: `${id}: reported (resume #${report.resume})\n${reportTail(w.result ?? '')}` };
+  // FL3 (review #1273): the report generation owns this slot until it finishes, even when the old candidate
+  // is accepted. Questions above and sealed failure routes below stay live; a new submit/parent act ends reportRequest.
+  if (report && !wSealed) return undefined;
   // F5: an explicit writer ruling takes priority over the generic resubmit/repair route.
   // Reviewers of the invalidated candidate are obsolete; delivery never acknowledges the ruling.
   if (writerRule) {
@@ -893,8 +934,9 @@ export function resumeLine(s: State, node: string, rid: string): string | undefi
   const r = resumeOf(s, node), n = s.nodes[node];
   if (!r || !n) return undefined;
   if (n.runs.find(x => x.attempt === r.attempt)?.sends.some(x => x.rid === rid && x.sendKind === 'follow-up' && x.seq > r.seq)) return undefined;
-  const dep = r.after !== undefined ? s.nodes[r.after]?.merged : undefined;
-  return `The parent resumed this node (#${r.seq})${dep ? ` after ${r.after} merged at ${dep.commit.slice(0, 12)}` : ''}${r.note ? `: ${oneLine(r.note)}` : ''}`;
+  const deps = afterNodes(r.after), merged = deps.map(id => ({ id, merge: s.nodes[id]?.merged }));
+  const clause = merged.length && merged.every(d => d.merge) ? ` after ${merged.map(d => `${d.id} merged at ${d.merge!.commit.slice(0, 12)}`).join(', ')}` : '';
+  return `The parent resumed this node (#${r.seq})${clause}${r.note ? `: ${oneLine(r.note)}` : ''}`;
 }
 /** AN1: the last sentence of an asking notify explains the single-act answer and reviewer acknowledgment. */
 export const askingRule = (_node: string): string => 'This records one answer ruling and delivers it to the asking run; reviewers still acknowledge it.';
