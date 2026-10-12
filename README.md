@@ -180,6 +180,38 @@ When a node check fails on the merge tree, `owed merge` first measures that same
 
 Plans are versioned through `owed plan <file>` / `owed_plan`; `owed plan <file> --rev <commit-ish>` reads the file from a commit (for example the plan kept in trunk) and the plan entry records that commit and path. Parents may strengthen or otherwise update a plan; weakening obligations requires an owner decision and remains visible as a downgrade. Pi owner operations require `ctx.ui.confirm`, record `channel: pi-confirm`, and refuse without UI. CLI owner operations prompt on a terminal. The CLI's `--i-am-owner` flag is a weaker human automation channel, recorded visibly; agents must never use it.
 
+## Known-red invariant debt (0.15)
+
+Instead of hiding failures by changing a suite's run command, an invariant may
+set `known_red: [{test: "exact name from obs.failed", fix: repair-node}]`:
+at most 20 unique names, with each fix node in the same plan. Exact names are
+case-sensitive, not patterns. The field changes no acceptance key. Adding an
+entry or reassigning its fix is an owner-only plan downgrade (no `allow` rule
+covers it in 0.15); removing entries is free. For example:
+
+```sh
+owed edit --invariant unit --set 'known_red=[{test: "old failure", fix: repair}]' --as owner:pi --note "Assign existing trunk debt to repair"
+```
+
+A failure consisting only of active listed failing tests is **W / ⚠**, satisfied
+for merging but never a measured pass. Extra names, timeout, error, count failure
+and pass/fail conflicts stay ordinary debt. Entries are active until their fix
+node merges; that node cannot use its own list for its merge-result measurement,
+and still-failing owned names refuse its merge even if trunk already failed them.
+After the fix merges its entries lapse and recurrence is ordinary red.
+
+`status`, `report` and `brief` always list active known-red debt with exact names,
+fix nodes and current plan seq; full status also lists removable lapsed entries.
+Item details read `inv:<id> known red: <names> (fix: <nodes>; plan #<seq>)`.
+JSON views add optional `knownRed: [{invariant, entries: [{test, fix}], plan}]`;
+status additionally exposes `lapsedKnownRed` in that shape. Clear the whole list
+with `owed edit --invariant unit --unset known_red --note "Remove repaired debt"`,
+or replace it with the remaining active entries. Existing ledgers without lists
+keep their states, keys and JSON fields. Compatibility: owed 0.14 and older
+ignore `known_red` and treat those tests as ordinary failures (stricter), so mixed
+versions may halt merges that 0.15 accepts; upgrade CLI, extension and drivers
+together.
+
 ## Waiting, reports and backlog (0.13)
 
 An open writer slot automatically waits while any dependency in the current plan

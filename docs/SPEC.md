@@ -293,6 +293,52 @@ Compatibility: ED adds no ledger entry kinds or fields; its plan, carry, rule
 and resume entries use their existing schemas. Plan fields or resume options
 introduced elsewhere in 0.13 follow their own compatibility rules.
 
+**Known-red invariant debt (0.15, KR1–KR4; ruling #1484).** An invariant may set
+`known_red: [{test: <exact obs.failed name>, fix: <node id>}]`. The list has at
+most 20 entries, unique non-empty names; each fix is a node of the same plan.
+Names are exact and case-sensitive (not globs); whitespace is preserved. This
+field is invariant-only and enters no check, invariant, review or other key.
+Adding an entry or changing its fix is a plan downgrade, recorded in the plan
+entry's `downgrades` as `inv:<id> known_red "<name>" added with fix <node>
+(owner only)` or `fix changed from <old> to <new> (owner only)`. Only the owner
+may record it; no `allow` rule covers known-red in 0.15. Removal is not a
+downgrade. Use `owed edit --invariant <id> --set
+'known_red=[{test: "exact failing name", fix: repair}]' --as owner:pi --note
+"assign bounded trunk debt"`, or `--unset known_red` to remove the whole list.
+The existing atomic edit/plan authority, note and rollback rules apply.
+
+An entry is active while its fix node remains in the plan and has not merged.
+An invariant failure decided solely by named failing tests (the shared IR2
+predicate: fail verdict, non-empty `failed`, no timeout, error, zero/unknown
+count or unmet `min_tests`, including repeat runs) becomes **W**, mark **⚠**,
+when every failing name is active. It is satisfied for merges and acceptance,
+not a measured pass or an invariant waiver. Its detail is
+`inv:<id> known red: <names> (fix: <nodes>; plan #<seq>)`; evidence includes the
+executor observations and current genesis/plan seq. An extra unlisted name,
+unknown names or any other failure keeps the ordinary evaluation; conflicts
+remain conflicts. Known-red never suppresses unlisted failures.
+
+For a fix node X's merge result, its own entries are inactive. If any of its
+names still fails, merge refuses with `X is the fix node of known-red <names>
+on inv:<id>, which still fail on the merge result`, even for an unchanged key
+or owner defer. Those names are also excluded from IR2's trunk failed-name
+comparison: existing trunk-red debt cannot excuse an unfixed fix node. After
+X merges the entries lapse, and a recurrence is ordinary red.
+
+`status`, `report` and `brief` list active debt, one line per invariant:
+`inv:<id> known red: <test> (fix: <node>), ...; plan #<seq>`, even when the
+latest observation passes. Full status also lists lapsed entries as removable
+with `owed edit --invariant <id> ...`. JSON adds optional `knownRed` arrays of
+`{invariant, entries: [{test, fix}], plan: <seq>}` to these views; status also
+adds optional `lapsedKnownRed` with the same shape. Fields are absent when empty.
+No new ledger entry kinds or top-level entry fields are needed.
+
+Compatibility exception (ruling #1484): owed 0.14 and older ignore `known_red`
+and treat the listed tests as ordinary failures (stricter); mixed versions may
+halt merges that 0.15 accepts; upgrade together. No compatibility flag is
+recorded, and the intro's version-refusal rule does not apply to this plan field.
+Ledgers without `known_red` keep their earlier states, keys and JSON views.
+
 Invariants removed by the owner no longer need their genesis observation.
 
 **Checks prepare their own artifacts** (0.8, L2.5, app #19). owed measures every
