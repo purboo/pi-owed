@@ -12,6 +12,7 @@ import { genesisProgress, jobCurrent, invalidates, carryable, DRIVER } from './r
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq } from './reducer.ts';
 import { runJob } from './exec.ts';
+import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unruledBlocks } from './drive.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf } from './views.ts';
@@ -30,12 +31,12 @@ export interface JobRef { subject: string; obligation: string; key: string }
  * was no longer current; `error` why the run stopped early (init only; attestGenesis rejects instead).
  */
 export interface GenesisAttest { complete: boolean; recorded: string[]; failed: string[]; missing: string[]; superseded: JobRef[]; error?: string }
-export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView; genesis: GenesisAttest }
+export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView; genesis: GenesisAttest; lease?: string }
 export interface InitPreview { trunk: string; commit: string; planSha: string; nodes: number; invariants: string[] }
-export interface AttestGenesisResult extends GenesisAttest { observations: Entry[] }
+export interface AttestGenesisResult extends GenesisAttest { observations: Entry[]; lease?: string }
 export interface DispatchPacket { node: string; attempt: number; worktree: string; branch: string; packet: string; entry: Entry; subagent: { agent: 'worker'; cwd: string; task: string } }
-export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard }
-export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[] }
+export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard; lease?: string }
+export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[]; lease?: string }
 /** `cacheMismatch` (N4): plan shas whose persistent cache entry disagreed with the YAML blob; verify rewrote them. */
 /**
  * `snapshotMismatch` (G1.4): seq of a disk snapshot that matched the chain but differed from the full replay at that seq;
@@ -43,6 +44,12 @@ export interface MergeResult { node: string; commit: string; tree: string; entry
  */
 export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string; code?: 'version'; cacheMismatch?: string[]; snapshotMismatch?: number }
 type Context = { cwd: string };
+type MeasurementContext = Context & { lease?: boolean; signal?: AbortSignal };
+/** LE3: lease before operation/tree locks; never mutate process.env or persisted observations. */
+async function leased<T extends object>(o: MeasurementContext, measure: (signal?: AbortSignal) => Promise<T>): Promise<T & { lease?: string }> {
+  const { state } = await load(await Ledger.open(o.cwd));
+  return withMachineLease({ ...o, lease: o.lease !== false && state.plan.lease !== false }, async signal => leaseResult(await measure(signal)));
+}
 type Actor = Context & { as: Principal; channel?: Channel };
 const by = (o: Actor): string => `${o.as.role}:${o.as.id}`;
 function owner(o: Actor): void { if (o.as.role === 'owner' && !['tty', 'pi-confirm', 'flag', 'delegated'].includes(o.channel ?? '')) throw new OwedError('owner actions require a confirmation channel'); }
@@ -399,22 +406,22 @@ export async function initPreview(o: Context & { plan: string }): Promise<InitPr
  * what is missing. An abort after genesis rejects with OwedError('aborted') whose message is the genesis-incomplete
  * text (an abort before genesis keeps the message 'aborted'). `commit` pins the trunk commit the owner confirmed.
  */
-export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; measure?: boolean; commit?: string }): Promise<InitResult> {
+export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; lease?: boolean; measure?: boolean; commit?: string }): Promise<InitResult> {
   owner(o); checkAbort(o.signal); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit);
   if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
   const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
   const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
-  let error: string | undefined;
+  let error: string | undefined, lease: string | undefined;
   if (o.measure !== false) {
-    try { const { state } = await load(ledger); await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal,done,parallelOf(state.plan)); }
+    try { lease = (await leased(o, async signal => { const { state } = await load(ledger); return runJobs(o.cwd,ledger,state,genesisJobs(state),signal,done,parallelOf(state.plan)); })).lease; }
     catch (e) {
       if (e instanceof OwedError && e.code === 'aborted') { const g = await genesisOutcome(ledger,done.superseded); throw new OwedError(genesisIncompleteText(entry.seq,g),'aborted'); }
       error = e instanceof Error ? e.message : String(e);
     }
   }
   const genesis = { ...await genesisOutcome(ledger,done.superseded), ...(error !== undefined ? { error } : {}) };
-  return { entry, observations:done.recorded, status:await status(o), genesis };
+  return { entry, observations:done.recorded, status:await status(o), genesis, ...(lease ? { lease } : {}) };
 }
 async function genesisOutcome(ledger: Ledger, superseded: JobRef[]): Promise<GenesisAttest> {
   const g = genesisProgress((await load(ledger)).state);
@@ -440,17 +447,17 @@ async function measuringHere(dir: string): Promise<boolean> {
  * do not overlap; node attests are never blocked by it: recording is safe concurrently, D24.1); records each
  * observation whose item is still current. Abortable like attest (§7.8).
  */
-export async function attestGenesis(o: Context & { signal?: AbortSignal }): Promise<AttestGenesisResult> {
+export async function attestGenesis(o: MeasurementContext): Promise<AttestGenesisResult> {
   checkAbort(o.signal);
   const opened = Ledger.open(o.cwd), run = { dir: opened.then(l => l.dir, () => undefined) };
   genesisRuns.add(run);
   try {
     const ledger = await opened;
     inited((await load(ledger)).state);
-    return await ledger.withLock(async () => {
-      const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),o.signal,undefined,parallelOf(state.plan));
+    return await leased(o, signal => ledger.withLock(async () => {
+      const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),signal,undefined,parallelOf(state.plan));
       return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
-    },'genesis',o.signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` });
+    },'genesis',signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` }));
   } finally { genesisRuns.delete(run); }
 }
 /** Genesis invariant ids that still lack an observation (empty when not initialized). */
@@ -737,8 +744,10 @@ export async function submit(o: Actor & { node: string; commit?: string }): Prom
   Object.assign(facts.keys, manualKeys(spec,facts.patch));
   return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts }; guard(current,d); return (await ledger.append([d]))[0]!; });
 }
-export async function attest(o: Context & { node: string; rerun?: boolean; signal?: AbortSignal }): Promise<AttestResult> {
-  checkAbort(o.signal); const ledger = await Ledger.open(o.cwd);
+export async function attest(o: MeasurementContext & { node: string; rerun?: boolean }): Promise<AttestResult> {
+  checkAbort(o.signal);
+  if (!measurementScope()) return leased(o, signal => attest({ ...o, signal }));
+  const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node), jobs = attestJobs(state,o.node);
     if (o.rerun) for (const c of state.plan.nodes.find(x => x.id === o.node)!.checks) for (const kind of ['check', ...(c.red ? ['red'] : [])] as ('check'|'red')[]) {
@@ -783,9 +792,10 @@ export async function rebase(o: Actor & { node:string; since?: number }): Promis
   const packet = [`# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `In the worktree run: git rebase --onto ${entry.base} ${entry.from}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
   return { node:o.node, attempt:entry.attempt, worktree:slot.worktree, branch:slot.branch, base:entry.base, from:entry.from, ...(previous ? { previous } : {}), packet, entry };
 }
-export async function merge(o: Actor & { node:string; signal?: AbortSignal }): Promise<MergeResult> {
+export async function merge(o: Actor & { node:string; signal?: AbortSignal; lease?: boolean }): Promise<MergeResult> {
   owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
   checkAbort(o.signal);
+  if (!measurementScope()) return leased(o, signal => merge({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node);
@@ -869,7 +879,7 @@ function prospective(latest: Awaited<ReturnType<typeof load>>, observations: Dra
 // ---------- adopt: trunk commits made outside owed (SPEC §6.6) ----------
 export interface AdoptPreview { trunk: string; prior: string; commit: string; commits: number; changed: string[] }
 /** `allowance` (D21.4): for a parent adoption, S of `under allowance (plan #S)`. */
-export interface AdoptResult extends AdoptPreview { entry: Entry; observations: Entry[]; allowance?: number }
+export interface AdoptResult extends AdoptPreview { entry: Entry; observations: Entry[]; allowance?: number; lease?: string }
 /** Preconditions of an adoption, checked before any ledger effect: commit = refs/heads/<trunk> ≠ ledger trunk, a fast-forward of it. */
 async function adoptable(cwd: string, s: State, commit?: string): Promise<AdoptPreview> {
   const ref = `refs/heads/${s.trunk.name}`, prior = s.trunk.commit;
@@ -898,12 +908,13 @@ export async function adoptPreview(o: Context & { commit?: string }): Promise<Ad
  * abort (D16a, SPEC §7.8): observations measured before it are recorded when the ledger is stable and they pass the
  * guard, without a ref check (abortWith).
  */
-export async function adopt(o: Actor & { commit?: string; note: string; channel?: Channel; signal?: AbortSignal }): Promise<AdoptResult> {
+export async function adopt(o: Actor & { commit?: string; note: string; channel?: Channel; signal?: AbortSignal; lease?: boolean }): Promise<AdoptResult> {
   owner(o);
   // D21.4: a parent may adopt only under an `adopt` allowance of the current plan (paths checked below, before any effect).
   if (o.as.role !== 'owner' && !(o.as.role === 'parent' && adoptPrefixes((await load(await Ledger.open(o.cwd))).state.plan).length)) throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('adopt requires a note','usage');
   checkAbort(o.signal);
+  if (!measurementScope()) return leased(o, signal => adopt({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const { state } = await load(ledger); inited(state);

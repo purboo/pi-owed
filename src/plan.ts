@@ -335,6 +335,7 @@ export function parsePlan(text: string): Plan {
   for (const id of ids.keys()) visit(id);
   const plan: Plan = { version: 1, trunk: str(r.trunk, 'trunk'), closure: strings(r.closure ?? [], 'closure'), invariants: checks(r.invariants, 'invariants'), nodes };
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
+  if (r.lease !== undefined) { if (typeof r.lease !== 'boolean') errors.push('lease: expected boolean'); else plan.lease = r.lease; }
   if (r.drive !== undefined) plan.drive = parseDrive(r.drive, errors);
   if (r.worktrees !== undefined) plan.worktrees = parseWorktrees(r.worktrees, errors);
   if (r.exec !== undefined) { const exec = parseExec(r.exec, errors); if (exec) plan.exec = exec; }

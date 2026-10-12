@@ -245,7 +245,7 @@ test('K6 --once waits for the measurement it started and prints its completion',
     const lines = await f.once();
     clearTimeout(timer);
     assert.ok(Date.now() - t0 >= 1400, 'returned only after the attest ended');
-    const s = lines.findIndex(x => /^attest o: started$/.test(x)), d = lines.findIndex(x => /^attest o: done — accepted$/.test(x));
+    const s = lines.findIndex(x => /^attest o: started$/.test(x)), d = lines.findIndex(x => /^attest o: done — accepted; lease: machine \(shared\)$/.test(x));
     assert.ok(s >= 0 && d > s, lines.join('\n'));
     assert.ok((await f.entries()).some(e => e.kind === 'obs' && e.subject === 'o' && e.verdict === 'pass'));
   } finally { await f.done(); }
@@ -391,7 +391,7 @@ test('#785 (2): the driver\'s own merge appending while a pass observes is no tr
     await d.settle();
     const out = lines.join('\n');
     assert.doesNotMatch(out, /moved outside owed|rewound|drift/, out);
-    assert.match(out, /^merge a: merged — trunk [0-9a-f]{12}$/m, out);
+    assert.match(out, /^merge a: merged — trunk [0-9a-f]{12}; lease: machine \(shared\)$/m, out);
     assert.ok(merged(await f.entries(), 'a'));
     assert.deepEqual(halts(await f.entries()), []);
   } finally { await f.done(); }
