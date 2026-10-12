@@ -324,14 +324,15 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
   if (typeof j.do !== 'string') return { kind: 'wake', text };
   if (j.do === 'merge' && j.outcome === 'merged') return { kind: 'merge', text };
   if (!wakeReport(j)) return { kind: 'quiet', text };
-  // H1.1b: what a pi delivery revalidates. Drift lines (`scope: 'repo'`; node `trunk` from an older driver) are
-  // repository facts: never dropped.
-  const node = typeof j.node === 'string' && j.scope !== 'repo' && !(j.scope === undefined && j.node === DRIFT_NODE) ? j.node : undefined;
+  // QT2 (#1378): only scoped drift wakes use the ledger trunk seq. Unscoped `trunk` may be a real plan node.
+  const drift = j.do === 'notify' && j.node === DRIFT_NODE && j.scope === 'repo';
+  const node = typeof j.node === 'string' && j.scope !== 'repo' && !drift ? j.node : undefined;
   const check: WakeCheck = {
+    ...(drift ? { drift: true as const, ...(typeof j.facts === 'number' ? { facts: j.facts } : {}) } : {}),
     ...(node !== undefined && typeof j.facts === 'number' ? { node, facts: j.facts } : {}),
     ...(j.do === 'notify' && typeof j.rid === 'string' && typeof j.qid === 'string' && typeof j.rev === 'number' ? { rid: j.rid, qid: j.qid, rev: j.rev } : {}),
   };
-  const checked = { ...(check.node !== undefined || check.qid !== undefined ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
+  const checked = { ...(check.node !== undefined || check.qid !== undefined || check.drift ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
   // E3.1: a node-scoped wake with a fact mark is compared per node by its text without the repeat suffix.
   // G3.4b: keyed by `reportKey`, so the repo-level drift notify and a plan node named `trunk` keep separate records.
   if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, key: reportKey(j), base: reportText({ ...j, repeat: undefined }), facts: j.facts }, ...checked };
@@ -339,27 +340,38 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
 }
 
 /**
- * What a pi delivery revalidates of one wake line (H1.1b): `node`/`facts` (a node-scoped line with a fact mark, not a
- * drift line) and `rid`/`qid`/`rev` (an asking notify naming its first open question). Terminal lines, drift lines and
- * lines without a fact mark or question carry none and are never dropped.
+ * What a pi delivery revalidates of one wake line (H1.1b, QT2): `node`/`facts` (a node-scoped fact mark), `drift`/`facts`
+ * (the ledger trunk seq), and `rid`/`qid`/`rev` (an asking notify's first open question). Terminal lines and other lines
+ * without a fact mark or question carry none and are never dropped.
  */
-export interface WakeCheck { node?: string; facts?: number; rid?: string; qid?: string; rev?: number }
+export interface WakeCheck { node?: string; facts?: number; drift?: true; rid?: string; qid?: string; rev?: number }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
 export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
 /**
  * The revalidation of a pi delivery (H1.1b), against the ledger of `cwd` and dsa. A line is dropped when the node's
  * current fact mark (`factMark`, the function that produced the mark) is higher than the line's (someone acted on the
  * node; a condition that still holds is reported again by the driver's next pass with the new mark), or when dsa
- * describe of the line's run no longer lists its qid/rev as an open question. A failed ledger read or describe keeps
- * the line. The ledger is read and each run described at most once per delivery.
+ * describe of the line's run no longer lists its qid/rev as an open question. Drift wakes are dropped when the ledger
+ * trunk seq advanced or the trunk ref equals the ledger commit. A failed read or describe keeps the line. The ledger,
+ * trunk ref and each run are read at most once per delivery.
  */
 export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
   return async checks => {
     let state: Promise<State | undefined> | undefined;
+    let trunk: Promise<string | undefined> | undefined;
     const views = new Map<string, Promise<{ qid: string; rev: number }[] | undefined>>();
     const dsa = (): Dsa => o.dsa ?? new Dsa({ timeoutMs: 10_000 });
     let client: Dsa | undefined;
     return Promise.all(checks.map(async c => {
+      if (c.drift) {
+        state ??= stateOf(o.cwd).catch(() => undefined);
+        const s = await state;
+        if (s) {
+          if (c.facts !== undefined && s.trunk.seq > c.facts) return false;
+          trunk ??= git.revParse(o.cwd, `refs/heads/${s.trunk.name}`).catch(() => undefined);
+          if (await trunk === s.trunk.commit) return false;
+        }
+      }
       if (c.node !== undefined && c.facts !== undefined) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;
