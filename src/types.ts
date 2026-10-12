@@ -72,6 +72,8 @@ export interface Plan {
   trunk: string;
   closure: string[];
   setup?: string;
+  /** LE3: machine leasing defaults on; false disables it repository-wide. Never part of any item key. */
+  lease?: boolean;
   exec?: ExecConfig;          // present only when env, wrap, parallel, trees or touch is set
   invariants: CheckSpec[];
   nodes: NodeSpec[];

@@ -15,6 +15,7 @@ import { Ledger } from './ledger.ts';
 import { parsePlan, planDowngrades, planWarnings } from './plan.ts';
 import { adoptPrefixes, uncoveredDowngrades, writesHint } from './reducer.ts';
 import { OwedError } from './errors.ts';
+import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
 import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
@@ -188,8 +189,8 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.rebase({ ...await actor(ctx, dir, who, `Rebase the open slot of node ${oneLine(p.node)} onto trunk`, {}, signal), node: p.node });
     return result(r, `${renderEntry(r.entry)}\n${r.packet}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
-  tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; as does not change executor identity.', Type.Object({ node, rerun: Type.Optional(Type.Boolean()), as, cwd }), async (p, _ctx, dir, signal) => {
-    const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal }); return result(r, `${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}`);
+  tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; as does not change executor identity.', Type.Object({ node, rerun: Type.Optional(Type.Boolean()), lease: Type.Optional(Type.Boolean({ description: 'False skips the shared machine lease (default on).' })), as, cwd }), async (p, _ctx, dir, signal) => {
+    const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal, lease: p.lease }); return result(r, `${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}${leaseText(r)}`);
   });
   tool('review', 'Independent review; explicitly specify reviewer:id (or owner:id: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), candidate: candidateParam, cwd }), async (p, ctx, dir, signal) => {
     if (!p.as || !['reviewer', 'owner'].includes(principal(p.as).role)) throw new OwedError('review requires an explicit reviewer:id or owner:id');
@@ -216,7 +217,7 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.evidence({ ...a, node: p.node, id: p.id, files, note: p.note, named: p.candidate, from: [ctx.cwd], ...(expect ? { expect } : {}), ...(at?.candidate ? { candidate: { seq: at.candidate.seq, commit: at.candidate.commit } } : {}) });
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
-  tool('merge', 'Run the merge guard, measure the merge tree and advance trunk with CAS.', Type.Object({ node, as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`, {}, signal), node: p.node, signal }); return card(dir, p.node, r); });
+  tool('merge', 'Run the merge guard, measure the merge tree under the shared machine lease and advance trunk with CAS. lease: false skips the lease.', Type.Object({ node, lease: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`, {}, signal), node: p.node, signal, lease: p.lease }); return result(r, `${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}${leaseText(r)}`); });
   tool('abandon', 'Close the open writer slot of a node (parent or owner); the node can then be dispatched again. note (or its older name reason) is recorded.', Type.Object({ node, note: Type.Optional(Type.String()), reason: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'abandon');
     if (p.note !== undefined && p.reason !== undefined) throw new OwedError('abandon takes note (or its older name reason), not both', 'usage');
@@ -271,7 +272,7 @@ export default function owed(pi: ExtensionAPI): void {
     const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.plan.seq - 1 })).downgrades.find(x => x.seq === r.plan.seq);
     return result(r, `${amendLines(r).join('\n')}${d?.allowance !== undefined ? `\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}` : ''}\n${renderStatus(await ops.status({ cwd: dir }))}`);
   });
-  tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), as, cwd }), async (p, ctx, dir, signal) => {
+  tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), lease: Type.Optional(Type.Boolean({ description: 'False skips leasing the background genesis attest.' })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'initialize the ledger');
     const read = await ops.readPlan({ cwd: dir, path: p.plan }), v = await ops.initPreview({ cwd: dir, plan: read.plan });
     const a = await actor(ctx, dir, who, `Initialize the owed ledger\nTrunk: ${oneLine(v.trunk)} at ${v.commit.slice(0, 12)}\nPlan: ${oneLine(read.path)} (sha256 ${v.planSha.slice(0, 12)})\nNodes: ${v.nodes}`, { Invariants: { items: v.invariants } }, signal);
@@ -281,8 +282,8 @@ export default function owed(pi: ExtensionAPI): void {
       const ac = new AbortController(); genesisRuns.add(ac);
       const end = (head: string, g: Pick<ops.GenesisAttest, 'recorded' | 'failed' | 'missing'>) => `${head}: recorded ${g.recorded.join(', ') || 'none'}; failed ${g.failed.join(', ') || 'none'}; missing ${g.missing.join(', ') || 'none'}${g.missing.length ? '; run owed attest --genesis, or the next attest/merge measures them first' : ''}`;
       // One wake-up when it ends (D17.7 style); none after session_shutdown aborted it (the session is gone).
-      void ops.attestGenesis({ cwd: dir, signal: ac.signal }).then(
-        g => end(`owed init: genesis attest of ${oneLine(dir)} finished`, g),
+      void ops.attestGenesis({ cwd: dir, signal: ac.signal, lease: p.lease }).then(
+        g => `${end(`owed init: genesis attest of ${oneLine(dir)} finished`, g)}${leaseText(g)}`,
         async (e: unknown) => ac.signal.aborted ? undefined : end(`owed init: genesis attest of ${oneLine(dir)} stopped (${oneLine(e instanceof Error ? e.message : String(e))})`, await ops.genesisReport({ cwd: dir }).catch(() => ({ recorded: [], failed: [], missing: r.genesis.missing }))),
       ).then(content => { if (content) return pi.sendMessage({ customType: 'owed-init', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }); }).catch(() => undefined).finally(() => { genesisRuns.delete(ac); });
     }
@@ -308,7 +309,7 @@ export default function owed(pi: ExtensionAPI): void {
     const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${oneLine(p.node)}: ${p.items.map(oneLine).join(', ')}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`, { Reason: p.reason }, signal);
     const r = await ops.defer({ ...a, channel: a.channel!, node: p.node, reason: p.reason, items }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
   });
-  tool('adopt', 'Owner adoption of trunk commits made outside owed (release commits, hotfixes): commit (default refs/heads/<trunk>) must equal the trunk ref and fast-forward the ledger trunk; invariants whose key changed are measured and a new failure refuses it. The main agent acts as owner (owner:pi, channel delegated, D25; a UI dialog only under OWED_CONFIRM=owner); as parent:<id> only when every changed path lies under an `allow` adopt prefix of the plan.', Type.Object({ commit: Type.Optional(Type.String({ minLength: 1, description: 'Commit to adopt; must equal refs/heads/<trunk> (the default).' })), note: Type.String({ minLength: 1, description: 'Why these commits are adopted (recorded).' }), as, cwd }), async (p, ctx, dir, signal) => {
+  tool('adopt', 'Owner adoption of trunk commits made outside owed (release commits, hotfixes): commit (default refs/heads/<trunk>) must equal the trunk ref and fast-forward the ledger trunk; invariants whose key changed are measured and a new failure refuses it. The main agent acts as owner (owner:pi, channel delegated, D25; a UI dialog only under OWED_CONFIRM=owner); as parent:<id> only when every changed path lies under an `allow` adopt prefix of the plan.', Type.Object({ commit: Type.Optional(Type.String({ minLength: 1, description: 'Commit to adopt; must equal refs/heads/<trunk> (the default).' })), note: Type.String({ minLength: 1, description: 'Why these commits are adopted (recorded).' }), lease: Type.Optional(Type.Boolean({ description: 'False skips the shared machine lease.' })), as, cwd }), async (p, ctx, dir, signal) => {
     // D21.4: a parent may adopt (no dialog) only when the current plan has an `adopt` allowance; ops checks the paths.
     const who = p.as ?? ownerDefault();
     if (!(principal(who).role === 'owner' || (principal(who).role === 'parent' && adoptPrefixes(await currentPlan(dir)).length))) throw new OwedError('Only owner may adopt trunk commits');
@@ -317,8 +318,8 @@ export default function owed(pi: ExtensionAPI): void {
     // Up to ADOPT_SHOWN paths one per line; beyond that, the exact command that lists them all.
     const shown = { items: v.changed.slice(0, ADOPT_SHOWN), ...(v.changed.length > ADOPT_SHOWN ? { more: `… +${v.changed.length - ADOPT_SHOWN} more paths; full list: git diff --no-renames --name-only ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}` } : {}) };
     const a = await actor(ctx, dir, who, `Adopt trunk ${oneLine(v.trunk)} ${v.prior.slice(0, 12)}..${v.commit.slice(0, 12)}: ${v.commits} commit${v.commits === 1 ? '' : 's'} made outside owed\nThese changes were not reviewed through owed; adopting them makes ${v.commit.slice(0, 12)} the ledger trunk.`, { [`Changed paths (${v.changed.length})`]: shown, Note: p.note }, signal);
-    const r = await ops.adopt({ ...a, commit: v.commit, note: p.note, signal });
-    return result(r, `${renderEntry(r.entry)}${r.allowance !== undefined ? `\nAdopted by ${r.entry.by} under allowance (plan #${r.allowance})` : ''}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
+    const r = await ops.adopt({ ...a, commit: v.commit, note: p.note, signal, lease: p.lease });
+    return result(r, `${renderEntry(r.entry)}${leaseText(r)}${r.allowance !== undefined ? `\nAdopted by ${r.entry.by} under allowance (plan #${r.allowance})` : ''}\nInvariant observations: ${r.observations.length}\n${renderStatus(await ops.status({ cwd: dir }))}`);
   });
   tool('escape', 'Record an escape: a defect found after a merge of node; merge is the seq of that merge entry (parent or owner).', Type.Object({ node, merge: Type.Integer({ minimum: 0, description: 'Seq of the merge entry of node.' }), class: Type.Union((['missing', 'false-pass', 'reuse', 'weak', 'waiver'] as const).map(c => Type.Literal(c))), note: reason, evidence: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'record escapes');
