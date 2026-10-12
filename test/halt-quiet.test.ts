@@ -65,7 +65,7 @@ test('E3.1 Follower: a node wake with the same text and fact mark does not wake 
     assert.equal(f.tick(), undefined);
     line({ do: 'notify', node: 'x', outcome: 'notify', text: 'x asks', facts: 1 });
     const m = f.tick() ?? '';
-    assert.deepEqual(m.split('\n'), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — attest recorded no verdict twice (repeat 2, no new ledger entries)', 'x asks', 'Next: owed status / owed why <node>'], 'only the latest repeat of h rides along with the next wake');
+    assert.deepEqual(m.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — attest recorded no verdict twice (repeat 2, no new ledger entries)', 'x asks', 'Next: owed status / owed why <node>'], 'only the latest repeat of h rides along with the next wake');
     line(halt(7));
     assert.doesNotMatch(f.tick() ?? 'no wake', /repeat/, 'a higher fact mark (new ledger entries for h) wakes as a new fact');
     line(halt(7, 'repairs exhausted'));

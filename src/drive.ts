@@ -2,6 +2,7 @@
 // the executor's in-process facts, and returns the actions of one pass. No I/O, no clock, no git: everything it uses
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
+import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
 import { applicableRules, attestJobs, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint } from './views.ts';
@@ -31,7 +32,7 @@ export type Action =
    * Printed only (asking questions); no ledger write. An asking notify (H1.1b) also names the run (`rid`) and its first
    * open question (`qid`, `rev`; absent when dsa reports none), so a wake can be revalidated at delivery time.
    */
-  | { do: 'notify'; node: string; text: string; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string; /** FL3: runtime receipt, never a ledger entry. */ reportedResume?: number };
+  | { do: 'notify'; node: string; text: string; quiet?: true; answerRetry?: true; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string; /** FL3: runtime receipt, never a ledger entry. */ reportedResume?: number };
 
 /** A merge of the node's candidate `candidate` (submit seq) that this process saw refused. */
 export interface MergeRefusal {
@@ -89,6 +90,8 @@ export interface DriveOpts {
    * Absent: no back-off (the node attests as soon as it would without one).
    */
   now?: number;
+  /** QN1: runtime notice keys already printed by this driver, so another overdue question can be reported. */
+  noticed?: ReadonlySet<string>;
 }
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
@@ -522,6 +525,11 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   return out;
 }
 
+/** QN1: a durable answer covers that question at its recorded revision and older revisions. */
+export function answeredQuestion(s: State, rid: string, qid: string, rev?: number) {
+  return entriesOf(s).findLast(e => e.kind === 'rule' && e.answer?.rid === rid && e.answer.qid === qid && (rev === undefined || rev <= e.answer.rev)) as import('./types.ts').RuleEntry | undefined;
+}
+
 function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpts, n: NodeState): Action | undefined {
   const id = n.id, slot = n.slot!, attempt = slot.attempt, c = n.candidate;
   const halt = (reason: string, needs: 'human' | 'owner' = 'human'): Action => ({ do: 'halt', node: id, attempt, reason, needs });
@@ -538,7 +546,22 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   };
   // Row 5: a run asking: notify (question, answer address); the driver never answers.
   // H1.1b: the report carries rid and the first question's qid/rev; its text is askingText, then (F1.3) `askingRule`.
-  const asking = (l: LaunchEntry, v: RunView): Action => { const q = v.questions?.[0]; return { do: 'notify', node: id, text: `${askingText(id, l, v)} ${askingRule(id)}`, rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) }; };
+  const asking = (l: LaunchEntry, v: RunView): Action => {
+    const questions = v.questions ?? [], open = questions.filter(q => !answeredQuestion(s, l.rid, q.qid, q.rev));
+    const answers = questions.flatMap(q => answeredQuestion(s, l.rid, q.qid, q.rev) ?? []);
+    const overdue = answers.find(e => !opts.noticed?.has(`answer-grace\u0000${l.rid}\u0000${e.answer!.qid}`)
+      && opts.now !== undefined && opts.now - Date.parse(e.ts) >= (s.plan.drive?.answer_grace_s ?? 900) * 1000);
+    if (overdue) {
+      const q = overdue.answer!, age = Math.floor((opts.now! - Date.parse(overdue.ts)) / 1000);
+      return { do: 'notify', node: id, rid: l.rid, qid: q.qid, rev: questions.find(q => q.qid === overdue.answer!.qid)!.rev, answerRetry: true, once: `answer-grace\u0000${l.rid}\u0000${q.qid}`, text: `${id}: answer #${overdue.seq} recorded ${age}s ago but run ${l.rid} still shows question ${q.qid}; retry delivery: ${answerRetry(id, overdue)}` };
+    }
+    if (questions.length && !open.length) {
+      const e = answers[0]!;
+      return { do: 'notify', node: id, quiet: true, once: `answered\u0000${l.rid}\u0000${e.answer!.qid}`, text: `${id}: answered #${e.seq}, waiting for the run to resume` };
+    }
+    const filtered = { ...v, questions: open }, q = open[0];
+    return { do: 'notify', node: id, text: `${askingText(id, l, filtered)} ${askingRule(id)}`, rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) };
+  };
   // Row 1: halted.
   if (halted(s, id)) return undefined;
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
@@ -548,7 +571,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   const waiting = waitingFor(s, id);
   if (waiting || reportedOf(s, id) !== undefined || s.plan.nodes.find(x => x.id === id)?.later) {
-    for (const l of live) { const v = runs.get(l.rid); if (v?.state === 'asking') return asking(l, v); }
+    const asks = live.flatMap(l => { const v = runs.get(l.rid); return v?.state === 'asking' ? [asking(l, v)] : []; });
+    if (asks.length) return asks.find(a => a.do === 'notify' && !a.quiet) ?? asks[0];
     // FL1: only the waiting notification is delivered while dependencies block the slot.
     const writer = ar.launches.find(l => l.role === 'writer'), w = writer && runs.get(writer.rid);
     if (waiting?.deps?.length && writer && w?.state === 'running') {
@@ -616,7 +640,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send, ...(x.rulings !== undefined ? { rulings: x.rulings } : {}) };
   }
   // Row 5: a run asking (`asking`).
-  for (const l of live) if (view(l).state === 'asking') return asking(l, view(l));
+  const asks = live.filter(l => view(l).state === 'asking').map(l => asking(l, view(l)));
+  if (asks.length) return asks.find(a => a.do === 'notify' && !a.quiet) ?? asks[0];
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
   // FL3: a fresh report resume gets the next writer follow-up even with an accepted/failed candidate.
   const reportResume = resumeOf(s, id);

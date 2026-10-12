@@ -139,7 +139,7 @@ export interface ActionReport {
   scope?: 'repo';
   attempt?: number; role?: string; rid?: string; send?: string; sendKind?: string; reason?: string; needs?: string; text?: string;
   /** An asking notify (H1.1b): the first open question of run `rid`; fields of the log line, not of the ledger. */
-  qid?: string; rev?: number;
+  qid?: string; rev?: number; answerRetry?: true; inProgress?: number;
   /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
   facts?: number;
   /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
@@ -156,7 +156,7 @@ export const NEEDS_PARENT = 'needs the parent (the main agent acts; owed lists t
  * Reports that wake a following session (D17.7): halts, notifies (questions, owner-needed, describe failures) and the
  * outcomes rejected, conflict, refused and error. F1: a `stale` outcome (a halt included) records nothing and wakes nobody.
  */
-export const wakeReport = (r: { do?: unknown; outcome?: unknown }): boolean => (r.do === 'halt' && r.outcome !== 'stale') || r.do === 'notify' || ['rejected', 'conflict', 'refused', 'error'].includes(String(r.outcome));
+export const wakeReport = (r: { do?: unknown; outcome?: unknown }): boolean => (r.do === 'halt' && r.outcome !== 'stale') || (r.do === 'notify' && r.outcome !== 'answered') || ['rejected', 'conflict', 'refused', 'error'].includes(String(r.outcome));
 /**
  * The fact mark of a node (E3.1): the highest seq of the ledger entries naming it (`node`, an observation's `subject`,
  * a ruling listing it) not written by the driver (`parent:drive`: its launches, sends, halts, dispatches, rebases and
@@ -302,7 +302,7 @@ export function lockAlive(o: LockOwner): boolean {
  * when it exists). A lock whose pid is gone (or reused by another process) is stale and taken over; a live one refuses.
  * A lock of another host is never taken over (its pid cannot be checked here). Returns the release functions.
  */
-export interface DriveLock { release(): Promise<void>; /** Synchronous release for a hard stop. */ releaseSync(): void }
+export interface DriveLock { owner: LockOwner; release(): Promise<void>; /** Synchronous release for a hard stop. */ releaseSync(): void }
 export async function acquireDriveLock(dir: string, session?: string): Promise<DriveLock> {
   const path = join(dir, 'drive.lock'), me: LockOwner = { pid: process.pid, ...(procStart(process.pid) ? { start: procStart(process.pid)! } : {}), host: hostname(), at: new Date().toISOString(), token: randomUUID(), ...(session ? { session } : {}) };
   const text = JSON.stringify(me);
@@ -328,6 +328,7 @@ export async function acquireDriveLock(dir: string, session?: string): Promise<D
       continue;
     }
     return {
+      owner: me,
       release: async () => { if (await readFile(path, 'utf8').catch(() => '') === text) await rm(path, { force: true }); },
       releaseSync: () => { try { if (readFileSync(path, 'utf8') === text) rmSync(path, { force: true }); } catch { /* gone */ } },
     };
@@ -562,7 +563,7 @@ export class Driver {
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
     const { runs, blobs, rejected, conflicts } = await this.observe(s, measuring);
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, measuring, now: Date.now() });
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, measuring, now: Date.now(), noticed: this.facts.once });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
@@ -763,6 +764,7 @@ export class Driver {
    * ledger entries)`), and the follower does not wake for it.
    */
   emit(r: ActionReport, s?: State): void {
+    if (s) r.inProgress = Object.values(s.nodes).filter(n => n.slot?.open && !n.merged).length;
     if (s && wakeReport(r) && r.scope !== 'repo' && s.nodes[r.node]) r.facts = factMark(s, r.node);
     if (r.scope === 'repo' && r.do === 'notify' && r.node === DRIFT_NODE) this.facts.drift = true;
     const rk = reportKey(r);
@@ -856,7 +858,7 @@ export class Driver {
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node, since }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
-        case 'notify': if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: 'notify', text: a.text, ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
+        case 'notify': if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
       // F4 (wais #31): a failed send names its node, kind and target like any other send line.
@@ -1031,6 +1033,14 @@ const errorCode = (e: unknown): number => e instanceof OwedError ? (REFUSALS.inc
 interface LoopEnd { record?: boolean; reason?: ExitReason; written?: boolean }
 
 async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
+  const output = o.log;
+  let identity = { pid: process.pid, start: procStart(process.pid), at: new Date().toISOString() };
+  if (o.json) o = { ...o, log: line => {
+    let stamped: string;
+    try { stamped = JSON.stringify({ ...JSON.parse(line), driver: identity }); }
+    catch { stamped = line; }
+    output(stamped);
+  } };
   const driver = new Driver(o), stop = new AbortController();
   let lock: DriveLock | undefined;
   const say = (line: string, json: object) => o.log(o.json ? JSON.stringify(json) : line);
@@ -1076,6 +1086,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
   try {
     const ledger = await Ledger.open(o.cwd);
     lock = await acquireDriveLock(ledger.dir, driver.session);
+    identity = { pid: lock.owner.pid, start: lock.owner.start, at: lock.owner.at };
     if (!o.once && driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     // K6: --once (and the pi tool's pass) waits for the measurements its pass started and handles them.
     if (o.once) { const r = await driver.pass(); await driver.settle(); if (hardStop) await hardStop; if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
