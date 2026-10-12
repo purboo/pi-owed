@@ -241,7 +241,7 @@ test('L1.4 (#16): describe reports the call address <wid>/<key>; halts naming a 
   assert.ok(fin?.do === 'halt' && fin.reason.startsWith(`writer run ${W} (to:"w7/tasks:0") finished without submitting a candidate`), JSON.stringify(fin));
   // An asking notice without a question address falls back to the run's call address.
   const ask = act(r, new Map([view(W, 'asking', { to: 'w7/tasks:0', questions: [{ qid: 'q', rev: 1, question: '?' }] })]));
-  assert.ok(ask?.do === 'notify' && ask.text.includes('to:"w7/tasks:0"') && ask.text.includes('--to w7/tasks:0'), JSON.stringify(ask));
+  assert.ok(ask?.do === 'notify' && ask.text.includes('to:"w7/tasks:0"') && ask.text.includes(`owed answer a --rid ${W} --qid q`), JSON.stringify(ask));
   // Review #886 F2: an asking run without a reported question also gives the call address (and only when known).
   const l = r.entries.find(e => e.kind === 'launch')! as Extract<Entry, { kind: 'launch' }>;
   assert.equal(askingText('a', l, { rid: W, state: 'asking', to: 'w7/tasks:0' }), `a: writer run ${W} (to:"w7/tasks:0") is asking (no question reported; see pi-durable-subagents describe --key ${W}); the driver never answers`);
