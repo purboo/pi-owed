@@ -806,6 +806,7 @@ export async function submit(o: Actor & { node: string; commit?: string }): Prom
   if ((!o.commit || resolve(await git.repoRoot(o.cwd)) === resolve(n.slot.worktree)) && !await git.isClean(n.slot.worktree)) throw new OwedError('slot worktree is dirty');
   const commit = await git.revParse(o.commit ? o.cwd : n.slot.worktree,o.commit ?? 'HEAD');
   if (!await git.isAncestor(o.cwd,n.slot.base,commit)) throw new OwedError('submit commit must be a descendant of slot base');
+  await git.checkCandidateLimits(o.cwd,state.plan.limits,n.slot.base,commit);
   const spec = state.plan.nodes.find(x => x.id === o.node)!, facts = await git.candidateFacts(o.cwd,state.plan,spec,n.slot.base,commit,n.slot.attempt);
   // D23: approve and evidence keys derive from the patch, like review.
   Object.assign(facts.keys, manualKeys(spec,facts.patch));

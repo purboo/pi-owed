@@ -80,6 +80,8 @@ export interface Plan {
   /** LE3: machine leasing defaults on; false disables it repository-wide. Never part of any item key. */
   lease?: boolean;
   sweep?: SweepSpec;          // advisory trunk measurements, never part of an item key
+  /** BD3: submit-only limits in MiB on candidate changed blobs; never part of an item key. */
+  limits?: { file_mib?: number; diff_mib?: number };
   exec?: ExecConfig;          // present only when env, wrap, parallel, trees or touch is set
   invariants: CheckSpec[];
   nodes: NodeSpec[];
