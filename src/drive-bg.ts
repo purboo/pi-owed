@@ -326,15 +326,19 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
   if (j.do === 'merge' && j.outcome === 'merged') return { kind: 'merge', text };
   if (!wakeReport(j)) return { kind: 'quiet', text };
   // QT2 (#1378): only scoped drift wakes use the ledger trunk seq. Unscoped `trunk` may be a real plan node.
-  const drift = j.do === 'notify' && j.node === DRIFT_NODE && j.scope === 'repo';
+  const red = j.invariantRed as { obligation?: unknown; key?: unknown } | undefined;
+  const invariantRed = j.do === 'notify' && j.scope === 'repo' && typeof red?.obligation === 'string' && red.obligation.startsWith('inv:') && typeof red.key === 'string'
+    ? { obligation:red.obligation, key:red.key } : undefined;
+  const drift = !invariantRed && j.do === 'notify' && j.node === DRIFT_NODE && j.scope === 'repo';
   const node = typeof j.node === 'string' && j.scope !== 'repo' && !drift ? j.node : undefined;
   const check: WakeCheck = {
+    ...(invariantRed ? { invariantRed } : {}),
     ...(drift ? { drift: true as const, ...(typeof j.facts === 'number' ? { facts: j.facts } : {}) } : {}),
     ...(node !== undefined && typeof j.facts === 'number' ? { node, facts: j.facts } : {}),
     ...(j.answerRetry === true ? { answerRetry: true as const } : {}),
     ...(j.do === 'notify' && typeof j.rid === 'string' && typeof j.qid === 'string' && typeof j.rev === 'number' ? { rid: j.rid, qid: j.qid, rev: j.rev } : {}),
   };
-  const checked = { ...(check.node !== undefined || check.qid !== undefined || check.drift ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
+  const checked = { ...(check.node !== undefined || check.qid !== undefined || check.drift || check.invariantRed ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
   // E3.1: a node-scoped wake with a fact mark is compared per node by its text without the repeat suffix.
   // G3.4b: keyed by `reportKey`, so the repo-level drift notify and a plan node named `trunk` keep separate records.
   if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, key: reportKey(j), base: reportText({ ...j, repeat: undefined }), facts: j.facts }, ...checked };
@@ -346,7 +350,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
  * (the ledger trunk seq), and `rid`/`qid`/`rev` (an asking notify's first open question). Terminal lines and other lines
  * without a fact mark or question carry none and are never dropped.
  */
-export interface WakeCheck { node?: string; facts?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true }
+export interface WakeCheck { node?: string; facts?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
 export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
 /**
@@ -366,6 +370,14 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
     const dsa = (): Dsa => o.dsa ?? new Dsa({ timeoutMs: 10_000 });
     let client: Dsa | undefined;
     return Promise.all(checks.map(async c => {
+      if (c.invariantRed) {
+        state ??= stateOf(o.cwd).catch(() => undefined);
+        const s = await state;
+        if (s) {
+          const red = c.invariantRed, item = s.invariants.find(i => i.obligation === red.obligation);
+          if (!item || item.key !== red.key || item.mark !== '✘' || item.status !== 'D') return false;
+        }
+      }
       if (c.drift) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;

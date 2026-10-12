@@ -109,11 +109,15 @@ export interface StateFacts { commit: string; tree: string; invKeys: Record<stri
 export type Verdict = 'pass' | 'fail' | 'error';
 /** format: 'tap' | 'cargo' | 'jest/vitest' | 'pytest' | 'mixed' (cargo + TAP in one log, E2.1) | 'mutants'. */
 export interface Counts { tests?: number; pass?: number; fail?: number; skip?: number; format?: string; /** RC3: at most 50 failing test names. */ failed?: string[] }
+/** IR2 (0.15): executor facts, not parsed from display notes; absent in historical observations. */
+export interface ExecutionResult { completed: boolean; countOK: boolean }
 /** RC1: one command run, before repeat decides the observation's verdict. Errors stop measurement, never count as votes. */
-export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[] }
+export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[]; execution?: ExecutionResult }
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; state: StateFacts }
+/** IR1: current-plan facts on the ledger trunk; refresh changes invariant keys, never the trunk commit/seq. */
+export interface RefreshEntry extends Base { kind: 'refresh'; commit: string; state: StateFacts }
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
 export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface AnswerRef { rid: string; qid: string; rev: number }
@@ -132,6 +136,8 @@ export interface ObsEntry extends Base {
   verdict: Verdict;
   exit: number | null;
   counts?: Counts;
+  /** IR2: all executed runs completed without timeout/error and met their count/min_tests requirement. */
+  execution?: ExecutionResult;
   log?: string;              // blob sha of the combined output
   durationMs: number;
   commit: string;            // commit the item was evaluated on
@@ -197,7 +203,7 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  */
 export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold' }
 export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
-export type Entry = SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
+export type Entry = RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
