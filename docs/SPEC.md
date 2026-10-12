@@ -1464,6 +1464,7 @@ adopt(o: {cwd, commit?, note, as, channel?, signal?}): Promise<AdoptResult>   //
 adoptPreview(o: {cwd, commit?}): Promise<AdoptPreview>   // the same preconditions, no effect: {trunk, prior, commit, commits, changed}
 status(o: {cwd}): Promise<StatusView>
 why(o: {cwd, node}): Promise<ReceiptCard>
+reportMetrics(o: {cwd, since?: number | string, until?: number | string}): Promise<Metrics>  // MT, ledger-only computation
 report(o: {cwd, since?: number | string}): Promise<Report>
 brief(o: {cwd, since?: number | string, now?: number}): Promise<Brief>
 verify(o: {cwd}): Promise<VerifyResult>                  // hash chain + replay; G1.4: {snapshotMismatch?: seq} when a disk snapshot matching the chain differed from the full replay at its seq (deleted); {code: 'version'} on a G1.5 refusal
@@ -1790,6 +1791,57 @@ while genesis items lack observations.
   section: escape counts by class with each escape, decoys caught / escaped /
   pending with each revealed decoy, unrevealed commitments and the escape rate
   (cumulative, §6.5; `--json` returns it as `escapes`).
+- **Metrics (0.15, MT)**: `owed report --metrics [--since <seq|ISO>] [--until <seq|ISO>] [--json]`
+  computes only from ledger entries and their recorded plan blobs, without
+  querying Git facts or dsa. It changes no acceptance state or key and writes no
+  ledger entry. Ordinary `report` and its JSON retain their existing fields;
+  `--until` is valid only with `--metrics`. Bounds are sequence numbers or ISO
+  timestamps: `since` is exclusive (default start), `until` inclusive (default
+  latest); a reversed pair in the same units is a usage error. Each merge, driver
+  halt and parent/owner answer ruling is counted if its own entry is in the
+  window. Earlier history supplies timing, attempts and plan comparisons;
+  entries after `until` cannot affect results (parent ruling #1486).
+  JSON returns `since`, `until` (`null` means latest), `mergedNodes`, `merged`,
+  `interruptions`, `halts`, `haltReasons`, `submitToMergeMs`,
+  `dispatchToMergeMs`, `firstPassAcceptance` and `repairs`:
+  - `merged` lists `{node, attempt, seq, submitToMergeMs, dispatchToMergeMs,
+    firstPass, repairs, repairsByAttempt}`. Submit time starts at the first
+    submit of the merged attempt, including its earlier candidates; dispatch
+    time starts at the node's first dispatch, including abandoned attempts.
+    Both times are milliseconds. Each duration summary has `samples`, `median`
+    (middle value, averaging the two middle values for an even sample), `p90`
+    (nearest rank, `ceil(0.9 * samples)`) and `max`. Missing/invalid durations
+    are `null` and excluded from samples.
+  - `interruptions` has `total` = driver halts + answer rules, `halts`,
+    `answers` and `perMergedNode`. Answers count even when they also decide a
+    halt. `firstPassAcceptance` has `nodes` and `rate`: a merged attempt 1 with
+    no execution or judgment block on any candidate in that attempt. Diagnostic
+    trunk probes and attribution observations do not create blocks. `repairs`
+    has `total` and `perMergedNode`: sum `max(writer submits - 1, 0)` separately
+    for every attempt of each node merged in the window, including abandoned
+    attempts, excluding executor carry submits. `repairsByAttempt` lists
+    `{attempt, submits, repairs}`. Rates with no merged nodes are `null`.
+  - Each halt has `seq`, `node`, `attempt`, original `reason`, `normalizedReason`,
+    `class` (`decision` or `no-decision`), `endedBy` and `decisionSeqs`. A halt
+    ends at its node's next resume, submit, merge, abandon or halt, whoever
+    recorded that ending halt; only `parent:drive` halts count as interruptions
+    (parent ruling #1488).
+    From the halt through that ending entry, a parent/owner action makes it a
+    decision: a rule naming the node or `*` (including an answer), waive, defer,
+    abandon, hold, evidence, approval or other owner review, or a plan entry
+    changing that node's spec/deps compared with the preceding plan. Unrelated
+    node changes, reviewer acts and driver acts do not count. At a historical
+    cutoff an open halt has `endedBy: null`; its class reflects only decisions
+    recorded through that cutoff, so a later decision can change a later report.
+    `haltReasons` gives the top five `{reason, count}` groups per class, ordered
+    by descending count then reason. Normalization collapses whitespace and
+    replaces node/run/question/key/commit ids with `<id>` and digits with `<n>`.
+    Text is one block of at most 20 lines: merged count, interruptions and rate,
+    submit-to-merge median/p90/max, dispatch-to-merge median/p90, first-pass rate,
+    repairs and rate, and the top-five halt reasons for each class. Unavailable
+    values read `n/a`; JSON includes all per-merge and per-halt detail.
+  Compatibility: MT adds no ledger kinds or fields. Historical ledgers, including
+  0.9-era entries without halts or answers, replay with unchanged states and keys.
 - **Manual obligations (D23)**: `approve` reads `✔ approved (<owner>, <channel>)`
   (pending: `⊥ awaiting owner approval`); `evidence:<id>` reads `✔ evidenced
   (manual) by <who>` with each file as `path sha12` and the note (pending:
@@ -1883,7 +1935,7 @@ spelling `--reason`; not both), `resume <node> [--after <node>] [--note TEXT]`
 <dep>]`, then `<node> waits for <dep> (resume #<seq>); the driver acts again
 when <dep> merges`, or `<dep> is already merged: <node> resumes now`; `--json`
 the entry), `merge <node>`, `status`,
-`why <node>`, `report [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
+`why <node>`, `report [--metrics [--until seq|ISO]] [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
 `adopt [--commit X] --note TEXT` (owner; `--as parent:ID` under an `adopt`
 allowance, §3.4, with no prompt and no preview; before the TTY prompt, and also with
 `--i-am-owner`, it prints to stderr the preview — full ledger trunk
