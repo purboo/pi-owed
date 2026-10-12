@@ -495,6 +495,36 @@ invalidates a candidate.
 - An `allow` rule never turns a failing writes item into a pass; it only lets
   the parent widen `writes` in the plan (§9 receipt card).
 
+### 3.5 Candidate size limits (0.14, BD)
+
+Optional top-level `limits: {file_mib?: number, diff_mib?: number}` contains
+positive finite numbers in MiB (1 MiB = 1,048,576 bytes; fractions allowed).
+Unknown fields, non-numbers, zero, negative and non-finite values are usage
+errors. `owed submit` / `owed_submit` inspects the candidate's added/changed blob
+ids with `git diff --raw --no-renames` and sizes with `cat-file --batch-check`,
+without reading their content. `file_mib` bounds the largest changed candidate
+blob; `diff_mib` bounds their summed full sizes, once per changed path even when
+paths share a blob. Mode changes count; deleted files and gitlinks contribute
+zero. An exact limit is allowed. Exceeding either limit refuses with code
+`refused`, the limit and up to five largest changed files with byte/MiB sizes;
+nothing is appended to the ledger. The writer receives this as an ordinary
+submit refusal through the existing writer command path.
+
+With neither limit set, submit performs no size check. Limits are submit policy,
+not an obligation: they enter no key, do not invalidate existing candidates, and
+are not rechecked at merge or when carrying a candidate. Compatibility: BD adds
+no ledger entry kind or field. Without limits the ledger replays with the same
+states, keys and views as 0.13. Earlier owed ignores the plan field; use 0.14+
+when enforcing limits.
+
+All buffered `git()` calls have a combined stdout/stderr bound of 256 MiB by
+default (clamped to the runtime's string limit). Output above the bound stops
+the process and returns `OwedError` code `refused` naming the subcommand,
+including with `allowFail`, before concatenating or decoding buffers. This
+covers other diffs, plan `show` and mutant `cat-file blob` content reads. The
+review diff streams stdout into a UTF-8 decoder and hash (§4); its stdout has
+no buffering bound, while stderr remains bounded.
+
 ## 4. Items and keys
 
 An item is `(subject, obligation, key)`; status is evaluated per item.
@@ -517,9 +547,13 @@ All keys are sha256 hex over canonical JSON.
 - Writes item key: `H({o:"writes", base: B, cand: C, writes})`.
 - Closure-review item (exists iff diff(B,C) touches a closure glob):
   `H({o:"closure-review", patch})`.
-- Review item key: `H({o:"review", patch})` where `patch` = sha256 of the exact
-  bytes of `git diff --binary --full-index --no-renames B C` (empty diff → sha256
-  of ""). Not `git patch-id`: it ignores whitespace, which can change meaning.
+- Review item key: `H({o:"review", patch})` where `patch` = sha256 of
+  `git diff --binary --full-index --no-renames B C` after UTF-8 decoding with
+  U+FFFD replacement and UTF-8 re-encoding (empty diff → sha256 of ""). Since
+  0.14 (BD1), stdout is decoded and hashed incrementally, preserving 0.13's
+  `Buffer.concat(out).toString()` semantics even for invalid UTF-8 and characters
+  split across chunks. The diff string is never built in memory. Not `git
+  patch-id`: it ignores whitespace, which can change meaning.
 - Check ids may contain `:`; an obligation name splits only at its first colon.
 - Rulings item: `H({o:"rulings", attempt})` (§5.6).
 - Invariant item on trunk state S: `H({o:"inv", id, run, timeout_s, setup, min_tests, closure: closureDigest(S), reads: readsDigest(S, reads)})`.
