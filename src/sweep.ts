@@ -36,21 +36,6 @@ export function mergeCoverage(entries: Entry[], lookup: (sha: string) => Plan): 
   return out;
 }
 const quote = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;
-/** Names are capped; counts parsing is shared with checks, including the counts protocol when available. */
-function failingNames(log: string): string[] {
-  const names: string[] = []; let owed: string[] | undefined;
-  for (const line of log.split(/\r?\n/)) {
-    const m = /^\s*not ok \d+\s*-?\s*(.+)$/.exec(line) ?? /^test (.+) \.\.\. FAILED\s*$/.exec(line);
-    if (m) names.push(m[1]!.replace(/\s+# (?:TODO|SKIP).*$/i, ''));
-    const protocol = /^\s*owed-counts\s+(.*)$/.exec(line);
-    if (protocol) try {
-      const v = JSON.parse(protocol[1]!);
-      if (v && Number.isInteger(v.pass) && v.pass >= 0 && Number.isInteger(v.fail) && v.fail >= 0 && (v.failed === undefined || Array.isArray(v.failed) && v.failed.every((x: unknown) => typeof x === 'string'))) owed = v.failed ?? [];
-    } catch { /* malformed counts line */ }
-  }
-  return [...new Set(owed ?? names)].slice(0, 50);
-}
-
 type SweepDraft = Extract<Draft, { kind: 'sweep' }>;
 /** Independent of acceptance keys and lease acquisition; older unkeyed greens need remeasurement. */
 export const sweepDefinitionKey = (plan: Plan): string => sha256(canonical({ sweep:plan.sweep, setup:plan.setup, exec:plan.exec }));
@@ -108,10 +93,9 @@ export async function sweep(o: LeaseOptions & { commit?: string; once?: boolean;
           spec:{id:'sweep',...spec,reads:spec.reads ?? ['**']},
         });
         if (signal?.aborted) throw new OwedError('aborted','aborted');
-        const log = (await ledger.getBlob(obs.log!)).toString();
         const d: SweepDraft = {kind:'sweep',by:'executor:owed',commit:at,key,
           verdict:obs.verdict === 'pass' && (obs.counts?.fail ?? 0) > 0 ? 'fail' : obs.verdict,
-          ...(obs.counts ? {counts:obs.counts as Counts} : {}),log:obs.log!,failed:failingNames(log),
+          ...(obs.counts ? {counts:obs.counts as Counts} : {}),log:obs.log!,failed:obs.failed ?? [],
           ...(drafts.length ? {bisect:true} : {})};
         drafts.push(d); samples.set(at,[...(samples.get(at) ?? []),d]); return d;
       };

@@ -890,7 +890,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (!blobHash(d.log)) errors.push('sweep log must be a blob hash');
       if (!Array.isArray(d.failed) || d.failed.length > 50 || d.failed.some(x => typeof x !== 'string')) errors.push('sweep failed must list at most 50 names');
       if (d.bisect !== undefined && d.bisect !== true) errors.push('sweep bisect must be true when present');
-      if (d.counts !== undefined && (!d.counts || typeof d.counts !== 'object' || Array.isArray(d.counts) || Object.entries(d.counts).some(([k, v]) => k === 'format' ? typeof v !== 'string' : !['tests', 'pass', 'fail', 'skip'].includes(k) || !Number.isInteger(v) || (v as number) < 0))) errors.push('sweep counts must be non-negative integer counts');
+      if (d.counts !== undefined && (!d.counts || typeof d.counts !== 'object' || Array.isArray(d.counts) || Object.entries(d.counts).some(([k, v]) => k === 'format' ? typeof v !== 'string' : k === 'failed' ? !Array.isArray(v) || v.length > 50 || v.some(n=>typeof n !== 'string') : !['tests', 'pass', 'fail', 'skip'].includes(k) || !Number.isInteger(v) || (v as number) < 0))) errors.push('sweep counts must be non-negative integer counts');
       break;
     case 'note': break;
     case 'adopt': {
