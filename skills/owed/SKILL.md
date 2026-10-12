@@ -21,6 +21,8 @@ Every `owed_*` tool takes an optional `cwd`: the absolute path of a directory in
 
 Start with `owed_brief` (CLI `owed brief [--since seq|ISO]`): owner decisions with the exact command that discharges each, merges since `since`, rejected or blocked nodes and how to clear them, work in progress with its age, and totals.
 
+For measured workflow outcomes, use `owed report --metrics [--since seq|ISO] [--until seq|ISO] [--json]` (0.15): merged nodes, interruptions/merge, decision vs no-decision halts, merge timing, first-pass acceptance and repairs/merge, computed only from the ledger and plan blobs; since is exclusive, until inclusive.
+
 1. Use `owed_status` (CLI `owed status`) to inspect ready nodes and pending queues. Dependencies must have merge records before dispatch; a verbal claim of completion is not a receipt.
 2. Use `owed_dispatch` to dispatch a ready node. Pass its `subagents` object to subagents/dsa: `agent: worker`, `cwd` must be the slot worktree, `isolation: none`, and `task` must contain the complete packet. owed has already created an isolated worktree; do not add another isolation layer.
 3. Writers modify only the packet's writes scope, commit their work, and keep the worktree clean. Run `owed submit <node>` or `owed_submit` inside that worktree. A parent submitting on behalf of a writer must explicitly use the slot's `writer:<node>#<attempt>` identity.
