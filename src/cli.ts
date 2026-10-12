@@ -66,7 +66,9 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     if(principal.role === 'parent' && principal.id === 'drive') throw new OwedError(ops.DRIVER_CLAIM);
     // D25.3: a pi-durable-subagents call never acts as owner or parent (an accident rail, not a security boundary).
     // Reads and attest (recorded as executor) take no principal.
-    const records=!['status','why','report','brief','verify','attest'].includes(cmd) && !(cmd === 'decoy' && args[0] === 'digest');
+    // ED2: an edit preview is read-only, even when an owner principal was supplied.
+    const preview = cmd === 'edit' && opts.has('dry-run');
+    const records=!preview && !['status','why','report','brief','verify','attest'].includes(cmd) && !(cmd === 'decoy' && args[0] === 'digest');
     const subagent=records ? ops.subagentRefusal(principal.role) : undefined; if(subagent) throw new OwedError(subagent);
     let channel:Channel|undefined, adoptCommit:string|undefined, approvePin:ops.CandidatePin|undefined, pin:ops.CandidatePin|undefined;
     // The owner confirms what is adopted: the preview is printed first and its commit is pinned, so a ref moving after the confirmation is refused.
@@ -76,7 +78,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     // G1.2: under the confirmation gate the owner confirms the candidate a waiver or owner review lands on: printed and pinned.
     if((cmd === 'waive' || cmd === 'review') && principal.role === 'owner' && ops.confirmGate() && !opts.has('i-am-owner')) { const v=await ops.candidatePreview({cwd,node:args[0]!}); io.error(`${cmd === 'waive' ? `Waive ${oneLine(v.node)}/${oneLine(args[1]!)}` : `Owner review of node ${oneLine(v.node)}`}: candidate ${v.commit} (submit #${v.seq}), base ${v.base}, ${v.changed} changed file${v.changed === 1 ? '' : 's'}`); pin={seq:v.seq,commit:v.commit}; }
     // D25.2/4: owner acts are delegated (no prompt) unless OWED_CONFIRM=owner restores the TTY confirmation; --i-am-owner records flag.
-    if(principal.role === 'owner') {
+    if(principal.role === 'owner' && !preview) {
       if(opts.has('i-am-owner')) channel='flag';
       else if(!ops.confirmGate()) channel='delegated';
       else if(io.ask) { if(await io.ask(`Execute ${cmd} as owner? Type yes to confirm: `) !== 'yes') throw new OwedError('owner did not confirm'); channel='tty'; }

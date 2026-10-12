@@ -261,9 +261,14 @@ and check assignments; it refuses an existing id. An invariant edit is
 `owed edit --invariant <id> --set <field>=<yaml> --note "<why>"`; its id cannot
 change, and rule/resume options apply only to node edits.
 
-ED1 uses the `yaml` Document API and re-emits only the target map, retaining its
-comments and keeping every byte outside it. A new node appends to the nodes
-sequence; for a flow sequence that sequence is re-emitted. The final plan passes
+ED1 uses the `yaml` Document API and re-emits only the target map when safe,
+retaining its comments and keeping every byte outside it. Targets inside flow
+containers or containing anchors/aliases use whole-Document serialization so
+flow punctuation and references stay in context; comments are kept, but spacing
+may be normalized. Assignment values remain YAML nodes, so an alias can refer
+to an anchor elsewhere in the plan. A new block node appends to the nodes
+sequence. Every result is re-parsed and compared with the intended edited plan
+before it can be written; malformed YAML or a lost reference refuses. The final plan passes
 the same parser and hygiene checks as `owed plan`. Unrecorded semantic file
 changes refuse; comment-only edits are kept. ED2 uses the same plan drafting,
 guard, authority and N1 carries as `owed plan`/`amend`. One ledger lock guards
@@ -278,7 +283,8 @@ afterward, preserving its mode. A refusal records nothing, leaves the source
 unchanged and removes the temporary file. A rename failure after the append
 reports the recorded seq range and the recovery file, as amend does.
 `--dry-run` prints the textual diff and structured downgrades without writes
-or owner confirmation. ED3 leaves `owed amend` unchanged.
+or owner confirmation, including `--as owner:pi` with `OWED_CONFIRM=owner` in
+a non-TTY process. ED3 leaves `owed amend` unchanged.
 
 Compatibility: ED adds no ledger entry kinds or fields; its plan, carry, rule
 and resume entries use their existing schemas. Plan fields or resume options
