@@ -827,7 +827,7 @@ export function manualHalt(s: State, node: string): { reason: string; needs: 'hu
     const c12 = n.candidate!.commit.slice(0, 12);
     if (i.obligation === 'approve') return `awaiting owner approval of candidate ${c12}: owed approve ${node} --candidate ${c12} [--note TEXT] (owner)`;
     const ev = spec.evidence?.find(e => `evidence:${e.id}` === i.obligation);
-    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`, c12)}`;
+    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`, c12)} or --as owner:pi`;
   });
   return { reason: parts.join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
 }

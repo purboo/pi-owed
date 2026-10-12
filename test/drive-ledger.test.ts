@@ -316,14 +316,14 @@ test('status, why and report show halts and live launches', async () => {
     const text = renderStatus(v), lines = text.split('\n');
     const halted = lines.indexOf('Halted (driver):');
     assert.ok(halted > 0, text);
-    assert.equal(lines[halted + 1], `⏸ a: halted by driver #${ha.seq} (attempt 1, needs human): writer run failed`);
+    assert.equal(lines[halted + 1], `⏸ a: halted by driver #${ha.seq} (attempt 1), needs the parent (the main agent acts; owed lists the command): writer run failed`);
     assert.ok(!lines.slice(halted).some(l => l.startsWith('⏸ b:')), 'needs-owner halts are not in the driver section');
     const owner = lines.indexOf('Pending owner:');
     assert.match(lines[owner + 1]!, new RegExp(`^⏸ halted b — driver halted attempt 1 \\(#${hb.seq}\\): request conflict; cleared by`));
     assert.ok(lines.includes('Driver runs (open attempts):'));
     assert.ok(lines.includes(`a attempt 1: #${ha.seq - 1} writer ${rid}`), text);
     const why = renderReceipt(await ops.why({ cwd: r.cwd, node: 'a' }));
-    assert.match(why, new RegExp(`⏸ halted by driver #${ha.seq} \\(attempt 1, needs human\\): writer run failed; cleared by any later action`));
+    assert.match(why, new RegExp(`⏸ halted by driver #${ha.seq} \\(attempt 1\\), needs the parent \\(the main agent acts; owed lists the command\\): writer run failed; cleared by any later action`));
     assert.match(why, new RegExp(`Driver launch #${ha.seq - 1} writer ${rid} \\(spec ${sha256('{}').slice(0, 12)}\\)`));
     const card = await ops.why({ cwd: r.cwd, node: 'a' });
     assert.equal(card.halt?.seq, ha.seq);
@@ -333,7 +333,7 @@ test('status, why and report show halts and live launches', async () => {
     const report = await ops.report({ cwd: r.cwd });
     assert.deepEqual(report.halts.map(h => [h.node, h.active]), [['a', true], ['b', false]]);
     const rt = renderReport(report);
-    assert.match(rt, new RegExp(`Driver halts\\n  a: halted by driver #${ha.seq} \\(attempt 1, needs human\\): writer run failed \\(active\\)\\n  b: halted by driver #${hb.seq} \\(attempt 1\\), needs the owner \\(the main agent decides; owed lists the command\\): request conflict \\(cleared\\)`));
+    assert.match(rt, new RegExp(`Driver halts\\n  a: halted by driver #${ha.seq} \\(attempt 1\\), needs the parent \\(the main agent acts; owed lists the command\\): writer run failed \\(active\\)\\n  b: halted by driver #${hb.seq} \\(attempt 1\\), needs the owner \\(the main agent decides; owed lists the command\\): request conflict \\(cleared\\)`));
     // Window: a cleared halt before `since` is omitted, an active one is still listed.
     const later = await ops.report({ cwd: r.cwd, since: hb.seq });
     assert.deepEqual(later.halts.map(h => h.node), ['a']);

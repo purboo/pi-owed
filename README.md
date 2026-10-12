@@ -8,6 +8,16 @@ The main agent is the owner (0.5, delegated owner): a human states the task in n
 
 It provides a CLI, a pi extension, and an agent skill. It is not an agent scheduler, a sandbox, or a replacement for code review. Your agent runner does the work; owed keeps acceptance evidence and guards the merge.
 
+## When to use owed
+
+Small, low-risk fixes can be committed directly, then recorded by the parent with one
+`owed adopt --note "<what changed and why it is acceptable>"` (using the owner's delegated
+identity unless a parent adoption allowance applies). Use owed nodes with independent
+review and red tests for authentication, concurrency, persistence, deletion/ownership,
+public contracts and multi-agent waves. Routine evidence and recovery are the main
+agent's job; reports to the user name what was delivered and what is genuinely blocked,
+not routine halts the main agent already resolved.
+
 ## Install
 
 Requires Node.js 22.19 or later, Git with `merge-tree --write-tree`, and Bash. For pi:

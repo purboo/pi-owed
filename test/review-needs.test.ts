@@ -164,7 +164,7 @@ test('views: why and status show "needs a parent ruling" until a node ruling, th
   // A driver halt with the same words is listed under Halted (driver).
   r.halt(act(r) as Extract<Action, { do: 'halt' }>);
   const halt = renderStatus(statusView(r.state(), [...r.entries]));
-  assert.match(halt, /Halted \(driver\):\n⏸ a: halted by driver #\d+ \(attempt 1, needs human\): review block #\d+ review needs a parent ruling: /);
+  assert.match(halt, /Halted \(driver\):\n⏸ a: halted by driver #\d+ \(attempt 1\), needs the parent \(the main agent acts; owed lists the command\): review block #\d+ review needs a parent ruling: /);
   const rule = r.rule('decision');
   const after = r.state();
   assert.ok(why(after).includes(`⛔ blocked #${block.seq} review (ruled #${rule.seq}): `), why(after));
