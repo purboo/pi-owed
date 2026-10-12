@@ -576,7 +576,7 @@ never part of a key.
 |---|---|---|---|
 | `genesis` | owner | `{trunk, commit, plan}` (plan = blob sha) | names s₀ and the plan |
 | `plan` | owner/parent | `{prior, plan, rev?, path?, note?}` | new plan; must cite current plan sha (CAS); downgrade needs owner, unless the parent's downgrades are all covered by an allowance of the prior plan (§3.4); `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
-| `rule` | owner/parent | `{text, nodes: string[] \| "*", writer?: boolean, answer?: {rid, qid, rev}}` | ruling; in scope for those nodes; `writer: true` invalidates named open candidates (§6.2); AN2 answer: one node, `writer: false`, recorded before dsa delivery (§12.5) |
+| `rule` | owner/parent | `{text, nodes: string[] \| "*", writer?: boolean, prospective?: boolean, answer?: {rid, qid, rev}}` | ruling; in scope for those nodes; `prospective: true` binds only later dispatches (§6.2 PR); `writer: true` invalidates named open candidates (§6.2); AN2 answer: one node, `writer: false`, recorded before dsa delivery (§12.5) |
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
@@ -754,6 +754,45 @@ them; they override your packet):`, the rulings, then — 0.12, G3.5 — the sam
 active and flaky block lines as the ruling follow-up of §12.5, then the submit
 instruction). Compatibility: owed < 0.11 cannot replay a ledger with a ruling
 carrying `writer`, nor one with a `send` of reason `verdict` (§12.5).
+
+**Prospective policy (0.14, PR1–PR2).** `owed rule --nodes a,b|* --prospective
+"<policy>"` (pi `owed_rule` field `prospective: boolean`) records the optional
+boolean `prospective` on the rule entry. When true, the rule binds only attempts
+whose dispatch seq is greater than its seq. Older attempts exclude it from
+`latestRule`, review packets and acknowledgment requests, so their `rulings`
+item stays satisfied if it was satisfied before. Later dispatch packets carry
+the policy normally and `rulings_seen` covers it. Omitted or false preserves
+0.13 behavior. Combining `--prospective` with `--writer` is a usage error and
+records nothing. Compatibility: owed 0.13 and earlier refuse a rule entry with
+the `prospective` field (including false) with code `version`; upgrade all
+readers before recording it. No obligation key changes.
+
+For each older open attempt, the driver sends the policy once to every
+unsealed writer or reviewer run, including an obsolete reviewer, as a `send`
+with `sendKind: notify`, `reason: ruling`, and `rulings` = the highest policy
+seq carried. These existing send fields identify retry bytes and do not
+advance the binding-rulings delivery cursor or acknowledge anything. The
+message says this attempt predates the policy and requires no change or ack.
+A rejected or conflicting notice never halts; a pending notice retries with
+the same request id only while the run remains unsealed. Sealed runs receive
+no such policy on later follow-ups and are never relaunched for it. Prospective
+policy also does not reset an older attempt's repair budget, clear its halt or
+resolve its needs-parent block.
+
+**Wildcard re-ack (0.14, PR3).** When a candidate's only debt is `rulings`, an
+undelivered ordinary `*` ruling follows the named-ruling route: send one
+`ruling` follow-up to its latest driver reviewer run, or launch a reviewer
+when none exists. The message lists the rulings, candidate commit and
+`--ack-rulings <seq>`; the reviewer may block if the writer must change
+something. Prospective notices on older attempts do not enter this route.
+
+Owner reviews use `--rank 3`; another rank is refused with
+`owner reviews use --rank 3`.
+
+The report's `changes` (rendered as "Status changes") omit every node merged
+at the end of the window, including nodes merged during it. In particular,
+later rulings never list a rulings status change for an already merged node;
+merge receipts and the rulings audit list are still reported (0.14, PR4).
 
 ### 6.3 Status of an item
 - Executor verdicts on the same item join in the lattice ⊥ < pass, fail < ⊤
@@ -1335,7 +1374,7 @@ planSet(o: {cwd, plan, rev?, path?, note?, as, channel?}): Promise<Entry>   // r
 edit(o: {cwd, node? | invariant?, set?, unset?, node_new?, note, plan?, rule?, writer?, resume?, after?, expect?, dry_run?, as, channel?}): Promise<EditResult | EditPreview> // ED2: one lock; dry_run previews only
 editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
-rule(o: {cwd, text, nodes, as}): Promise<Entry>
+rule(o: {cwd, text, nodes, writer?, prospective?, as}): Promise<Entry>
 answer(o: {cwd, node, text, qid?, rid?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
@@ -1751,7 +1790,7 @@ ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
 [--plan <file>]` (§3 Amend), `edit <node> --set path=yaml ... [--unset path ...]
 [--node-new] [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
 --note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
---note WHY` (§3 ED1/ED2), `rule <text> --nodes a,b|*`,
+--note WHY` (§3 ED1/ED2), `rule <text> --nodes a,b|* [--writer|--prospective]`,
 `answer <node> [--qid Q] [--rid R] "<text>"` (AN1–AN2, parent/owner;
 prints the answer rule seq and delivery request id; `--json` returns
 `{entry, request, delivery}`; a failed delivery refuses with the recorded rule
@@ -1911,7 +1950,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_answer` | `node`, `text`, `qid?`, `rid?`, `as?` (default `parent:pi`; parent/owner) | AN1–AN2: record and deliver an answer ruling; returns `{entry, request, delivery}` (§12.5) |
-| `owed_rule` | `text`, `nodes`, `writer?`, `as` | ruling; `writer: true` requires named nodes to submit again |
+| `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
 | `owed_edit` | `node?` or `invariant?`, `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
 | `owed_amend` | `node`, `writes` (`+path` each), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |

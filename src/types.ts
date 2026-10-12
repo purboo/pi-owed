@@ -117,7 +117,7 @@ export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; com
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
 export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface AnswerRef { rid: string; qid: string; rev: number }
-export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*'; writer?: boolean; answer?: AnswerRef }
+export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; answer?: AnswerRef }
 export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
 /**
  * N1 (0.10): `carry` = the seq of the submit this entry carries across a plan entry that changed only the node's checks,
@@ -254,7 +254,7 @@ export interface NodeState {
   reported?: number;
 }
 export interface AttemptRuns { attempt: number; launches: LaunchEntry[]; sends: SendEntry[] }
-export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string; writer?: boolean; answer?: AnswerRef; /** D25: present only for a delegated owner ruling */ channel?: 'delegated' }
+export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string; writer?: boolean; prospective?: boolean; answer?: AnswerRef; /** D25: present only for a delegated owner ruling */ channel?: 'delegated' }
 export interface State {
   seq: number;                 // last seq, -1 when empty
   head: string;                // hash of last entry

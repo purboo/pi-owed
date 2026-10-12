@@ -3,7 +3,7 @@
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
 import { driveConfig } from './plan.ts';
-import { attestJobs, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
+import { applicableRules, attestJobs, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -103,7 +103,7 @@ export function launchSpec(o: { agent: string; model?: string; cwd: string; task
 /** dsa run name of a driver launch (D22.5): `owed <node>#<attempt> writer` / `owed <node>#<attempt> reviewer <n>`. */
 export const runName = (node: string, attempt: number, role: RunRole, n?: number): string => `owed ${node}#${attempt} ${role}${role === 'reviewer' ? ` ${n}` : ''}`;
 /** Rulings covering `node` (`--nodes` names it, or `*`), in ledger order. */
-const rulingsInScope = (s: State, node: string): Rule[] => s.rules.filter(r => r.nodes === '*' || r.nodes.includes(node));
+const rulingsInScope = applicableRules;
 /** AN3: writer delivery excludes answers to that run, not answers to other runs or acknowledgment scope. */
 const writerRid = (s: State, node: string): string | undefined => s.nodes[node]?.runs.find(a => a.attempt === s.nodes[node]?.slot?.attempt)?.launches.find(l => l.role === 'writer')?.rid;
 const deliversRule = (r: Rule, rid: string | undefined): boolean => r.answer === undefined || r.answer.rid !== rid;
@@ -279,7 +279,7 @@ const epochSpec = (p: Plan, node: string): string | undefined => {
  */
 export function repairEpoch(s: State, node: string): { seq: number; label: string } {
   let best = { seq: s.nodes[node]!.slot!.dispatchSeq, label: 'dispatch' };
-  const rule = s.rules.findLast(r => r.nodes !== '*' && r.nodes.includes(node));
+  const rule = rulingsInScope(s, node).findLast(r => r.nodes !== '*' && r.nodes.includes(node));
   if (rule && rule.seq > best.seq) best = { seq: rule.seq, label: `ruling #${rule.seq}` };
   // 0.8 (L1.2): the latest resume of the open attempt starts a new epoch too.
   const resume = resumeOf(s, node);
@@ -347,7 +347,7 @@ function blockLines(s: State, node: string): string[] {
  * 0.8 (L3.1): at the stalled point of a candidate whose only debt is `rulings` (every reviewer run of it sealed), the
  * undelivered in-scope rulings go to a reviewer, whose ok review with --ack-rulings discharges `rulings`: a `ruling`
  * follow-up to the latest driver reviewer run of the candidate (`reviewers`), or, when there is none, a reviewer launch
- * (row 12; its packet lists every ruling in scope). Undefined when a ruling naming the node is not undelivered to that
+ * (row 12; its packet lists every ruling in scope). Undefined when no applicable ruling is undelivered to that
  * run (sent once), or the candidate has no review obligation an ack could be recorded on.
  */
 function reviewerRuling(s: State, n: NodeState, ar: AttemptRuns, reviewers: readonly LaunchEntry[], opts: DriveOpts): Action | undefined {
@@ -355,9 +355,9 @@ function reviewerRuling(s: State, n: NodeState, ar: AttemptRuns, reviewers: read
   if (!n.items.some(i => i.obligation === 'review' || i.obligation === 'closure-review')) return undefined;
   const l = reviewers.at(-1);
   const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
-  if (!l) return inScope.some(r => r.nodes !== '*' && r.seq > acked) ? reviewerLaunch(s, n.id, nextReviewerN(s, n.id), opts.project, opts.root) : undefined;
+  if (!l) return inScope.some(r => r.seq > acked) ? reviewerLaunch(s, n.id, nextReviewerN(s, n.id), opts.project, opts.root) : undefined;
   const delivered = deliveredRulings(s, n.id, ar, l, opts.rejected);
-  if (!inScope.some(r => r.nodes !== '*' && r.seq > delivered) && !answerAckDue(s, n, ar, l, opts.rejected)) return undefined;
+  if (!inScope.some(r => r.seq > delivered) && !answerAckDue(s, n, ar, l, opts.rejected)) return undefined;
   // AN3 / #1266: acknowledgment covers every in-scope ruling, including already delivered answers.
   const rules = inScope, top = carried(rules);
   return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'follow-up', reason: 'ruling', rulings: top, message: [`New parent rulings for ${n.id}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
@@ -387,7 +387,7 @@ function execEvidence(s: State, n: NodeState, items: readonly { obligation: stri
  * such a ruling the repair path runs).
  */
 export function thresholdHint(s: State, node: string, obligations: readonly string[]): string | undefined {
-  const spec = s.plan.nodes.find(x => x.id === node), named = s.rules.findLast(r => r.nodes !== '*' && r.nodes.includes(node));
+  const spec = s.plan.nodes.find(x => x.id === node), named = rulingsInScope(s, node).findLast(r => r.nodes !== '*' && r.nodes.includes(node));
   for (const o of obligations) {
     if (!o.startsWith('check:')) continue;
     const x = o.slice(6), m = spec?.checks.find(c => c.id === x)?.min_tests;
@@ -498,9 +498,15 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   if (s.seq < 0) return [];
   const plan = s.plan;
   const out: Action[] = [];
-  // F4 (wais #27): a node removed from the plan is never selected, not even its open slot.
+  // F4: ordinary work excludes nodes removed from the plan; PR2 notices may still reach their open runs.
   const open = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').sort(byStatusOrder);
-  for (const n of open) { if (opts.measuring?.has(n.id)) continue; const a = slotAction(s, runs, opts, n); if (a) out.push(a); }
+  for (const n of Object.values(s.nodes).filter(n => n.slot?.open).sort(byStatusOrder)) {
+    const ar = n.runs.find(r => r.attempt === n.slot!.attempt) ?? { attempt: n.slot!.attempt, launches: [], sends: [] };
+    const notice = prospectiveNotice(s, n, ar, runs, opts);
+    if (notice) { out.push(notice); continue; }
+    if (n.phase === 'removed' || opts.measuring?.has(n.id)) continue;
+    const a = slotAction(s, runs, opts, n); if (a) out.push(a);
+  }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
   const taken = open.map(n => writes(n.id));
@@ -592,6 +598,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   }
   // Row 4: a recorded send not confirmed applied in this process: re-send the same id and bytes.
   for (const x of ar.sends) {
+    if (x.reason === 'ruling' && x.sendKind === 'notify') continue; // PR2: never retries a notice to a sealed run or halts.
     if (opts.applied.has(x.send) || !live.some(l => l.rid === x.rid)) continue;
     const refused = opts.rejected.get(x.send);
     // D22.3: a rejected ruling steer is never retried and never halts; its rulings travel with repairs and reviewer
@@ -875,7 +882,7 @@ function relaunch(s: State, opts: DriveOpts, l: LaunchEntry): Action | undefined
 export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: LaunchEntry, refused?: Refused): number {
   const inScope = rulingsInScope(s, node);
   const before = (seq: number): number => Math.max(-1, ...inScope.filter(r => r.seq < seq).map(r => r.seq));
-  const sends = ar.sends.filter(x => x.rid === l.rid && !refused?.has(x.send));
+  const sends = ar.sends.filter(x => x.rid === l.rid && !(x.reason === 'ruling' && x.sendKind === 'notify') && !refused?.has(x.send));
   const launch = l.rulings ?? (l.role === 'writer' ? -1 : before(l.seq));
   // K5.2: every writer send that records `rulings` (submit, rebase, repair, ruling follow-ups) delivered them.
   const base = l.role === 'writer' ? Math.max(s.nodes[node]!.slot!.rulings_seen, launch, ...sends.map(x => x.rulings ?? (x.reason === 'repair' ? before(x.seq) : -1))) : launch;
@@ -887,6 +894,26 @@ export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: Lau
   }
   return delivered;
 }
+/** PR2: notify each unsealed run once; sealed runs receive no prospective policy for an older attempt. */
+function prospectiveNotice(s: State, n: NodeState, ar: AttemptRuns, runs: ReadonlyMap<string, RunView>, opts: DriveOpts): Action | undefined {
+  const rules = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
+  if (!rules.length) return undefined;
+  for (const l of ar.launches) {
+    const v = runs.get(l.rid);
+    if (!v || !['running', 'asking', 'queued'].includes(v.state)) continue;
+    const notices = ar.sends.filter(x => x.rid === l.rid && x.reason === 'ruling' && x.sendKind === 'notify');
+    for (const x of notices) {
+      if (opts.applied.has(x.send) || opts.rejected.has(x.send)) continue;
+      const bytes = opts.blobs?.get(x.message);
+      if (bytes !== undefined && sha256(bytes) === x.message) return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'notify', reason: 'ruling', message: bytes, rulings: x.rulings, send: x.send };
+      return undefined; // Missing bytes never turn an informational notice into a halt or a second request.
+    }
+    const seen = Math.max(-1, ...notices.map(x => x.rulings ?? -1)), pending = rules.filter(r => r.seq > seen);
+    if (!pending.length) continue;
+    return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'notify', reason: 'ruling', rulings: carried(pending), message: [`Prospective policy for future attempts of ${n.id}:`, ...pending.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`), 'This attempt predates the policy; no change or acknowledgment is required.'].join('\n') };
+  }
+  return undefined;
+}
 /** Send ids dsa rejected (`DriveOpts.rejected`): they delivered nothing (review #784 F1). */
 type Refused = { has(id: string): boolean };
 /** AN3: receiving an answer does not acknowledge it; request an ack once per answer on this candidate. */
@@ -894,7 +921,7 @@ function answerAckDue(s: State, n: NodeState, ar: AttemptRuns, l: LaunchEntry, r
   const c = n.candidate;
   if (!c) return false;
   const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
-  const requested = Math.max(-1, ...ar.sends.filter(x => x.rid === l.rid && x.reason === 'ruling' && !refused?.has(x.send)).map(x => x.rulings ?? -1));
+  const requested = Math.max(-1, ...ar.sends.filter(x => x.rid === l.rid && x.reason === 'ruling' && x.sendKind !== 'notify' && !refused?.has(x.send)).map(x => x.rulings ?? -1));
   return rulingsInScope(s, n.id).some(r => r.answer?.rid === l.rid && r.seq > Math.max(acked, requested));
 }
 /** Steer message of undelivered rulings (D22.2): one line per ruling `#<seq> (<nodes>): <text>`, then what to do. */
@@ -908,7 +935,7 @@ export function rulingMessage(node: string, role: RunRole, rules: readonly Rule[
  * reviewers by n) that lacks an in-scope ruling gets every undelivered one. Never to an `asking` run.
  */
 function rulingSteer(s: State, n: NodeState, ar: AttemptRuns, live: readonly LaunchEntry[], view: (l: LaunchEntry) => RunView): Action | undefined {
-  const inScope = s.rules.filter(r => r.nodes === '*' || r.nodes.includes(n.id));
+  const inScope = rulingsInScope(s, n.id);
   if (!inScope.length) return undefined;
   const order = [...live].sort((a, b) => (a.role === 'writer' ? 0 : reviewerN(a)) - (b.role === 'writer' ? 0 : reviewerN(b)));
   for (const l of order) {
