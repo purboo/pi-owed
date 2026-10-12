@@ -1,26 +1,86 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat, lutimes } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, createHash } from 'node:crypto';
+import { constants as bufferConstants } from 'node:buffer';
+import { StringDecoder } from 'node:string_decoder';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'node:path';
 import { realpath } from 'node:fs/promises';
-import { H, EMPTY_SHA, sha256 } from './canon.ts';
+import { H, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { matchesAny } from './plan.ts';
 import type { Plan, NodeSpec, CandidateFacts, StateFacts, CheckSpec, ExecConfig } from './types.ts';
 
-export function git(cwd: string, args: string[], opts?: { input?: string; allowFail?: boolean; env?: Record<string,string> }): Promise<{ code: number; stdout: string; stderr: string }> {
+/** Buffered git output is bounded, including stderr; the review diff uses the streaming path below. */
+export const GIT_MAX_OUTPUT_BYTES = Math.min(256 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH);
+/** Test seams: lower the buffering bound or split hash input into small chunks. Neither enters a key. */
+export const gitHooks: { maxOutputBytes?: number; hashChunkBytes?: number } = {};
+interface GitOptions { input?: string; allowFail?: boolean; env?: Record<string, string>; maxOutputBytes?: number }
+export function git(cwd: string, args: string[], opts?: GitOptions): Promise<{ code: number; stdout: string; stderr: string }> {
+  return runGit(cwd, args, opts);
+}
+function runGit(cwd: string, args: string[], opts?: GitOptions, stdout?: (chunk: Buffer) => void): Promise<{ code: number; stdout: string; stderr: string }> {
+  const limit = Math.min(opts?.maxOutputBytes ?? gitHooks.maxOutputBytes ?? GIT_MAX_OUTPUT_BYTES, GIT_MAX_OUTPUT_BYTES);
+  const subcommand = args.find(arg => !arg.startsWith('-')) ?? args[0];
+  if (!Number.isFinite(limit) || limit <= 0) return Promise.reject(new OwedError('git output bound must be positive', 'usage'));
   return new Promise((resolve, reject) => {
     const p = spawn('git', args, { cwd, env: { ...process.env, ...opts?.env }, stdio: ['pipe', 'pipe', 'pipe'] });
     const out: Buffer[] = [], err: Buffer[] = [];
-    p.stdout.on('data', b => out.push(b)); p.stderr.on('data', b => err.push(b));
+    let bytes = 0, failure: OwedError | undefined;
+    const collect = (chunk: Buffer, target: Buffer[]): void => {
+      if (failure) return;
+      bytes += chunk.length;
+      if (bytes > limit) {
+        failure = new OwedError(`git ${subcommand} output exceeds ${limit} bytes; refused to buffer it`, 'refused');
+        out.length = err.length = 0;
+        p.kill('SIGKILL');
+      } else target.push(chunk);
+    };
+    p.stdout.on('data', (b: Buffer) => { if (!failure) { if (stdout) stdout(b); else collect(b, out); } });
+    p.stderr.on('data', (b: Buffer) => collect(b, err));
     p.on('error', e => reject(new OwedError(`git: ${e.message}`, 'internal')));
     p.on('close', code => {
+      if (failure) { reject(failure); return; }
       const result = { code: code ?? 1, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() };
       if (result.code && !opts?.allowFail) reject(new OwedError(`git ${args[0]}: ${result.stderr}`, 'internal')); else resolve(result);
     });
     p.stdin.on('error', () => {}); p.stdin.end(opts?.input);
   });
+}
+/** Hash the 0.13 UTF-8 decoded/re-encoded diff, preserving replacement and split-character semantics. */
+async function diffHash(cwd: string, base: string, commit: string): Promise<string> {
+  const hash = createHash('sha256'), decoder = new StringDecoder('utf8'), chunkBytes = gitHooks.hashChunkBytes;
+  await runGit(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--binary', '--full-index', '--src-prefix=a/', '--dst-prefix=b/', base, commit], undefined, b => {
+    if (chunkBytes && Number.isInteger(chunkBytes) && chunkBytes > 0) {
+      for (let i = 0; i < b.length; i += chunkBytes) hash.update(decoder.write(b.subarray(i, i + chunkBytes)));
+    } else hash.update(decoder.write(b));
+  });
+  hash.update(decoder.end());
+  return hash.digest('hex');
+}
+/** Submit-only size policy: inspect new blob ids and sizes, never blob content. Deletions/gitlinks add no bytes. */
+export async function checkCandidateLimits(cwd: string, limits: Plan['limits'], base: string, commit: string): Promise<void> {
+  if (limits?.file_mib === undefined && limits?.diff_mib === undefined) return;
+  const raw = (await git(cwd, ['diff', '--raw', '--no-abbrev', '--no-renames', '-z', base, commit])).stdout.split('\0');
+  const changed: { path: string; oid: string }[] = [];
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    const fields = raw[i]!.split(' '), mode = fields[1]!, oid = fields[3]!;
+    if (mode === '000000' || mode === '160000') continue;
+    changed.push({ path: raw[i + 1]!, oid });
+  }
+  if (!changed.length) return;
+  const oids = [...new Set(changed.map(f => f.oid))];
+  const batch = await git(cwd, ['cat-file', '--batch-check=%(objectname) %(objecttype) %(objectsize)'], { input: oids.join('\n') + '\n' });
+  const sizes = new Map(batch.stdout.trim().split('\n').map(line => {
+    const [oid, type, size] = line.split(' ');
+    if (type !== 'blob' || !Number.isSafeInteger(Number(size))) throw new OwedError(`git cat-file: expected blob size for ${oid}`, 'internal');
+    return [oid!, Number(size)] as const;
+  }));
+  const files = changed.map(f => ({ path: f.path, bytes: sizes.get(f.oid)! })).sort((a, b) => b.bytes - a.bytes || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const total = files.reduce((sum, f) => sum + f.bytes, 0), exceeded: string[] = [];
+  if (limits.file_mib !== undefined && files[0]!.bytes > limits.file_mib * 1024 * 1024) exceeded.push(`limits.file_mib ${limits.file_mib} MiB (largest changed file: ${files[0]!.bytes} bytes)`);
+  if (limits.diff_mib !== undefined && total > limits.diff_mib * 1024 * 1024) exceeded.push(`limits.diff_mib ${limits.diff_mib} MiB (total added/changed blobs: ${total} bytes)`);
+  if (exceeded.length) throw new OwedError(`submit refused: candidate exceeds ${exceeded.join('; ')}\nLargest changed files (up to 5):\n${files.slice(0, 5).map(f => `${JSON.stringify(f.path)}: ${f.bytes} bytes (${(f.bytes / 1024 / 1024).toFixed(3)} MiB)`).join('\n')}`, 'refused');
 }
 /** Top level of the worktree containing cwd (a linked worktree is its own top level). */
 export async function repoRoot(cwd: string): Promise<string> { return (await git(cwd, ['rev-parse', '--show-toplevel'])).stdout.trim(); }
@@ -98,10 +158,9 @@ async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string
 export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, base: string, commit: string, attempt: number): Promise<CandidateFacts> {
   base = await revParse(cwd, base); commit = await revParse(cwd, commit);
   const changed = (await git(cwd, ['diff', '--no-renames', '--name-only', '-z', base, commit])).stdout.split('\0').filter(Boolean);
-  // Review identity = the exact bytes of the full-index binary diff (paths, modes, blob ids,
-  // whitespace). patch-id is not used: it ignores whitespace, which can change meaning.
-  const diff = (await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--no-renames', '--binary', '--full-index', '--src-prefix=a/', '--dst-prefix=b/', base, commit])).stdout;
-  const patch = diff ? sha256(diff) : EMPTY_SHA;
+  // Review identity preserves 0.13's UTF-8 decoding, while retaining only one stdout chunk at a time.
+  // patch-id is not used: it ignores whitespace, which can change meaning.
+  const patch = await diffHash(cwd, base, commit);
   const closure = await readsDigest(cwd, base, plan.closure), keys: Record<string,string> = {};
   for (const c of node.checks) {
     keys[`check:${c.id}`] = await checkKey(cwd, plan, c, commit, closure, 'check');
