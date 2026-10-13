@@ -223,7 +223,7 @@ function nodeItems(s: State, id: string, facts: CandidateFacts): ItemView[] {
   return spec ? required(spec, facts).map(o => item(s, id, o, facts.keys[o] ?? '')) : [];
 }
 /**
- * N4: the nodes whose derived fields (items, accepted, phase, dependents, stale halt) entry `e` can change. Those
+ * N4: the nodes whose derived fields (items, accepted, acceptedSince, phase, dependents, stale halt) entry `e` can change. Those
  * fields read only the node's own slot, candidate, blocks, writers and entries, the rulings in its scope, the plan and
  * (phase) the merged state of its deps; trunk-red diagnostics also read current trunk. So genesis, plan, merge and
  * adopt touch every node, a ruling the nodes it names, an observation its subject, any other entry with a node its
@@ -242,6 +242,7 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
     const n = s.nodes[spec.id] ??= emptyNode(spec.id);
     n.items = n.candidate ? nodeItems(s, n.id, n.candidate) : [];
     n.accepted = !!n.candidate && (!!n.slot?.open || !!n.merged) && n.items.every(i => i.status !== 'D') && !n.blocks.some(b => binding(b, spec));
+    refreshAcceptedSince(n, s.seq);
     n.phase = n.merged ? 'merged' : n.slot?.open ? n.candidate ? n.accepted ? 'accepted' : 'submitted' : 'dispatched' : n.held !== undefined ? 'held' : !spec.later && spec.deps.every(d => s.nodes[d]?.merged) ? 'ready' : 'blocked';
     n.dependents = h.dependents.get(n.id) ?? 0;
     if (n.halt && (!n.slot?.open || n.slot.attempt !== n.halt.attempt)) n.halt = undefined;
@@ -249,7 +250,7 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
   // F4 (wais #27): a node in the state but not in the current plan and not merged is `removed`, never ready.
   for (const id of dirty === 'all' ? Object.keys(s.nodes) : dirty) {
     const n = s.nodes[id];
-    if (n && !nodeSpec(s, id)) { n.phase = n.merged ? 'merged' : 'removed'; delete n.held; }
+    if (n && !nodeSpec(s, id)) { n.phase = n.merged ? 'merged' : 'removed'; delete n.held; if (!n.candidate) delete n.acceptedSince; }
   }
   s.invariants = s.plan.invariants.map(i => item(s, 'trunk', `inv:${i.id}`, s.trunk.invKeys[i.id] ?? ''));
   const g = h.genesis;
@@ -257,6 +258,12 @@ function refresh(s: State, dirty: Set<string> | 'all' = 'all'): void {
   // judged by the no-new-debt rule on the first merge that carries their key.
   // Invariants removed later by the owner (a visible downgrade) are exempt.
   s.genesisDone = !!g && lawPlan(h, g.plan).invariants.filter(i => s.plan.invariants.some(c => c.id === i.id)).every(i => !!g.state.invKeys[i.id] && hasVerdict(s, 'trunk', `inv:${i.id}`, g.state.invKeys[i.id]!));
+}
+
+/** MO1: preserve the acceptance tenure across unrelated entries; losing acceptance clears it. */
+function refreshAcceptedSince(n: NodeState, seq: number): void {
+  if (n.accepted) n.acceptedSince ??= seq;
+  else delete n.acceptedSince;
 }
 
 /**
@@ -407,6 +414,8 @@ function fold(s: State, entries: Iterable<Entry>): void {
         const ar = n.runs.find(r => r.attempt === e.attempt), writer = ar?.launches.find(l => l.role === 'writer');
         if (writer) n.slot.rulings_seen = Math.max(n.slot.rulings_seen, ...ar!.sends.filter(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up').map(x => x.rulings ?? -1));
       }
+      // MO1: a submit replaces the current candidate, even when its evidence can be reused immediately.
+      delete n.acceptedSince;
       n.candidate = { ...e.facts, seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
     }
     else if (e.kind === 'abandon') { s.nodes[e.node]!.slot!.open = false; s.nodes[e.node]!.candidate = undefined; }
@@ -672,6 +681,19 @@ export function waitingFor(s: State, node: string): Waiting | undefined {
 export interface Waiting { after: string; resume: number; deps?: string[] }
 /** FL2: a single node stays a string; comma spelling is normalized at command/tool boundaries. */
 export const afterNodes = (after: string | string[] | undefined): string[] => after === undefined ? [] : Array.isArray(after) ? after : [after];
+/** MO2: accepted open attempts, waited-on first, then acceptance FIFO, dependent count and id. */
+export function mergeQueue(s: State): string[] {
+  const waitedOn = new Set<string>();
+  for (const n of Object.values(s.nodes)) {
+    if (n.merged || !waitingFor(s, n.id)) continue;
+    for (const id of afterNodes(resumeOf(s, n.id)?.after)) if (!s.nodes[id]?.merged) waitedOn.add(id);
+  }
+  return Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'accepted').sort((a, b) =>
+    Number(waitedOn.has(b.id)) - Number(waitedOn.has(a.id))
+    || (a.acceptedSince ?? Number.MAX_SAFE_INTEGER) - (b.acceptedSince ?? Number.MAX_SAFE_INTEGER)
+    || b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id);
+}
+
 /** FL3: report follow-up of the latest resume; a later submit or parent act ends the parked receipt. */
 export function reportRequest(s: State, node: string): { resume: number; send: SendEntry } | undefined {
   const r = resumeOf(s, node), n = s.nodes[node];

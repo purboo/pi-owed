@@ -791,11 +791,21 @@ new merge-key waivers require 0.14's validation and scope interpretation.
 Replay speed (0.10, N4). The fold keeps per-node indexes of reviews, evidence and
 waivers, executor observations by item, launches by rid and entries by seq, so
 item and validation lookups never scan the whole ledger. After each entry it
-recomputes the derived fields (items, accepted, phase, dependents, stale halt)
+recomputes the derived fields (items, accepted, acceptedSince, phase, dependents, stale halt)
 only of the nodes the entry can change: every node for genesis, plan and merge
 entries, the named nodes (or every node for `*`) for a ruling, the subject of an
 observation, the node of any other entry with one; trunk invariants and
 `genesisDone` every time.
+
+Acceptance tenure (0.16, MO1). `nodes.<id>.acceptedSince` is the ledger sequence
+of the entry since which the node has been continuously accepted with its current
+candidate. Losing acceptance clears it; a new submit replaces the candidate and
+starts a new tenure when accepted, including when evidence is immediately reused.
+Unrelated entries, resumes and trunk movement preserve continuous acceptance.
+This is derived State only: incremental replay, packed-state continuation and full
+replay produce identical values. It changes no obligation key, acceptance gate or
+ledger entry kind/field; 0.15 and 0.16 can share the same ledger. New 0.16 plan
+fields still require a 0.16 parser; older owed rejects plans that use them.
 
 Removed nodes (0.11, F4, wais #27). A node in the state but absent from the
 current plan and not merged has phase `removed` (a merged one stays `merged`).
@@ -2022,8 +2032,11 @@ while genesis items lack observations.
   replay states and keys. Historical owner audit remains in full status.
   Empty sections are omitted. The last line is
   `Details: owed status --full · owed why <node>`.
-  `status --full` (pi `full: true`) preserves exactly the 0.14 renderer plus
-  IR/KR lines; historical flag/delegated confirmation, superseded and carried
+  `status --full` (pi `full: true`) preserves the 0.14 renderer plus
+  IR/KR lines and the 0.16 line `Merge queue: a, b, c` (`none` when empty).
+  Status JSON adds `mergeQueue: string[]`, always present, listing accepted
+  open attempts in the driver's merge order (§12.5); all other gates still apply.
+  Historical flag/delegated confirmation, superseded and carried
   audit details belong there. Earlier detailed status descriptions refer to
   this full rendering. `--full --json` and `--json` have the same shape:
   all 0.14 fields remain; additive `summary` contains `{merged, needs:
@@ -2629,6 +2642,21 @@ need owner action. One reviewer run covers all of a candidate's review
 obligations (review and closure-review); a node with `review.count` > 1 gets
 one run per required principal, each with the next attempt-global `n`
 (`nextReviewerN`), so distinct reviewer ids.
+
+Merge order (0.16, MO2). Among accepted open attempts, merge actions first name
+nodes in the `after` of the latest resume of an unmerged node that is still
+waiting on them (the "waited-on" group), then all others. Within each group,
+order by `acceptedSince` ascending, then transitive dependents descending, then
+node id. `owed resume X --after Y` (including list waits and the `owed_resume`
+tool) therefore raises accepted Y's priority without changing the plan or keys.
+Only outstanding explicit `after` targets gain priority: replacing the resume,
+closing its attempt or merging the target removes that priority; implicit plan
+dependencies alone do not add it. Other actions retain status order. The driver's
+single merge slot takes the first eligible merge action in this queue. An accepted
+node merges after at most the accepted nodes ahead of it in this order; no new
+acceptance can overtake it except a waited-on node. This ordering does not bypass
+waits, halts, run state, measurements or merge guards; the bound applies while the
+candidate remains continuously accepted and eligible to merge.
 
 Acting on a current state (0.11, F1, wais #35). A pass loads the ledger state
 (seq S), then describes the runs; a run that records its entry and seals in
