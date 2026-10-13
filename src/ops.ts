@@ -380,8 +380,7 @@ async function writesGrantDrafts(cwd: string, ledger: Ledger, s: State, job: Att
   }
   const grants = grantsOf(s,job.subject).filter(g => g.paths.some(p => paths.includes(p)));
   const labels = [...grants.map(g => `granted #${g.seq}: ${g.paths.join(', ')}`), ...(drafts.length ? [`granted #${s.seq + 1}: ${bad.join(', ')}`] : [])];
-  const hint = reason ? grantHint(s,job.subject,paths) : undefined;
-  const note = reason ? `outside writes: ${bad.join(', ')}; ${reason}${hint ? `\n${hint}` : ''}` : `all changed paths within writes${labels.length ? ` (${labels.join('; ')})` : ''}`;
+  const note = reason ? `outside writes: ${bad.join(', ')}; ${reason}` : `all changed paths within writes${labels.length ? ` (${labels.join('; ')})` : ''}`;
   drafts.push({...obs,verdict:reason ? 'fail' : 'pass',exit:reason ? 1 : 0,note,log:await ledger.putBlob(note)});
   return drafts;
 }

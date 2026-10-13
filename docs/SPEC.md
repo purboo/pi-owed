@@ -2064,12 +2064,20 @@ while genesis items lack observations.
 - **Out-of-writes paths** (receipt card, D21.5, for every plan): when the
   candidate's `writes` item is ✘ or ⛔ and changed paths lie outside the node's
   writes, the line `Out-of-writes paths: <p1>, <p2>, …` lists them (the first 20,
-  then `… +N more`; `--json` `outOfWrites: {paths, allowance?, hint?}` lists all).
-  Covered paths still failing grant validation say `; pre-authorized by allowance
-  plan #S, but grant refused`. Uncovered paths add `hint: an allow rule {nodes:
+  then `… +N more`; `--json` `outOfWrites: {paths, allowance?, hint?, grantRefused?}` lists all).
+  Covered paths say `; pre-authorized by allowance plan #S`; `, but grant refused`
+  appears only when a failure observation for this key records a GR2 closure/overlap
+  refusal (`grantRefused: true` in JSON), never for a legacy failure or one recorded
+  before the allowance existed. For newly covered paths whose key already failed,
+  the display says `hint: paths are now pre-authorized; submit a new commit or
+  rerun attest to measure the grant (an active writes failure is attributed first;
+  rerun again after attribution)`.
+  Uncovered paths add `hint: an allow rule {nodes:
   ["<id>"], writes: ["<dirs>"]} would let owed grant these` to the receipt/why,
   merge refusal and driver repair/halt text; dirs are deduplicated parent directories
-  with trailing `/` (top-level files stay literal). This hint records nothing.
+  with trailing `/` (top-level files stay literal). Hints are generated only for
+  display, never stored in writes observations or their log blobs; failure notes
+  contain only the original outside-writes note plus the first GR2 reason.
   A ruling never accepts out-of-writes paths.
 - **Granted writes (0.17)**: the receipt shows `Granted writes: <p1>, … (#seq,
   allowance plan #S)` per grant, first 20 then `… +N more`; JSON `grantedWrites`
@@ -2082,7 +2090,9 @@ while genesis items lack observations.
   `--json` has `rebase: {seq, from, base, previous?, rangeDiff?}`.
 - **Status**: trunk, nodes by state, ready list (sorted by number of transitive
   dependents; a ready node whose writes overlap an open slot is marked
-  `(writes overlap open slot of X)`, `--json` `overlaps: {node: [ids]}`), pending queue grouped by discharger (owner / parent+writer /
+  `(writes overlap open slot of X)`, `--json` `overlaps: {node: [ids]}`); a node
+  removed from the plan still owns its dispatch-plan writes while its slot remains
+  open, so dispatch and grants continue to respect that overlap. Pending queue grouped by discharger (owner / parent+writer /
   reviewer / executor), invariant debt on trunk. When refs/heads/<trunk> differs
   from the ledger trunk, a line after the trunk says so: `trunk moved outside
   owed: … ahead of the ledger trunk … by N commits; … owed adopt` (a fast-forward),

@@ -5,6 +5,7 @@ import { matchesGlob } from 'node:path';
 import { matchesAny, driveConfig } from './plan.ts';
 import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq } from './reducer.ts';
+import { canonical } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
 import type { WaiveEntry } from './types.ts';
@@ -46,7 +47,7 @@ export interface ReceiptCard {
    * D21.5: when the writes item fails (✘/⛔), the candidate's changed paths outside the node's writes; `allowance` = S
    * when an allowance of the current plan lets the parent widen writes to cover all of them.
    */
-  outOfWrites?: { paths: string[]; allowance?: number; hint?: string };
+  outOfWrites?: { paths: string[]; allowance?: number; hint?: string; grantRefused?: boolean };
 }
 /** KR4: one debt line per invariant, independent of whether its latest observation passes. */
 export interface KnownRedDebt { invariant: string; entries: { test: string; fix: string }[]; plan: number }
@@ -251,13 +252,18 @@ function outsideWrites(s: State, node: string): ReceiptCard['outOfWrites'] {
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node), writes = n?.items.find(i => i.obligation === 'writes');
   if (!n?.candidate || !spec || !writes || (writes.mark !== '✘' && writes.mark !== '⛔')) return undefined;
   const paths = n.candidate.changed.filter(p => !withinWrites(s,node,p)), seq = allowanceSeq(s);
-  return paths.length ? { paths, ...(seq !== undefined && writesAllowed(s.plan, node, paths) ? { allowance: seq } : {}), ...(grantHint(s,node,paths) ? { hint:grantHint(s,node,paths) } : {}) } : undefined;
+  const covered = seq !== undefined && writesAllowed(s.plan,node,paths);
+  const failure = observationsOf(s,node,'writes',writes.key).findLast(o => o.verdict === 'fail');
+  // Only a recorded GR2 refusal demonstrates an attempted grant; an old writes failure does not.
+  const grantRefused = covered && !!failure?.note && /; (under closure|overlaps open node [^\n]+)$/.test(failure.note);
+  const hint = grantHint(s,node,paths) ?? (covered && !grantRefused ? 'hint: paths are now pre-authorized; submit a new commit or rerun attest to measure the grant (an active writes failure is attributed first; rerun again after attribution)' : undefined);
+  return paths.length ? { paths, ...(covered ? { allowance: seq } : {}), ...(grantRefused ? { grantRefused: true } : {}), ...(hint ? { hint } : {}) } : undefined;
 }
 /** Out-of-writes paths shown in the receipt card (D21.5); the JSON keeps them all. */
 const OUT_OF_WRITES_SHOWN = 20;
 function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
   const shown = o.paths.slice(0, OUT_OF_WRITES_SHOWN).map(oneLine).join(', '), more = o.paths.length > OUT_OF_WRITES_SHOWN ? `, … +${o.paths.length - OUT_OF_WRITES_SHOWN} more` : '';
-  return `Out-of-writes paths: ${shown}${more}${o.allowance !== undefined ? `; pre-authorized by allowance plan #${o.allowance}, but grant refused` : ''}${o.hint ? `\n${o.hint}` : ''}`;
+  return `Out-of-writes paths: ${shown}${more}${o.allowance !== undefined ? `; pre-authorized by allowance plan #${o.allowance}${o.grantRefused ? ', but grant refused' : ''}` : ''}${o.hint ? `\n${o.hint}` : ''}`;
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
 export const allowanceLabel = (d: { by: string; allowance?: number }): string => d.allowance === undefined ? '' : d.by === 'executor:owed' ? `granted by owed under allowance (plan #${d.allowance})` : `by ${d.by} under allowance (plan #${d.allowance})`;
@@ -866,7 +872,7 @@ export function preauthorizedWritesLines(s: State, node: string, dispatchSeq?: n
     let prior: Plan['allow'];
     for (const e of entriesOf(s)) if (e.seq < dispatchSeq && (e.kind === 'genesis' || e.kind === 'plan')) {
       const next = planAt(s,e.seq + 1).allow;
-      if (JSON.stringify(prior) !== JSON.stringify(next)) allowance = e.seq;
+      if (canonical(prior) !== canonical(next)) allowance = e.seq;
       prior = next;
     }
   }
