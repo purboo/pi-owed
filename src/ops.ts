@@ -759,16 +759,49 @@ export async function rule(o: Actor & { text: string; nodes: string[] | '*'; wri
   if (o.prospective && o.writer) throw new OwedError('--prospective cannot be combined with --writer', 'usage');
   return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}), ...(o.prospective !== undefined ? { prospective:o.prospective } : {}) }));
 }
+/** SS5: porcelain -z keeps paths literal; a rename/copy has a second NUL-delimited source path. */
+async function slotSetupStatus(worktree: string): Promise<{ tracked: string[]; untracked: string[] }> {
+  const fields = (await git.git(worktree, ['status', '--porcelain', '-z', '--untracked-files=normal'])).stdout.split('\0');
+  const tracked: string[] = [], untracked: string[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const field = fields[i]!;
+    if (!field) continue;
+    const status = field.slice(0, 2), path = field.slice(3);
+    if (status === '??') untracked.push(path);
+    else {
+      tracked.push(path);
+      if (/[RC]/.test(status)) tracked.push(fields[++i]!);
+    }
+  }
+  return { tracked: [...new Set(tracked)], untracked };
+}
+/** Append literal anchored patterns once, under the dispatch lock; retain the common excludes already present. */
+async function appendSlotExcludes(exclude: string, lines: string[]): Promise<void> {
+  if (!lines.length) return;
+  let text = '';
+  try { text = await readFile(exclude, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  const existing = new Set(text.split('\n'));
+  const added = lines.filter(line => { if (existing.has(line)) return false; existing.add(line); return true; });
+  if (added.length) await appendFile(exclude, `${text.endsWith('\n') ? '' : '\n'}${added.join('\n')}\n`);
+}
 /** SS: setup is a dispatch prerequisite, outside the ledger lock and before any dispatch entry. */
-async function setupSlot(plan: Plan, worktree: string): Promise<string | undefined> {
+async function setupSlot(plan: Plan, worktree: string): Promise<{ line: string; excludes: string[] } | undefined> {
   const run = plan.slot_setup === false ? undefined : plan.slot_setup ?? plan.setup;
   if (run === undefined) return undefined;
+  const before = new Set((await slotSetupStatus(worktree)).untracked);
   const result = await runCommand({ plan }, run, worktree, 600);
   if (result.error || result.code !== 0) {
     const tail = lastLines(result.log, 20);
     throw new OwedError(`slot setup failed: ${result.error ?? `exit ${result.code}`}; last output:${tail.length ? tail.map(l => `\n  ${l}`).join('') : ' (none)'}`);
   }
-  return `Setup: ran \`${oneLine(run)}\` in this worktree (exit 0)`;
+  const after = await slotSetupStatus(worktree);
+  if (after.tracked.length) throw new OwedError(`slot setup changed tracked paths: ${after.tracked.map(oneLine).join(', ')}`);
+  const paths = after.untracked.filter(path => !before.has(path));
+  // Gitignore cannot represent a line break in a literal path: refuse rather than leave a setup output committable.
+  if (paths.some(path => /[\r\n]/.test(path))) throw new OwedError(`slot setup output cannot be excluded: ${paths.map(oneLine).join(', ')}`);
+  const excludes = paths.map(path => `/${ignoreLiteral(path).replace(/ +$/, spaces => spaces.replace(/ /g, '\\ '))}`);
+  const excluded = paths.length ? `; excluded: ${paths.map(path => oneLine(`/${path}`)).join(', ')}` : '';
+  return { line: `Setup: ran \`${oneLine(run)}\` in this worktree (exit 0${excluded})`, excludes };
 }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
   // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
@@ -802,8 +835,8 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     const hasSetup = state.plan.slot_setup !== false && (state.plan.slot_setup ?? state.plan.setup) !== undefined;
     try {
       const setup = await setupSlot(state.plan, worktree);
-      if (setup) { packet += `\n${setup}`; d.packet = await ledger.putBlob(packet); }
-      entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw casRefusal('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw casRefusal('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; });
+      if (setup) { packet += `\n${setup.line}`; d.packet = await ledger.putBlob(packet); }
+      entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw casRefusal('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw casRefusal('Open slots changed; dispatch again'); guard(current,d); if (setup) await appendSlotExcludes(exclude,setup.excludes); return (await ledger.append([d]))[0]!; });
     }
     catch (error) {
       const run = (args: string[]) => async () => { const r = await git.git(root,args,{allowFail:true}); return r.code ? r.stderr.trim().split('\n').join(' ') || `exit ${r.code}` : undefined; };
