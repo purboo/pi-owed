@@ -760,8 +760,8 @@ export async function rule(o: Actor & { text: string; nodes: string[] | '*'; wri
   return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}), ...(o.prospective !== undefined ? { prospective:o.prospective } : {}) }));
 }
 /** SS5: porcelain -z keeps paths literal; a rename/copy has a second NUL-delimited source path. */
-async function slotSetupStatus(worktree: string): Promise<{ tracked: string[]; untracked: string[] }> {
-  const fields = (await git.git(worktree, ['status', '--porcelain', '-z', '--untracked-files=normal'])).stdout.split('\0');
+async function slotSetupStatus(worktree: string, untrackedFiles: 'normal' | 'all' = 'normal'): Promise<{ tracked: string[]; untracked: string[] }> {
+  const fields = (await git.git(worktree, ['status', '--porcelain', '-z', `--untracked-files=${untrackedFiles}`])).stdout.split('\0');
   const tracked: string[] = [], untracked: string[] = [];
   for (let i = 0; i < fields.length; i++) {
     const field = fields[i]!;
@@ -775,17 +775,36 @@ async function slotSetupStatus(worktree: string): Promise<{ tracked: string[]; u
   }
   return { tracked: [...new Set(tracked)], untracked };
 }
-/** Append literal anchored patterns once, under the dispatch lock; retain the common excludes already present. */
-async function appendSlotExcludes(exclude: string, lines: string[]): Promise<void> {
-  if (!lines.length) return;
-  let text = '';
-  try { text = await readFile(exclude, 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-  const existing = new Set(text.split('\n'));
+/** Append once under the dispatch lock; undo only these bytes, retaining existing rules and later appenders. */
+async function appendSlotExcludes(exclude: string, lines: string[]): Promise<() => Promise<string | undefined>> {
+  const noop = async () => undefined;
+  if (!lines.length) return noop;
+  let before: Buffer | undefined;
+  try { before = await readFile(exclude); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  const text = before?.toString() ?? '', existing = new Set(text.split('\n'));
   const added = lines.filter(line => { if (existing.has(line)) return false; existing.add(line); return true; });
-  if (added.length) await appendFile(exclude, `${text.endsWith('\n') ? '' : '\n'}${added.join('\n')}\n`);
+  if (!added.length) return noop;
+  const suffix = Buffer.from(`${text.endsWith('\n') ? '' : '\n'}${added.join('\n')}\n`);
+  const written = Buffer.concat([before ?? Buffer.alloc(0), suffix]);
+  await appendFile(exclude, suffix);
+  return async () => {
+    const current = await readFile(exclude);
+    // Never overwrite another writer's edits. A later append can be retained after removing our own suffix.
+    if (!current.subarray(0, written.length).equals(written)) return 'common info/exclude changed; cannot safely remove this dispatch\'s lines';
+    const restored = Buffer.concat([before ?? Buffer.alloc(0), current.subarray(written.length)]);
+    if (before === undefined && !restored.length) await unlink(exclude);
+    else await writeFile(exclude, restored);
+    return undefined;
+  };
+}
+/** SS6: a tracked ignore negation has higher precedence than common excludes, even inside collapsed directories. */
+async function verifySlotExcludes(worktree: string, paths: string[]): Promise<void> {
+  if (!paths.length) return;
+  const visible = (await slotSetupStatus(worktree, 'all')).untracked.filter(path => paths.some(created => created.endsWith('/') ? path.startsWith(created) : path === created));
+  if (visible.length) throw new OwedError(`slot setup outputs still visible: ${visible.map(oneLine).join(', ')}; a tracked ignore rule such as a ! negation in .gitignore overrides info/exclude; ignore setup outputs in the repository or change slot_setup`);
 }
 /** SS: setup is a dispatch prerequisite, outside the ledger lock and before any dispatch entry. */
-async function setupSlot(plan: Plan, worktree: string): Promise<{ line: string; excludes: string[] } | undefined> {
+async function setupSlot(plan: Plan, worktree: string): Promise<{ line: string; excludes: string[]; paths: string[] } | undefined> {
   const run = plan.slot_setup === false ? undefined : plan.slot_setup ?? plan.setup;
   if (run === undefined) return undefined;
   const before = new Set((await slotSetupStatus(worktree)).untracked);
@@ -801,7 +820,7 @@ async function setupSlot(plan: Plan, worktree: string): Promise<{ line: string; 
   if (paths.some(path => /[\r\n]/.test(path))) throw new OwedError(`slot setup output cannot be excluded: ${paths.map(oneLine).join(', ')}`);
   const excludes = paths.map(path => `/${ignoreLiteral(path).replace(/ +$/, spaces => spaces.replace(/ /g, '\\ '))}`);
   const excluded = paths.length ? `; excluded: ${paths.map(path => oneLine(`/${path}`)).join(', ')}` : '';
-  return { line: `Setup: ran \`${oneLine(run)}\` in this worktree (exit 0${excluded})`, excludes };
+  return { line: `Setup: ran \`${oneLine(run)}\` in this worktree (exit 0${excluded})`, excludes, paths };
 }
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
   // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
@@ -832,11 +851,22 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     };
     try { await git.addWorktree(root,worktree,branch,state.trunk.commit); } catch (error) { throw await rolledBack(error,[['directory cleanup',unmake]]); }
     let entry: Entry;
+    let undoExcludes = async (): Promise<string | undefined> => undefined;
     const hasSetup = state.plan.slot_setup !== false && (state.plan.slot_setup ?? state.plan.setup) !== undefined;
     try {
       const setup = await setupSlot(state.plan, worktree);
       if (setup) { packet += `\n${setup.line}`; d.packet = await ledger.putBlob(packet); }
-      entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw casRefusal('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw casRefusal('Open slots changed; dispatch again'); guard(current,d); if (setup) await appendSlotExcludes(exclude,setup.excludes); return (await ledger.append([d]))[0]!; });
+      entry = await ledger.withLock(async () => {
+        const current = (await load(ledger)).state; stable(state,current,o.node);
+        if (canonical(current.rules) !== canonical(state.rules)) throw casRefusal('Rulings changed; dispatch again');
+        if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw casRefusal('Open slots changed; dispatch again');
+        guard(current,d);
+        if (setup) {
+          undoExcludes = await appendSlotExcludes(exclude,setup.excludes);
+          await verifySlotExcludes(worktree,setup.paths);
+        }
+        return (await ledger.append([d]))[0]!;
+      });
     }
     catch (error) {
       const run = (args: string[]) => async () => { const r = await git.git(root,args,{allowFail:true}); return r.code ? r.stderr.trim().split('\n').join(' ') || `exit ${r.code}` : undefined; };
@@ -847,7 +877,7 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
         return run(['update-ref','-d',ref,state.trunk.commit])();
       };
       // A setup may create ignored/untracked prerequisites or edit tracked files; remove this unrecorded slot too.
-      throw await rolledBack(error,[['git worktree remove',run(['worktree','remove',...(hasSetup ? ['--force'] : []),worktree])],['git branch -d',dropBranch],['directory cleanup',unmake]]);
+      throw await rolledBack(error,[['setup exclude cleanup',undoExcludes],['git worktree remove',run(['worktree','remove',...(hasSetup ? ['--force'] : []),worktree])],['git branch -d',dropBranch],['directory cleanup',unmake]]);
     }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
   }),'dispatch');
