@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { chmod, readFile, unlink, writeFile } from 'node:fs/promises';
+import fs, { chmod, readFile, unlink, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 import { setImmediate as immediate } from 'node:timers/promises';
 import { repo } from './helpers/repo.ts';
@@ -192,6 +193,39 @@ test('SS6 a ledger append failure removes setup excludes and retains a later unr
     await rollbackUnchanged(r, before);
     assert.deepEqual(await readFile(exclude), Buffer.concat([bytes, Buffer.from('/unrelated\n')]));
   } finally { t.mock.restoreAll(); await r.cleanup(); }
+});
+
+test('SS6 an exclude append that writes a full line then throws EIO restores existing and absent files', async t => {
+  for (const existed of [true, false]) for (const mode of ['line', 'all', 'none'] as const) {
+    const r = await fixture({ worktrees: { root: '../created/nested' }, slot_setup: 'touch artifact other-output' });
+    try {
+      const exclude = join(r.cwd, '.git', 'info', 'exclude');
+      if (existed) await writeFile(exclude, '# preserve without final newline');
+      else await unlink(exclude);
+      const bytes = existed ? await readFile(exclude) : undefined;
+      const before = await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8');
+      const append = fs.appendFile, failure = Object.assign(new Error('fixture exclude append EIO'), { code: 'EIO' });
+      let injected = false;
+      t.mock.method(fs, 'appendFile', async (...args: Parameters<typeof fs.appendFile>) => {
+        if (args[0] === exclude) {
+          injected = true;
+          assert.ok(Buffer.isBuffer(args[1]), 'setup rules append as bytes');
+          const suffix = args[1] as Buffer;
+          const firstLine = suffix.indexOf(10, suffix[0] === 10 ? 1 : 0) + 1;
+          assert.match(suffix.subarray(0, firstLine).toString(), /\/artifact\n$/);
+          if (mode !== 'none') await append(exclude, mode === 'all' ? suffix : suffix.subarray(0, firstLine));
+          throw failure;
+        }
+        return append(...args);
+      });
+      syncBuiltinESMExports();
+      await assert.rejects(r.dispatch(), e => e === failure, 'preserve the original EIO after successful rollback');
+      assert.ok(injected, 'fault injected into the actual setup exclude append');
+      await rollbackUnchanged(r, before);
+      if (bytes) assert.deepEqual(await readFile(exclude), bytes, `${mode}: pre-existing excludes byte-identical`);
+      else assert.ok(!existsSync(exclude), `${mode}: leave no file when none existed`);
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); await r.cleanup(); }
+  }
 });
 
 test('SS5 successful setup changing tracked modified/deleted/renamed paths refuses and rolls back', async () => {
