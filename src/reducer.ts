@@ -1372,11 +1372,12 @@ function decidingInvariantFail(s: State, obligation: string, key: string, commit
   if (obs.some(e => e.verdict === 'pass')) return undefined;
   return obs.findLast(e => e.verdict === 'fail' && (commit === undefined || e.commit === commit));
 }
-/** IR2 seam: knownred excludes fix-owned names from `trunkNames` here on rebase. */
+/** IR2/KR3: fix-owned names are not inheritable trunk debt when their fixing node merges. */
 export function invariantTrunkComparison(s: State, merging: string, inv: CheckSpec, key: string, commit: string): { inherited: boolean; trunk?: ObsEntry; merge?: ObsEntry; trunkNames: string[]; newNames: string[]; truncated: boolean } {
   const o = `inv:${inv.id}`, oldKey = s.trunk.invKeys[inv.id] ?? '';
   const trunk = decidingInvariantFail(s, o, oldKey, s.trunk.commit), merge = decidingInvariantFail(s, o, key);
-  const trunkNames = trunk?.failed ?? [], names = merge?.failed ?? [];
+  const owned = fixOwnedKnownRed(s, inv.id, merging);
+  const trunkNames = (trunk?.failed ?? []).filter(name => !owned.includes(name)), names = merge?.failed ?? [];
   const newNames = names.filter(name => !trunkNames.includes(name));
   const truncated = !!trunk?.failed?.length && !failedNamesComplete(trunk) || !!merge?.failed?.length && !failedNamesComplete(merge);
   return { trunk, merge, trunkNames, newNames, truncated, inherited: key !== oldKey && item(s, 'trunk', o, oldKey).mark === '✘' && !!trunk && !!merge && failedNamesComplete(trunk) && failedNamesComplete(merge) && testOnlyFailure(merge) && !newNames.length };

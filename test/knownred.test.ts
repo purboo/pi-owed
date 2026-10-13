@@ -24,7 +24,7 @@ const sf = (commit = 's0', key = 'inv0'): StateFacts => ({ commit, tree: `tree-$
 const facts = (node: string, commit = 'c1'): CandidateFacts => ({ commit, tree: `tree-${commit}`, base: 's0', patch: node,
   changed: ['src/x'], closureTouched: false, keys: { writes: `writes-${node}`, rulings: `rules-${node}` } });
 const failFields = (names = ['old failure']): Partial<ObsEntry> => ({ verdict: 'fail', exit: 1, failed: names,
-  counts: { tests: names.length, pass: 0, fail: names.length, format: 'tap' }, note: `failed tests: ${names.join(', ')}; last output:\n  not ok` });
+  counts: { tests: names.length, pass: 0, fail: names.length, format: 'tap' }, execution: { completed: true, countOK: true }, note: `failed tests: ${names.join(', ')}; last output:\n  not ok` });
 function rig(p = plan()) {
   const entries: Entry[] = [], plans: Record<string, Plan> = { p };
   const state = () => reducer.reduce(entries, sha => { const p = plans[sha]; if (!p) throw Error('missing plan'); return p; });
@@ -85,7 +85,7 @@ test('KR2: missing names, timeout, error, zero tests, count/min_tests failures a
   const variants: Partial<ObsEntry>[] = [
     { failed: [] }, { failed: undefined }, { exit: null, note: 'timeout after 10s' }, { verdict: 'error' },
     { counts: { tests: 0, fail: 0 } }, { counts: { tests: 1, pass: 1, fail: 0 } },
-    { note: 'failed tests: old failure; min_tests unmet: counted 1 < min_tests 2; last output:\n  fail' },
+    { execution: { completed: true, countOK: false }, note: 'failed tests: old failure; min_tests unmet: counted 1 < min_tests 2; last output:\n  fail' },
     { runs: [{ verdict: 'error', exit: null, durationMs: 1, log: 'x', note: 'spawn failed' }] },
   ];
   for (const fields of variants) {
@@ -119,6 +119,25 @@ test('KR3: fix merge refuses its own still-failing names, including unchanged ke
   }
 });
 
+test('KR3/IR2 (#1485): fix-owned trunk names cannot be inherited; another fix owner preserves inheritance', () => {
+  for (const fix of ['fix', 'other']) {
+    const r = rig(plan([{ test: 'old failure', fix }]));
+    // Keep an unlisted old failure so PRE is ordinary red and the IR2 path is exercised, not KR's W fast path.
+    const names = ['old failure', 'unlisted inherited'];
+    r.obs('inv0', failFields(names)); const m = r.open('fix');
+    r.obs('invM', { ...failFields(names), merging: 'fix' });
+    const s = r.state(), comparison = reducer.invariantTrunkComparison(s, 'fix', s.plan.invariants[0]!, 'invM', 'cm');
+    assert.equal(s.invariants[0]!.mark, '✘');
+    assert.deepEqual(comparison.trunkNames, fix === 'fix' ? ['unlisted inherited'] : names);
+    assert.deepEqual(comparison.newNames, fix === 'fix' ? ['old failure'] : []);
+    assert.equal(comparison.inherited, fix !== 'fix');
+    const guard = reducer.mergeGuard(s, 'fix', m);
+    assert.equal(guard.ok, fix !== 'fix');
+    if (fix === 'fix') assert.match(guard.reasons.join('; '), /fix is the fix node of known-red old failure.*still fail/);
+    else assert.match(guard.invItems[0]!.detail, /trunk-red: inv:unit already failed on trunk before fix/);
+  }
+});
+
 test('KR3: a fixed merge succeeds, exemptions lapse, and later recurrence is ordinary red', () => {
   const r = rig(); r.obs('inv0', failFields()); const m = r.open('fix'); r.obs('invM');
   assert.equal(reducer.mergeGuard(r.state(), 'fix', m).ok, true);
@@ -127,7 +146,7 @@ test('KR3: a fixed merge succeeds, exemptions lapse, and later recurrence is ord
   assert.deepEqual(reducer.activeKnownRed(s, 'unit'), []);
   const debt = views.statusView(s, r.entries);
   assert.equal(debt.knownRed, undefined); assert.equal(debt.lapsedKnownRed?.[0]!.entries[0]!.test, 'old failure');
-  assert.match(views.renderStatus(debt), /lapsed known_red:.*removable: owed edit --invariant unit/);
+  assert.match(views.renderStatus(debt, { full: true }), /lapsed known_red:.*removable: owed edit --invariant unit/);
   r.obs('invLater', failFields());
   // An adopted later trunk retains the ordinary 0.14 adoption rule (red may be inherited only from red trunk).
   const future = sf('later', 'invLater');
