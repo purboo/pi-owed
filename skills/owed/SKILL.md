@@ -21,6 +21,8 @@ Every `owed_*` tool takes an optional `cwd`: the absolute path of a directory in
 
 Start with `owed_brief` (CLI `owed brief [--since seq|ISO]`): outcome and Needs you first, then owner audit acts, merges since `since`, rejected or blocked nodes and how to clear them, work in progress with its age, and totals.
 
+Act replies are brief; use `owed status` for the full list.
+
 Default `owed status` / `owed_status` shows outcome, parent/owner next actions, progress and current debt; use `owed status --full` / `owed_status {full:true}` for all evidence and historical audit lines (JSON retains existing fields). Status and brief share current merge diagnostics; a defer stays in Debt only while it still applies to the current merge invariant key.
 In 0.16, status/brief keep current-attempt recorded defers visible when rechecking is blocked: `owner defer (not rechecked: trunk moved)` or `(not rechecked: merge conflicts)`; JSON `deferred[].unverified` is `drift` or `conflict`. These are unverified debt, never acceptance evidence.
 After an upgrade, the pi restart hint appears once per session per installed version; full status and mismatch refusals retain it.

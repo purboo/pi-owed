@@ -2124,6 +2124,24 @@ while genesis items lack observations.
   adding `summary`, `trunk` and `invariants` for the prefix. Compatibility:
   these are presentation/result fields only, with no new ledger kind/field,
   no key changes and no new replay/version gate.
+- **Compact act replies (0.16.2, CR).** `renderStatusBrief(v)` uses the same
+  status outcome line and, when the queue is non-empty, the same
+  `Needs you (<A>):` items and commands. It ends with
+  `Details: owed status · owed why <node>` and omits the progress and debt
+  lists (and the empty `Needs you: none` line). Pi `dispatch` retains its
+  packet and subagents arguments, then appends this brief; `plan`, `edit`
+  and `amend` retain their act/carry/not-carried/downgrade lines and append
+  it. Plan warnings and ready hints retain their text before the brief. `rule` and `defer`
+  show the recorded entry as `renderEntry`, then the brief, replacing the
+  report. `abandon` and `resume` show the recorded entry, resume's waits-for
+  tail when present, and the first line of the node receipt (its phase), then
+  the brief, replacing the full receipt. Edit dry-run output is unchanged.
+  Structured tool results, explicit status/why/report, `/owed` and CLI
+  `status` remain unchanged. CLI `dispatch`, `plan`, `edit`, `amend`, `rule`,
+  `defer`, `abandon` and `resume` currently append no full status, so no CLI
+  status suffix needs replacing for these acts; CLI `init` and pi `adopt`
+  retain their existing status suffixes. This changes presentation only:
+  no ledger kinds/fields, states, keys or acceptance gates change.
 - **Brief** (`brief [--since seq|ISO]`, `briefView`/`renderBrief`): a morning
   summary, one line per item, sections in this order:
   0. *Owner acts (delegated) since <since>* (D25.5) — every owner entry with
@@ -2348,7 +2366,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `as` | merge |
 | `owed_abandon` | `node`, `hold?: boolean`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner); hold prevents re-dispatch until resume |
-| `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
+| `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the node phase line and brief status |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
@@ -3657,7 +3675,7 @@ polling.
   `decide` on that state: readiness, `drive.max`, writes overlap, owner-needed)
   and no driver holds the repository's lock (a live lock or a lock of another
   host counts as a driver; a stale one does not), the output adds one line
-  (before the H2.2 check-less warnings, which end the text):
+  (before the H2.2 check-less warnings; pi appends the CR brief after them):
   CLI `ready: <ids> (<n>); no driver is running: owed drive --detach --stay`,
   pi `ready: <ids> (<n>); no driver is running: owed_drive {action:"start",
   stay:true}`. `--json` output and the tool details gain `ready: string[]` and
