@@ -279,6 +279,11 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
   for (const i of Object.values(v.pending).flat()) {
     if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
     if (i.obligation === 'driver-halt' || i.obligation === 'dispatch' || v.needsRuling?.some(b => b.node === i.subject && b.obligation === i.obligation)) continue;
+    const red = i.subject === 'trunk' ? v.trunkRed?.find(r => r.obligation === i.obligation && r.key === i.key) : undefined;
+    if (red) {
+      if (!needs.some(n => n.node === 'trunk' && n.reason === oneLine(red.text) && n.command === '')) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
+      continue;
+    }
     const command = i.subject === 'trunk' ? 'owed plan <plan.yaml>' : i.discharger === 'owner'
       ? decisionCommand(s, i, false).split(';')[0]!
       : `owed why ${i.subject}`;
@@ -468,7 +473,7 @@ export function renderStatus(v: StatusView, options: { full?: boolean } = {}): s
 function summaryHead(trunk: StatusView['trunk'], invariants: ItemView[], summary: SummaryView): string[] {
   const ok = invariants.filter(i => i.status !== 'D').length;
   return [`owed: ${summary.merged} merged · ${summary.progress.length} in progress · ${summary.needs.length} need you · trunk ${trunk.name} ${trunk.commit.slice(0, 12)} ${ok === invariants.length ? '✔' : '✘'} invariants (${ok}/${invariants.length})`,
-    ...(summary.needs.length ? [`Needs you (${summary.needs.length}):`, ...summary.needs.map(n => `  ${n.node}: ${n.reason} → ${n.command}`)] : ['Needs you: none'])];
+    ...(summary.needs.length ? [`Needs you (${summary.needs.length}):`, ...summary.needs.map(n => `  ${n.node}: ${n.reason}${n.command ? ` → ${n.command}` : ''}`)] : ['Needs you: none'])];
 }
 /** SQ2: preserve the 0.14 renderer plus trunk invariant-red diagnostics. */
 export function renderStatusFull(v: StatusView): string {
