@@ -57,6 +57,26 @@ test('FG1: old cargo multiline panic retains normalized message and location thr
   }
 });
 
+test('FG1: unfinished old cargo panic cannot consume the next panic header', () => {
+  const log = "thread 'worker' panicked at 'unfinished\nthread 'module::good' panicked at 'real cause', src/good.rs:9:3\ntest module::good ... FAILED\n";
+  const good = { message: 'real cause', location: 'src/good.rs:9', names: ['module::good'] };
+  for (const text of [log, log.replace(/\n/g, '\r\n'), log.replace("'unfinished\n", "'unfinished:\n")]) {
+    assert.deepEqual(errorGroups(text, ['module::good']), [good]);
+    assert.deepEqual(errorGroups(text, ['worker', 'module::good']), [good, { message: '(no error text)', names: ['worker'] }]);
+  }
+});
+
+test('FG1: unfinished old cargo panic stops at failed-test and stdout record boundaries', () => {
+  for (const boundary of ['test worker ... FAILED', '---- module::good stdout ----']) {
+    const log = `thread 'worker' panicked at 'unfinished\n${boundary}\nnot part of worker', src/other.rs:4:2\nthread 'module::good' panicked at 'real cause', src/good.rs:9:3\ntest module::good ... FAILED\n`;
+    assert.deepEqual(errorGroups(log, ['module::good']), [{ message: 'real cause', location: 'src/good.rs:9', names: ['module::good'] }]);
+    assert.deepEqual(errorGroups(log, ['worker', 'module::good']), [
+      { message: 'real cause', location: 'src/good.rs:9', names: ['module::good'] },
+      { message: '(no error text)', names: ['worker'] },
+    ]);
+  }
+});
+
 test('FG2: old cargo multiline panic appears with error text and location in the stored failure note', async () => {
   const log = "thread 'module::old' panicked at 'assertion failed: left == right\n  left: 1\n right: 2', src/lib.rs:9:3\ntest module::old ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored;\n";
   await measure([log], obs => {
