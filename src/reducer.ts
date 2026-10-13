@@ -314,8 +314,19 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
   halt: { needs: ['human', 'owner'] },
   escape: { class: ESCAPE_CLASSES },
 };
+/** AR / ruling #1600: re-asks are history; supersedes makes their version boundary explicit. */
+function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | undefined, supersedes?: number): string[] {
+  const history = s.rules.filter(x => x.answer && x.answer.rid === a?.rid && x.answer.qid === a?.qid);
+  const latest = history.at(-1), errors: string[] = [];
+  if (history.some(x => x.answer!.rev === a?.rev)) errors.push(`answer for this rid/qid/rev (rev ${a?.rev}) is already recorded; retry its send`);
+  if (latest) {
+    if (!Number.isSafeInteger(supersedes) || supersedes !== latest.seq || !(latest.answer!.rev < a!.rev)) errors.push(`answer supersedes must name latest prior answer rule #${latest.seq} for this rid/qid with a lower rev`);
+  } else if (supersedes !== undefined) errors.push('answer supersedes must be absent without a prior answer for this rid/qid');
+  return errors;
+}
+
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
-const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer'];
+const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
 const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
@@ -912,8 +923,8 @@ export function validateDraft(s: State, d: Draft): string[] {
           if (!launch) errors.push('answer rid must name a launch of the node current open attempt');
           else if (typeof d.text !== 'string' || !d.text.startsWith(`Answer to ${launch.role} question ${a.qid}: `) || !d.text.slice(`Answer to ${launch.role} question ${a.qid}: `.length).trim()) errors.push('answer rule text must name the role and question and include the answer');
         }
-        if (s.rules.some(x => x.answer?.rid === a?.rid && x.answer?.qid === a?.qid)) errors.push('answer for this rid/qid is already recorded; retry its send');
-      }
+        errors.push(...answerRevisionErrors(s, a, d.supersedes));
+      } else if (d.supersedes !== undefined) errors.push('rule supersedes requires an answer');
       break;
     case 'dispatch':
       allow('parent', 'owner');
