@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.17.0
+
+This release delivers the merged nodes grant (GR), trunkpark (TP),
+parentacts (PA) and granthint (GH), removing pre-authorized writes and
+trunk-red coordination round trips while counting the parent's work honestly.
+Origins: wais ledger metrics (2026-10-13 22:2x: rulings per merge rose
+1.36 → 2.93, with widenings 1.38 and trunk-red 0.86 per merge) and the
+three-model product panel (2026-10-13). Parent rulings pin the behavior
+below; no acceptance gate is weakened.
+
+- **Grant task-needed writes under owner allowances (grant, GR1–GR8).**
+  Shared attest paths record an executor-only `grant` before a passing
+  writes observation when every new out-of-writes path is covered by the
+  current owner's `allow.writes`. Replay validates the open attempt,
+  candidate commit, sorted exact changed paths and allowance plan sequence;
+  closure paths, another open slot's writes and duplicate grants refuse.
+  A refusal grants nothing and leaves writes failing with its first reason.
+  Effective writes combine plan prefixes with exact attempt grants for
+  measurement, merge recheck and dispatch overlap. Grants survive plan or
+  allowance changes, but a new attempt starts with none; writes keys do not
+  change. Packets show owner pre-authorization and ask reviewers to block
+  grants outside the node's task. Receipts show `Granted writes`, and
+  report, brief and receipt ΔO⁻ label grants `granted by owed under allowance
+  (plan #S)`. Uncovered failures suggest a deduplicated parent-directory
+  allow rule in receipts, why, merge refusals and driver repair/halt text;
+  hints record nothing, and a ruling never accepts out-of-writes paths.
+  Open writer slots retain dispatch-plan write ownership after their nodes leave the plan, preventing overlapping dispatches and grants until those slots close.
+- **Park entirely trunk-red candidates (trunkpark, TP1–TP5).** When all
+  binding blocks, including flaky binding debt, are trunk-red on current
+  trunk, the driver records no halt and sends no writer follow-up, launches
+  no reviewer and performs no attest; questions still notify. Mixed blocks
+  retain the existing behavior, and merge refusals retain every gate.
+  One repository notice per trunk commit, obligation and sorted failed-name
+  state lists waiting nodes and fix/adopt, optional sweep or owner-waiver
+  options. Status and brief show one `Needs you` line per red state and
+  `waiting: trunk-red (<obligation> on trunk <trunk12>)` in node progress;
+  queued notices recompute waiting nodes at delivery using the full key.
+  Trunk movement resumes the existing measurement/rebase route without a
+  resume entry. Parent rulings #1813/#1814 limit deduplication to the
+  existing per-process once set: a restarted driver may print the repository
+  notice once again, but never records a parked-node halt.
+- **Measure parent coordination acts (parentacts, PA1–PA4).**
+  `owed report --metrics` adds `parentActs: {total, perMergedNode, byClass}`
+  and `grants: {total, perMergedNode}` while retaining every old JSON field
+  and value. Non-driver owner/parent decisions count once per entry within
+  the window, excluding dispatch, launch and send transport; classes cover
+  writes, answers, trunk work, resumes, rules, plans, owner reviews and
+  remaining act kinds. Writes-only plan downgrades and amend rulings count
+  as writes; amend recognizes the existing `writes of <node> widened by
+  plan #<seq>: <paths>. Limit: <note>` marker and counts the plan and ruling
+  separately. Earlier history supplies plan and last-halt context, never
+  entries after `until`. Rates divide by merges in the same window, or are
+  `null` with none; grants are zero on older ledgers. Text leads with
+  `parent acts per merged node` and top classes, then grants, and labels
+  the old interruption rate `driver halts + answers per merged node
+  (partial)`. `parentActs.perMergedNode` is the 0.17+ gate metric for parent
+  coordination cost, not a weaker acceptance condition.
+- **Make grant recovery hints lead to acceptance (granthint, GH1–GH3;
+  grant review #1850).** After a writes key failed, adding a covering allow
+  rule and following attribution with `attest --rerun` on that same key
+  creates a pass/fail owner conflict, not acceptance. The hint instead says
+  to submit a new commit (any change, e.g. an amended commit message) so
+  writes are measured again under the new allow rule. A mixed trunk-red
+  merge refusal also carries the uncovered-path allow hint once, without
+  changing refusal precedence or any gate.
+
+### Compatibility
+
+Owed 0.17 adds exactly one ledger entry kind, `grant`. Owed 0.16 refuses a
+ledger containing one, so every driver, CLI and pi plugin sharing a ledger
+must upgrade together before the first grant is recorded. A ledger without
+grants replays exactly as in 0.16, retaining its states and obligation keys
+apart from the derived views described above. TP and PA are derived state,
+views and driver behavior, with no new ledger kinds or fields; GH changes
+only hints. No acceptance gate is weakened.
+
 ## 0.16.2
 
 This release delivers the merged node refusalnotice (FG, TD), showing distinct
