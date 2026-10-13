@@ -751,11 +751,29 @@ tests twice, below its `min_tests`, halts for the parent (`the plan's threshold
 may be wrong`) instead of another repair. Calls you launched by hand stay yours to steer. Driver calls
 carry a dsa run name (`owed <node>#<attempt> writer` / `owed <node>#<attempt>
 reviewer <n>`). An asking call is printed with dsa's answer address and both
-answer forms: the pi `subagents` send call (`to`, `qid`) and the CLI command. A halt
-from dsa rejecting a run or send is the exception: that request's id and bytes
-are fixed for the attempt and dsa rejects it again, so fix the cause (plan,
-agent, model) and run `owed abandon <node>`; the driver then dispatches a new
-attempt. Halts that name a driver run also give dsa's call address
+answer forms: the pi `subagents` send call (`to`, `qid`) and the CLI command.
+Even while halted, the driver reports asking writers and reviewers of the current
+candidate with the same answer hint and once/quiet behavior; it does not clear
+that halt or send anything. `owed status` and brief stay ledger-only: the driver's
+asking notify is the question channel (0.16.1, HA1–HA2).
+
+A rejected **run** stays fixed for the attempt (D15.1): fix the cause (plan,
+agent, model), then `owed abandon <node>` so the driver dispatches a new attempt.
+A rejected **send** need not lose the attempt (0.16.1, SR1–SR4). Row 4 skips it,
+never re-sends it and lets later rows act if a later ledger entry is a resume or
+submit of the same node/attempt, or a non-rejected send of that attempt to the
+same rid (even one not yet confirmed applied). A rejected steer to a sealed or
+pruned run is also skipped: the sealed-run rows decide (`unknown` gets the
+`interrupted` follow-up). At send action time a rejected steer records only the
+refusal and outcome `rejected`; next pass decides. A steer to a still
+running/asking/queued run with nothing later still halts then; rejected
+follow-ups and notices keep their action-time behavior, including existing
+ruling-steer and waiting/ruling-notice exemptions. No ledger format or key changes.
+The send halt says: `the attempt is not lost: continue the run (e.g. a dsa
+follow-up), then owed resume <node>; a later resume, submit or send to this run
+supersedes this send; or owed abandon <node>`. After that resume it does not
+re-raise the same send halt; abandon is the last option.
+Halts that name a driver run also give dsa's call address
 (`to:"<wid>/<key>"`) when dsa reported one, so you can steer or inspect the call.
 
 ### Same-key reviewer reuse (0.16.1)

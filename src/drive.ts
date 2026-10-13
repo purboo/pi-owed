@@ -63,8 +63,9 @@ export interface DriveOpts {
   /**
    * Request ids dsa rejected (exit 1), with dsa's reason: run ids (`dsa run`) rejected in this process, and send ids
    * (`dsa send`, e.g. a re-send to a pruned run) rejected in this process or reported rejected by dsa's request state
-   * (every pass). The attempt halts needing a human (D9); the request is never retried. A rejected ruling steer does not
-   * halt and delivered nothing to the writer (review #784 F1).
+   * (every pass). Rejected runs stay fixed for the attempt (D15.1). Rejected sends are never retried; row 4 halts only
+   * if not superseded (SR1) or exempt (SR2, ruling steer, waiting/ruling notice). A rejected ruling steer delivered
+   * nothing to the writer (review #784 F1).
    */
   rejected: ReadonlyMap<string, string>;
   /**
@@ -162,12 +163,12 @@ export function verdictMessage(node: string, c: { seq: number; commit: string },
 }
 export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node}\` for reviews you already recorded on this candidate, finish the rest.`;
 /**
- * Ending of a halt for a request dsa rejected (D15.1): the id and bytes of a recorded run or send are fixed for the
- * attempt and dsa answers the same id the same way, so clearing the halt only re-halts; a new attempt is the recovery.
+ * Ending of a halt for a run dsa rejected (D15.1): its id and bytes are fixed for the attempt and dsa answers the
+ * same id the same way, so clearing the halt only re-halts; a new attempt is the recovery.
  */
 export const rejectedFixed = (node: string): string => `this attempt's request is fixed; fix the cause (plan, agent, model), then \`owed abandon ${node}\` to start a new attempt`;
-/** Halt reason of a run or send dsa rejected: dsa's reason, then `rejectedFixed`. */
-export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${rejectedFixed(node)}`;
+/** SR4: a rejected send can be superseded without losing the attempt; rejected runs keep D15.1. */
+export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${what === 'run' ? rejectedFixed(node) : `the attempt is not lost: continue the run (e.g. a dsa follow-up), then \`owed resume ${node}\`; a later resume, submit or send to this run supersedes this send; or \`owed abandon ${node}\``}`;
 export const fencedMessage = (reason: string): string => `Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`;
 /**
  * Repair follow-up: what to do, the notes of active review blocks (a needs-parent block quotes the ruling that resolved
@@ -571,17 +572,21 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const filtered = { ...v, questions: open }, q = open[0];
     return { do: 'notify', node: id, text: `${askingText(id, l, filtered)} ${askingRule(id)}`, rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) };
   };
-  // Row 1: halted.
-  if (halted(s, id)) return undefined;
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
   // RR1: same-key resubmits carry reviewer runs across the contiguous review epoch; writers are unchanged.
   const epoch = reviewEpoch(s, id);
   const live = ar.launches.filter(l => l.role === 'writer' || (epoch !== undefined && l.seq > epoch));
+  const askingNotice = (): Action | undefined => {
+    const asks = live.flatMap(l => { const v = runs.get(l.rid); return v?.state === 'asking' ? [asking(l, v)] : []; });
+    return asks.find(a => a.do === 'notify' && !a.quiet) ?? asks[0];
+  };
+  // Row 1 (HA1): a halted node still reports questions, without clearing the halt or taking any other action.
+  if (halted(s, id)) return askingNotice();
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   const waiting = waitingFor(s, id);
   if (waiting || reportedOf(s, id) !== undefined || s.plan.nodes.find(x => x.id === id)?.later) {
-    const asks = live.flatMap(l => { const v = runs.get(l.rid); return v?.state === 'asking' ? [asking(l, v)] : []; });
-    if (asks.length) return asks.find(a => a.do === 'notify' && !a.quiet) ?? asks[0];
+    const ask = askingNotice();
+    if (ask) return ask;
     // FL1: only the waiting notification is delivered while dependencies block the slot.
     const writer = ar.launches.find(l => l.role === 'writer'), w = writer && runs.get(writer.rid);
     if (waiting?.deps?.length && writer && w?.state === 'running') {
@@ -646,14 +651,21 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // acks. A rejected ruling follow-up (K5.2) halts like any other send.
     if (refused !== undefined && ((x.reason === 'ruling' && x.sendKind === 'steer') || x.reason === 'waiting')) continue;
     const xl = live.find(l => l.rid === x.rid)!;
-    if (refused !== undefined) return halt(rejectedHalt(id, 'send', `${x.send}${callAt(view(xl))}`, refused));
+    if (refused !== undefined) {
+      // SR1: later resume/submit of this attempt, or a non-rejected send to the same run, supersedes the refusal.
+      // SR2: a steer refused by a sealed/pruned run belongs to the sealed-run rows (unknown gets interrupted).
+      if (Math.max(resumed, last?.seq ?? -1) > x.seq
+        || ar.sends.some(y => y.seq > x.seq && y.rid === x.rid && !opts.rejected.has(y.send))
+        || (x.sendKind === 'steer' && isSealed(view(xl)))) continue;
+      return halt(rejectedHalt(id, 'send', `${x.send}${callAt(view(xl))}`, refused));
+    }
     const bytes = opts.blobs?.get(x.message);
     if (bytes === undefined || sha256(bytes) !== x.message) return halt(`cannot re-send ${x.send}${callAt(view(xl))}: the stored message bytes (blob ${x.message}) were not supplied`);
     return { do: 'send', node: id, attempt, rid: x.rid, sendKind: x.sendKind, message: bytes, reason: x.reason, send: x.send, ...(x.rulings !== undefined ? { rulings: x.rulings } : {}) };
   }
   // Row 5: a run asking (`asking`).
-  const asks = live.filter(l => view(l).state === 'asking').map(l => asking(l, view(l)));
-  if (asks.length) return asks.find(a => a.do === 'notify' && !a.quiet) ?? asks[0];
+  const ask = askingNotice();
+  if (ask) return ask;
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
   // FL3: a fresh report resume gets the next writer follow-up even with an accepted/failed candidate.
   const reportResume = resumeOf(s, id);
