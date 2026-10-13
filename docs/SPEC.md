@@ -624,7 +624,7 @@ never part of a key.
 |---|---|---|---|
 | `genesis` | owner | `{trunk, commit, plan}` (plan = blob sha) | names s₀ and the plan |
 | `plan` | owner/parent | `{prior, plan, rev?, path?, note?}` | new plan; must cite current plan sha (CAS); downgrade needs owner, unless the parent's downgrades are all covered by an allowance of the prior plan (§3.4); `rev` = commit the plan file was read from (`owed plan --rev`), `path` = repository-relative plan file |
-| `rule` | owner/parent | `{text, nodes: string[] \| "*", writer?: boolean, prospective?: boolean, answer?: {rid, qid, rev}}` | ruling; in scope for those nodes; `prospective: true` binds only later dispatches (§6.2 PR); `writer: true` invalidates named open candidates (§6.2); AN2 answer: one node, `writer: false`, recorded before dsa delivery (§12.5) |
+| `rule` | owner/parent | `{text, nodes: string[] \| "*", writer?: boolean, prospective?: boolean, answer?: {rid, qid, rev}, supersedes?: number}` | ruling; in scope for those nodes; `prospective: true` binds only later dispatches (§6.2 PR); `writer: true` invalidates named open candidates (§6.2); AN2 answer: one node, `writer: false`, recorded before dsa delivery (§12.5) |
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
@@ -1578,7 +1578,7 @@ edit(o: {cwd, node? | invariant?, set?, unset?, node_new?, note, plan?, rule?, w
 editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
 rule(o: {cwd, text, nodes, writer?, prospective?, as}): Promise<Entry>
-answer(o: {cwd, node, text, qid?, rid?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
+answer(o: {cwd, node, text, qid?, rid?, rev?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
@@ -2082,8 +2082,9 @@ ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
 [--node-new] [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
 --note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
 --note WHY` (§3 ED1/ED2), `rule <text> --nodes a,b|* [--writer|--prospective]`,
-`answer <node> [--qid Q] [--rid R] "<text>"` (AN1–AN2, parent/owner;
-prints the answer rule seq and delivery request id; `--json` returns
+`answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (AN1–AN2, AR; parent/owner;
+`--rev` is a positive integer, otherwise a usage error; prints the answer rule
+seq, qid, rev and delivery request id; `--json` returns
 `{entry, request, delivery}`; a failed delivery refuses with the recorded rule
 seq and exact retry command), `dispatch <node> [--allow-overlap]`,
 `submit <node> [--commit X]`, `rebase <node>` (parent, or the slot writer when
@@ -2243,7 +2244,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_abandon` | `node`, `hold?: boolean`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner); hold prevents re-dispatch until resume |
 | `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the receipt card |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
-| `owed_answer` | `node`, `text`, `qid?`, `rid?`, `as?` (default `parent:pi`; parent/owner) | AN1–AN2: record and deliver an answer ruling; returns `{entry, request, delivery}` (§12.5) |
+| `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
 | `owed_edit` | `node?` or `invariant?`, `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
 | `owed_amend` | `node`, `writes` (`+path` each), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
@@ -2876,26 +2877,39 @@ it gives the reviewer's `owed evidence` command.
   1.0.27): `owed <node>#<attempt> writer` / `owed <node>#<attempt> reviewer <n>`
   (`runName`), next to the labels. A re-launch of a recorded launch sends its
   stored spec bytes unchanged (a launch recorded before 0.5.0 has no name).
-- **Answer in one act (0.13, AN1–AN3, wais §65).**
-  `owed answer <node> [--qid Q] [--rid R] "<text>"` (pi
-  `owed_answer {node, text, qid?, rid?}`) is a parent or owner act; the driver
+- **Answer in one act (0.13, AN1–AN3, wais §65; 0.16 AR, dsa 1.0.38 re-asks).**
+  `owed answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (pi
+  `owed_answer {node, text, qid?, rid?, rev?}`) is a parent or owner act; the driver
   never answers. It describes the writer and reviewer launches of the node's
   current open attempt and selects one open question. With one matching
   question, qid may be omitted; qid may repeat across runs, so rid
-  disambiguates. No matching question or ambiguity refuses, listing all open
-  questions (role, rid, qid, rev and text), and records nothing. A describe
-  failure refuses rather than selecting from incomplete results.
+  disambiguates. When a matching question is open, its current rev from dsa
+  describe wins, even if `--rev` names an old rule; history never supplies that
+  rev. With no matching open question, `--rev N` retries a prior rule at
+  rid+qid+N; without `--rev`, the latest prior rule for rid+qid is retried.
+  The rid may be found from current-attempt launches when history identifies
+  exactly one run. Without such a prior rule, "No matching open question"
+  refuses; ambiguity lists all open questions (role, rid, qid, rev and text)
+  and records nothing. A describe failure refuses rather than selecting from
+  incomplete results. `--rev` / tool `rev` must be a positive integer,
+  otherwise a usage error.
   Under one ledger lock it records one `rule` naming the node,
   `writer: false`, text `Answer to <role> question <qid>: <text>`, and
   `answer: {rid, qid, rev}` (nonempty ids, positive integer rev). The rid must
   name a launch of that node's current open attempt. It then sends dsa
   `kind: answer` to the rid with qid, the described rev, the original answer
   text and request id `owed-answer-<rule seq>`. No candidate is invalidated.
-  Concurrent duplicate answers reuse the recorded entry. An explicit rid/qid
-  retry reuses its rule and original rev even after the question disappears
-  or the slot closes; different text for that pair refuses. Use `--` before
+  Identity is rid+qid+rev. Same identity and text reuse the entry, including
+  concurrent retries; different text refuses and names the rev. A higher-rev
+  re-ask records a new rule and request id even when its answer text is identical.
+  By parent ruling #1600, that rule carries `supersedes: <seq>` of the latest
+  prior answer rule for the same rid+qid. This field is required exactly when
+  such a prior rule exists, absent otherwise, and must name that latest rule
+  with a lower rev; ordinary rules cannot carry it. An explicit rid/qid retry
+  works after the question disappears or the slot closes. Use `--` before
   answer text beginning with `--` (the retry command always includes it). Any delivery
-  failure reports the recorded seq and an exactly shell-quoted retry command;
+  failure reports the recorded seq and an exactly shell-quoted retry command
+  including `--rev <recorded rev>`;
   the rule remains. Dsa deduplicates the stable send id and returns its first
   outcome. Nothing is rolled back and no separate `send` entry is appended.
   The answer is delivered to its target rid: no ruling steer or ruling
@@ -2903,8 +2917,14 @@ it gives the reviewer's `owed evidence` command.
   are still delivered; an answer never advances the delivery watermark past
   a gap. Other runs (reviewers and later attempts) receive it as a normal
   ruling. Delivery does not discharge `rulings`: reviewers still acknowledge.
+  Driver QN coverage remains revisions <= the recorded answer rev: q@2 after
+  a q@1 answer is an open question, not an "answered #" quiet line.
   Compatibility: owed < 0.13 refuses a rule with `answer` with code `version`
-  (the unknown ruling field rule of 0.12, §5).
+  (the unknown ruling field rule of 0.12, §5). Owed 0.15 and 0.16 share a ledger
+  until the first re-ask answer (a rule with `supersedes`); after that every reader
+  needs 0.16. The new field makes 0.15 refuse with code `version` and an upgrade
+  message, not a misleading invalid-entry error. Historical states and keys
+  are unchanged; there is no new entry kind.
 - **Answer address (D22.6, updated by AN1).** The asking line (notify, drive
   output, wake-ups) prints one line per open question with role, rid, qid,
   rev and question text, followed by `owed answer <node> --rid <rid> --qid

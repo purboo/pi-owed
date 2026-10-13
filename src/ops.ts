@@ -743,12 +743,15 @@ export async function answerRule(o: Actor & { node: string; text: string; answer
   return ledger.withLock(async () => {
     const { state, entries } = await load(ledger);
     if (!['parent', 'owner'].includes(o.as.role)) throw new OwedError('answer requires parent or owner');
-    const prior = entries.find((e): e is RuleEntry => e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(o.node) && e.answer?.rid === o.answer.rid && e.answer.qid === o.answer.qid);
+    const history = entries.filter((e): e is RuleEntry => e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(o.node) && e.answer?.rid === o.answer.rid && e.answer.qid === o.answer.qid);
+    const prior = history.find(e => e.answer!.rev === o.answer.rev);
     if (prior) {
-      if (prior.text !== o.text) throw new OwedError(`Answer rule #${prior.seq} already records different text for this rid/qid; retry with its original answer`);
+      if (prior.text !== o.text) throw new OwedError(`Answer rule #${prior.seq} already records different text for this rid/qid/rev (rev ${o.answer.rev}); retry with its original answer`);
       return prior;
     }
-    const draft: Draft = { kind: 'rule', by: by(o), channel: o.channel, nodes: [o.node], writer: false, text: o.text, answer: o.answer };
+    // AR / ruling #1600: mark a re-ask answer so older readers refuse with an upgrade message.
+    const supersedes = history.at(-1)?.seq;
+    const draft: Draft = { kind: 'rule', by: by(o), channel: o.channel, nodes: [o.node], writer: false, text: o.text, answer: o.answer, ...(supersedes !== undefined ? { supersedes } : {}) };
     guard(state, draft); return (await ledger.append([draft]))[0] as RuleEntry;
   });
 }
