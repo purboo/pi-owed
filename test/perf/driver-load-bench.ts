@@ -1,6 +1,6 @@
 // DL5 benchmark, not in the default suite. Run identically on base and candidate:
 //   node --expose-gc test/perf/driver-load-bench.ts [entries=6800] [nodes=280] [plans=279]
-// Uses the public driver loader (stateOf), not an imitation of either implementation.
+// Uses the public driver loader (stateOf), including a same-head reload after +10 (the 31-entry refold bound).
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import { performance } from 'node:perf_hooks';
 import { H } from '../../src/canon.ts';
 import { Ledger } from '../../src/ledger.ts';
 import { stateOf } from '../../src/drive-run.ts';
+import { replayStats } from '../../src/ops.ts';
 import { synthLedger } from './synth.ts';
 import { chain, writeLedgerDir } from './synth-dir.ts';
 
@@ -35,11 +36,12 @@ async function prepare() {
 const fixture = await prepare(), prior = process.env.OWED_DIR;
 process.env.OWED_DIR = fixture.dir;
 const gc = () => (globalThis as { gc?: () => void }).gc?.();
-const results: { phase: string; ms: number; rssMiB: number; maxRssMiB: number; seq: number }[] = [];
+const results: { phase: string; ms: number; rssMiB: number; maxRssMiB: number; seq: number; replay: { full: number; memo: number; disk: number; folded: number } }[] = [];
 async function measure(phase: string) {
-  gc(); const start = performance.now(), state = await stateOf(fixture.root), ms = performance.now() - start;
+  gc(); const before = { ...replayStats }, start = performance.now(), state = await stateOf(fixture.root), ms = performance.now() - start;
   assert.equal(Object.keys(state.nodes).length, fixture.nodes);
-  results.push({ phase, ms: Math.round(ms * 100) / 100, rssMiB: Math.round(process.memoryUsage().rss / 1048576 * 100) / 100, maxRssMiB: Math.round(process.resourceUsage().maxRSS / 1024 * 100) / 100, seq: state.seq });
+  const replay = { full: replayStats.full - before.full, memo: replayStats.memo - before.memo, disk: replayStats.disk - before.disk, folded: replayStats.folded - before.folded };
+  results.push({ phase, ms: Math.round(ms * 100) / 100, rssMiB: Math.round(process.memoryUsage().rss / 1048576 * 100) / 100, maxRssMiB: Math.round(process.resourceUsage().maxRSS / 1024 * 100) / 100, seq: state.seq, replay });
 }
 try {
   await measure('cold');
@@ -47,6 +49,7 @@ try {
   const ledger = await Ledger.open(fixture.root);
   await ledger.withLock(() => ledger.append(Array.from({ length: 10 }, (_, i) => ({ kind: 'note' as const, by: 'parent:bench', text: `incremental ${i}` }))));
   await measure('incremental');
+  await measure('warm-after-incremental');
   console.log(JSON.stringify({ bench: 'driver-load', ...fixture, results }));
 } finally {
   if (prior === undefined) delete process.env.OWED_DIR; else process.env.OWED_DIR = prior;

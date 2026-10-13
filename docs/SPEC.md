@@ -3038,9 +3038,15 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   entire ledger hash chain, resumes its in-process memo or disk snapshot and
   uses the persistent parsed-plan cache, refuses an uninitialized ledger, then
   applies `drive/reports.json` to the loaded private state. The result equals
-  `reduce(entries, lookup)` followed by `applyReports`. At a cached head no
-  full replay or historical YAML parse occurs; appended entries fold from the
-  cached replay point. A fresh process with a valid snapshot and plan cache
+  `reduce(entries, lookup)` followed by `applyReports`. At a cached replay
+  point no full replay or historical YAML parse occurs; appended entries fold
+  from that point. The in-process memo cadence stays `MEMO_EVERY=32`: after a
+  short incremental load, a same-head reload may refold at most
+  `MEMO_EVERY-1` (31) entries since the last memo replay point. Consecutive
+  small increments fold at most the newly appended entries plus 31; crossing
+  32 folded entries advances the memo point, so the following same-head load
+  folds zero. The disk snapshot cadence is unchanged (parent ruling #1689).
+  A fresh process with a valid snapshot and plan cache
   parses no historical YAML. Corrupt or chain-mismatching snapshots fall back
   to full replay; ledger verification errors still throw and newly appended
   plans are applied. Reports and driver mutations never enter the serialized
@@ -3049,7 +3055,8 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   ruling, scheduling or idempotence rule changes. Incremental ledger hash
   verification and pass frequency are deferred. DL5's synthetic scale bench
   (`node --expose-gc test/perf/driver-load-bench.ts`, outside the default suite)
-  measures cold, same-head warm and +10-entry loads and RSS with at least
+  measures cold, same-head warm, +10-entry and a second same-head warm load
+  after that increment, including replay counts and RSS, with at least
   6,800 entries, 250 distinct plans and 280 nodes.
 - **Pass.** Load the ledger state; for every open, not halted attempt
   `describe --key` its live runs (the writer and the reviewer runs of the
