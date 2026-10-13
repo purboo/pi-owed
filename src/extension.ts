@@ -20,7 +20,7 @@ import { renderSweep, unguardedText } from './sweep.ts';
 import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
-import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus } from './views.ts';
+import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus, renderStatusBrief } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -179,7 +179,7 @@ export default function owed(pi: ExtensionAPI): void {
   tool('dispatch', 'Dispatch a node; return the packet and arguments ready to pass to subagents. Refused while its writes overlap an open slot unless allow_overlap.', Type.Object({ node, allow_overlap: Type.Optional(Type.Boolean({ description: 'Dispatch although writes overlap another open slot; recorded in the entry.' })), as, cwd }), async (p, ctx, dir, signal) => {
     const r = await ops.dispatch({ ...await actor(ctx, dir, p.as, `Dispatch node ${oneLine(p.node)}${p.allow_overlap ? ' (allowing overlapping writes)' : ''}`, {}, signal), node: p.node, allowOverlap: !!p.allow_overlap });
     const subagents = { ...r.subagent, isolation: 'none' as const };
-    return result({ ...r, subagents }, `${r.packet}\n\nsubagents: ${JSON.stringify(subagents)}\n${renderStatus(await ops.status({ cwd: dir }))}`);
+    return result({ ...r, subagents }, `${r.packet}\n\nsubagents: ${JSON.stringify(subagents)}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('submit', 'Submit a committed, clean writer worktree; infer the writer when cwd (or the session) is the slot worktree.', Type.Object({ node, commit: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = p.as ?? await slotWriter(dir, p.node);
@@ -231,13 +231,13 @@ export default function owed(pi: ExtensionAPI): void {
     if (p.note !== undefined && p.reason !== undefined) throw new OwedError('abandon takes note (or its older name reason), not both', 'usage');
     const note = p.note ?? p.reason;
     const r = await ops.abandon({ ...await actor(ctx, dir, who, `Abandon the open attempt of node ${oneLine(p.node)}`, { Note: note ?? '(none)' }, signal), node: p.node, reason: note ?? '', ...(p.hold ? { hold:true } : {}) });
-    return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
+    return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node })).split('\n')[0]}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('resume', 'Clear a driver halt on the open attempt of a node, or release an abandon hold with no open slot without an obligation (parent or owner; never the driver): the driver acts on its next pass and the repair budget starts again. after: a node, comma-separated string or list; wait until all merge first. expect: report asks for findings without requiring a candidate (the driver leaves the node alone meanwhile, except asking notices). note: why (the writer gets it with the next follow-up). Use owed_rule instead for guidance the writer and reviewers must acknowledge.', Type.Object({ node, after: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })])), expect: Type.Optional(Type.Literal('report')), note: Type.Optional(Type.String({ description: 'Why (recorded; quoted to the writer).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'resume');
     const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(p.node)}${p.after !== undefined ? ` after ${oneLine(String(p.after))}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}), ...(p.note !== undefined ? { note: p.note } : {}) });
     const tail = p.after === undefined ? '' : r.merged ? `\n${p.after} is already merged: ${p.node} resumes now` : `\n${p.node} waits for ${p.after} (resume #${r.entry.seq}); the driver acts again when ${p.after} merges`;
-    return result(r.entry, `${renderEntry(r.entry)}${tail}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
+    return result(r.entry, `${renderEntry(r.entry)}${tail}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node })).split('\n')[0]}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('gc', 'Reclaim worktrees and branches of merged or abandoned attempts (parent or owner); dry_run only reports.', Type.Object({ dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'run gc');
@@ -250,7 +250,7 @@ export default function owed(pi: ExtensionAPI): void {
     return result(r, answerText(p.node, r));
   });
   tool('rule', 'Record a ruling for the applicable nodes. prospective: policy binding only attempts dispatched after it; older unsealed runs receive a notice without a new acknowledgment. Cannot combine with writer. writer: invalidate named open candidates and ask their writers to apply it and submit again (the same commit is allowed); reviewers still acknowledge it.', Type.Object({ text: reason, nodes: Type.Union([Type.Literal('*'), Type.Array(node)]), writer: Type.Optional(Type.Boolean()), prospective: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
-    const r = await ops.rule({ text: p.text, nodes: p.nodes, ...(p.writer !== undefined ? { writer: p.writer } : {}), ...(p.prospective !== undefined ? { prospective: p.prospective } : {}), ...await actor(ctx, dir, p.as, `Ruling for ${JSON.stringify(p.nodes)}`, { Ruling: p.text }, signal) }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
+    const r = await ops.rule({ text: p.text, nodes: p.nodes, ...(p.writer !== undefined ? { writer: p.writer } : {}), ...(p.prospective !== undefined ? { prospective: p.prospective } : {}), ...await actor(ctx, dir, p.as, `Ruling for ${JSON.stringify(p.nodes)}`, { Ruling: p.text }, signal) }); return result(r, `${renderEntry(r)}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades need the owner (the main agent as owner:pi, delegated, with a note saying why; a dialog only under OWED_CONFIRM=owner) unless an `allow` rule of the current plan covers them all (then the parent records them, labelled under allowance).', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), note: Type.Optional(Type.String({ description: 'Why (recorded); required for a delegated owner downgrade (D25.5).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const read = await ops.readPlan({ cwd: dir, path: p.plan, rev: p.rev }), text = read.plan;
@@ -267,13 +267,13 @@ export default function owed(pi: ExtensionAPI): void {
     // H2.2: warnings for check-less nodes of the new plan, after the result.
     const state = await ops.status({ cwd: dir });
     const warnings = planWarnings(next, new Set(Object.values(state.nodes).filter(n => n.phase === 'merged').map(n => n.id)));
-    // H1.3: dispatchable ready nodes and no driver: one hint line before the H2.2 warnings, which end the text (the
+    // H1.3: dispatchable ready nodes and no driver: one hint line before the H2.2 warnings and CR brief (the
     // parent decides; nothing starts automatically).
     const ready = await readyHint(dir);
     // N1.3: one line per node whose candidate the plan entry carried, and (23:4x) one per carry it skipped.
     const carried = await ops.carriedBy({ cwd: dir, plan: r.seq }), carriedText = [...carried.map(carryLine), ...notCarried.map(notCarriedLine)].map(l => `${l}\n`).join('');
     const data = { ...r, ...(pending.length ? { warning: warning.trim() } : {}), warnings, ...(carried.length ? { carried } : {}), ...(notCarried.length ? { notCarried } : {}), ...(ready ? { ready, driver: false } : {}) };
-    return result(data, `${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${renderStatus(state)}${ready ? `\n${readyHintText(ready, 'pi')}` : ''}${warnings.map(w => `\n${w}`).join('')}`);
+    return result(data, `${carriedText}${warning}${d?.allowance !== undefined ? `Downgrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}\n` : ''}${ready ? `${readyHintText(ready, 'pi')}\n` : ''}${warnings.map(w => `${w}\n`).join('')}${renderStatusBrief(state)}`);
   });
   tool('edit', 'ED1/ED2: atomically edit node/check fields or an invariant in the recorded plan file, keeping comments and layout outside the target. YAML assignments are path=value strings. Append the plan (same authority and carries as owed_plan), optional ruling and optional resume in one lock. A refusal records nothing and leaves the file unchanged; dry_run returns the diff and downgrades.', Type.Object({ node: Type.Optional(node), invariant: Type.Optional(node), node_new: Type.Optional(Type.Boolean()), set: Type.Optional(Type.Array(Type.String({ minLength:1 }))), unset: Type.Optional(Type.Array(Type.String({ minLength:1 }))), note: Type.String({ minLength:1 }), plan: Type.Optional(Type.String({ minLength:1 })), rule: Type.Optional(Type.String({ minLength:1 })), writer: Type.Optional(Type.Boolean()), resume: Type.Optional(Type.Boolean()), after: Type.Optional(Type.Union([Type.String(),Type.Array(Type.String())])), expect: Type.Optional(Type.Literal('report')), dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const args: ops.EditArgs = { ...p, cwd:dir }, e = await ops.editPreview(args);
@@ -281,7 +281,7 @@ export default function owed(pi: ExtensionAPI): void {
     const gaps = e.downgrades.length ? uncoveredDowngrades(e.prior,e.plan,e.downgrades) : [], who = p.as ?? (gaps.length ? ownerDefault() : 'parent:pi');
     if (gaps.length && principal(who).role !== 'owner') throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}`);
     const r = await ops.edit({ ...args, ...await actor(ctx,dir,who,`Edit plan ${oneLine(e.path)}\nDowngraded obligations: ${JSON.stringify(e.downgrades)}`, { Note:p.note },signal) }) as ops.EditResult;
-    return result(r,[renderEntry(r.plan),...r.carried.map(carryLine),...r.notCarried.map(notCarriedLine),...(r.rule ? [renderEntry(r.rule)] : []),...(r.resume ? [renderEntry(r.resume)] : []),`Wrote ${r.path}`].join('\n'));
+    return result(r,[renderEntry(r.plan),...r.carried.map(carryLine),...r.notCarried.map(notCarriedLine),...(r.rule ? [renderEntry(r.rule)] : []),...(r.resume ? [renderEntry(r.resume)] : []),`Wrote ${r.path}`,renderStatusBrief(await ops.status({ cwd: dir }))].join('\n'));
   });
   tool('amend', "Widen one node's writes (N3): appends the paths to the node's writes in the plan file (plan, else the latest plan entry's path; comments and layout kept), records it as owed_plan would (same authority: widening is a downgrade, so the owner or an `allow` rule of the current plan) and, in the same lock, a ruling naming the node with the limit, which the writer receives and reviewers acknowledge. Refused, with nothing recorded and the file unchanged, when the file has unrecorded edits.", Type.Object({ node, writes: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, description: 'Paths to add, each prefixed with + (e.g. "+src/x.ts"); removal is not offered.' }), note: Type.String({ minLength: 1, description: 'The limit of the widening (recorded in the ruling and the plan note).' }), plan: Type.Optional(Type.String({ minLength: 1, description: "Plan file, relative to cwd; defaults to the latest plan entry's path." })), as, cwd }), async (p, ctx, dir, signal) => {
     const args = { cwd: dir, node: p.node, writes: p.writes, note: p.note, ...(p.plan !== undefined ? { plan: p.plan } : {}) };
@@ -291,7 +291,7 @@ export default function owed(pi: ExtensionAPI): void {
     if (gaps.length && principal(who).role !== 'owner') { const hint = writesHint(e.prior, e.plan, gaps); throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}${hint ? `\n${hint}` : ''}`); }
     const r = await ops.amend({ ...await actor(ctx, dir, who, `Amend plan ${oneLine(e.path)}: widen writes of ${oneLine(p.node)}\nAdded writes: ${JSON.stringify(e.added)}\nDowngraded obligations: ${JSON.stringify(downgrades)}\nDowngrades reduce acceptance requirements.`, { Limit: p.note }, signal), ...args });
     const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.plan.seq - 1 })).downgrades.find(x => x.seq === r.plan.seq);
-    return result(r, `${amendLines(r).join('\n')}${d?.allowance !== undefined ? `\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}` : ''}\n${renderStatus(await ops.status({ cwd: dir }))}`);
+    return result(r, `${amendLines(r).join('\n')}${d?.allowance !== undefined ? `\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}` : ''}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('init', 'Owner: initialize the owed ledger from a plan file (genesis), (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner, showing the trunk commit, plan sha, node count and invariants). Returns at once; the genesis attest of the invariants then runs in the background in this session, owed_status shows its progress, and the session gets one message when it ends.', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), lease: Type.Optional(Type.Boolean({ description: 'False skips leasing the background genesis attest.' })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'initialize the ledger');
@@ -328,7 +328,7 @@ export default function owed(pi: ExtensionAPI): void {
     const facts = await git.stateFacts(dir, plan, m.commit);
     const items = p.items.map(value => { const id = invariantId(plan,value), key = facts.invKeys[id]!; return { id, key }; });
     const a = await actor(ctx, dir, who, `Defer post-merge invariants for node ${oneLine(p.node)}: ${p.items.map(oneLine).join(', ')}\nThese obligations remain debt; they do not become passes.\n${JSON.stringify(items)}`, { Reason: p.reason }, signal);
-    const r = await ops.defer({ ...a, channel: a.channel!, node: p.node, reason: p.reason, items }); return result(r, renderReport(await ops.report({ cwd: dir, since: r.seq - 1 })));
+    const r = await ops.defer({ ...a, channel: a.channel!, node: p.node, reason: p.reason, items }); return result(r, `${renderEntry(r)}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('adopt', 'Owner adoption of trunk commits made outside owed (release commits, hotfixes): commit (default refs/heads/<trunk>) must equal the trunk ref and fast-forward the ledger trunk; invariants whose key changed are measured and a new failure refuses it. The main agent acts as owner (owner:pi, channel delegated, D25; a UI dialog only under OWED_CONFIRM=owner); as parent:<id> only when every changed path lies under an `allow` adopt prefix of the plan.', Type.Object({ commit: Type.Optional(Type.String({ minLength: 1, description: 'Commit to adopt; must equal refs/heads/<trunk> (the default).' })), note: Type.String({ minLength: 1, description: 'Why these commits are adopted (recorded).' }), lease: Type.Optional(Type.Boolean({ description: 'False skips the shared machine lease.' })), as, cwd }), async (p, ctx, dir, signal) => {
     // D21.4: a parent may adopt (no dialog) only when the current plan has an `adopt` allowance; ops checks the paths.
