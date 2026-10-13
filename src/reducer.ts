@@ -731,7 +731,7 @@ export function projectId(s: State): string {
 /**
  * dsa run id: `owed:<project>:<node>:<attempt>:<role>[:<n>]`. Writers have no `n`; reviewer runs always carry it:
  * `n` = 1 + the reviewer launch entries already in this attempt (`nextReviewerN`), monotone across the candidates
- * of the attempt. A reviewer run belongs to the latest candidate whose submit seq is below its launch entry's seq.
+ * of the attempt. Reviewer runs belong to the contiguous review epoch (RR1), not just the latest submit.
  */
 export function runId(project: string, node: string, attempt: number, role: RunRole, n?: number): string {
   return `owed:${project}:${node}:${attempt}:${role}${n === undefined ? '' : `:${n}`}`;
@@ -743,10 +743,29 @@ function reviewerLaunches(s: State, node: string): LaunchEntry[] {
 }
 /** The `n` of the next reviewer run of the node's current attempt: 1 + reviewer launch entries in that attempt. */
 export function nextReviewerN(s: State, node: string): number { return 1 + reviewerLaunches(s, node).length; }
-/** Reviewer launches of the current attempt recorded before the current candidate's submit (they belong to earlier candidates); the candidate's runs are n = base+1, base+2, … */
+/** RR1: first submit in the current attempt's contiguous epoch of equal review/closure-review keys. Policy only. */
+export function reviewEpoch(s: State, node: string): number | undefined {
+  const n = s.nodes[node], c = n?.candidate;
+  if (!n?.slot?.open || !c) return undefined;
+  const keys = (facts: CandidateFacts, spec: NodeSpec | undefined): (string | undefined)[] => [
+    (spec?.review.count ?? 0) > 0 ? facts.keys.review : undefined,
+    facts.closureTouched ? facts.keys['closure-review'] : undefined,
+  ];
+  const current = keys(c, nodeSpec(s, node)), entries = entriesOf(s);
+  let first = c.seq;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (e.seq >= c.seq || e.kind !== 'submit' || e.node !== node || e.attempt !== n.slot.attempt) continue;
+    const prior = keys(e.facts, planAt(s, e.seq).nodes.find(x => x.id === node));
+    if (prior.some((key, k) => key !== current[k])) break;
+    first = e.seq;
+  }
+  return first;
+}
+/** Reviewer launches before the review epoch; current runs are n = base+1, base+2, … (RR1). */
 export function reviewerBase(s: State, node: string): number {
-  const c = s.nodes[node]?.candidate;
-  return c ? reviewerLaunches(s, node).filter(l => l.seq < c.seq).length : reviewerLaunches(s, node).length;
+  const first = reviewEpoch(s, node) ?? s.nodes[node]?.candidate?.seq;
+  return first !== undefined ? reviewerLaunches(s, node).filter(l => l.seq < first).length : reviewerLaunches(s, node).length;
 }
 /** dsa labels of a run. */
 export function runLabels(project: string, node: string, attempt: number, role: RunRole): Record<string, string> {

@@ -204,15 +204,16 @@ test('G3.3 app timeline: needs-parent block → halt → plan update → ruling 
   assert.deepEqual(reasons(), ['repair']);
   // The writer resubmits identical content: the new check is measured, then a second repair, never a reviewer run.
   r.submit('1');
-  assert.equal(what(act(r, runsOf(sealed(W())))), 'attest');
+  // RR1: identical review keys carry reviewer:1, so every pass supplies its view.
+  assert.equal(what(act(r, runs1)), 'attest');
   r.pass();
-  const g = act(r, runsOf(sealed(W())));
+  const g = act(r, runs1);
   assert.ok(g?.do === 'send' && g.reason === 'repair', JSON.stringify(g));
   r.record(g);
-  assert.equal(act(r, runsOf(view(W(), 'running'))), undefined);
+  assert.equal(act(r, runsOf(view(W(), 'running'), sealed(R(1)))), undefined);
   // Identical content once more: repairs (2) exhausted → halt; still no reviewer run.
   r.submit('1'); r.pass();
-  const h = act(r, runsOf(sealed(W())));
+  const h = act(r, runs1);
   assert.ok(h?.do === 'halt' && h.reason.startsWith(`repairs exhausted (2 of 2 since ruling #${ruling.seq})`), JSON.stringify(h));
   assert.equal(reviewers(), 1, 'only the reviewer run of the first candidate');
   assert.deepEqual(reasons(), ['repair', 'repair']);

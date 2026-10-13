@@ -1910,6 +1910,10 @@ while genesis items lack observations.
 - **Receipt card** (`why`): per obligation: ✔ measured (executor pass, with log
   sha, counts, duration), ✔ reviewed (reviewers), ⚠ waived (owner, reason, channel),
   ✘ rejected, ⊥ awaiting observation, ⊤ conflict, ⏸ deferred, ⛔ blocked (active blocks and how to clear them).
+  In 0.16.1 (RR3), a satisfied `review`/`closure-review` receipt item shows each
+  principal once, using its latest qualifying review. Its JSON `evidence` and
+  `observations` use the same deduplicated list. This is view-only: stored/replayed
+  evidence, obligation keys and distinct-principal satisfaction are unchanged.
   Under its item line, every `fail` observation with a note shows it: a line
   `  note #<seq>:` then each line of the note as recorded, indented four
   spaces (so the last output lines of a failed command, §7.2, reach `owed
@@ -2518,11 +2522,16 @@ must name the node's current open slot (node and attempt), and so must a halt.
   Reviewer rids always carry `:<n>` (the ledger refuses a reviewer launch
   without it): `n` = 1 + the reviewer launch entries already in this attempt
   (`nextReviewerN(state, node)`), monotone across the candidates of the
-  attempt, so a resubmitted candidate gets fresh rids and reviewer ids. A
-  reviewer run belongs to the latest candidate whose submit seq is below its
-  launch entry's seq: for the current candidate, `reviewerBase(state, node)` =
-  the reviewer launches of the attempt with seq below its submit seq, and its
-  runs are `n = base+1 … base+reviewRuns` (local index `k = n - base`).
+  attempt. In 0.16.1 (RR1), the current candidate C has a **review epoch**
+  starting at the earliest submit C0 of the open attempt such that every
+  candidate from C0 through C has the same required `review` and
+  `closure-review` keys as C (including which obligations exist). A reviewer
+  launch after C0 belongs to C: it stays live for questions, rulings, retries
+  and rows 12–15, and counts toward the required reviewer runs. A changed
+  review key starts a new epoch; a key changed and then restored does not
+  resurrect runs from the earlier epoch. Writer launches are unchanged.
+  `reviewerBase(state, node)` counts the attempt's reviewer launches before
+  C0; epoch runs are `n = base+1 … base+reviewRuns` (local index `k = n - base`).
 - Labels `runLabels(project, node, attempt, role)` =
   `{owed: <project>, node, attempt: String(attempt), role}`.
 - Driver reviewer principal: `reviewer:drive-<node>-<attempt>-<n>`
@@ -2721,6 +2730,15 @@ need owner action. One reviewer run covers all of a candidate's review
 obligations (review and closure-review); a node with `review.count` > 1 gets
 one run per required principal, each with the next attempt-global `n`
 (`nextReviewerN`), so distinct reviewer ids.
+
+In 0.16.1 (RR2), a carried reviewer run's verdict follow-up names the **current**
+candidate, not C0. A review already recorded by that principal on the same
+obligation key counts even if it predates the latest submit. The existing
+one-verdict-follow-up-per-run-of-the-current-candidate rule is unchanged.
+No ledger kind or field is added; replayed states and obligation keys are unchanged.
+**Deferred (RR4, not implemented in 0.16.1):** stopping surplus reviewer runs
+once review is satisfied requires a driver `stop` effect, which this release
+does not add.
 
 Merge order (0.16, MO2). Among accepted open attempts, merge actions first name
 nodes in the `after` of the latest resume of an unmerged node that is still

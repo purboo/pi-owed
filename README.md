@@ -758,6 +758,19 @@ agent, model) and run `owed abandon <node>`; the driver then dispatches a new
 attempt. Halts that name a driver run also give dsa's call address
 (`to:"<wid>/<key>"`) when dsa reported one, so you can steer or inspect the call.
 
+### Same-key reviewer reuse (0.16.1)
+
+An evidence-only resubmit with unchanged required `review` and `closure-review`
+keys reuses reviewer runs launched since the start of that contiguous review
+epoch in the open attempt. These runs still report questions and receive rulings;
+the driver counts them instead of launching redundant reviewers. A review-key
+change starts a new epoch with the existing launch behavior. A sealed carried
+reviewer's verdict follow-up names the current candidate, and its earlier review
+on the same key counts. Satisfied `owed why` / receipt items show each principal
+once, with its latest qualifying review; this is view-only deduplication and
+changes neither replayed state nor acceptance rules. Stopping already-surplus
+reviewer runs remains deferred (SPEC RR4); 0.16.1 adds no driver `stop` effect.
+
 ### Resume or rule? (0.8)
 
 Answer a writer or reviewer question with `owed answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (pi `owed_answer {node, text, qid?, rid?, rev?}`, parent or owner). Omit qid when one open question matches; rid disambiguates questions across the node's current writer and reviewer runs. Ambiguity refuses and lists the open questions. The command records one rule naming the node, `writer: false`, text `Answer to <role> question <qid>: <text>`, and `answer: {rid, qid, rev}`, then sends dsa `kind: answer` with request id `owed-answer-<rule seq>`. A delivery failure retains the rule and reports its seq and an exact retry command including `--rev`. Use `--` before text beginning with `--`; exact retry commands include it. The driver does not send that answer rule back to the target rid as a ruling steer or follow-up. Other runs receive it normally and reviewers still acknowledge it. Successful text shows the rule seq, rid, qid, rev and request id; `--json` and the tool return `{entry, request, delivery}`.

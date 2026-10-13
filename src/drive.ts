@@ -4,7 +4,7 @@
 import { canonical, sha256 } from './canon.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
-import { mergeQueue, applicableRules, attestJobs, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
+import { mergeQueue, applicableRules, attestJobs, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -574,9 +574,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 1: halted.
   if (halted(s, id)) return undefined;
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
-  // Runs that matter: the writer and the reviewer runs of the current candidate (a reviewer run belongs to the latest
-  // candidate submitted before its launch entry); runs of earlier candidates are obsolete.
-  const live = ar.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq));
+  // RR1: same-key resubmits carry reviewer runs across the contiguous review epoch; writers are unchanged.
+  const epoch = reviewEpoch(s, id);
+  const live = ar.launches.filter(l => l.role === 'writer' || (epoch !== undefined && l.seq > epoch));
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   const waiting = waitingFor(s, id);
   if (waiting || reportedOf(s, id) !== undefined || s.plan.nodes.find(x => x.id === id)?.later) {
@@ -813,7 +813,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     }
     const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
     const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
-    // Row 12: review obligations awaiting and fewer reviewer runs than the candidate needs: launch the next n. G3.1:
+    // Row 12: review obligations awaiting and fewer reviewer runs than the review epoch needs: launch the next n. G3.1:
     // never while a review block is active on the candidate's key: row 15 repairs it first (a reviewer would judge
     // content the repair replaces).
     const reviewers = live.filter(l => l.role === 'reviewer');
