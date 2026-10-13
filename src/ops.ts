@@ -161,6 +161,15 @@ export const replayStats = { full: 0, memo: 0, disk: 0, folded: 0, ms: 0 };
 export function forgetReplays(): void { memos.clear(); for (const c of replayControls.values()) c.epoch++; }
 /** @internal Test hook: the ledger's entries and replayed state as an op loads them (no effect beyond the replay caches). */
 export async function readState(o: Context): Promise<{ entries: Entry[]; state: State }> { const { entries, state } = await load(await Ledger.open(o.cwd)); return { entries, state }; }
+/**
+ * DL1/DL3 (0.16): the driver uses the same verified replay and plan caches as ops. `load` returns a private state;
+ * publish its ledger-only replay before applying the optional reports.json overlay, which must never enter a cache.
+ */
+export async function loadDriverState(ledger: Ledger): Promise<State> {
+  const state = inited((await load(ledger)).state);
+  await applyReports(ledger,state);
+  return state;
+}
 const unpacked = (payload: Buffer, lookup: (sha: string) => Plan): State | undefined => { try { return unpackState(deserialize(payload) as PackedState, lookup); } catch { return undefined; } };
 /**
  * G1.3/G1.4: the state of the verified `entries`. It continues the fold from the in-process cache, else from the disk

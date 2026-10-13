@@ -15,11 +15,11 @@ import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
-import { parsePlan, driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
+import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
 import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
-import { reduce, halted, projectId, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { halted, projectId, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
@@ -278,14 +278,8 @@ export function ledgerHead(dir: string): string {
   } finally { closeSync(fd); }
 }
 
-async function loadState(ledger: Ledger): Promise<State> {
-  const entries = await ledger.read(), plans = new Map<string, Plan>();
-  for (const e of entries) if ((e.kind === 'genesis' || e.kind === 'plan') && !plans.has(e.plan)) plans.set(e.plan, parsePlan((await ledger.getBlob(e.plan)).toString()));
-  const s = reduce(entries, sha => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; });
-  if (s.seq < 0) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
-  await ops.applyReports(ledger,s);
-  return s;
-}
+/** DL1: all driver loads, including stateOf and measurement reaping, use the verified ops replay caches. */
+const loadState = ops.loadDriverState;
 
 // ---------- single-driver lock (D6) ----------
 /** Start time of a process (Linux `/proc/<pid>/stat` field 22), to tell a reused pid from the lock holder; else undefined. */
