@@ -2549,6 +2549,12 @@ must name the node's current open slot (node and attempt), and so must a halt.
   attempt (any dispatch of the node). Driver entries (`launch`, `send`, `halt`)
   and executor entries (`obs`, `merge`, which the driver causes) never clear a
   halt. A halt of an attempt that is no longer open is not active.
+  **Halt row (0.16.1, HA1–HA2):** while halted, the driver still describes and
+  reports asking runs that matter: the writer and reviewers of the current
+  candidate, with the same question text, answer/ruling hint, rid/qid/rev and
+  once/quiet semantics as row 5. It neither clears the halt nor sends anything
+  or takes another action on the node. `owed status` and brief stay ledger-only
+  (they need not query dsa); the driver's asking notify is the question channel.
 - **Abandon hold** (0.14, AH). `owed abandon <node> --hold [--note TEXT]`
   (pi `owed_abandon {node, hold: true, note?}`) closes the open slot and appends
   `{kind: "hold", node, abandon: <abandon seq>, reason?}` immediately after the
@@ -2724,8 +2730,8 @@ The single-string resume entry and historical replay/acceptance keys are unchang
 `decide` outputs `dispatch | launch | send | attest | rebase | merge | halt |
 notify` actions per the policy table of the contract (first matching row per
 open attempt, at most one action per node per pass; a halted attempt gets
-none). Not per slot: while open slots < `max`, ready nodes are dispatched in
-status order, skipping nodes whose writes overlap an open slot and nodes that
+only its asking notify, HA1). Not per slot: while open slots < `max`, ready
+nodes are dispatched in status order, skipping nodes whose writes overlap an open slot and nodes that
 need owner action. One reviewer run covers all of a candidate's review
 obligations (review and closure-review); a node with `review.count` > 1 gets
 one run per required principal, each with the next attempt-global `n`
@@ -2921,8 +2927,9 @@ Repair budget, rulings to a sealed writer, threshold hint (0.7, K5).
   = the highest seq it lists. It is not a repair (not counted). A writer that
   finishes it without submitting halts as before, naming it: `writer run <rid>
   finished ruling follow-up <send> without submitting a new candidate
-  (<cause>)`. dsa rejecting it halts the attempt in the same pass, like any
-  other send (only ruling *steers* are never halted for, D22.3).
+  (<cause>)`. dsa rejecting this follow-up halts the attempt in the same pass;
+  row 4 later applies the supersession rules (SR1). Ruling steers retain their
+  never-halt exemption (D22.3).
 - **Threshold hint.** On the measured repair path, for a check X among the
   measured items: when the node's latest two failing, non-attribution
   observations of `check:X` both exited 0 with `counts.fail` 0 and the same
@@ -3007,8 +3014,8 @@ it gives the reviewer's `owed evidence` command.
   rejected is skipped by the re-send row and never sent again as a steer. Its
   rulings are not delivered (above): the writer's next follow-up lists them;
   reviewers acknowledge with `--ack-rulings`. A rejected ruling *follow-up*
-  halts at once, like any other send. An unconfirmed ruling send is re-sent like any send (same id,
-  stored bytes).
+  halts at once, like other follow-ups (SR1 can supersede it later). An
+  unconfirmed ruling send is re-sent like any send (same id, stored bytes).
 - **Obligation unchanged (D22.4).** A steer is not an acknowledgment: the
   `rulings` obligation still needs the reviewer's `ack_rulings`.
 - **Run names (D22.5).** New launches carry dsa's run option `name` in the spec
@@ -3153,7 +3160,8 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   measures cold, same-head warm, +10-entry and a second same-head warm load
   after that increment, including replay counts and RSS, with at least
   6,800 entries, 250 distinct plans and 280 nodes.
-- **Pass.** Load the ledger state; for every open, not halted attempt
+- **Pass.** Load the ledger state; for every open attempt (including halted
+  ones for questions, HA1)
   `describe --key` its live runs (the writer and the reviewer runs of the
   current candidate); for every recorded send this process has not confirmed,
   `describe --key <send id>` (`applied`/`rejected` are taken as dsa's decision;
@@ -3174,26 +3182,43 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `send`: `ops.send` (assigns the send id) then `dsa send --request <id>`; a
   re-send uses the recorded id and the stored message bytes. Outcomes: 0
   applied (the send id is remembered as applied); 1 rejected → `halt` needing
-  a human in the same pass, reason = dsa's text followed by the abandon
-  recovery sentence (D15.1); 3 request-conflict → `halt`
-  in the same pass (never retried with other bytes); 75, a timeout or a dsa
-  child killed by a signal → pending, the next pass retries the same id and
-  bytes. After a human clears a halt, the next pass retries the same id and
-  bytes (dsa answers again).
-- **A rejected request is fixed for its attempt (D15.1).** The id and bytes of
-  a recorded run or send cannot change, and dsa answers the same id the same
-  way (a send id stays rejected; a run rejected before creation is checked
-  again, with the same stored bytes). The halt reason of a rejection (exit 1,
-  or `describe` reporting the run `rejected`) therefore ends with "this
-  attempt's request is fixed; fix the cause (plan, agent, model), then `owed
-  abandon <node>` to start a new attempt". A ruling, submit or review clears
-  the halt as any other, but the retry re-halts with the same text; abandon
-  (then the driver dispatches a new attempt with new ids) is the recovery.
+  the parent in the same pass, except rejected steers (SR3) and the existing
+  ruling/waiting notice exemptions. A rejected steer records the refusal in
+  `facts.refused` and returns outcome `rejected`, without a halt; next pass's
+  row 4 applies SR1/SR2. Rejected follow-ups and notices keep their action-time
+  behavior. 3 request-conflict → `halt` in the same pass (never retried with
+  other bytes); 75, a timeout or a dsa child killed by a signal → pending,
+  the next pass retries the same id and bytes.
+- **A rejected run is fixed for its attempt (D15.1, unchanged).** The id and
+  bytes of a recorded run cannot change, and dsa answers the same id the same
+  way. The halt reason of a run rejection (exit 1, or `describe` reporting the
+  run `rejected`) ends with "this attempt's request is fixed; fix the cause
+  (plan, agent, model), then `owed abandon <node>` to start a new attempt".
+  A ruling, submit or review clears the halt as any other, but the retry
+  re-halts; abandon with a new attempt and new ids is the recovery.
+- **Superseded rejected sends (0.16.1, SR1–SR4).** Row 4 skips a rejected send
+  of the open attempt when a later ledger entry (seq greater than the send's)
+  is a resume or submit of that same node/attempt, or another send of the
+  attempt to the same rid that is not itself rejected. Confirmation as applied
+  is not required for that later send. The superseded send is never re-sent,
+  does not halt and does not block later rows. The existing rejected ruling
+  steer, rejected waiting notice and ruling notice exemptions stay unchanged.
+  Row 4 also skips a rejected steer (any reason, including `fenced`) whose run
+  is sealed or pruned in this pass's view: sealed-run rows decide, so row 6
+  sends `interrupted` to a writer sealed `unknown`, and rows 7–8 act as before.
+  That later follow-up supersedes the refused steer for good. A rejected steer
+  to a running/asking/queued run with nothing later still halts on the next
+  pass; rejected follow-ups/notices without a successor still halt. Send ids
+  and bytes remain immutable; no entry kind/field, replay state or key changes.
+  The rejected-send halt ends with "the attempt is not lost: continue the run
+  (e.g. a dsa follow-up), then `owed resume <node>`; a later resume, submit or
+  send to this run supersedes this send; or `owed abandon <node>`". After that
+  resume, row 4 does not re-raise the same rejected-send halt; abandon is last.
 - **Verdicts are durable when they happen (D14).** The ledger (plus
   `describe`) is the only state that carries a decision across passes: every
   verdict (dsa rejection or conflict, merge refusal, attest error) is written
-  in the pass that meets it; nothing in memory decides a later pass. What the
-  process keeps are caches of dsa's answers (send ids dsa reported applied,
+  in the pass that meets it, except rejected steers (SR3: decided next pass);
+  nothing in memory decides a later pass. What the process keeps are caches of dsa's answers (send ids dsa reported applied,
   follow-up generations) and what the loop last printed.
 - **Follow-up generations after a restart** (0.12, G3.2). What a follow-up
   lets the driver expect is derived from the ledger, so a restarted driver
