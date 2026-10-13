@@ -1,5 +1,150 @@
 # Changelog
 
+## 0.15.0
+
+This release delivers the merged nodes invred (IR), knownred (KR),
+notices (QN), summary (SQ) and metrics (MT): quiet by default, loud
+precisely, measurable. Origins: app feedback on 0.14 (2026-10-12 22:00)
+in `/tmp/dsa/owed-requirements.md`, items 1–3, plus another owed user's
+report (2026-10-12) about internal notices, a late old-driver `stopped`
+and mixed historical audit/current blockers/version hints. Metrics comes
+from the product goal of measuring interruptions and acceptance time.
+The parent's rulings below pin the behavior where the original asks changed.
+
+- **Refresh trunk invariants and inherit bounded existing failures (IR;
+  app inv:next-tests, INFRA-PREBUILT-KERNEL #4159, AQ-KF #4178,
+  KX-RUNTIME-GC escape #4188 and run-string workaround R139).**
+  `owed attest --trunk` (pi `owed_attest {trunk: true}`, no node) records
+  executor `refresh` entries for current-plan invariant keys that differ
+  from the ledger trunk's recorded keys, then measures them on trunk.
+  Refresh changes invariant keys, not trunk commit or sequence; stale
+  commits are refused. Merge performs the refresh before measuring its
+  result and keeps the trunk observations even when refused; an otherwise
+  quiet driver pass refreshes through its background measurement lifecycle
+  and shared no-wait lease. An interrupted refresh can resume missing
+  observations; nothing pending records nothing. Never-refreshed items
+  say `not measured on trunk yet — owed attest --trunk`.
+  A differing unsatisfied merge key needs no defer when the deciding
+  executor failure on trunk and the merge failure have complete named
+  failure lists, the merge failure is test-only, and every merge failure
+  already occurs on trunk. Completeness is checked against failure counts,
+  including each failing repeat run and its retained union; structured
+  `execution.completed` and `execution.countOK` prove test-only execution,
+  not display notes or log tails. Unknown/truncated names, timeout/error
+  and count/min_tests failures do not qualify. New failures still refuse,
+  naming only the new tests when available. Inherited debt stays D and
+  belongs to the parent, not any open writer; owner defers and adopt retain
+  their rules. Status, `owed why trunk` and the driver give fix-node,
+  known-red and sweep options; the driver wakes once per (invariant, key)
+  without halting node work. Background changes in rulings #1521/#1523
+  are limited to IR3 notice identity and delivery-time revalidation:
+  repo-scoped `inv:<id>` notices carry the obligation/key, separate from
+  trunk drift, and are dropped before pi delivery if removed, resolved
+  or on a different key. Failed ledger reads retain the notice.
+- **Exact known-red debt owned by a fix node (KR; app item 2,
+  replacing run-string exclusions).** Invariants accept
+  `known_red: [{test: <exact obs.failed name>, fix: <plan node id>}]`,
+  at most 20 unique names, with fixes in the same plan; it enters no key.
+  `owed edit --invariant <id> --set known_red=...` supports the field.
+  Adding a name or changing its fix is an owner-only plan downgrade;
+  no `allow` rule covers it, while removal is free (#1484).
+  Entries stay active until their fix merges. Test-only failures entirely
+  covered by active entries yield W (⚠), satisfied for acceptance and
+  merge, with names, fixes and plan sequence visible as debt in default
+  status, brief and report. Unlisted failures are evaluated normally.
+  At a fix node's merge its own entries are inactive: still-failing owned
+  names refuse the merge, even with an unchanged key or owner defer.
+  KR3 is wired into IR2: the merging node's own fix names are excluded
+  from inheritable trunk failure names, so trunk-red debt cannot excuse
+  its unfinished repair (#1485). After the fix merges the entries lapse;
+  `status --full` lists them as removable, and recurrence is ordinary red.
+- **Answered questions stay quiet; old drivers do not look current (QN;
+  app item 3, HOST-VOCAB, LY-TFL-K and ST-LOCK repeated questions,
+  plus the user's notice/late-`stopped` report).** The driver and pi
+  delivery revalidation suppress questions covered by a recorded answer
+  for the same run/question and no newer revision. A covered asking run
+  logs that the answer was recorded and waits quietly. After
+  `drive.answer_grace_s` (default 900 seconds, 0 immediately), a still-open
+  covered question wakes once per (run, question) in that driver run,
+  with the exact answer-delivery retry command; retries reuse the recorded
+  answer and request. The one-shot retry survives unrelated node facts
+  while that answered question remains open. Terminal events from an
+  earlier driver, while a newer live driver owns the repository, ride
+  along with the next wake naming both drivers instead of waking alone;
+  current-owner terminal events, or those with no live owner, still wake.
+  Wake messages lead with plain `Needs you`, then `Done` when present,
+  then whether the driver continues or stopped. Full original evidence,
+  commands, ids, leases, repeat counters and halt hints remain under
+  `Details:`, with `Next: owed status / owed why <node>` last.
+- **Outcome and next step by default (SQ; the user's mixed
+  audit/blocker/version-hint report and 0.14's historical owner flags).**
+  Default CLI/pi status starts with merged, in-progress and needs-you
+  counts plus trunk invariant health, followed by current `Needs you`,
+  plain progress phases with age, and `Debt` only when present.
+  Ready nodes request dispatch only when no driver owns the repository;
+  current merge diagnostics are shared with brief, and stale defers do
+  not remain debt. Brief starts with the same outcome/needs prefix and
+  keeps its other sections. A trunk-red invariant gets exactly one
+  curated `Needs you` line in default status and brief, using its trunk-red
+  options without an appended command; its Debt line is unchanged
+  (#1562). `owed status --full` (pi `full: true`) preserves the detailed
+  rendering with IR/KR additions and historical audit lines; default
+  status ends with `Details: owed status --full · owed why <node>`.
+  JSON retains existing fields with additive summary data. The installed
+  versus loaded version hint appears once per pi session per installed
+  version, as the last tool-output line; full status and mismatch refusals
+  still show it.
+- **Ledger-only workflow metrics (MT; evidence for the release's
+  interruption/acceptance-time goal).**
+  `owed report --metrics [--since <seq|ISO>] [--until <seq|ISO>] [--json]`
+  reads ledger entries and recorded plan blobs, with no extra Git-fact or
+  dsa queries and no acceptance/key changes. It reports merged nodes,
+  interruptions and rate, submit-to-merge median/p90/max, first-dispatch-
+  to-merge median/p90, first-pass acceptance, repairs and rate, and the
+  top five normalized halt reasons for each decision class. Text is one
+  block of at most 20 lines; JSON includes per-merge and per-halt detail.
+  Submit timing starts at the first submit of the merged attempt;
+  dispatch timing includes earlier abandoned attempts. First-pass means
+  merged attempt 1 without an execution or judgment block on any candidate.
+  Repairs sum `max(writer submits - 1, 0)` separately across each merged
+  node's attempts, excluding executor carries. `since` is exclusive and
+  `until` inclusive; merges, driver halts and parent/owner answer rules
+  count by their own sequence, using history through `until` for timing
+  and classification (#1486). A halt is a decision when a parent/owner
+  records a relevant rule/answer, risk/debt decision, abandon/hold,
+  approval/evidence/owner review, or a plan change to that node's spec/deps
+  before or at its ending entry; otherwise it is no-decision. The window
+  ends at the node's next resume, submit, merge, abandon or any later halt,
+  whoever wrote that halt. Only `parent:drive` halts count as interruptions,
+  alongside parent/owner answer rules (#1488).
+
+### Compatibility
+
+Owed 0.14 refuses the new `refresh` ledger entry kind and observations
+carrying the new `execution` field with code `version` (verified against
+`v0.14.0`'s reducer). Since 0.15 executor check/invariant observations may
+write `execution` even without a refresh, 0.14 and 0.15 cannot be mixed on
+one ledger. Upgrade every user of that ledger — pi extension, CLI and
+background drivers — together before writing new observations, and restart
+existing pi sessions.
+
+Owed 0.14 and older ignore plan `known_red` and treat the listed tests as
+ordinary failures (stricter), rather than refusing this plan field (#1484).
+Mixed versions may halt merges that 0.15 accepts. `drive.answer_grace_s`
+requires a 0.15 plan parser; older readers reject that unknown drive key.
+
+Histories without the new entries/fields keep their earlier replayed states
+and keys, apart from the changed not-measured message and default text
+renderings. Default status, brief and wakes now foreground outcomes and
+next steps; use `status --full` and wake `Details:` for full evidence.
+Existing JSON fields remain, with additive result/runtime metadata.
+
+### Deferred
+
+Automatic re-verification after a repair is planned for 0.16; merge train
+#22; measuring on the merged trunk #23. None is claimed as delivered in
+this release.
+
 ## 0.14.0
 
 This release delivers the merged nodes bigdiff (BD), policy (PR), hold (AH)
