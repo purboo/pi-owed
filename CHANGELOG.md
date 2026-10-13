@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.16.2
+
+This release delivers the merged node refusalnotice (FG, TD), showing distinct
+failure causes and the trunk-vs-merge-tree delta in merge refusals without
+weakening any gate. Origins: wais feedback on owed 0.16.0 in
+`/tmp/dsa/owed-requirements.md` (2026-10-13 15:1x): AQ-Q halt #7285 listed
+11 failures with the same `exact-source host required` precondition, but
+finding the cause required a blob lookup; the invariant had passed on trunk
+698517a8 (#7271) about ten minutes earlier without that context in the notice.
+
+- **Group failing tests by error (refusalnotice, FG1–FG3; wais
+  AQ-Q feedback).** New measurements parse node TAP YAML `error` and
+  `location` diagnostics and both cargo panic formats, grouping tests by
+  normalized message, ordered by frequency then first appearance. TAP
+  quoted/plain scalars are decoded; block scalars show their first non-empty
+  source line. `subtestsFailed` parents are omitted from groups when another
+  failing point has an error. Messages strip ANSI, collapse whitespace,
+  replace semicolons with commas and stop at 160 characters with `…`.
+  Shared locations retain `file:line`, drop the column and shorten absolute
+  paths relative to the run cwd, otherwise to their last three segments;
+  a location appears only when every name in its group shares it.
+  Single-run and repeat-union `obs.note` prefixes show failed and distinct
+  error counts, at most three error groups and three names, and remainder
+  counts: `11 failed, 1 distinct error(s): "exact-source host required" ... ×11`.
+  Unparsed names form a `(no error text)` group; with no parsed errors,
+  the 0.16.0 names-only segment stays byte-identical. The grouped segment
+  contains no semicolon, preserving the existing prefix parser and
+  `; last output:` tail. `obs.failed` retains its capped union of up to
+  50 names; full evidence remains in `owed why` and log blobs. Refusals,
+  driver halts and `owed why` quote the stored note without re-extraction.
+  Review fixes #1758/#1788 retain multiline legacy cargo messages through
+  their closing quote/location while bounding parsing per panic record:
+  an unfinished message cannot consume the next panic header, failed-test
+  line or stdout record, steal another thread's cause/location, or masquerade
+  as a new-style location. LF and CRLF logs retain independent records.
+- **Show the trunk-to-merge delta (refusalnotice, TD1–TD3; wais
+  #7271/#7285 feedback).** A failing merge-tree invariant measured for the
+  refused node shows the latest pass of that obligation on the current trunk:
+  `inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`.
+  This appears even without failed-test names, once per obligation. Append
+  `; node diff touches <p1>, <p2>, <p3> (+<N> more)` from the current
+  candidate when changed paths exist. Without a current-trunk pass, omit
+  the delta; existing trunk-red hints still apply. Merge refusals, driver
+  merge-refused halts, `owed why` merge-block hints and merge-check details
+  share the delta, after failure text and before intermittent/fix hints.
+
+### Compatibility
+
+Owed 0.16.2 shares a ledger with 0.16.0 and 0.16.1. No new entry kind or
+field is added; replayed states, obligation keys and acceptance gates are
+unchanged. Only new measurements' `obs.note` text and refusal/halt/hint
+presentation change; stored historical notes are not rewritten.
+
 ## 0.16.1
 
 This release delivers the merged nodes stalesend (SR, HA), reviewdedup
