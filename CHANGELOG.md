@@ -1,5 +1,140 @@
 # Changelog
 
+## 0.16.0
+
+This release delivers the six merged nodes answerrev (AR), slotsetup (SS),
+mergeorder (MO), flakyhint (FH), nits016 (NT) and driveload (DL), removing
+observed answer, prerequisite, merge-queue and driver-load costs without
+weakening any gate. Origins: the dsa 1.0.38 note (2026-10-13 04:2x), app
+feedback (2026-10-13 07:3x and 08:4x) in
+`/tmp/dsa/owed-requirements.md`, three non-blocking 0.15 metrics/summary
+review notes, and `/tmp/pi/pi-performance-diagnosis-2026-10-13.md` task B.
+The parent's rulings below pin the behavior where the original asks changed.
+
+- **Answer re-asks at their current revision (AR; dsa 1.0.38 note,
+  item 1).** `owed answer <node> [--qid Q] [--rid R] [--rev N] "<text>"`
+  (pi `owed_answer` parameter `rev`, a positive integer) uses the matching
+  open question's current revision from dsa describe, never an old rule's
+  revision. Without a matching open question, `--rev N` retries that prior
+  answer; omission retries the latest rule for rid/qid. With no matching
+  history it refuses. Answer identity is rid+qid+rev: the same revision
+  and text reuse the rule/request; different text refuses and names the
+  revision. A higher-revision re-ask records a new rule and request even
+  for identical text. Ruling #1599 extends AR to the reducer; #1600 pins
+  its duplicate check and requires `supersedes: <latest prior answer seq>`
+  exactly when a prior rid/qid answer exists, with a lower revision.
+  Retry hints include `--rev`. A q@2 re-ask after a q@1 answer remains an
+  open driver question, not an answered quiet line. Answers do not
+  invalidate candidates; reviewers still acknowledge in-scope rulings.
+- **Prepare writer slots without committing setup artifacts (SS;
+  app 08:4x feedback, HOST-CASE-DOC-WIRE #6327 and five other slots
+  missing prerequisite links).** Dispatch runs `slot_setup` when it is
+  a string, otherwise the plan's `setup`, in the new worktree before
+  recording dispatch; `slot_setup: false` skips it. CLI, pi and driver
+  dispatch share the measurement shell/environment/wrapper and a
+  600-second timeout. Success adds a one-line `Setup: ran ... (exit 0)`
+  packet line. Failure names the exit code or timeout and last 20 combined
+  output lines, rolls back the worktree, unchanged branch and newly
+  created directories, and records nothing. Setup outputs never enter a
+  candidate (SS5, #1607): tracked-file changes refuse dispatch; newly
+  created untracked, not-ignored paths get deduplicated anchored literal
+  rules in common `info/exclude` and are named in the packet.
+  Newline/carriage-return paths refuse; other special characters are
+  literal-escaped, rules start with `/`, and directories retain trailing
+  `/` (#1617). SS6 (#1656) verifies every created status path, including
+  directory descendants, is ignored. A tracked `.gitignore` negation
+  leaving outputs visible refuses dispatch with paths and rollback;
+  owed never edits tracked files to hide outputs. Rollback removes only this
+  dispatch's appended exclude bytes, preserving existing rules, including
+  when exclude append fails after writing (#1671). Successful rules
+  persist across worktrees. `slot_setup` enters no key and changes alone
+  invalidate no candidate/evidence; existing `setup` keys are unchanged.
+  Rebase reuses the worktree without rerunning setup.
+- **FIFO merges with explicit-wait priority (MO; app 07:3x feedback,
+  QA-MPV1-MARKER #6067, HOST-ACQ-REACH, BG-ACQ-CLEANUP and
+  LY-ROAD-LEGACY waiting accepted for 1–4 hours).** Accepted open attempts
+  merge first when named by an outstanding latest `resume --after` wait,
+  then all others; within each group the order is derived `acceptedSince`
+  ascending, dependent count descending, then id. Losing acceptance or
+  replacing the candidate resets its tenure; incremental and full replay
+  agree. `owed resume X --after Y` raises accepted Y's priority without
+  changing the plan or dropping a carried candidate. Replacing the resume,
+  closing the waiting attempt or merging Y removes that priority; implicit
+  dependencies alone do not raise it. Full status shows `Merge queue:`;
+  status JSON adds `mergeQueue: string[]`. The driver's single merge slot
+  takes the first eligible action; other actions keep their existing
+  order. A continuously accepted, eligible node merges after at most the
+  accepted nodes ahead of it; only a waited-on node can newly overtake it.
+  Waits, halts, measurements and merge guards still apply.
+- **Name intermittent merge failures and possible fixes (FH; app
+  07:3x feedback, repeated names at #4614/#5903 and #5037/#5325,
+  CUT-FROZEN-HTTP refusals while QA-MPV1-MARKER waited).** CLI merge
+  refusals, driver merge-refused halts and `owed why` block/merge-check
+  lines add `known intermittent: <name> also failed on #a, #b (other trees)`
+  for exact failed names seen on different commits, scanning at most the
+  last 5000 entries and citing at most three sequences, newest first.
+  Names of at least six characters found verbatim in an unmerged open,
+  accepted or ready node's title, brief, check run or tests list add
+  `fix candidate: <node> (<phase>) — owed resume <refused> --after <node>`.
+  Same-commit history adds no intermittent hint; anonymous failures add
+  neither hint. These are advisory text, not automatic waits, reordered
+  work, relaxed gates, changed keys or new ledger fields.
+- **Keep metrics meaningful and unrechecked debt visible (NT;
+  three non-blocking 0.15 metrics/summary review notes).** Metrics
+  `--since`/`--until` also accept date-only `YYYY-MM-DD` at UTC midnight.
+  Halt normalization replaces lowercase plain-word node ids only in node
+  positions (start before `:`, before `/`, after `node ` or `--after `,
+  or as the argument of `owed <verb> `), preserving ordinary prose such
+  as `merge refused` and `review refused`; other ids keep prior behavior.
+  Default status and brief retain current-attempt owner defers when trunk
+  drift or merge conflicts prevent rechecking, labeled
+  `not rechecked: trunk moved` or `not rechecked: merge conflicts`; JSON adds
+  `deferred[].unverified: 'drift' | 'conflict'`. Retired nodes/invariants
+  and older attempts stay excluded; stale defers disappear once the
+  current merge key can be queried. Unverified debt is not acceptance
+  evidence; no gate, key or ledger schema changes.
+- **Reuse verified state caches in every driver load (DL; pi performance
+  diagnosis 2026-10-13 task B, app driver at 113–145% CPU and about
+  1.9 GiB RSS).** Driver passes, reaping, refusal and status/state reads
+  use the ops replay memo/disk snapshot and persistent parsed-plan cache,
+  still reading and verifying the entire ledger hash chain on every load.
+  Warm loads never fully replay or parse historical plans. Ruling #1689
+  permits same-head/incremental loads to refold up to `MEMO_EVERY-1 = 31`
+  entries since the last memo point, in addition to newly appended entries
+  for incremental loads; crossing 32 advances that point and the next
+  same-head load folds zero. Memo/snapshot cadence is unchanged.
+  Reports are applied only to a private loaded state, never the ledger-only
+  cache; driver mutations cannot leak into later loads. Corrupt/mismatching
+  snapshots fall back to full replay, bad hash chains still refuse, and
+  newly appended plans are applied. Locks, stale checks, rulings,
+  scheduling, idempotence, keys and ledger schemas are unchanged.
+
+### Compatibility
+
+Owed 0.15 and 0.16 can share a ledger until the first re-ask answer rule
+carrying `supersedes` is recorded (#1600). Owed 0.15 refuses that entry
+with code `version`; upgrade every process using a ledger — CLI, pi
+extension, background drivers and remote executors — together, and
+restart existing pi sessions. No new entry kind is added. Other additions
+are derived state, output or plan fields and leave acceptance keys intact.
+Mixed 0.14/0.15 remains unsupported.
+
+Owed 0.15 ignores top-level `slot_setup`, runs no setup at dispatch and
+adds no key for it (#1601); a plan using it needs 0.16 for setup to run.
+
+Driver caching does not remove cold load: a fresh driver process still
+pays one cold load (on app about 20 seconds). On a 7,071-entry / 279-plan
+app ledger, warm loads measured about 0.1 seconds (213x faster), and
+loads after +10 entries about 0.09 seconds (328x faster). These are warm
+load measurements, not a cold-start or whole-driver-pass guarantee.
+
+### Deferred
+
+Incremental `ledger.read()` verification; automatic re-verification after
+a repair (to be decided from 0.15 metrics); setup rerun on rebase; merge
+train #22; measuring on the merged trunk #23; cold driver load. None is
+claimed as delivered in this release.
+
 ## 0.15.0
 
 This release delivers the merged nodes invred (IR), knownred (KR),
