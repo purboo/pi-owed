@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.16.1
+
+This release delivers the merged nodes stalesend (SR, HA) and reviewdedup
+(RR), keeping rejected sends from stranding recoverable attempts, reporting
+questions while halted and avoiding redundant reviewers after unchanged-key
+resubmits, without weakening any gate. Origins: app feedback on owed
+0.16.0 in `/tmp/dsa/owed-requirements.md` (2026-10-13 13:4x, a forced dsa
+1.0.39 orchestrator restart; 14:3x, a halted writer's hidden question;
+14:4x, CMP-META attempt 2's evidence-only resubmit and redundant reviewer).
+The parent's rulings below pin the behavior where the original asks changed.
+
+- **Recover attempts after a rejected send (stalesend, SR1–SR4; app
+  forced-restart feedback).** A rejected send of the open attempt is
+  superseded by a later ledger entry: a resume or submit of that same
+  node/attempt, or another send of the attempt to the same rid that is not
+  itself rejected. That later send need not be confirmed applied. The old
+  send is skipped, never re-sent and cannot halt or block later rows.
+  Existing rejected ruling-steer, waiting-notice and ruling-notice exemptions
+  remain. A rejected steer to a run now sealed or pruned is also skipped so
+  sealed-run rows decide; a writer sealed `unknown` gets the `interrupted`
+  follow-up, which then supersedes the steer. At action time a rejected
+  steer records its refusal and returns `rejected` without halting; the next
+  pass applies these rules. A rejected steer to a still-running, asking or
+  queued run with nothing later still halts; rejected follow-ups and notices
+  retain their action-time behavior. Rejected-send halt text says the attempt
+  is not lost: continue the run (e.g. a dsa follow-up), then
+  `owed resume <node>`; a later resume, submit or send to this run supersedes
+  the send, with `owed abandon <node>` only as the last option. That resume
+  prevents the same send from re-halting. Rejected run requests remain fixed
+  for the attempt and still require fixing the cause and abandoning it.
+- **Report questions even while halted (stalesend, HA1–HA2; app
+  14:3x feedback).** The driver still reports asking writers and reviewers
+  of the current candidate with the existing question text, answer/ruling
+  hint, rid/qid/rev and once/quiet semantics. The slot action does not clear
+  the halt, send anything or take another action. Ruling #1743 limits that
+  no-send rule to slot actions: PR2 prospective notices still reach halted
+  attempts. Ruling #1746 refines notice precedence: a non-quiet report with
+  a concrete qid, or an overdue answer retry, precedes a pending prospective
+  notice once per rid/qid/rev in that driver; a later pass may send the
+  notice. Reporting alone does not quiet an unanswered question. A generic
+  asking notice with no question content/qid does not preempt PR2, and
+  other notices retain their precedence. `owed status` and brief stay
+  ledger-only; the driver's asking notify is the question channel.
+- **Reuse reviewers across unchanged review keys (reviewdedup, RR1–RR3;
+  app 14:4x feedback, CMP-META #7204/#7208/#7209/#7211).** The current
+  candidate's review epoch starts at the earliest submit of the open attempt
+  whose required `review` and `closure-review` keys remain unchanged through
+  the current candidate. Reviewer launches after that epoch start remain
+  live for questions, fence/ruling steers and rows 12–15, and count toward
+  required reviewer runs; an unchanged-key resubmit does not launch a
+  duplicate. A changed key starts a new epoch, and changing then restoring
+  a key does not revive earlier reviewers. Writer launches are unchanged.
+  Ruling #1724 applies the same epoch to the two reviewer filters in
+  `src/drive-run.ts` (driver views and live-run reporting). Carried reviewers'
+  verdict follow-ups name the current candidate; a review by that principal
+  on the same obligation key counts even if recorded before the latest
+  submit. Satisfied `review`/`closure-review` receipt and `owed why` items
+  show each principal once, using its latest qualifying review, including
+  JSON `evidence` and `observations`. Deduplication is view-only: stored and
+  replayed evidence and distinct-principal satisfaction are unchanged.
+
+### Compatibility
+
+Owed 0.16.0 and 0.16.1 share a ledger. No new entry kind or field is added;
+replayed states, obligation keys and acceptance gates are unchanged. The
+changes are driver decisions, halt text and receipt presentation.
+
+### Deferred
+
+Stopping surplus reviewer runs once review is satisfied (RR4) requires a
+driver `stop` effect, which 0.16.1 does not add. None is claimed as delivered.
+
 ## 0.16.0
 
 This release delivers the six merged nodes answerrev (AR), slotsetup (SS),
