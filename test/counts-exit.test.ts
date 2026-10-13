@@ -173,7 +173,8 @@ test('#557: cargo summaries count only at column 0 — a TAP comment or an inden
   assert.match(log, /^# test result: ok\. 40 passed/m, log);
   assert.equal(obs.counts?.format, 'tap', JSON.stringify(obs.counts));
   assert.equal(obs.counts?.tests, 2);
-  assert.equal(obs.verdict, 'fail'); assert.ok(obs.note?.startsWith('failed tests: fails; min_tests unmet: counted 2 (1 pass, 1 fail) < min_tests 5; exit 0; last output:')); // RC3: names first.
+  assert.equal(obs.verdict, 'fail');
+  assert.ok(obs.note?.startsWith('failed tests: 1 failed, 1 distinct error(s): "test result: ok. 7 passed, 0 failed, 0 ignored, 0 measured, 0 filtered out" (test/echo.test.mjs:4) ×1 — fails; min_tests unmet: counted 2 (1 pass, 1 fail) < min_tests 5; exit 0; last output:'), obs.note); // FG2: grouped error first; counts and bounded tail unchanged.
   assert.deepEqual(obs.failed, ['fails']);
 });
 

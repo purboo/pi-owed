@@ -1313,8 +1313,8 @@ async function currentTrunkRedChecks(cwd: string, s: State, id: string): Promise
 }
 /** FH: hints for persisted failures on current merge keys, including invariants without node execution blocks. */
 async function hintedMergeChecks(cwd: string, s: State, id: string, existing: ItemView[]): Promise<ItemView[]> {
-  const n = s.nodes[id], entries = entriesOf(s).slice(-5000);
-  if (!n?.slot?.open || !n.candidate || n.merged || !entries.some(e => e.kind === 'obs' && (e.merging === id || e.obligation.startsWith('inv:')) && e.verdict === 'fail' && e.failed?.length)) return existing;
+  const n = s.nodes[id], entries = entriesOf(s);
+  if (!n?.slot?.open || !n.candidate || n.merged || !entries.some(e => e.kind === 'obs' && (e.merging === id || e.obligation.startsWith('inv:')) && e.verdict === 'fail' && (e.failed?.length || (e.merging === id && e.obligation.startsWith('inv:'))))) return existing;
   if (await git.trunkDrift(cwd,s.trunk.name,s.trunk.commit)) return existing;
   const built = await git.buildMerge(cwd,s.trunk.commit,n.candidate.commit,`owed merge ${id}`);
   if ('conflicts' in built) return existing;
