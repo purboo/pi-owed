@@ -163,7 +163,8 @@ agent's owner acts first (§9).
 version: 1
 trunk: main                    # branch name of the trunk
 closure: [".owed/**", "package.json", "**/conftest.py"]  # check-closure path globs (pinned from base)
-setup: "npm ci --prefer-offline"   # optional, run in every materialized tree before checks
+setup: "npm ci --prefer-offline"   # optional, run in every materialized tree before checks; default slot setup too
+slot_setup: "ln -s /shared/node_modules node_modules"  # optional (0.16): string overrides setup in slots; false skips
 invariants:                    # state invariants on trunk (machine checks)
   - id: unit
     run: "npm test"
@@ -1800,6 +1801,56 @@ that directory literally; the line stays after the slots are gone), and nothing 
 a root outside it (both compared as physical paths). The dispatch entry records `branch` and
 `worktree`; every later use (submit/rebase writer inference, rebase packets,
 gc, the driver, views) reads the recorded values and never reconstructs them.
+
+**Slot setup (0.16, SS).** After `git worktree add` and before appending the
+`dispatch` entry, dispatch runs `slot_setup` when it is a string, otherwise
+`setup` when present. `slot_setup: false` skips slot setup; absent commands do
+nothing. CLI dispatch, the pi tool and driver all use this path. The command
+runs in the new slot worktree with the measurement command's `bash -lc`,
+`exec.env`/`exec.wrap`, inherited-environment filtering and `CI=1 OWED=1
+OWED_TREE=<slot worktree>` handling (§7.9), with a fixed 600-second timeout.
+Success adds exactly one packet line `Setup: ran \`<command>\` in this worktree
+(exit 0)`; the command is rendered with the existing one-line escaping
+(newlines as literal `\n`, backslashes doubled). Failure refuses with the command's exit code (or timeout) and the
+last 20 combined output lines, removes the unrecorded worktree including setup
+artifacts, deletes its unchanged branch and newly created parent directories
+through the existing rollback path, and appends no entry. Rollback failures
+still name every failed step.
+
+Setup outputs must never enter a candidate (SS5, parent ruling #1607). Compare
+`git status --porcelain -z --untracked-files=normal` before and after setup.
+A successful command that leaves a modified, deleted, renamed or other changed
+tracked path refuses dispatch with those paths and rolls back as above. Every
+new untracked, not-ignored status path is appended once to the common
+`info/exclude` as an anchored `/<path>` literal rule (directories retain Git's
+trailing `/`). Glob characters, backslashes, leading `!`/`#` and trailing spaces
+are escaped; newline/carriage-return paths cannot be represented and refuse
+with one-line escaped paths and the same rollback. Existing excludes are
+preserved, already ignored outputs need no new rule, and repeat dispatches do
+not duplicate rules. After appending, SS6 (parent ruling #1656) verifies in the
+slot with `git status --porcelain -z --untracked-files=all` that every newly
+created status path, including directory descendants, is now ignored. A tracked
+`.gitignore` rule such as `!/artifact` can override `info/exclude`. If any output
+remains visible, dispatch refuses with its one-line escaped paths and explains
+the higher-precedence tracked rule: ignore setup outputs in the repository or
+change `slot_setup`. The SS2 rollback removes worktree/branch, records nothing,
+and removes only this dispatch's appended exclude bytes, leaving pre-existing
+rules unchanged (also on a later dispatch-recording failure). Owed never edits
+tracked ignore files. Added rules on success remain in the common excludes for
+all worktrees. When rules are added, the packet line ends
+`(exit 0; excluded: /a, /b)` instead of `(exit 0)`; paths use the same one-line
+escaping. Dispatch serializes exclude writes with its existing operation lock
+and publishes them only after the ledger CAS/guard succeeds, before appending
+its unchanged dispatch entry. Rebase reuses the worktree and does not rerun
+setup; rerunning on rebase is deferred.
+
+`slot_setup` is a plan field only (non-empty string or `false`); it enters no
+check/invariant key, changes no existing `setup` key formula and invalidates no
+candidate or evidence when changed alone. No ledger kind or field is added;
+0.15 and 0.16 share the ledger. Compatibility (parent ruling #1601): this field
+needs a 0.16 parser. Owed 0.15 ignores unknown top-level plan fields, including
+`slot_setup`, and runs no setup at dispatch. Mixing versions changes no
+acceptance, only whether setup runs at dispatch.
 
 In 0.10 (N2), dispatch and plan retry CAS refusals for at most three attempts in
 total, each starting with a fresh ledger read, only while the plan sha is
