@@ -13,6 +13,7 @@ import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { OwedError } from '../src/errors.ts';
 import { renderStatus, renderReceipt, renderReport, renderBrief } from '../src/views.ts';
+import * as views from '../src/views.ts';
 import { revalidator } from '../src/drive-bg.ts';
 import { repo } from './helpers/repo.ts';
 import { commitAt } from './helpers/surface.ts';
@@ -116,7 +117,7 @@ test('G2 text/details equal the in-process views; worker errors retain exact cod
     assert.equal(text(error), `Refused: ${expected.message}`);
     const d = await h.call('dispatch', { node: 'n1' }), value = d.details as Awaited<ReturnType<typeof ops.dispatch>> & { subagents: unknown };
     assert.deepEqual(value.subagents, { ...value.subagent, isolation: 'none' });
-    assert.equal(text(d), `${value.packet}\n\nsubagents: ${JSON.stringify(value.subagents)}\n${renderStatus(await ops.status({ cwd: r.cwd }))}`);
+    assert.equal(text(d), `${value.packet}\n\nsubagents: ${JSON.stringify(value.subagents)}\n${views.renderStatusBrief(await ops.status({ cwd: r.cwd }))}`);
   } finally { await h.emit('session_shutdown'); await r.cleanup(); }
 });
 
