@@ -283,6 +283,70 @@ test('HA1 executor: halted sealed run never replays an applied follow-up for gen
   } finally { await f.cleanup(); }
 });
 
+test('#1743: asking report precedes prospective notice once per question revision (halted, row 5 and waiting)', () => {
+  for (const row of ['halted', 'row5', 'waiting'] as const) {
+    for (const pending of [false, true]) {
+      const r = rig();
+      if (row === 'halted') r.halt();
+      if (row === 'waiting') r.add({ kind: 'resume', by: 'parent:main', node: 'a', attempt: 1, after: 'b' });
+      const policy = r.add({ kind: 'rule', by: 'owner:pi', channel: 'delegated', nodes: ['a'], prospective: true, text: 'Future policy' });
+      const x = pending ? r.add({ kind: 'send', by: 'parent:drive', node: 'a', attempt: 1, rid: W(), send: `${W()}:notify:${r.entries.length}`,
+        sendKind: 'notify', reason: 'ruling', rulings: policy.seq, message: sha256('pending notice') }) as SendEntry : undefined;
+      if (x) r.blobs.set(x.message, 'pending notice');
+      const runs = new Map([view(W(), 'asking', { questions: [{ qid: 'q1', rev: 1, question: 'Scope?' }] })]);
+      const before = JSON.stringify(r.entries), h = halted(r.state(), 'a');
+      const first = act(r, runs);
+      assert.ok(first?.do === 'notify' && !first.quiet && first.rid === W() && first.qid === 'q1' && first.once);
+      assert.match(first.text, /owed answer a/);
+      const noticed = new Set([first.once]);
+      const second = act(r, runs, { noticed });
+      assert.ok(second?.do === 'send' && second.sendKind === 'notify' && second.reason === 'ruling');
+      if (x) assert.equal(second.send, x.send, 'a pending notice is retried with its original request id');
+      else assert.equal(second.rulings, policy.seq);
+      // Reporting never answers or quiets q1; only its priority over PR2 has been consumed.
+      assert.deepEqual(act(r, runs), first, 'pure decide does not mutate noticed or ledger');
+      const revised = new Map([view(W(), 'asking', { questions: [{ qid: 'q1', rev: 2, question: 'Revised scope?' }] })]);
+      const reask = act(r, revised, { noticed });
+      assert.ok(reask?.do === 'notify' && !reask.quiet && reask.rev === 2 && reask.once !== first.once);
+      assert.equal(JSON.stringify(r.entries), before); assert.deepEqual(halted(r.state(), 'a'), h);
+    }
+  }
+  // A genuinely quiet, answered question never delays PR2.
+  const r = rig();
+  r.add({ kind: 'rule', by: 'parent:main', nodes: ['a'], writer: false, text: 'Answer to writer question q1: scope', answer: { rid: W(), qid: 'q1', rev: 1 } });
+  r.halt(); r.add({ kind: 'rule', by: 'owner:pi', channel: 'delegated', nodes: ['a'], prospective: true, text: 'Future policy' });
+  const a = act(r, new Map([view(W(), 'asking', { questions: [{ qid: 'q1', rev: 1, question: 'Scope?' }] })]));
+  assert.ok(a?.do === 'send' && a.sendKind === 'notify');
+  // #1746: generic asking without question content/qid keeps the existing PR2 precedence.
+  const generic = act(r, new Map([view(W(), 'asking')]));
+  assert.ok(generic?.do === 'send' && generic.sendKind === 'notify');
+});
+
+test('#1743 executor: halted asking writer is reported first, then receives PR2 notice without an answer', { timeout: 60_000 }, async () => {
+  const f = await runtime();
+  try {
+    await ops.halt({ cwd: f.cwd, as: DRIVE_PRINCIPAL, node: 'a', attempt: 1, reason: 'stuck', needs: 'human' });
+    const h = halted(await stateOf(f.cwd), 'a');
+    await ops.rule({ cwd: f.cwd, as: { role: 'parent', id: 'main' }, nodes: ['a'], prospective: true, text: 'Future policy' });
+    const before = await f.entries(), rid = f.writer.rid;
+    const asking: RunView = { rid, state: 'asking', questions: [{ qid: 'q1', rev: 3, question: 'Need a decision' }] };
+    f.dsa.views.set(rid, asking);
+    const first = await f.d.pass();
+    assert.deepEqual(first.actions.map(a => [a.do, a.outcome]), [['notify', 'notify']]);
+    assert.equal(first.actions[0]!.qid, 'q1'); assert.equal(first.actions[0]!.rev, 3);
+    assert.equal(f.dsa.sends.length, 0); assert.deepEqual(await f.entries(), before);
+    assert.ok([...f.d.facts.once].some(k => k.startsWith('asking-notice\u0000')));
+    const second = await f.d.pass();
+    assert.deepEqual(second.actions.map(a => [a.do, a.sendKind, a.reason, a.outcome]), [['send', 'notify', 'ruling', 'applied']]);
+    assert.equal(f.dsa.sends.length, 1);
+    assert.deepEqual((await f.entries()).slice(before.length).map(e => e.kind), ['send']);
+    assert.deepEqual(halted(await stateOf(f.cwd), 'a'), h);
+    f.dsa.views.set(rid, asking);
+    const third = await f.d.pass();
+    assert.equal(third.actions[0]?.outcome, 'notify', 'unanswered question is still non-quiet after its report');
+  } finally { await f.cleanup(); }
+});
+
 test('SR3 executor: refused follow-up still records an action-time halt', { timeout: 60_000 }, async () => {
   const f = await runtime();
   try {

@@ -2552,8 +2552,17 @@ must name the node's current open slot (node and attempt), and so must a halt.
   **Halt row (0.16.1, HA1–HA2):** while halted, the driver still describes and
   reports asking runs that matter: the writer and reviewers of the current
   candidate, with the same question text, answer/ruling hint, rid/qid/rev and
-  once/quiet semantics as row 5. It neither clears the halt nor sends anything
-  or takes another action on the node. `owed status` and brief stay ledger-only
+  once/quiet semantics as row 5. `slotAction` neither clears the halt nor sends
+  anything or takes another action on the node. PR2 prospective notices still
+  reach halted attempts (#1743). When the slot action would be a non-quiet
+  report of a concrete question (with qid, or an overdue answer retry; #1746)
+  from the halt row, row 5 or waiting branch, `decide` emits that report
+  before a pending/new prospective notice once per rid/qid/rev in this driver;
+  the next pass may send the notice. Reporting alone does not make an unanswered
+  question quiet: only a recorded answer does. This priority uses runtime
+  `once`/`noticed` keys, not ledger entries. A generic asking notification with
+  no question content/qid does not delay PR2; other notices keep their precedence.
+  `owed status` and brief stay ledger-only
   (they need not query dsa); the driver's asking notify is the question channel.
 - **Abandon hold** (0.14, AH). `owed abandon <node> --hold [--note TEXT]`
   (pi `owed_abandon {node, hold: true, note?}`) closes the open slot and appends
@@ -2730,7 +2739,8 @@ The single-string resume entry and historical replay/acceptance keys are unchang
 `decide` outputs `dispatch | launch | send | attest | rebase | merge | halt |
 notify` actions per the policy table of the contract (first matching row per
 open attempt, at most one action per node per pass; a halted attempt gets
-only its asking notify, HA1). Not per slot: while open slots < `max`, ready
+only its asking notify from the slot rows, HA1; PR2 notices remain eligible).
+Not per slot: while open slots < `max`, ready
 nodes are dispatched in status order, skipping nodes whose writes overlap an open slot and nodes that
 need owner action. One reviewer run covers all of a candidate's review
 obligations (review and closure-review); a node with `review.count` > 1 gets

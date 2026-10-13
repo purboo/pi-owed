@@ -515,9 +515,17 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   for (const n of open) {
     const ar = n.runs.find(r => r.attempt === n.slot!.attempt) ?? { attempt: n.slot!.attempt, launches: [], sends: [] };
     const notice = prospectiveNotice(s, n, ar, runs, opts);
-    if (notice) { out.push(notice); continue; }
-    if (opts.measuring?.has(n.id)) continue;
-    const a = slotAction(s, runs, opts, n); if (a) out.push(a);
+    const a = opts.measuring?.has(n.id) ? undefined : slotAction(s, runs, opts, n);
+    if (notice) {
+      // #1743/#1746: PR2 cannot preempt a concrete question's first non-quiet report (or overdue answer retry).
+      // Reporting does not answer or quiet it; remember this revision only in runtime. Generic asks keep PR2 first.
+      if (a?.do === 'notify' && !a.quiet && a.rid && (a.qid || a.answerRetry) && runs.get(a.rid)?.state === 'asking') {
+        const once = a.once ?? `asking-notice\u0000${a.rid}\u0000${a.qid}\u0000${a.rev ?? ''}`;
+        if (!opts.noticed?.has(once)) { out.push({ ...a, once }); continue; }
+      }
+      out.push(notice); continue;
+    }
+    if (a) out.push(a);
   }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
@@ -580,7 +588,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const asks = live.flatMap(l => { const v = runs.get(l.rid); return v?.state === 'asking' ? [asking(l, v)] : []; });
     return asks.find(a => a.do === 'notify' && !a.quiet) ?? asks[0];
   };
-  // Row 1 (HA1): a halted node still reports questions, without clearing the halt or taking any other action.
+  // Row 1 (HA1): slotAction only reports questions while halted; decide still delivers PR2 notices (#1743).
   if (halted(s, id)) return askingNotice();
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   const waiting = waitingFor(s, id);
