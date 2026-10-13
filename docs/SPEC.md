@@ -542,8 +542,32 @@ invalidates a candidate.
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
   `changed` lies under an `adopt` prefix of a rule of the **current** plan and
   `adoptGuard` passes. No owner channel is needed.
-- An `allow` rule never turns a failing writes item into a pass; it only lets
-  the parent widen `writes` in the plan (§9 receipt card).
+- **Writes grants (0.17, GR).** At measurement, owed grants all newly out-of-writes
+  paths together when an owner-written `allow.writes` rule of the current plan covers
+  them. It appends `grant` before the passing writes observation, without a plan edit,
+  ruling or parent round trip. A ruling still never accepts out-of-writes paths.
+  Every replay validates the grant: only `executor:owed`; matching open node/attempt
+  and current candidate commit; nonempty sorted unique exact repository paths, all
+  in the candidate's `changed` and outside plan writes; current `writesAllowed`
+  coverage and `allowanceSeq`; no closure match or path owned by another open slot's
+  effective writes; no path previously granted to the attempt. A refusal grants
+  nothing and the writes observation stays fail, appending the first reason
+  (`not covered by an allow rule`, `under closure`, `overlaps open node <id>`).
+  Effective writes are plan prefixes plus exact granted paths (not new prefixes),
+  used for measurement, merge recheck and dispatch/grant overlap. Grants survive
+  candidate, rebase, plan and allowance changes within the attempt; a new attempt
+  starts without grants. Attribution reruns retain the original writes measurement.
+  The writes key stays `H({o: "writes", base, cand, writes: node.writes})`.
+  The pass note is `all changed paths within writes (granted #<seq>: <paths>)`
+  (multiple relevant grants are separated by `; `).
+  Each grant enters ΔO⁻ as `{node, what: "writes granted: <paths>"}`, with
+  `by: "executor:owed"` and `allowance`, labelled everywhere
+  `granted by owed under allowance (plan #S)`. Owed 0.16 refuses any ledger
+  containing a grant (unknown kind); grant-free ledgers retain their keys and states.
+  Dispatch packets add `Pre-authorized by the owner (allowance plan #S): <prefixes>
+  — change files there only when the task needs it; owed records the grant; do not ask.`
+  Review packets (including driver reviewers) add `Writes granted under allowance
+  (plan #S): <paths> — judge whether each belongs to this node's task; block if not.`
 
 ### 3.5 Candidate size limits (0.14, BD)
 
@@ -629,6 +653,7 @@ never part of a key.
 | `dispatch` | parent | `{node, attempt, base, branch, worktree, packet, rulings_seen: number, overlaps?: string[]}` | opens writer slot; `rulings_seen` = seq of latest ruling in packet; `overlaps` = nodes with an open slot whose writes overlap, present only when dispatched with `--allow-overlap` |
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
+| `grant` | executor:owed only | `{node, attempt, commit, paths, allowance}` | 0.17 GR: sorted exact out-of-writes paths, candidate commit and current allowance plan seq; validated on every replay (§3.4), effective only for this attempt; owed 0.16 refuses this kind |
 | `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?, probe?: "trunk"}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate. `probe: "trunk"` (0.14, TR) measures that node's check on current trunk alone; subject = node, commit/base = trunk, no merging/attribution; diagnostic only, never satisfies or blocks an obligation |
 | `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5); on obligation `approve` (D23, §6.2 item 8) only by the owner (rank 3) |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
@@ -2039,10 +2064,25 @@ while genesis items lack observations.
 - **Out-of-writes paths** (receipt card, D21.5, for every plan): when the
   candidate's `writes` item is ✘ or ⛔ and changed paths lie outside the node's
   writes, the line `Out-of-writes paths: <p1>, <p2>, …` lists them (the first 20,
-  then `… +N more`; `--json` `outOfWrites: {paths, allowance?}` lists all). When
-  an allowance of the current plan matching the node covers every one of them
-  with a `writes` prefix, the line ends with `; the parent may widen writes in the
-  plan (allowance plan #S)`. A ruling never accepts out-of-writes paths.
+  then `… +N more`; `--json` `outOfWrites: {paths, allowance?, hint?, grantRefused?}` lists all).
+  Covered paths say `; pre-authorized by allowance plan #S`; `, but grant refused`
+  appears only when a failure observation for this key records a GR2 closure/overlap
+  refusal (`grantRefused: true` in JSON), never for a legacy failure or one recorded
+  before the allowance existed. For newly covered paths whose key already failed,
+  the display says `hint: paths are now pre-authorized; submit a new commit or
+  rerun attest to measure the grant (an active writes failure is attributed first;
+  rerun again after attribution)`.
+  Uncovered paths add `hint: an allow rule {nodes:
+  ["<id>"], writes: ["<dirs>"]} would let owed grant these` to the receipt/why,
+  merge refusal and driver repair/halt text; dirs are deduplicated parent directories
+  with trailing `/` (top-level files stay literal). Hints are generated only for
+  display, never stored in writes observations or their log blobs; failure notes
+  contain only the original outside-writes note plus the first GR2 reason.
+  A ruling never accepts out-of-writes paths.
+- **Granted writes (0.17)**: the receipt shows `Granted writes: <p1>, … (#seq,
+  allowance plan #S)` per grant, first 20 then `… +N more`; JSON `grantedWrites`
+  contains the attempt's complete grant entries. Report, brief's `Downgrades under
+  allowance`, receipt ΔO⁻ and JSON retain grant provenance (`by`, `allowance`).
 - **Receipt card after a rebase**: `Rebased #seq: slot base <from> → <base>`,
   the previously reviewed patch (old base..old commit, submit seq) and
   `Re-review only the resolution: git range-diff <old base>..<old commit>
@@ -2050,7 +2090,9 @@ while genesis items lack observations.
   `--json` has `rebase: {seq, from, base, previous?, rangeDiff?}`.
 - **Status**: trunk, nodes by state, ready list (sorted by number of transitive
   dependents; a ready node whose writes overlap an open slot is marked
-  `(writes overlap open slot of X)`, `--json` `overlaps: {node: [ids]}`), pending queue grouped by discharger (owner / parent+writer /
+  `(writes overlap open slot of X)`, `--json` `overlaps: {node: [ids]}`); a node
+  removed from the plan still owns its dispatch-plan writes while its slot remains
+  open, so dispatch and grants continue to respect that overlap. Pending queue grouped by discharger (owner / parent+writer /
   reviewer / executor), invariant debt on trunk. When refs/heads/<trunk> differs
   from the ledger trunk, a line after the trunk says so: `trunk moved outside
   owed: … ahead of the ledger trunk … by N commits; … owed adopt` (a fast-forward),
