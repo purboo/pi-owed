@@ -20,6 +20,9 @@ export interface CheckSpec {
   /** RC1: K passing runs out of at most N (1 <= need <= runs <= 9); not on red or mutants checks. */
   repeat?: { runs: number; need?: number };
 }
+/** KR: exact failed-test names, owned by a fix node until it merges; never part of an item key. */
+export interface KnownRed { test: string; fix: string }
+export interface InvariantSpec extends CheckSpec { known_red?: KnownRed[] }
 export interface NodeSpec {
   id: string;
   title?: string;
@@ -83,7 +86,7 @@ export interface Plan {
   /** BD3: submit-only limits in MiB on candidate changed blobs; never part of an item key. */
   limits?: { file_mib?: number; diff_mib?: number };
   exec?: ExecConfig;          // present only when env, wrap, parallel, trees or touch is set
-  invariants: CheckSpec[];
+  invariants: InvariantSpec[];
   nodes: NodeSpec[];
   drive?: DriveConfig;        // present only when the plan has a `drive:` block (filled with defaults)
   worktrees?: WorktreesConfig; // D19: present only when the plan has a `worktrees:` block (filled with defaults)
