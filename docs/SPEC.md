@@ -774,9 +774,31 @@ Both name the merge-result and current-trunk probe seqs. These read-only
 projections do not change the candidate's acceptance or create debt from a
 probe alone; a stale failure on another merge key is not projected. Once the
 merge key is waived, the diagnostic disappears and that key can merge.
-The driver halts needing the parent using its existing wording, before attribution attest or
-any writer follow-up, including after restart. These are diagnostics, not
-acceptance or a waiver. Classification is recomputed against current trunk
+In 0.17 (TP), an open candidate is parked while its nonempty set of active
+binding blocks is entirely trunk-red on the current trunk. No halt, writer
+follow-up, reviewer launch or attest is recorded; asking notices still reach
+the parent. A mixed node retains the existing halt/repair behavior, and
+`owed merge` refusals and every acceptance gate are unchanged.
+
+The driver emits one repository-level notify per red state, with once-key
+`trunk-red\0<trunk commit>\0<obligation>\0<sorted failed names>` (names separated
+by NUL). Its text is `trunk-red: <obligation> fails on trunk <trunk12> without
+any candidate (<first 3 failed names, +N>); waiting: <node ids>. Fix trunk with
+a fixing node or a commit adopted with owed adopt[, or run owed sweep to find
+the culprit]; or the owner waives <obligation> on the waiting nodes.` Sweep
+advice appears only with a configured sweep; known_red is not offered for
+checks. Waiting membership is recomputed when pi delivers a queued notice.
+Status and brief `summary.needs` have one `trunk` item per red state with empty
+`command`, and `summary.progress[].phase` is `waiting: trunk-red (<obligation>
+on trunk <trunk12>)`. `why` retains its existing trunk-red hint.
+
+TP5 (parent ruling #1814): the existing in-process once set suppresses repeated
+notices per driver process and once-key; a restarted driver may print one
+repository notice again, but never records a halt for a parked candidate.
+There is no new persistence, entry kind or ledger field. Moving trunk
+invalidates the old probe and resumes the existing attribution/merge
+measurement or rebase route automatically, without a resume entry.
+These are diagnostics, not acceptance or a waiver. Classification is recomputed against current trunk
 and the current check/closure definition; moving trunk invalidates the old
 probe for this purpose. A merge-result fail whose key still matches the guarded
 merge key remains valid evidence even when its base predates an unrelated

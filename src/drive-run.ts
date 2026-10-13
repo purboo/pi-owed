@@ -19,7 +19,7 @@ import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
 import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
-import { halted, projectId, reviewEpoch, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { halted, projectId, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
@@ -966,7 +966,10 @@ export class Driver {
       return async () => {
         noisy = await this.noisyDetail(node, measuredSince);
         // F5: a resume may land while the merge measures or awaits reaping. Decide its refusal on that state.
-        const waiting = waitingFor(await loadState(this.ledger!), node);
+        const current = await loadState(this.ledger!);
+        // TP1 (#1814): refuse the gate without blaming the writer or recording a halt.
+        if (trunkParked(current, node).length) return [report('parked', 'waiting: trunk-red; repository notice follows next pass')];
+        const waiting = waitingFor(current, node);
         if (waiting) return [report('waiting', `merge refused (${e.message}); ${waitingText(node, waiting.after, waiting.resume)}`)];
         if (e.message === MERGE_TRANSIENT) return [report('retry', `merge refused (${e.message}); retry next pass`)];
         // K4: a key the plan update introduced was not measured (the measured observations were kept): the next pass
