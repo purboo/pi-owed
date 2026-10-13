@@ -2,7 +2,7 @@ import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
 import { canonical } from './canon.ts';
-import type { Plan, CheckSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
+import type { Plan, CheckSpec, InvariantSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
@@ -299,12 +299,12 @@ export function parsePlan(text: string): Plan {
   const arr = (v: unknown, label: string): unknown[] => { if (!Array.isArray(v)) { errors.push(`${label}: expected array`); return []; } return v; };
   const strings = (v: unknown, label: string): string[] => arr(v, label).map(x => str(x, label));
   const num = (v: unknown, label: string, min: number): number => { if (typeof v !== 'number' || !Number.isInteger(v) || v < min) { errors.push(`${label}: expected integer >= ${min}`); return min; } return v; };
-  const checks = (v: unknown, label: string): CheckSpec[] => {
+  const checks = (v: unknown, label: string): InvariantSpec[] => {
     const ids = new Set<string>();
     return arr(v ?? [], label).map((x, i) => {
       const p = `${label}[${i}]`, c = obj(x, p), id = str(c.id, `${p}.id`);
       if (ids.has(id)) errors.push(`${p}: duplicate id ${id}`); ids.add(id);
-      const out: CheckSpec = { id, run: str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`) };
+      const out: InvariantSpec = { id, run: str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`) };
       if (c.min_tests !== undefined) out.min_tests = num(c.min_tests, `${p}.min_tests`, 0);
       if (c.red !== undefined) { if (typeof c.red !== 'boolean') errors.push(`${p}.red: expected boolean`); else out.red = c.red; }
       if (c.tests !== undefined) out.tests = strings(c.tests, `${p}.tests`);
@@ -323,6 +323,19 @@ export function parsePlan(text: string): Plan {
         if (runs > 9 || need > runs) errors.push(`${p}.repeat: expected 1 <= need <= runs <= 9`);
         if (out.red || out.mutants !== undefined) errors.push(`${p}.repeat: not allowed on red or mutants checks`);
         out.repeat = { runs, need };
+      }
+      if (c.known_red !== undefined) {
+        if (label !== 'invariants') errors.push(`${p}.known_red: only supported on invariants`);
+        const entries = arr(c.known_red, `${p}.known_red`), names = new Set<string>();
+        if (entries.length > 20) errors.push(`${p}.known_red: at most 20 entries`);
+        out.known_red = entries.map((entry, index) => {
+          const q = `${p}.known_red[${index}]`, e = obj(entry, q);
+          for (const k of Object.keys(e)) if (k !== 'test' && k !== 'fix') errors.push(`${q}.${k}: unknown key`);
+          const test = str(e.test, `${q}.test`), fix = str(e.fix, `${q}.fix`);
+          if (names.has(test)) errors.push(`${q}: duplicate known_red test ${test}`);
+          names.add(test);
+          return { test, fix };
+        });
       }
       return out;
     });
@@ -354,6 +367,7 @@ export function parsePlan(text: string): Plan {
   }
   for (const id of ids.keys()) visit(id);
   const plan: Plan = { version: 1, trunk: str(r.trunk, 'trunk'), closure: strings(r.closure ?? [], 'closure'), invariants: checks(r.invariants, 'invariants'), nodes };
+  for (const inv of plan.invariants) for (const entry of inv.known_red ?? []) if (!ids.has(entry.fix)) errors.push(`invariants: ${inv.id}: known_red fix ${entry.fix} is not a node of this plan`);
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
   if (r.lease !== undefined) { if (typeof r.lease !== 'boolean') errors.push('lease: expected boolean'); else plan.lease = r.lease; }
   if (r.sweep !== undefined) {
@@ -414,8 +428,15 @@ export function loopWarnings(plan: Plan, merged: ReadonlySet<string> = new Set()
 }
 /** The warnings `owed plan` / `owed init` print after the result: check-less nodes (H2.2), then looped checks (L3.3). */
 export const planWarnings = (plan: Plan, merged: ReadonlySet<string> = new Set()): string[] => [...checklessWarnings(plan, merged), ...loopWarnings(plan, merged)];
+/** KR1 (#1484): additions and reassignment are owner-only downgrades; deletion is free. */
+export function knownRedDowngrades(prev: Plan, next: Plan): Downgrade[] {
+  return next.invariants.flatMap(inv => (inv.known_red ?? []).flatMap(entry => {
+    const old = prev.invariants.find(i => i.id === inv.id)?.known_red?.find(e => e.test === entry.test);
+    return old?.fix === entry.fix ? [] : [{ node: 'trunk', what: `inv:${inv.id} known_red ${JSON.stringify(entry.test)} ${old ? `fix changed from ${old.fix} to` : 'added with fix'} ${entry.fix} (owner only)` }];
+  }));
+}
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
-  const out: Downgrade[] = [];
+  const out: Downgrade[] = knownRedDowngrades(prev, next);
   function compare(node: string, before: CheckSpec[], after: CheckSpec[]): void {
     for (const c of before) {
       const n = after.find(x => x.id === c.id);
