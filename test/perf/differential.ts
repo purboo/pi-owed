@@ -23,7 +23,10 @@ const attempt = <T>(f: () => T): unknown => { try { return f(); } catch (e) { re
 
 /** Canonical JSON of the state and of the queries and views on it. */
 export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string {
-  const { r, v } = m, ids = Object.keys(s.nodes).sort(), out: Record<string, unknown> = { state: s };
+  const { r, v } = m, ids = Object.keys(s.nodes).sort(), out: Record<string, unknown> = { state: { ...s, nodes: Object.fromEntries(ids.map(id => {
+    // MO1 adds only derived acceptance tenure; historical acceptance flags, keys and all other fields still compare.
+    const { acceptedSince: _acceptedSince, ...node } = s.nodes[id]!; return [id, node];
+  })) } };
   const prefix = entries.slice(0, s.seq + 1);
   out.genesisJobs = attempt(() => r.genesisJobs(s)); out.genesisProgress = attempt(() => r.genesisProgress(s));
   out.allowanceSeq = r.allowanceSeq(s); out.projectId = attempt(() => r.projectId(s));
@@ -46,7 +49,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       if (waiting.length) status.waiting = waiting;
       status.pending['parent+writer'] = status.pending['parent+writer']!.filter(i => i.obligation !== 'submit' || !wait(i.subject));
     }
-    let text = m === CUR ? curViews.renderStatusFull(status) : v.renderStatus(status);
+    let text = m === CUR ? curViews.renderStatusFull(status as curViews.StatusView).replace(/^Merge queue:.*\n/gm, '') : v.renderStatus(status);
     if (m === BASE) for (const node of ids) {
       const w = wait(node);
       if (w?.deps?.length) text = text.replace(`⏳ ${node}: waiting for ${w.after} (resume #${w.resume})`,`⏳ ${node}: ${curViews.waitingLine(w)}`);

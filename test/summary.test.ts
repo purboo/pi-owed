@@ -68,9 +68,9 @@ test('SQ1 default status shows outcome, each phase and only current parent/owner
   assert.equal(renderStatus(statusView(f.s,f.entries,[],now,true)).includes('ready to dispatch'),false);
 });
 
-test('SQ2 full status preserves the exact 0.14 rendering and default omits audit and empty sections', () => {
+test('SQ2 full status preserves the 0.14 rendering plus the MO merge queue; default omits audit and empty sections', () => {
   const f=fixture(), v=statusView(f.s,f.entries,[],now);
-  const legacy='Trunk main abcdef0123456789\nReady (by dependent count): none\nPending owner:\nnone\nPending parent+writer:\nnone\nPending reviewer:\nnone\nPending executor:\nnone\nTrunk invariants:\nowner flag weak confirmation: #0 genesis';
+  const legacy='Trunk main abcdef0123456789\nReady (by dependent count): none\nMerge queue: none\nPending owner:\nnone\nPending parent+writer:\nnone\nPending reviewer:\nnone\nPending executor:\nnone\nTrunk invariants:\nowner flag weak confirmation: #0 genesis';
   assert.equal(renderStatus(v,{full:true}),legacy);
   assert.equal(renderStatus(v),'owed: 0 merged · 0 in progress · 0 need you · trunk main abcdef012345 ✔ invariants (0/0)\nNeeds you: none\nDetails: owed status --full · owed why <node>');
 });
