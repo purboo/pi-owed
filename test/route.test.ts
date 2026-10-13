@@ -118,7 +118,9 @@ test('F5 running writer gets a ruling steer once, then the same commit can resum
   r.record(a); assert.equal(r.act('running'), undefined);
   r.submit();
   const next = r.act();
-  assert.ok(next?.do === 'launch' && next.role === 'reviewer', JSON.stringify(next));
+  // RR1: unchanged keys carry the original reviewer; deliver its outstanding ruling instead of launching again.
+  assert.ok(next?.do === 'send' && next.rid === R && next.reason === 'ruling' && next.sendKind === 'steer', JSON.stringify(next));
+  assert.equal(next.rulings, rule.seq);
 });
 
 test('F5 ordinary ruling keeps the accepted content and goes to the running reviewer', () => {
