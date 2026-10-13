@@ -1924,8 +1924,9 @@ while genesis items lack observations.
   querying Git facts or dsa. It changes no acceptance state or key and writes no
   ledger entry. Ordinary `report` and its JSON retain their existing fields;
   `--until` is valid only with `--metrics`. Bounds are sequence numbers or ISO
-  timestamps: `since` is exclusive (default start), `until` inclusive (default
-  latest); a reversed pair in the same units is a usage error. Each merge, driver
+  timestamps, including date-only `YYYY-MM-DD` at UTC midnight (0.16, NT1):
+  `since` is exclusive (default start), `until` inclusive (default latest);
+  a reversed pair in the same units is a usage error. Each merge, driver
   halt and parent/owner answer ruling is counted if its own entry is in the
   window. Earlier history supplies timing, attempts and plan comparisons;
   entries after `until` cannot affect results (parent ruling #1486).
@@ -1964,6 +1965,10 @@ while genesis items lack observations.
     `haltReasons` gives the top five `{reason, count}` groups per class, ordered
     by descending count then reason. Normalization collapses whitespace and
     replaces node/run/question/key/commit ids with `<id>` and digits with `<n>`.
+    In 0.16 (NT2), node ids matching `/^[a-z]+$/` are replaced only at the
+    reason start before `:`, before `/`, after `node `, after `--after `, or
+    as the argument of `owed <verb> `; command verbs and ordinary prose such
+    as `merge refused` stay distinct. Other ids keep their prior normalization.
     Text is one block of at most 20 lines: merged count, interruptions and rate,
     submit-to-merge median/p90/max, dispatch-to-merge median/p90, first-pass rate,
     repairs and rate, and the top-five halt reasons for each class. Unavailable
@@ -2004,7 +2009,17 @@ while genesis items lack observations.
   of open nodes. Status and brief share current merge diagnostics, including
   reused trunk-red failures. A defer is current only when the current merge
   guard still honours its invariant key and evidence; an open slot alone does
-  not keep a stale defer in Debt. Historical owner audit remains in full status.
+  not keep a stale defer in Debt. In 0.16 (NT3), when trunk drift or merge-build
+  conflicts prevent rechecking an open candidate, its current-attempt recorded
+  defers remain visible as `<node>/inv:<id>: owner defer (not rechecked: trunk
+  moved)` or `(not rechecked: merge conflicts)`, respectively. Status and brief
+  JSON add `deferred: [{seq, node, id, key, unverified?}]` when non-empty, with
+  `unverified: 'drift' | 'conflict'` only for these unverified records. Retired
+  nodes/invariants and defers from earlier attempts are not revived. A later
+  successful merge-key query filters stale defers as before; this is display
+  only, not acceptance evidence. Brief renders the same current defer `Debt:` lines.
+  NT adds no ledger kinds or fields; 0.15/0.16 share the ledger with unchanged
+  replay states and keys. Historical owner audit remains in full status.
   Empty sections are omitted. The last line is
   `Details: owed status --full · owed why <node>`.
   `status --full` (pi `full: true`) preserves exactly the 0.14 renderer plus
