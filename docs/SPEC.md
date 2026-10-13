@@ -804,8 +804,9 @@ starts a new tenure when accepted, including when evidence is immediately reused
 Unrelated entries, resumes and trunk movement preserve continuous acceptance.
 This is derived State only: incremental replay, packed-state continuation and full
 replay produce identical values. It changes no obligation key, acceptance gate or
-ledger entry kind/field; 0.15 and 0.16 can share the same ledger. New 0.16 plan
-fields still require a 0.16 parser; older owed rejects plans that use them.
+ledger entry kind/field; 0.15 and 0.16 can share the same ledger. The `slot_setup`
+plan field needs 0.16 to take effect; owed 0.15 ignores it as an unknown top-level
+field rather than rejecting the plan.
 
 Removed nodes (0.11, F4, app #27). A node in the state but absent from the
 current plan and not merged has phase `removed` (a merged one stays `merged`).
