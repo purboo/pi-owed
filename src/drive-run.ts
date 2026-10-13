@@ -19,7 +19,7 @@ import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
 import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
-import { halted, projectId, reviewEpoch, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { halted, projectId, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
@@ -142,6 +142,8 @@ export interface ActionReport {
   qid?: string; rev?: number; answerRetry?: true; inProgress?: number;
   /** IR3: separate from trunk drift, revalidated against this invariant/key at pi delivery. */
   invariantRed?: { obligation: string; key: string };
+  /** TP2: full runtime notice identity, including names omitted from the display. Never a ledger field. */
+  once?: string;
   /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
   facts?: number;
   /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
@@ -789,7 +791,7 @@ export class Driver {
     if (r.scope === 'repo' && r.do === 'notify' && r.node === DRIFT_NODE) this.facts.drift = true;
     const rk = reportKey(r);
     if (!this.o.once && (r.outcome === 'notify' || r.outcome === 'busy')) {
-      const key = `${busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${rk}:${r.outcome}`;
+      const key = `${r.once ?? busyKey(r.text ?? r.detail ?? '')}${r.outcome === 'notify' && r.facts !== undefined ? `\u0000${r.facts}` : ''}`, slot = `${rk}:${r.outcome}`;
       if (this.facts.printed.get(slot) === key) return;
       this.facts.printed.set(slot, key);
     // Any other measurement line, `started` included, ends the busy dedup: a started measurement always gets its completion
@@ -879,7 +881,7 @@ export class Driver {
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node, since }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
-        case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
+        case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.once !== undefined ? { once:a.once } : {}), ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
       // F4 (app #31): a failed send names its node, kind and target like any other send line.
@@ -966,7 +968,10 @@ export class Driver {
       return async () => {
         noisy = await this.noisyDetail(node, measuredSince);
         // F5: a resume may land while the merge measures or awaits reaping. Decide its refusal on that state.
-        const waiting = waitingFor(await loadState(this.ledger!), node);
+        const current = await loadState(this.ledger!);
+        // TP1 (#1814): refuse the gate without blaming the writer or recording a halt.
+        if (trunkParked(current, node).length) return [report('parked', 'waiting: trunk-red; repository notice follows next pass')];
+        const waiting = waitingFor(current, node);
         if (waiting) return [report('waiting', `merge refused (${e.message}); ${waitingText(node, waiting.after, waiting.resume)}`)];
         if (e.message === MERGE_TRANSIENT) return [report('retry', `merge refused (${e.message}); retry next pass`)];
         // K4: a key the plan update introduced was not measured (the measured observations were kept): the next pass

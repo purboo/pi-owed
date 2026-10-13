@@ -3,7 +3,7 @@ import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny, driveConfig } from './plan.ts';
 import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor, reportedOf, type Waiting } from './reducer.ts';
-import { genesisProgress, trunkInvariantReds, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq } from './reducer.ts';
+import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
 import type { WaiveEntry } from './types.ts';
@@ -308,7 +308,9 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
       ?? `owed resume ${h.node} --note "<why>"`;
     add(h.node, `driver halted: ${haltReason(h.reason)}`, command);
   }
+  for (const red of trunkParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
   for (const i of Object.values(v.pending).flat()) {
+    if (trunkParked(s, i.subject).length) continue;
     if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
     if (i.obligation === 'driver-halt' || i.obligation === 'dispatch' || v.needsRuling?.some(b => b.node === i.subject && b.obligation === i.obligation)) continue;
     const red = i.subject === 'trunk' ? v.trunkRed?.find(r => r.obligation === i.obligation && r.key === i.key) : undefined;
@@ -336,7 +338,8 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
   const progress = Object.values(v.nodes).filter(n => !n.merged && !v.later?.includes(n.id) && (n.slot?.open || n.phase === 'blocked' || n.phase === 'held')).map(n => {
     const w = v.waiting?.find(w => w.node === n.id);
     const deps = [...new Set([...(w?.deps ?? []), ...(w?.after?.split(', ') ?? [])])];
-    let phase = deps.length ? `waiting for ${deps.join(', ')}`
+    const parked = trunkParked(s, n.id);
+    let phase = parked.length ? `waiting: trunk-red (${[...new Set(parked.map(r => r.merge.obligation))].join(', ')} on trunk ${s.trunk.commit.slice(0, 12)})` : deps.length ? `waiting for ${deps.join(', ')}`
       : n.phase === 'held' || v.halted.some(h => h.node === n.id) || v.needsRuling?.some(b => b.node === n.id) || v.reported?.some(r => r.node === n.id) ? 'held'
       : n.accepted ? 'accepted (merge pending)'
       : !n.candidate || n.phase === 'dispatched' || n.items.some(i => i.status === 'D' && i.discharger === 'writer') ? 'writing'

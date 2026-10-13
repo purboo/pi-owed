@@ -12,6 +12,7 @@ import { OwedError } from './errors.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
 import { answeredQuestion } from './drive.ts';
+import { trunkParkNotices } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
@@ -615,11 +616,23 @@ export class Follower {
     this.collect();
     this.terminals();
     if (this.o.busy?.() || !this.pending.some(p => p.wake)) return undefined;
-    const batch = this.pending.slice(), wakes = batch.filter(p => p.wake && p.check);
+    const batch = this.pending.slice();
+    // TP2: waiting membership can change while pi is busy. Recompute at delivery, dropping resolved states.
+    const parked = batch.filter(p => p.json?.do === 'notify' && p.json.scope === 'repo' && typeof p.json.once === 'string' && p.json.once.startsWith('trunk-red\u0000'));
+    const resolvedPark = new Set<PendingLine>();
+    if (parked.length) {
+      const s = await stateOf(this.o.repo).catch(() => undefined);
+      if (s) for (const p of parked) {
+        const red = trunkParkNotices(s).find(r => r.once === p.json!.once);
+        if (!red) resolvedPark.add(p);
+        else { p.json!.text = red.text; p.text = reportText(p.json!); }
+      }
+    }
+    const wakes = batch.filter(p => p.wake && p.check);
     let keep: boolean[] = wakes.map(() => true);
     if (wakes.length && this.o.revalidate) { try { keep = await this.o.revalidate(wakes.map(p => p.check!)); } catch { /* keep all */ } }
     if (this.stopped || this.o.busy?.()) return undefined;
-    const dropped = new Set(wakes.filter((_, i) => keep[i] === false));
+    const dropped = new Set([...resolvedPark, ...wakes.filter((_, i) => keep[i] === false)]);
     // Nothing reads while a step runs (one step at a time); anything appended after the snapshot stays pending.
     const rest = this.pending.slice(batch.length);
     // A dropped wake that is still its key's current record also drops that record's repeat ride-alongs, and later
