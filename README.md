@@ -176,6 +176,23 @@ When a node check fails on the merge tree, `owed merge` first measures that same
 
 `owed report --metrics [--since <seq|ISO>] [--until <seq|ISO>] [--json]` (0.15) measures merged nodes, interruptions (driver halts plus parent/owner answer rulings) and interruptions per merged node; submit-to-merge median/p90/max and first-dispatch-to-merge median/p90; first-pass acceptance (attempt 1, no block on any candidate); and repairs per merged node. Repairs sum writer submits after the first separately for each attempt, including abandoned attempts, excluding executor carry submits. `since` is exclusive and `until` inclusive; merges and interruptions count by their own entries, while earlier history supplies timing and classification. An ending entry can decide a halt: between the halt and the next resume/submit/merge/abandon/halt, a parent/owner rule naming the node or `*`, answer, waive, defer, abandon, hold, approval, evidence, owner review, or plan change to that node's spec/deps makes it `decision`; otherwise it is `no-decision`. Entries after `until` cannot decide a halt. The short text block lists the top five reasons per class, with digits and ids normalized. JSON returns all numeric summaries (durations in milliseconds, ratios as fractions, unavailable values `null`), per-merge attempts/repairs and per-halt classes, ending sequences and decision sequences; SPEC §9 defines each field. It reads only the ledger and recorded plan blobs, preserves old ledger states and keys, and records nothing. `--until` requires `--metrics`; ordinary `report` output is unchanged.
 
+In 0.16, metrics bounds also accept date-only `YYYY-MM-DD` (UTC midnight).
+Halt normalization preserves plain-word node ids in ordinary prose: ids matching
+`/^[a-z]+$/` become `<id>` only at the reason start before `:`, before `/`, after
+`node ` or `--after `, or as the argument of `owed <verb> `; other ids keep the
+previous behavior. Thus unrelated `merge refused` and `review refused` reasons
+no longer collapse just because nodes have those names.
+
+When trunk drift or a merge-build conflict prevents defer rechecking, default
+status and brief retain the open candidate's current-attempt recorded debt as
+`<node>/inv:<id>: owner defer (not rechecked: trunk moved)` or
+`(not rechecked: merge conflicts)`. Their JSON adds a non-empty `deferred` array
+of `{seq, node, id, key, unverified?}`, with `unverified: 'drift' | 'conflict'`
+for those records. Retired nodes/invariants and older attempts are excluded;
+once the current merge key can be queried, stale defers disappear as before.
+These 0.16 presentation changes add no ledger entry kinds or fields, change no
+keys or gates, and keep 0.15/0.16 ledger replay compatible.
+
 `owed brief [--since <sequence-or-ISO-time>] [--json]` starts with the same outcome line and **Needs you** section as status. It retains its other morning-view sections: **Merged** (per merged node: measured and waived obligation counts, reviewed obligations, untested changes, and reviewers; a waived obligation is never counted as measured), **Rejected or blocked** (active blocks with the node, obligation, failing observation sequence, and how to clear them), **In progress** (dispatched and submitted nodes with their age), and a total line (merged / accepted-unmerged / blocked / ready, plus nodes waiting on dependencies). `--since` limits only the Merged section; the other sections always show the current state. `--json` returns the structured view.
 
 Plans are versioned through `owed plan <file>` / `owed_plan`; `owed plan <file> --rev <commit-ish>` reads the file from a commit (for example the plan kept in trunk) and the plan entry records that commit and path. Parents may strengthen or otherwise update a plan; weakening obligations requires an owner decision and remains visible as a downgrade. Pi owner operations require `ctx.ui.confirm`, record `channel: pi-confirm`, and refuse without UI. CLI owner operations prompt on a terminal. The CLI's `--i-am-owner` flag is a weaker human automation channel, recorded visibly; agents must never use it.

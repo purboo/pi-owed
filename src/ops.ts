@@ -21,7 +21,7 @@ import { editText, editDiff, type EditFields } from './edit.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, knownRedDebt } from './views.ts';
-import type { ReceiptCard, StatusView, Report } from './views.ts';
+import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
 import type { Brief } from './views.ts';
@@ -1163,6 +1163,11 @@ export async function status(o: Context): Promise<StatusView> {
   if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
   return {...view,...(trunkWorktree ? {trunkWorktree} : {})};
 }
+/** NT3: retain only recorded defers for this open attempt and invariants still in the plan. */
+function unverifiedDefers(state: State, id: string, defers: State['deferred'], unverified: 'drift' | 'conflict'): DeferredView[] {
+  const dispatch = state.nodes[id]?.slot?.dispatchSeq ?? Infinity;
+  return defers.filter(d => d.seq > dispatch && state.plan.nodes.some(n => n.id === id) && state.plan.invariants.some(i => i.id === d.id)).map(d => ({...d,unverified}));
+}
 /** SQ: both status and brief use the same current merge diagnostics and defer scope. */
 async function summaryStatusView(cwd: string, dir: string, state: State, entries: Entry[], now: number): Promise<StatusView> {
   const drift = await git.trunkDrift(cwd,state.trunk.name,state.trunk.commit);
@@ -1171,16 +1176,16 @@ async function summaryStatusView(cwd: string, dir: string, state: State, entries
     const subjects = new Set(entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.probe === 'trunk' && e.commit === state.trunk.commit).map(e => e.subject));
     for (const id of subjects) mergeChecks.push(...await currentTrunkRedChecks(cwd,state,id));
   }
-  const currentDefers: State['deferred'] = [];
+  const currentDefers: DeferredView[] = [];
   for (const id of new Set(state.deferred.map(d => d.node))) {
     const n = state.nodes[id], defers = state.deferred.filter(d => d.node === id);
     if (!n?.slot?.open || !n.candidate || n.merged) {
       currentDefers.push(...defers.filter(d => state.invariants.some(i => i.key === d.key && i.obligation === `inv:${d.id}` && i.mark === '⏸' && i.evidence.includes(d.seq))));
       continue;
     }
-    if (drift) continue;
+    if (drift) { currentDefers.push(...unverifiedDefers(state,id,defers,'drift')); continue; }
     const built = await git.buildMerge(cwd,state.trunk.commit,n.candidate.commit,`owed merge ${id}`);
-    if ('conflicts' in built) continue;
+    if ('conflicts' in built) { currentDefers.push(...unverifiedDefers(state,id,defers,'conflict')); continue; }
     const m = await mergeFacts(cwd,state,id,built.commit), guard = mergeGuard(state,id,m);
     currentDefers.push(...defers.filter(d => guard.invItems.some(i => i.key === d.key && i.obligation === `inv:${d.id}` && i.mark === '⏸' && i.evidence.includes(d.seq))));
   }
@@ -1292,7 +1297,7 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
   await applyReports(ledger,state);
   if (typeof since === 'string' && !Number.isFinite(Date.parse(since))) throw new OwedError('since must be a seq or ISO timestamp','usage');
   const now = o.now ?? Date.now(), view = await summaryStatusView(o.cwd,ledger.dir,state,entries,now);
-  return briefView(state,entries,since,now,mergeCoverage(entries,lookup),undefined,view.summary);
+  return {...briefView(state,entries,since,now,mergeCoverage(entries,lookup),undefined,view.summary),...(view.deferred ? {deferred:view.deferred} : {})};
 }
 
 // ---------- driver entries (SPEC §12, D3): persisted before the dsa call ----------
