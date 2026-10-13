@@ -76,7 +76,9 @@ background, showing progress in `owed_status` and sending one message when done.
 (`Genesis attest incomplete: …`), the ledger is initialized; run `owed attest --genesis`, or let the next
 attest/merge measure the missing invariants first.
 
-Dispatch prints the packet and creates `.owed/wt/greeting-1`. Act as the writer in that worktree:
+Dispatch prints the packet and creates `.owed/wt/greeting-1`. Since 0.16 it also runs the plan's `setup` in that worktree before recording dispatch. Optional `slot_setup: "<command>"` overrides `setup` for slots; `slot_setup: false` skips it. Commands use the measurement shell/environment/wrapper (`bash -lc`, `exec.env`, `exec.wrap`, `CI=1 OWED=1 OWED_TREE=<slot worktree>`) and a 600-second timeout. Success adds `Setup: ran \`<command>\` in this worktree (exit 0)` to the packet, escaping the command onto one line (newlines as literal `\n`, backslashes doubled). Failure refuses with the exit code or timeout and the last 20 lines of combined output, rolls back the worktree (including setup artifacts), unchanged branch and newly created directories, and records no entry. Rebase reuses the worktree without rerunning setup (rerun on rebase is deferred). `slot_setup` enters no key and changing it alone invalidates no evidence or candidate; the existing `setup` keys are unchanged. No ledger kind or field is added, so 0.15 and 0.16 share a ledger. The field needs a 0.16 parser: 0.15 ignores unknown top-level fields, including `slot_setup`, and runs no setup at dispatch (parent ruling #1601); mixing versions changes no acceptance, only whether dispatch runs setup.
+
+Act as the writer in that worktree:
 
 ```sh
 cd .owed/wt/greeting-1
