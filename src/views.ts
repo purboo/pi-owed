@@ -675,8 +675,17 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
 /** FH: advisory text only; inspect at most the last 5000 entries and cite at most three other-tree failures. */
 export function mergeFailureHints(s: State, node: string, failures: readonly ObsEntry[]): string[] {
   const named = failures.filter(e => e.verdict === 'fail' && /^(check|inv):/.test(e.obligation) && e.failed?.length);
-  if (!named.length) return [];
-  const history = entriesOf(s).slice(-5000).reverse(), lines: string[] = [];
+  const entries = entriesOf(s), lines: string[] = [], seen = new Set<string>();
+  for (const failure of failures) {
+    if (failure.verdict !== 'fail' || failure.merging !== node || !failure.obligation.startsWith('inv:') || seen.has(failure.obligation)) continue;
+    const pass = entries.findLast((e): e is ObsEntry => e.kind === 'obs' && e.obligation === failure.obligation && e.verdict === 'pass' && e.commit === s.trunk.commit);
+    if (!pass) continue;
+    seen.add(failure.obligation);
+    const paths = s.nodes[node]?.candidate?.changed ?? [];
+    lines.push(`${failure.obligation}: pass on trunk ${s.trunk.commit.slice(0, 12)} (#${pass.seq}) → fail on merge tree ${failure.commit.slice(0, 12)} (#${failure.seq})${paths.length ? `; node diff touches ${paths.slice(0, 3).map(oneLine).join(', ')}${paths.length > 3 ? ` (+${paths.length - 3} more)` : ''}` : ''}`);
+  }
+  if (!named.length) return lines;
+  const history = entries.slice(-5000).reverse();
   const names = [...new Set(named.flatMap(e => e.failed!))];
   for (const name of names) {
     const other = history.filter((e): e is ObsEntry => e.kind === 'obs' && e.verdict === 'fail' && e.failed?.includes(name) === true && named.some(f => f.failed!.includes(name) && f.commit !== e.commit)).slice(0, 3);

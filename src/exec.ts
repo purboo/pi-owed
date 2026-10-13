@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { parse as parseYaml } from 'yaml';
 import type { Plan, AttestJob, ObsEntry, Counts } from './types.ts';
 import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths } from './git.ts';
@@ -88,6 +89,95 @@ function standardCounts(log: string): Counts | undefined {
     return c;
   }
   return undefined;
+}
+/** FG: display-only errors; failed names and measurement verdicts remain unchanged. */
+export interface ErrorGroup { message: string; location?: string; names: string[] }
+const stripAnsi = (text: string): string => text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
+function errorMessage(text: string): string {
+  const line = stripAnsi(text).replace(/\s+/g, ' ').replace(/;/g, ',').trim();
+  return line.length > 160 ? `${line.slice(0, 159)}…` : line;
+}
+function errorLocation(text: string, cwd?: string): string | undefined {
+  let location = text.trim().replace(/^file:\/\//, '').replace(/:(\d+):\d+$/, ':$1');
+  if (location.startsWith('/')) {
+    const prefix = cwd ? `${cwd.replace(/\/$/, '')}/` : undefined;
+    location = prefix && location.startsWith(prefix) ? location.slice(prefix.length) : location.split('/').slice(-3).join('/');
+  }
+  return stripAnsi(location).replace(/\s+/g, ' ').replace(/;/g, ',').trim() || undefined;
+}
+/** Pure extraction with an explicit run directory for executor-only path shortening. */
+function groupsAt(log: string, failed: readonly string[], cwd?: string): { groups: ErrorGroup[]; hasError: boolean } {
+  const wanted = new Set(failed), points: { name: string; message?: string; location?: string; parent?: boolean; at: number }[] = [];
+  const clean = stripAnsi(log).replace(/\r\n/g, '\n'), lines = clean.split('\n');
+  let offset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!, point = /^\s*not ok \d+\s*-\s*(.+)$/.exec(line);
+    if (point && wanted.has(point[1]!)) {
+      const start = /^(\s+)---\s*$/.exec(lines[i + 1] ?? '');
+      let diagnostic: Record<string, unknown> = {}, blockMessage: string | undefined;
+      if (start) {
+        const indent = start[1]!.length, body: string[] = [];
+        for (let j = i + 2; j < lines.length; j++) {
+          const next = lines[j]!;
+          if (next.trim() === '...' && next.search(/\S/) === indent) {
+            try {
+              const parsed: unknown = parseYaml(body.join('\n'), { schema: 'failsafe', logLevel: 'silent' });
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) diagnostic = parsed as Record<string, unknown>;
+            } catch { /* A malformed diagnostic falls back to the failed name. */ }
+            break;
+          }
+          if (next.trim() && next.search(/\S/) < indent) break;
+          body.push(next.slice(indent));
+        }
+        const errorLine = body.findIndex(l => /^error:\s*[|>][-+]?\s*(?:#.*)?$/.test(l));
+        if (errorLine >= 0) {
+          blockMessage = '';
+          for (const next of body.slice(errorLine + 1)) {
+            if (next.trim() && !/^\s/.test(next)) break;
+            if (next.trim()) { blockMessage = next; break; }
+          }
+        }
+      }
+      const raw = typeof diagnostic.error === 'string' ? diagnostic.error : '';
+      // Folded YAML scalars also display their first source line, before YAML joins the lines.
+      const message = raw ? errorMessage(blockMessage ?? raw) : '';
+      points.push({ name: point[1]!, ...(message ? { message } : {}), ...(typeof diagnostic.location === 'string' ? { location: errorLocation(diagnostic.location, cwd) } : {}), parent: diagnostic.failureType === 'subtestsFailed', at: offset });
+    }
+    offset += line.length + 1;
+  }
+  for (const m of clean.matchAll(/^thread '([^']+)' panicked at (.+):\r?\n([^\r\n]*)|^thread '([^']+)' panicked at '(.+)', (.+)\r?$/gm)) {
+    const name = m[1] ?? m[4]!;
+    if (!wanted.has(name)) continue;
+    const message = errorMessage(m[3] ?? m[5]!);
+    points.push({ name, ...(message ? { message } : {}), location: errorLocation(m[2] ?? m[6]!, cwd), at: m.index });
+  }
+  points.sort((a, b) => a.at - b.at);
+  const hasChildError = points.some(p => !p.parent && p.message);
+  const picked = new Map<string, typeof points[number]>();
+  for (const point of points) {
+    if (point.parent && hasChildError) continue;
+    if (!picked.has(point.name) || (!picked.get(point.name)!.message && point.message)) picked.set(point.name, point);
+  }
+  const parents = new Set(points.filter(p => p.parent && hasChildError).map(p => p.name));
+  for (const name of failed) if (!picked.has(name) && !parents.has(name)) picked.set(name, { name, at: clean.length });
+  const groups = new Map<string, ErrorGroup>();
+  for (const point of picked.values()) {
+    const message = point.message ?? '(no error text)', group = groups.get(message);
+    if (group) {
+      group.names.push(point.name);
+      if (group.location !== point.location) delete group.location;
+    } else groups.set(message, { message, ...(point.location ? { location: point.location } : {}), names: [point.name] });
+  }
+  return { groups: [...groups.values()].sort((a, b) => b.names.length - a.names.length), hasError: [...picked.values()].some(p => !!p.message) };
+}
+/** FG1: distinct errors, most common first, then first appearance; no ambient cwd or state. */
+export function errorGroups(log: string, failed: readonly string[]): ErrorGroup[] { return groupsAt(log, failed).groups; }
+function failedTests(log: string, failed: readonly string[], cwd: string): string {
+  const { groups, hasError } = groupsAt(log, failed, cwd);
+  if (!hasError) return `failed tests: ${failed.join(', ')}`;
+  const errors = groups.slice(0, 3).map(g => `"${g.message}"${g.location ? ` (${g.location})` : ''} ×${g.names.length}`).join(' | ');
+  const names = failed.slice(0, 3).map(n => stripAnsi(n).replace(/\s+/g, ' ').replace(/;/g, ',')).join(', ');
+  return `failed tests: ${failed.length} failed, ${groups.length} distinct error(s): ${errors}${groups.length > 3 ? ` (+${groups.length - 3} more errors)` : ''} — ${names}${failed.length > 3 ? ` (+${failed.length - 3} more)` : ''}`;
 }
 const LIMIT = 1024 * 1024;
 /** E2.2: the last `n` non-empty output lines (ANSI colour removed, trailing blanks trimmed), each at most 200 characters. */
@@ -224,7 +314,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       if (repeat && (job.kind === 'red' || spec.red || spec.mutants)) throw new Error('repeat is not allowed on red or mutants checks');
       if (repeat) obs.runs = [];
       let passed = 0, allCompleted = true, allCountsOK = true;
-      const failed = new Set<string>();
+      const failed = new Set<string>(), failureLogs: string[] = [];
       for (let index = 0; index < runs; index++) {
         if (ctx.signal?.aborted) throw new Error('aborted');
         const runStart = Date.now();
@@ -235,6 +325,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         obs.counts = parseCounts(result.log, note => { warnings.push(note); protocolWarnings++; });
         const runFailed = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(result.log);
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
+        if (runFailed.length) failureLogs.push(result.log);
         if (failed.size) obs.failed = [...failed];
         // IR2: facts about this run remain independent of failure names and display-note separators.
         const execution = { completed:false, countOK:false };
@@ -270,7 +361,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
           }
           if (obs.verdict === 'fail' && runFailed.length) {
             const tail = lastLines(result.log, 15);
-            obs.note = `failed tests: ${runFailed.join(', ')}${obs.note && !obs.note.includes('last output:') ? `; ${obs.note}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
+            obs.note = `${failedTests(result.log, runFailed, tree)}${obs.note && !obs.note.includes('last output:') ? `; ${obs.note}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
           }
         } catch (e) {
           execution.completed = false;
@@ -291,7 +382,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
           if (repeat && obs.verdict === 'fail' && failed.size) {
             const tail = lastLines(result.log, 15);
             const reason = obs.note?.split('; last output:')[0]?.replace(/^failed tests: [^;]*;?\s*/, '');
-            obs.note = `failed tests: ${[...failed].join(', ')}${reason ? `; ${reason}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
+            obs.note = `${failedTests(failureLogs.join('\n'), [...failed], tree)}${reason ? `; ${reason}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
           }
           break;
         }

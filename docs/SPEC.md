@@ -787,7 +787,18 @@ Compatibility: owed 0.13 refuses the new `obs.probe` field with code
 probes. Upgrade before replaying it. Existing histories without probes retain their 0.13 replayed states and keys;
 new merge-key waivers require 0.14's validation and scope interpretation.
 
-### Merge refusal hints (0.16, FH)
+### Merge refusal hints (0.16, FH; 0.16.2, TD)
+
+For a failing merge-tree invariant observation measured for the refused node,
+the hints show the latest passing observation of the same obligation on the
+current trunk, even if the failure has no test names:
+`inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`.
+If the node's current candidate has changed paths, append
+`; node diff touches <p1>, <p2>, <p3> (+<N> more)` (at most three paths).
+Without a pass on the current trunk, omit this delta; the existing trunk-red
+hint still applies. Delta lines appear once per obligation after failure text
+and before intermittent-history and fix-candidate hints. The same lines appear
+in merge refusals, driver halts, `why` merge-block hints and merge-check details.
 
 A merge refusal caused by a failing check or invariant observation with named
 tests adds `known intermittent: <name> also failed on #a, #b (other trees)`
@@ -1519,8 +1530,30 @@ red counterfactual stays unchanged. A merge refusal and subsequent driver halt
 carry the stored names and short tail even when the failing merge-key observation
 is reused rather than freshly measured (ruling #1274).
 A failed item's note, `why`, driver halt
-detail and repair message list names first, then a log tail of at most 15
-non-empty lines (ANSI stripped, each at most 200 characters). Failures without
+detail and repair message include a log tail of at most 15
+non-empty lines (ANSI stripped, each at most 200 characters). Since 0.16.2
+(FG), TAP YAML `error` diagnostics and both cargo panic formats group failing
+tests by distinct error text, ordered by group size descending then first
+appearance. TAP quoted/plain scalars are decoded; block scalars (`|`, `|-`,
+`>`, `>-`) display their first non-empty line. A `subtestsFailed` parent is
+omitted from groups when another failing point has an error. Unparsed names
+form a `(no error text)` group. ANSI is stripped, whitespace collapsed,
+semicolons replaced by commas and messages limited to 160 characters with `…`.
+Locations retain `file:line` without a column: absolute paths under the run
+cwd become relative, other absolute paths keep their last three segments.
+A group's location is shown only if every name shares it.
+
+When any group has parsed error text, the single-run and repeat-union
+`obs.note` prefix is
+`failed tests: <N> failed, <K> distinct error(s): "<m1>" (<loc1>) ×<n1> | "<m2>" ×<n2> | … (+<R> more errors) — <name1>, <name2>, <name3> (+<M> more)`.
+Show at most three groups and three names; omit zero-count remainder suffixes
+and absent locations. This segment contains no semicolon, preserving the
+existing prefix parser and `; last output:` tail. Without parsed errors the
+0.16.0 segment is unchanged. The capped `obs.failed` union and full log retain
+the names/evidence used by `why` and intermittent hints. Refusals and halts
+quote the stored grouped note without extracting errors again. Only display
+text changes: 0.16.0, 0.16.1 and 0.16.2 share ledger fields, replay and keys.
+Failures without
 names also receive a bounded tail; existing count-failure notes and the
 5-line no-count command-failure note remain unchanged.
 
