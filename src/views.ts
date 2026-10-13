@@ -496,6 +496,13 @@ export function renderStatus(v: StatusView, options: { full?: boolean } = {}): s
     ...(summary.debt.length ? ['Debt:', ...summary.debt.map(d => `  ${d}`)] : []),
     'Details: owed status --full · owed why <node>'].join('\n');
 }
+/** CR1: act replies retain outcome and current actions; the full lists stay in status. */
+export function renderStatusBrief(v: StatusView): string {
+  const summary = v.summary ?? { merged: v.groups.merged?.length ?? 0, needs: [], progress: [], debt: [] };
+  const head = summaryHead(v.trunk, v.invariants, summary);
+  return [...(summary.needs.length ? head : head.slice(0, 1)),
+    'Details: owed status · owed why <node>'].join('\n');
+}
 function summaryHead(trunk: StatusView['trunk'], invariants: ItemView[], summary: SummaryView): string[] {
   const ok = invariants.filter(i => i.status !== 'D').length;
   return [`owed: ${summary.merged} merged · ${summary.progress.length} in progress · ${summary.needs.length} need you · trunk ${trunk.name} ${trunk.commit.slice(0, 12)} ${ok === invariants.length ? '✔' : '✘'} invariants (${ok}/${invariants.length})`,
