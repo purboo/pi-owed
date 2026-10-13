@@ -145,11 +145,12 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string): { group
     }
     offset += line.length + 1;
   }
-  for (const m of clean.matchAll(/^thread '([^']+)' panicked at (.+):\r?\n([^\r\n]*)|^thread '([^']+)' panicked at '(.+)', (.+)\r?$/gm)) {
+  // Match legacy quoted messages first: they may span lines or end their first line with a colon.
+  for (const m of clean.matchAll(/^thread '([^']+)' panicked at '([\s\S]+?)', ([^\r\n]+:\d+:\d+)\r?$|^thread '([^']+)' panicked at (.+):\r?\n([^\r\n]*)/gm)) {
     const name = m[1] ?? m[4]!;
     if (!wanted.has(name)) continue;
-    const message = errorMessage(m[3] ?? m[5]!);
-    points.push({ name, ...(message ? { message } : {}), location: errorLocation(m[2] ?? m[6]!, cwd), at: m.index });
+    const message = errorMessage(m[2] ?? m[6]!);
+    points.push({ name, ...(message ? { message } : {}), location: errorLocation(m[3] ?? m[5]!, cwd), at: m.index });
   }
   points.sort((a, b) => a.at - b.at);
   const hasChildError = points.some(p => !p.parent && p.message);
