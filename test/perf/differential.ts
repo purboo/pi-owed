@@ -21,6 +21,32 @@ export function frozen(lookup: (sha: string) => Plan): (sha: string) => Plan {
 }
 const attempt = <T>(f: () => T): unknown => { try { return f(); } catch (e) { return `throws: ${e instanceof Error ? e.message : String(e)}`; } };
 
+/** RR1 adapter for the frozen baseline's policy queries only; replay state/keys are never normalized. */
+function reviewEpochView(s: State, entries: Entry[], id: string): State {
+  const n = s.nodes[id]!, c = n.candidate, slot = n.slot;
+  if (!slot?.open || !c) return s;
+  const keys = (facts: CandidateFacts, spec?: NodeSpec) => [
+    (spec?.review.count ?? 0) > 0 ? facts.keys.review : undefined,
+    facts.closureTouched ? facts.keys['closure-review'] : undefined,
+  ];
+  const current = keys(c, s.plan.nodes.find(n => n.id === id));
+  let first = c.seq;
+  for (const e of entries.filter(e => e.seq < c.seq).reverse()) {
+    if (e.kind !== 'submit' || e.node !== id || e.attempt !== slot.attempt) continue;
+    const prior = keys(e.facts, BASE.r.planAt(s, e.seq).nodes.find(n => n.id === id));
+    if (canonical(prior) !== canonical(current)) break;
+    first = e.seq;
+  }
+  // Only the baseline launch ordering used by reviewerBase/reviewPacket changes. Candidate seq/text stays current.
+  const runs = n.runs.map(ar => ar.attempt !== slot.attempt ? ar : { ...ar,
+    launches: ar.launches.map(l => l.role === 'reviewer' && l.seq > first ? { ...l, seq: c.seq + 1 } : l),
+  });
+  // Preserve the frozen reducer's non-enumerable replay metadata for its packet's entriesOf/applicableRules queries.
+  const view = Object.create(Object.getPrototypeOf(s), Object.getOwnPropertyDescriptors(s)) as State;
+  view.nodes = { ...s.nodes, [id]: { ...n, runs } };
+  return view;
+}
+
 /** Canonical JSON of the state and of the queries and views on it. */
 export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string {
   const { r, v } = m, ids = Object.keys(s.nodes).sort(), out: Record<string, unknown> = { state: { ...s, nodes: Object.fromEntries(ids.map(id => {
@@ -68,12 +94,22 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
     const n = s.nodes[id]!, q: Record<string, unknown> = {};
     q.attestJobs = attempt(() => r.attestJobs(s, id).map(j => [j, r.jobCurrent(s, j)]));
     q.overlapping = attempt(() => r.overlapping(s, id)); q.halted = r.halted(s, id); q.resume = r.resumeOf(s, id); q.waiting = m === BASE ? wait(id) : r.waitingFor(s, id);
-    q.nextReviewerN = r.nextReviewerN(s, id); q.reviewerBase = r.reviewerBase(s, id);
+    q.nextReviewerN = r.nextReviewerN(s, id);
+    const reviewState = m === BASE ? reviewEpochView(s, prefix, id) : s;
+    q.reviewerBase = r.reviewerBase(reviewState, id);
     q.observations = n.items.map(i => r.observationsOf(s, i.subject, i.obligation, i.key).map(e => e.seq));
     q.blocks = n.blocks.map(b => [r.parentRuling(s, b)?.seq, r.awaitingRuling(s, b)]);
     if (n.candidate) q.mergeGuard = attempt(() => r.mergeGuard(s, id, { facts: { ...n.candidate!, base: s.trunk.commit }, state: { commit: n.candidate!.commit, tree: n.candidate!.tree, invKeys: { ...s.trunk.invKeys } } }));
     q.receipt = attempt(() => {
       const card = v.receipt(s,prefix,id);
+      // RR3: only satisfied review receipt presentation adopts latest qualifying evidence per principal.
+      // The state, mergeGuard and every other evidence list above still compare exactly to 0.10.
+      if (m === BASE) for (const i of card.items) {
+        if (i.status !== 'E' || (i.obligation !== 'review' && i.obligation !== 'closure-review')) continue;
+        i.observations = i.observations.filter(e => e.kind !== 'review' || !i.observations.some(later =>
+          later.kind === 'review' && later.by === e.by && later.seq > e.seq));
+        i.evidence = i.observations.map(e => e.seq);
+      }
       if (m === BASE && wait(id)) {
         const w = wait(id)!;
         // The new line is the FL1 contract; the rest remains the historical renderer.
@@ -87,7 +123,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       return rendered(v.renderReceipt(card));
     });
     q.owner = attempt(() => v.ownerCommands(s, id));
-    if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(s, id));
+    if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(reviewState, id));
     out[`node:${id}`] = q;
   }
   return canonical(out);
