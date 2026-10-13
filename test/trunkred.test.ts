@@ -33,8 +33,7 @@ if grep -q broken flag; then
 else echo '# tests 1'; echo '# pass 1'; fi\n`;
     await commitAt(r.cwd, { flag: 'clean', impl: 'base', 'check.sh': check });
     const spec = { id: 'runtime', run: 'bash check.sh', reads: ['flag', 'impl', 'check.sh'], min_tests: 1 };
-    // Keep the measurement-only marker out of the candidate's git add and declared writes.
-    const plan = { version: 1, trunk: 'main', lease: false, slot_setup: false, setup: 'touch setup-ready', exec: { env: { TR_ENV: 'same' } }, closure: [], invariants: options.invariant ? [spec] : [], nodes: [{ id: 'a', writes: ['impl'], checks: options.invariant ? [] : [spec] }] };
+    const plan = { version: 1, trunk: 'main', lease: false, setup: 'touch setup-ready', exec: { env: { TR_ENV: 'same' } }, closure: [], invariants: options.invariant ? [spec] : [], nodes: [{ id: 'a', writes: ['impl'], checks: options.invariant ? [] : [spec] }] };
     await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated' });
     const a = await ops.dispatch({ cwd: r.cwd, node: 'a', as: parent });
     const candidate = await commitAt(a.worktree, { impl: 'candidate' });

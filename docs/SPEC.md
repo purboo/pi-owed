@@ -1815,7 +1815,24 @@ Success adds exactly one packet line `Setup: ran \`<command>\` in this worktree
 last 20 combined output lines, removes the unrecorded worktree including setup
 artifacts, deletes its unchanged branch and newly created parent directories
 through the existing rollback path, and appends no entry. Rollback failures
-still name every failed step. Rebase reuses the worktree and does not rerun
+still name every failed step.
+
+Setup outputs must never enter a candidate (SS5, parent ruling #1607). Compare
+`git status --porcelain -z --untracked-files=normal` before and after setup.
+A successful command that leaves a modified, deleted, renamed or other changed
+tracked path refuses dispatch with those paths and rolls back as above. Every
+new untracked, not-ignored status path is appended once to the common
+`info/exclude` as an anchored `/<path>` literal rule (directories retain Git's
+trailing `/`). Glob characters, backslashes, leading `!`/`#` and trailing spaces
+are escaped; newline/carriage-return paths cannot be represented and refuse
+with one-line escaped paths and the same rollback. Existing excludes are
+preserved, already ignored outputs need no new rule, and repeat dispatches do
+not duplicate rules. Added rules remain in the common excludes for all
+worktrees. When rules are added, the packet line ends
+`(exit 0; excluded: /a, /b)` instead of `(exit 0)`; paths use the same one-line
+escaping. Dispatch serializes exclude writes with its existing operation lock
+and publishes them only after the ledger CAS/guard succeeds, before appending
+its unchanged dispatch entry. Rebase reuses the worktree and does not rerun
 setup; rerunning on rebase is deferred.
 
 `slot_setup` is a plan field only (non-empty string or `false`); it enters no
