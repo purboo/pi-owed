@@ -4,7 +4,7 @@
 import { canonical, sha256 } from './canon.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
-import { applicableRules, attestJobs, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
+import { mergeQueue, applicableRules, attestJobs, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -490,6 +490,14 @@ const reviewerN = (l: LaunchEntry): number => Number(l.rid.slice(l.rid.lastIndex
 /** Status order of `owed status`: more dependents first, then id. */
 const byStatusOrder = (a: NodeState, b: NodeState): number => b.dependents - a.dependents || a.id.localeCompare(b.id);
 
+/** MO2: replace only merge positions, keeping all other actions in status order. */
+function orderMergeActions(s: State, actions: Action[]): Action[] {
+  const ranks = new Map(mergeQueue(s).map((id, i) => [id, i]));
+  const merges = actions.filter(a => a.do === 'merge').sort((a, b) => ranks.get(a.node)! - ranks.get(b.node)!);
+  let i = 0;
+  return actions.map(a => a.do === 'merge' ? merges[i++]! : a);
+}
+
 /**
  * The actions of one pass (contract D1/D4/D10/D11): per open attempt the first matching row of the policy table, then
  * dispatches of ready nodes while open attempts < `max`. Pure: equal inputs give deep-equal outputs; inputs are not
@@ -523,7 +531,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
     taken.push(writes(n.id));
   }
   for (const red of trunkInvariantReds(s)) out.push({ do:'notify', node:red.obligation, scope:'repo', invariantRed:{obligation:red.obligation,key:red.key}, text:red.text, once:`inv-red\u0000${red.obligation}\u0000${red.key}` });
-  return out;
+  return orderMergeActions(s, out);
 }
 
 /** QN1: a durable answer covers that question at its recorded revision and older revisions. */

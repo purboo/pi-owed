@@ -252,6 +252,8 @@ export interface NodeState {
   items: ItemView[];          // obligations on the current candidate (empty before submit)
   blocks: Block[];
   accepted: boolean;
+  /** MO1: seq since this current candidate has been continuously accepted; derived, never a ledger field. */
+  acceptedSince?: number;
   dependents: number;         // transitive dependents count (for ready ordering)
   writers: string[];          // every writer principal that ever held a slot of this node
   merged?: { seq: number; commit: string };
