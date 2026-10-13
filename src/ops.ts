@@ -1,4 +1,4 @@
-import { readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod } from 'node:fs/promises';
+import { readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod, truncate } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { serialize, deserialize } from 'node:v8';
 import { performance } from 'node:perf_hooks';
@@ -786,16 +786,25 @@ async function appendSlotExcludes(exclude: string, lines: string[]): Promise<() 
   if (!added.length) return noop;
   const suffix = Buffer.from(`${text.endsWith('\n') ? '' : '\n'}${added.join('\n')}\n`);
   const written = Buffer.concat([before ?? Buffer.alloc(0), suffix]);
-  await appendFile(exclude, suffix);
-  return async () => {
-    const current = await readFile(exclude);
-    // Never overwrite another writer's edits. A later append can be retained after removing our own suffix.
-    if (!current.subarray(0, written.length).equals(written)) return 'common info/exclude changed; cannot safely remove this dispatch\'s lines';
+  const undo = async (partial = false): Promise<string | undefined> => {
+    let current: Buffer;
+    try { current = await readFile(exclude); } catch (e) {
+      if (before === undefined && (e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw e;
+    }
+    // On append failure even a prefix of the suffix is ours; retain the same guard against unrelated edits.
+    const length = partial ? Math.min(current.length, written.length) : written.length;
+    if (length < (before?.length ?? 0) || !current.subarray(0, length).equals(written.subarray(0, length))) return 'common info/exclude changed; cannot safely remove this dispatch\'s lines';
     const restored = Buffer.concat([before ?? Buffer.alloc(0), current.subarray(written.length)]);
     if (before === undefined && !restored.length) await unlink(exclude);
+    else if (partial && before !== undefined && current.length <= written.length) await truncate(exclude, before.length);
     else await writeFile(exclude, restored);
     return undefined;
   };
+  // The caller cannot receive undo until append succeeds: clean partial/full writes here before rethrowing.
+  try { await appendFile(exclude, suffix); }
+  catch (error) { throw await rolledBack(error, [['setup exclude cleanup', () => undo(true)]]); }
+  return () => undo();
 }
 /** SS6: a tracked ignore negation has higher precedence than common excludes, even inside collapsed directories. */
 async function verifySlotExcludes(worktree: string, paths: string[]): Promise<void> {
