@@ -618,13 +618,12 @@ export class Follower {
     if (this.o.busy?.() || !this.pending.some(p => p.wake)) return undefined;
     const batch = this.pending.slice();
     // TP2: waiting membership can change while pi is busy. Recompute at delivery, dropping resolved states.
-    const parked = batch.filter(p => p.json?.do === 'notify' && p.json.scope === 'repo' && typeof p.json.text === 'string' && p.json.text.startsWith('trunk-red: check:') && p.json.text.includes('without any candidate'));
+    const parked = batch.filter(p => p.json?.do === 'notify' && p.json.scope === 'repo' && typeof p.json.once === 'string' && p.json.once.startsWith('trunk-red\u0000'));
     const resolvedPark = new Set<PendingLine>();
     if (parked.length) {
       const s = await stateOf(this.o.repo).catch(() => undefined);
       if (s) for (const p of parked) {
-        const prefix = String(p.json!.text).split('; waiting:')[0];
-        const red = trunkParkNotices(s).find(r => r.text.split('; waiting:')[0] === prefix);
+        const red = trunkParkNotices(s).find(r => r.once === p.json!.once);
         if (!red) resolvedPark.add(p);
         else { p.json!.text = red.text; p.text = reportText(p.json!); }
       }

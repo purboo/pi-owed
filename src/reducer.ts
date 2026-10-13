@@ -618,11 +618,11 @@ export function trunkRedOf(s: State, seq: number, key?: string): { merge: ObsEnt
   if (!probe || probe.verdict !== 'fail' || (names.length ? !names.every(n => trunkNames.includes(n)) : trunkNames.length !== 0)) return undefined;
   return { merge: e, probe };
 }
-/** TP1: parked is derived only from nonempty, entirely trunk-red active binding blocks. */
+/** TP1: parked is derived only from nonempty, entirely trunk-red binding blocks (active or flaky). */
 export function trunkParked(s: State, node: string): { merge: ObsEntry; probe: ObsEntry }[] {
   const n = s.nodes[node];
   if (!n?.slot?.open || !n.candidate || n.merged || n.phase === 'removed') return [];
-  const blocks = n.blocks.filter(b => b.state === 'active');
+  const blocks = n.blocks.filter(b => binding(b, nodeSpec(s, node)));
   const reds = blocks.map(b => trunkRedOf(s, b.seq, b.key));
   return blocks.length && reds.every(r => r !== undefined) ? reds as { merge: ObsEntry; probe: ObsEntry }[] : [];
 }

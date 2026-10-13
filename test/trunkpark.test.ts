@@ -21,12 +21,12 @@ const owner = { role: 'owner', id: 'pi' } as const;
 const parent = { role: 'parent', id: 'test' } as const;
 const FAKE = fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url));
 const options = (root: string): DriveOpts => ({ max: 2, repairs: 2, project: 'fixture', root, applied: new Set(), rejected: new Map() });
-async function fixture(ids = ['a', 'b'], launch = false) {
+async function fixture(ids = ['a', 'b'], launch = false, failedByNode: Record<string, string[]> = {}) {
   const r = await repo();
   try {
     await commitAt(r.cwd, { flag: 'clean', ...Object.fromEntries(ids.map(id => [`${id}.txt`, 'base'])) });
     const check = { id: 'runtime', run: `if grep -q broken flag; then echo 'owed-counts {"pass":0,"fail":4,"failed":["old bug","b bug","c bug","d bug"]}'; exit 1; else echo 'owed-counts {"pass":4,"fail":0}'; fi`, reads: ['flag'], min_tests: 1 };
-    const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [], drive: { min_free_mb: 0 }, nodes: ids.map(id => ({ id, writes: [`${id}.txt`], checks: [check] })) };
+    const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [], drive: { min_free_mb: 0 }, nodes: ids.map(id => ({ id, writes: [`${id}.txt`], checks: [{ ...check, run: failedByNode[id] ? check.run.replace(JSON.stringify(['old bug', 'b bug', 'c bug', 'd bug']), JSON.stringify(failedByNode[id])) : check.run }] })) };
     await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated' });
     const dir = join(r.root, 'dsa'); await mkdir(join(dir, 'agents'), { recursive: true });
     const dsa = new Dsa({ bin: FAKE, env: { FAKE_DSA_DIR: dir, ...identity }, timeoutMs: 30_000 });
@@ -82,6 +82,28 @@ test('TP1: a mixed trunk-red and genuine execution block still halts by the old 
     const mixed = await r.state(); assert.equal(trunkParked(mixed, 'a').length, 0);
     const actions = decide(mixed, s.plan, new Map(), options(r.cwd));
     assert.equal(actions.length, 1); assert.equal(actions[0]!.do, 'halt');
+  } finally { await r.cleanup(); }
+});
+
+test('TP1/P1: genuine flaky debt plus an active trunk-red block must halt, not park', async () => {
+  const r = await fixture(['a']);
+  try {
+    await r.refuse('a');
+    const measured = (await r.ledger.read()).find((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'a' && e.obligation === 'check:runtime')!;
+    const { seq, ts, prev, hash, ...draft } = measured;
+    const failed = { ...draft, verdict: 'fail' as const, exit: 1, failed: ['candidate intermittent regression'], note: 'genuine candidate flaky debt' };
+    await r.ledger.withLock(() => r.ledger.append([failed]));
+    await r.ledger.withLock(() => r.ledger.append([{ ...draft, verdict: 'pass', exit: 0, attribution: true }]));
+    const flaky = (await r.state()).nodes.a!.blocks.find(b => b.key === measured.key)!;
+    assert.equal(flaky.state, 'flaky', 'passing attribution preserves binding flaky debt');
+    const s = await r.state();
+    assert.ok(s.nodes.a!.blocks.some(b => b.state === 'active' && reducer.trunkRedOf(s, b.seq, b.key)));
+    assert.ok(s.nodes.a!.blocks.some(b => b.state === 'flaky' && !reducer.trunkRedOf(s, b.seq, b.key)));
+    assert.equal(trunkParked(s, 'a').length, 0);
+    assert.deepEqual(trunkParkNotices(s), []);
+    const actions = decide(s, s.plan, new Map(), options(r.cwd));
+    assert.equal(actions.length, 1); assert.equal(actions[0]!.do, 'halt');
+    assert.equal((await ops.status({ cwd: r.cwd })).summary!.progress[0]!.phase.includes('waiting: trunk-red'), false);
   } finally { await r.cleanup(); }
 });
 
@@ -161,12 +183,40 @@ test('TP1: parked questions still notify and sweep guidance appears only with sw
   } finally { await r.cleanup(); }
 });
 
+test('TP2/P2: full once-key separates queued groups with identical truncated failed-name displays', async () => {
+  const r = await fixture(['a', 'b'], false, { a: ['a', 'b', 'c', 'd'], b: ['a', 'b', 'c', 'e'] });
+  try {
+    for (const id of r.ids) await r.refuse(id);
+    const groups = trunkParkNotices(await r.state());
+    assert.equal(groups.length, 2); assert.notEqual(groups[0]!.once, groups[1]!.once);
+    assert.equal(groups[0]!.text.split('; waiting:')[0], groups[1]!.text.split('; waiting:')[0]);
+    const result = await driveOnce({ cwd: r.cwd, dsa: r.dsa, json: true });
+    assert.equal(result.error, undefined);
+    const notices = result.lines.map(line => JSON.parse(line) as { do?: string; scope?: string; once?: string; text?: string }).filter(line => line.do === 'notify' && line.scope === 'repo' && line.text?.includes('without any candidate'));
+    assert.equal(notices.length, 2);
+    assert.deepEqual(notices.map(n => n.once).sort(), groups.map(g => g.once).sort(), 'actual driver JSON retains the full group identity');
+    const log = join(r.root, 'collision.jsonl');
+    await writeFile(log, notices.map(n => JSON.stringify(n)).join('\n') + '\n');
+    let busy = true; const delivered: string[] = [];
+    const follower = new Follower({ repo: r.cwd, log, pid: process.pid, from: 0, busy: () => busy, deliver: text => { delivered.push(text); } });
+    try {
+      assert.equal(await follower.step(), undefined);
+      await ops.abandon({ cwd: r.cwd, node: 'a', as: parent, reason: 'resolve only group ending in d' });
+      busy = false; await follower.step();
+      assert.equal(delivered.length, 1);
+      const redLines = delivered[0]!.split('Details:')[1]!.split('\n').filter(l => l.includes('without any candidate'));
+      assert.equal(redLines.length, 1, 'resolved d group must not borrow the remaining e group');
+      assert.match(redLines[0]!, /waiting: b\./); assert.doesNotMatch(redLines[0]!, /waiting: a/);
+    } finally { follower.stop(); }
+  } finally { await r.cleanup(); }
+});
+
 test('TP2: queued notice recomputes waiting nodes at pi delivery', async () => {
   const r = await fixture();
   try {
     for (const id of r.ids) await r.refuse(id);
-    const text = trunkParkNotices(await r.state())[0]!.text, log = join(r.root, 'driver.jsonl');
-    await writeFile(log, JSON.stringify({ do: 'notify', node: 'check:runtime', scope: 'repo', outcome: 'notify', text }) + '\n');
+    const { text, once } = trunkParkNotices(await r.state())[0]!, log = join(r.root, 'driver.jsonl');
+    await writeFile(log, JSON.stringify({ do: 'notify', node: 'check:runtime', scope: 'repo', outcome: 'notify', text, once }) + '\n');
     let busy = true; const delivered: string[] = [];
     const follower = new Follower({ repo: r.cwd, log, pid: process.pid, from: 0, busy: () => busy, deliver: text => { delivered.push(text); } });
     try {
