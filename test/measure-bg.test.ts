@@ -498,6 +498,9 @@ test('item 7: a ruling follow-up dsa rejects halts in the same pass (the log say
     assert.match(out, /^send follow-up \(ruling\) to \S+ \[\S+\]: rejected — fault; halted$/m, out);
     const added = (await f.entries()).slice(before);
     assert.deepEqual(added.map(e => e.kind === 'send' ? `send ${e.reason}` : e.kind), ['send ruling', 'halt'], 'the halt is recorded in the same pass');
-    assert.match((added[1] as Extract<Entry, { kind: 'halt' }>).reason, /^dsa rejected send \S+ \(to:"w1\/main"\): fault; this attempt's request is fixed/, '0.8 (L1.4): the halt names the call address');
+    const reason = (added[1] as Extract<Entry, { kind: 'halt' }>).reason;
+    assert.match(reason, /^dsa rejected send \S+ \(to:"w1\/main"\): fault; the attempt is not lost:/, 'L1.4/SR4: keep the call address with recoverable-send guidance');
+    assert.match(reason, /`owed resume v`/);
+    assert.doesNotMatch(reason, /start a new attempt/);
   } finally { await f.done(); }
 });

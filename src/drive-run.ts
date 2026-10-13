@@ -1,7 +1,7 @@
 // owed drive: the executor and the loop (SPEC §12.7, contract D6/D7/D9). One pass = load the ledger state, describe
 // every live launch of the open attempts, `decide` (pure, src/drive.ts), execute the actions in order. Persist before
 // submit: a launch/send entry is appended before the dsa call, and a retry re-sends the stored bytes with the same id.
-// Verdicts (dsa rejections and conflicts, merge refusals, attest errors) are written to the ledger in the pass that meets
+// Verdicts (except rejected steers, decided next pass by SR1/SR2) are written to the ledger in the pass that meets
 // them (D14); what this process keeps across passes are caches of dsa's answers (applied sends, follow-up generations),
 // so losing it (a crash, a restart) is harmless: the ledger plus `describe` re-derive the state.
 import { spawn } from 'node:child_process';
@@ -451,7 +451,7 @@ export class Driver {
   }
 
   /**
-   * Describe live runs of open attempts, plus any run with a prospective notice due even while halted or measuring;
+   * Describe live runs of open attempts (including halted ones, HA1), plus any run with a prospective notice due while measuring;
    * ask dsa about recorded sends not yet confirmed; read the
    * stored bytes `decide` may need for retries. `rejected`: the attempt's sends dsa decided rejected (every pass; cached
    * once terminal) and the runs and sends rejected in this process.
@@ -465,7 +465,7 @@ export class Driver {
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), epoch = reviewEpoch(s, n.id);
       if (!ar) continue;
       const policy = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
-      const normal = !halted(s, n.id) && !measuring.has(n.id);
+      const normal = !measuring.has(n.id); // HA1: halted attempts still need live run views for asking notices.
       const noticeDue = (rid: string): boolean => {
         const notices = ar.sends.filter(x => x.rid === rid && x.reason === 'ruling' && x.sendKind === 'notify');
         const seen = Math.max(-1, ...notices.map(x => x.rulings ?? -1));
@@ -497,7 +497,8 @@ export class Driver {
       }
       // G3.2: after the sends are confirmed, so a restarted driver knows which follow-ups dsa applied.
       for (const [rid, r] of raw) {
-        await this.restartGen(ar.sends, r, ledger);
+        // HA1: halted nodes are observed for questions only; do not even replay an applied follow-up to them.
+        if (!halted(s, n.id)) await this.restartGen(ar.sends, r, ledger);
         runs.set(rid, this.current(r.view, r.gen));
       }
       // G3.7: the files the previous candidate conflicts on, only when row 8 sends a rebase instruction (review #680 b).
@@ -856,17 +857,18 @@ export class Driver {
             return done('applied', true, a.send ? 're-sent' : undefined, x);
           }
           if (r.outcome === 'rejected') this.facts.refused.set(id, r.reason);
-          // D22.3: a rejected ruling steer (e.g. the call sealed meanwhile) is logged only: no halt, never retried as a
-          // steer. Review #784 F1: it does not count as delivered, so the writer's next follow-up (submit, rebase, repair
-          // or ruling) carries its rulings; reviewers get them through the rulings obligation. A rejected ruling
-          // follow-up halts like any other send (as decide would on the next pass).
+          // SR3: a rejected steer is logged and cached, not halted here: next pass's row 4 applies SR1/SR2.
+          // D22.3 keeps its stronger ruling-steer exemption: its undelivered rulings travel with the next follow-up.
+          // Rejected follow-ups and notices keep their action-time behavior.
           if ((r.outcome === 'rejected' || r.outcome === 'conflict') && a.reason === 'ruling' && a.sendKind === 'notify') {
             const reason = r.outcome === 'rejected' ? r.reason : 'dsa request-conflict';
             this.facts.refused.set(id, reason);
             return done(r.outcome, false, `${reason}; prospective notice not retried, no halt`, x);
           }
           if (r.outcome === 'rejected' && a.reason === 'waiting') return done('rejected', false, `${r.reason}; waiting notice not retried`, x);
-          if (r.outcome === 'rejected' && a.reason === 'ruling' && a.sendKind === 'steer') return done('rejected', false, `${r.reason}; not retried as a steer (the writer's next follow-up carries these rulings; reviewers get them through the rulings obligation)`, x);
+          if (r.outcome === 'rejected' && a.sendKind === 'steer') return done('rejected', false, a.reason === 'ruling'
+            ? `${r.reason}; not retried as a steer (the writer's next follow-up carries these rulings; reviewers get them through the rulings obligation)`
+            : `${r.reason}; no halt in this pass; next pass checks whether this steer was superseded or its run sealed`, x);
           // 0.8 (L1.4): the halt names the run's call address when describe reported one.
           const to = callAt({ rid: a.rid, state: 'running', ...(this.facts.lastTo.has(a.rid) ? { to: this.facts.lastTo.get(a.rid)! } : {}) });
           if (r.outcome === 'rejected') { await this.halt(a.node, a.attempt, rejectedHalt(a.node, 'send', `${id}${to}`, r.reason)); return done('rejected', false, `${r.reason}; halted`, x); }
