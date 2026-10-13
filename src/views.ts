@@ -256,7 +256,7 @@ function outsideWrites(s: State, node: string): ReceiptCard['outOfWrites'] {
   const failure = observationsOf(s,node,'writes',writes.key).findLast(o => o.verdict === 'fail');
   // Only a recorded GR2 refusal demonstrates an attempted grant; an old writes failure does not.
   const grantRefused = covered && !!failure?.note && /; (under closure|overlaps open node [^\n]+)$/.test(failure.note);
-  const hint = grantHint(s,node,paths) ?? (covered && !grantRefused ? 'hint: paths are now pre-authorized; submit a new commit or rerun attest to measure the grant (an active writes failure is attributed first; rerun again after attribution)' : undefined);
+  const hint = grantHint(s,node,paths) ?? (covered && !grantRefused ? 'hint: paths are now pre-authorized; submit a new commit (any change, e.g. an amended commit message) so the writes item is measured again under the new allow rule' : undefined);
   return paths.length ? { paths, ...(covered ? { allowance: seq } : {}), ...(grantRefused ? { grantRefused: true } : {}), ...(hint ? { hint } : {}) } : undefined;
 }
 /** Out-of-writes paths shown in the receipt card (D21.5); the JSON keeps them all. */

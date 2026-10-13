@@ -1090,8 +1090,10 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
       const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === o.node && n.blocks.some(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky') && b.seq === e.seq));
       const hints = mergeFailureHints(state,o.node,failures);
-      if (trunkRed.length) throw new OwedError([...trunkRed, ...hints].join('; '));
-      throw new OwedError([`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; ') + (n.items.some(i => i.obligation === 'writes' && i.status === 'D') && grantHint(state,o.node) ? `\n${grantHint(state,o.node)}` : ''));
+      const writesHint = n.items.some(i => i.obligation === 'writes' && i.status === 'D') ? grantHint(state,o.node) : undefined;
+      const suffix = writesHint ? `\n${writesHint}` : '';
+      if (trunkRed.length) throw new OwedError([...trunkRed, ...hints].join('; ') + suffix);
+      throw new OwedError([`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; ') + suffix);
     }
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     // IR1: trunk measurements persist even if the later merge guard refuses.
