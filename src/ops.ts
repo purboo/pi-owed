@@ -971,11 +971,10 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     const n = candidate(state,o.node);
     if (!n.accepted) {
       const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
-      if (trunkRed.length) {
-        const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && n.blocks.some(b => b.state === 'active' && b.seq === e.seq));
-        throw new OwedError([...trunkRed, ...mergeFailureHints(state,o.node,failures)].join('; '));
-      }
-      throw new OwedError(`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
+      const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === o.node && n.blocks.some(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky') && b.seq === e.seq));
+      const hints = mergeFailureHints(state,o.node,failures);
+      if (trunkRed.length) throw new OwedError([...trunkRed, ...hints].join('; '));
+      throw new OwedError([`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; '));
     }
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     // IR1: trunk measurements persist even if the later merge guard refuses.
@@ -1217,14 +1216,15 @@ async function currentTrunkRedChecks(cwd: string, s: State, id: string): Promise
 /** FH: hints for persisted failures on current merge keys, including invariants without node execution blocks. */
 async function hintedMergeChecks(cwd: string, s: State, id: string, existing: ItemView[]): Promise<ItemView[]> {
   const n = s.nodes[id], entries = entriesOf(s).slice(-5000);
-  if (!n?.slot?.open || !n.candidate || n.merged || !entries.some(e => e.kind === 'obs' && e.merging === id && e.verdict === 'fail' && e.failed?.length)) return existing;
+  if (!n?.slot?.open || !n.candidate || n.merged || !entries.some(e => e.kind === 'obs' && (e.merging === id || e.obligation.startsWith('inv:')) && e.verdict === 'fail' && e.failed?.length)) return existing;
   if (await git.trunkDrift(cwd,s.trunk.name,s.trunk.commit)) return existing;
   const built = await git.buildMerge(cwd,s.trunk.commit,n.candidate.commit,`owed merge ${id}`);
   if ('conflicts' in built) return existing;
   const g = mergeGuard(s,id,await mergeFacts(cwd,s,id,built.commit)), out = [...existing];
   for (const i of [...g.nodeItems, ...g.invItems]) {
     if (i.status !== 'D') continue;
-    const failures = entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === id && e.subject === i.subject && e.obligation === i.obligation && e.key === i.key && i.evidence.includes(e.seq));
+    // Invariant verdicts belong to the trunk/key and can come from another node's merge.
+    const failures = entries.filter((e): e is ObsEntry => e.kind === 'obs' && (e.merging === id || i.obligation.startsWith('inv:')) && e.subject === i.subject && e.obligation === i.obligation && e.key === i.key && i.evidence.includes(e.seq));
     const hints = mergeFailureHints(s,id,failures);
     if (!hints.length) continue;
     const at = out.findIndex(x => x.subject === i.subject && x.obligation === i.obligation && x.key === i.key), prior = out[at] ?? i;
