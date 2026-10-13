@@ -9,7 +9,7 @@ import { parsePlan } from '../src/plan.ts';
 import { reduce, attestJobs, newerEntry, validateDraft } from '../src/reducer.ts';
 import * as reducer from '../src/reducer.ts';
 import { decide, thresholdHint, environmentWait, type DriveOpts } from '../src/drive.ts';
-import { renderReceipt, renderStatus } from '../src/views.ts';
+import { renderReceipt, renderStatusFull as renderStatus } from '../src/views.ts';
 import type { Draft, ObsEntry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { commitAt } from './helpers/surface.ts';

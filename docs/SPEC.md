@@ -1931,6 +1931,40 @@ while genesis items lack observations.
   (`Receipt #seq <node>/<id> by <who> (merge #m): files …; note: …`, `--json`
   `receipts`) and `report` (`Receipts (manual, informational)` for receipts
   after `since`, `--json` `receipts`); both present only when non-empty.
+- **Default status and brief (0.15, SQ).** `owed status` and pi `owed_status`
+  start with `owed: <M> merged · <R> in progress · <A> need you · trunk <name>
+  <short> <✔|✘> invariants (<ok>/<n>)`; short commits have 12 characters and
+  E/W invariants count as satisfied. `Needs you (<A>):` has one line per current
+  parent/owner item, `<node>: <plain reason> → <command>`: driver halts,
+  unresolved needs-ruling blocks, trunk-red failures and owner decisions. Ready
+  nodes without writes overlaps appear here only when no live/foreign driver
+  owns the repository. An empty queue reads `Needs you: none`. A trunk-red
+  invariant listed in status `trunkRed` has exactly one line, `trunk: <its
+  trunkRed text>`, with that curated text's options instead of a separate
+  command (JSON `command` is empty); its Debt line is unchanged.
+  `In progress (<R>):` lists unmerged open slots, dependency waits and held
+  nodes as `<node>: <phase> (<age>)`; phases are writing, measuring, reviewing,
+  waiting for <deps>, held, and accepted (merge pending). Age is since dispatch,
+  hold or the current plan, clamped at zero. Ready/later nodes are not progress.
+  `Debt:` appears only when there are trunk-red invariants, active known-red
+  entries (test, fix node and plan sequence), current owner defers or waivers
+  of open nodes. Status and brief share current merge diagnostics, including
+  reused trunk-red failures. A defer is current only when the current merge
+  guard still honours its invariant key and evidence; an open slot alone does
+  not keep a stale defer in Debt. Historical owner audit remains in full status.
+  Empty sections are omitted. The last line is
+  `Details: owed status --full · owed why <node>`.
+  `status --full` (pi `full: true`) preserves exactly the 0.14 renderer plus
+  IR/KR lines; historical flag/delegated confirmation, superseded and carried
+  audit details belong there. Earlier detailed status descriptions refer to
+  this full rendering. `--full --json` and `--json` have the same shape:
+  all 0.14 fields remain; additive `summary` contains `{merged, needs:
+  [{node, reason, command}], progress: [{node, phase, ageMs}], debt: string[]}`.
+  Brief starts with that outcome line and Needs you section; its other sections
+  retain their content. Brief JSON keeps `decisions` and all existing fields,
+  adding `summary`, `trunk` and `invariants` for the prefix. Compatibility:
+  these are presentation/result fields only, with no new ledger kind/field,
+  no key changes and no new replay/version gate.
 - **Brief** (`brief [--since seq|ISO]`, `briefView`/`renderBrief`): a morning
   summary, one line per item, sections in this order:
   0. *Owner acts (delegated) since <since>* (D25.5) — every owner entry with
@@ -1940,7 +1974,9 @@ while genesis items lack observations.
      prior..commit, the ruling's nodes, …); `--json` `delegated`
      `[{seq, ts, by, kind, node?, what, note}]`; omitted when there is none.
      `report` and every entry line mark these entries `(delegated)`.
-  1. *Needs your decision* — the owner queue (node and trunk items with status D
+  1. *Needs you* (SQ3 replaces the old *Needs your decision* text heading) —
+     current parent/owner actions as specified above. The JSON `decisions`
+     field retains the owner queue (node and trunk items with status D
      and discharger `owner`), sorted by the number of transitive downstream
      nodes of the item's node (trunk items count 0), then node id and
      obligation; each line carries the exact command that discharges the item:
@@ -2009,7 +2045,7 @@ spelling `--reason`; not both), `resume <node> [--after <node>] [--note TEXT]`
 (parent/owner, §12.3; prints `Recorded #<seq> <by> resumed <node>[ after
 <dep>]`, then `<node> waits for <dep> (resume #<seq>); the driver acts again
 when <dep> merges`, or `<dep> is already merged: <node> resumes now`; `--json`
-the entry), `merge <node>`, `status`,
+the entry), `merge <node>`, `status [--full]`,
 `why <node>`, `report [--metrics [--until seq|ISO]] [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
 `adopt [--commit X] --note TEXT` (owner; `--as parent:ID` under an `adopt`
 allowance, §3.4, with no prompt and no preview; before the TTY prompt, and also with
@@ -2121,10 +2157,13 @@ the next call creates a replacement, without automatically replaying lost calls.
 
 The extension remembers the package version beside its loaded module. Each tool
 result checks the installed package version (cached by manifest stat). A changed
-version appends exactly this last line:
+version appends exactly this last line once per pi session per installed
+version, at the first tool output (0.15 SQ4); `owed_status {full:true}` always
+appends it while versions differ:
 `owed <installed> is installed but this pi session loaded <loaded>: restart pi to use it.`
-The same line is appended to errors with code `version`, even when the version
-strings match. A replacement worker is refused when the installed version differs
+The same line is retained on a mismatch refusal and appended to errors with
+code `version`, even when the version strings match. Dedupe lives on pi's
+thread for the session and survives worker replacement. A replacement worker is refused when the installed version differs
 from the loaded version; startup also checks the version before and after loading
 its modules. This prevents a crashed old session from silently switching to new
 code. A same-process extension reload shares the original worker; after an upgrade,
@@ -2137,7 +2176,7 @@ repository. Most tools also take `as` (`role:id`).
 
 | tool | parameters (besides `cwd`) | operation |
 |---|---|---|
-| `owed_status` | `as` | status view |
+| `owed_status` | `as`, `full?: boolean` | outcome and next actions; full keeps evidence and audit |
 | `owed_why` | `node`, `as` | receipt card |
 | `owed_report` | `since?`, `as` | report |
 | `owed_brief` | `since?` | brief |

@@ -13,7 +13,7 @@ import { Driver, stateOf, DRIVE_PRINCIPAL, wakeReport } from '../src/drive-run.t
 import { Dsa, type RunResult } from '../src/dsa.ts';
 import { parsePlan } from '../src/plan.ts';
 import { reduce, reduceFrom, packState, unpackState, sameReplay, newerEntry, projectId, runId, runLabels, validateDraft } from '../src/reducer.ts';
-import { renderReceipt, renderStatus, receipt, statusView } from '../src/views.ts';
+import { renderReceipt, renderStatusFull as renderStatus, receipt, statusView } from '../src/views.ts';
 import type { Entry, RunView } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';

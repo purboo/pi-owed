@@ -198,7 +198,7 @@ test('OWED_CONFIRM=owner: the dialog waits at most OWED_CONFIRM_TIMEOUT seconds,
   } finally { await r.cleanup(); }
 });
 
-test('audit: the brief starts with the delegated owner acts (kind, node, what, why); report marks them (delegated)', { timeout: 60_000 }, async () => {
+test('audit: the brief keeps delegated owner acts after outcome and Needs you; report marks them (delegated)', { timeout: 60_000 }, async () => {
   const r = await fixture();
   try {
     await withEnv(delegatedEnv, async () => {
@@ -210,15 +210,16 @@ test('audit: the brief starts with the delegated owner acts (kind, node, what, w
     const all = await entries(r.cwd), plan = all.find(e => e.kind === 'plan')!, rule = all.find(e => e.kind === 'rule')!;
     const b = await ops.brief({ cwd: r.cwd });
     assert.deepEqual(b.delegated.map(d => [d.seq, d.by, d.kind, d.node, d.note]), [[plan.seq, 'owner:pi', 'plan', undefined, 'review is redundant'], [rule.seq, 'owner:pi', 'rule', undefined, 'keep it small']]);
-    const lines = renderBrief(b).split('\n');
+    const text = renderBrief(b), lines = text.slice(text.indexOf('Brief (since start)')).split('\n');
+    assert.match(text, /^owed:.*\nNeeds you \(1\):\n  a: ready to dispatch → owed dispatch a\n/);
     assert.equal(lines[0], 'Brief (since start)');
     assert.equal(lines[1], 'Owner acts (delegated) since start (2):');
     assert.match(lines[2]!, new RegExp(`^  #${plan.seq} owner:pi plan: downgrades a: .+ — review is redundant$`));
     assert.equal(lines[3], `  #${rule.seq} owner:pi rule: ruling (a) — keep it small`);
-    assert.equal(lines[4], 'Needs your decision: none');
+    assert.equal(lines[4], 'Merged: none');
     // A later window has no delegated act, so no section; genesis (flag) is never one.
     const later = renderBrief(await ops.brief({ cwd: r.cwd, since: rule.seq }));
-    assert.match(later, /^Brief \(since #\d+\)\nNeeds your decision: none\n/);
+    assert.match(later, /^owed:.*\nNeeds you \(1\):\n  a: ready to dispatch → owed dispatch a\nBrief \(since #\d+\)\nMerged: none\n/);
     assert.deepEqual((await ops.brief({ cwd: r.cwd, since: rule.seq })).delegated, []);
     const report = renderReport(await ops.report({ cwd: r.cwd }));
     assert.match(report, new RegExp(`\\n  #${plan.seq} owner:pi \\(delegated\\) updated plan from eased\\.json, downgrades a: .*: review is redundant\\n`));

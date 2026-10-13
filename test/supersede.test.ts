@@ -6,7 +6,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { attestJobs, jobCurrent, manualKeys, reduce, validateDraft } from '../src/reducer.ts';
 import { manualHalt } from '../src/drive.ts';
-import { receipt, renderReceipt, renderReport, renderStatus, statusView } from '../src/views.ts';
+import { receipt, renderReceipt, renderReport, renderStatusFull as renderStatus, statusView } from '../src/views.ts';
 import type { Report } from '../src/views.ts';
 import type { CandidateFacts, Draft, Entry, ObsEntry, Plan, StateFacts } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
@@ -205,7 +205,7 @@ test('L2 end to end: the env-fix plan supersedes #852-like block; attest reruns 
     const why = await cli(x.cwd, ['why', 'a']);
     assert.ok(why.stdout.split('\n').includes(`⊘ ${line}`), why.stdout);
     assert.ok(!why.stdout.includes('⛔ blocked'), why.stdout);
-    const status = await cli(x.cwd, ['status']);
+    const status = await cli(x.cwd, ['status', '--full']);
     assert.ok(status.stdout.split('\n').includes(`⊘ a: ${line}`), status.stdout);
     const report = await cli(x.cwd, ['report']);
     assert.ok(report.stdout.split('\n').includes(`  a/check:unit ${line}`), report.stdout);
