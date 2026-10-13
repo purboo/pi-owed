@@ -80,6 +80,8 @@ export interface Plan {
   trunk: string;
   closure: string[];
   setup?: string;
+  /** SS: dispatch-only setup override; false skips setup in slots. Never part of an item key. */
+  slot_setup?: string | false;
   /** LE3: machine leasing defaults on; false disables it repository-wide. Never part of any item key. */
   lease?: boolean;
   sweep?: SweepSpec;          // advisory trunk measurements, never part of an item key

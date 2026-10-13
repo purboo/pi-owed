@@ -125,6 +125,36 @@ function diskFull(code: number | null, counts: Counts | undefined, log: string, 
   // G3.4 (0.12): the note shows the filtered lines the pattern matched (the last 5, each at most 200 characters).
   if (m) { const t = lines.filter(l => DISK_FULL.test(l)).slice(-5).map(l => l.trim().slice(0, 200)); throw new EnvironmentError(`${m[0]}: ${what}; matched output:${t.map(l => `\n  ${l}`).join('')}`); }
 }
+export interface CommandResult { code: number | null; error?: string; log: string; spawn?: boolean }
+/** Shared shell, environment, wrapper and process-group handling for measurements and slot setup. */
+export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abortGraceMs'>, run: string, cwd: string, timeout: number, capture: (data: Buffer) => void = () => {}): Promise<CommandResult> {
+  return new Promise(resolve => {
+    let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
+    const inherited: NodeJS.ProcessEnv = { ...process.env };
+    // Nested test runners and dsa call identities must not leak into child commands; DSA_HOME is configuration.
+    delete inherited.NODE_TEST_CONTEXT;
+    for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
+    const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment() };
+    const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
+    const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
+    p.stdout.on('data', collect); p.stderr.on('data', collect);
+    let escalation: NodeJS.Timeout | undefined;
+    const kill = (sig: NodeJS.Signals = 'SIGKILL') => { if (p.pid) { try { process.kill(-p.pid, sig); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
+    const abort = () => {
+      error = 'aborted';
+      if (ctx.abortGraceMs) { kill('SIGTERM'); escalation = setTimeout(() => kill(), ctx.abortGraceMs); }
+      else kill();
+    };
+    const timer = setTimeout(() => { error = `timeout after ${timeout}s`; kill(); }, timeout * 1000);
+    ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
+    p.on('error', e => { error = e.message; spawnError = true; });
+    p.on('close', (code, signal) => {
+      clearTimeout(timer); clearTimeout(escalation); ctx.signal?.removeEventListener('abort', abort); kill();
+      resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(spawnError ? { spawn: true } : {}) });
+    });
+  });
+}
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   const start = Date.now();
   const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
@@ -136,38 +166,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
   // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
   const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, touch: ctx.plan.exec?.touch, note: (line: string) => capture(`${line}\n`) } : undefined;
-  async function command(run: string, cwd: string, timeout: number): Promise<{ code: number | null; error?: string; log: string; /** F2.1: the process could not be spawned (an environment failure). */ spawn?: boolean }> {
-    return new Promise(resolve => {
-      let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
-      const inherited: NodeJS.ProcessEnv = { ...process.env };
-      // A nested Node test runner must not inherit the parent's IPC/reporting mode.
-      delete inherited.NODE_TEST_CONTEXT;
-      // E2.3: no dsa call identity (DSA_CALL, DSA_EXEC, DSA_SESSION, …) leaks into a check, so owed commands inside it are
-      // not refused as subagent acts. DSA_HOME is configuration, not identity, and stays; a variable the plan's exec.env
-      // sets explicitly still applies.
-      for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
-      // D20: the plan's exec.env over the inherited environment, CI/OWED last; the wrapper argv prefixes bash -lc.
-      const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment() };
-      const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
-      const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
-      const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
-      p.stdout.on('data', collect); p.stderr.on('data', collect);
-      let escalation: NodeJS.Timeout | undefined;
-      const kill = (sig: NodeJS.Signals = 'SIGKILL') => { if (p.pid) { try { process.kill(-p.pid, sig); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
-      const abort = () => {
-        error = 'aborted';
-        if (ctx.abortGraceMs) { kill('SIGTERM'); escalation = setTimeout(() => kill(), ctx.abortGraceMs); }
-        else kill();
-      };
-      const timer = setTimeout(() => { error = `timeout after ${timeout}s`; kill(); }, timeout * 1000);
-      ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
-      p.on('error', e => { error = e.message; spawnError = true; });
-      p.on('close', (code, signal) => {
-        clearTimeout(timer); clearTimeout(escalation); ctx.signal?.removeEventListener('abort', abort); kill();
-        resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(spawnError ? { spawn: true } : {}) });
-      });
-    });
-  }
+  const command = (run: string, cwd: string, timeout: number): Promise<CommandResult> => runCommand(ctx, run, cwd, timeout, capture);
   try {
     ctx.onProgress?.(`${job.subject}: ${job.obligation}`);
     if (ctx.signal?.aborted) throw new Error('aborted');

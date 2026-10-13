@@ -369,6 +369,10 @@ export function parsePlan(text: string): Plan {
   const plan: Plan = { version: 1, trunk: str(r.trunk, 'trunk'), closure: strings(r.closure ?? [], 'closure'), invariants: checks(r.invariants, 'invariants'), nodes };
   for (const inv of plan.invariants) for (const entry of inv.known_red ?? []) if (!ids.has(entry.fix)) errors.push(`invariants: ${inv.id}: known_red fix ${entry.fix} is not a node of this plan`);
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
+  if (r.slot_setup !== undefined) {
+    if (r.slot_setup === false) plan.slot_setup = false;
+    else plan.slot_setup = str(r.slot_setup, 'slot_setup');
+  }
   if (r.lease !== undefined) { if (typeof r.lease !== 'boolean') errors.push('lease: expected boolean'); else plan.lease = r.lease; }
   if (r.sweep !== undefined) {
     const sw = obj(r.sweep, 'sweep');
