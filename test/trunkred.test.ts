@@ -135,7 +135,7 @@ test('TR1/3: retry on unchanged trunk reuses its probe and never starts another 
   } finally { await r.cleanup(); }
 });
 
-test('TR3: driver routes persisted trunk-red to parent before writer launch or attribution attest', async () => {
+test('TR3/TP1: driver parks persisted trunk-red before writer launch or attribution attest', async () => {
   const r = await fixture();
   try {
     await r.refusal();
@@ -143,10 +143,10 @@ test('TR3: driver routes persisted trunk-red to parent before writer launch or a
     assert.ok(attestJobs(s, 'a').some(j => j.attribution), '0.13 would route through attribution first');
     const actions = decide(s, s.plan, new Map(), driveOptions(r.cwd));
     assert.equal(actions.length, 1);
-    assert.equal(actions[0]!.do, 'halt');
     const action = actions[0]!;
-    assert.ok(action.do === 'halt'); assert.equal(action.needs, 'human');
-    assert.match(action.reason, /^merge refused: trunk-red:/);
+    assert.ok(action.do === 'notify'); assert.equal(action.scope, 'repo');
+    assert.match(action.text, /^trunk-red:.*without any candidate.*waiting: a/);
+    assert.ok(action.once?.startsWith('trunk-red\u0000'));
   } finally { await r.cleanup(); }
 });
 

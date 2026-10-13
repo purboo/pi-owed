@@ -618,6 +618,28 @@ export function trunkRedOf(s: State, seq: number, key?: string): { merge: ObsEnt
   if (!probe || probe.verdict !== 'fail' || (names.length ? !names.every(n => trunkNames.includes(n)) : trunkNames.length !== 0)) return undefined;
   return { merge: e, probe };
 }
+/** TP1: parked is derived only from nonempty, entirely trunk-red binding blocks (active or flaky). */
+export function trunkParked(s: State, node: string): { merge: ObsEntry; probe: ObsEntry }[] {
+  const n = s.nodes[node];
+  if (!n?.slot?.open || !n.candidate || n.merged || n.phase === 'removed') return [];
+  const blocks = n.blocks.filter(b => binding(b, nodeSpec(s, node)));
+  const reds = blocks.map(b => trunkRedOf(s, b.seq, b.key));
+  return blocks.length && reds.every(r => r !== undefined) ? reds as { merge: ObsEntry; probe: ObsEntry }[] : [];
+}
+/** TP2: one repository notice per current trunk/check/failed-name state. No ledger fields. */
+export function trunkParkNotices(s: State): { once: string; obligation: string; nodes: string[]; text: string }[] {
+  const groups = new Map<string, { obligation: string; names: string[]; nodes: Set<string> }>();
+  for (const node of Object.keys(s.nodes).sort()) for (const r of trunkParked(s, node)) {
+    const names = [...new Set(r.merge.failed ?? [])].sort();
+    const once = `trunk-red\u0000${s.trunk.commit}\u0000${r.merge.obligation}\u0000${names.join('\u0000')}`;
+    const group = groups.get(once) ?? { obligation: r.merge.obligation, names, nodes: new Set<string>() };
+    group.nodes.add(node); groups.set(once, group);
+  }
+  return [...groups].map(([once, g]) => {
+    const nodes = [...g.nodes], names = g.names.slice(0, 3).join(', ') || 'unknown failed tests';
+    return { once, obligation: g.obligation, nodes, text: `trunk-red: ${g.obligation} fails on trunk ${s.trunk.commit.slice(0, 12)} without any candidate (${names}${g.names.length > 3 ? `, +${g.names.length - 3}` : ''}); waiting: ${nodes.join(', ')}. Fix trunk with a fixing node or a commit adopted with owed adopt${s.plan.sweep ? ', or run owed sweep to find the culprit' : ''}; or the owner waives ${g.obligation} on the waiting nodes.` };
+  }).sort((a, b) => a.once.localeCompare(b.once));
+}
 /** Probe lookup is separate from counted observations, even when their keys coincide. */
 function observationsForProbe(s: State, subject: string, obligation: string): ObsEntry[] {
   return context(s).entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.probe === 'trunk' && e.subject === subject && e.obligation === obligation);

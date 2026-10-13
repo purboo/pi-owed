@@ -4,7 +4,7 @@
 import { canonical, sha256 } from './canon.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
-import { mergeQueue, applicableRules, attestJobs, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
+import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -514,7 +514,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   const open = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').sort(byStatusOrder);
   for (const n of open) {
     const ar = n.runs.find(r => r.attempt === n.slot!.attempt) ?? { attempt: n.slot!.attempt, launches: [], sends: [] };
-    const notice = prospectiveNotice(s, n, ar, runs, opts);
+    const notice = trunkParked(s, n.id).length ? undefined : prospectiveNotice(s, n, ar, runs, opts);
     const a = opts.measuring?.has(n.id) ? undefined : slotAction(s, runs, opts, n);
     if (notice) {
       // #1743/#1746: PR2 cannot preempt a concrete question's first non-quiet report (or overdue answer retry).
@@ -539,6 +539,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
     out.push({ do: 'dispatch', node: n.id });
     taken.push(writes(n.id));
   }
+  for (const red of trunkParkNotices(s)) if (!opts.noticed?.has(red.once)) out.push({ do: 'notify', node: red.obligation, scope: 'repo', text: red.text, once: red.once });
   for (const red of trunkInvariantReds(s)) out.push({ do:'notify', node:red.obligation, scope:'repo', invariantRed:{obligation:red.obligation,key:red.key}, text:red.text, once:`inv-red\u0000${red.obligation}\u0000${red.key}` });
   return orderMergeActions(s, out);
 }
@@ -590,6 +591,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   };
   // Row 1 (HA1): slotAction only reports questions while halted; decide still delivers PR2 notices (#1743).
   if (halted(s, id)) return askingNotice();
+  // TP1: parking forbids all follow-ups, including dependency and prospective notices; questions remain live.
+  if (trunkParked(s, id).length) return askingNotice();
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   const waiting = waitingFor(s, id);
   if (waiting || reportedOf(s, id) !== undefined || s.plan.nodes.find(x => x.id === id)?.later) {
@@ -613,7 +616,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     }
     return undefined;
   }
-  // TR3: route trunk-red to the parent before attribution attests or any writer follow-up, including after restart.
+  // TR3: mixed blocks retain the existing parent halt before attribution or writer follow-up.
   if (c) {
     const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(s,b.seq,b.key) ?? []);
     if (trunkRed.length) {

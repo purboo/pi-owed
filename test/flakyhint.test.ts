@@ -115,7 +115,7 @@ test('FH3: entries older than the last 5000 are not scanned', () => {
   assert.deepEqual(views.mergeFailureHints(r.state(), 'a', [current]), []);
 });
 
-test('FH1/2: CLI refusal, why block and recorded driver halt carry the same diagnostic lines', async () => {
+test('FH1/2/TP1: CLI and why retain diagnostic lines while trunk-red driver parks without a halt', async () => {
   const r = await fixture();
   try {
     const result = await cli(r.cwd, ['merge', 'a', '--as', 'parent:test']);
@@ -125,18 +125,18 @@ test('FH1/2: CLI refusal, why block and recorded driver halt carry the same diag
     assert.equal(hints.length, 2);
     assert.match(hints[0]!, /^known intermittent: .*also failed on #\d+ \(other trees\)$/);
     const card = await ops.why({ cwd: r.cwd, node: 'a' }), text = views.renderReceipt(card);
-    const action = decide(s, s.plan, new Map(), { max: 1, repairs: 2, project: 'fixture', root: r.cwd, applied: new Set(), rejected: new Map() }).find(a => a.do === 'halt');
-    assert.ok(action?.do === 'halt');
+    const actions = decide(s, s.plan, new Map(), { max: 1, repairs: 2, project: 'fixture', root: r.cwd, applied: new Set(), rejected: new Map() });
+    assert.ok(!actions.some(a => a.do === 'halt'));
+    const action = actions.find(a => a.do === 'notify' && a.scope === 'repo');
+    assert.ok(action?.do === 'notify'); assert.match(action.text, /without any candidate.*waiting: a/);
     for (const hint of hints) {
       assert.ok(result.stderr.includes(hint), result.stderr); assert.ok(text.includes(hint), text);
-      assert.ok(card.blocks.some(b => b.clear.includes(hint))); assert.ok(action.reason.includes(hint));
+      assert.ok(card.blocks.some(b => b.clear.includes(hint)));
     }
     const fakeDir = join(r.root, 'dsa'); await mkdir(fakeDir);
     const driver = new Driver({ cwd: r.cwd, once: true, log: () => {}, dsa: new Dsa({ bin: fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url)), env: { FAKE_DSA_DIR: fakeDir } }) });
     await driver.pass();
-    const halt = (await r.ledger.read()).find(e => e.kind === 'halt');
-    assert.ok(halt?.kind === 'halt');
-    for (const hint of hints) assert.ok(halt.reason.includes(hint), halt.reason);
+    assert.ok(!(await r.ledger.read()).some(e => e.kind === 'halt'), 'trunk-red waits without a driver halt');
     assert.ok(!(await r.ledger.read()).some(e => e.kind === 'merge'));
   } finally { await r.cleanup(); }
 });
