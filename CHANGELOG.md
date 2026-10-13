@@ -2,10 +2,11 @@
 
 ## 0.16.1
 
-This release delivers the merged nodes stalesend (SR, HA) and reviewdedup
-(RR), keeping rejected sends from stranding recoverable attempts, reporting
-questions while halted and avoiding redundant reviewers after unchanged-key
-resubmits, without weakening any gate. Origins: wais feedback on owed
+This release delivers the merged nodes stalesend (SR, HA), reviewdedup
+(RR) and compactreply (CR), keeping rejected sends from stranding recoverable
+attempts, reporting questions while halted, avoiding redundant reviewers after
+unchanged-key resubmits and shortening parent act replies, without weakening
+any gate. Origins: wais feedback on owed
 0.16.0 in `/tmp/dsa/owed-requirements.md` (2026-10-13 13:4x, a forced dsa
 1.0.39 orchestrator restart; 14:3x, a halted writer's hidden question;
 14:4x, CMP-META attempt 2's evidence-only resubmit and redundant reviewer).
@@ -60,6 +61,21 @@ The parent's rulings below pin the behavior where the original asks changed.
   show each principal once, using its latest qualifying review, including
   JSON `evidence` and `observations`. Deduplication is view-only: stored and
   replayed evidence and distinct-principal satisfaction are unchanged.
+- **Keep parent act replies brief (compactreply, CR1–CR3; wais
+  2026-10-13 15:xx feedback).** Parent act tool replies use
+  `renderStatusBrief`: the status outcome line, non-empty `Needs you` items
+  and commands, then `Details: owed status · owed why <node>`, without
+  progress or debt lists. `dispatch` retains its packet and subagents
+  arguments; `plan`, `edit` and `amend` retain their act, carry and downgrade
+  lines. The wais addendum is included: `rule` and `defer` return recorded
+  entries plus the brief, replacing the report and omitting
+  `Escapes (all time)`. `abandon` and `resume` retain the entry, node phase
+  and resume's waits-for tail, then the brief instead of a full receipt.
+  Structured tool results, explicit `owed status`, `owed why`, `owed report`
+  and `/owed` are unchanged. CLI acts that already append no full status
+  need no replacement; CLI `init` and pi `adopt` keep their status suffixes.
+  The skill points to `owed status` for the full list. Parent ruling #1776
+  includes compactreply in 0.16.1 because it merged before this release.
 
 ### Compatibility
 
