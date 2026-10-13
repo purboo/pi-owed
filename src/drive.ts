@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
-import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
@@ -603,7 +603,10 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // TR3: route trunk-red to the parent before attribution attests or any writer follow-up, including after restart.
   if (c) {
     const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(s,b.seq,b.key) ?? []);
-    if (trunkRed.length) return halt(`merge refused: ${trunkRed.join('; ')}`);
+    if (trunkRed.length) {
+      const failures = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && n.blocks.some(b => b.state === 'active' && b.seq === e.seq));
+      return halt(`merge refused: ${[...trunkRed, ...mergeFailureHints(s,id,failures)].join('; ')}`);
+    }
   }
   // FL1: dependencies merged after dispatch: use the existing rebase route exactly once before other work.
   const deps = s.plan.nodes.find(x => x.id === id)?.deps ?? [];

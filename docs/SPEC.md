@@ -786,6 +786,32 @@ Compatibility: owed 0.13 refuses the new `obs.probe` field with code
 probes. Upgrade before replaying it. Existing histories without probes retain their 0.13 replayed states and keys;
 new merge-key waivers require 0.14's validation and scope interpretation.
 
+### Merge refusal hints (0.16, FH)
+
+A merge refusal caused by a failing check or invariant observation with named
+tests adds `known intermittent: <name> also failed on #a, #b (other trees)`
+when another failing observation lists that exact name on a different commit.
+The lookup scans only the last 5000 ledger entries and cites at most the three
+most recent matching observation sequences, newest first; failures on the same
+commit do not qualify. Historical failures may belong to another subject or
+obligation, including a trunk probe. Observations without failed names add no
+hint.
+
+For each failed name of at least six characters, an unmerged node other than
+the refused node is a fix candidate when it has an open slot, is accepted, or
+is ready, and its title, brief, a check's `run`, or a check's `tests` entry
+contains the name verbatim (case-sensitive). The refusal adds
+`fix candidate: <node> (<phase>) — owed resume <refused> --after <node>`.
+This suggests an existing command; it does not automatically resume or reorder
+work. Short names may still have the intermittent-history hint.
+
+CLI `owed merge`, the driver's merge-refused halt reason, and the block line
+in `owed why <node>` carry the same hints. `why` also projects hinted failures
+on current merge keys under `Merge checks:`, including invariants that have no
+node execution block. These are diagnostic text only: no gate, item key,
+verdict, ledger entry kind or entry field changes. Owed 0.15 and 0.16 can share
+the ledger; replayed states and keys remain identical.
+
 ## 6. Reducer (pure: entries → State)
 
 Replay speed (0.10, N4). The fold keeps per-node indexes of reviews, evidence and
