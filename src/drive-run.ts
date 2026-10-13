@@ -19,7 +19,7 @@ import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
 import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
-import { halted, projectId, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { halted, projectId, reviewEpoch, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
@@ -462,7 +462,7 @@ export class Driver {
     for (const n of Object.values(s.nodes)) {
       // K6: while measuring, describe only the runs PR2 needs for prospective notices.
       if (!n.slot?.open || n.phase === 'removed') continue;
-      const ar = n.runs.find(r => r.attempt === n.slot!.attempt), c = n.candidate;
+      const ar = n.runs.find(r => r.attempt === n.slot!.attempt), epoch = reviewEpoch(s, n.id);
       if (!ar) continue;
       const policy = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
       const normal = !halted(s, n.id) && !measuring.has(n.id);
@@ -472,7 +472,7 @@ export class Driver {
         return policy.some(r => r.seq > seen) || notices.some(x => !this.facts.applied.has(x.send) && !this.facts.refused.has(x.send));
       };
       const raw = new Map<string, { view: RunView; gen?: number }>();
-      for (const l of ar.launches.filter(l => (normal && (l.role === 'writer' || (!!c && l.seq > c.seq))) || noticeDue(l.rid))) {
+      for (const l of ar.launches.filter(l => (normal && (l.role === 'writer' || (epoch !== undefined && l.seq > epoch))) || noticeDue(l.rid))) {
         try {
           // F4 (app #34): a describe that timed out is retried once in this pass before it is reported.
           const r = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
@@ -1007,8 +1007,8 @@ export async function liveRunLines(cwd: string, dsa: Dsa = new Dsa({ timeoutMs: 
   if (!dsaAvailable(dsa.bin)) return [];
   const s = await loadState(await Ledger.open(cwd)), lines: string[] = [];
   for (const n of Object.values(s.nodes)) {
-    const ar = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined, c = n.candidate;
-    for (const l of ar?.launches.filter(l => l.role === 'writer' || (!!c && l.seq > c.seq)) ?? []) {
+    const ar = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined, epoch = reviewEpoch(s, n.id);
+    for (const l of ar?.launches.filter(l => l.role === 'writer' || (epoch !== undefined && l.seq > epoch)) ?? []) {
       let state: string;
       try { const v = await dsa.describe(l.rid); state = `${v.state}${v.status ? ` ${v.status}` : ''}`; } catch { state = 'describe failed'; }
       lines.push(`${n.id} ${l.role} ${l.rid}: ${state}`);

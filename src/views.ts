@@ -196,13 +196,24 @@ export function supersededText(s: State, b: Block): string {
 export function supersededOf(s: State, nodes: readonly NodeState[]): SupersededBlock[] {
   return nodes.flatMap(n => n.blocks.filter(b => b.state === 'superseded').map(b => ({ ...b, supersededBy: b.supersededBy ?? -1, text: supersededText(s, b) })));
 }
+/** RR3: receipt-only deduplication; keep reducer evidence/replay and distinct-principal satisfaction unchanged. */
+function receiptItem(i: ItemView, entries: readonly Entry[]): ItemView & { observations: Entry[] } {
+  let observations = entries.filter(e => i.evidence.includes(e.seq));
+  if (i.status === 'E' && reviewObligation(i.obligation)) {
+    const latest = new Map<string, Entry>();
+    for (const e of observations) if (e.kind === 'review' && e.seq > (latest.get(e.by)?.seq ?? -1)) latest.set(e.by, e);
+    observations = observations.filter(e => e.kind !== 'review' || latest.get(e.by) === e);
+    return { ...i, evidence: observations.map(e => e.seq), observations };
+  }
+  return { ...i, observations };
+}
 export function receipt(s: State, entries: readonly Entry[], node: string, mergeChecks: ItemView[] = []): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   const outOfWrites = outsideWrites(s, node), superseded = supersededOf(s, [n]);
   return { node, phase: n.phase, accepted: n.accepted,
-    items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
-    ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })) } : {}),
+    items: n.items.map(i => receiptItem(i, entries)),
+    ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => receiptItem(i, entries)) } : {}),
     blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: mergeBlockClearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
     ...(superseded.length ? { superseded } : {}),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
@@ -840,7 +851,7 @@ export function reviewRuns(s: State, node: string): number {
 /**
  * Review obligations recorded by the attempt-global reviewer run `n` on the current candidate, through the local
  * index k = n - reviewerBase: `review` while k <= review.count, `closure-review` by k = 1; none for a run of an
- * earlier candidate (k < 1) or beyond the candidate's runs.
+ * earlier review epoch (k < 1) or beyond the candidate's runs.
  */
 export function reviewObligations(s: State, node: string, n: number): ('review' | 'closure-review')[] {
   const st = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
