@@ -49,7 +49,7 @@ test('DL1: driver state equals the full replay on cold, warm and incremental loa
   } finally { await f.cleanup(); }
 });
 
-test('DL2: a same-head driver load neither replays nor parses plans; +10 folds exactly 10 entries', async t => {
+test('DL2 (#1689): memo hits parse no plans; short increments refold at most 31 old entries and refresh at 32', async t => {
   const f = await fixture();
   try {
     let reads = 0;
@@ -66,6 +66,31 @@ test('DL2: a same-head driver load neither replays nor parses plans; +10 folds e
     assert.ok(sameReplay(await stateOf(f.cwd), reduce(f.entries, f.lookup)));
     assert.deepEqual(delta(before), { full: 0, memo: 1, disk: 0, folded: 10 });
     assert.equal(reads, 0);
+    // #1689: keep MEMO_EVERY=32. Short loads may reuse the previous replay point, not the preceding load's head.
+    const memoEvery = 32, refoldBound = memoEvery - 1;
+    let pending = 10;
+    const sameHead = async () => {
+      const before = stats();
+      assert.ok(sameReplay(await stateOf(f.cwd), reduce(f.entries, f.lookup)));
+      const folded = delta(before).folded;
+      assert.deepEqual(delta(before), { full: 0, memo: 1, disk: 0, folded: pending });
+      assert.ok(folded <= refoldBound, 'same-head loads refold at most 31 entries');
+      assert.equal(reads, 0, 'same-head reload never parses a historical plan');
+    };
+    await sameHead(); // Same head immediately after +10 may fold those 10 again.
+    // Reach exactly 31, then cross 32; repeat a second memo window with consecutive small increments.
+    for (const added of [1, 3, 2, 5, 10, 1, 1, 7, 9, 14, 1]) {
+      await f.append(Array.from({ length: added }, (_, i) => note(f.entries.length + i)));
+      before = stats();
+      assert.ok(sameReplay(await stateOf(f.cwd), reduce(f.entries, f.lookup)));
+      const folded = delta(before).folded;
+      assert.deepEqual(delta(before), { full: 0, memo: 1, disk: 0, folded: pending + added });
+      assert.ok(folded <= added + refoldBound, 'consecutive loads fold new entries plus at most 31 old ones');
+      assert.equal(reads, 0, 'small increments parse no historical plans');
+      pending = folded >= memoEvery ? 0 : folded;
+      await sameHead(); // Crossing MEMO_EVERY must advance the replay point: folded=0.
+    }
+    assert.equal(pending, 0, 'the final increment crosses the second memo refresh boundary');
   } finally { await f.cleanup(); }
 });
 
