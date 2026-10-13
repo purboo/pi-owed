@@ -126,7 +126,15 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
     if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(reviewState, id));
     out[`node:${id}`] = q;
   }
-  return canonical(out);
+  // GR7 intentionally adds advisory text only. Keep all state, keys, verdicts and reasons compared;
+  // ignore precisely that line (and its JSON outOfWrites.hint mirror) in the frozen view comparison.
+  return canonical(withoutGrantHints(out));
+}
+function withoutGrantHints(value: unknown): unknown {
+  if (typeof value === 'string') return value.replace(/\nhint: an allow rule \{nodes: \[[^\n]*\], writes: \[[^\n]*\]\} would let owed grant these/g, '');
+  if (Array.isArray(value)) return value.map(withoutGrantHints);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).filter(([k,v]) => !(k === 'hint' && typeof v === 'string' && /^hint: an allow rule .* would let owed grant these$/.test(v))).map(([k,v]) => [k,withoutGrantHints(v)]));
+  return value;
 }
 /** Variants of a draft (other principal, attempt, key, node, obligation) whose validateDraft decisions are compared. */
 export function variants(d: Draft, nodes: string[]): Draft[] {
@@ -160,7 +168,7 @@ export function intendedChange(s: State, d: Draft, base: unknown, cur: unknown):
     }
   }
   if (d.kind === 'abandon' && s.nodes[d.node]?.phase === 'removed') expected = expected.filter(x => x !== `Node ${d.node} does not exist`);
-  return canonical(expected) === canonical(cur);
+  return canonical(expected) === canonical(withoutGrantHints(cur));
 }
 /**
  * Reduces `entries` with both reducers at every k-th prefix and the full ledger; compares snapshots and the

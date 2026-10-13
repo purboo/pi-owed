@@ -253,7 +253,7 @@ test('pi: owed_adopt and owed_plan as parent under an allowance show no dialog; 
   } finally { await r.cleanup(); }
 });
 
-test('why lists out-of-writes paths of a failing writes item, says when an allowance covers them, and the parent widening writes lets the node pass', { timeout: 120_000 }, async () => {
+test('why shows granted writes for covered paths, caps uncovered paths and preserves plan carry', { timeout: 120_000 }, async () => {
   const r = await fixture();
   try {
     const genesis = (await entries(r.cwd))[0]!;
@@ -264,10 +264,12 @@ test('why lists out-of-writes paths of a failing writes item, says when an allow
       return { d, accepted: (await ops.attest({ cwd: r.cwd, node: id })).accepted };
     };
     const w = await run('w', { 'w.txt': 'w\n', 'docs/w.md': 'doc\n', 'docs/api/w.md': 'doc\n' });
-    assert.equal(w.accepted, false);
+    assert.equal(w.accepted, true, 'GR4: covered paths are granted during measurement');
     const card = await ops.why({ cwd: r.cwd, node: 'w' });
-    assert.deepEqual(card.outOfWrites, { paths: ['docs/api/w.md', 'docs/w.md'], allowance: genesis.seq });
-    assert.match((await cli(r.cwd, ['why', 'w'])).stdout, new RegExp(`\\nOut-of-writes paths: docs/api/w.md, docs/w.md; the parent may widen writes in the plan \\(allowance plan #${genesis.seq}\\)\\n`));
+    assert.equal(card.outOfWrites, undefined);
+    assert.deepEqual(card.grantedWrites?.[0]?.paths, ['docs/api/w.md', 'docs/w.md']);
+    assert.equal(card.grantedWrites?.[0]?.allowance, genesis.seq);
+    assert.match((await cli(r.cwd, ['why', 'w'])).stdout, /\nGranted writes: docs\/api\/w.md, docs\/w.md \(#\d+, allowance plan #0\)\n/);
     // Node x matches no rule; many paths are capped at 20 in the text, all kept in the JSON.
     const many: Record<string, string> = { 'x.txt': 'x\n' };
     for (let i = 0; i < 25; i++) many[`o/f${String(i).padStart(2, '0')}`] = `${i}\n`;

@@ -10,7 +10,7 @@ import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
-import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf } from './reducer.ts';
+import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantErrors, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
@@ -335,7 +335,9 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
     const { state } = await load(ledger);
     const freshTrunk = job.subject !== 'trunk' || !trunkJobs(snapshot).some(j => sameJob(j,job)) || (job.commit === state.trunk.commit && (await git.stateFacts(cwd,state.plan,state.trunk.commit)).invKeys[job.obligation.slice(4)] === job.key);
     if (!jobCurrent(state,job) || !freshTrunk) { out.superseded.push({ subject:job.subject, obligation:job.obligation, key:job.key }); return; }
-    guard(state,obs); result.push(...await ledger.append([obs]));
+    const drafts = job.kind === 'writes' && !job.attribution && obs.kind === 'obs' && obs.verdict !== 'error' ? await writesGrantDrafts(cwd, ledger, state, job, obs) : [obs];
+    for (const d of drafts) guard(state,d);
+    result.push(...await ledger.append(drafts));
   },undefined,lockSignal);
   if (parallel > 1) {
     // M1 (exec.parallel): up to `parallel` jobs at once; observations are recorded in job order. On abort every running
@@ -359,11 +361,28 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
   for (const job of jobs) {
     checkAbort(signal);
     // Attribution must use the original setup, exec, closure and writes as well as the original check spec (jobPlan).
-    const obs = await runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), signal }, job);
+    const obs = await runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), grantedWrites:job.attribution ? [] : grantsOf(snapshot,job.subject).flatMap(g => g.paths), signal }, job);
     checkAbort(signal);
     await record(job,obs,signal);
   }
   return out;
+}
+/** GR4: grant + observation are one locked append; fresh replay validates all paths, never a partial grant. */
+async function writesGrantDrafts(cwd: string, ledger: Ledger, s: State, job: AttestJob, obs: import('./types.ts').ObsEntry | Extract<Draft, { kind:'obs' }>): Promise<Draft[]> {
+  const n = s.nodes[job.subject]!;
+  const paths = (await git.git(cwd,['diff','--no-renames','--name-only','-z',job.base,job.commit])).stdout.split('\0').filter(Boolean);
+  const bad = paths.filter(p => !withinWrites(s,job.subject,p)).sort(), drafts: Draft[] = [];
+  let reason: string | undefined;
+  if (bad.length) {
+    const grant: Extract<Draft,{kind:'grant'}> = {kind:'grant',by:'executor:owed',node:job.subject,attempt:n.slot!.attempt,commit:job.commit,paths:bad,allowance:allowanceSeq(s) ?? -1};
+    reason = grantErrors(s,grant)[0];
+    if (!reason) drafts.push(grant);
+  }
+  const grants = grantsOf(s,job.subject).filter(g => g.paths.some(p => paths.includes(p)));
+  const labels = [...grants.map(g => `granted #${g.seq}: ${g.paths.join(', ')}`), ...(drafts.length ? [`granted #${s.seq + 1}: ${bad.join(', ')}`] : [])];
+  const note = reason ? `outside writes: ${bad.join(', ')}; ${reason}` : `all changed paths within writes${labels.length ? ` (${labels.join('; ')})` : ''}`;
+  drafts.push({...obs,verdict:reason ? 'fail' : 'pass',exit:reason ? 1 : 0,note,log:await ledger.putBlob(note)});
+  return drafts;
 }
 /**
  * The plan a job runs under: the snapshot's, or for an attribution rerun the plan its block was recorded under (the
@@ -854,7 +873,7 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     const attempt = (n.slot?.attempt ?? 0)+1, { branch, worktree, excludeLine } = await slotLayout(root,state.plan,spec,attempt);
     const rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
     // K1.3: the driver (parent:drive) launches this writer and measures its candidate itself.
-    let packet = dispatchPacket(spec, attempt, worktree, rules, by(o) === 'parent:drive');
+    let packet = dispatchPacket(spec, attempt, worktree, rules, by(o) === 'parent:drive', state);
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
     guard(state,d);
     const exclude = join(await git.commonDir(o.cwd),'info','exclude');
@@ -1072,7 +1091,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === o.node && n.blocks.some(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky') && b.seq === e.seq));
       const hints = mergeFailureHints(state,o.node,failures);
       if (trunkRed.length) throw new OwedError([...trunkRed, ...hints].join('; '));
-      throw new OwedError([`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; '));
+      throw new OwedError([`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; ') + (n.items.some(i => i.obligation === 'writes' && i.status === 'D') && grantHint(state,o.node) ? `\n${grantHint(state,o.node)}` : ''));
     }
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     // IR1: trunk measurements persist even if the later merge guard refuses.

@@ -133,6 +133,8 @@ export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; at
  * writes, type or drive. Only a submit by executor:owed has it (the same commit at the same base, facts recomputed).
  */
 export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts; carry?: number }
+/** GR: exact changed paths pre-authorized by the current owner allowance, scoped to one attempt. */
+export interface GrantEntry extends Base { kind: 'grant'; node: string; attempt: number; commit: string; paths: string[]; allowance: number }
 export interface ObsEntry extends Base {
   kind: 'obs';
   subject: string;           // node id, or 'trunk'
@@ -208,7 +210,7 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  */
 export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold' }
 export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
-export type Entry = RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
+export type Entry = GrantEntry | RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
