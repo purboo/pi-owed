@@ -4,7 +4,7 @@
 import { canonical, sha256 } from './canon.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
-import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, writesOverlap } from './reducer.ts';
+import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -121,7 +121,7 @@ export function writerTask(s: State, node: string): string {
   if (!slot) throw new Error(`Node ${node} has no slot`);
   const spec = planAt(s, slot.dispatchSeq).nodes.find(x => x.id === node);
   if (!spec) throw new Error(`Node ${node} is not in the plan of its dispatch #${slot.dispatchSeq}`);
-  return dispatchPacket(spec, slot.attempt, slot.worktree, writerRulings(s, node, slot.dispatchSeq));
+  return dispatchPacket(spec, slot.attempt, slot.worktree, writerRulings(s, node, slot.dispatchSeq), true, s, slot.dispatchSeq);
 }
 /** Launch action of the writer of the node's open attempt (spec: writer agent/model of `driveConfig(plan, node)`, cwd = slot worktree, task = dispatch packet). */
 export function writerLaunch(s: State, node: string, project: string): Extract<Action, { do: 'launch' }> {
@@ -528,16 +528,15 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
     if (a) out.push(a);
   }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
-  const writes = (id: string): string[] => plan.nodes.find(x => x.id === id)?.writes ?? [];
-  const taken = open.map(n => writes(n.id));
+  const taken = open.map(n => n.id);
   // G3.6 (0.12, review #1089): a removed node's open slot (its writer may still run) counts toward `max` until abandoned.
   const removedOpen = Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'removed').length;
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
     const owner = ownerNeeded(s, n.id);
     if (owner) { out.push(ownerNotify(s, n.id, owner)); continue; }
-    if (taken.length + removedOpen >= opts.max || !plan.nodes.some(x => x.id === n.id) || taken.some(w => writesOverlap(writes(n.id), w))) continue;
+    if (taken.length + removedOpen >= opts.max || !plan.nodes.some(x => x.id === n.id) || (overlapping(s,n.id).length > 0 || taken.some(id => effectiveWritesOverlap(s,n.id,id)))) continue;
     out.push({ do: 'dispatch', node: n.id });
-    taken.push(writes(n.id));
+    taken.push(n.id);
   }
   for (const red of trunkParkNotices(s)) if (!opts.noticed?.has(red.once)) out.push({ do: 'notify', node: red.obligation, scope: 'repo', text: red.text, once: red.once });
   for (const red of trunkInvariantReds(s)) out.push({ do:'notify', node:red.obligation, scope:'repo', invariantRed:{obligation:red.obligation,key:red.key}, text:red.text, once:`inv-red\u0000${red.obligation}\u0000${red.key}` });
@@ -832,7 +831,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       if (hint) return halt(hint);
       // K5.4: the halts this cause reaches cite the failing observations.
       const evidence = execEvidence(s, n, measured);
-      return repair(`measured block ${measured.map(i => `${i.obligation} [${i.evidence.map(x => `#${x}`).join(', ')}]`).join(', ')}${evidence.length ? `; ${evidence.join('; ')}` : ''}`);
+      return repair(`measured block ${measured.map(i => `${i.obligation} [${i.evidence.map(x => `#${x}`).join(', ')}]`).join(', ')}${evidence.length ? `; ${evidence.join('; ')}` : ''}${measured.some(i => i.obligation === 'writes') && grantHint(s,id) ? `\n${grantHint(s,id)}` : ''}`);
     }
     const judged = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
     const current = judged.filter(b => b.key === c.keys[b.obligation]), stale = judged.filter(b => b.key !== c.keys[b.obligation]);
