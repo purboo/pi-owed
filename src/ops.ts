@@ -11,7 +11,7 @@ import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErro
 import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf } from './reducer.ts';
-import { runJob } from './exec.ts';
+import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
@@ -20,7 +20,7 @@ import { readLock } from './drive-bg.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt } from './views.ts';
+import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -759,6 +759,17 @@ export async function rule(o: Actor & { text: string; nodes: string[] | '*'; wri
   if (o.prospective && o.writer) throw new OwedError('--prospective cannot be combined with --writer', 'usage');
   return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}), ...(o.prospective !== undefined ? { prospective:o.prospective } : {}) }));
 }
+/** SS: setup is a dispatch prerequisite, outside the ledger lock and before any dispatch entry. */
+async function setupSlot(plan: Plan, worktree: string): Promise<string | undefined> {
+  const run = plan.slot_setup === false ? undefined : plan.slot_setup ?? plan.setup;
+  if (run === undefined) return undefined;
+  const result = await runCommand({ plan }, run, worktree, 600);
+  if (result.error || result.code !== 0) {
+    const tail = lastLines(result.log, 20);
+    throw new OwedError(`slot setup failed: ${result.error ?? `exit ${result.code}`}; last output:${tail.length ? tail.map(l => `\n  ${l}`).join('') : ' (none)'}`);
+  }
+  return `Setup: ran \`${oneLine(run)}\` in this worktree (exit 0)`;
+}
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
   // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
   // Resolved first, so an unverifiable layout is refused before any ledger, exclude or worktree effect.
@@ -773,7 +784,7 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     const attempt = (n.slot?.attempt ?? 0)+1, { branch, worktree, excludeLine } = await slotLayout(root,state.plan,spec,attempt);
     const rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
     // K1.3: the driver (parent:drive) launches this writer and measures its candidate itself.
-    const packet = dispatchPacket(spec, attempt, worktree, rules, by(o) === 'parent:drive');
+    let packet = dispatchPacket(spec, attempt, worktree, rules, by(o) === 'parent:drive');
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
     guard(state,d);
     const exclude = join(await git.commonDir(o.cwd),'info','exclude');
@@ -788,7 +799,12 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     };
     try { await git.addWorktree(root,worktree,branch,state.trunk.commit); } catch (error) { throw await rolledBack(error,[['directory cleanup',unmake]]); }
     let entry: Entry;
-    try { entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw casRefusal('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw casRefusal('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; }); }
+    const hasSetup = state.plan.slot_setup !== false && (state.plan.slot_setup ?? state.plan.setup) !== undefined;
+    try {
+      const setup = await setupSlot(state.plan, worktree);
+      if (setup) { packet += `\n${setup}`; d.packet = await ledger.putBlob(packet); }
+      entry = await ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); if (canonical(current.rules) !== canonical(state.rules)) throw casRefusal('Rulings changed; dispatch again'); if (canonical(overlapping(current,o.node)) !== canonical(overlaps)) throw casRefusal('Open slots changed; dispatch again'); guard(current,d); return (await ledger.append([d]))[0]!; });
+    }
     catch (error) {
       const run = (args: string[]) => async () => { const r = await git.git(root,args,{allowFail:true}); return r.code ? r.stderr.trim().split('\n').join(' ') || `exit ${r.code}` : undefined; };
       const dropBranch = async () => {
@@ -797,7 +813,8 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
         if (checkedOut) return `branch '${branch}' is checked out in ${checkedOut.path}`;
         return run(['update-ref','-d',ref,state.trunk.commit])();
       };
-      throw await rolledBack(error,[['git worktree remove',run(['worktree','remove',worktree])],['git branch -d',dropBranch],['directory cleanup',unmake]]);
+      // A setup may create ignored/untracked prerequisites or edit tracked files; remove this unrecorded slot too.
+      throw await rolledBack(error,[['git worktree remove',run(['worktree','remove',...(hasSetup ? ['--force'] : []),worktree])],['git branch -d',dropBranch],['directory cleanup',unmake]]);
     }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
   }),'dispatch');

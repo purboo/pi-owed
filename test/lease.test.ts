@@ -88,7 +88,8 @@ test('LE1/LE3 init and standalone attest/merge/adopt wait under one shared lease
   const f = await rig();
   try {
     const check = { id: 'leased', run: leasedCheck(f.root), reads: ['a.txt'], timeout_s: 10, min_tests: 1 };
-    const plan = { ...f.plan, setup: `test "$OWED_LEASED" = 1 && test -f '${f.path('active')}'`, invariants: [check], nodes: [{ ...f.plan.nodes[0]!, checks: [check] }] };
+    // This setup asserts the measurement lease; slot prerequisites need no machine lease.
+    const plan = { ...f.plan, slot_setup: false, setup: `test "$OWED_LEASED" = 1 && test -f '${f.path('active')}'`, invariants: [check], nodes: [{ ...f.plan.nodes[0]!, checks: [check] }] };
     const initial = await ops.init({ cwd: f.cwd, as: owner, channel: 'flag', plan: JSON.stringify(plan) });
     assert.equal(initial.observations[0]?.kind === 'obs' && initial.observations[0].verdict, 'pass');
     assert.equal((initial as { lease?: string }).lease, 'machine (shared)');
