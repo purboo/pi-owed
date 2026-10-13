@@ -1938,7 +1938,10 @@ while genesis items lack observations.
   parent/owner item, `<node>: <plain reason> → <command>`: driver halts,
   unresolved needs-ruling blocks, trunk-red failures and owner decisions. Ready
   nodes without writes overlaps appear here only when no live/foreign driver
-  owns the repository. An empty queue reads `Needs you: none`.
+  owns the repository. An empty queue reads `Needs you: none`. A trunk-red
+  invariant listed in status `trunkRed` has exactly one line, `trunk: <its
+  trunkRed text>`, with that curated text's options instead of a separate
+  command (JSON `command` is empty); its Debt line is unchanged.
   `In progress (<R>):` lists unmerged open slots, dependency waits and held
   nodes as `<node>: <phase> (<age>)`; phases are writing, measuring, reviewing,
   waiting for <deps>, held, and accepted (merge pending). Age is since dispatch,

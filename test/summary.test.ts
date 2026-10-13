@@ -198,6 +198,31 @@ test('SQ repair #1517.1 status and brief share a reused trunk-red merge diagnosi
   } finally { await r.cleanup(); }
 });
 
+test('SQ ruling #1562 trunk-red invariants use curated Needs you text once in status and brief', async () => {
+  const r=await repo();
+  try {
+    const failing=(name:string)=>`echo 'owed-counts {"pass":0,"fail":1,"failed":["${name}"]}'; exit 1`;
+    await commitAt(r.cwd,{'one.sh':failing('old one'),'two.sh':failing('old two')});
+    const plan={version:1,trunk:'main',lease:false,closure:[],invariants:[],nodes:[]};
+    await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify(plan)});
+    await ops.planSet({cwd:r.cwd,as:parent,plan:JSON.stringify({...plan,invariants:[{id:'one',run:'bash one.sh',reads:['one.sh'],min_tests:1},{id:'two',run:'bash two.sh',reads:['two.sh'],min_tests:1}]})});
+    const refreshed=await ops.attestTrunk({cwd:r.cwd,lease:false});
+    assert.deepEqual(refreshed.missing,[]);
+    const status=await ops.status({cwd:r.cwd}), brief=await ops.brief({cwd:r.cwd});
+    assert.equal(status.trunkRed?.length,2);
+    for (const text of [renderStatus(status),renderBrief(brief)]) {
+      const needs=text.split('\nDebt:')[0]!.split('\nBrief (since')[0]!;
+      for (const red of status.trunkRed! as { obligation:string; text:string }[]) {
+        const line:string=`  trunk: ${red.text}`;
+        assert.equal(needs.split('\n').filter(l=>l===line).length,1,`${red.obligation} curated line appears once`);
+      }
+      assert.doesNotMatch(needs,/trunk: inv:(one|two): .*→ owed plan/);
+    }
+    assert.match(renderStatus(status),/Debt:\n  inv:one: [^\n]+\n  inv:two: /);
+    assert.deepEqual(brief.summary!.needs,status.summary!.needs);
+  } finally { await r.cleanup(); }
+});
+
 test('SQ repair #1517.2 A defer becomes history after B fixes the current merge invariant key', async () => {
   const r=await repo();
   try {
