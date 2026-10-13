@@ -44,6 +44,28 @@ test('FG1: cargo new and old panic forms preserve line and remove column', () =>
   ]);
 });
 
+test('FG1: old cargo multiline panic retains normalized message and location through the closing quote', () => {
+  const log = "thread 'module::old' panicked at 'assertion failed: left == right\n  left: 1\n right: 2', src/lib.rs:9:3\ntest module::old ... FAILED\n";
+  assert.deepEqual(errorGroups(log, ['module::old']), [{
+    message: 'assertion failed: left == right left: 1 right: 2', location: 'src/lib.rs:9', names: ['module::old'],
+  }]);
+  const quoted = "thread 'module::old' panicked at 'assertion failed:\n  left: 'one', not a location; detail\n right: 'two'', src/lib.rs:9:3\ntest module::old ... FAILED\n";
+  for (const text of [quoted, quoted.replace(/\n/g, '\r\n')]) {
+    assert.deepEqual(errorGroups(text, ['module::old']), [{
+      message: "assertion failed: left: 'one', not a location, detail right: 'two'", location: 'src/lib.rs:9', names: ['module::old'],
+    }]);
+  }
+});
+
+test('FG2: old cargo multiline panic appears with error text and location in the stored failure note', async () => {
+  const log = "thread 'module::old' panicked at 'assertion failed: left == right\n  left: 1\n right: 2', src/lib.rs:9:3\ntest module::old ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored;\n";
+  await measure([log], obs => {
+    assert.equal(obs.verdict, 'fail');
+    assert.deepEqual(obs.failed, ['module::old']);
+    assert.equal(obs.note!.split('; last output:')[0], 'failed tests: 1 failed, 1 distinct error(s): "assertion failed: left == right left: 1 right: 2" (src/lib.rs:9) ×1 — module::old');
+  });
+});
+
 test('FG1: subtestsFailed parents are dropped only when another failing point has an error', () => {
   const parent = tap('suite', "'1 subtest failed'", undefined, 'subtestsFailed');
   assert.deepEqual(errorGroups(tap('child', "'real cause'") + parent, ['suite', 'child']), [{ message: 'real cause', names: ['child'] }]);
