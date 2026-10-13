@@ -22,9 +22,13 @@ Every `owed_*` tool takes an optional `cwd`: the absolute path of a directory in
 Start with `owed_brief` (CLI `owed brief [--since seq|ISO]`): outcome and Needs you first, then owner audit acts, merges since `since`, rejected or blocked nodes and how to clear them, work in progress with its age, and totals.
 
 Default `owed status` / `owed_status` shows outcome, parent/owner next actions, progress and current debt; use `owed status --full` / `owed_status {full:true}` for all evidence and historical audit lines (JSON retains existing fields). Status and brief share current merge diagnostics; a defer stays in Debt only while it still applies to the current merge invariant key.
+In 0.16, status/brief keep current-attempt recorded defers visible when rechecking is blocked: `owner defer (not rechecked: trunk moved)` or `(not rechecked: merge conflicts)`; JSON `deferred[].unverified` is `drift` or `conflict`. These are unverified debt, never acceptance evidence.
 After an upgrade, the pi restart hint appears once per session per installed version; full status and mismatch refusals retain it.
 
 For measured workflow outcomes, use `owed report --metrics [--since seq|ISO] [--until seq|ISO] [--json]` (0.15): merged nodes, interruptions/merge, decision vs no-decision halts, merge timing, first-pass acceptance and repairs/merge, computed only from the ledger and plan blobs; since is exclusive, until inclusive.
+
+In 0.16, metrics `--since`/`--until` also accept date-only `YYYY-MM-DD` at UTC midnight.
+Metrics halt groups preserve plain-word node ids in prose; they normalize only in node positions (start before `:`, before `/`, after `node ` or `--after `, or the argument of `owed <verb> `).
 
 1. Use `owed_status` (CLI `owed status`) to inspect ready nodes and pending queues. Dependencies must have merge records before dispatch; a verbal claim of completion is not a receipt.
 2. Use `owed_dispatch` to dispatch a ready node. Pass its `subagents` object to subagents/dsa: `agent: worker`, `cwd` must be the slot worktree, `isolation: none`, and `task` must contain the complete packet. owed has already created an isolated worktree; do not add another isolation layer.
