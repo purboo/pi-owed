@@ -10,8 +10,8 @@ import * as R from '../src/reducer.ts';
 const { reduce, reduceFrom, packState, unpackState, overlapping, mergeGuard } = R;
 const grantsOf = (...args: Parameters<typeof R.grantsOf>) => R.grantsOf(...args);
 const withinWrites = (...args: Parameters<typeof R.withinWrites>) => R.withinWrites(...args);
-import { renderReceipt, renderReport, renderBrief, briefView, reviewPacket } from '../src/views.ts';
-import { writerTask, decide, writerLaunch } from '../src/drive.ts';
+import { renderReceipt, renderReport, renderBrief, briefView, reviewPacket, preauthorizedWritesLines } from '../src/views.ts';
+import { writerTask, decide, writerLaunch, repairMessage } from '../src/drive.ts';
 import { projectId } from '../src/reducer.ts';
 import type { Entry, Draft, Plan, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
@@ -57,7 +57,9 @@ test('uncovered paths fail atomically with first reason and deduplicated learnin
   const r=await fixture(); try {
     await r.submit({'docs/ok':'ok','new/a':'a','new/b':'b','rootfile':'r','uncovered':'u'}); await r.attest();
     const es=await r.all(); assert.equal(grants(es).length,0); assert.equal(writes(es)[0]!.verdict,'fail');
-    assert.match(writes(es)[0]!.note!,/not covered by an allow rule/);
+    assert.equal(writes(es)[0]!.note,'outside writes: docs/ok, new/a, new/b, rootfile, uncovered; not covered by an allow rule');
+    assert.doesNotMatch(writes(es)[0]!.note!,/hint:/);
+    assert.equal((await r.ledger.getBlob(writes(es)[0]!.log!)).toString(),writes(es)[0]!.note);
     const hint='hint: an allow rule {nodes: ["a"], writes: ["new/","uncovered"]} would let owed grant these';
     assert.ok(renderReceipt(await ops.why({cwd:r.cwd,node:'a'})).includes(hint));
     assert.ok((await cli(r.cwd,['why','a'])).stdout.includes(hint));
@@ -65,13 +67,48 @@ test('uncovered paths fail atomically with first reason and deduplicated learnin
     const {s,lookup}=await r.state(), project=projectId(s), action=writerLaunch(s,'a',project);
     const launched=reduceFrom(s,[forged(s,{kind:'launch',by:'parent:drive',node:'a',attempt:1,role:'writer',rid:action.rid,spec:await r.ledger.putBlob(action.spec),labels:action.labels})],lookup);
     const actions=decide(launched,launched.plan,new Map([[action.rid,{rid:action.rid,state:'sealed',status:'ok'}]]),{max:2,repairs:0,project,root:r.cwd,applied:new Set(),rejected:new Map()});
-    assert.ok(actions.some(a=>a.do === 'halt' && a.reason.includes(hint)),'driver halt includes learning hint');
+    assert.ok(actions.some(a=>a.do === 'halt' && a.reason.split(hint).length === 2),'driver halt includes learning hint exactly once');
+    assert.equal(repairMessage(launched,'a').split(hint).length,2,'repair packet includes learning hint exactly once');
+    const repair=decide(launched,launched.plan,new Map([[action.rid,{rid:action.rid,state:'sealed',status:'ok'}]]),{max:2,repairs:1,project,root:r.cwd,applied:new Set(),rejected:new Map()});
+    assert.ok(repair.some(a=>a.do === 'send' && a.reason === 'repair' && a.message.split(hint).length === 2));
+  } finally {await r.cleanup();}
+});
+test('a legacy writes failure never claims a grant refusal; rerun measures after attribution', async()=>{
+  const r=await fixture(plan({allow:[]})); try {
+    await r.submit({'docs/a':'a'});
+    const {s}=await r.state(), c=s.nodes.a!.candidate!;
+    // A valid 0.16-shaped executor observation has no GR2 reason.
+    await r.ledger.withLock(()=>r.ledger.append([{kind:'obs',by:'executor:owed',subject:'a',obligation:'writes',key:c.keys.writes!,commit:c.commit,base:c.base,verdict:'fail',exit:1,durationMs:0,note:'outside writes: docs/a',log:'legacy'}]));
+    await ops.planSet({cwd:r.cwd,as:owner,channel:'flag',plan:JSON.stringify(plan())});
+    let card=await ops.why({cwd:r.cwd,node:'a'}), text=renderReceipt(card);
+    assert.doesNotMatch(text,/but grant refused/); assert.match(text,/hint: paths are now pre-authorized; submit a new commit or rerun attest/);
+    assert.equal(card.outOfWrites?.grantRefused,undefined);
+    await r.attest();
+    assert.equal(grants(await r.all()).length,0,'active failure is attributed first');
+    await ops.attest({cwd:r.cwd,node:'a',rerun:true});
+    assert.equal(grants(await r.all()).length,1,'--rerun measures the same key after attribution');
+  } finally {await r.cleanup();}
+});
+test('failure before an allowance existed is not presented as a refused covered grant', async()=>{
+  const r=await fixture(plan({allow:[]})); try {
+    await r.submit({'docs/a':'a'}); await r.attest();
+    await ops.planSet({cwd:r.cwd,as:owner,channel:'flag',plan:JSON.stringify(plan())});
+    assert.doesNotMatch(renderReceipt(await ops.why({cwd:r.cwd,node:'a'})),/but grant refused/);
+  } finally {await r.cleanup();}
+});
+test('dispatch-time allowance comparison ignores object key insertion order', async()=>{
+  const r=await fixture(); try {
+    const {s,lookup}=await r.state();
+    const next={...s.plan,allow:s.plan.allow!.map(rule=>Object.fromEntries(Object.entries(rule).reverse()))} as typeof s.plan;
+    const updated=reduceFrom(s,[forged(s,{kind:'plan',by:'owner:test',channel:'flag',plan:'reordered',prior:s.planSha,downgrades:[]})],sha=>sha === 'reordered' ? next : lookup(sha));
+    assert.match(preauthorizedWritesLines(updated,'a',updated.seq+1)[0]!,/allowance plan #0/);
   } finally {await r.cleanup();}
 });
 test('closure paths are never granted, including mixed covered paths', async()=>{
   const r=await fixture(plan({closure:['docs/pinned*']})); try {
     await r.submit({'docs/pinned':'x','docs/ok':'y'}); await r.attest();
     assert.equal(grants(await r.all()).length,0); assert.match(writes(await r.all())[0]!.note!,/under closure/);
+    assert.match(renderReceipt(await ops.why({cwd:r.cwd,node:'a'})),/but grant refused/);
     const {s,lookup}=await r.state();
     assert.throws(()=>reduceFrom(s,[forged(s,{kind:'grant',by:'executor:owed',node:'a',attempt:1,commit:s.nodes.a!.candidate!.commit,paths:['docs/pinned'],allowance:0})],lookup),/under closure/);
   } finally {await r.cleanup();}
