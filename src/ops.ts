@@ -20,7 +20,7 @@ import { readLock } from './drive-bg.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, knownRedDebt } from './views.ts';
+import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -971,7 +971,10 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     const n = candidate(state,o.node);
     if (!n.accepted) {
       const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
-      if (trunkRed.length) throw new OwedError(trunkRed.join('; '));
+      if (trunkRed.length) {
+        const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && n.blocks.some(b => b.state === 'active' && b.seq === e.seq));
+        throw new OwedError([...trunkRed, ...mergeFailureHints(state,o.node,failures)].join('; '));
+      }
       throw new OwedError(`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`);
     }
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
@@ -1029,15 +1032,15 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       if (reasons.length || !g) {
         if (kept.length) await ledger.append(kept);
         // RC3 (#1274): report evidence deciding unsatisfied items on the guarded merge keys, including reused obs.
-        const bySeq = new Map(entriesOf(current).map(e => [e.seq, e])), seen = new Set<number>();
+        const bySeq = new Map(entriesOf(current).map(e => [e.seq, e])), seen = new Set<number>(), failedObs: ObsEntry[] = [];
         const failures = [...(g?.nodeItems ?? []), ...(g?.invItems ?? [])].flatMap(i => i.status !== 'D' ? [] : i.evidence.flatMap(seq => {
           const e = bySeq.get(seq);
           if (seen.has(seq) || e?.kind !== 'obs' || e.verdict !== 'fail' || e.subject !== i.subject || e.obligation !== i.obligation || e.key !== i.key) return [];
-          seen.add(seq);
+          seen.add(seq); failedObs.push(e);
           return e.note || e.failed?.length ? [`${e.subject}/${e.obligation}: ${e.note ?? `failed tests: ${e.failed!.join(', ')}`}`] : [];
         }));
         const trunkRed = (g?.nodeItems ?? []).filter(i => i.status === 'D').flatMap(i => i.evidence.flatMap(seq => trunkRedHint(current,seq,i.key) ?? []));
-        throw new OwedError([...new Set(trunkRed), ...failures, ...reasons].join('; '));
+        throw new OwedError([...new Set(trunkRed), ...failures, ...reasons, ...mergeFailureHints(current,o.node,failedObs)].join('; '));
       }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
@@ -1211,6 +1214,25 @@ async function currentTrunkRedChecks(cwd: string, s: State, id: string): Promise
     return hints.length ? [{...i,discharger:'parent' as const,detail:[...new Set(hints)].join('; ')}] : [];
   });
 }
+/** FH: hints for persisted failures on current merge keys, including invariants without node execution blocks. */
+async function hintedMergeChecks(cwd: string, s: State, id: string, existing: ItemView[]): Promise<ItemView[]> {
+  const n = s.nodes[id], entries = entriesOf(s).slice(-5000);
+  if (!n?.slot?.open || !n.candidate || n.merged || !entries.some(e => e.kind === 'obs' && e.merging === id && e.verdict === 'fail' && e.failed?.length)) return existing;
+  if (await git.trunkDrift(cwd,s.trunk.name,s.trunk.commit)) return existing;
+  const built = await git.buildMerge(cwd,s.trunk.commit,n.candidate.commit,`owed merge ${id}`);
+  if ('conflicts' in built) return existing;
+  const g = mergeGuard(s,id,await mergeFacts(cwd,s,id,built.commit)), out = [...existing];
+  for (const i of [...g.nodeItems, ...g.invItems]) {
+    if (i.status !== 'D') continue;
+    const failures = entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === id && e.subject === i.subject && e.obligation === i.obligation && e.key === i.key && i.evidence.includes(e.seq));
+    const hints = mergeFailureHints(s,id,failures);
+    if (!hints.length) continue;
+    const at = out.findIndex(x => x.subject === i.subject && x.obligation === i.obligation && x.key === i.key), prior = out[at] ?? i;
+    const hinted = {...prior,detail:[prior.detail, ...hints].join('; ')};
+    if (at < 0) out.push(hinted); else out[at] = hinted;
+  }
+  return out;
+}
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
   if (o.node === 'trunk' && !state.nodes.trunk) {
@@ -1223,7 +1245,8 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   }
   const view = reduceFrom(state,[],lookup); await applyReports(ledger,view);
   node(view,o.node);
-  return receipt(view,entries,o.node,await currentTrunkRedChecks(o.cwd,view,o.node));
+  const mergeChecks = await currentTrunkRedChecks(o.cwd,view,o.node);
+  return receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks));
 }
 /** FL3: private runtime receipts, never acceptance evidence or ledger entries. A missing file is a cache miss. */
 export async function applyReports(ledger: Ledger, state: State): Promise<void> {
