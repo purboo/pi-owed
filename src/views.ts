@@ -1,8 +1,9 @@
 import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, SlotRebase, State } from './types.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
+import { matchesGlob } from 'node:path';
 import { matchesAny, driveConfig } from './plan.ts';
-import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
@@ -21,6 +22,7 @@ export interface ReceiptCard {
   /** L2: execution blocks a plan entry superseded (no longer active), with `text` = `#<seq> superseded by plan #<p> (…)`; present only when there are any. */
   superseded?: SupersededBlock[];
   untested: string[]; downgrades: State['downgrades']; ownerFlags: Entry[];
+  grantedWrites?: import('./types.ts').GrantEntry[];
   /** Latest rebase of the open slot; `rangeDiff` lets a reviewer review only the conflict resolution. */
   rebase?: SlotRebase & { rangeDiff?: string };
   /** N1: the open candidate is a carry submit `seq`: carried by plan entry `plan` from submit `submit`. */
@@ -44,7 +46,7 @@ export interface ReceiptCard {
    * D21.5: when the writes item fails (✘/⛔), the candidate's changed paths outside the node's writes; `allowance` = S
    * when an allowance of the current plan lets the parent widen writes to cover all of them.
    */
-  outOfWrites?: { paths: string[]; allowance?: number };
+  outOfWrites?: { paths: string[]; allowance?: number; hint?: string };
 }
 /** KR4: one debt line per invariant, independent of whether its latest observation passes. */
 export interface KnownRedDebt { invariant: string; entries: { test: string; fix: string }[]; plan: number }
@@ -228,6 +230,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
     ...(s.plan.nodes.find(x => x.id === node)?.drive ? { drive: driveText(s.plan, node) } : {}),
     ...(entries.some(e => e.kind === 'evidence' && e.node === node && e.merge !== undefined) ? { receipts: entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.node === node && e.merge !== undefined) } : {}),
     ...(outOfWrites ? { outOfWrites } : {}),
+    ...(grantsOf(s,node).length ? { grantedWrites: grantsOf(s,node) } : {}),
     ...(n.slot?.open && n.runs.some(r => r.attempt === n.slot!.attempt) ? { runs: n.runs.find(r => r.attempt === n.slot!.attempt) } : {}),
     ...(carriedOf(n) ? { carried: carriedOf(n) } : {}),
     ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) };
@@ -247,17 +250,17 @@ export function driveText(plan: Plan, node: string): string {
 function outsideWrites(s: State, node: string): ReceiptCard['outOfWrites'] {
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node), writes = n?.items.find(i => i.obligation === 'writes');
   if (!n?.candidate || !spec || !writes || (writes.mark !== '✘' && writes.mark !== '⛔')) return undefined;
-  const paths = n.candidate.changed.filter(p => !spec.writes.some(w => p.startsWith(w))), seq = allowanceSeq(s);
-  return paths.length ? { paths, ...(seq !== undefined && writesAllowed(s.plan, node, paths) ? { allowance: seq } : {}) } : undefined;
+  const paths = n.candidate.changed.filter(p => !withinWrites(s,node,p)), seq = allowanceSeq(s);
+  return paths.length ? { paths, ...(seq !== undefined && writesAllowed(s.plan, node, paths) ? { allowance: seq } : {}), ...(grantHint(s,node,paths) ? { hint:grantHint(s,node,paths) } : {}) } : undefined;
 }
 /** Out-of-writes paths shown in the receipt card (D21.5); the JSON keeps them all. */
 const OUT_OF_WRITES_SHOWN = 20;
 function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
   const shown = o.paths.slice(0, OUT_OF_WRITES_SHOWN).map(oneLine).join(', '), more = o.paths.length > OUT_OF_WRITES_SHOWN ? `, … +${o.paths.length - OUT_OF_WRITES_SHOWN} more` : '';
-  return `Out-of-writes paths: ${shown}${more}${o.allowance !== undefined ? `; the parent may widen writes in the plan (allowance plan #${o.allowance})` : ''}`;
+  return `Out-of-writes paths: ${shown}${more}${o.allowance !== undefined ? `; pre-authorized by allowance plan #${o.allowance}, but grant refused` : ''}${o.hint ? `\n${o.hint}` : ''}`;
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
-export const allowanceLabel = (d: { by: string; allowance?: number }): string => d.allowance === undefined ? '' : `by ${d.by} under allowance (plan #${d.allowance})`;
+export const allowanceLabel = (d: { by: string; allowance?: number }): string => d.allowance === undefined ? '' : d.by === 'executor:owed' ? `granted by owed under allowance (plan #${d.allowance})` : `by ${d.by} under allowance (plan #${d.allowance})`;
 export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key)): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
@@ -500,7 +503,7 @@ function runsText(r: AttemptRuns): string[] {
 }
 export function renderReceipt(v: ReceiptCard): string {
   const waitingNodes = [...new Set([...(v.waiting?.deps ?? []), ...(v.waiting?.after ? v.waiting.after.split(', ') : [])])];
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed resume ${v.node}`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(itemText)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed resume ${v.node}`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(itemText)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
   if (options.full) return renderStatusFull(v);
@@ -530,6 +533,7 @@ const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'ow
 function entryLine(e: Entry): string {
   const head = `#${e.seq} ${e.by}${e.channel === 'flag' ? ' (flag weak confirmation)' : e.channel === 'delegated' ? ' (delegated)' : ''}`;
   switch (e.kind) {
+    case 'grant': return `${head} granted writes ${e.paths.join(', ')} for ${e.node} attempt ${e.attempt} under allowance (plan #${e.allowance})`;
     case 'obs': return `${head} observed ${e.subject}/${e.obligation} ${e.verdict}${noise(e)}${e.note ? `: ${e.note}` : ''}`;
     case 'sweep': return `${head} sweep ${e.commit.slice(0, 12)}: ${e.verdict}${e.bisect ? ' (bisect)' : ''}; log ${e.log}${e.failed.length ? `; failed: ${e.failed.join(', ')}` : ''}`;
     case 'merge': return `${head} merged ${e.node} → ${e.commit.slice(0, 12)}`;
@@ -844,8 +848,37 @@ export function renderBrief(v: Brief): string {
  * defaults to true for the driver's writer task (drive.ts writerTask); `owed dispatch` passes false unless the
  * driver dispatches, so a manual dispatch stores the packet without the line.
  */
-export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], driver = true): string {
-  return [...dispatchLines(spec, attempt, worktree, rules), ...(driver ? [DRIVER_ATTESTS] : [])].join('\n');
+export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], driver = true, state?: State, dispatchSeq?: number): string {
+  const lines = dispatchLines(spec, attempt, worktree, rules);
+  if (state) {
+    const permission = preauthorizedWritesLines(state,spec.id,dispatchSeq);
+    lines.splice(lines.findIndex(x => x.startsWith('Allowed writes:')) + 1, 0, ...permission);
+    if (permission.length) lines[lines.indexOf('commit your work; do not edit files outside writes; owed will run the checks itself')] = 'commit your work; stay within plan writes or task-needed owner pre-authorized paths; owed will run the checks itself';
+  }
+  return [...lines, ...(driver ? [DRIVER_ATTESTS] : [])].join('\n');
+}
+/** GR6: permissions are task-limited owner pre-authorization, not an instruction to widen unnecessarily. */
+export function preauthorizedWritesLines(s: State, node: string, dispatchSeq?: number): string[] {
+  const plan = dispatchSeq === undefined ? s.plan : planAt(s,dispatchSeq);
+  let allowance = allowanceSeq(s);
+  if (dispatchSeq !== undefined) {
+    allowance = undefined;
+    let prior: Plan['allow'];
+    for (const e of entriesOf(s)) if (e.seq < dispatchSeq && (e.kind === 'genesis' || e.kind === 'plan')) {
+      const next = planAt(s,e.seq + 1).allow;
+      if (JSON.stringify(prior) !== JSON.stringify(next)) allowance = e.seq;
+      prior = next;
+    }
+  }
+  const prefixes = [...new Set((plan.allow ?? []).filter(r => r.nodes.some(g => matchesGlob(node,g))).flatMap(r => r.writes ?? []))].sort();
+  return prefixes.length ? [`Pre-authorized by the owner (allowance plan #${allowance}): ${prefixes.join(', ')} — change files there only when the task needs it; owed records the grant; do not ask.`] : [];
+}
+function grantedWritesText(g: import('./types.ts').GrantEntry): string {
+  return `Granted writes: ${g.paths.slice(0,20).map(oneLine).join(', ')}${g.paths.length > 20 ? `, … +${g.paths.length - 20} more` : ''} (#${g.seq}, allowance plan #${g.allowance})`;
+}
+function reviewGrantLines(s: State, node: string): string[] {
+  const grants = grantsOf(s,node), allowances = [...new Set(grants.map(g => g.allowance))];
+  return allowances.map(seq => `Writes granted under allowance (plan #${seq}): ${grants.filter(g => g.allowance === seq).flatMap(g => g.paths).sort().join(', ')} — judge whether each belongs to this node's task; block if not.`);
 }
 /** K1.3: the line of a driver-launched writer's packet. */
 export const DRIVER_ATTESTS = 'the driver measures your candidate; do not run owed attest';
@@ -923,6 +956,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
     `Base: ${base}`,
     ...(spec.brief ? ['Brief:', spec.brief.trimEnd()] : []),
     `Allowed writes: ${spec.writes.join(', ') || 'none'}`,
+    ...reviewGrantLines(s,node),
     'Obligations of the candidate:',
     ...st.items.map(i => `- ${i.obligation}: ${required(i.obligation)} [${i.mark} ${i.detail}]${mine.includes(i.obligation as 'review') ? ' — recorded by this run' : ''}`),
     `Rulings in scope:${rulings.length ? '' : ' none'}`,

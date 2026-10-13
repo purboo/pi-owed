@@ -2,7 +2,7 @@ import { matchesGlob } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
-import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades } from './plan.ts';
+import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades, matchesAny } from './plan.ts';
 import { execKey } from './git.ts';
 import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
 
@@ -25,7 +25,7 @@ interface Indexes {
  * per replay; undefined = not resolved yet, after `unpackState`: resolved through `plans` on first use); `obsPlans` names the plan in force at each executor observation by its sha. Neither holds a plan by
  * value elsewhere, so a packed state (`packState`) carries plan shas only and every plan object is shared or re-resolved.
  */
-interface History extends Indexes { /** IR lineage exists only after a refresh or an inherited trunk-red merge. */ invRed?: Map<string, { key: string; seq: number; kind: 'refresh' | 'merge'; node?: string }>; entries: Entry[]; plans: PlanLookup; planObjs: Map<string, Plan | undefined>; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, string>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
+interface History extends Indexes { /** GR: only present after the first grant; keeps grant-free snapshots unchanged. */ grants?: Map<string, import('./types.ts').GrantEntry[]>; /** IR lineage exists only after a refresh or an inherited trunk-red merge. */ invRed?: Map<string, { key: string; seq: number; kind: 'refresh' | 'merge'; node?: string }>; entries: Entry[]; plans: PlanLookup; planObjs: Map<string, Plan | undefined>; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, string>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
 type ReplayState = State & { [history]: History };
 function context(state: State): History {
   const value = (state as ReplayState)[history];
@@ -69,6 +69,7 @@ function record(h: History, e: Entry): void {
   else if (e.kind === 'waive') push(h.waives, e.node, e);
   else if (e.kind === 'launch') push(h.launches, e.rid, e);
   else if (e.kind === 'plan') h.lastPlan = e.seq;
+  else if (e.kind === 'grant') push(h.grants ??= new Map(), e.node, e);
 }
 /** N4: the number of transitive dependents of every node of `plan` (reverse adjacency, one DFS per node). */
 function dependentCounts(plan: Plan): Map<string, number> {
@@ -89,7 +90,15 @@ function dependentCounts(plan: Plan): Map<string, number> {
  */
 const waivedFail = (s: State, e: ObsEntry): boolean => e.verdict === 'fail' && e.merging !== undefined && e.merging === e.subject && listed(context(s).waives, e.subject).some(w => w.kind === 'waive' && w.node === e.subject && w.obligation === e.obligation && w.key !== e.key && w.seq > e.seq && (w.accept_risk ?? []).includes(e.seq));
 /** The observations that count for an item: exclude diagnostic probes and waived merge-key fails (F3). */
-const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e));
+const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e) && grantPassReusable(s,e));
+/** GR3: the unchanged writes key must not carry a grant-supported pass into a new attempt. */
+function grantPassReusable(s: State, e: ObsEntry): boolean {
+  if (e.obligation !== 'writes' || e.verdict !== 'pass') return true;
+  const c = s.nodes[e.subject]?.candidate;
+  if (!c || c.commit !== e.commit) return true;
+  const supported = context(s).grants?.get(e.subject)?.some(g => g.seq < e.seq);
+  return !supported || c.changed.every(p => withinWrites(s,e.subject,p));
+}
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => counted(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
 function required(spec: NodeSpec, facts: CandidateFacts): string[] {
@@ -119,8 +128,25 @@ function latestRule(s: State, node: string): number {
 export const writesOverlap = (a: string[], b: string[]): boolean => a.some(p => b.some(q => p.startsWith(q) || q.startsWith(p)));
 /** Other nodes with an open slot whose `writes` overlap those of node `id`, sorted. */
 export function overlapping(s: State, id: string): string[] {
-  const writes = nodeSpec(s, id)?.writes ?? [];
-  return s.plan.nodes.filter(x => x.id !== id && s.nodes[x.id]?.slot?.open && writesOverlap(writes, x.writes)).map(x => x.id).sort();
+  return Object.values(s.nodes).filter(x => x.id !== id && x.slot?.open && effectiveWritesOverlap(s, id, x.id)).map(x => x.id).sort();
+}
+/** GR3: grants survive resubmits, rebases and plan changes, but never a new attempt. */
+export function grantsOf(s: State, id: string): import('./types.ts').GrantEntry[] {
+  const attempt = s.nodes[id]?.slot?.attempt;
+  return (context(s).grants?.get(id) ?? []).filter(e => e.attempt === attempt);
+}
+function planWrites(s: State, id: string): string[] {
+  const n = s.nodes[id];
+  return (nodeSpec(s, id) ?? (n?.slot?.open ? planAt(s, n.slot.dispatchSeq).nodes.find(x => x.id === id) : undefined))?.writes ?? [];
+}
+export function effectiveWrites(s: State, id: string): string[] { return [...planWrites(s, id), ...grantsOf(s, id).flatMap(g => g.paths)]; }
+/** Plan writes are prefixes; granted paths are exact repository paths, never prefixes. */
+export function withinWrites(s: State, id: string, path: string): boolean {
+  return planWrites(s, id).some(w => path.startsWith(w)) || grantsOf(s, id).some(g => g.paths.includes(path));
+}
+export function effectiveWritesOverlap(s: State, a: string, b: string): boolean {
+  const pa = planWrites(s, a), pb = planWrites(s, b), ga = s.nodes[a]?.slot?.open ? grantsOf(s, a).flatMap(g => g.paths) : [], gb = s.nodes[b]?.slot?.open ? grantsOf(s, b).flatMap(g => g.paths) : [];
+  return writesOverlap(pa, pb) || ga.some(p => pb.some(w => p.startsWith(w)) || gb.includes(p)) || gb.some(p => pa.some(w => p.startsWith(w)));
 }
 /** Detail of a satisfied `rulings` item when no ruling is in scope for the node (shown as "no rulings apply"). */
 export const NO_RULINGS = 'no ruling is in scope for this node';
@@ -304,7 +330,7 @@ export function reduceFrom(base: State, more: Entry[], plans: PlanLookup): State
 /** G1: continues the fold of `s` itself with `more` (mutates and returns `s`); for a state the caller owns alone. */
 export function extendState(s: State, more: Entry[]): State { fold(s, more); return s; }
 /** The entry kinds this owed interprets (G1.5): any other kind needs a newer owed. */
-const KINDS: readonly string[] = ['genesis', 'refresh', 'plan', 'rule', 'dispatch', 'submit', 'obs', 'review', 'waive', 'defer', 'abandon', 'hold', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
+const KINDS: readonly string[] = ['genesis', 'refresh', 'plan', 'rule', 'dispatch', 'submit', 'grant', 'obs', 'review', 'waive', 'defer', 'abandon', 'hold', 'rebase', 'merge', 'note', 'adopt', 'escape', 'decoy-commit', 'decoy-reveal', 'launch', 'send', 'halt', 'evidence', 'resume', 'sweep'];
 /**
  * G1.5 closed entry enum audit (types.ts): Base.channel, send.sendKind/reason, obs.verdict, review.obligation/verdict/
  * needs, launch.role, halt.needs, escape.class. `by`, other obligations and counts.format are open strings, not enums;
@@ -401,6 +427,8 @@ function fold(s: State, entries: Iterable<Entry>): void {
       // A parent's downgrades were accepted only because the prior plan's allowances cover them (D21.3).
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       if (allowChanged) h.allowSeq = e.seq;
+    } else if (e.kind === 'grant') {
+      s.downgrades.push({ seq: e.seq, by: e.by, items: [{ node: e.node, what: `writes granted: ${e.paths.join(', ')}` }], allowance: e.allowance });
     } else if (e.kind === 'rule') {
       s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.prospective !== undefined ? { prospective: e.prospective } : {}), ...(e.answer !== undefined ? { answer: e.answer } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       // F5: a writer ruling names the candidates that need a new submit; blocks and keys retain their semantics.
@@ -930,6 +958,36 @@ export function writesAllowed(plan: Plan, node: string, paths: readonly string[]
 }
 /** Seq of the genesis/plan entry that last changed the `allow` block (S of `under allowance (plan #S)`, D21.3), if any. */
 export function allowanceSeq(s: State): number | undefined { return context(s).allowSeq; }
+/** GR2: used both at append and every replay, before any grant can affect acceptance. */
+export function grantErrors(s: State, d: Omit<import('./types.ts').GrantEntry, 'seq' | 'ts' | 'prev' | 'hash'>): string[] {
+  const errors: string[] = [], n = s.nodes[d.node], spec = nodeSpec(s, d.node);
+  if (d.by !== 'executor:owed') errors.push('grant may only be written by executor:owed');
+  if (!n?.slot?.open || n.slot.attempt !== d.attempt) errors.push('grant attempt must match the current open writer slot');
+  if (!n?.candidate || n.candidate.commit !== d.commit) errors.push('grant commit must match the current candidate commit');
+  const paths = d.paths;
+  if (!Array.isArray(paths) || !paths.length || paths.some(p => typeof p !== 'string' || !p || p.startsWith('/') || p.endsWith('/') || p.split('/').some(x => x === '.' || x === '..' || !x)) || canonical(paths) !== canonical([...new Set(paths)].sort())) {
+    errors.push('grant paths must be sorted unique exact repository paths');
+    return errors;
+  }
+  if (paths.some(p => !n?.candidate?.changed.includes(p))) errors.push('grant paths must be in the current candidate changed paths');
+  if (paths.some(p => spec?.writes.some(w => p.startsWith(w)))) errors.push('grant paths must be outside plan writes');
+  if (!writesAllowed(s.plan, d.node, paths)) errors.push('not covered by an allow rule');
+  if (!Number.isSafeInteger(d.allowance) || d.allowance !== allowanceSeq(s)) errors.push('grant allowance must match the current allowance plan seq');
+  if (paths.some(p => matchesAny(p, s.plan.closure))) errors.push('under closure');
+  for (const other of Object.values(s.nodes).filter(x => x.id !== d.node && x.slot?.open).sort((a,b) => a.id.localeCompare(b.id))) {
+    if (paths.some(p => withinWrites(s, other.id, p))) { errors.push(`overlaps open node ${other.id}`); break; }
+  }
+  if (paths.some(p => grantsOf(s, d.node).some(g => g.paths.includes(p)))) errors.push('grant paths already granted to this attempt');
+  errors.push(...Object.keys(d).filter(k => !ENTRY_BASE_FIELDS.includes(k) && !['node', 'attempt', 'commit', 'paths', 'allowance'].includes(k)).map(k => `grant unknown field ${k}`));
+  return errors;
+}
+/** GR7: advisory only, for the uncovered paths; does not authorize a write. */
+export function grantHint(s: State, id: string, paths = s.nodes[id]?.candidate?.changed ?? []): string | undefined {
+  const uncovered = paths.filter(p => !withinWrites(s, id, p) && !writesAllowed(s.plan, id, [p]));
+  if (!uncovered.length) return undefined;
+  const dirs = [...new Set(uncovered.map(p => p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : p))].sort();
+  return `hint: an allow rule {nodes: ${JSON.stringify([id])}, writes: ${JSON.stringify(dirs)}} would let owed grant these`;
+}
 export function validateDraft(s: State, d: Draft): string[] {
   const errors: string[] = [];
   const r = role(d.by);
@@ -1007,6 +1065,9 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.facts.base !== n?.slot?.base) errors.push('submit base must match slot base');
       if (spec && required(spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit is missing required obligation keys');
       if (spec && Object.entries(manualKeys(spec, d.facts.patch)).some(([o, k]) => d.facts.keys[o] !== k)) errors.push('submit approve/evidence keys must be derived from the candidate patch');
+      break;
+    case 'grant':
+      errors.push(...grantErrors(s, d));
       break;
     case 'obs':
       if (d.by !== 'executor:owed') errors.push('obs may only be written by executor:owed');
@@ -1486,7 +1547,7 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
       // CandidateFacts.changed is trusted git output for PRE..M. Unlike command
       // checks, writes can be re-evaluated synchronously without an executor job.
       if (o === 'writes' && m.facts.keys.writes) {
-        if (m.facts.changed.some(p => !spec.writes.some(prefix => p.startsWith(prefix)))) Object.assign(v, { status: 'D', mark: '✘', discharger: 'writer', detail: 'writes merge changes exceed allowed paths' });
+        if (m.facts.changed.some(p => !withinWrites(s, id, p))) Object.assign(v, { status: 'D', mark: '✘', discharger: 'writer', detail: `writes merge changes exceed allowed paths${grantHint(s, id, m.facts.changed) ? `\n${grantHint(s, id, m.facts.changed)}` : ''}` });
         else if (v.mark === '⊥') Object.assign(v, { status: 'E', mark: '✔', discharger: undefined, detail: 'writes merge changes rechecked against allowed paths' });
       }
       nodeItemsOnMerge.push(v);

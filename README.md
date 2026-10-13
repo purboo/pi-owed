@@ -574,13 +574,17 @@ Recipe: keep writes strict by default, and at plan time pre-authorize the `write
 allow: [{nodes: ["KB*", "A9-*"], writes: ["app/src/entry/", "package.json"]}]
 ```
 
-A writer's writes question on such a node then costs one parent plan update and no owner step.
+In 0.17, owed uses `allow.writes` at measurement time: covered out-of-writes paths are granted without a plan edit, ruling or parent round trip. Add these rules at plan time; change pre-authorized files only when the task needs it.
 
 `owed init` and `owed plan` warn, without refusing or recording anything, for each node of the new plan with no checks and no evidence obligations: `warning: node <id> has no checks: its acceptance rests on review alone`. The CLI prints the warnings after the result; `--json`, `owed_init` and `owed_plan` return them as `warnings: string[]`. They also warn about a check (or invariant) with `min_tests` that runs its command in a shell loop (`for/while/until … do`, `seq N`): owed counts only the last TAP (`# tests`), jest/vitest (`Tests:`) or pytest (`N passed`) summary of the log, i.e. one run, not the sum (only cargo `test result:` lines add up), so such a loop does not raise the count.
 
 `owed adopt --note TEXT --as parent:<id>` (pi: `owed_adopt` with `as: parent:…`) adopts trunk commits without a prompt when every changed path lies under an `adopt` prefix and the usual no-new-debt guard passes; the refusal names the first path outside. Views show `adopted by parent:<id> under allowance (plan #S)`.
 
-A candidate that changes files outside its writes fails the writes item; `owed why` lists those paths (`Out-of-writes paths: …`, the first 20) and, when a rule covers them all, adds `the parent may widen writes in the plan (allowance plan #S)`. A ruling cannot accept such paths: widening writes is a plan change.
+For a covered candidate, owed atomically records `{kind: "grant", by: "executor:owed", node, attempt, commit, paths, allowance}` before a passing writes observation. `paths` are sorted exact changed paths, not prefixes; `allowance` is the seq of the genesis/plan entry that last changed `allow`. Every replay refuses a wrong principal, stale attempt/commit/allowance, uncovered path, closure match, overlap with another open slot or duplicate grant. Nothing is partially granted. Effective writes (plan prefixes plus exact attempt grants) apply to measurement, merge recheck and dispatch overlap; grants survive plan/allow changes but a new attempt starts with none. Writes keys are unchanged.
+
+`owed why` shows `Granted writes: <paths> (#seq, allowance plan #S)` (first 20, then `… +N more`; JSON `grantedWrites` keeps all grant entries). Report, brief and receipt ΔO⁻ label grants `granted by owed under allowance (plan #S)`. Dispatch packets show owner pre-authorization; reviewer packets ask whether each grant belongs to the node's task and require blocking otherwise. Failed grants leave the writes observation failing with the first reason (`not covered by an allow rule`, `under closure`, `overlaps open node <id>`). For uncovered paths, why/receipt, merge refusal and driver repair/halt text suggest `hint: an allow rule {nodes: ["<id>"], writes: ["<dirs>"]} would let owed grant these` (deduplicated parent directories, trailing `/`; top-level files stay literal). JSON `outOfWrites` adds optional `hint`. A ruling never accepts out-of-writes paths.
+
+Compatibility: owed 0.16 cannot read a ledger containing the new `grant` entry kind. A ledger without grants retains its existing keys and states.
 
 A changed check definition refusal names the changed fields (`run`, `timeout_s`, `reads`, `tests`, `red_expect`). Owed cannot compare commands: the change needs owner authority or a matching check allowance; adding the command as a new check id avoids replacing the existing check. This explanation does not change which edits count as downgrades.
 
