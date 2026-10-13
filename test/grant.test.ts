@@ -81,7 +81,7 @@ test('a legacy writes failure never claims a grant refusal; rerun measures after
     await r.ledger.withLock(()=>r.ledger.append([{kind:'obs',by:'executor:owed',subject:'a',obligation:'writes',key:c.keys.writes!,commit:c.commit,base:c.base,verdict:'fail',exit:1,durationMs:0,note:'outside writes: docs/a',log:'legacy'}]));
     await ops.planSet({cwd:r.cwd,as:owner,channel:'flag',plan:JSON.stringify(plan())});
     let card=await ops.why({cwd:r.cwd,node:'a'}), text=renderReceipt(card);
-    assert.doesNotMatch(text,/but grant refused/); assert.match(text,/hint: paths are now pre-authorized; submit a new commit or rerun attest/);
+    assert.doesNotMatch(text,/but grant refused/); assert.match(text,/hint: paths are now pre-authorized; submit a new commit \(any change, e\.g\. an amended commit message\)/);
     assert.equal(card.outOfWrites?.grantRefused,undefined);
     await r.attest();
     assert.equal(grants(await r.all()).length,0,'active failure is attributed first');
