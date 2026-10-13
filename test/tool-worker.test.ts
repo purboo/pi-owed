@@ -215,7 +215,7 @@ test('G2 index.js loads through pi jiti and executes its native worker', { timeo
       const ctx = { cwd: process.argv[3], hasUI: false, isIdle: () => true, ui: { notify() {} } };
       const result = await tool.execute('test', {}, undefined, undefined, ctx);
       assert.notEqual(result.isError, true, JSON.stringify(result));
-      assert.match(result.content[0].text, /Trunk main/);
+      assert.match(result.content[0].text, /owed:.*trunk main/);
       for (const handler of ext.handlers.get('session_shutdown') ?? []) await handler({}, ctx);
       console.log('jiti index + native worker OK');
     `;

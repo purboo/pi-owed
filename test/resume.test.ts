@@ -10,7 +10,7 @@ import { sha256 } from '../src/canon.ts';
 import { decide, repairEpoch, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, resumeOf, runId, validateDraft, waitingFor } from '../src/reducer.ts';
 import { Dsa, toRunView, type RunResult } from '../src/dsa.ts';
-import { renderEntry, renderReceipt, renderStatus, receipt, statusView } from '../src/views.ts';
+import { renderEntry, renderReceipt, renderStatusFull as renderStatus, receipt, statusView } from '../src/views.ts';
 import { Driver, driveOnce, reportText } from '../src/drive-run.ts';
 import { askingText } from '../src/drive.ts';
 import { Follower, classifyLine, haltHintText } from '../src/drive-bg.ts';
@@ -309,7 +309,7 @@ test('L1.1: owed resume (CLI) and owed_resume (pi): refusals, output, --json, wa
     const wait = await cli(r.cwd, ['resume', 'a', '--after', 'b', '--note', 'wait for b']);
     assert.equal(wait.code, 0, wait.stderr);
     assert.equal(wait.stdout.trim(), `Recorded #${n0} parent:cli resumed a after b\na waits for b (resume #${n0}); the driver acts again when b merges`);
-    const status = await cli(r.cwd, ['status']);
+    const status = await cli(r.cwd, ['status', '--full']);
     assert.match(status.stdout, new RegExp(`\\nWaiting \\(resume\\):\\n⏳ a: waiting for b \\(resume #${n0}\\)\\n`));
     assert.match((await cli(r.cwd, ['why', 'a'])).stdout, new RegExp(`\\n⏳ waiting for b \\(resume #${n0}\\)`));
     const json = await cli(r.cwd, ['resume', 'a', '--json']);

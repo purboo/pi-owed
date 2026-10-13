@@ -10,7 +10,7 @@ import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
 import { decide, planChangedMessage, rebaseMessage, writerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
-import { receipt, renderReceipt, renderStatus, statusView } from '../src/views.ts';
+import { receipt, renderReceipt, renderStatusFull as renderStatus, statusView } from '../src/views.ts';
 import type { CandidateFacts, Draft, Entry, NodeSpec, Plan, RunView, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import owed from '../src/extension.ts';

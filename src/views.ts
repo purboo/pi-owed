@@ -73,8 +73,16 @@ export interface StatusView {
   carried?: (Carried & { node: string })[];
   /** L2: superseded execution blocks of nodes that are not merged; present only when there are any. */
   superseded?: SupersededBlock[];
+  /** SQ: outcome and next actions; existing status fields remain available in JSON. */
+  summary?: SummaryView;
   /** Present while genesis items lack observations (D24.5); `measuring` when this process runs their genesis attest. */
   genesis?: GenesisStatus;
+}
+export interface SummaryView {
+  merged: number;
+  needs: { node: string; reason: string; command: string }[];
+  progress: { node: string; phase: string; ageMs: number }[];
+  debt: string[];
 }
 export interface GenesisStatus { observed: number; total: number; pending: string[]; measuring?: boolean }
 /** `Genesis: k/n invariants observed` plus where the rest gets measured (D24.5). */
@@ -219,7 +227,7 @@ function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
 export const allowanceLabel = (d: { by: string; allowance?: number }): string => d.allowance === undefined ? '' : `by ${d.by} under allowance (plan #${d.allowance})`;
-export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = []): StatusView {
+export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: State['deferred'] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key)): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
     (groups[n.phase] ??= []).push(n.id);
@@ -232,7 +240,7 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   const halts = Object.keys(s.nodes).flatMap(id => halted(s, id) ?? []), launches: Record<string, LaunchEntry[]> = {};
   for (const h of halts) if (h.needs === 'owner') pending.owner!.push({ subject: h.node, obligation: 'driver-halt', key: '', status: 'D', mark: '⏸', discharger: 'owner', evidence: [h.seq], detail: `driver halted attempt ${h.attempt} (#${h.seq}): ${oneLine(h.reason)}` });
   for (const n of Object.values(s.nodes)) { const runs = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined; if (runs?.launches.length) launches[n.id] = runs.launches; }
-  const all = entriesOf(s), needsRuling = Object.values(s.nodes).filter(n => n.slot?.open).flatMap(n => n.blocks.filter(b => currentNeeds(s, b) && awaitingRuling(s, b)).map(b => { const e = all.find(x => x.seq === b.seq); return { ...b, note: e?.kind === 'review' ? e.note ?? '' : '' }; }));
+  const all = entries.length ? entries : entriesOf(s), needsRuling = Object.values(s.nodes).filter(n => n.slot?.open).flatMap(n => n.blocks.filter(b => currentNeeds(s, b) && awaitingRuling(s, b)).map(b => { const e = all.find(x => x.seq === b.seq); return { ...b, note: e?.kind === 'review' ? e.note ?? '' : '' }; }));
   const waiting = Object.keys(s.nodes).sort().flatMap(id => { const w = waitingFor(s, id); return w ? [{ node: id, ...w }] : []; });
   const reported = Object.keys(s.nodes).sort().flatMap(node => { const resume = reportedOf(s,node); return resume === undefined ? [] : [{ node, resume }]; });
   const later = s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).map(n => n.id);
@@ -240,7 +248,80 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   const carried = Object.values(s.nodes).flatMap(n => { const c = carriedOf(n); return c ? [{ node: n.id, ...c }] : []; });
   const held = Object.values(s.nodes).filter(n => n.phase === 'held').map(n => ({ node:n.id, abandon:n.held! }));
   const trunkRed = trunkInvariantReds(s);
-  return { ...(trunkRed.length ? { trunkRed } : {}), ...(held.length ? { held } : {}), ...(reported.length ? { reported } : {}), ...(later.length ? { later } : {}), ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
+  const view: StatusView = { ...(trunkRed.length ? { trunkRed } : {}), ...(held.length ? { held } : {}), ...(reported.length ? { reported } : {}), ...(later.length ? { later } : {}), ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
+  view.summary = summaryView(s, entries, view, now, driverRunning, currentDefers);
+  return view;
+}
+/** SQ: derive presentation only; no ledger state, keys or acceptance rules change. */
+function summaryView(s: State, entries: Entry[], v: StatusView, now: number, driverRunning: boolean, currentDefers: State['deferred']): SummaryView {
+  const needs: SummaryView['needs'] = [], debt: string[] = [];
+  const add = (node: string, reason: string, command: string) => {
+    if (!needs.some(n => n.node === node && n.command === command)) needs.push({ node, reason: oneLine(reason), command });
+  };
+  const plain = (text: string): string => text.replace(/#[0-9]+\s*/g, '').split(';')[0]!.trim();
+  const haltReason = (reason: string): string => {
+    if (reason.startsWith('review-missing:')) return 'reviewer finished without recording the required review';
+    if (/^writer run .*finished .*without submitting/.test(reason)) return 'writer finished without submitting a candidate';
+    const sealed = /^writer run .* sealed (\S+)(.*)$/.exec(reason);
+    if (sealed) return `writer stopped: ${sealed[1]}${plain(sealed[2]!)}`;
+    if (reason.startsWith('dsa rejected')) return `run request rejected${reason.includes(':') ? `: ${plain(reason.slice(reason.indexOf(':') + 1))}` : ''}`;
+    if (/^cannot re-(?:launch|send)/.test(reason)) return 'stored run request is unavailable';
+    return plain(reason).replace(/\s+to:"[^"]*"/g, '');
+  };
+  for (const b of v.needsRuling ?? []) add(b.node, `needs a parent ruling: ${b.note}`, `owed rule --nodes ${b.node} "<decision>"`);
+  for (const h of v.halted) {
+    if (v.needsRuling?.some(b => b.node === h.node)) continue;
+    const command = h.reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim()
+      ?? (h.needs === 'owner' ? ownerCommands(s, h.node)[0] : undefined)
+      ?? `owed resume ${h.node} --note "<why>"`;
+    add(h.node, `driver halted: ${haltReason(h.reason)}`, command);
+  }
+  for (const i of Object.values(v.pending).flat()) {
+    if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
+    if (i.obligation === 'driver-halt' || i.obligation === 'dispatch' || v.needsRuling?.some(b => b.node === i.subject && b.obligation === i.obligation)) continue;
+    const red = i.subject === 'trunk' ? v.trunkRed?.find(r => r.obligation === i.obligation && r.key === i.key) : undefined;
+    if (red) {
+      if (!needs.some(n => n.node === 'trunk' && n.reason === oneLine(red.text) && n.command === '')) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
+      continue;
+    }
+    const command = i.subject === 'trunk' ? 'owed plan <plan.yaml>' : i.discharger === 'owner'
+      ? decisionCommand(s, i, false).split(';')[0]!
+      : `owed why ${i.subject}`;
+    const reason = i.obligation === 'approve' ? 'awaiting owner approval'
+      : reviewObligation(i.obligation) ? `${i.obligation} needs an owner decision`
+      : i.obligation.startsWith('evidence:') ? `awaiting manual evidence: ${i.obligation.slice(9)}`
+      : `${i.obligation}: ${plain(i.detail)}`;
+    add(i.subject, reason, command);
+  }
+  if (!driverRunning) for (const id of v.ready) {
+    if (v.later?.includes(id) || v.overlaps[id]) continue;
+    add(id, 'ready to dispatch', `owed dispatch ${id}`);
+  }
+  const at = (seq?: number): number => {
+    const ts = entries.find(e => e.seq === seq)?.ts;
+    return ts && Number.isFinite(Date.parse(ts)) ? Math.max(0, now - Date.parse(ts)) : 0;
+  };
+  const progress = Object.values(v.nodes).filter(n => !n.merged && !v.later?.includes(n.id) && (n.slot?.open || n.phase === 'blocked' || n.phase === 'held')).map(n => {
+    const w = v.waiting?.find(w => w.node === n.id);
+    const deps = [...new Set([...(w?.deps ?? []), ...(w?.after?.split(', ') ?? [])])];
+    let phase = deps.length ? `waiting for ${deps.join(', ')}`
+      : n.phase === 'held' || v.halted.some(h => h.node === n.id) || v.needsRuling?.some(b => b.node === n.id) || v.reported?.some(r => r.node === n.id) ? 'held'
+      : n.accepted ? 'accepted (merge pending)'
+      : !n.candidate || n.phase === 'dispatched' || n.items.some(i => i.status === 'D' && i.discharger === 'writer') ? 'writing'
+      : n.items.some(i => i.status === 'D' && i.discharger === 'executor') ? 'measuring'
+      : n.items.some(i => i.status === 'D' && i.discharger === 'reviewer') ? 'reviewing' : 'held';
+    if (n.phase === 'blocked' && !deps.length) phase = `waiting for ${(s.plan.nodes.find(x => x.id === n.id)?.deps ?? []).filter(id => !s.nodes[id]?.merged).join(', ')}`;
+    return { node: n.id, phase, ageMs: at(n.slot?.dispatchSeq ?? n.held ?? entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq) };
+  });
+  for (const spec of s.plan.invariants) {
+    const active = ((spec as typeof spec & { known_red?: { test:string; fix:string }[] }).known_red ?? []).filter(r => s.plan.nodes.some(n => n.id === r.fix) && !s.nodes[r.fix]?.merged);
+    if (active.length) debt.push(`inv:${spec.id} known red: ${active.map(r => `${oneLine(r.test)} (fix: ${r.fix})`).join(', ')}; plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq ?? 0}`);
+  }
+  for (const i of v.invariants) if (i.status === 'D' && (i.discharger === 'parent' || i.detail.startsWith('trunk-red:'))) debt.push(`${i.obligation}: ${oneLine(i.detail)}`);
+  for (const n of Object.values(v.nodes).filter(n => !n.merged && n.slot?.open)) for (const i of n.items.filter(i => i.status === 'W')) debt.push(`${n.id}/${i.obligation}: waived — ${oneLine(i.detail.replace(/ \((?:flag weak confirmation|delegated)\)$/, ''))}`);
+  for (const d of currentDefers) debt.push(`${d.node}/inv:${d.id}: owner defer`);
+  needs.sort((a,b) => (s.nodes[b.node]?.dependents ?? 0) - (s.nodes[a.node]?.dependents ?? 0) || a.node.localeCompare(b.node) || a.command.localeCompare(b.command));
+  return { merged: Object.values(v.nodes).filter(n => n.merged).length, needs, progress, debt: [...new Set(debt)] };
 }
 function genesisStatus(s: State): { genesis?: GenesisStatus } {
   const g = genesisProgress(s);
@@ -381,7 +462,21 @@ export function renderReceipt(v: ReceiptCard): string {
   const waitingNodes = [...new Set([...(v.waiting?.deps ?? []), ...(v.waiting?.after ? v.waiting.after.split(', ') : [])])];
   return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed resume ${v.node}`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(itemText)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`, ...(v.receipts ?? []).map(receiptText), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
-export function renderStatus(v: StatusView): string {
+export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
+  if (options.full) return renderStatusFull(v);
+  const summary = v.summary ?? { merged: v.groups.merged?.length ?? 0, needs: [], progress: [], debt: [] };
+  return [...summaryHead(v.trunk, v.invariants, summary),
+    ...(summary.progress.length ? [`In progress (${summary.progress.length}):`, ...summary.progress.map(p => `  ${p.node}: ${p.phase} (${age(p.ageMs)})`)] : []),
+    ...(summary.debt.length ? ['Debt:', ...summary.debt.map(d => `  ${d}`)] : []),
+    'Details: owed status --full · owed why <node>'].join('\n');
+}
+function summaryHead(trunk: StatusView['trunk'], invariants: ItemView[], summary: SummaryView): string[] {
+  const ok = invariants.filter(i => i.status !== 'D').length;
+  return [`owed: ${summary.merged} merged · ${summary.progress.length} in progress · ${summary.needs.length} need you · trunk ${trunk.name} ${trunk.commit.slice(0, 12)} ${ok === invariants.length ? '✔' : '✘'} invariants (${ok}/${invariants.length})`,
+    ...(summary.needs.length ? [`Needs you (${summary.needs.length}):`, ...summary.needs.map(n => `  ${n.node}: ${n.reason}${n.command ? ` → ${n.command}` : ''}`)] : ['Needs you: none'])];
+}
+/** SQ2: preserve the 0.14 renderer plus trunk invariant-red diagnostics. */
+export function renderStatusFull(v: StatusView): string {
   return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.held?.length ? v.held.map(h => `${h.node}: held by abandon #${h.abandon}; release with owed resume ${h.node}`) : []), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(i => itemText({ ...i, detail:v.trunkRed?.find(r => r.obligation === i.obligation)?.text ?? i.detail })), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
@@ -480,6 +575,9 @@ export interface BriefBlock { seq: number; node: string; obligation: string; kin
 export interface BriefDelegated { seq: number; ts: string; by: string; kind: Entry['kind']; node?: string; what: string; note: string }
 export interface BriefProgress { node: string; phase: 'dispatched' | 'submitted'; attempt: number; dispatchSeq: number; dispatchedAt: string; ageMs: number; submitSeq?: number; submittedAt?: string; submitAgeMs?: number }
 export interface Brief {
+  summary?: SummaryView;
+  trunk?: StatusView['trunk'];
+  invariants?: ItemView[];
   since: number | string; now: string;
   decisions: BriefDecision[]; merged: BriefMerged[]; rejected: BriefBlock[]; inProgress: BriefProgress[];
   /** Adoptions of trunk commits made outside owed after `since` (shown only when there are any): owner ones as owner decisions, parent ones under allowance apart. */
@@ -576,7 +674,7 @@ function currentNeeds(s: State, b: Block): boolean {
   return b.needs === 'parent' && b.kind === 'judgment' && !!n?.slot?.open && !!n.candidate && n.candidate.keys[b.obligation] === b.key;
 }
 /** Pure morning brief over a reduced state. `since` limits the Merged section; the other sections show current state. */
-export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now(), coverage?: Map<number, string[]>): Brief {
+export function briefView(s: State, entries: Entry[], since: number | string = -1, now: number = Date.now(), coverage?: Map<number, string[]>, driverRunning = false, summary?: SummaryView): Brief {
   const included = (e: Entry): boolean => typeof since === 'number' ? e.seq > since : Date.parse(e.ts) > Date.parse(since);
   const ts = (seq: number): string => entries.find(e => e.seq === seq)?.ts ?? '';
   const nodes = Object.values(s.nodes), open = nodes.filter(n => !n.merged);
@@ -607,7 +705,7 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
   const allowanceDowngrades = s.downgrades.filter(d => { const e = entries.find(x => x.seq === d.seq); return d.allowance !== undefined && !!e && included(e); });
   const later = s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).map(n => n.id);
   const reported = open.flatMap(n => { const resume = reportedOf(s,n.id); return resume === undefined ? [] : [{ node:n.id, resume }]; });
-  return { since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress, later, reported,
+  return { summary: summary ?? statusView(s, entries, [], now, driverRunning).summary, trunk: s.trunk, invariants: s.invariants, since, now: new Date(now).toISOString(), delegated, decisions, merged, adoptions, allowanceDowngrades, rejected, inProgress, later, reported,
     ...(coverage ? { unguarded: entries.filter((e): e is Extract<Entry, { kind: 'merge' }> => e.kind === 'merge').slice(-10).map(e => ({ node:e.node, seq:e.seq, paths:coverage.get(e.seq) ?? [] })) } : {}),
     totals: { merged: count('merged'), acceptedUnmerged: count('accepted'), blocked: new Set(rejected.map(b => b.node)).size, ready: count('ready'), waiting: open.filter(n => waitingFor(s,n.id) || (n.phase === 'blocked' && !later.includes(n.id))).length, later: later.length, reported: reported.length } };
 }
@@ -636,9 +734,9 @@ function age(ms: number): string {
 export function renderBrief(v: Brief): string {
   const section = (title: string, lines: string[]) => [`${title}${lines.length ? ` (${lines.length}):` : ': none'}`, ...lines.map(l => `  ${l}`)];
   const since = v.since === -1 ? 'start' : typeof v.since === 'number' ? `#${v.since}` : v.since;
-  return [`Brief (since ${since})`,
+  return [...(v.summary && v.trunk && v.invariants ? summaryHead(v.trunk, v.invariants, v.summary) : []), `Brief (since ${since})`,
     ...(v.delegated?.length ? section(`Owner acts (delegated) since ${since}`, v.delegated.map(delegatedText)) : []),
-    ...section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)),
+    ...(v.summary ? [] : section('Needs your decision', v.decisions.map(d => `${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`))),
     ...section('Merged', v.merged.map(m => `${m.node} #${m.seq} → ${m.commit.slice(0, 12)}: ${m.measured} measured, ${m.waived} waived${m.waivedItems.length ? ` (${m.waivedItems.join(', ')})` : ''}, ${m.reviewed} reviewed${m.manualItems?.length ? `, ${m.manualItems.length} manual (${m.manualItems.join(', ')})` : ''}${m.deferred ? `, ${plural(m.deferred, 'deferred invariant')}` : ''}, ${plural(m.untested, 'untested change')}; reviewers: ${m.reviewers.join(', ') || 'none'}`)),
     ...(v.unguarded?.length ? section('Unguarded paths (last 10 merges)', v.unguarded.map(m => `${m.node} #${m.seq}: ${m.paths.join(', ') || 'none'}`)) : []),
     ...adoptionSections(v.adoptions, section, 'Adopted outside owed (owner decisions)', 'Adopted outside owed (parent adoptions under allowance)'),

@@ -7,7 +7,7 @@ import { sha256 } from '../src/canon.ts';
 import { decide, type Action, type DriveOpts } from '../src/drive.ts';
 import * as planMod from '../src/plan.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
-import { briefView, receipt, renderBrief, renderReceipt, renderStatus, statusView } from '../src/views.ts';
+import { briefView, receipt, renderBrief, renderReceipt, renderStatusFull as renderStatus, statusView } from '../src/views.ts';
 import type { CandidateFacts, CheckSpec, Draft, Entry, NodeSpec, Plan, RunView, SendEntry, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli } from './helpers/surface.ts';
