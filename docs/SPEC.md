@@ -1827,8 +1827,17 @@ trailing `/`). Glob characters, backslashes, leading `!`/`#` and trailing spaces
 are escaped; newline/carriage-return paths cannot be represented and refuse
 with one-line escaped paths and the same rollback. Existing excludes are
 preserved, already ignored outputs need no new rule, and repeat dispatches do
-not duplicate rules. Added rules remain in the common excludes for all
-worktrees. When rules are added, the packet line ends
+not duplicate rules. After appending, SS6 (parent ruling #1656) verifies in the
+slot with `git status --porcelain -z --untracked-files=all` that every newly
+created status path, including directory descendants, is now ignored. A tracked
+`.gitignore` rule such as `!/artifact` can override `info/exclude`. If any output
+remains visible, dispatch refuses with its one-line escaped paths and explains
+the higher-precedence tracked rule: ignore setup outputs in the repository or
+change `slot_setup`. The SS2 rollback removes worktree/branch, records nothing,
+and removes only this dispatch's appended exclude bytes, leaving pre-existing
+rules unchanged (also on a later dispatch-recording failure). Owed never edits
+tracked ignore files. Added rules on success remain in the common excludes for
+all worktrees. When rules are added, the packet line ends
 `(exit 0; excluded: /a, /b)` instead of `(exit 0)`; paths use the same one-line
 escaping. Dispatch serializes exclude writes with its existing operation lock
 and publishes them only after the ledger CAS/guard succeeds, before appending

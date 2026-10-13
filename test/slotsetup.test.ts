@@ -135,6 +135,65 @@ test('SS5 an outside slot creates a missing common exclude file for its setup ou
   } finally { await r.cleanup(); }
 });
 
+test('SS6 tracked !/artifact negation refuses dispatch and restores common excludes byte-for-byte', async () => {
+  for (const preexisting of [false, true]) for (const command of ['touch artifact', 'touch artifact other-output']) {
+    const r = await fixture({ worktrees: { root: '../created/nested' }, slot_setup: command });
+    try {
+      await commitAt(r.cwd, { '.gitignore': '!/artifact\n' });
+      await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'fixture tracked negation' });
+      const exclude = join(r.cwd, '.git', 'info', 'exclude');
+      // No final newline, plus a pre-existing rule when requested: rollback must preserve both exactly.
+      await writeFile(exclude, preexisting ? '# preserve\n/artifact\n/preexisting' : '# preserve without final newline');
+      const before = await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8');
+      const bytes = await readFile(exclude), ignore = await readFile(join(r.cwd, '.gitignore'));
+      await assert.rejects(r.dispatch(), (e: Error) => {
+        assert.match(e.message, /slot setup outputs still visible: artifact;/);
+        assert.match(e.message, /tracked ignore rule.*! negation.*overrides info\/exclude/);
+        assert.match(e.message, /ignore setup outputs in the repository or change slot_setup/);
+        assert.doesNotMatch(e.message, /rollback failed/); return true;
+      });
+      await rollbackUnchanged(r, before);
+      assert.deepEqual(await readFile(exclude), bytes, 'remove only this dispatch additions, retaining pre-existing rules');
+      assert.deepEqual(await readFile(join(r.cwd, '.gitignore')), ignore, 'never edit tracked ignore rules');
+    } finally { await r.cleanup(); }
+  }
+});
+
+test('SS6 verifies visible descendants of collapsed directories and restores an absent exclude file', async () => {
+  const r = await fixture({ worktrees: { root: '../created/nested' }, slot_setup: 'mkdir cache; touch cache/value artifact' });
+  try {
+    await commitAt(r.cwd, { '.gitignore': '!/cache/\n!/cache/value\n' });
+    await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'fixture directory negation' });
+    const exclude = join(r.cwd, '.git', 'info', 'exclude');
+    await unlink(exclude);
+    const before = await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8');
+    await assert.rejects(r.dispatch(), /slot setup outputs still visible: cache\/value;/);
+    await rollbackUnchanged(r, before);
+    assert.ok(!existsSync(exclude), 'no exclude file existed before this dispatch');
+  } finally { await r.cleanup(); }
+});
+
+test('SS6 a ledger append failure removes setup excludes and retains a later unrelated append', async t => {
+  const r = await fixture({ worktrees: { root: '../created/nested' }, slot_setup: 'touch artifact' });
+  try {
+    const exclude = join(r.cwd, '.git', 'info', 'exclude');
+    const before = await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8'), bytes = await readFile(exclude);
+    const append = Ledger.prototype.append;
+    t.mock.method(Ledger.prototype, 'append', async function(this: Ledger, ...args: Parameters<Ledger['append']>) {
+      if (args[0].some(d => d.kind === 'dispatch')) {
+        const current = await readFile(exclude);
+        assert.ok(current.toString().includes('/artifact\n'), 'excludes have been applied');
+        await writeFile(exclude, Buffer.concat([current, Buffer.from('/unrelated\n')]));
+        throw new Error('fixture ledger append failure');
+      }
+      return append.apply(this, args);
+    });
+    await assert.rejects(r.dispatch(), /fixture ledger append failure/);
+    await rollbackUnchanged(r, before);
+    assert.deepEqual(await readFile(exclude), Buffer.concat([bytes, Buffer.from('/unrelated\n')]));
+  } finally { t.mock.restoreAll(); await r.cleanup(); }
+});
+
 test('SS5 successful setup changing tracked modified/deleted/renamed paths refuses and rolls back', async () => {
   for (const command of ['printf changed > impl', 'rm impl', 'git mv impl renamed']) {
     const r = await fixture({ worktrees: { root: '../created/nested' }, slot_setup: command });
