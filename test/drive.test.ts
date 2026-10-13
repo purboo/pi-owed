@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, sha256 } from '../src/canon.ts';
-import { blockText, decide, driverSlot, rejectedFixed, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
+import { blockText, decide, driverSlot, rejectedFixed, rejectedHalt, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, runLabels, projectId, entriesOf } from '../src/reducer.ts';
 import { reviewPacket, dispatchPacket, ownerCommands } from '../src/views.ts';
 /** D25.6: the clause naming the commands the main agent can run, appended to owner halts and notifications. */
@@ -96,11 +96,12 @@ const okWriter = () => view(W(), 'sealed', { status: 'ok' });
 const applied = (r: Rig) => new Set(r.entries.flatMap(e => e.kind === 'send' ? [e.send] : []));
 
 // ---------- D4 table, first-match order ----------
-test('row 1: a halted attempt gets no action, whatever else matches', () => {
+test('row 1: a halted attempt only reports questions, whatever else matches', () => {
   const r = rig(); r.dispatch(); r.halt('writer failed');
   assert.equal(act(r), undefined, 'not even the missing writer launch');
   r.launchWriter(); r.halt('again');
-  assert.equal(act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q', rev: 1, question: '?' }] }))), undefined);
+  assert.equal(act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q', rev: 1, question: '?' }] })))?.do, 'notify', 'HA1: questions are reported without clearing the halt');
+  assert.ok(r.state().nodes.a!.halt);
   // A non-driver action on the node clears the halt.
   r.rule('carry on');
   assert.equal(act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q', rev: 1, question: '?' }] })))?.do, 'notify');
@@ -531,7 +532,7 @@ test('a re-send dsa refuses (exit 1, e.g. pruned run) → halt needing a human, 
   const r = rig(); r.dispatch(); r.launchWriter();
   const x = r.send(W(), 'submit', 'follow-up', 'commit your work and run `owed submit a`');
   const a = act(r, runsOf(view(W(), 'pruned', { status: 'ok' })), { rejected: new Map([[x.send, 'unknown run']]) });
-  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `dsa rejected send ${x.send}: unknown run; ${rejectedFixed('a')}`, needs: 'human' });
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: rejectedHalt('a', 'send', x.send, 'unknown run'), needs: 'human' });
 });
 
 // ---------- D11: stale review blocks wait for the slot re-review (review #224) ----------
@@ -682,7 +683,7 @@ test('D15.3: a stalled: halt lists each active block with obligation, principal,
   assert.equal(blockText(s2, s2.nodes.a!.candidate!, b), `#${blk.seq} review by reviewer:human rank 1 on candidate #${c.seq}`);
 });
 
-test('D15.1: a run or send dsa reports rejected halts with the abandon recovery (decide rows 3, 4, 7)', () => {
+test('D15.1/SR4: a rejected run keeps abandon recovery; a rejected send can recover the attempt (rows 3, 4, 7)', () => {
   const r = rig(); r.dispatch(); r.launchWriter();
   const fixed = "this attempt's request is fixed; fix the cause (plan, agent, model), then `owed abandon a` to start a new attempt";
   assert.equal(rejectedFixed('a'), fixed);
@@ -690,7 +691,9 @@ test('D15.1: a run or send dsa reports rejected halts with the abandon recovery 
   assert.ok(run?.do === 'halt' && run.reason.endsWith(fixed), JSON.stringify(run));
   const x = r.send(W(), 'submit');
   const send = act(r, runsOf(okWriter()), { rejected: new Map([[x.send, 'unknown run']]) });
-  assert.ok(send?.do === 'halt' && send.reason === `dsa rejected send ${x.send}: unknown run; ${fixed}`, JSON.stringify(send));
+  assert.ok(send?.do === 'halt' && send.reason === rejectedHalt('a', 'send', x.send, 'unknown run'), JSON.stringify(send));
+  assert.match(send.reason, /owed resume a/);
+  assert.doesNotMatch(send.reason, /start a new attempt/);
   // describe reporting the run rejected (dsa recorded the rejection): row 7 names the same recovery.
   const sealed = act(r, runsOf(view(W(), 'sealed', { status: 'rejected', error: 'unknown agent' })), { applied: applied(r) });
   assert.ok(sealed?.do === 'halt' && sealed.reason === `writer run ${W()} sealed rejected: unknown agent; ${fixed}`, JSON.stringify(sealed));
