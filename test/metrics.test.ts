@@ -41,7 +41,7 @@ function scenario() {
   halt('a','waiting for a at seq 123'); // 5: rule decision
   add({kind:'rule',by:'parent:main',nodes:['a'],text:'choose a design'}); // 6
   submit('a'); // 7: repair
-  halt('a','waiting for b at seq 987'); // 8: same normalized reason, global rule
+  halt('a','waiting for b at seq 987'); // 8: distinct word-id prose (NT2), global rule
   add({kind:'rule',by:'owner:human',channel:'tty',nodes:'*',text:'answer',answer:{rid:'r1',qid:'q1',rev:1}}); // 9
   resume('a'); // 10
   halt('a','plan pending'); // 11
@@ -73,7 +73,7 @@ test('metrics: exact counts, durations, repairs across attempts, carries and hal
   assert.deepEqual(m.repairs,{total:3,perMergedNode:1});
   assert.deepEqual(m.merged.map(x => x.repairs),[1,0,2]);
   assert.deepEqual(m.merged[2]!.repairsByAttempt,[{attempt:1,submits:2,repairs:1},{attempt:2,submits:2,repairs:1}]);
-  assert.deepEqual(m.haltReasons.decision,[{reason:'waiting for <id> at seq <n>',count:2},{reason:'plan pending',count:1}]);
+  assert.deepEqual(m.haltReasons.decision,[{reason:'plan pending',count:1},{reason:'waiting for a at seq <n>',count:1},{reason:'waiting for b at seq <n>',count:1}]);
   assert.ok(renderMetrics(m).split('\n').length <= 20);
 });
 

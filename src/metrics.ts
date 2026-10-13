@@ -26,7 +26,7 @@ export interface Metrics {
 export function metricsBound(value: number | string | undefined, name: 'since' | 'until'): number | string | undefined {
   if (value === undefined) return value;
   if (typeof value === 'string' && /^\d+$/.test(value)) value = Number(value);
-  if (typeof value === 'number' ? !Number.isSafeInteger(value) || value < -1 : !/^\d{4}-\d{2}-\d{2}T/.test(value) || !Number.isFinite(Date.parse(value))) {
+  if (typeof value === 'number' ? !Number.isSafeInteger(value) || value < -1 : !/^\d{4}-\d{2}-\d{2}(?:$|T)/.test(value) || !Number.isFinite(Date.parse(value))) {
     throw new OwedError(`${name} must be a seq or ISO timestamp`, 'usage');
   }
   return value;
@@ -44,6 +44,21 @@ const elapsed = (start: Entry | undefined, end: Entry): number | null => {
 };
 const parentAct = (e: Entry): boolean => e.by !== 'parent:drive' && /^(parent|owner):/.test(e.by);
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** NT2: word-shaped node ids must not erase verbs or ordinary prose. */
+function haltNormalizer(nodeIds: ReadonlySet<string>): (reason: string) => string {
+  const ids = [...nodeIds].sort((a,b) => b.length-a.length).map(escapeRegex);
+  const pattern = ids.length ? new RegExp(`(?<![\\w.-])(?:${ids.join('|')})(?![\\w.-])`, 'g') : undefined;
+  return reason => {
+    let text = reason.replace(/owed:[\w:.-]+|\b[0-9a-f]{7,64}\b/gi,'<id>')
+      .replace(/\b(rid|qid|key|commit|run)\s+[\w:.-]+/gi,'$1 <id>');
+    if (pattern) text = text.replace(pattern,(id: string, offset: number, source: string) => {
+      if (!/^[a-z]+$/.test(id)) return '<id>';
+      const before = source.slice(0,offset), after = source.slice(offset+id.length);
+      return offset === 0 && after.startsWith(':') || after.startsWith('/') || /(?:\bnode |--after |\bowed [\w-]+ )$/.test(before) ? '<id>' : id;
+    });
+    return text.replace(/\d+/g,'<n>').replace(/\s+/g,' ').trim();
+  };
+}
 
 /** MT: pure ledger computation; plans are the recorded blobs, never current Git or dsa state. */
 export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<string, Plan>, window: MetricsWindow = {}): Metrics {
@@ -58,14 +73,7 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     if ('node' in e) nodeIds.add(e.node);
     if (e.kind === 'genesis' || e.kind === 'plan') for (const n of plans.get(e.plan)?.nodes ?? []) nodeIds.add(n.id);
   }
-  const ids = [...nodeIds].sort((a,b) => b.length-a.length).map(escapeRegex);
-  const idPattern = ids.length ? new RegExp(`(?<![\\w.-])(?:${ids.join('|')})(?![\\w.-])`, 'g') : undefined;
-  const normalize = (reason: string): string => {
-    let text = reason.replace(/owed:[\w:.-]+|\b[0-9a-f]{7,64}\b/gi,'<id>')
-      .replace(/\b(rid|qid|key|commit|run)\s+[\w:.-]+/gi,'$1 <id>');
-    if (idPattern) text = text.replace(idPattern,'<id>');
-    return text.replace(/\d+/g,'<n>').replace(/\s+/g,' ').trim();
-  };
+  const normalize = haltNormalizer(nodeIds);
   interface Attempt { firstSubmit?: Entry; submits: number; blocked: boolean }
   const attempts = new Map<string, Map<number, Attempt>>(), current = new Map<string, number>(), dispatches = new Map<string, Entry>();
   const attemptOf = (node: string, attempt: number): Attempt => {
