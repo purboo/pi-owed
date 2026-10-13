@@ -1,4 +1,4 @@
-import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, Plan, Rule, SlotRebase, State } from './types.ts';
+import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, SlotRebase, State } from './types.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesAny, driveConfig } from './plan.ts';
@@ -203,7 +203,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
   return { node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })),
     ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => ({ ...i, observations: entries.filter(e => i.evidence.includes(e.seq)) })) } : {}),
-    blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: clearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
+    blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: mergeBlockClearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
     ...(superseded.length ? { superseded } : {}),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
@@ -671,6 +671,31 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
   if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) return `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}${flag}`;
   // 0.8 (L3.2): a flaky block also offers a ruling (`ownerCommands` adds it once itself).
   return `${waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag)}${flakyHint && blocks.some(b => b.state === 'flaky') ? `; ${flakyRuleHint(i.subject)}` : ''}`;
+}
+/** FH: advisory text only; inspect at most the last 5000 entries and cite at most three other-tree failures. */
+export function mergeFailureHints(s: State, node: string, failures: readonly ObsEntry[]): string[] {
+  const named = failures.filter(e => e.verdict === 'fail' && /^(check|inv):/.test(e.obligation) && e.failed?.length);
+  if (!named.length) return [];
+  const history = entriesOf(s).slice(-5000).reverse(), lines: string[] = [];
+  const names = [...new Set(named.flatMap(e => e.failed!))];
+  for (const name of names) {
+    const other = history.filter((e): e is ObsEntry => e.kind === 'obs' && e.verdict === 'fail' && e.failed?.includes(name) === true && named.some(f => f.failed!.includes(name) && f.commit !== e.commit)).slice(0, 3);
+    if (other.length) lines.push(`known intermittent: ${oneLine(name)} also failed on ${other.map(e => `#${e.seq}`).join(', ')} (other trees)`);
+    if (name.length < 6) continue;
+    for (const spec of s.plan.nodes) {
+      const n = s.nodes[spec.id];
+      if (spec.id === node || !n || n.merged || !(n.slot?.open || n.accepted || n.phase === 'ready')) continue;
+      const text = [spec.title, spec.brief, ...spec.checks.flatMap(c => [c.run, ...(c.tests ?? [])])];
+      if (text.some(t => t?.includes(name))) lines.push(`fix candidate: ${spec.id} (${n.phase}) — owed resume ${node} --after ${spec.id}`);
+    }
+  }
+  return [...new Set(lines)];
+}
+/** FH: retain the normal block remedy and append the same merge-failure diagnostics as the refusal. */
+function mergeBlockClearHint(s: State, entries: readonly Entry[], b: Block): string {
+  const e = entries.find(x => x.seq === b.seq);
+  const hints = e?.kind === 'obs' && e.merging === b.node ? mergeFailureHints(s, b.node, [e]) : [];
+  return [clearHint(s, entries, b), ...hints].join('; ');
 }
 /** TR: parent choices; the failing merge observation is the waiver risk, never the probe. */
 export function trunkRedHint(s: State, seq: number, key?: string): string | undefined {
