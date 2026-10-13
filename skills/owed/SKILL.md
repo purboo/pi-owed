@@ -25,6 +25,8 @@ Default `owed status` / `owed_status` shows outcome, parent/owner next actions, 
 In 0.16, status/brief keep current-attempt recorded defers visible when rechecking is blocked: `owner defer (not rechecked: trunk moved)` or `(not rechecked: merge conflicts)`; JSON `deferred[].unverified` is `drift` or `conflict`. These are unverified debt, never acceptance evidence.
 After an upgrade, the pi restart hint appears once per session per installed version; full status and mismatch refusals retain it.
 
+Merge order (0.16): `status --full` lists `Merge queue` (JSON `mergeQueue`); accepted attempts use derived `acceptedSince` FIFO, with outstanding `resume X --after Y` targets first, then dependent count and id for ties. Use `resume --after` to prioritize an accepted fix without changing the plan; replacement resumes or closed waits remove that priority, and all gates still apply.
+
 For measured workflow outcomes, use `owed report --metrics [--since seq|ISO] [--until seq|ISO] [--json]` (0.15): merged nodes, interruptions/merge, decision vs no-decision halts, merge timing, first-pass acceptance and repairs/merge, computed only from the ledger and plan blobs; since is exclusive, until inclusive.
 
 In 0.16, metrics `--since`/`--until` also accept date-only `YYYY-MM-DD` at UTC midnight.
