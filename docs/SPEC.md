@@ -2069,12 +2069,14 @@ while genesis items lack observations.
   appears only when a failure observation for this key records a GR2 closure/overlap
   refusal (`grantRefused: true` in JSON), never for a legacy failure or one recorded
   before the allowance existed. For newly covered paths whose key already failed,
-  the display says `hint: paths are now pre-authorized; submit a new commit or
-  rerun attest to measure the grant (an active writes failure is attributed first;
-  rerun again after attribution)`.
+  the display says `hint: paths are now pre-authorized; submit a new commit (any
+  change, e.g. an amended commit message) so the writes item is measured again
+  under the new allow rule`. Attribution followed by `attest --rerun` on the same
+  failed key creates conflicting pass/fail observations (⊤), not acceptance.
   Uncovered paths add `hint: an allow rule {nodes:
   ["<id>"], writes: ["<dirs>"]} would let owed grant these` to the receipt/why,
-  merge refusal and driver repair/halt text; dirs are deduplicated parent directories
+  merge refusal (also when trunk-red takes precedence) and driver repair/halt text;
+  dirs are deduplicated parent directories
   with trailing `/` (top-level files stay literal). Hints are generated only for
   display, never stored in writes observations or their log blobs; failure notes
   contain only the original outside-writes note plus the first GR2 reason.
