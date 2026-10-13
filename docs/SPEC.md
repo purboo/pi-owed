@@ -774,8 +774,9 @@ Both name the merge-result and current-trunk probe seqs. These read-only
 projections do not change the candidate's acceptance or create debt from a
 probe alone; a stale failure on another merge key is not projected. Once the
 merge key is waived, the diagnostic disappears and that key can merge.
-In 0.17 (TP), an open candidate is parked while its nonempty set of active
-binding blocks is entirely trunk-red on the current trunk. No halt, writer
+In 0.17 (TP), an open candidate is parked while its nonempty set of binding
+blocks (active or flaky, using the existing binding semantics) is entirely
+trunk-red on the current trunk. No halt, writer
 follow-up, reviewer launch or attest is recorded; asking notices still reach
 the parent. A mixed node retains the existing halt/repair behavior, and
 `owed merge` refusals and every acceptance gate are unchanged.
@@ -787,7 +788,10 @@ any candidate (<first 3 failed names, +N>); waiting: <node ids>. Fix trunk with
 a fixing node or a commit adopted with owed adopt[, or run owed sweep to find
 the culprit]; or the owner waives <obligation> on the waiting nodes.` Sweep
 advice appears only with a configured sweep; known_red is not offered for
-checks. Waiting membership is recomputed when pi delivers a queued notice.
+checks. The runtime notify JSON carries `once`, the full once-key including
+all failed names, so queued notices are revalidated by identity rather than
+truncated display text. Waiting membership is recomputed when pi delivers a
+queued notice. `once` is not a ledger field.
 Status and brief `summary.needs` have one `trunk` item per red state with empty
 `command`, and `summary.progress[].phase` is `waiting: trunk-red (<obligation>
 on trunk <trunk12>)`. `why` retains its existing trunk-red hint.
