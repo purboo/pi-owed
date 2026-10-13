@@ -2094,10 +2094,46 @@ while genesis items lack observations.
     reason start before `:`, before `/`, after `node `, after `--after `, or
     as the argument of `owed <verb> `; command verbs and ordinary prose such
     as `merge refused` stay distinct. Other ids keep their prior normalization.
-    Text is one block of at most 20 lines: merged count, interruptions and rate,
+    Text is one block of at most 20 lines: window and merged count, parent acts
+    and top classes (0.17), grants, partial interruptions and rate, halt counts,
     submit-to-merge median/p90/max, dispatch-to-merge median/p90, first-pass rate,
     repairs and rate, and the top-five halt reasons for each class. Unavailable
     values read `n/a`; JSON includes all per-merge and per-halt detail.
+  - **Parent acts (0.17, PA)**: `parentActs.perMergedNode` is the gate metric
+    for coordination cost in 0.17+, not the partial interruptions ratio. JSON
+    adds `parentActs: {total, perMergedNode, byClass}` and
+    `grants: {total, perMergedNode}`; every pre-existing metrics field is unchanged.
+    Count each entry in the window whose principal role is owner or parent,
+    except `parent:drive` and non-decision transport kinds `dispatch`, `launch`,
+    `send`. Executor, writer and reviewer entries never count. Each act enters
+    exactly one class, first match:
+    1. `writes`: a plan whose detected downgrades are non-empty and all writes
+       widenings, or an amend rule. Detection compares recorded plans (including
+       check-definition changes), ignoring allowance coverage and claimed text.
+       Amend uses the existing `ops.amend` ruling marker
+       `writes of <node> widened by plan #<seq>: <paths>. Limit: <note>`;
+       a hand-written rule matching that marker also qualifies. Its plan and rule
+       are two acts, not one. This is text recognition, not a new ledger field.
+    2. `answer`: a rule with `answer`.
+    3. `trunk`: adopt; a plan changed only in invariants' `known_red`; or resume
+       whose node's last recorded halt reason starts `merge refused: trunk-red`.
+       The last halt is historical, not necessarily still active; a newer halt
+       replaces it. A no-op plan does not qualify as a known_red-only change.
+    4. `resume`, `rule`, `plan`, `review` (owner reviews), then
+       `waive`/`defer`/`evidence`/`abandon`/`approve` by kind, else `other`.
+       Genesis, notes and otherwise unclassified acts count as `other`.
+       Owner approvals currently are review entries, so first-match `review`
+       counts them and `approve` remains zero.
+    `byClass` contains every class, including zeros. `grants.total` counts all
+    entries of kind `grant` in the window, zero in ledgers without grants.
+    Both `perMergedNode` values divide by merged nodes in the same window,
+    or are `null` with none. Bounds apply to each act/grant independently;
+    earlier history supplies previous-plan and last-halt context, and entries
+    after `until` cannot affect classification. Text leads with
+    `parent acts per merged node` and the top five nonzero classes (descending
+    count, name for ties), shows grants, and relabels the old interruptions line
+    `driver halts + answers per merged node (partial)`.
+    PA is derived only: it adds no ledger kind/field and changes no gate or key.
   Compatibility: MT adds no ledger kinds or fields. Historical ledgers, including
   0.9-era entries without halts or answers, replay with unchanged states and keys.
 - **Manual obligations (D23)**: `approve` reads `✔ approved (<owner>, <channel>)`

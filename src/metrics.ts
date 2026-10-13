@@ -1,5 +1,7 @@
 import { canonical } from './canon.ts';
 import { OwedError } from './errors.ts';
+import { planDowngrades } from './plan.ts';
+import { uncoveredDowngrades } from './reducer.ts';
 import type { Entry, HaltEntry, Plan } from './types.ts';
 
 export interface MetricsWindow { since?: number | string; until?: number | string }
@@ -12,7 +14,11 @@ export interface MergedMetric {
   node: string; attempt: number; seq: number; submitToMergeMs: number | null; dispatchToMergeMs: number | null;
   firstPass: boolean; repairs: number; repairsByAttempt: { attempt: number; submits: number; repairs: number }[];
 }
+export type ParentActClass = 'writes' | 'answer' | 'trunk' | 'resume' | 'rule' | 'plan' | 'review' | 'waive' | 'defer' | 'evidence' | 'abandon' | 'approve' | 'other';
+const parentActClasses: readonly ParentActClass[] = ['writes','answer','trunk','resume','rule','plan','review','waive','defer','evidence','abandon','approve','other'];
 export interface Metrics {
+  parentActs: { total: number; perMergedNode: number | null; byClass: Record<ParentActClass, number> };
+  grants: { total: number; perMergedNode: number | null };
   since: number | string; until: number | string | null; mergedNodes: number; merged: MergedMetric[];
   interruptions: { total: number; halts: number; answers: number; perMergedNode: number | null };
   halts: HaltMetric[];
@@ -43,6 +49,27 @@ const elapsed = (start: Entry | undefined, end: Entry): number | null => {
   return Number.isFinite(ms) && ms >= 0 ? ms : null;
 };
 const parentAct = (e: Entry): boolean => e.by !== 'parent:drive' && /^(parent|owner):/.test(e.by);
+/** PA: compare recorded laws, ignoring allowance coverage only while detecting downgrades. */
+function writesOnlyDowngrades(prev: Plan, next: Plan): boolean {
+  const ds = [...planDowngrades(prev,next), ...uncoveredDowngrades({...prev,allow:[]},{...next,allow:[]})];
+  return ds.length > 0 && ds.every(d => d.what === 'writes widened' || d.what === 'writes scope expanded');
+}
+function knownRedOnly(prev: Plan, next: Plan): boolean {
+  const without = (p: Plan): string => canonical({...p,invariants:p.invariants.map(({known_red: _knownRed,...inv}) => inv)});
+  return canonical(prev) !== canonical(next) && without(prev) === without(next);
+}
+function parentActClass(e: Entry, prev: Plan | undefined, next: Plan | undefined, lastHalts: ReadonlyMap<string,string>): ParentActClass {
+  if (e.kind === 'plan') {
+    if (prev && next && writesOnlyDowngrades(prev,next)) return 'writes';
+    return prev && next && knownRedOnly(prev,next) ? 'trunk' : 'plan';
+  }
+  // ops.amend already writes this marker; ordinary prose mentioning writes does not qualify.
+  if (e.kind === 'rule') return /^writes of .+ widened by plan #\d+: .+\. Limit: /.test(e.text) ? 'writes' : e.answer ? 'answer' : 'rule';
+  if (e.kind === 'adopt' || e.kind === 'resume' && lastHalts.get(e.node)?.startsWith('merge refused: trunk-red')) return 'trunk';
+  if (e.kind === 'review') return e.by.startsWith('owner:') ? 'review' : 'other';
+  const kind: string = e.kind;
+  return ['resume','waive','defer','evidence','abandon','approve'].includes(kind) ? kind as ParentActClass : 'other';
+}
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** NT2: word-shaped node ids must not erase verbs or ordinary prose. */
 function haltNormalizer(nodeIds: ReadonlySet<string>): (reason: string) => string {
@@ -81,7 +108,9 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     let a = ns.get(attempt); if (!a) { a = { submits:0, blocked:false }; ns.set(attempt,a); } return a;
   };
   const active = new Map<string,HaltMetric>(), halts: HaltMetric[] = [], merged: MergedMetric[] = [];
-  let planSpecs = new Map<string,string>(), answers = 0;
+  let planSpecs = new Map<string,string>(), answers = 0, previousPlan: Plan | undefined, parentActsTotal = 0, grantsTotal = 0;
+  const byClass = Object.fromEntries(parentActClasses.map(cls => [cls,0])) as Record<ParentActClass,number>;
+  const lastHalts = new Map<string,string>();
   const endHalt = (node: string, seq: number): void => { const h = active.get(node); if (h) { h.endedBy = seq; active.delete(node); } };
   const decision = (node: string, seq: number): void => { const h = active.get(node); if (h) { h.class = 'decision'; h.decisionSeqs.push(seq); } };
   const addHalt = (e: HaltEntry): void => {
@@ -90,11 +119,20 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     active.set(e.node,h); if (included(e)) halts.push(h);
   };
   for (const e of history) {
+    const nextPlan = e.kind === 'genesis' || e.kind === 'plan' ? plans.get(e.plan) : undefined;
+    if (included(e)) {
+      if (parentAct(e) && !['dispatch','launch','send'].includes(e.kind)) {
+        parentActsTotal++; byClass[parentActClass(e,previousPlan,nextPlan,lastHalts)]++;
+      }
+      // GR is implemented in parallel; do not depend on its entry type being present yet.
+      if ((e.kind as string) === 'grant') grantsTotal++;
+    }
+    if (e.kind === 'halt') lastHalts.set(e.node,e.reason);
     if (e.kind === 'genesis' || e.kind === 'plan') {
-      const p = plans.get(e.plan); if (!p) throw new OwedError(`Missing plan ${e.plan}`, 'internal');
+      const p = nextPlan; if (!p) throw new OwedError(`Missing plan ${e.plan}`, 'internal');
       const next = new Map(p.nodes.map(n => [n.id,canonical(n)]));
       if (e.kind === 'plan' && parentAct(e)) for (const node of active.keys()) if (planSpecs.get(node) !== next.get(node)) decision(node,e.seq);
-      planSpecs = next;
+      planSpecs = next; previousPlan = p;
     }
     if (parentAct(e)) {
       if (e.kind === 'rule') {
@@ -134,6 +172,8 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
   };
   const firstPass = merged.filter(m => m.firstPass).length, repairs = merged.reduce((sum,m) => sum+m.repairs,0), n = merged.length;
   return { since,until:until ?? null,mergedNodes:n,merged,
+    parentActs:{total:parentActsTotal,perMergedNode:ratio(parentActsTotal,n),byClass},
+    grants:{total:grantsTotal,perMergedNode:ratio(grantsTotal,n)},
     interruptions:{total:halts.length+answers,halts:halts.length,answers,perMergedNode:ratio(halts.length+answers,n)},halts,
     haltReasons:{decision:top('decision'),'no-decision':top('no-decision')},
     submitToMergeMs:durations(merged.map(m => m.submitToMergeMs)),dispatchToMergeMs:durations(merged.map(m => m.dispatchToMergeMs)),
@@ -145,12 +185,15 @@ export function renderMetrics(m: Metrics): string {
   const number = (v: number | null): string => v === null ? 'n/a' : String(Math.round(v*1000)/1000);
   const time = (v: number | null): string => v === null ? 'n/a' : `${number(v/1000)}s`;
   const summary = (d: DurationMetrics, max: boolean): string => `median ${time(d.median)}, p90 ${time(d.p90)}${max ? `, max ${time(d.max)}` : ''} (${d.samples} samples)`;
-  return [`Metrics (since ${m.since === -1 ? 'start' : m.since}, until ${m.until ?? 'latest'})`,
-    `Merged nodes: ${m.mergedNodes}`,
-    `Interruptions: ${m.interruptions.total} (${m.interruptions.halts} halts, ${m.interruptions.answers} answers); per merged node ${number(m.interruptions.perMergedNode)}`,
+  const classes = Object.entries(m.parentActs.byClass).filter(([,count]) => count > 0)
+    .sort(([a,x],[b,y]) => y-x || a.localeCompare(b)).slice(0,5).map(([cls,count]) => `${cls} ${count}`).join(', ');
+  return [`Metrics (since ${m.since === -1 ? 'start' : m.since}, until ${m.until ?? 'latest'}); merged nodes: ${m.mergedNodes}`,
+    `Parent acts per merged node: ${number(m.parentActs.perMergedNode)} (${m.parentActs.total} total); top classes: ${classes || 'none'}`,
+    `Grants: ${m.grants.total}; per merged node ${number(m.grants.perMergedNode)}`,
+    `Driver halts + answers per merged node (partial): ${number(m.interruptions.perMergedNode)} (${m.interruptions.total} total: ${m.interruptions.halts} halts, ${m.interruptions.answers} answers)`,
+    `Halts: decision ${m.halts.filter(h => h.class === 'decision').length}, no-decision ${m.halts.filter(h => h.class === 'no-decision').length}`,
     `Submit to merge: ${summary(m.submitToMergeMs,true)}`,`First dispatch to merge: ${summary(m.dispatchToMergeMs,false)}`,
     `First-pass acceptance: ${m.firstPassAcceptance.nodes}/${m.mergedNodes} (${m.firstPassAcceptance.rate === null ? 'n/a' : `${number(m.firstPassAcceptance.rate*100)}%`})`,
     `Repairs: ${m.repairs.total}; per merged node ${number(m.repairs.perMergedNode)}`,
-    ...(['decision','no-decision'] as const).flatMap(cls => [`Halts (${cls}): ${m.halts.filter(h => h.class === cls).length}`,
-      ...m.haltReasons[cls].map(r => `  ${r.count} × ${r.reason.slice(0,160)}`)])].join('\n');
+    ...(['decision','no-decision'] as const).flatMap(cls => m.haltReasons[cls].map(r => `  ${cls}: ${r.count} × ${r.reason.slice(0,160)}`))].join('\n');
 }
