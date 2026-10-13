@@ -31,6 +31,8 @@ Merge order (0.16): `status --full` lists `Merge queue` (JSON `mergeQueue`); acc
 
 For measured workflow outcomes, use `owed report --metrics [--since seq|ISO] [--until seq|ISO] [--json]` (0.15): merged nodes, interruptions/merge, decision vs no-decision halts, merge timing, first-pass acceptance and repairs/merge, computed only from the ledger and plan blobs; since is exclusive, until inclusive.
 
+In 0.17, use `parentActs.perMergedNode` as the gate metric: all non-driver owner/parent acts by class; `grants` counts owed grants, while the old interruptions line is explicitly partial (driver halts + answers).
+
 In 0.16, metrics `--since`/`--until` also accept date-only `YYYY-MM-DD` at UTC midnight.
 Metrics halt groups preserve plain-word node ids in prose; they normalize only in node positions (start before `:`, before `/`, after `node ` or `--after `, or the argument of `owed <verb> `).
 
