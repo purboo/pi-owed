@@ -3032,6 +3032,25 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
 
 `src/drive-run.ts` executes the actions of `decide` as principal `parent:drive`.
 
+- **State loads** (0.16, DL1–DL4). Every driver load, including `stateOf`,
+  measurement reaping/refusal handling and run-status reads, uses
+  `ops.loadDriverState(ledger)`: the ops load path (§6) reads and verifies the
+  entire ledger hash chain, resumes its in-process memo or disk snapshot and
+  uses the persistent parsed-plan cache, refuses an uninitialized ledger, then
+  applies `drive/reports.json` to the loaded private state. The result equals
+  `reduce(entries, lookup)` followed by `applyReports`. At a cached head no
+  full replay or historical YAML parse occurs; appended entries fold from the
+  cached replay point. A fresh process with a valid snapshot and plan cache
+  parses no historical YAML. Corrupt or chain-mismatching snapshots fall back
+  to full replay; ledger verification errors still throw and newly appended
+  plans are applied. Reports and driver mutations never enter the serialized
+  ledger-only memo/snapshot or another load; cached plans are deep-frozen and
+  must not be mutated. No ledger kind/field, gate, key, lock, stale check,
+  ruling, scheduling or idempotence rule changes. Incremental ledger hash
+  verification and pass frequency are deferred. DL5's synthetic scale bench
+  (`node --expose-gc test/perf/driver-load-bench.ts`, outside the default suite)
+  measures cold, same-head warm and +10-entry loads and RSS with at least
+  6,800 entries, 250 distinct plans and 280 nodes.
 - **Pass.** Load the ledger state; for every open, not halted attempt
   `describe --key` its live runs (the writer and the reviewer runs of the
   current candidate); for every recorded send this process has not confirmed,
