@@ -273,16 +273,62 @@ async function excusableQuarantine(ctx: ExecContext, job: AttestJob): Promise<Qu
   return await keyCommitsTo(ctx.cwd, ctx.plan, job, q.map(e => e.test)) ? q : [];
 }
 /**
- * MS4: the quarantine entries that excuse a run: it completed (no timeout, signal, spawn or command-not-found exit),
- * its counts name every failing test (fail = the number of distinct names, more than zero tests) and each failing
- * name exactly equals an active entry. Undefined otherwise: a crash, timeout, non-TAP failure or other name still fails.
+ * MS4 ruling (10-15 01:0x): whether `run` is one runner invocation: no unquoted `&&`, `||`, `;`, `|`, `&` or newline,
+ * and no backtick or `$(` outside single quotes. Conservative: an unterminated quote also counts as compound.
  */
-export function quarantineExcuse(q: QuarantineEntry[], r: CommandResult, counts: Counts | undefined, failed: string[]): QuarantineEntry[] | undefined {
+export function singleInvocation(run: string): boolean {
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < run.length; i++) {
+    const c = run[i]!;
+    if (quote === "'") { if (c === "'") quote = undefined; continue; }
+    if (c === '\\') { i++; continue; }
+    if (c === '`' || (c === '$' && run[i + 1] === '(')) return false;
+    if (quote === '"') { if (c === '"') quote = undefined; continue; }
+    if (c === "'" || c === '"') { quote = c; continue; }
+    if ('&|;\n\r'.includes(c)) return false;
+  }
+  return quote === undefined;
+}
+const CARGO_RUN = /(?:^|\s)cargo\s+(?:\+\S+\s+)?test\b/;
+/** MS4 ruling c: TAP completeness: a column-0 plan `1..N` and exactly N column-0 results. */
+function tapComplete(log: string): string | undefined {
+  const plan = [...log.matchAll(/^1\.\.(\d+)(?:\s+#.*)?\s*$/gm)];
+  if (plan.length !== 1) return plan.length ? 'several top-level TAP plans' : 'no TAP plan';
+  const results = [...log.matchAll(/^(?:not )?ok \d+\b/gm)].length, n = Number(plan[0]![1]);
+  return results === n ? undefined : `TAP plan 1..${n} but ${results} top-level results`;
+}
+/** MS4 ruling c: cargo completeness: --no-fail-fast, no build error, one `test result:` per test binary. */
+function cargoComplete(run: string, log: string): string | undefined {
+  if (!/(?:^|\s)--no-fail-fast(?:\s|$)/.test(run)) return 'cargo without --no-fail-fast';
+  if (/^error(?:\[\w+\])?:/m.test(log)) return 'cargo build error';
+  const binaries = [...log.matchAll(/^\s+(?:Running|Doc-tests)\s/gm)].length, results = [...log.matchAll(/^test result: /gm)].length;
+  return binaries && binaries === results ? undefined : `cargo ran ${binaries} test targets but printed ${results} test results`;
+}
+/**
+ * MS4 (fail-closed, parent ruling 10-15 01:0x): the quarantine entries that excuse a run, or why they do not. All of:
+ * one runner invocation; it completed with that runner's test-failure exit (TAP 1, cargo 101; never a timeout, signal
+ * or spawn error); completeness proven (TAP plan and results, or cargo --no-fail-fast with every summary); every
+ * failing name (fail = number of distinct names) exactly equals an active entry; and the remaining tests still meet
+ * min_tests. `reason` is set only when entries were active and the run had failing names or a failing exit.
+ */
+export function quarantineExcuse(q: QuarantineEntry[], run: string, r: CommandResult, counts: Counts | undefined, failed: string[], minTests?: number): { excused?: QuarantineEntry[]; reason?: string } {
   const names = [...new Set(failed)];
-  if (!q.length || !names.length || r.error || r.spawn || r.code === null || [124, 126, 127, 137, 143].includes(r.code)) return undefined;
-  if (!counts || counts.format === 'mutants' || !counts.tests || counts.fail !== names.length) return undefined;
-  const hit = names.map(n => q.find(e => e.test === n));
-  return hit.every(e => e !== undefined) ? hit as QuarantineEntry[] : undefined;
+  if (!q.length || (r.code === 0 && !names.length)) return {};
+  const no = (reason: string) => ({ reason });
+  if (r.error || r.spawn || r.code === null) return no(r.error ? `run did not complete (${r.error.split('\n')[0]})` : 'run did not complete');
+  if (!names.length) return no('no failing test names');
+  if (!singleInvocation(run)) return no('compound command');
+  const cargo = CARGO_RUN.test(run), code = cargo ? 101 : 1;
+  if (r.code !== code) return no(`exit ${r.code} is not a test failure`);
+  if (!counts || (cargo ? counts.format !== 'cargo' : counts.format !== 'tap')) return no(cargo ? 'no cargo test results' : 'counts are not TAP');
+  const incomplete = cargo ? cargoComplete(run, r.log) : tapComplete(r.log);
+  if (incomplete) return no(incomplete);
+  if (!counts.tests || counts.fail !== names.length) return no(`${counts.fail ?? 0} failing tests but ${names.length} failing names`);
+  const hit = names.map(n => q.find(e => e.test === n)), other = names.filter((_, i) => !hit[i]);
+  if (other.length) return no(`${other.length} failing test${other.length > 1 ? 's are' : ' is'} not quarantined`);
+  const left = counts.tests - names.length;
+  if (minTests !== undefined && left < minTests) return no(`${left} tests left, below min_tests ${minTests}`);
+  return { excused: hit as QuarantineEntry[] };
 }
 /** MS4: counts without the excused tests: they count neither as passed nor as failed (min_tests sees the rest). */
 function withoutQuarantined(c: Counts, excused: QuarantineEntry[]): Counts {
@@ -359,7 +405,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const repeat = spec.repeat, runs = repeat?.runs ?? 1, need = repeat?.need ?? runs;
       if (repeat && (job.kind === 'red' || spec.red || spec.mutants)) throw new Error('repeat is not allowed on red or mutants checks');
       if (repeat) obs.runs = [];
-      const excusable = await excusableQuarantine(ctx, job), quarantined = new Map<string, string>();
+      const excusable = await excusableQuarantine(ctx, job), quarantined = new Map<string, string>(), notApplied = new Set<string>();
       let passed = 0, allCompleted = true, allCountsOK = true;
       const failed = new Set<string>(), failureLogs: string[] = [];
       for (let index = 0; index < runs; index++) {
@@ -372,7 +418,8 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         obs.counts = parseCounts(raw.log, note => { warnings.push(note); protocolWarnings++; });
         const named = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(raw.log);
         // MS4: a completed run whose only failing tests are active quarantine names counts as if they had not run.
-        const excused = quarantineExcuse(excusable, raw, obs.counts, named);
+        const verdict = quarantineExcuse(excusable, spec.run, raw, obs.counts, named, spec.min_tests), excused = verdict.excused;
+        if (verdict.reason) notApplied.add(verdict.reason);
         if (excused) { for (const e of excused) quarantined.set(e.test, e.fix); obs.counts = withoutQuarantined(obs.counts!, excused); }
         const runFailed = excused ? [] : named, result = excused ? { ...raw, code: 0 } : raw;
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
@@ -441,6 +488,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       }
       if (obs.noisy) obs.note = `${obs.note ? `${obs.note}; ` : ''}noisy (${passed}/${obs.runs!.length} passed)`;
       if (quarantined.size) { obs.quarantined = [...quarantined.keys()]; obs.note = `${obs.note ? `${obs.note}; ` : ''}${quarantineNote(quarantined)}`; }
+      if (notApplied.size) obs.note = `quarantine not applied: ${[...notApplied].join(', ')}${obs.note ? `; ${obs.note}` : ''}`;
     }
   } catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`; capture(`\n${obs.note}\n`); }
   finally {

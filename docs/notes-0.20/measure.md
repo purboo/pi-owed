@@ -73,13 +73,27 @@ reused observations: `reused #a (...), reused #b (...); measure again: ...`. `<a
 - Keys: the check/invariant key includes the sorted active names (`quarantine` field of the hashed key object, absent
   when there are none, so the key equals 0.17's). The fix merging, or a plan change of the entries, changes the key and
   forces a fresh measurement (a trunk refresh on the next `attest --trunk`/merge).
-- Executor: a run whose failing tests all equal active entries exactly does not fail: the excused tests count neither
-  as passed nor failed (`counts.tests`/`fail` exclude them, so `min_tests` sees the rest), the observation records
-  `quarantined: [names]` and its note ends `quarantined: <name> (fix: <node>)[, <name> (fix: <node>)]`. Required: the
-  run completed (no timeout, signal, spawn error, exit 124/126/127/137/143) and its counts name every failing test
-  (`fail` = number of distinct names, from TAP / cargo / owed-counts). A crash, timeout, non-TAP failure or any other
-  failing name still fails. Excuses apply only when the job's key commits to exactly the excused names (recomputed by
-  the executor), so a stale key without them can never pass by an excuse. Not applied to red or mutants runs.
+- Executor (fail-closed, parent ruling MS4 10-15 01:0x, review #1907): a failing run is excused only when owed can
+  prove its non-zero exit came from the quarantined test failures alone. All of:
+  a. `run` is one runner invocation: no unquoted `&&`, `||`, `;`, `|`, `&` or newline, no backtick or `$(` outside
+     single quotes, no unterminated quote (lexical, conservative);
+  b. the exit is the runner's test-failure code: 101 when `run` is `cargo test`, else 1 (TAP / node --test); a
+     timeout, signal or spawn error is never excused;
+  c. completeness: TAP has exactly one column-0 plan `1..N` and N column-0 `ok`/`not ok` results; cargo has
+     `--no-fail-fast` in `run`, no `error:`/`error[E…]:` line, and one `test result:` per `Running`/`Doc-tests` target;
+  d. counts name every failure (`fail` = distinct failing names), every failing name exactly equals an active entry,
+     and the remaining tests still meet `min_tests`.
+  Then the excused tests count neither as passed nor failed (`counts.tests`/`fail` exclude them), the run's exit is
+  treated as 0, the observation records `quarantined: [names]` and its note ends
+  `quarantined: <name> (fix: <node>)[, ...]`. Otherwise the observation fails exactly as without quarantine and its
+  note (shown by `why`/`status`) starts `quarantine not applied: <reason>; ` with one of: `compound command`,
+  `exit <n> is not a test failure`, `run did not complete (...)`, `no failing test names`, `counts are not TAP`,
+  `no cargo test results`, `no TAP plan`, `several top-level TAP plans`, `TAP plan 1..<n> but <m> top-level results`,
+  `cargo without --no-fail-fast`, `cargo build error`, `cargo ran <n> test targets but printed <m> test results`,
+  `<f> failing tests but <n> failing names`, `<n> failing test(s) is/are not quarantined`,
+  `<n> tests left, below min_tests <m>`. owed-counts output is never excused (not TAP/cargo).
+  Excuses apply only when the job's key commits to exactly the excused names (recomputed by the executor), so a stale
+  key can never pass by an excuse. Red runs (`kind: red`) and mutants runs are never excused.
 
 ## MS5 views
 
@@ -87,6 +101,13 @@ reused observations: `reused #a (...), reused #b (...); measure again: ...`. `<a
   `quarantine <inv>/<test> until <fix> merges` (node checks: `quarantine <node>/<check>/<test> until <fix> merges`).
   JSON: report `quarantine: string[]`; status/brief through `summary.debt`.
 - `owed why <fix>`: `merging <fix> lifts quarantine: <inv>/<test>, ...` (receipt field `lifts`).
+
+## Replay exception (pooled repeat)
+
+Pooling changes how an existing ledger replays in one case: a 0.17 ledger whose invariant or check sets `repeat` and
+has several observations with a verdict on one key. 0.17 showed pass + fail there as the ⊤ owner conflict; 0.20 pools
+their runs, so the same entries may replay as ✔ (pass) or ✘ (fail). Ledgers without `repeat`, or with at most one
+observation per key, replay unchanged.
 
 ## Deviations / interpretation choices
 
