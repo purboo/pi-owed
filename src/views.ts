@@ -760,8 +760,8 @@ export function mergeFailureHints(s: State, node: string, failures: readonly Obs
   const history = entries.slice(-5000).reverse();
   const names = [...new Set(named.flatMap(e => e.failed!))];
   for (const name of names) {
-    const other = history.filter((e): e is ObsEntry => e.kind === 'obs' && e.verdict === 'fail' && e.failed?.includes(name) === true && named.some(f => f.failed!.includes(name) && f.commit !== e.commit)).slice(0, 3);
-    if (other.length) lines.push(`known intermittent: ${oneLine(name)} also failed on ${other.map(e => `#${e.seq}`).join(', ')} (other trees)`);
+    const intermittent = intermittentLine(history, node, named.filter(f => f.failed!.includes(name)), name);
+    if (intermittent) lines.push(intermittent);
     if (name.length < 6) continue;
     for (const spec of s.plan.nodes) {
       const n = s.nodes[spec.id];
@@ -771,6 +771,24 @@ export function mergeFailureHints(s: State, node: string, failures: readonly Obs
     }
   }
   return [...new Set(lines)];
+}
+/**
+ * AT4: `known intermittent` only when the same test failed and passed on the same key, or failed with the same error
+ * signature on a trunk key; trees of the refused node are never independent evidence. Otherwise, when other trees
+ * failed the same name with a known, different signature, `same test failed on older trees (different error)`; else nothing.
+ */
+function intermittentLine(history: readonly Entry[], node: string, failures: readonly ObsEntry[], name: string): string | undefined {
+  const obs = history.filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed');
+  const flip = obs.filter(e => failures.some(f => e.subject === f.subject && e.obligation === f.obligation && e.key === f.key && (e.verdict === 'pass' || (e.failed?.includes(name) === true && !!e.runs?.some(r => r.verdict === 'pass'))))).slice(0, 3);
+  if (flip.length) return `known intermittent: ${oneLine(name)} failed and passed on the same key (${flip.map(e => `#${e.seq}`).join(', ')})`;
+  const sig = (e: ObsEntry): string | undefined => e.signatures?.[name];
+  const other = obs.filter(e => e.verdict === 'fail' && e.failed?.includes(name) === true && (e.probe === 'trunk' || (e.subject !== node && e.merging !== node)) && failures.every(f => f.seq !== e.seq && f.commit !== e.commit));
+  const trunk = other.filter(e => (e.probe === 'trunk' || (e.subject === 'trunk' && e.merging === undefined)) && sig(e) !== undefined && failures.some(f => sig(f) === sig(e))).slice(0, 3);
+  if (trunk.length) return `known intermittent: ${oneLine(name)} failed with the same error on trunk (${trunk.map(e => `#${e.seq}`).join(', ')})`;
+  // Only known signatures can show a different error; unknown ones print nothing.
+  const older = other.filter(e => e.probe === undefined && sig(e) !== undefined);
+  if (!older.length || !failures.some(f => sig(f) !== undefined) || older.some(e => failures.some(f => sig(f) === sig(e)))) return undefined;
+  return `same test failed on older trees (different error): ${oneLine(name)} (${older.slice(0, 3).map(e => `#${e.seq}`).join(', ')})`;
 }
 /** FH: retain the normal block remedy and append the same merge-failure diagnostics as the refusal. */
 function mergeBlockClearHint(s: State, entries: readonly Entry[], b: Block): string {
