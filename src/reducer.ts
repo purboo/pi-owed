@@ -1260,6 +1260,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         else if (id === d.node) errors.push('resume after must name another node, not the node itself');
       }
       if (d.expect !== undefined && d.expect !== 'report') errors.push('resume expect must be report');
+      if (d.batch !== undefined) errors.push(...resumeBatchErrors(s,d));
       if (d.note !== undefined && typeof d.note !== 'string') errors.push('resume note must be a string');
       break;
     case 'halt':
@@ -1321,10 +1322,20 @@ function carriedErrors(s: State, d: Draft & { node: string; rulings?: number }, 
 }
 
 // ---------- escapes and decoys ----------
+/** PO2: batch members are contiguous, same actor/options, and name distinct nodes. */
+function resumeBatchErrors(s: State, d: Extract<Draft,{kind:'resume'}>): string[] {
+  const own = 'seq' in d && typeof d.seq === 'number' ? d.seq : s.seq+1, first = d.batch!;
+  if (!Number.isSafeInteger(first) || first < 0 || first > own) return ['resume batch must reference its first resume seq'];
+  if (first === own) return [];
+  const members = entriesOf(s).filter(e => e.seq >= first);
+  const same = (e: Entry): boolean => e.kind === 'resume' && e.batch === first && e.by === d.by && e.channel === d.channel && canonical(e.after) === canonical(d.after) && e.expect === d.expect && e.note === d.note && e.node !== d.node;
+  return members[0]?.seq === first && members.length === own-first && members.every(same) ? [] : ['resume batch must follow contiguous resumes with the same actor and options and distinct nodes'];
+}
+
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on

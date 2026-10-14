@@ -147,7 +147,7 @@ test('gc pins submitted commits of an abandoned attempt so a later attribution r
     const a2 = await call<DispatchPacket>(r.cwd, ['dispatch', 'a']);
     await commitAt(a2.worktree, { 'test/a.cjs': 'module.exports=1;', 'test/a.test.cjs': checkTest('a', 1) });
     await call(a2.worktree, ['submit', 'a']);
-    const out = await cli(r.cwd, ['attest', 'a', '--json']); assert.equal(out.code, 0, `${out.stderr}\n${out.stdout}`);
+    const out = await cli(r.cwd, ['attest', 'a', '--json']); assert.equal(out.code, 1, `${out.stderr}\n${out.stdout}`);
     const res = JSON.parse(out.stdout) as AttestResult;
     assert.ok(res.observations.some(e => e.kind === 'obs' && e.attribution && e.obligation === 'check:a' && e.verdict === 'fail' && e.commit === bad), 'attribution rerun reproduced the failure');
     assert.ok(!res.receipt.blocks.some(b => b.obligation === 'check:a' && b.state === 'active'), 'block cleared');

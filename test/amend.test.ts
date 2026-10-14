@@ -111,7 +111,7 @@ test('N3: amend edits the file (comments and flow kept) and records plan, carry 
   } finally { await r.cleanup(); }
 });
 
-test('N3: authority is that of owed plan: a parent without an allow rule is refused (nothing recorded, file unchanged); an allow rule lets the parent amend', { timeout: 120_000 }, async () => {
+test('N3/PO1: authority is that of owed plan: a parent without an allow rule is refused; covered amend is unnecessary and records nothing', { timeout: 120_000 }, async () => {
   const { r, file } = await setup();
   try {
     const count = (await entriesOf(r.cwd)).length;
@@ -128,14 +128,14 @@ test('N3: authority is that of owed plan: a parent without an allow rule is refu
     assert.equal(refused.isError, true);
     assert.match(refused.content[0]!.text!, /Only owner may confirm plan downgrades/);
     await untouched(r, file, count, PLAN);
-    // An allow rule of the current plan covers b inside test/: the parent amends, labelled under allowance.
+    // PO1: an allow rule replaces this amend with a grant at measurement.
     const ok = await cli(r.cwd, ['amend', 'b', '--writes', '+test/x.cjs', '--note', 'the second fixture only']);
-    assert.equal(ok.code, 0, ok.stderr);
-    assert.match(ok.stdout, /Downgrades by parent:cli under allowance \(plan #\d+\): b: /);
-    const es = await entriesOf(r.cwd);
-    assert.equal(es.length, count + 2, 'plan and rule; no candidate to carry');
-    assert.ok(es.at(-2)?.kind === 'plan' && es.at(-2)?.by === 'parent:cli' && es.at(-1)?.kind === 'rule' && es.at(-1)?.by === 'parent:cli');
-    assert.match(await readFile(file, 'utf8'), /writes:\n {6}- test\/b\n {6}- test\/x\.cjs\n/, 'block style stays');
+    assert.equal(ok.code, 1, ok.stderr);
+    assert.match(ok.stderr, /not needed: test\/x\.cjs are covered by allow rule/);
+    await untouched(r, file, count, PLAN);
+    const covered = await run({ node: 'b', writes: ['+test/x.cjs'], note: 'covered' });
+    assert.equal(covered.isError,true); assert.match(covered.content[0]!.text!,/not needed:/);
+    await untouched(r,file,count,PLAN);
     // The pi tool without `as` defaults to the owner (delegated) when an allowance does not cover the widening.
     const pi = await run({ node: 'a', writes: ['+test/y'], note: 'pi limit' });
     assert.equal(pi.isError, undefined, pi.content[0]!.text);
@@ -221,7 +221,7 @@ test('N3: the plan source is the latest plan entry\'s path, else --plan; without
 });
 
 test('N3: the edit keeps each list style: empty flow, quoted flow, block, and a node without writes', { timeout: 120_000 }, async () => {
-  const text = `${PLAN}  - id: c   # no writes yet\n    deps: [a]\n  - id: d\n    deps: [a]\n    writes: [ ]\n  - {id: e, deps: [a], writes: ["test/e"]}\n`;
+  const text = `${PLAN.replace('nodes: [b], writes: [test/]','nodes: [b], writes: [allowed/]')}  - id: c   # no writes yet\n    deps: [a]\n  - id: d\n    deps: [a]\n    writes: [ ]\n  - {id: e, deps: [a], writes: ["test/e"]}\n`;
   const { r, file } = await setup(text);
   try {
     const count = (await entriesOf(r.cwd)).length;

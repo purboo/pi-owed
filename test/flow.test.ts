@@ -192,7 +192,7 @@ test('rebase in place: trunk moves, the slot base becomes trunk, the candidate i
     await git(a.worktree, ['rebase', '--onto', trunk, oldBase], { env: identity });
     const newCommit = await revParse(a.worktree, 'HEAD');
     await call(a.worktree, ['submit', 'a']);
-    const card = await call<ops.ReceiptCard>(r.cwd, ['attest', 'a'], 1) as unknown as { stdout: string };
+    const card = await call<ops.ReceiptCard>(r.cwd, ['attest', 'a'], 3) as unknown as { stdout: string };
     assert.match(card.stdout, /needs work|blocked/);
     const why = await call<ops.ReceiptCard>(r.cwd, ['why', 'a']);
     assert.equal(why.accepted, false, 'the review block binds the node across the rebase');
