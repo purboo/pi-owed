@@ -64,36 +64,36 @@ function rig(plan = planOf()) {
   return r;
 }
 
-test('MO1/MO2: acceptance FIFO beats dependent count and later acceptances cannot overtake', () => {
+test('DR1/MO1: transitive dependent weight beats FIFO; equal weights retain acceptance order', () => {
   const r = rig(), old = r.accept('old'), high = r.accept('high');
   assert.equal(r.state().nodes.old!.acceptedSince, old.seq);
   assert.equal(r.state().nodes.high!.acceptedSince, high.seq);
   assert.ok(r.state().nodes.high!.dependents > r.state().nodes.old!.dependents);
-  assert.deepEqual(r.merges(), ['old', 'high']);
+  assert.deepEqual(r.merges(), ['high', 'old']);
   r.accept('wait');
-  assert.deepEqual(r.merges(), ['old', 'high', 'wait']);
+  assert.deepEqual(r.merges(), ['high', 'old', 'wait']);
   r.merge('old');
   assert.deepEqual(r.merges(), ['high', 'wait']);
   assert.equal(r.state().nodes.high!.acceptedSince, high.seq, 'trunk movement preserves continuous candidate acceptance');
 });
 
-test('MO2: resume --after prioritizes accepted targets; replacement and abandoned waiters remove priority', () => {
+test('DR1: resume --after does not override critical-path merge weight', () => {
   const r = rig(); r.accept('old'); r.accept('high'); r.dispatch('wait');
   r.resume('wait', 'high'); assert.deepEqual(r.merges(), ['high', 'old']);
-  r.resume('wait'); assert.deepEqual(r.merges(), ['old', 'high'], 'latest resume replaces explicit wait');
-  r.resume('wait', ['high', 'old']); assert.deepEqual(r.merges(), ['old', 'high'], 'waited-on group remains FIFO');
+  r.resume('wait'); assert.deepEqual(r.merges(), ['high', 'old'], 'latest resume replaces explicit wait, not merge weight');
+  r.resume('wait', ['high', 'old']); assert.deepEqual(r.merges(), ['high', 'old'], 'waited-on group keeps critical-path weight');
   r.resume('wait', 'high');
   r.add({ kind: 'abandon', by: 'parent:main', node: 'wait', attempt: 1, reason: 'fixture closes wait' });
-  assert.deepEqual(r.merges(), ['old', 'high'], 'closed attempt no longer waits');
+  assert.deepEqual(r.merges(), ['high', 'old'], 'closed attempt no longer waits; weight is unchanged');
 });
 
-test('MO2: waited-on targets disappear after merging; current deps alone do not raise priority', () => {
+test('DR1: waited-on targets disappear after merging; current deps count toward merge weight', () => {
   const r = rig(); r.accept('old'); r.accept('high'); r.dispatch('wait'); r.resume('wait', 'high');
   r.merge('high'); assert.deepEqual(r.merges(), ['old']);
   assert.equal(reducer.waitingFor(r.state(), 'wait'), undefined);
   const other = rig(); other.accept('old'); other.accept('high'); other.dispatch('wait');
   other.changePlan(p => { p.nodes.find(n => n.id === 'wait')!.deps = ['high']; });
-  assert.deepEqual(other.merges(), ['old', 'high'], 'implicit dependencies do not count as resume.after');
+  assert.deepEqual(other.merges(), ['high', 'old'], 'implicit dependencies contribute to transitive dependent weight');
 });
 
 test('MO1: losing and regaining acceptance resets acceptedSince on the same candidate', () => {
@@ -150,18 +150,18 @@ test('MO1: incremental, copied/packed and full replay agree at every ledger pref
 test('MO2: only merge actions reorder; non-merge actions and in-flight/halted gates are preserved', () => {
   const r = rig(); r.accept('old'); r.accept('high'); r.dispatch('wait');
   const writer = r.state().nodes.wait!.runs[0]!.launches[0]!; r.runs.delete(writer.rid);
-  const initial = r.actions(); assert.deepEqual(initial.filter(a => a.do === 'merge').map(a => a.node), ['old', 'high']);
+  const initial = r.actions(); assert.deepEqual(initial.filter(a => a.do === 'merge').map(a => a.node), ['high', 'old']);
   assert.deepEqual(r.merges({ measuring: new Set(['old']) }), ['high']);
   r.add({ kind: 'halt', by: 'parent:drive', node: 'old', attempt: 1, needs: 'human', reason: 'fixture halt' });
   assert.deepEqual(r.merges(), ['high']);
-  r.resume('old'); assert.deepEqual(r.merges(), ['old', 'high']);
+  r.resume('old'); assert.deepEqual(r.merges(), ['high', 'old']);
   // A non-merge action remains ahead of both merges; the merge subsequence alone becomes FIFO.
   const mixed = rig(); mixed.accept('wait'); mixed.accept('old'); mixed.dispatch('high');
   const actions = mixed.actions();
   assert.deepEqual(actions.map(a => [a.do, a.node]), [['send', 'high'], ['merge', 'wait'], ['merge', 'old']]);
 });
 
-test('MO3: status JSON and full status expose the same FIFO and waited-on queue', { timeout: 120_000 }, async () => {
+test('DR1/MO3: status JSON and full status expose the same critical-path weighted queue', { timeout: 120_000 }, async () => {
   const r = await repo();
   try {
     await r.put('README', 'fixture'); await r.commit();
@@ -173,8 +173,8 @@ test('MO3: status JSON and full status expose the same FIFO and waited-on queue'
       await ops.attest({ cwd: r.cwd, node });
     }
     const json = await cli(r.cwd, ['status', '--json']); assert.equal(json.code, 0, json.stderr);
-    assert.deepEqual(JSON.parse(json.stdout).mergeQueue, ['old', 'high']);
-    const full = await cli(r.cwd, ['status', '--full']); assert.equal(full.code, 0, full.stderr); assert.match(full.stdout, /^Merge queue: old, high$/m);
+    assert.deepEqual(JSON.parse(json.stdout).mergeQueue, ['high', 'old']);
+    const full = await cli(r.cwd, ['status', '--full']); assert.equal(full.code, 0, full.stderr); assert.match(full.stdout, /^Merge queue: high, old$/m);
     await ops.dispatch({ cwd: r.cwd, as: { role: 'parent', id: 'main' }, node: 'wait' });
     const resume = await cli(r.cwd, ['resume', 'wait', '--after', 'high']); assert.equal(resume.code, 0, resume.stderr);
     assert.deepEqual((await ops.status({ cwd: r.cwd })).mergeQueue, ['high', 'old']);

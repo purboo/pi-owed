@@ -7,7 +7,45 @@ import type { Channel, LaunchEntry, Principal, RuleEntry, RunQuestion, State } f
 import { oneLine } from './views.ts';
 
 export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; dsa?: Pick<Dsa, 'describe' | 'send'> }
-export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult }
+export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; rulingDelivery?: RulingDelivery }
+export interface RulingDelivery { delivered: string[]; pending: number; failures: string[] }
+/** DR4: runtime receipt only. Notify once after committing the rule, with no ledger writes or retry loop. */
+export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick<Dsa, 'describe' | 'send'>, exclude?: string): Promise<RulingDelivery> {
+  const { state } = await readState({ cwd }), dsa = client ?? new Dsa({ cwd, timeoutMs: 5000 });
+  const { rulingFollowUp, rulingMessage } = await import('./drive.ts');
+  const result: RulingDelivery = { delivered: [], pending: 0, failures: [] };
+  if (entry.prospective) return result;
+  const ids = entry.nodes === '*' ? state.plan.nodes.map(n => n.id) : entry.nodes;
+  for (const id of ids) {
+    const n = state.nodes[id];
+    if (n?.merged) continue;
+    const launches = n?.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
+    for (const role of ['writer', 'reviewer'] as const) {
+      const calls = launches.filter(l => l.role === role && l.rid !== exclude);
+      if (!calls.length) {
+        const needsRole = role === 'writer' || (state.plan.nodes.find(x => x.id === id)?.review.count ?? 0) > 0 || n?.candidate?.closureTouched;
+        if (needsRole && !launches.some(l => l.role === role && l.rid === exclude)) result.pending++;
+        continue;
+      }
+      for (const launch of calls) {
+        const address = `${id}/${role}`;
+        try {
+          const view = await dsa.describe(launch.rid);
+          if (view.state !== 'running' && view.state !== 'asking') { result.pending++; continue; }
+          const followUp = rulingFollowUp(state, id)?.message;
+          const message = followUp?.includes(`#${entry.seq} `) || followUp?.includes(`#${entry.seq} (`) ? followUp : rulingMessage(id, 'writer', state.rules.filter(r => r.seq === entry.seq));
+          const sent = await dsa.send(`owed-rule-${entry.seq}-${launch.rid}`, launch.rid, 'notify', message);
+          if (sent.outcome !== 'applied') throw new Error(`${sent.outcome}${'reason' in sent && sent.reason ? `: ${sent.reason}` : ''}`);
+          result.delivered.push(address);
+        } catch (e) { result.failures.push(`${address} (${launch.rid}): ${oneLine((e as Error).message)}`); }
+      }
+    }
+  }
+  return result;
+}
+export function rulingDeliveryText(r: RulingDelivery): string {
+  return `delivered to ${r.delivered.length} running calls (${r.delivered.join(', ')}); ${r.pending} will get it at their next dispatch or follow-up${r.failures.length ? `; delivery failures: ${r.failures.join('; ')}` : ''}`;
+}
 type Question = { launch: LaunchEntry; question: RunQuestion };
 const shell = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
 export const answerRetry = (node: string, entry: RuleEntry): string => {
@@ -66,14 +104,15 @@ export async function answer(o: AnswerOptions): Promise<AnswerResult> {
   const entry = await answerRule({ ...o, text, answer: ref }), a = entry.answer!, request = `owed-answer-${entry.seq}`;
   const role = entry.text.startsWith('Answer to writer question ') ? 'writer' : 'reviewer';
   const message = entry.text.slice(`Answer to ${role} question ${a.qid}: `.length);
+  const rulingDelivery = await deliverRuling(o.cwd, entry, dsa, a.rid);
   try {
     const delivery = await dsa.send(request, a.rid, 'answer', message, { qid: a.qid, rev: a.rev });
     if (delivery.outcome !== 'applied') throw new Error(`${delivery.outcome}${'reason' in delivery && delivery.reason ? `: ${delivery.reason}` : ''}`);
-    return { entry, request, delivery };
+    return { entry, request, delivery, rulingDelivery };
   } catch (e) {
     throw new OwedError(`Answer rule #${entry.seq} recorded; dsa delivery failed: ${(e as Error).message}. Retry exactly: ${answerRetry(o.node, entry)}`);
   }
 }
 export function answerText(node: string, r: AnswerResult): string {
-  return `Answer rule #${r.entry.seq} for ${node}: delivered to ${r.entry.answer!.rid} (qid ${r.entry.answer!.qid}, rev ${r.entry.answer!.rev}, request ${r.request})`;
+  return `Answer rule #${r.entry.seq} for ${node}: delivered to ${r.entry.answer!.rid} (qid ${r.entry.answer!.qid}, rev ${r.entry.answer!.rev}, request ${r.request})${r.rulingDelivery ? `; ${rulingDeliveryText(r.rulingDelivery)}` : ''}`;
 }

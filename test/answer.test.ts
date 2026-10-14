@@ -24,7 +24,7 @@ class FakeDsa {
   async send(id: string, to: string, kind: string, message: string | Uint8Array, extra: { qid?: string; rev?: number } = {}): Promise<SendResult> {
     this.sends.push({ id, to, kind, message: String(message), ...extra });
     if (this.error) throw new Error(this.error);
-    if (this.outcome.outcome === 'applied') this.views.set(to, { rid: to, state: 'running' });
+    if (this.outcome.outcome === 'applied' && kind !== 'notify') this.views.set(to, { rid: to, state: 'running' });
     return this.outcome;
   }
   ask(rid: string, qid = 'q1', rev = 2) { this.views.set(rid, { rid, state: 'asking', questions: [{ qid, rev, question: 'Which API?', to: 'w1/main' }] }); }
