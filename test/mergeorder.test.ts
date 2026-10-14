@@ -155,7 +155,7 @@ test('MO2: only merge actions reorder; non-merge actions and in-flight/halted ga
   r.add({ kind: 'halt', by: 'parent:drive', node: 'old', attempt: 1, needs: 'human', reason: 'fixture halt' });
   assert.deepEqual(r.merges(), ['high']);
   r.resume('old'); assert.deepEqual(r.merges(), ['high', 'old']);
-  // A non-merge action remains ahead of both merges; the merge subsequence alone becomes FIFO.
+  // A non-merge action remains ahead of both merges; the merge subsequence follows DR1 order.
   const mixed = rig(); mixed.accept('wait'); mixed.accept('old'); mixed.dispatch('high');
   const actions = mixed.actions();
   assert.deepEqual(actions.map(a => [a.do, a.node]), [['send', 'high'], ['merge', 'wait'], ['merge', 'old']]);

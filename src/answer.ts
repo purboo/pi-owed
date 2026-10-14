@@ -2,6 +2,7 @@
 import { Dsa } from './dsa.ts';
 import type { SendResult } from './dsa.ts';
 import { OwedError } from './errors.ts';
+import { sha256 } from './canon.ts';
 import { answerRule, readState, subagentRefusal } from './ops.ts';
 import type { Channel, LaunchEntry, Principal, RuleEntry, RunQuestion, State } from './types.ts';
 import { oneLine } from './views.ts';
@@ -34,7 +35,7 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
           if (view.state !== 'running' && view.state !== 'asking') { result.pending++; continue; }
           const followUp = rulingFollowUp(state, id)?.message;
           const message = followUp?.includes(`#${entry.seq} `) || followUp?.includes(`#${entry.seq} (`) ? followUp : rulingMessage(id, 'writer', state.rules.filter(r => r.seq === entry.seq));
-          const sent = await dsa.send(`owed-rule-${entry.seq}-${launch.rid}`, launch.rid, 'notify', message);
+          const sent = await dsa.send(`owed-rule-${entry.seq}-${launch.rid}-${sha256(message).slice(0,12)}`, launch.rid, 'notify', message);
           if (sent.outcome !== 'applied') throw new Error(`${sent.outcome}${'reason' in sent && sent.reason ? `: ${sent.reason}` : ''}`);
           result.delivered.push(address);
         } catch (e) { result.failures.push(`${address} (${launch.rid}): ${oneLine((e as Error).message)}`); }
@@ -110,7 +111,7 @@ export async function answer(o: AnswerOptions): Promise<AnswerResult> {
     if (delivery.outcome !== 'applied') throw new Error(`${delivery.outcome}${'reason' in delivery && delivery.reason ? `: ${delivery.reason}` : ''}`);
     return { entry, request, delivery, rulingDelivery };
   } catch (e) {
-    throw new OwedError(`Answer rule #${entry.seq} recorded; dsa delivery failed: ${(e as Error).message}. Retry exactly: ${answerRetry(o.node, entry)}`);
+    throw new OwedError(`Answer rule #${entry.seq} recorded; dsa delivery failed: ${(e as Error).message}; ${rulingDeliveryText(rulingDelivery)}. Retry exactly: ${answerRetry(o.node, entry)}`);
   }
 }
 export function answerText(node: string, r: AnswerResult): string {
