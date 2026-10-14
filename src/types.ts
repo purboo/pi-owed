@@ -132,7 +132,7 @@ export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; at
  * N1 (0.10): `carry` = the seq of the submit this entry carries across a plan entry that changed only the node's checks,
  * writes, type or drive. Only a submit by executor:owed has it (the same commit at the same base, facts recomputed).
  */
-export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts; carry?: number }
+export interface SubmitEntry extends Base { kind: 'submit'; node: string; attempt: number; facts: CandidateFacts; carry?: number; model?: string }
 /** GR: exact changed paths pre-authorized by the current owner allowance, scoped to one attempt. */
 export interface GrantEntry extends Base { kind: 'grant'; node: string; attempt: number; commit: string; paths: string[]; allowance: number }
 export interface ObsEntry extends Base {
@@ -164,7 +164,7 @@ export interface ObsEntry extends Base {
   signatures?: Record<string, string>;
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
-export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent' }
+export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }
 export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[] }
 export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string }
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
@@ -310,6 +310,8 @@ export interface RunQuestion { qid: string; rev: number; question: string; to?: 
  * informational (spec_digest is opaque: never compare it with a locally computed hash).
  */
 export interface RunView {
+  /** DR3: actual model reported by dsa, never inferred from the selected launch spec. */
+  model?: string;
   rid: string;
   state: RunState;
   status?: string;
