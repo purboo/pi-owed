@@ -75,23 +75,26 @@ reused observations: `reused #a (...), reused #b (...); measure again: ...`. `<a
   forces a fresh measurement (a trunk refresh on the next `attest --trunk`/merge).
 - Executor (fail-closed, parent ruling MS4 10-15 01:0x, review #1907): a failing run is excused only when owed can
   prove its non-zero exit came from the quarantined test failures alone. All of:
-  a. `run` is one runner invocation: no unquoted `&&`, `||`, `;`, `|`, `&` or newline, no backtick or `$(` outside
-     single quotes, no unterminated quote (lexical, conservative);
-  b. the exit is the runner's test-failure code: 101 when `run` is `cargo test`, else 1 (TAP / node --test); a
-     timeout, signal or spawn error is never excused;
-  c. completeness: TAP has exactly one column-0 plan `1..N` and N column-0 `ok`/`not ok` results; cargo has
-     `--no-fail-fast` in `run`, no `error:`/`error[E…]:` line, and one `test result:` per `Running`/`Doc-tests` target;
+  a. `run` is a plain `node --test` run (rulings 2, 10-15 01:5x, review #1925): split on spaces, every token uses
+     only `[A-Za-z0-9_./=:@,+*?-]` (no quote, `$`, backslash, redirection or operator), optional leading
+     `NAME=value` tokens, then exactly `node` with a `--test` token. npm/pnpm/bash/sh scripts, wrappers, `$'…'`,
+     quoted arguments and redirection are `not a known test runner`;
+  b. the exit is 1; a timeout, signal or spawn error is never excused;
+  c. completeness: exactly one column-0 TAP plan `1..N` and N column-0 `ok`/`not ok` results;
   d. counts name every failure (`fail` = distinct failing names), every failing name exactly equals an active entry,
      and the remaining tests still meet `min_tests`.
   Then the excused tests count neither as passed nor failed (`counts.tests`/`fail` exclude them), the run's exit is
   treated as 0, the observation records `quarantined: [names]` and its note ends
   `quarantined: <name> (fix: <node>)[, ...]`. Otherwise the observation fails exactly as without quarantine and its
-  note (shown by `why`/`status`) starts `quarantine not applied: <reason>; ` with one of: `compound command`,
-  `exit <n> is not a test failure`, `run did not complete (...)`, `no failing test names`, `counts are not TAP`,
-  `no cargo test results`, `no TAP plan`, `several top-level TAP plans`, `TAP plan 1..<n> but <m> top-level results`,
-  `cargo without --no-fail-fast`, `cargo build error`, `cargo ran <n> test targets but printed <m> test results`,
+  note (shown by `why`/`status`) starts `quarantine not applied: <reason>; ` with one of:
+  `cargo runs are not excused in 0.20`, `not a known test runner`, `exit <n> is not a test failure`,
+  `run did not complete (...)`, `no failing test names`, `counts are not TAP`, `no TAP plan`,
+  `several top-level TAP plans`, `TAP plan 1..<n> but <m> top-level results`,
   `<f> failing tests but <n> failing names`, `<n> failing test(s) is/are not quarantined`,
-  `<n> tests left, below min_tests <m>`. owed-counts output is never excused (not TAP/cargo).
+  `<n> tests left, below min_tests <m>`. owed-counts output is never excused (not TAP).
+- Cargo (backlog): a `cargo test` run is never excused in 0.20 (`cargo runs are not excused in 0.20`); its real
+  output (`error: test failed, to rerun pass ...`) and summary lines give no reliable completeness proof. A
+  `quarantine` key on a cargo check still parses and keys; it only never excuses.
   Excuses apply only when the job's key commits to exactly the excused names (recomputed by the executor), so a stale
   key can never pass by an excuse. Red runs (`kind: red`) and mutants runs are never excused.
 
@@ -101,6 +104,11 @@ reused observations: `reused #a (...), reused #b (...); measure again: ...`. `<a
   `quarantine <inv>/<test> until <fix> merges` (node checks: `quarantine <node>/<check>/<test> until <fix> merges`).
   JSON: report `quarantine: string[]`; status/brief through `summary.debt`.
 - `owed why <fix>`: `merging <fix> lifts quarantine: <inv>/<test>, ...` (receipt field `lifts`).
+
+## Remeasure selection with repeat
+
+Without `--all`, a remeasure selects an item whose latest verdict on the key failed, or whose pooled repeat runs still
+fail (review #1925 nit): a passing latest run does not hide a pool that still fails.
 
 ## Replay exception (pooled repeat)
 

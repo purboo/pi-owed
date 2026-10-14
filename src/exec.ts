@@ -273,21 +273,16 @@ async function excusableQuarantine(ctx: ExecContext, job: AttestJob): Promise<Qu
   return await keyCommitsTo(ctx.cwd, ctx.plan, job, q.map(e => e.test)) ? q : [];
 }
 /**
- * MS4 ruling (10-15 01:0x): whether `run` is one runner invocation: no unquoted `&&`, `||`, `;`, `|`, `&` or newline,
- * and no backtick or `$(` outside single quotes. Conservative: an unterminated quote also counts as compound.
+ * MS4 rulings 2 (10-15 01:5x): whether `run` is a plain `node --test` invocation: space-separated tokens of only
+ * `[A-Za-z0-9_./=:@,+*?-]` (no quote, `$`, backslash, redirection or operator), optional leading `NAME=value`
+ * tokens, then exactly `node`, with a `--test` token among its arguments.
  */
-export function singleInvocation(run: string): boolean {
-  let quote: "'" | '"' | undefined;
-  for (let i = 0; i < run.length; i++) {
-    const c = run[i]!;
-    if (quote === "'") { if (c === "'") quote = undefined; continue; }
-    if (c === '\\') { i++; continue; }
-    if (c === '`' || (c === '$' && run[i + 1] === '(')) return false;
-    if (quote === '"') { if (c === '"') quote = undefined; continue; }
-    if (c === "'" || c === '"') { quote = c; continue; }
-    if ('&|;\n\r'.includes(c)) return false;
-  }
-  return quote === undefined;
+export function nodeTestRun(run: string): boolean {
+  const tokens = run.split(' ').filter(t => t !== '');
+  if (!tokens.length || tokens.some(t => !/^[A-Za-z0-9_./=:@,+*?-]+$/.test(t))) return false;
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]!)) i++;
+  return tokens[i] === 'node' && tokens.slice(i + 1).includes('--test');
 }
 const CARGO_RUN = /(?:^|\s)cargo\s+(?:\+\S+\s+)?test\b/;
 /** MS4 ruling c: TAP completeness: a column-0 plan `1..N` and exactly N column-0 results. */
@@ -297,17 +292,10 @@ function tapComplete(log: string): string | undefined {
   const results = [...log.matchAll(/^(?:not )?ok \d+\b/gm)].length, n = Number(plan[0]![1]);
   return results === n ? undefined : `TAP plan 1..${n} but ${results} top-level results`;
 }
-/** MS4 ruling c: cargo completeness: --no-fail-fast, no build error, one `test result:` per test binary. */
-function cargoComplete(run: string, log: string): string | undefined {
-  if (!/(?:^|\s)--no-fail-fast(?:\s|$)/.test(run)) return 'cargo without --no-fail-fast';
-  if (/^error(?:\[\w+\])?:/m.test(log)) return 'cargo build error';
-  const binaries = [...log.matchAll(/^\s+(?:Running|Doc-tests)\s/gm)].length, results = [...log.matchAll(/^test result: /gm)].length;
-  return binaries && binaries === results ? undefined : `cargo ran ${binaries} test targets but printed ${results} test results`;
-}
 /**
- * MS4 (fail-closed, parent ruling 10-15 01:0x): the quarantine entries that excuse a run, or why they do not. All of:
- * one runner invocation; it completed with that runner's test-failure exit (TAP 1, cargo 101; never a timeout, signal
- * or spawn error); completeness proven (TAP plan and results, or cargo --no-fail-fast with every summary); every
+ * MS4 (fail-closed, parent rulings 10-15 01:0x and 01:5x): the quarantine entries that excuse a run, or why they do
+ * not. All of: a plain `node --test` run (never cargo in 0.20); it completed with exit 1 (never a timeout, signal or
+ * spawn error); TAP completeness proven (one plan `1..N`, N top-level results); every
  * failing name (fail = number of distinct names) exactly equals an active entry; and the remaining tests still meet
  * min_tests. `reason` is set only when entries were active and the run had failing names or a failing exit.
  */
@@ -317,11 +305,11 @@ export function quarantineExcuse(q: QuarantineEntry[], run: string, r: CommandRe
   const no = (reason: string) => ({ reason });
   if (r.error || r.spawn || r.code === null) return no(r.error ? `run did not complete (${r.error.split('\n')[0]})` : 'run did not complete');
   if (!names.length) return no('no failing test names');
-  if (!singleInvocation(run)) return no('compound command');
-  const cargo = CARGO_RUN.test(run), code = cargo ? 101 : 1;
-  if (r.code !== code) return no(`exit ${r.code} is not a test failure`);
-  if (!counts || (cargo ? counts.format !== 'cargo' : counts.format !== 'tap')) return no(cargo ? 'no cargo test results' : 'counts are not TAP');
-  const incomplete = cargo ? cargoComplete(run, r.log) : tapComplete(r.log);
+  if (CARGO_RUN.test(run)) return no('cargo runs are not excused in 0.20');
+  if (!nodeTestRun(run)) return no('not a known test runner');
+  if (r.code !== 1) return no(`exit ${r.code} is not a test failure`);
+  if (!counts || counts.format !== 'tap') return no('counts are not TAP');
+  const incomplete = tapComplete(r.log);
   if (incomplete) return no(incomplete);
   if (!counts.tests || counts.fail !== names.length) return no(`${counts.fail ?? 0} failing tests but ${names.length} failing names`);
   const hit = names.map(n => q.find(e => e.test === n)), other = names.filter((_, i) => !hit[i]);
