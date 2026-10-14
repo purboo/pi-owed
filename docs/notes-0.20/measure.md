@@ -110,6 +110,17 @@ reused observations: `reused #a (...), reused #b (...); measure again: ...`. `<a
 Without `--all`, a remeasure selects an item whose latest verdict on the key failed, or whose pooled repeat runs still
 fail (review #1925 nit): a passing latest run does not hide a pool that still fails.
 
+## Attest exit codes (PO5) with repeat and quarantine
+
+`measuredFailure` (PO5 exit 1) looks at the verdicts of the observations the action recorded, and those verdicts are
+already after the quarantine decision: an excused run records verdict pass (and `quarantined`), so it is not a measured
+failure; a run quarantine did not excuse records verdict fail and exits 1. With `repeat`, each observation's own verdict
+counts (its runs against `need`), not the pooled item verdict: a remeasure whose new observation fails exits 1 even if
+the pool now passes, and one whose observation passes exits 0/4 even if the pool still fails (the receipt shows the
+pool). `attest --trunk --remeasure` includes the remeasured observations.
+Check templates (CT1) expand to a multi-line `# owed-template/...` pipeline, which is `not a known test runner`, so a
+quarantine on a template check never excuses in 0.20.
+
 ## Replay exception (pooled repeat)
 
 Pooling changes how an existing ledger replays in one case: a 0.17 ledger whose invariant or check sets `repeat` and

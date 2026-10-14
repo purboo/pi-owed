@@ -11,6 +11,7 @@ import { editText } from '../src/edit.ts';
 import * as ops from '../src/ops.ts';
 import type { AttestJob, ObsEntry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
+import { measuredFailure } from '../src/parentops.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 
 const owner = { role: 'owner', id: 'pi' } as const, parent = { role: 'parent', id: 'main' } as const;
@@ -110,6 +111,7 @@ test('MS4/MS5: active quarantine excuses only its name, joins the key, shows as 
     assert.equal(stale.verdict, 'fail'); assert.equal(stale.quarantined, undefined);
     const fresh = await runJob({ cwd: r.cwd, plan: s.plan, ledger }, { ...job, key: s.trunk.invKeys.unit! });
     assert.equal(fresh.verdict, 'pass'); assert.deepEqual(fresh.quarantined, ['flaky one']);
+    assert.equal(measuredFailure([fresh as never]), false, 'PO5: an excused run is no measured failure');
     // A red run is never excused: its failing test is the counterfactual (exit stays non-zero, red passes).
     const red = await runJob({ cwd: r.cwd, plan: s.plan, ledger }, { ...job, kind: 'red', subject: 'other', obligation: 'red:c', key: 'red-key', spec: { ...job.spec!, red: true, tests: ['test/suite.test.cjs'] } });
     assert.equal(red.verdict, 'pass', red.note); assert.equal(red.quarantined, undefined); assert.notEqual(red.exit, 0);
@@ -150,6 +152,7 @@ test('MS4 fail-closed: `...; exit 3` is not a known test runner: not excused, an
     await ops.attest({ cwd: r.cwd, node: 'other' });
     const obs = (await (await Ledger.open(r.cwd)).read()).findLast((e): e is ObsEntry => e.kind === 'obs' && e.obligation === 'check:c')!;
     assert.equal(obs.verdict, 'fail'); assert.equal(obs.exit, 3); assert.equal(obs.quarantined, undefined);
+    assert.equal(measuredFailure([obs as never]), true, 'PO5: a run quarantine did not excuse is a measured failure');
     assert.deepEqual(obs.failed, ['flaky one']);
     const why = (await cli(r.cwd, ['why', 'other'])).stdout;
     assert.match(why, /other\/check:c/); assert.match(why, /note #\d+:\n {4}quarantine not applied: not a known test runner; failed tests:/);
