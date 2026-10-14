@@ -145,6 +145,12 @@ async function files(cwd: string, commit: string): Promise<[string, string, stri
   }).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
 }
 export async function readsDigest(cwd: string, commit: string, globs: string[]): Promise<string> { return H((await files(cwd, commit)).filter(([p]) => matchesAny(p, globs))); }
+/** AT2: files matching `globs` at `commit` that do not exist at `base` (tests new in the candidate). */
+export async function newFiles(cwd: string, base: string, commit: string, globs: string[]): Promise<string[]> {
+  if (!globs.length) return [];
+  const old = new Set((await files(cwd, base)).map(([p]) => p));
+  return (await files(cwd, commit)).map(([p]) => p).filter(p => matchesAny(p, globs) && !old.has(p));
+}
 async function tree(cwd: string, commit: string): Promise<string> { return (await git(cwd, ['rev-parse', `${commit}^{tree}`])).stdout.trim(); }
 /** The `exec` part of a check/red/strength/inv key (D20): only the non-empty fields, undefined (dropped by canonical JSON) without exec. */
 export function execKey(plan: Plan): Pick<ExecConfig, 'env' | 'wrap' | 'touch'> | undefined {

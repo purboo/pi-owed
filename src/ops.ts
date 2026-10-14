@@ -9,6 +9,7 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.
 import * as git from './git.ts';
 import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
+import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantErrors, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
@@ -25,6 +26,7 @@ import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
 import type { Brief } from './views.ts';
+import type { CheckSpec, NodeState } from './types.ts';
 import type { AnswerRef, RuleEntry, AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, ObsEntry, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
@@ -1089,7 +1091,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     if (!n.accepted) {
       const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
       const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === o.node && n.blocks.some(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky') && b.seq === e.seq));
-      const hints = mergeFailureHints(state,o.node,failures);
+      const hints = [...await mergeTreeBreakLead(o.cwd,state,o.node,failures.map(e => e.commit)), ...mergeFailureHints(state,o.node,failures)];
       const writesHint = n.items.some(i => i.obligation === 'writes' && i.status === 'D') ? grantHint(state,o.node) : undefined;
       const suffix = writesHint ? `\n${writesHint}` : '';
       if (trunkRed.length) throw new OwedError([...trunkRed, ...hints].join('; ') + suffix);
@@ -1114,9 +1116,11 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     // No ledger lock while commands run; the existing final CAS discards stale results.
     const preview = mergeCurrent(snapshot,o.node,m,observations,true).state;
     const failed = mergeGuard(preview,o.node,m).nodeItems.filter(i => i.status === 'D' && i.obligation.startsWith('check:') && i.evidence.some(seq => entriesOf(preview).some(e => e.seq === seq && e.kind === 'obs' && e.probe === undefined && e.verdict === 'fail' && e.key === i.key)));
-    const probes: Draft[] = [];
+    const probes: Draft[] = [], slotBaseRed: string[] = [];
     for (const i of failed) {
       const spec = state.plan.nodes.find(x => x.id === o.node)!.checks.find(c => `check:${c.id}` === i.obligation)!;
+      const fresh = await newCheckTests(o.cwd,n,spec);
+      if (fresh) { slotBaseRed.push(fresh); continue; }
       const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit);
       if (entriesOf(state).some(e => e.kind === 'obs' && e.probe === 'trunk' && e.subject === o.node && e.obligation === i.obligation && e.key === key && e.commit === state.trunk.commit && e.verdict !== 'error')) continue;
       const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal}, {kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit});
@@ -1158,7 +1162,8 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
           return e.note || e.failed?.length ? [`${e.subject}/${e.obligation}: ${e.note ?? `failed tests: ${e.failed!.join(', ')}`}`] : [];
         }));
         const trunkRed = (g?.nodeItems ?? []).filter(i => i.status === 'D').flatMap(i => i.evidence.flatMap(seq => trunkRedHint(current,seq,i.key) ?? []));
-        throw new OwedError([...new Set(trunkRed), ...failures, ...reasons, ...mergeFailureHints(current,o.node,failedObs)].join('; '));
+        const lead = await mergeTreeBreakLead(o.cwd,current,o.node,[built.commit]);
+        throw new OwedError([...lead, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs)].join('; '));
       }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
@@ -1166,6 +1171,31 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D'),unguarded:unguardedPaths(current.plan,lm.facts.changed)};
     },undefined,o.signal);
   },'merge',o.signal);
+}
+/**
+ * AT1: refusal lead when merge trees `commits` of `node` break an invariant trunk passes and trunk moved since the
+ * slot base: the remedy is a rebase, never a waiver, sweep or adoption. Empty otherwise.
+ */
+async function mergeTreeBreakLead(cwd: string, s: State, node: string, commits: string[]): Promise<string[]> {
+  const breaks = [...new Set(commits)].flatMap(c => mergeTreeBreaks(s,node,c)), base = s.nodes[node]?.slot?.base;
+  if (!breaks.length || !base || base === s.trunk.commit) return [];
+  const moved = await git.countCommits(cwd,base,s.trunk.commit).catch(() => 0);
+  if (!moved) return [];
+  return [`merge tree does not pass ${[...new Set(breaks.map(b => b.obligation))].join(', ')} (trunk passes); trunk moved ${moved} commits since the slot base: rebase → owed rebase ${node}`];
+}
+/** AT5: refused invariant debt whose owner defer was recorded on another merge key and does not carry. */
+function deferBoundHints(s: State, node: string, items: ItemView[]): string[] {
+  return items.flatMap(i => {
+    if (i.status !== 'D' || i.mark === '\u23f8') return [];
+    const d = carriedDefer(s,node,i.obligation.slice(4),i.key);
+    return d && !d.carried ? [`defer #${d.defer.seq} was bound to merge key ${d.defer.key.slice(0,12)} (trunk moved)`] : [];
+  });
+}
+/** AT2: a check whose `tests` include files new in the candidate is never probed on trunk; its red reference is the slot base. */
+async function newCheckTests(cwd: string, n: NodeState, spec: CheckSpec): Promise<string | undefined> {
+  if (!n.candidate || !spec.tests?.length) return undefined;
+  const fresh = await git.newFiles(cwd,n.candidate.base,n.candidate.commit,spec.tests);
+  return fresh.length ? `check:${spec.id} runs tests new in the candidate (${fresh.slice(0,3).join(', ')}${fresh.length > 3 ? `, +${fresh.length - 3}` : ''}): its red reference is the slot base ${n.candidate.base.slice(0,12)}, not trunk` : undefined;
 }
 /** The merge result's candidate and state facts of node `id` under the plan of `s` (merge commit `commit` on the ledger trunk). */
 async function mergeFacts(cwd: string, s: State, id: string, commit: string): Promise<{ facts: CandidateFacts; state: StateFacts }> {

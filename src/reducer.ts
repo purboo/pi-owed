@@ -361,7 +361,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -644,14 +644,41 @@ export function trunkRedOf(s: State, seq: number, key?: string): { merge: ObsEnt
   const probe = probes.findLast(p => p.verdict !== 'error');
   const names = e.failed ?? [], trunkNames = probe?.failed ?? [];
   if (!probe || probe.verdict !== 'fail' || (names.length ? !names.every(n => trunkNames.includes(n)) : trunkNames.length !== 0)) return undefined;
+  // AT1: a merge tree that already breaks an invariant trunk passes explains the node check failure, not trunk.
+  if (mergeTreeBreaks(s, e.subject, e.commit).length) return undefined;
   return { merge: e, probe };
+}
+/**
+ * AT1: invariants that fail on merge tree `commit` of `node` while their current trunk key passes ("passes on trunk,
+ * fails on the merge tree"). Derived from executor observations only.
+ */
+export function mergeTreeBreaks(s: State, node: string, commit: string): { obligation: string; fail: ObsEntry }[] {
+  const out: { obligation: string; fail: ObsEntry }[] = [];
+  for (const e of context(s).entries) {
+    if (e.kind !== 'obs' || e.by !== 'executor:owed' || e.subject !== 'trunk' || e.merging !== node || e.commit !== commit || e.verdict !== 'fail' || !e.obligation.startsWith('inv:') || out.some(x => x.obligation === e.obligation)) continue;
+    const trunkKey = s.trunk.invKeys[e.obligation.slice(4)];
+    if (!trunkKey || trunkKey === e.key) continue;
+    const trunk = counted(s, 'trunk', e.obligation, trunkKey);
+    if (trunk.some(x => x.verdict === 'pass') && !trunk.some(x => x.verdict === 'fail')) out.push({ obligation: e.obligation, fail: e });
+  }
+  return out;
+}
+/**
+ * AT3: a block whose observation was recorded for an earlier candidate commit of the node (a later submit replaced it).
+ * The trunk-red guard and parking ignore it so the new candidate is attested first.
+ */
+export function priorCandidateBlock(s: State, node: string, b: Pick<Block, 'seq'>): boolean {
+  const c = s.nodes[node]?.candidate;
+  if (!c || b.seq > c.seq) return false;
+  const before = context(s).entries.findLast(e => e.kind === 'submit' && e.node === node && e.seq < b.seq);
+  return before?.kind === 'submit' && before.facts.commit !== c.commit;
 }
 /** TP1: parked is derived only from nonempty, entirely trunk-red binding blocks (active or flaky). */
 export function trunkParked(s: State, node: string): { merge: ObsEntry; probe: ObsEntry }[] {
   const n = s.nodes[node];
   if (!n?.slot?.open || !n.candidate || n.merged || n.phase === 'removed') return [];
   const blocks = n.blocks.filter(b => binding(b, nodeSpec(s, node)));
-  const reds = blocks.map(b => trunkRedOf(s, b.seq, b.key));
+  const reds = blocks.map(b => priorCandidateBlock(s, node, b) ? undefined : trunkRedOf(s, b.seq, b.key));
   return blocks.length && reds.every(r => r !== undefined) ? reds as { merge: ObsEntry; probe: ObsEntry }[] : [];
 }
 /** TP2: one repository notice per current trunk/check/failed-name state. No ledger fields. */
@@ -1533,6 +1560,27 @@ export function trunkInvariantReds(s: State): { obligation: string; key: string;
     return i.status === 'D' && i.discharger === 'parent' && red?.key === i.key && fail ? [{ obligation: i.obligation, key: i.key, text: invariantRedText(s, i.obligation, red, fail) }] : [];
   });
 }
+/**
+ * AT5 (derived, no entry): the latest owner defer of `inv` by `node` in its open attempt on another merge key, and
+ * whether it carries to merge key `key`: the deferred merge-tree failure was trunk-own (its names failed on trunk before
+ * the defer), and now the merge tree fails only those names while current trunk still fails each of them with the same
+ * error signature as then. Signatures (0.20 field) are required, so a ledger without them never carries.
+ */
+export function carriedDefer(s: State, node: string, inv: string, key: string): { defer: State['deferred'][number]; carried: boolean } | undefined {
+  const o = `inv:${inv}`, n = s.nodes[node];
+  const defer = s.deferred.findLast(d => d.node === node && d.id === inv && d.key !== key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
+  if (!defer) return undefined;
+  const deferred = decidingInvariantFail(s, o, defer.key), now = decidingInvariantFail(s, o, key);
+  const before = context(s).entries.findLast((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === 'trunk' && e.merging === undefined && e.probe === undefined && e.obligation === o && e.verdict === 'fail' && e.seq < defer.seq);
+  const trunkKey = s.trunk.invKeys[inv], trunk = trunkKey ? decidingInvariantFail(s, o, trunkKey) : undefined;
+  const names = now?.failed ?? [];
+  const carried = !!deferred && !!before && !!trunk && names.length > 0 && (now!.counts?.fail ?? 0) <= (deferred.counts?.fail ?? 0)
+    && names.every(name => {
+      const sig = before.signatures?.[name];
+      return sig !== undefined && deferred.failed?.includes(name) && trunk.failed?.includes(name) && trunk.signatures?.[name] === sig && now!.signatures?.[name] === sig;
+    });
+  return { defer, carried };
+}
 export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): MergeGuard {
   const reasons: string[] = [];
   const n = s.nodes[id], spec = nodeSpec(s, id);
@@ -1566,7 +1614,9 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
       if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner deferred, still debt` });
       else {
         const red = invariantTrunkComparison(s, id, i, key, m.state.commit);
+        const carry = red.inherited ? undefined : carriedDefer(s, id, i.id, key);
         if (red.inherited) Object.assign(v, { discharger: 'parent', detail: `trunk-red: inv:${i.id} already failed on trunk before ${id} (${red.merge!.failed!.join(', ')}); merge #${s.seq + 1}` });
+        else if (carry?.carried) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, carry.defer.seq])], detail: `inv:${i.id} owner deferred, still debt; defer #${carry.defer.seq} carried (same trunk failure)` });
         else reasons.push(invariantDebtReason(i.id, red));
       }
     }
