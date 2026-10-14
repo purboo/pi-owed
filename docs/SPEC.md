@@ -12,6 +12,19 @@ Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-workt
 rail §2.1.7) are rails against accidents and instructions, not security
 boundaries: a process can unset the variables or change directory.
 
+### Compatibility (0.20)
+
+0.20 adds only optional fields to existing entry kinds and optional plan keys;
+it adds **no new entry kind**. Upgrade every driver, CLI and pi plugin together:
+older releases can ignore or misread new plan/observation fields, or refuse them
+with `needs a newer owed`. New optional ledger fields are `obs.signatures`,
+`obs.quarantined`, `resume.remeasure`, `resume.batch`, `submit.model` and
+`review.model` (§5). New plan keys are check/invariant `quarantine` and
+`template`, with template arguments `package`, `test`, `filters`, `min_ok`,
+`files`, `name_prefix`, `path` and `required` (§3.6). Runtime/view fields are not
+ledger entries. Without these additions keys and replay remain as in 0.17,
+except pooled repeat across several observations on one key (§7 RC1).
+
 ## 1. Storage
 
 - Ledger directory: `$(git rev-parse --git-common-dir)/owed/` (shared by all
@@ -59,6 +72,14 @@ boundaries: a process can unset the variables or change directory.
   same way; a wait that times out (60 s) fails with code `busy` (§7.11).
 - Every append: re-read ledger, verify chain tail, check guard, append the line
   with `fsync`, release.
+- **TR, torn read (0.20):** `Ledger.read()` without the ledger `lock` ignores
+  only a final fragment without a trailing `\n`, returning the preceding
+  complete entries with their chain verified. This is an append-in-flight
+  tolerance, not permission to drop a malformed complete line: a complete bad
+  line still fails with `ledger seq N: invalid JSON`. Inside `withLock` on the
+  same Ledger instance, reads remain strict: a torn tail fails with `invalid
+  JSON` or `incomplete line`. A crash-torn tail therefore cannot be appended
+  after silently. Other reader paths are not covered by this change (§7.17).
 
 ## 2. Principals
 
@@ -599,6 +620,74 @@ covers other diffs, plan `show` and mutant `cat-file blob` content reads. The
 review diff streams stdout into a UTF-8 decoder and hash (§4); its stdout has
 no buffering bound, while stderr remains bounded.
 
+### 3.6 Quarantine and check templates (0.20, MS4 / CT1)
+
+An invariant or node check may set `quarantine: [{test, fix, note?}]`: at most
+20 entries, unique exact non-empty test names, non-empty fix ids and optional
+non-empty notes; unknown entry keys are refused. Each `fix` must name a node of
+the current plan, otherwise validation reports `invariants: <inv>: quarantine
+fix <id> is not a node of this plan` (or `<node>: check <id>: ...`). Adding a
+name or changing its fix is an owner-only downgrade, never covered by an
+`allow` rule: `inv:<id> quarantine "<test>" added with fix <fix> (owner only)`
+or `check <id> ...`; reassignment says `fix changed from <old> to <new>`.
+Deletion is free; changing only a note does not widen the excuse.
+
+Entries are active while the fix exists and has not merged. The fix's own
+prospective merge is measured with its entries already inactive, so that fix
+must repair the test. The key includes sorted active test names; with none the
+hashed field is absent and the key equals 0.17's. A fix merging changes current
+trunk/merge keys and forces fresh measurement. An open candidate's stored
+check keys are not recomputed solely because a fix merged (§7.17). Editable
+paths include invariant `quarantine` and `checks.<id>.quarantine`. Quarantine
+is not `known_red`: it excludes tests from counts only under §7.16's proof.
+
+A check/invariant may use `template` **instead of** `run`. Loading expands it
+deterministically into `run` and, for test templates, `min_tests = min_ok`;
+no template metadata remains in the parsed plan. A handwritten identical
+expanded run/min_tests has identical keys. Supported keys:
+
+| template | Required | Optional |
+|---|---|---|
+| `cargo-tests` | non-empty `package`, safe integer `min_ok >= 0` | non-empty `test` (integration target), `filters` array (default `[]`) |
+| `node-tap` | non-empty `files` array, safe integer `min_ok >= 0` | non-empty `name_prefix` (literal anchored prefix) |
+| `evidence-json` | non-empty `path`, non-empty `required` field-path array | existing explicit `min_tests` |
+
+Strings reject NUL; list items must be non-empty strings. `required` paths use
+dot-separated own-property segments with no empty segment; numeric segments
+address array indexes. Presence, not truthiness, is checked: `false`, `0`,
+`""` and `null` count as present. Template-specific keys from another template
+are refused. For test templates explicit `min_tests` must equal `min_ok`.
+Templates do not infer `reads`, red `tests` or closure. Existing timeout, red,
+repeat and closure rules apply; dependencies are not installed.
+
+Errors name the full check/invariant field path and record no plan:
+`<field>.template: unknown template <value>`, `<field>.run: cannot be combined
+with template`, `<field>.<key>: not supported by template <template>`,
+`<field>.min_ok: expected integer >= 0`, `<field>.min_tests: must equal template
+min_ok`, `<field>.required[<i>]: expected dot-separated field path without empty
+segments`, and string/list errors `expected non-empty string without NUL` /
+`expected a non-empty array of non-empty strings without NUL` (`filters` allows
+an empty array).
+
+**Frozen expansion v1.** `CHECK_TEMPLATE_VERSION = 1` in `src/plan.ts` controls
+both expansion and recognition. A future semantic change must use a new marker
+version. Define `Q(x)` as single-quoting x, replacing each embedded single quote
+with `'"'"'`. Arrays preserve input order. Each command starts with exactly
+`# owed-template/v1/<template>` plus a newline, followed by:
+
+- Cargo: `set -o pipefail; cargo test -p Q(package)[ --test Q(test)] --[ Q(filter1) Q(filter2) ...] | node -e Q(cargoCounter)`.
+- Node: `set -o pipefail; node --test --test-reporter=tap[ --test-name-pattern=Q(^escapedPrefix)] -- Q(file1) Q(file2) ... | node -e Q(tapCounter)`.
+- Evidence: `node -e Q(evidenceScript) -- Q(path) Q(field1) Q(field2) ...`.
+
+Brackets denote optional fragments, not literal bytes. Prefix escaping replaces
+each regex metacharacter matched by `/[.*+?^${}()|[\]\\]/g` with a backslash
+plus that character. Files are quoted argv (not shell-expanded globs); the
+Node runner may apply supported file patterns. Counter/script bytes are the
+frozen `templateCounter` / `expandCheckTemplate` implementations in
+`src/plan.ts`; their exact counting contract is §7 RC2. Templates require Bash
+and Node, and `cargo-tests` additionally Cargo. The expanded run is shown in
+packets, keys and receipts, not the template declaration (§9).
+
 ## 4. Items and keys
 
 An item is `(subject, obligation, key)`; status is evaluated per item.
@@ -675,6 +764,20 @@ never part of a key.
 
 `verdict` for `obs` ∈ `pass | fail | error`. `error` (timeout, crash of the
 harness, materialization failure) is ⊥: no information, no block.
+
+### Optional 0.20 fields on existing entries
+
+- `obs.signatures?: Record<string,string>`: per failed test name, normalized
+  first error line of the first run that failed it; absent without error text.
+  Normalization masks hex ids of 8+ digits as `<hex>`, durations as `<t>` and
+  `/tmp/...` paths as `<tmp>`. Used for diagnostic/carry proof, not a new key.
+- `obs.quarantined?: string[]`: non-empty list of excused names (§7.16).
+- `resume.remeasure?: true`: driver remeasures before the next merge (§7.15a).
+- `resume.batch?: number`: seq of the first resume in an atomic batch (§8.3).
+- `submit.model?: string`, `review.model?: string`: non-empty actual model
+  used, recorded at receipt creation (§12.5.2); not key/acceptance evidence.
+
+These fields add no entry kind. Upgrade all readers together (§Compatibility).
 
 ### Trunk invariant refresh and inherited red (0.15, IR)
 
@@ -838,6 +941,43 @@ Compatibility: owed 0.13 refuses the new `obs.probe` field with code
 probes. Upgrade before replaying it. Existing histories without probes retain their 0.13 replayed states and keys;
 new merge-key waivers require 0.14's validation and scope interpretation.
 
+### Attribution (0.20, AT1–AT5)
+
+**AT1 merge-tree break first:** an invariant failure on the same merge tree
+whose current trunk key passes (without a fail) prevents a node-check failure
+on that tree being classified as trunk-red. When trunk moved N >= 1 commits
+since the slot base, the FIRST sentence of the CLI refusal, driver halt and
+Needs-you reason is `merge tree does not pass <inv>[, ...] (trunk passes);
+trunk moved <N> commits since the slot base: rebase → owed rebase <node>`.
+It precedes even `Node <node> current candidate is not yet accepted`; no
+waive/sweep/adopt trunk-red suggestion replaces the rebase remedy. An unmoved
+trunk gets the normal refusal: rebase is not the remedy for the candidate's
+own break.
+
+**AT2 new tests:** when a failing merge-tree check's declared `tests` globs
+include files absent at the slot base, it is not probed on trunk. The refusal
+says `check:<id> runs tests new in the candidate (<files, max 3>[, +N]): its
+red reference is the slot base <base12>, not trunk`. Checks without `tests`
+retain the existing probe behavior.
+
+**AT3 new submit:** an earlier candidate's merge-tree block no longer parks
+the new candidate as trunk-red or triggers the driver's TR3 halt, including
+a resume after that submit. The driver attests the new candidate first.
+Blocks still bind until attribution/clearance rules discharge them; submission
+is not a waiver.
+
+**AT5 defer carry:** an owner defer of a trunk-own invariant failure may carry
+to the attempt's next merge key as derived debt, not a new entry. Deferred,
+current trunk and current merge observations must each be `testOnlyFailure`
+and `failedNamesComplete` (counts.fail equals the number of named failures).
+Current names must be a non-empty subset of deferred names, have failed on
+trunk before defer and still fail there, and have identical recorded signatures
+on all three deciding observations. The current observation must meet
+`min_tests`. Timeout/crash, missing counts/signatures, unnamed or new failures
+never carry. Success says `defer #<seq> carried (same trunk failure)`; otherwise
+`defer #<seq> was bound to merge key <k12> (trunk moved)`. Old observations
+without signatures cannot prove carry. This never turns debt into a pass.
+
 ### Merge refusal hints (0.16, FH; 0.16.2, TD)
 
 For a failing merge-tree invariant observation measured for the refused node,
@@ -851,14 +991,15 @@ hint still applies. Delta lines appear once per obligation after failure text
 and before intermittent-history and fix-candidate hints. The same lines appear
 in merge refusals, driver halts, `why` merge-block hints and merge-check details.
 
-A merge refusal caused by a failing check or invariant observation with named
-tests adds `known intermittent: <name> also failed on #a, #b (other trees)`
-when another failing observation lists that exact name on a different commit.
-The lookup scans only the last 5000 ledger entries and cites at most the three
-most recent matching observation sequences, newest first; failures on the same
-commit do not qualify. Historical failures may belong to another subject or
-obligation, including a trunk probe. Observations without failed names add no
-hint.
+**AT4 (0.20):** a named merge failure gets `known intermittent: <name> failed
+and passed on the same key (#a, #b, #c)` only with same-key pass evidence (also
+mixed repeated runs), or `known intermittent: <name> failed with the same error
+on trunk (#...)` with matching normalized signatures on a trunk key/probe.
+The refused node's different trees are not independent evidence. Other-tree
+failures with known different signatures instead say `same test failed on older
+trees (different error): <name> (#...)`; missing signatures claim neither.
+The lookup scans the last 5000 ledger entries, citing at most three seqs,
+newest first. These hints never clear a block or weaken acceptance.
 
 For each failed name of at least six characters, an unmerged node other than
 the refused node is a fix candidate when it has an open slot, is accepted, or
@@ -1542,7 +1683,46 @@ include both pass and fail; otherwise it is false. It is descriptive, never a
 separate failing observation or block. `why` and driver attest/merge reports
 show `noisy (2/3 passed)` using the number of executed runs, not the maximum N.
 
+**MS1 pooled repeat (0.20):** across observations on the same key, every run
+of every non-error observation is pooled (an observation without `runs` counts
+as one run). No window or cherry-picking: with repeat `{runs:N, need:K}`, the
+item passes iff `passes*N >= K*total_runs`, otherwise fails, never ⊤. With
+several observations `why` shows `pooled <p>/<t> runs on this key (need <K>/<N>)`.
+Without repeat, pass+fail on one key remains the ⊤ owner conflict. This is a
+replay exception: a 0.17 ledger with repeat and several observations on one
+key can replay its former ⊤ as pass/fail in 0.20 (§7.17).
+
 ### RC2 Counts protocol (0.13)
+
+**CT1 template counters (0.20):** counters stream runner stdout unchanged,
+collect it and emit counts at EOF. Cargo sums every column-zero summary
+matching `/^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/gm`.
+TAP uses the final column-zero `# pass` and `# fail` summaries, subtracting
+successful file wrappers from pass. A wrapper is **only** a top-level result
+with no indented subtests whose trimmed name equals an actual input file.
+Names/files normalize backslashes and `./` via absolute-path resolution;
+`fs.globSync` expands input globs for comparison with runner-reported paths.
+Both `ok` and `not ok` delimit top-level results. SKIP/TODO results are not
+subtracted (already excluded by the summary). An actual test named
+`test/looks-like-file.mjs` inside `test/real.mjs` counts; a file-named result
+with subtests also counts. Empty, diagnostic-only and filtered-empty file
+wrappers do not satisfy `min_ok`, with or without a preceding `1..0`.
+
+With summaries present, counters emit `owed-counts ` plus
+`JSON.stringify({pass,fail,...(failed.length?{failed}:{})})`. Failed names are
+matched by `/^test (.+) \.\.\. FAILED\s*$/gm` (Cargo) or
+`/^\s*not ok \d+\s*-\s*(.+)$/gm` (TAP); stored names remain bounded to 50.
+Counters exit 1 for missing summaries, failing counts or successful tests below
+`min_ok`; `pipefail` retains runner nonzero exits/crashes. Skips/ignored tests
+never satisfy `min_ok`; executor timeouts remain errors.
+
+`evidence-json` parses `fs.readFileSync(path,'utf8')` as JSON and traverses
+required paths with `Object.hasOwn`. Success emits
+`owed-counts {"pass":1,"fail":0}`. Failure emits stderr
+`evidence-json: <error message>` and
+`owed-counts {"pass":0,"fail":1,"failed":["evidence-json: <path>"]}`, exiting 1.
+Missing fields say `missing field <field path>`; missing files and invalid JSON
+also fail. Evidence templates do not synthesize `min_tests`.
 
 A log line `owed-counts {"pass":2,"fail":1,"failed":["latency gate"],"skip":0}`
 provides counts with format `owed`. The `owed-counts` token must start at column 0
@@ -1690,6 +1870,91 @@ plain `error`. The driver does not count environment errors toward its
 - **Coverage.** Each merge computes paths in its actual prior-to-merge diff matched by none of the current invariant `reads`. Group uncovered files by their parent directory (`app/bundles/**`), remove directory globs covered by a shorter reported directory, and keep root files literal; sort and deduplicate. For touched uncovered files `app/bundles/foo/a.ts` and `app/bundles/bar/b.ts`, report `app/bundles/foo/**` and `app/bundles/bar/**`, never widen to `app/bundles/**` or another common ancestor: a suggestion must not cover paths that were not touched. CLI/tool merge results return `unguarded: string[]` and text `Unguarded paths: ...` (`none` when empty). Driver merge completion includes the same text. `owed brief` returns `unguarded: {node, seq, paths}[]` for the last 10 ledger merges, independently of `--since`, with coverage from each merge's recorded plan; text has an `Unguarded paths (last 10 merges)` section. It is report-only, never a gate and not stored as a new merge-entry field.
 - **Compatibility.** The new `sweep` entry kind (including `counts`, `log`, `failed` and `bisect` on that kind) requires owed 0.13+: older owed refuses replay with code `version`, under §5's unknown-kind rule. The plan field and result-only coverage metadata add no fields to existing ledger entry kinds.
 
+### 7.15a Same-key remeasure (0.20, MS1–MS3)
+
+`owed attest <node> --remeasure [--all]` builds the current prospective merge
+tree and, under the shared machine lease and node attest lock, remeasures
+merge-tree **invariants only**, not node checks or ordinary candidate jobs.
+It selects a key whose latest non-error verdict failed or whose repeat pool
+still fails; `--all` selects every invariant. Observations keep the SAME key
+and `merging: <node>`; append requires unchanged trunk, plan and slot. Nothing
+else is invalidated. Output leads with `Remeasured on the same merge key:
+inv:<id> #<seq> <verdict>, ...`, or `Nothing to remeasure: no merge-tree invariant
+of <node> failed on its current key (--all measures every one)`, then receipt. Result fields add `AttestResult.remeasured?: string[]`.
+
+`owed attest --trunk --remeasure [--all]` performs the usual refresh first,
+then remeasures failed current trunk keys (or all), skipping keys measured by
+this call. Text starts `Remeasured on the same key: inv:<id> #<seq> <verdict>`
+or `Nothing to remeasure: no trunk invariant failed on its current key (--all
+measures every one)`. Usage errors: `attest --all requires --remeasure` and
+`attest --remeasure does not take --rerun or --genesis`. Trunk results add
+`remeasured?: string[]` and `remeasuredObs?: Entry[]` alongside ordinary refresh
+observations; these are result fields, not ledger fields.
+
+`owed resume <node> --remeasure [--note TEXT]` stores `remeasure: true`. On the
+next merge the driver first runs the node form above inside the same machine
+lease; this is due while neither a merge-tree observation nor a halt of that
+node follows the resume. Busy retains the normal later-pass retry. Hold release
+cannot take `--after`, `--expect` or `--remeasure`.
+
+A refusal reusing a failing invariant observation measured before the current
+call appends `reused #<seq> (same merge key, measured <age> ago); measure again:
+owed attest <node> --remeasure` (CLI), or `owed resume <node> --remeasure`
+(driver halt). Several reused seqs are comma-separated; age uses `45s`, `3m`,
+`2h5m`, `1d2h` style. A fresh pass without repeat still conflicts with an old
+fail; remeasure never silently clears risk.
+
+### 7.16 Fail-closed native quarantine (0.20, MS4)
+
+The executor excuses failures only for check/invariant jobs whose keys commit
+to exactly the active quarantine names (§3.6), never red or mutants jobs. ALL
+of the following must hold before rewriting the runner exit to 0:
+
+1. `run` passes the plain `node --test` allowlist: split on spaces; every
+   non-empty token contains only `[A-Za-z0-9_./=:@,+*?-]`; optional leading
+   `NAME=value` tokens, then exactly `node`, with a separate `--test` token.
+   Quotes, tabs/newlines, `$`, backslashes, redirection, operators, shell/npm/pnpm
+   scripts and wrappers are not accepted as known runners.
+2. The run completed with **exit 1**, no timeout, signal or spawn error.
+3. Counts are TAP; exactly one column-zero `1..N` plan and N column-zero
+   `ok`/`not ok` results prove completeness.
+4. Every failure has a distinct exact name (`counts.fail` equals name count),
+   every name is active quarantine, and tests left after removing those names
+   still meet `min_tests`.
+
+Excused tests count neither passed nor failed; `counts.tests` and `fail` exclude
+them. The observation records `quarantined: [names]` and note
+`quarantined: <name> (fix: <node>)[, ...]`. Otherwise normal failure/error
+semantics remain; `why` shows `quarantine not applied: <reason>`, such as
+`not a known test runner`, `exit <n> is not a test failure`, `run did not complete`,
+`no failing test names`, `counts are not TAP`, `no TAP plan`,
+`several top-level TAP plans`, `TAP plan 1..<n> but <m> top-level results`,
+`<f> failing tests but <n> failing names`, `<n> failing test(s) is/are not
+quarantined`, or `<n> tests left, below min_tests <m>`.
+
+Cargo runs are **not excused in 0.20**, even with `--no-fail-fast`:
+`quarantine not applied: cargo runs are not excused in 0.20`. Their quarantine
+plan field still parses and keys. `owed-counts` is not TAP and cannot be
+excused. All template expansions are multi-line scripts/pipelines, not plain
+allowlisted runs: a quarantine on a template never excuses in 0.20.
+
+### 7.17 Known limitations and backlog (0.20)
+
+- Cargo quarantine exemption/completeness proof is not implemented.
+- The MS4 allowlist still permits leading `PATH`/`NODE_OPTIONS` assignments
+  and `--require`, `--import`, `--test-isolation`; rejecting these is backlog,
+  not a claimed safety check. Quarantine is not a sandbox/security boundary.
+- TR changes only `Ledger.read()` on the same lock-tracked instance. Auditing
+  other unlocked reader paths is backlog; no global torn-read guarantee is made.
+- Pooled repeat is an intentional replay compatibility exception (§7 RC1),
+  not an unchanged-replay promise for old multi-observation repeat ledgers.
+- Fix merges refresh current trunk/merge quarantine keys, not an open
+  candidate's stored submit check keys. Remeasure measures invariants only.
+- Existing submit/review entries are not retrofitted with model metadata;
+  unavailable dsa status leaves `model unknown` (§12.5.2).
+- Prospective merge-tree invariant measurement before review, stopping surplus
+  reviewers, and a unified decision/lighter release API remain future work.
+
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
 ```ts
@@ -1699,13 +1964,13 @@ planSet(o: {cwd, plan, rev?, path?, note?, as, channel?}): Promise<Entry>   // r
 edit(o: {cwd, node? | invariant?, set?, unset?, node_new?, note, plan?, rule?, writer?, resume?, after?, expect?, dry_run?, as, channel?}): Promise<EditResult | EditPreview> // ED2: one lock; dry_run previews only
 editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
-rule(o: {cwd, text, nodes, writer?, prospective?, as}): Promise<Entry>
-answer(o: {cwd, node, text, qid?, rid?, rev?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
+rule(o: {cwd, text, nodes, writer?, prospective?, as}): Promise<RuleEntry & {delivery?: RulingDelivery}>
+answer(o: {cwd, node, text, qid?, rid?, rev?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult, rulingDelivery?: RulingDelivery}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
-submit(o: {cwd, node, commit?, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
-attest(o: {cwd, node, rerun?: boolean, signal?: AbortSignal}): Promise<AttestResult>   // abort: §7.8
-review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, obligation?: "review"|"closure-review", needs?: "parent", named?: string, pin?: {seq, commit}, from?: string[]}): Promise<Entry>   // named: --candidate; pin: an owner dialog's candidate; from: more working directories for the writer-worktree rail
+submit(o: {cwd, node, commit?, model?: string, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
+attest(o: {cwd, node, rerun?: boolean, remeasure?: boolean, all?: boolean, signal?: AbortSignal}): Promise<AttestResult>   // abort: §7.8
+review(o: {cwd, node, verdict, rank, note, as, ack_rulings?, model?: string, obligation?: "review"|"closure-review", needs?: "parent", named?: string, pin?: {seq, commit}, from?: string[]}): Promise<Entry>   // named: --candidate; pin: an owner dialog's candidate; from: more working directories for the writer-worktree rail
 waive(o: {cwd, node, obligation, reason, accept_risk?, as, channel, named?: string, pin?: {seq, commit}}): Promise<Entry>
 defer(o: {cwd, node, items, reason, as, channel}): Promise<Entry>
 abandon(o: {cwd, node, reason, hold?: boolean, as}): Promise<Entry> // returns the abandon; hold appends both entries atomically
@@ -1989,7 +2254,117 @@ registered, `status` in that process marks the genesis progress `measuring` (§1
 `StatusView.genesis = {observed, total, pending, measuring?}` is present only
 while genesis items lack observations.
 
+### 8.3 Parent operations (0.20, PO1–PO7)
+
+- **PO1 covered amend:** if every added path is covered by current
+  `allow.writes`, amend refuses with no file/ledger change: `not needed: <paths>
+  are covered by allow rule (plan #<seq>); owed grants them at measurement;
+  tell the writer to edit them`. Mixed additions retain normal authority rules.
+  Writer packets say `edit these freely; do not ask the parent; owed grants
+  them when your candidate is measured`, still only for task-needed edits.
+- **PO2 batch resume:** `owed resume A,B,C`, or `owed_resume` with `node` a
+  string/comma list/non-empty string array, trims and deduplicates ids. The same
+  note, after, expect and remeasure options apply to all. One lock validates
+  all nodes/options before appending one normal resume per node, each with
+  `batch` equal to the first seq. Any refusal records nothing. One unique node
+  retains the old shape. Replay validates contiguous resumes, first-seq
+  reference, same actor/channel/after/expect/note and distinct nodes (the
+  batch operation supplies identical remeasure options; replay's batch check
+  does not separately compare remeasure/release). Empty lists fail
+  with `resume needs a non-empty node list`. Text prints each resume receipt;
+  batch JSON/tool details are `{entry: <first>, entries: [<all>], merged?: true}`;
+  single-node details remain the entry.
+- **PO3 metrics:** `report --metrics` / `owed_report {metrics:true}` add
+  `parentActs.byNode`, `perMergedNodeAttributed`, `pending` and `unattributed`.
+  Each act contributes 1/k to each distinct explicit node target; batches count
+  once. Plan acts target added/removed/changed node specs. General `*`, genesis,
+  trunk-only and other targetless acts are unattributed. `pending` sums targets
+  not merged in the window; the attributed ratio sums acts on nodes merged in
+  the window / merges (`null` without merges). Existing fields retain their
+  meaning, with batches counted once. Since-exclusive/until-inclusive bounds
+  remain; intersecting batches count once among members visible at `until`.
+  Text adds `Attributed parent acts per merged node: <n>; pending <n>;
+  unattributed <n>` and `Parent acts by node: <id> <n>, ...` (`n/a` ratio,
+  `none` empty map).
+- **PO4 overlap:** plan replies and edit dry-runs warn `writes of <a> overlap
+  <b> (on the critical path): consider deps <a> after <b>`. A is new or
+  dispatch-ready, B unfinished on any equally longest unfinished dependency
+  chain, writes overlap and neither depends transitively on the other. Each
+  unordered pair appears once; merged nodes are skipped. Advisory only, in
+  existing plan `warnings` or new `EditPreview.warnings: string[]`.
+- **PO5 exit codes:** attest (node/genesis/trunk) exits 1 if **any observation
+  recorded by this action** has verdict fail, including known_red, attribution
+  and probe failures. Never infer this from diagnostics or cached observations.
+  Otherwise 0 = nothing outstanding, 4 = obligations remain (including review
+  or measurement errors). Usage 2, internal error 3, refused 1 and busy 75 keep
+  their meanings. Quarantine verdicts are already adjusted; repeat uses the
+  newly recorded observation's verdict, not the pooled item verdict. Thus a
+  newly passing observation can exit 0/4 while its pool fails, or fail/exit 1
+  while its pool passes. Trunk remeasure includes its newly remeasured obs.
+  Driver treats 0/4 as done, 1 as measured failure/done, 75 as busy; 3/other
+  errors halt, never silently re-attest.
+- **PO6 derived ack:** without explicit `ack_rulings`, the current driver
+  reviewer's recorded launch packet may supply the existing ack field. It must
+  identify the current candidate commit/submit and same reviewer identity.
+  In its `Rulings in scope` section, every applicable pre-launch ruling up to
+  the derived seq must match byte-exact in seq order: the largest complete
+  prefix, never the max of isolated matches. Missing the earliest yields ack
+  0; launch metadata alone is insufficient. Later rulings are never implicitly
+  acknowledged. Manual/invalid/missing packets retain omitted-ack debt behavior
+  (review may record, but cannot discharge applicable rulings). Explicit ack
+  takes precedence.
+- **PO7 brief:** edit `set: ["brief=<text>"]` preserves unquoted multiline,
+  colon-bearing and equals-containing text literally. Quoted/YAML block strings
+  also work. Empty/whitespace-only values still refuse without file/ledger change.
+
 ## 9. Views
+
+### Current presentation (0.20, NY1–NY7 / MS5 / DR2–DR3)
+
+- **NY1:** a recorded repair follow-up or newer submit after a review block
+  shows `repairing (block #<seq>)`. Its review item leaves Needs you **only**
+  when `ownerNeeded(s,node)` is undefined. Non-driver-authored rank-2 blocks,
+  rank-3 blocks, flaky/⊤ conflicts and other owner-needed cases remain there,
+  even when progress says repairing. Driver halt remains actionable; blocks
+  continue binding acceptance. Status and driver owner notices must agree.
+  Guidance first: `owed rule --nodes <node> "<guidance>"`; owner review override
+  second, labelled `(overrides a valid block: state the accepted risk)`.
+- **NY2–NY3:** dependency/resume waits on `approve: owner` show `waiting for
+  <deps> (owner approval after)` and omit approval from Needs you until
+  actionable. Only a ⊤ review item says `review needs an owner decision`;
+  a blocked candidate otherwise says `review blocked: guidance needed`.
+- **NY5:** CLI/tool plan replies lead with `Recorded plan #<seq> (v<version>
+  : +<n> nodes [<ids>], -<m>, ~<k> changed; downgrades: <node>: <what>; ...)`,
+  before carries/warnings/board; absent downgrades say `none`. Counts compare
+  exact prior/next recorded plan blobs; v is schema version (currently 1).
+- **NY6:** `why` hides standalone `owner flag weak confirmation: ...` history
+  by default; `why --full` / `owed_why {full:true}` restores it. `ownerFlags`
+  JSON and evidence provenance stay visible.
+- **NY7:** open worktrees are checked with `git merge-base --is-ancestor`.
+  Status/brief/why show `rebase pending (HEAD <h12> not on slot base <b12>)`.
+  JSON `rebasePending` is a node map in status and single record in receipts,
+  each `{head, base, upstream, command}` with full hashes. Missing/unreadable
+  worktrees give no HEAD evidence; driver behavior is §12.5.2.
+- **DR2:** current driver busy receipts show `merge waiting for <reason> since
+  <HH:MM>` for accepted nodes, `measure waiting for <reason> since <HH:MM>` for
+  open not-yet-accepted candidates, also in plain status. Times are UTC. Accepted
+  progress age is since continuous acceptance, not dispatch. Runtime
+  `drive/waiting.json` maps nodes to `{reason,since,attempt,candidate?}`;
+  status JSON exposes `mergeWaiting`. Atomic driver-owned writes survive restart,
+  but are ignored when candidate/attempt stale or missing/corrupt. Completion,
+  replacement, merge or closure clears them; they are cache, not evidence.
+- **DR3:** why adds `models` (`writer <model> · reviewer <model>`) and optional
+  `modelWarnings`; absent roles say `writer model unknown` / `reviewer model
+  unknown`. Warnings `reviewer used the writer's model` and `model used <x>
+  differs from the one selected <y>` are advisory (§12.5.2).
+- **CT1:** template receipts add optional `items[].run` / `mergeChecks[].run`
+  for recognized expansions; text prints exact command after `  run: `.
+  This includes node/trunk/invariant why and attest; no ledger field is added.
+- **MS5:** status/brief Debt lists `quarantine <inv>/<test> until <fix> merges`
+  or `quarantine <node>/<check>/<test> until <fix> merges`. Report has
+  `Debt (quarantine)` and JSON `quarantine: string[]`; status/brief use
+  `summary.debt`. `why <fix>` says `merging <fix> lifts quarantine: <inv>/<test>,
+  ...` (receipt `lifts`).
 
 - **Receipt card** (`why`): per obligation: ✔ measured (executor pass, with log
   sha, counts, duration), ✔ reviewed (reviewers), ⚠ waived (owner, reason, channel),
@@ -2233,10 +2608,12 @@ while genesis items lack observations.
   command (JSON `command` is empty); its Debt line is unchanged.
   `In progress (<R>):` lists unmerged open slots, dependency waits and held
   nodes as `<node>: <phase> (<age>)`; phases are writing, measuring, reviewing,
-  waiting for <deps>, held, and accepted (merge pending). Age is since dispatch,
-  hold or the current plan, clamped at zero. Ready/later nodes are not progress.
-  `Debt:` appears only when there are trunk-red invariants, active known-red
-  entries (test, fix node and plan sequence), current owner defers or waivers
+  waiting for <deps>, held, accepted (merge pending), and the 0.20 repair/rebase/
+  measure-wait/merge-wait phases above. Accepted age is since continuous
+  acceptance; other ages are since dispatch, hold or current plan, clamped at
+  zero. Ready/later nodes are not progress.
+  `Debt:` appears when there are trunk-red invariants, active known-red
+  entries (test, fix node and plan sequence), quarantine entries, current owner defers or waivers
   of open nodes. Status and brief share current merge diagnostics, including
   reused trunk-red failures. A defer is current only when the current merge
   guard still honours its invariant key and evidence; an open slot alone does
@@ -2354,20 +2731,21 @@ ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
 seq, qid, rev and delivery request id; `--json` returns
 `{entry, request, delivery}`; a failed delivery refuses with the recorded rule
 seq and exact retry command), `dispatch <node> [--allow-overlap]`,
-`submit <node> [--commit X]`, `rebase <node>` (parent, or the slot writer when
-run inside its worktree), `attest <node> [--rerun]`,
-`review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings]`
+`submit <node> [--commit X] [--model MODEL]`, `rebase <node>` (parent, or the slot writer when
+run inside its worktree), `attest <node> [--rerun | --remeasure [--all]]`,
+`attest --trunk [--remeasure [--all]]`,
+`review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings] [--model MODEL]`
 (`--needs-parent` records `needs: "parent"`; refused with `--ok`),
 `waive <node> <obligation> --reason ... [--accept-risk 12,15]`
 (`review`, `waive`, `approve` and `evidence` also take `--candidate COMMIT`,
 §8 act binding),
 `defer <node> <inv-id...> --reason`, `abandon <node> [--hold] [--note TEXT]` (older
-spelling `--reason`; not both), `resume <node> [--after <node>] [--note TEXT]`
+spelling `--reason`; not both), `resume <node[,node...]> [--after <node>] [--expect report] [--remeasure] [--note TEXT]`
 (parent/owner, §12.3; prints `Recorded #<seq> <by> resumed <node>[ after
 <dep>]`, then `<node> waits for <dep> (resume #<seq>); the driver acts again
 when <dep> merges`, or `<dep> is already merged: <node> resumes now`; `--json`
 the entry), `merge <node>`, `status [--full]`,
-`why <node>`, `report [--metrics [--until seq|ISO]] [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
+`why <node> [--full]`, `report [--metrics [--until seq|ISO]] [--since seq|ISO]`, `brief [--since seq|ISO]`, `verify`,
 `adopt [--commit X] --note TEXT` (owner; `--as parent:ID` under an `adopt`
 allowance, §3.4, with no prompt and no preview; before the TTY prompt, and also with
 `--i-am-owner`, it prints to stderr the preview — full ledger trunk
@@ -2397,8 +2775,10 @@ records `channel: flag`. Under `OWED_CONFIRM=owner` they prompt on a TTY as in
 0.4.1 and refuse without one unless `--i-am-owner`. `plan` takes `--note TEXT`
 (required for a delegated downgrade). In a pi-durable-subagents call owner and
 parent commands are refused (§2.1). Exit codes: 0 ok, 1 refused
-by a guard (message says which obligation; also code `stale`, stderr `Stale:
-<message>`, 0.12), 2 usage error, 3 internal error,
+by a guard or a newly measured attest failure (message/receipt says which
+obligation; also code `stale`, stderr `Stale: <message>`, 0.12),
+2 usage error, 3 internal error, 4 attest completed without a measured failure
+but obligations outstanding (§8.3 PO5),
 75 busy (a lock is held: the node's attest is already running, or a lock wait
 timed out, §7.11; stderr `Busy: <message>`; retry later), 130/143 aborted by a
 signal; a ledger entry of a newer owed (§6, G1.5, code `version`) exits 1
@@ -2421,7 +2801,7 @@ the checks ended. Exit codes describe the ledger outcome (`owed drive` reads the
 D14.3): a signal that arrives after the last abort point, when the operation
 completed, does not change the exit code — the normal result is printed, stderr
 says `Signal <SIG> arrived after the operation completed; nothing was aborted`,
-and the exit is the operation's normal code (0/1); only an operation that was
+and the exit is the operation's normal code (including attest 0/1/4); only an operation that was
 actually aborted exits 130/143. The handlers are removed when the command ends.
 SIGKILL cannot be handled: checks already started then keep running in their own
 process groups until their own end (their timeout timer died with owed) — out of
@@ -2442,7 +2822,8 @@ worktree (`owed-run-*/tree` under the temp directory): `git worktree remove --fo
 - `owed attest --genesis` (no node; not with `--rerun`; abortable like attest)
   measures the genesis items still lacking an observation and prints `Genesis
   attest: N observation(s) recorded; observed <ids> [(failed <ids>)]; missing
-  <ids>`; exit 0 when no item is missing, else 1.
+  <ids>`; exit 1 for any newly recorded fail, otherwise 0 when complete or
+  4 for outstanding results (§8.3 PO5).
 - `owed plan` while genesis items lack observations succeeds and adds the line
   `Warning: genesis attest pending for <ids>` (stdout; stderr with `--json`).
 - `owed status` (and `owed_status`, `/owed`) shows, after the trunk line while
@@ -2454,6 +2835,18 @@ worktree (`owed-run-*/tree` under the temp directory): `git worktree remove --fo
   above before `Aborted: <signal>` (exit 130/143).
 
 ## 11. pi extension
+
+0.20 surface parity: `owed_attest` adds optional booleans `remeasure` and `all`
+(`trunk:true`, no node, for trunk remeasure; all requires remeasure).
+`owed_resume.node` accepts a string/comma list or non-empty string array and
+adds optional `remeasure:boolean`; batch options/atomicity are §8.3.
+`owed_submit.model` and `owed_review.model` are optional non-empty strings
+recording the actual model; omitted review `ack_rulings` derives only from the
+qualifying driver launch packet (§8.3 PO6). `owed_why.full?:boolean` restores
+weak-confirmation history. Existing plan/edit tools accept template/quarantine
+plan input through the same parser; no template-specific tool is introduced.
+Report metrics, plan/edit warnings and rule/answer delivery result fields are
+additive (§8.3, §12.5.2). Upgrade the pi plugin with CLI/driver (§Compatibility).
 
 Since 0.12, extension loading eagerly starts one shared native `worker_threads`
 worker per pi process. Every tool execution, `/owed` command, background genesis
@@ -2498,18 +2891,18 @@ repository. Most tools also take `as` (`role:id`).
 | tool | parameters (besides `cwd`) | operation |
 |---|---|---|
 | `owed_status` | `as`, `full?: boolean` | outcome and next actions; full keeps evidence and audit |
-| `owed_why` | `node`, `as` | receipt card |
+| `owed_why` | `node`, `full?`, `as` | receipt card; full restores weak-confirmation history |
 | `owed_report` | `since?`, `as` | report |
 | `owed_brief` | `since?` | brief |
 | `owed_verify` | — | hash chain + replay |
 | `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; returns the packet plus a ready-to-use `subagents` call spec (agent `worker`, cwd = slot worktree, isolation `none`, task = packet) |
-| `owed_submit` | `node`, `commit?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
+| `owed_submit` | `node`, `commit?`, `model?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
-| `owed_attest` | `node`, `rerun?`, `as` | attest |
-| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
+| `owed_attest` | `node?`, `trunk?`, `rerun?`, `remeasure?`, `all?`, `lease?`, `as` | attest; trunk needs no node; all requires remeasure |
+| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `model?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `as` | merge |
 | `owed_abandon` | `node`, `hold?: boolean`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner); hold prevents re-dispatch until resume |
-| `owed_resume` | `node`, `after?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the node phase line and brief status |
+| `owed_resume` | `node` (string or non-empty string array), `after?`, `expect?`, `remeasure?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the node phase line and brief status |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
@@ -2913,20 +3306,16 @@ No ledger kind or field is added; replayed states and obligation keys are unchan
 once review is satisfied requires a driver `stop` effect, which this release
 does not add.
 
-Merge order (0.16, MO2). Among accepted open attempts, merge actions first name
-nodes in the `after` of the latest resume of an unmerged node that is still
-waiting on them (the "waited-on" group), then all others. Within each group,
-order by `acceptedSince` ascending, then transitive dependents descending, then
-node id. `owed resume X --after Y` (including list waits and the `owed_resume`
-tool) therefore raises accepted Y's priority without changing the plan or keys.
-Only outstanding explicit `after` targets gain priority: replacing the resume,
-closing its attempt or merging the target removes that priority; implicit plan
-dependencies alone do not add it. Other actions retain status order. The driver's
-single merge slot takes the first eligible merge action in this queue. An accepted
-node merges after at most the accepted nodes ahead of it in this order; no new
-acceptance can overtake it except a waited-on node. This ordering does not bypass
-waits, halts, run state, measurements or merge guards; the bound applies while the
-candidate remains continuously accepted and eligible to merge.
+Merge order (0.20, DR1, supersedes MO2). Accepted open attempts merge in
+transitive dependent weight order: number of unique not-merged nodes depending
+on them, descending; ties use continuous `acceptedSince` oldest first, then id.
+`resume --after` is a dependency wait, not a priority override. The single merge
+slot takes the first eligible action; waits, halts, run state, measurements and
+merge guards still apply. Other actions retain status order. While any candidate
+is accepted, the driver starts no background trunk attest or advisory sweep,
+and preempts only its own running trunk attest/sweep (`trunk attest aborted:
+preempted` / `sweep aborted: preempted`). External measurements and node attests
+are not killed; required merge-guard measurements still run.
 
 Acting on a current state (0.11, F1, wais #35). A pass loads the ledger state
 (seq S), then describes the runs; a run that records its entry and seals in
@@ -3160,7 +3549,9 @@ it gives the reviewer's `owed evidence` command.
   0.5.0) fall back to the 0.5.0 position rule: a reviewer launch carried the
   in-scope rulings recorded before its entry, a `repair` send those recorded
   before it (D22.4a), a writer launch `rulings_seen`.
-- **Ruling steer (D22.2, D22.2a).** The lowest row of the table: used only where
+- **Ruling steer (D22.2, D22.2a).** This existing later-pass route remains in
+  addition to 0.20's immediate rule/answer notification (§12.5.2), which stores
+  no delivered-send/ack metadata. The lowest row of the table: used only where
   the node would otherwise get no action — row 18 (`fenced` first), the wait for
   a live reviewer run of the candidate behind a stale block, and a running
   writer with an outstanding repair. The first run in state `running` (never
@@ -3261,6 +3652,49 @@ it gives the reviewer's `owed evidence` command.
   `{"event":"waiting","node","after","resume"}`; `PassResult.waiting`); the
   loop prints it once per node and resume, `--once` and `owed_drive` every
   pass. It never wakes a session.
+
+### 12.5.2 Model receipts, live rulings and rebase drift (0.20)
+
+**DR3 actual models:** submit/review accept `--model MODEL` (pi `model`),
+storing optional actual model fields on those existing receipts, never a
+second launch. Without an explicit model ops inspect the recorded dsa launch
+before taking the ledger lock; latest listed `calls[].model` takes precedence
+over top-level `model`. Failed status leaves the field absent. Stale review
+candidate/attempt discards stale metadata. Already-written entries are not
+rewritten/supplemented; unknown models stay explicit. Selected model comes
+from launch spec model or array's first entry; opaque pool names are not guessed.
+Why's matching-model/mismatch warnings (§9) never affect gates.
+
+**DR4 live ruling delivery:** after rule append and lock release, a
+non-prospective rule inspects named nodes' current writer/reviewer calls,
+notifying each running/asking call once with the writer ruling follow-up packet
+(or ordinary ruling packet). Answer also notifies other running roles; its
+selected asking call gets the existing dsa answer, not a duplicate ruling
+notify. Future/sealed/queued roles receive the next dispatch/follow-up packet.
+Notifications acknowledge nothing, create no send entry and do not themselves
+invalidate candidates. Prospective policy behavior is unchanged.
+
+Receipts say `delivered to <n> running calls (<node>/<role>...); <m> will get it
+at their next dispatch or follow-up`; failure suffix is `delivery failures:
+<node>/<role> (<rid>): <reason>`. Rule results add optional
+`delivery: {delivered:string[], pending:number, failures:string[]}`; answers
+add the same as `rulingDelivery`. Pending counts applicable non-running launches
+and required not-yet-dispatched roles, skipping merged nodes. Request id is
+`owed-rule-<seq>-<rid>-<sha256(exact message body)[0:12]>`: identical bytes
+are idempotent, changed bytes produce a new request, avoiding request-conflict
+on answer retry after intervening rules. Delivery failures are reported with
+no retry loop and no ledger change beyond the rule. A failed target answer
+preserves all other-role delivered/failed results and its exact retry command.
+
+**NY7 Git drift:** on each pass the executor supplies actual worktree ancestry.
+The driver sends one existing `send` (`reason: rebase`) follow-up per attempt /
+slot base, preserving durable retry ids/bytes and existing owner/wait/question/
+report priorities. Rebase packets say `First commit your work, then run:
+git rebase --onto <new base> <upstream>`; never instruct stash. Upstream is the
+newest recorded slot base of this attempt ancestral to HEAD, falling back to
+`git merge-base HEAD <trunk-at-dispatch>`. Follow-ups retain allowed-writes,
+conflict, rerun/commit and `owed submit <node>` instructions. No new ledger
+field records this Git fact.
 
 ### 12.6 Review packet (D5)
 
@@ -3433,8 +3867,9 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `pi-durable-subagents:` error on stderr and no stdout is dsa rejecting the
   invocation — on dsa < 1.0.27 `Unknown option --no-wait` — and halts the
   attempt needing a human (an attest error, not a busy machine). `owed attest`
-  exits 0/1 are done (the ledger says what follows); any other exit (2/3), a
-  signal or a timeout halts needing a human in the same pass.
+  exits 0/4 are done (accepted / not accepted yet), 1 is measured failure/done,
+  75 is busy; 2/3 or other errors, a signal or timeout halt needing the parent
+  in the same pass, never silently re-attest (§8.3 PO5).
 - **Background measurements** (0.7.0, K6; wais #13). An `attest` or `merge`
   action starts a *measurement* and the pass goes on with its next action: an
   attest runs as a child process as above; a merge runs in the driver process
@@ -3709,9 +4144,9 @@ polling.
   applied, attest, busy and pending are quiet; `merge` `merged` does not wake
   alone and is listed in the next message. All wake lines of one read form one
   `pi.sendMessage({customType: "owed-drive", display: true, content},
-  {triggerTurn: true, deliverAs: "followUp"})`. In 0.15 its plain summary
-  precedes `Details:` (§12.8.1); Details keeps the 0.14 `owed drive (<repo>):`
-  header, carried merges and wake lines in log order, and (0.8) when at
+  {triggerTurn: true, deliverAs: "followUp"})`. In 0.20 its plain summary
+  is de-duplicated with the original report (§12.8.1, NY4); it retains the
+  `owed drive (<repo>):` header, carried merges and wake lines, and when at
   least one wake line is a halt the line `To clear a halt without an
   obligation: owed resume <node> --note "<why>" (add --after <node> to wait
   until that node merges); owed rule gives the writer and reviewers guidance
@@ -3784,10 +4219,12 @@ polling.
   `Needs you: <node> — <decision in words> → <one command>`, followed by
   `Done: <merged nodes>` when present, then `Driver continues (<n> in progress)`
   or `Driver stopped: <reason>`. `inProgress` on action log lines counts open
-  slots and supplies the status count. The exact previous report text, seqs,
-  run ids, dsa addresses, keys, leases, repeat counters and full commands stay
-  under `Details:`. The halt hint and any resolved-wake count also belong
-  there. `Next: owed status / owed why <node>` is always last. These fields
+  slots and supplies the status count. In 0.20 (NY4), the original question/
+  reason and commands appear once, prefixed `Needs you: `; the repeating
+  `Details:` block is removed. Distinct questions, report header, seqs, run ids,
+  dsa addresses, keys, leases, repeat counters, halt hint and resolved-wake
+  count are retained without duplicating the question/reason.
+  `Next: owed status / owed why <node>` is always last. These fields
   are runtime log metadata only, not ledger data; JSON tool outputs retain
   their existing fields.
 
