@@ -789,9 +789,12 @@ export async function answerRule(o: Actor & { node: string; text: string; answer
     guard(state, draft); return (await ledger.append([draft]))[0] as RuleEntry;
   });
 }
-export async function rule(o: Actor & { text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean }): Promise<Entry> {
+export async function rule(o: Actor & { text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; dsa?: Pick<import('./dsa.ts').Dsa, 'describe' | 'send'> }): Promise<RuleEntry & { delivery?: import('./answer.ts').RulingDelivery }> {
   if (o.prospective && o.writer) throw new OwedError('--prospective cannot be combined with --writer', 'usage');
-  return mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}), ...(o.prospective !== undefined ? { prospective:o.prospective } : {}) }));
+  const entry = await mutate(o,() => ({ kind:'rule', by:by(o), channel:o.channel, text:o.text, nodes:o.nodes, ...(o.writer !== undefined ? { writer:o.writer } : {}), ...(o.prospective !== undefined ? { prospective:o.prospective } : {}) })) as RuleEntry;
+  if (o.prospective) return entry;
+  const { deliverRuling } = await import('./answer.ts');
+  return { ...entry, delivery: await deliverRuling(o.cwd, entry, o.dsa) };
 }
 /** SS5: porcelain -z keeps paths literal; a rename/copy has a second NUL-delimited source path. */
 async function slotSetupStatus(worktree: string, untrackedFiles: 'normal' | 'all' = 'normal'): Promise<{ tracked: string[]; untracked: string[] }> {
@@ -961,7 +964,24 @@ async function slotLayout(root: string, plan: Plan, spec: NodeSpec, attempt: num
 }
 /** `text` as a literal gitignore pattern: `\`, `*`, `?` and `[` escaped, and a leading `!` or `#`. */
 export function ignoreLiteral(text: string): string { return text.replace(/[\\*?[]/g,'\\$&').replace(/^[!#]/,'\\$&'); }
-export async function submit(o: Actor & { node: string; commit?: string }): Promise<Entry> {
+/** DR3: use the current recorded dsa launch's actual model, not its selected spec. Unknown stays absent. */
+async function recordedModel(cwd: string, s: State, id: string, principal: string, explicit?: string): Promise<string | undefined> {
+  if (explicit !== undefined) {
+    if (typeof explicit !== 'string' || !explicit.trim()) throw new OwedError('model must be nonempty text', 'usage');
+    return explicit;
+  }
+  const n = s.nodes[id], slot = n?.slot;
+  if (!slot?.open) return undefined;
+  const { driveReviewerSlot, reviewerBase } = await import('./reducer.ts');
+  const k = driveReviewerSlot(principal, id, slot.attempt);
+  const launches = n!.runs.find(r => r.attempt === slot.attempt)?.launches ?? [];
+  const l = principal === slot.writer ? launches.find(l => l.role === 'writer') : k === undefined ? undefined
+    : launches.find(l => l.role === 'reviewer' && Number(l.rid.split(':').at(-1)) === reviewerBase(s, id) + k);
+  if (!l) return undefined;
+  const { Dsa } = await import('./dsa.ts');
+  try { return (await new Dsa({ cwd, timeoutMs: 5000 }).describe(l.rid)).model; } catch { return undefined; }
+}
+export async function submit(o: Actor & { node: string; commit?: string; model?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), { state } = await load(ledger), n = node(state,o.node);
   if (!n.slot?.open) throw new OwedError('No open writer slot');
   if ((!o.commit || resolve(await git.repoRoot(o.cwd)) === resolve(n.slot.worktree)) && !await git.isClean(n.slot.worktree)) throw new OwedError('slot worktree is dirty');
@@ -971,7 +991,8 @@ export async function submit(o: Actor & { node: string; commit?: string }): Prom
   const spec = state.plan.nodes.find(x => x.id === o.node)!, facts = await git.candidateFacts(o.cwd,state.plan,spec,n.slot.base,commit,n.slot.attempt);
   // D23: approve and evidence keys derive from the patch, like review.
   Object.assign(facts.keys, manualKeys(spec,facts.patch));
-  return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts }; guard(current,d); return (await ledger.append([d]))[0]!; });
+  const model = await recordedModel(o.cwd,state,o.node,by(o),o.model);
+  return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts, ...(model !== undefined ? { model } : {}) }; guard(current,d); return (await ledger.append([d]))[0]!; });
 }
 export async function attest(o: MeasurementContext & { node: string; rerun?: boolean }): Promise<AttestResult> {
   checkAbort(o.signal);
@@ -1002,9 +1023,11 @@ export const attestBusyText = (node: string, owner: LockOwner): string => `attes
  * either refuses at append time when the open candidate differs. `from`: further working directories of the calling
  * process for the writer-worktree rail (G2.1; o.cwd and process.cwd() are always checked).
  */
-export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[] }): Promise<Entry> {
+export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<Entry> {
   const given = candidateArg(o.named), ledger = await Ledger.open(o.cwd);
-  return mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString()),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
+  const modelState = (await readState(o)).state;
+  const measuredModel = await recordedModel(o.cwd,modelState,o.node,by(o),o.model);
+  return mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString()),...(model !== undefined ? { model } : {}),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<Entry> {
@@ -1358,6 +1381,7 @@ async function summaryStatusView(cwd: string, dir: string, state: State, entries
   }
   const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
   const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers);
+  await applyMergeWaiting(dir, state, view);
   const pendingBases: NonNullable<StatusView['rebasePending']> = {};
   for (const id of Object.keys(state.nodes)) {
     const r = await rebasePending(state, id);
@@ -1420,7 +1444,48 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks));
   const pending = await rebasePending(view, o.node);
   if (pending) card.rebasePending = pending;
+  await applyModels(ledger,view,entries,o.node,card);
   return card;
+}
+/** DR2: a missing/corrupt busy file cannot create acceptance evidence or hide a gate. */
+async function applyMergeWaiting(dir: string, state: State, view: StatusView): Promise<void> {
+  try {
+    const busy = JSON.parse(await readFile(join(dir,'drive','waiting.json'),'utf8')) as NonNullable<StatusView['mergeWaiting']>;
+    const current: NonNullable<StatusView['mergeWaiting']> = {};
+    for (const [id, wait] of Object.entries(busy)) {
+      const n = state.nodes[id];
+      if (!n?.slot?.open || n.merged || wait.attempt !== n.slot.attempt || wait.candidate !== n.candidate?.seq || typeof wait.reason !== 'string' || !Number.isFinite(Date.parse(wait.since))) continue;
+      current[id] = wait;
+      const progress = view.summary?.progress.find(p => p.node === id);
+      if (progress && n.accepted) progress.phase = `merge waiting for ${oneLine(wait.reason)} since ${new Date(wait.since).toISOString().slice(11,16)}`;
+    }
+    if (Object.keys(current).length) view.mergeWaiting = current;
+  } catch { /* cache miss */ }
+}
+/** DR3: compare used models only; a pool label/selected model never counts as observed evidence. */
+async function applyModels(ledger: Ledger, state: State, entries: Entry[], id: string, card: ReceiptCard): Promise<void> {
+  const n = state.nodes[id]!, attempt = n.slot?.attempt;
+  const launches = n.runs.find(r => r.attempt === attempt)?.launches ?? [];
+  const submit = entries.findLast((e): e is SubmitEntry => e.kind === 'submit' && e.node === id && e.attempt === attempt && e.carry === undefined);
+  const reviews = entries.filter((e): e is import('./types.ts').ReviewEntry => e.kind === 'review' && e.node === id && e.attempt === attempt && e.key === n.candidate?.keys[e.obligation]);
+  if (!launches.length && !submit?.model && !reviews.some(e => e.model)) return;
+  const writer = submit?.model, reviewer = reviews.at(-1)?.model;
+  card.models = `writer ${writer ?? 'model unknown'} · reviewer ${reviewer ?? 'model unknown'}`;
+  const warnings: string[] = [];
+  if (writer && reviewer && writer === reviewer) warnings.push("reviewer used the writer's model");
+  const { driveReviewerSlot, reviewerBase } = await import('./reducer.ts');
+  for (const [role, used, principal] of [['writer', writer, n.slot?.writer], ['reviewer', reviewer, reviews.at(-1)?.by]] as const) {
+    if (!used) continue;
+    const k = role === 'reviewer' && principal ? driveReviewerSlot(principal,id,attempt!) : undefined;
+    const l = launches.findLast(l => l.role === role && (role === 'writer' || (k !== undefined && Number(l.rid.split(':').at(-1)) === reviewerBase(state,id) + k)));
+    if (!l) continue;
+    try {
+      const spec = JSON.parse((await ledger.getBlob(l.spec)).toString()) as { model?: unknown };
+      const selected = typeof spec.model === 'string' ? spec.model : Array.isArray(spec.model) && typeof spec.model[0] === 'string' ? spec.model[0] : undefined;
+      if (selected && selected !== used) warnings.push(`model used ${used} differs from the one selected ${selected}`);
+    } catch { /* missing launch selection is unknown, not a guessed mismatch */ }
+  }
+  if (warnings.length) card.modelWarnings = [...new Set(warnings)];
 }
 /** FL3: private runtime receipts, never acceptance evidence or ledger entries. A missing file is a cache miss. */
 export async function applyReports(ledger: Ledger, state: State): Promise<void> {

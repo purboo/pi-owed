@@ -7,7 +7,7 @@
 import { spawn } from 'node:child_process';
 import { link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { statfs } from 'node:fs/promises';
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -20,7 +20,7 @@ import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
 import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
-import { halted, projectId, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
+import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
@@ -233,6 +233,8 @@ interface Measurement {
   do: 'attest' | 'merge'; node: string; attempt: number; at: string;
   ended: Promise<void>;
   done: boolean;
+  /** DR1: only driver-owned trunk refreshes may be preempted. */
+  abort?: AbortController;
   finish?: () => Promise<ActionReport[]>;
 }
 /** How a measurement ended: `finish` handles it on the loop; `busy`: its report, handled at once instead. */
@@ -430,6 +432,23 @@ export class Driver {
    */
   private cycle = 0;
   private readonly busyAt = new Map<string, number>();
+  /** DR2: private runtime state; never a ledger act or acceptance evidence. */
+  private readonly mergeWaiting = new Map<string, { reason: string; since: string; attempt: number; candidate?: number }>();
+  private recordMergeWaiting(node: string, reason?: string, s?: State): void {
+    if (!this.ledger) return;
+    const n = s?.nodes[node], prior = this.mergeWaiting.get(node);
+    if (reason !== undefined) {
+      const attempt = n?.slot?.attempt ?? prior?.attempt;
+      if (attempt === undefined) return;
+      const candidate = n?.candidate?.seq ?? prior?.candidate;
+      this.mergeWaiting.set(node, { reason, since: prior && prior.attempt === attempt && prior.candidate === candidate ? prior.since : new Date().toISOString(), attempt, ...(candidate !== undefined ? { candidate } : {}) });
+    } else this.mergeWaiting.delete(node);
+    const dir = join(this.ledger.dir, 'drive'), path = join(dir, 'waiting.json');
+    mkdirSync(dir, { recursive: true });
+    const temp = `${path}.${process.pid}.tmp`;
+    writeFileSync(temp, JSON.stringify(Object.fromEntries(this.mergeWaiting)), { mode: 0o600 });
+    renameSync(temp, path);
+  }
   /** The loop calls this before a pass started by its timer or by a dsa event (not by a measurement ending). */
   tick(): void { this.cycle++; }
   /** A stop at once runs: ended measurements are not handled (their results are not recorded by the driver). */
@@ -449,7 +468,13 @@ export class Driver {
   }
 
   private async init(): Promise<Ledger> {
-    if (!this.ledger) { this.ledger = await Ledger.open(this.o.cwd); this.root = await git.mainRoot(this.o.cwd); }
+    if (!this.ledger) {
+      this.ledger = await Ledger.open(this.o.cwd); this.root = await git.mainRoot(this.o.cwd);
+      try {
+        const saved = JSON.parse(await readFile(join(this.ledger.dir, 'drive', 'waiting.json'), 'utf8')) as Record<string, { reason: string; since: string; attempt: number; candidate?: number }>;
+        for (const [id, w] of Object.entries(saved)) if (typeof w.reason === 'string' && Number.isFinite(Date.parse(w.since)) && Number.isSafeInteger(w.attempt)) this.mergeWaiting.set(id, w);
+      } catch { /* missing/corrupt private cache */ }
+    }
     return this.ledger;
   }
 
@@ -563,6 +588,12 @@ export class Driver {
     // K6: first the measurements that ended, in the order they ended (their halts and rebases are in the state below).
     const handled = await this.reap(reports);
     const s = await loadState(ledger), cfg = driveConfig(s.plan);
+    const mergeReady = mergeQueue(s).length > 0;
+    for (const [id, wait] of this.mergeWaiting) {
+      const n = s.nodes[id];
+      if (!n?.slot?.open || n.merged || n.slot.attempt !== wait.attempt || n.candidate?.seq !== wait.candidate) this.recordMergeWaiting(id);
+    }
+    if (mergeReady) this.measuring.get('\u0000trunk-refresh')?.abort?.abort('preempted');
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
     const { runs, blobs, rejected, conflicts, rebasePending } = await this.observe(s, measuring);
@@ -590,19 +621,25 @@ export class Driver {
     }
     // Sweep checks own detached process groups. Cancellation is asynchronous: a ready action never
     // awaits the sweep/bisect; it signals preemption and proceeds in this same pass.
-    if (this.sweepRun && !this.sweepRun.done && !this.sweepRun.committing && (this.stopping || drift || actions.some(a=>a.do !== 'notify') || Object.values(s.nodes).some(n=>n.phase === 'ready'))) {
+    if (this.sweepRun && !this.sweepRun.done && !this.sweepRun.committing && (this.stopping || drift || mergeReady || actions.some(a=>a.do !== 'notify') || Object.values(s.nodes).some(n=>n.phase === 'ready'))) {
       this.sweepRun.abort.abort(this.stopping ? 'stopped' : 'preempted');
     }
     /** F2.3: whether the disk is low this pass (checked once, before the first measurement it would start). */
     let low: boolean | undefined;
-    for (const a of actions) {
+    // DR1: start a merge before node attests consume the measurement capacity.
+    const scheduled = [...actions.filter(a => a.do === 'merge'), ...actions.filter(a => a.do !== 'merge')];
+    for (const a of scheduled) {
       if (this.stopping) break;
       // F2.2: a notify with a `once` key (the environment back-off) is printed once per key.
       if (a.do === 'notify' && a.once !== undefined) { if (this.facts.once.has(a.once)) continue; this.facts.once.add(a.once); }
       if (a.do === 'attest' || a.do === 'merge') {
         // K6: start it in the background; over `drive.measure`, or a second merge: skipped, decided again later.
         const inFlight = [...this.measuring.values()];
-        if (inFlight.length >= cap || (a.do === 'merge' && inFlight.some(m => m.do === 'merge'))) continue;
+        if (inFlight.length >= cap || (a.do === 'merge' && inFlight.some(m => m.do === 'merge'))) {
+          const jobs = inFlight.map(m => `${m.do === 'attest' && m.attempt === 0 ? 'attest --trunk' : `${m.node} ${m.do}`}`).join(', ');
+          this.recordMergeWaiting(a.node, `driver-internal job runs: ${jobs}`, s);
+          continue;
+        }
         // Busy back-off: a measurement that ended busy waits for the next timed or event pass.
         if (this.busyAt.get(a.node) === this.cycle) continue;
         // F2.3: below `drive.min_free_mb` in the git common dir or the temp dir: no measurement starts this pass.
@@ -625,13 +662,13 @@ export class Driver {
       this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
     }
     // IR1: refresh only on an otherwise quiet pass; run in the existing measurement lifecycle.
-    if (!this.stopping && !drift && checked && !this.measuring.size && !actions.some(a => a.do !== 'notify') && await ops.trunkRefreshPending({ cwd:this.root! })) {
+    if (!mergeReady && !this.stopping && !drift && checked && !this.measuring.size && !actions.some(a => a.do !== 'notify') && await ops.trunkRefreshPending({ cwd:this.root! })) {
       low ??= await this.diskLow(s,reports);
       if (!low && this.busyAt.get('trunk') !== this.cycle) { const r = this.startTrunkRefresh(s); reports.push(r); this.emit(r); }
     }
     // SW: a staying idle driver schedules the detached sweep and returns without awaiting it.
     let sweepBusy = this.sweepBusyAt === this.cycle;
-    if (this.o.stay && !this.o.once && !this.stopping && !drift && checked && s.plan.sweep && !this.sweepRun && !sweepBusy && !this.measuring.size && !Object.values(s.nodes).some(n=>n.phase === 'ready') && !actions.some(a=>a.do !== 'notify')) {
+    if (!mergeReady && this.o.stay && !this.o.once && !this.stopping && !drift && checked && s.plan.sweep && !this.sweepRun && !sweepBusy && !this.measuring.size && !Object.values(s.nodes).some(n=>n.phase === 'ready') && !actions.some(a=>a.do !== 'notify')) {
       const entries = await ledger.read();
       if (!entries.some(e=>e.kind === 'sweep' && e.commit === s.trunk.commit)) {
         low ??= await this.diskLow(s,reports);
@@ -693,15 +730,19 @@ export class Driver {
   // ---------- measurements in flight (K6) ----------
   private startTrunkRefresh(s: State): ActionReport {
     const key = '\u0000trunk-refresh';
-    const at = new Date().toISOString(), m: Measurement = { do:'attest', node:'trunk', attempt:0, at, done:false, ended:Promise.resolve() };
+    const ac = new AbortController(), abort = () => ac.abort(this.abort.signal.reason);
+    this.abort.signal.addEventListener('abort', abort, { once: true });
+    if (this.abort.signal.aborted) abort();
+    const at = new Date().toISOString(), m: Measurement = { do:'attest', node:'trunk', attempt:0, at, done:false, ended:Promise.resolve(), abort: ac };
     let busy: ActionReport | undefined;
-    m.ended = withMachineLease({ cwd:this.root!, signal:this.abort.signal, lease:s.plan.lease !== false, noWait:true, dsa:this.dsa }, signal => ops.attestTrunk({ cwd:this.root!, signal }))
+    m.ended = withMachineLease({ cwd:this.root!, signal:ac.signal, lease:s.plan.lease !== false, noWait:true, dsa:this.dsa }, signal => ops.attestTrunk({ cwd:this.root!, signal }))
       .then(r => { m.finish = async () => [{ do:'attest', node:'trunk', scope:'repo', outcome:'done', detail:ops.attestTrunkText(r) }]; }, (e:unknown) => {
-        const outcome = e instanceof OwedError && e.code === 'busy' ? 'busy' : this.abort.signal.aborted ? 'aborted' : 'error';
-        const report: ActionReport = { do:'attest', node:'trunk', scope:'repo', outcome, detail:e instanceof Error ? e.message : String(e) };
+        const outcome = ac.signal.aborted ? 'aborted' : e instanceof OwedError && e.code === 'busy' ? 'busy' : 'error';
+        const report: ActionReport = { do:'attest', node:'trunk', scope:'repo', outcome, detail:ac.signal.reason === 'preempted' ? 'trunk attest aborted: preempted' : e instanceof Error ? e.message : String(e) };
         if (outcome === 'busy') busy = report;
         m.finish = async () => [report];
       }).finally(() => {
+        this.abort.signal.removeEventListener('abort', abort);
         m.done = true;
         if (busy) { this.measuring.delete(key); this.busyAt.set('trunk',this.cycle); if (!this.hard) this.emit(busy); return; }
         this.ended.push(m); this.waker?.();
@@ -720,7 +761,8 @@ export class Driver {
         m.done = true;
         // A busy measurement (LE2, review #785) is not progress and does not wake the loop: its line is printed now (so status no
         // longer lists it) and the node waits for the next timed or event pass.
-        if (busy) { this.measuring.delete(node); this.busyAt.set(node, this.cycle); if (!this.hard) this.emit(busy); return; }
+        if (busy) { this.recordMergeWaiting(node, busy.detail ?? 'machine lease busy', s); this.measuring.delete(node); this.busyAt.set(node, this.cycle); if (!this.hard) this.emit(busy); return; }
+        this.recordMergeWaiting(node);
         this.ended.push(m); this.waker?.();
       });
     this.measuring.set(node, m);
