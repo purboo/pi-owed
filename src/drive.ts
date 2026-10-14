@@ -6,6 +6,7 @@ import { rebaseFollowupSent, rebaseWorkText, type RebasePending } from './rebase
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping } from './reducer.ts';
+import { priorCandidateBlock } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -619,7 +620,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   }
   // TR3: mixed blocks retain the existing parent halt before attribution or writer follow-up.
   if (c) {
-    const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(s,b.seq,b.key) ?? []);
+    // AT3: a block measured for an earlier candidate never halts here; the new candidate is attested first.
+    const trunkRed = n.blocks.filter(b => b.state === 'active' && !priorCandidateBlock(s, id, b)).flatMap(b => trunkRedHint(s,b.seq,b.key) ?? []);
     if (trunkRed.length) {
       const failures = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && n.blocks.some(b => b.state === 'active' && b.seq === e.seq));
       return halt(`merge refused: ${[...trunkRed, ...mergeFailureHints(s,id,failures)].join('; ')}`);

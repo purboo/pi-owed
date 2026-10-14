@@ -992,7 +992,8 @@ export class Driver {
           const now = await loadState(this.ledger!), d = await git.trunkDrift(this.root!, now.trunk.name, now.trunk.commit).catch(() => undefined);
           return [report('retry', `merge refused (${e.message}); retry next pass`), ...(d ? [driftReport(now, d)] : [])];
         }
-        await this.halt(node, attempt, `merge refused: ${e.message}`);
+        // AT1: a merge-tree break lead stays the first sentence of the halt (and so of the Needs-you line).
+        await this.halt(node, attempt, e.message.startsWith(ops.MERGE_TREE_BREAK) ? e.message : `merge refused: ${e.message}`);
         return [report('refused', `${e.message}; halted (${NEEDS_PARENT})`)];
       };
     }

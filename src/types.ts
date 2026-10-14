@@ -160,6 +160,8 @@ export interface ObsEntry extends Base {
   noisy?: boolean;
   /** RC3: at most 50 failing names (union across repeat runs). */
   failed?: string[];
+  /** AT4 (0.20): failed name -> normalized first error line, for names whose output had one (first run that failed it). */
+  signatures?: Record<string, string>;
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent' }
