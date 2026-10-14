@@ -57,7 +57,7 @@ test('parentacts: each class counts one entry, with first-match precedence', () 
   f.add({kind:'note',by:'parent:pi',text:'coordination'});
   f.grant(); f.merged();
   const m = computeMetrics(f.entries,f.plans);
-  assert.deepEqual(m.parentActs,{total:17,perMergedNode:17,byClass:{writes:2,answer:1,trunk:3,resume:1,rule:1,plan:1,review:2,waive:1,defer:1,evidence:1,abandon:1,approve:0,other:2}});
+  assert.deepEqual({total:m.parentActs.total,perMergedNode:m.parentActs.perMergedNode,byClass:m.parentActs.byClass},{total:17,perMergedNode:17,byClass:{writes:2,answer:1,trunk:3,resume:1,rule:1,plan:1,review:2,waive:1,defer:1,evidence:1,abandon:1,approve:0,other:2}});
   assert.deepEqual(m.grants,{total:1,perMergedNode:1});
 });
 

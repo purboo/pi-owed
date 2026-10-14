@@ -210,7 +210,7 @@ test('replay refuses forged principals, uncovered paths, wrong allowance and sta
 test('dispatch and review packets include owner preauthorization and grants, including driver tasks', async()=>{
   const r=await fixture(plan({nodes:[node('a',['src/'],1),node('b',['other/'])]})); try {
     assert.match(r.slot.packet,/Allowed writes: src\/\nPre-authorized by the owner \(allowance plan #0\): docs\/, root/);
-    let {s}=await r.state(); assert.match(writerTask(s,'a'),/owed records the grant; do not ask/);
+    let {s}=await r.state(); assert.match(writerTask(s,'a'),/edit these freely; do not ask the parent; owed grants them when your candidate is measured/);
     await r.submit({'docs/a':'a'}); await r.attest(); ({s}=await r.state());
     const packet=reviewPacket(s,'a'); assert.match(packet,/Writes granted under allowance \(plan #0\): docs\/a — judge whether each belongs to this node's task; block if not\./);
     await ops.planSet({cwd:r.cwd,as:owner,channel:'flag',plan:JSON.stringify(plan({allow:[],nodes:[node('a',['src/'],1),node('b',['other/'])]}))});

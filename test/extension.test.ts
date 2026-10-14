@@ -129,7 +129,7 @@ test('README quickstart runs from sample plan through merge and verification', a
     const worktree = join(r.cwd, '.owed/wt/greeting-1');
     await commitAt(worktree, { 'hello.txt': 'hello\n' });
     assert.equal((await cli(worktree, ['submit', 'greeting'])).code, 0);
-    const attested = await cli(r.cwd, ['attest', 'greeting']); assert.equal(attested.code, 1); assert.match(attested.stdout, /measured/);
+    const attested = await cli(r.cwd, ['attest', 'greeting']); assert.equal(attested.code, 4); assert.match(attested.stdout, /measured/);
     for (const args of [['why', 'greeting'], ['review', 'greeting', '--ok', '--rank', '1', '--as', 'reviewer:demo-reviewer', '--note', 'Inspected greeting and acceptance evidence'], ['merge', 'greeting'], ['report'], ['verify']]) {
       const out = await cli(r.cwd, args); assert.equal(out.code, 0, out.stderr);
     }

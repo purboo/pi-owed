@@ -52,8 +52,10 @@ export function editText(text: string, o: EditFields): string {
   for (const assignment of o.set ?? []) {
     const eq = assignment.indexOf('=');
     if (eq < 1) usage(`--set needs path=yaml: ${assignment}`);
-    const p = parts(assignment.slice(0,eq),o), value = parseDocument(assignment.slice(eq+1));
-    if (value.errors.length) usage(`Invalid YAML value for ${p.join('.')}: ${value.errors.map(e => e.message).join('; ')}`);
+    const raw = assignment.slice(eq+1), p = parts(assignment.slice(0,eq),o), value = parseDocument(raw);
+    // PO7: brief is free text; explicit quoted/block YAML strings remain supported.
+    const freeBrief = p.length === 1 && p[0] === 'brief' && !/^(?:["']|[|>](?:[+-]|[1-9])?\s*(?:\n|$))/.test(raw.trimStart());
+    if (!freeBrief && value.errors.length) usage(`Invalid YAML value for ${p.join('.')}: ${value.errors.map(e => e.message).join('; ')}`);
     if (p[0] === 'checks' && p.length === 2 && o.invariant === undefined) {
       const mapping: unknown = value.contents;
       if (!isMap(mapping)) usage(`checks.${p[1]} needs a whole mapping`);
@@ -63,7 +65,7 @@ export function editText(text: string, o: EditFields): string {
       mapping.set('id',p[1]);
     }
     // Keep YAML nodes (especially aliases) so they resolve against the plan's Document, not the value's.
-    const at = locate(p,true)!, prior = at.map.getIn(at.path,true), next = value.contents?.clone() ?? doc.createNode(null);
+    const at = locate(p,true)!, prior = at.map.getIn(at.path,true), next = freeBrief ? doc.createNode(raw) : value.contents?.clone() ?? doc.createNode(null);
     if (isNode(prior)) { next.comment = prior.comment; next.commentBefore = prior.commentBefore; next.spaceBefore = prior.spaceBefore; }
     if ((isMap(prior) && isMap(next)) || (isSeq(prior) && isSeq(next))) next.flow = prior.flow;
     at.map.setIn(at.path,next);
