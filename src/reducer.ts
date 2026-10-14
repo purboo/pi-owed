@@ -769,17 +769,24 @@ export function waitingFor(s: State, node: string): Waiting | undefined {
 export interface Waiting { after: string; resume: number; deps?: string[] }
 /** FL2: a single node stays a string; comma spelling is normalized at command/tool boundaries. */
 export const afterNodes = (after: string | string[] | undefined): string[] => after === undefined ? [] : Array.isArray(after) ? after : [after];
-/** MO2: accepted open attempts, waited-on first, then acceptance FIFO, dependent count and id. */
+/** DR1: unique not-merged transitive dependents; merged nodes are not counted. */
+export function unmergedDependents(s: State, node: string): number {
+  const found = new Set<string>();
+  const visit = (id: string): void => {
+    for (const spec of s.plan.nodes) if (spec.deps.includes(id) && !found.has(spec.id)) {
+      found.add(spec.id); visit(spec.id);
+    }
+  };
+  visit(node);
+  return [...found].filter(id => !s.nodes[id]?.merged).length;
+}
+/** DR1: critical-path weight first, older continuous acceptance breaks ties. */
 export function mergeQueue(s: State): string[] {
-  const waitedOn = new Set<string>();
-  for (const n of Object.values(s.nodes)) {
-    if (n.merged || !waitingFor(s, n.id)) continue;
-    for (const id of afterNodes(resumeOf(s, n.id)?.after)) if (!s.nodes[id]?.merged) waitedOn.add(id);
-  }
+  const weight = new Map(s.plan.nodes.map(n => [n.id, unmergedDependents(s, n.id)]));
   return Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'accepted').sort((a, b) =>
-    Number(waitedOn.has(b.id)) - Number(waitedOn.has(a.id))
+    (weight.get(b.id) ?? 0) - (weight.get(a.id) ?? 0)
     || (a.acceptedSince ?? Number.MAX_SAFE_INTEGER) - (b.acceptedSince ?? Number.MAX_SAFE_INTEGER)
-    || b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id);
+    || a.id.localeCompare(b.id)).map(n => n.id);
 }
 
 /** FL3: report follow-up of the latest resume; a later submit or parent act ends the parked receipt. */
@@ -1204,6 +1211,7 @@ export function validateDraft(s: State, d: Draft): string[] {
     const extra = Object.entries(d).filter(([k, v]) => v !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !STRICT_FIELDS[d.kind].includes(k)).map(([k]) => k);
     if (extra.length) errors.push(`${d.kind} has unknown fields: ${extra.join(', ')}`);
   }
+  if ((d.kind === 'submit' || d.kind === 'review') && d.model !== undefined && (typeof d.model !== 'string' || !d.model.trim())) errors.push(`${d.kind} model must be nonempty text`);
   switch (d.kind) {
     case 'escape': {
       allow('owner', 'parent');
