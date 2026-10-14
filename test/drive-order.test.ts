@@ -359,7 +359,7 @@ test('G3.7: the rebase follow-up and the rebasing repair list the conflicting fi
   };
   const r = rebased(false), runs = runsOf(sealed(W()));
   const msg = (o: Partial<DriveOpts>) => { const a = act(r, runs, o); assert.ok(a?.do === 'send' && a.reason === 'rebase', JSON.stringify(a)); return a.message; };
-  assert.equal(msg({ conflicts: new Map([['a', ['a/x', 'a/y']]]) }), 'trunk moved; rebase your worktree onto main (s1): in /repo/.owed/wt/a-1 run `git rebase --onto s1 s0` (files that conflict with your previous candidate: a/x, a/y), resolve conflicts within the allowed writes, rerun checks, commit, then `owed submit a`');
+  assert.equal(msg({ conflicts: new Map([['a', ['a/x', 'a/y']]]) }), 'trunk moved; rebase your worktree onto main (s1): first commit your work, then in /repo/.owed/wt/a-1 run `git rebase --onto s1 s0` (files that conflict with your previous candidate: a/x, a/y), resolve conflicts within the allowed writes, rerun checks, commit, then `owed submit a`');
   assert.match(msg({ conflicts: new Map([['a', []]]) }), /`git rebase --onto s1 s0` \(files that conflict with your previous candidate: none\), resolve/);
   assert.equal(msg({}), drv.rebaseMessage(r.state(), 'a'));
   assert.doesNotMatch(msg({ conflicts: new Map([['b', ['b/x']]]) }), /conflict with your previous candidate/, 'another node\'s list');

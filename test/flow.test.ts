@@ -214,7 +214,7 @@ test('plan --rev reads the plan file from a commit and records rev and path; wit
     await mkdir(join(r.cwd, 'sub'), { recursive: true });
     const sub = join(r.cwd, 'sub');
     const out = await cli(sub, ['plan', '../plans/next.json', '--rev', 'HEAD']);
-    assert.equal(out.code, 0, out.stderr); assert.match(out.stdout, new RegExp(`from plans/next\\.json at ${rev.slice(0, 12)}`));
+    assert.equal(out.code, 0, out.stderr); assert.match(out.stdout, /^Recorded plan #\d+ \(v1 : \+0 nodes \[\], -0, ~1 changed; downgrades: none\)/);
     const e = (await entries(r.cwd)).at(-1)!;
     assert.ok(e.kind === 'plan'); assert.equal(e.rev, rev); assert.equal(e.path, 'plans/next.json');
     const stored = parse((await (await Ledger.open(r.cwd)).getBlob(e.plan)).toString()) as Plan;

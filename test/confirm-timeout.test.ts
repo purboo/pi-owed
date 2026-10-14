@@ -103,7 +103,7 @@ test('CLI: --as owner:x without a TTY records delegated (no prompt, no --i-am-ow
     assert.equal(bare.code, 1); assert.match(bare.stderr, /requires a note saying why/);
     const eased = await cli(r.cwd, ['plan', 'eased.json', '--as', 'owner:x', '--note', 'generated file']);
     assert.equal(eased.code, 0, eased.stderr);
-    assert.match(eased.stdout, /^Recorded #\d+ owner:x \(delegated\) updated plan from eased\.json, downgrades a: .*: generated file$/m);
+    assert.match(eased.stdout, /^Recorded plan #\d+ \(v1 : .*; downgrades: a: .*\)$/m);
     last = (await entries(r.cwd)).at(-1)!;
     assert.ok(last.kind === 'plan' && last.channel === 'delegated' && last.note === 'generated file');
     const flag = await cli(r.cwd, ['rule', 'flagged', '--nodes', '*', '--as', 'owner:x', '--i-am-owner']);

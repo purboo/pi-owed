@@ -2,6 +2,7 @@
 // --stay`, and the ready hint after a plan update. Fake dsa only (test/fixtures/fake-dsa.mjs), never the real dsa.
 // Exports added by this node are read through the module namespaces, so the base fails by assertion or "is not a
 // function", not at import time.
+import { assertWakeLines } from './helpers/wake.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
@@ -151,7 +152,7 @@ test('H1.1a-c pi: a question read while the agent runs is held; answered before 
       await until(() => h.messages.length >= 1, 8000, 'the later wake');
       const m = h.messages[0]!;
       assert.deepEqual(m.options, { triggerTurn: true, deliverAs: 'followUp' });
-      assert.deepEqual(m.message.content.split('Details:\n')[1]!.split('\n').slice(1), ['halt zz attempt 1, needs the parent (the main agent acts; owed lists the command): halted — later', bg.haltHintText, 'Next: owed status / owed why <node>']);
+      assertWakeLines(m.message.content, ['halt zz attempt 1, needs the parent (the main agent acts; owed lists the command): halted — later', bg.haltHintText, 'Next: owed status / owed why <node>']);
       // ctx.isIdle() false (no agent_start seen): held too; delivered at the next tick once idle.
       h.state.idle = false;
       line({ do: 'halt', node: 'zz', outcome: 'halted', attempt: 1, needs: 'human', detail: 'while streaming' });
@@ -164,7 +165,7 @@ test('H1.1a-c pi: a question read while the agent runs is held; answered before 
   } finally { await h.emit('session_shutdown'); rmSync(f.lock, { force: true }); await f.done(); }
 });
 
-test('H1.1b/c revalidation: a fact-advanced halt and resolved drift are dropped; an open question, idle-wait and unmarked lines are delivered; the count stays in Details', { timeout: 60_000 }, async () => {
+test('H1.1b/c revalidation: a fact-advanced halt and resolved drift are dropped; an open question, idle-wait and unmarked lines are delivered; the count remains in the single wake body', { timeout: 60_000 }, async () => {
   const f = await rig(planOf(node('h'), node('q')));
   const dir = join(f.root, 'follow'), log = join(dir, 'log.jsonl');
   mkdirSync(dir); writeFileSync(log, '');
@@ -186,7 +187,7 @@ test('H1.1b/c revalidation: a fact-advanced halt and resolved drift are dropped;
     assert.ok(run.factMark(await run.stateOf(f.cwd), 'h') > mark);
     state.busy = false;
     const m = await fo.step();
-    assert.deepEqual(m?.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'merge m: merged — trunk 1', 'q: writer run rid-q asks (qid q1-1, rev 1): which port?',
+    assertWakeLines(m, ['owed drive (/r):', 'merge m: merged — trunk 1', 'q: writer run rid-q asks (qid q1-1, rev 1): which port?',
       'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — older driver, no mark', LEGACY_IDLE_WAIT, bg.haltHintText, '(2 wake(s) resolved before delivery)', 'Next: owed status / owed why <node>']);
     assert.equal(got.length, 1);
     // Only dropped lines left: nothing is delivered; a merge read with them rides along with the next message.
@@ -195,7 +196,7 @@ test('H1.1b/c revalidation: a fact-advanced halt and resolved drift are dropped;
     assert.equal(await fo.step(), undefined, 'no wake line left: not delivered');
     line({ event: 'stopped' });
     const end = await fo.step();
-    assert.deepEqual(end?.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'merge n: merged — trunk 2', 'stopped', 'Next: owed status / owed why <node>'], 'the merge rides along; the count is not carried over');
+    assertWakeLines(end, ['owed drive (/r):', 'merge n: merged — trunk 2', 'stopped', 'Next: owed status / owed why <node>'], 'the merge rides along; the count is not carried over');
     assert.equal(fo.stopped, true);
     // A failed describe keeps the line.
     const broken = NEW.revalidator({ cwd: f.cwd, dsa: new Dsa({ bin: join(f.root, 'no-such-dsa') }) });
@@ -256,16 +257,16 @@ test('H1.1b a dropped wake also drops its repeat ride-along and later repeats of
     line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'unrelated' });
     state.busy = false;
     const m = await fo.step();
-    assert.deepEqual(m?.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'halt k attempt 1, needs the parent (the main agent acts; owed lists the command): halted — unrelated', bg.haltHintText, '(1 wake(s) resolved before delivery)', 'Next: owed status / owed why <node>'],
+    assertWakeLines(m, ['owed drive (/r):', 'halt k attempt 1, needs the parent (the main agent acts; owed lists the command): halted — unrelated', bg.haltHintText, '(1 wake(s) resolved before delivery)', 'Next: owed status / owed why <node>'],
       'the resolved wake of h and its repeat ride-along are gone');
     line(halt(mark, 'other'));        // a later repeat of the resolved wake: does not ride along
     line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'next' });
     const n = await fo.step();
-    assert.deepEqual(n?.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'halt k attempt 1, needs the parent (the main agent acts; owed lists the command): halted — next', bg.haltHintText, 'Next: owed status / owed why <node>']);
+    assertWakeLines(n, ['owed drive (/r):', 'halt k attempt 1, needs the parent (the main agent acts; owed lists the command): halted — next', bg.haltHintText, 'Next: owed status / owed why <node>']);
     // The driver's next pass reports h with the new mark: a new fact, delivered.
     const now = run.factMark(await run.stateOf(f.cwd), 'h');
     line(halt(now));
-    assert.match(await fo.step() ?? '', /halted — stuck\nTo clear a halt without an obligation: [^\n]*\nNext: /, 'a new fact of h wakes');
+    assertWakeLines(await fo.step(), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — stuck', bg.haltHintText, 'Next: owed status / owed why <node>'], 'a new fact of h wakes');
     fo.stop();
   } finally { await f.done(); }
 });
@@ -277,7 +278,7 @@ test('H1.1d CLI-era follower (no pi hooks): no hold, no revalidation; tick deliv
     const got: string[] = [];
     const fo = new bg.Follower({ log, repo: '/r', pid: process.pid, start: run.procStart(process.pid), deliver: c => got.push(c) });
     appendFileSync(log, `${JSON.stringify(askLine('a', 'rid-x', { qid: 'gone', rev: 1 }, 'a asks', 0))}\n`);
-    assert.match(fo.tick() ?? '', /\na asks\nNext: owed status \/ owed why <node>$/);
+    assertWakeLines(fo.tick(), ['owed drive (/r):', 'a asks', 'Next: owed status / owed why <node>']);
     assert.equal(bg.classifyLine(JSON.stringify({ event: 'idle-wait', at: 'x' })).kind, 'wake', 'idle-wait wakes, not terminal');
     assert.equal(run.reportText({ event: 'idle-wait', at: 'x' }), LEGACY_IDLE_WAIT);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -312,7 +313,7 @@ test('H1.2 pi start stay:true: idle-wait wakes and the driver stays; a plan upda
     await until(() => f.logJson().at(-1)?.event === 'exit', 15_000, 'the exit record');
     const last = f.logJson().at(-1)!;
     assert.equal(last.reason, 'stopped'); assert.equal(last.code, 0);
-    await until(() => h.messages.some(m => /driver exited 0 \(stopped\)/.test(m.message.content)), 10_000, 'the exit wake');
+    await until(() => h.messages.some(m => /Driver stopped: stopped/.test(m.message.content)), 10_000, 'the exit wake');
   } finally { await h.emit('session_shutdown'); await f.done(); }
 });
 
