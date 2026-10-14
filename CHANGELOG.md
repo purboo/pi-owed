@@ -1,5 +1,133 @@
 # Changelog
 
+## 0.20.0
+
+Compatibility first: 0.20 adds no new ledger entry kind, only optional fields
+on existing entries and optional plan keys. Upgrade every driver, CLI and pi
+plugin together: older versions can ignore, misread or refuse these additions.
+Versions 0.18 and 0.19 were not published; their work is folded into 0.20.
+Without the additions, keys and replay remain as in 0.17 except for pooled
+repeat across several observations on one key, described below. No acceptance
+gate is weakened. Origins: app feedback and the parent's ledger metrics:
+merge-tree invariant refusals accounted for 28 of 70 driver halts, and 16
+test-path widenings were still amended manually although already covered by
+`allow`.
+
+- **Trust same-key measurements (measure, MS1–MS5).**
+  `owed attest <node> --remeasure [--all]` remeasures current prospective
+  merge-tree invariants only, under the shared machine lease, on the same
+  keys; `owed attest --trunk --remeasure` targets current trunk invariants.
+  `owed resume <node> --remeasure` requests that measurement before the
+  driver's next merge. Nothing else is invalidated. Without repeat, pass
+  and fail on one key remain an owner conflict. With `repeat {runs:N,
+  need:K}`, every run of every non-error observation on that key is pooled:
+  pass iff `passes*N >= K*total_runs`, otherwise fail, with no window or
+  cherry-picking. An old multi-observation repeat conflict can therefore
+  replay as pass or fail. Refusals that reuse an earlier failing observation
+  show its seq, age and exact remeasure command.
+  Owner-only `quarantine: [{test,fix,note?}]` on checks/invariants excludes
+  exact failing names while the fix remains unmerged; its own prospective
+  merge is measured without that quarantine and must repair the tests.
+  Exemption is fail-closed: only a plain allowlisted `node --test` invocation
+  completing with exit 1, one complete TAP plan, all failures exactly named
+  and quarantined, and enough remaining tests can pass. Quarantined tests
+  count neither passed nor failed. Cargo, templates, wrappers, red/mutants
+  runs, crashes and timeouts are not excused. Status, brief and report list
+  quarantine debt; `why <fix>` lists what the fix's merge lifts.
+- **Attribute the actual break (attrib, AT1–AT5).** A merge-tree invariant
+  failure with passing current trunk, after trunk moved at least one commit
+  since the slot base, makes the first sentence of refusals, driver halts
+  and Needs-you reasons lead with `merge tree does not pass ... (trunk
+  passes)` and the rebase remedy, not a trunk-red waiver/sweep/adopt hint.
+  Checks whose declared test files are new use the slot base, not trunk,
+  as their red reference. New submits are attested before old-candidate
+  merge blocks can park or re-halt them; submission is not a waiver.
+  Intermittency hints require same-key pass/fail evidence or matching
+  normalized error signatures on trunk, not just the same name on another
+  tree. AT5 defer carry remains debt and is fail-closed: deferred, current
+  trunk and current merge failures must all be test-only with complete
+  names/counts; current names must be a non-empty subset of deferred names,
+  already failing on trunk before defer, with identical signatures on all
+  three observations and the current `min_tests` met. Missing proof, new
+  failures, crashes or timeouts leave the defer bound to its old merge key.
+- **Show actionable state (views, NY1–NY7).** Repair follow-ups or newer
+  submits show `repairing (block #<seq>)`, but NY1 removes the review item
+  from Needs you only when `ownerNeeded(s,node)` is undefined. Rank-3,
+  non-driver-authored rank-2 and flaky/owner-conflict cases stay actionable
+  even while repairing. Guidance precedes the explicitly risk-labelled
+  owner override. Owner approval stays waiting until dependency/resume
+  waits clear; only a review owner conflict says an owner decision is
+  needed. Plan replies lead with their recorded receipt, wake reasons and
+  questions appear once, and `why --full` restores quiet confirmation
+  history. Worktree ancestry drift shows `rebase pending`; the driver sends
+  one follow-up per attempt/base, with a computed upstream and commit-first
+  rebase command.
+- **Serve the critical path with honest receipts (driver, DR1–DR4).**
+  Merge-ready nodes outrank background trunk attest/sweeps, ordered by
+  unfinished transitive dependent count, then continuous acceptance age.
+  The driver preempts only its own trunk attest/sweep, never external
+  measurements or node attests. Plain status shows both `merge waiting for
+  <reason> since <HH:MM>` and DR2's `measure waiting for <reason> since
+  <HH:MM>`; accepted age starts at acceptance. Submit/review accept `--model`
+  (pi `model`) and record actual models in optional fields; why reports
+  matching/mismatched-model warnings without changing gates. Non-prospective
+  rules immediately notify running/asking roles; answers notify other roles
+  while answering the selected call. DR4 request ids bind ruling seq, rid
+  and exact message-body digest: identical retries are idempotent, changed
+  bodies get new ids. Receipts retain delivered/failed results and exact
+  answer retry commands; delivery failures never trigger a retry loop or
+  acknowledge rulings.
+- **Remove unnecessary parent round trips (parentops, PO1–PO7).**
+  An amend wholly covered by current `allow.writes` refuses as unnecessary,
+  recording nothing: writers edit task-needed covered paths freely and owed
+  grants them at measurement, rather than requiring a manual amend.
+  `owed resume A,B,C` (pi `node` array) validates the whole batch under one
+  lock and records one resume per node, or nothing on refusal. Metrics add
+  per-node attribution, attributed acts per merged node, pending and
+  unattributed acts; batches count once. Plan/edit dry-run warn about
+  dependency-free write overlaps on the critical path, without new gates.
+  PO5 attest exits 1 if any observation recorded by that action failed,
+  including known-red/probe failures; otherwise 0 means complete and 4 means
+  obligations remain. Usage 2, internal error 3, refusal 1 and busy 75 retain
+  their meanings. The driver treats 0/4 and measured failure 1 as completed
+  work, 75 as busy, and internal/other errors as halts, never silent retries.
+  PO6 omitted ruling acknowledgments derive only from a qualifying driver
+  reviewer launch packet's largest byte-exact complete prefix of applicable
+  pre-launch rulings, never the maximum isolated match; later rulings remain
+  owed. Brief edits preserve multiline, colon-bearing and equals text while
+  empty values still refuse.
+- **Version and count check templates (checktpl, CT1).** Plan loading expands
+  `cargo-tests`, `node-tap` and `evidence-json` into frozen v1 commands;
+  expanded `run`/`min_tests` determine keys and appear in packets/receipts.
+  Unknown templates, missing parameters or combining `run` and `template`
+  refuse. `min_ok` counts successful tests only: Cargo sums its summaries;
+  TAP uses final summaries and subtracts successful empty file wrappers only
+  when the top-level name matches an actual input file and has no subtests.
+  Real tests with file-like names still count; skips/ignored tests do not.
+  Missing summaries, insufficient successes and runner failures still fail.
+  JSON evidence checks own-field presence, not truthiness, so `false`, `0`,
+  empty strings and `null` remain valid present values. Templates infer no
+  reads/closure and install no dependencies; quarantine does not exempt them.
+- **Tolerate an append in flight, not corruption (tornread, TR1–TR3).**
+  Unlocked `Ledger.read()` ignores only a final fragment without a trailing
+  newline, returning preceding complete entries with the chain verified.
+  Reads under the lock still reject a torn tail, and malformed complete
+  lines always fail. This adds no entry kind or plan key.
+
+### Not in 0.20
+
+A unified `decide` verb, a lighter release flow, prospective merge-tree
+invariant measurement before review, and stopping surplus reviewers remain
+future work. Cargo quarantine exemption/completeness proof and MS4 allowlist
+hardening against `PATH`/`NODE_OPTIONS`, `--require`, `--import` and
+`--test-isolation` are backlog; quarantine is not a sandbox. TR covers only
+`Ledger.read()` on the same lock-tracked instance, not every unlocked reader.
+Fix merges refresh trunk/merge quarantine keys, not an open candidate's stored
+submit check keys, and remeasure targets invariants only. Pooled repeat is the
+explicit old-ledger replay exception, not an unchanged-replay promise.
+Historical submit/review entries are not retrofitted with model metadata;
+unavailable dsa status leaves `model unknown`. See `docs/SPEC.md` §7.17.
+
 ## 0.17.0
 
 This release delivers the merged nodes grant (GR), trunkpark (TP),
