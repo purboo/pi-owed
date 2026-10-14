@@ -287,6 +287,55 @@ export function globMatch(path: string, glob: string): boolean {
   return glob === '**' || (glob.endsWith('/') ? path.startsWith(glob) : matchesGlob(path, glob));
 }
 export function matchesAny(path: string, globs: string[]): boolean { return globs.some(g => globMatch(path, g)); }
+/** CT1: version 1 expansions are frozen: normalized plans store only run/min_tests, never template metadata. */
+export const CHECK_TEMPLATE_VERSION = 1;
+/** Template-generated commands carry their expansion version in the keyed command itself. */
+export const isCheckTemplateRun = (run: string): boolean => run.startsWith(`# owed-template/v${CHECK_TEMPLATE_VERSION}/`);
+const templateQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
+/** CT1: count successful tests only (not skipped/ignored); pipefail retains crashes and runner failures. */
+function templateCounter(format: 'cargo' | 'tap', min: number, files: string[] = []): string {
+  const script = `let log='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>{log+=x;process.stdout.write(x)});process.stdin.on('end',()=>{let pass=0,fail=0,seen=false;${format === 'cargo' ? "for(const m of log.matchAll(/^test result: (?:ok|FAILED)\\. (\\d+) passed; (\\d+) failed; (\\d+) ignored/gm)){seen=true;pass+=Number(m[1]);fail+=Number(m[2])}" : `const p=[...log.matchAll(/^# pass (\\d+)\\s*$/gm)].at(-1),f=[...log.matchAll(/^# fail (\\d+)\\s*$/gm)].at(-1);if(p&&f){seen=true;const {resolve}=require('node:path'),{globSync}=require('node:fs');const normal=x=>resolve(x.trim().replace(/\\\\/g,'/'));const files=new Set(${JSON.stringify(files)}.flatMap(x=>[normal(x),...globSync(x.replace(/\\\\/g,'/')).map(normal)]));let wrappers=0,cursor=0;for(const m of log.matchAll(/^(not )?ok \\d+ - ([^\\r\\n]+)\\r?$/gm)){const before=log.slice(cursor,m.index);cursor=m.index+m[0].length;if(!m[1]&&!/ # (?:SKIP|TODO)\\b/.test(m[2])&&!/^[ \\t]+# Subtest:/m.test(before)&&files.has(normal(m[2])))wrappers++}pass=Math.max(0,Number(p[1])-wrappers);fail=Number(f[1])}`}if(seen){const failed=[...log.matchAll(${format === 'cargo' ? '/^test (.+) \\.\\.\\. FAILED\\s*$/gm' : '/^\\s*not ok \\d+\\s*-\\s*(.+)$/gm'})].map(m=>m[1]);console.log('owed-counts '+JSON.stringify({pass,fail,...(failed.length?{failed}:{})}))}if(!seen||fail||pass<${min})process.exitCode=1});`;
+  return `node -e ${templateQuote(script)}`;
+}
+/** CT1: validate template-specific input before expanding into the existing check interface. */
+function expandCheckTemplate(c: Record<string, unknown>, p: string, errors: string[]): { run: string; min_tests?: number } | undefined {
+  if (c.template === undefined) return undefined;
+  const start = errors.length;
+  if (c.run !== undefined) errors.push(`${p}.run: cannot be combined with template`);
+  const names = ['cargo-tests', 'node-tap', 'evidence-json'];
+  if (typeof c.template !== 'string' || !names.includes(c.template)) { errors.push(`${p}.template: unknown template ${String(c.template)}`); return { run: '' }; }
+  const str = (key: string): string => {
+    const value = c[key];
+    if (typeof value !== 'string' || !value.trim() || value.includes('\0')) { errors.push(`${p}.${key}: expected non-empty string without NUL`); return ''; }
+    return value;
+  };
+  const list = (key: string, empty = false): string[] => {
+    const value = c[key];
+    if (!Array.isArray(value) || (!empty && !value.length) || value.some(x => typeof x !== 'string' || !x.trim() || x.includes('\0'))) { errors.push(`${p}.${key}: expected ${empty ? 'an array' : 'a non-empty array'} of non-empty strings without NUL`); return []; }
+    return value as string[];
+  };
+  const fields = c.template === 'cargo-tests' ? ['package', 'test', 'filters', 'min_ok'] : c.template === 'node-tap' ? ['files', 'name_prefix', 'min_ok'] : ['path', 'required'];
+  for (const key of ['package', 'test', 'filters', 'min_ok', 'files', 'name_prefix', 'path', 'required']) if (c[key] !== undefined && !fields.includes(key)) errors.push(`${p}.${key}: not supported by template ${c.template}`);
+  if (c.template === 'evidence-json') {
+    const path = str('path'), required = list('required');
+    required.forEach((field, i) => { if (field.split('.').some(part => !part)) errors.push(`${p}.required[${i}]: expected dot-separated field path without empty segments`); });
+    const script = "const fs=require('node:fs');const [path,...required]=process.argv.slice(1);try{const data=JSON.parse(fs.readFileSync(path,'utf8'));for(const field of required){let value=data;for(const part of field.split('.')){if(value===null||typeof value!=='object'||!Object.hasOwn(value,part))throw new Error('missing field '+field);value=value[part]}}console.log('owed-counts '+JSON.stringify({pass:1,fail:0}))}catch(e){console.error('evidence-json: '+e.message);console.log('owed-counts '+JSON.stringify({pass:0,fail:1,failed:['evidence-json: '+path]}));process.exitCode=1}";
+    return { run: errors.length === start ? `# owed-template/v${CHECK_TEMPLATE_VERSION}/evidence-json\nnode -e ${templateQuote(script)} -- ${[path, ...required].map(templateQuote).join(' ')}` : '' };
+  }
+  const min = c.min_ok;
+  if (typeof min !== 'number' || !Number.isSafeInteger(min) || min < 0) errors.push(`${p}.min_ok: expected integer >= 0`);
+  if (c.min_tests !== undefined && c.min_tests !== min) errors.push(`${p}.min_tests: must equal template min_ok`);
+  let command: string;
+  if (c.template === 'cargo-tests') {
+    const pkg = str('package'), target = c.test === undefined ? undefined : str('test'), filters = c.filters === undefined ? [] : list('filters', true);
+    command = `cargo test -p ${templateQuote(pkg)}${target === undefined ? '' : ` --test ${templateQuote(target)}`} --${filters.length ? ` ${filters.map(templateQuote).join(' ')}` : ''}`;
+  } else {
+    const files = list('files'), prefix = c.name_prefix === undefined ? undefined : str('name_prefix');
+    const pattern = prefix?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    command = `node --test --test-reporter=tap${pattern === undefined ? '' : ` --test-name-pattern=${templateQuote(`^${pattern}`)}`} -- ${files.map(templateQuote).join(' ')}`;
+  }
+  return { run: errors.length === start ? `# owed-template/v${CHECK_TEMPLATE_VERSION}/${c.template}\nset -o pipefail; ${command} | ${templateCounter(c.template === 'cargo-tests' ? 'cargo' : 'tap', min as number, c.template === 'node-tap' ? c.files as string[] : [])}` : '', ...(typeof min === 'number' ? { min_tests: min } : {}) };
+}
 export function parsePlan(text: string): Plan {
   const errors: string[] = [];
   let raw: unknown;
@@ -304,7 +353,8 @@ export function parsePlan(text: string): Plan {
     return arr(v ?? [], label).map((x, i) => {
       const p = `${label}[${i}]`, c = obj(x, p), id = str(c.id, `${p}.id`);
       if (ids.has(id)) errors.push(`${p}: duplicate id ${id}`); ids.add(id);
-      const out: InvariantSpec = { id, run: str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`) };
+      const template = expandCheckTemplate(c, p, errors);
+      const out: InvariantSpec = { id, run: template?.run ?? str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`), ...(template?.min_tests !== undefined ? { min_tests: template.min_tests } : {}) };
       if (c.min_tests !== undefined) out.min_tests = num(c.min_tests, `${p}.min_tests`, 0);
       if (c.red !== undefined) { if (typeof c.red !== 'boolean') errors.push(`${p}.red: expected boolean`); else out.red = c.red; }
       if (c.tests !== undefined) out.tests = strings(c.tests, `${p}.tests`);
