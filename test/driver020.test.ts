@@ -10,6 +10,7 @@ import { Dsa, type SendResult } from '../src/dsa.ts';
 import { writerLaunch, rulingFollowUp } from '../src/drive.ts';
 import { projectId, runId, runLabels } from '../src/reducer.ts';
 import * as answers from '../src/answer.ts';
+import { sha256 } from '../src/canon.ts';
 import { renderStatus } from '../src/views.ts';
 import type { RunView } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
@@ -186,5 +187,91 @@ test('DR4: owed_answer notifies other running roles while answering only the sel
     assert.deepEqual(f.dsa.sends.map(s=>[s.to,s.kind]),[[reviewer.rid,'notify'],[writer.rid,'answer']]);
     assert.match(answers.rulingDeliveryText(r.rulingDelivery!),/delivered to 1 running calls \(a\/reviewer\)/);
     assert.equal((await ops.readState(f)).entries.filter(e=>e.kind==='rule').length,1);
+  } finally { await f.done(); }
+});
+
+test('DR2 review #1938: ordinary status exposes current attest lease waits without changing gates', {timeout:120_000}, async()=>{
+  const f=await fixture([node('a',[],{checks:[{id:'unit',run:'true',reads:['a.txt']}],review:{count:1,min_rank:1}})],{lease:true});
+  try {
+    const slot=await ops.dispatch({cwd:f.cwd,as:parent,node:'a'}); await f.launch('a');
+    await commitAt(slot.worktree,{'a.txt':'candidate'});
+    await ops.submit({cwd:slot.worktree,as:{role:'writer',id:'a#1'},node:'a',model:'actual'});
+    const before=(await ops.readState(f)).state.nodes.a!;
+    f.dsa.hold=async()=>({outcome:'busy',reason:'machine lease held by fixture'});
+    await f.driver.pass(); await f.driver.settle();
+    const status=await cli(f.cwd,['status']); assert.equal(status.code,0,status.stderr);
+    assert.match(status.stdout,/a: measure waiting for .*machine lease held by fixture since \d\d:\d\d/);
+    const view=await ops.status(f), after=(await ops.readState(f)).state.nodes.a!;
+    assert.ok(view.mergeWaiting?.a);
+    assert.equal(after.accepted,false);
+    assert.deepEqual(after.items,before.items,'runtime waiting receipt does not alter measurement/review gates');
+    assert.equal(after.candidate!.seq,before.candidate!.seq);
+  } finally { await f.done(); }
+});
+
+test('DR4 review #1938: answer retry uses body-digested notify ids, identical bytes stay idempotent', {timeout:120_000},async()=>{
+  const f=await fixture([node('a',[],{review:{count:1,min_rank:1}})]);
+  try {
+    await f.candidate('a'); const reviewer=await f.launch('a','reviewer');
+    const writer=(await ops.readState(f)).state.nodes.a!.runs[0]!.launches[0]!;
+    f.dsa.views.set(writer.rid,{rid:writer.rid,state:'running'});
+    f.dsa.views.set(reviewer.rid,{rid:reviewer.rid,state:'asking',questions:[{qid:'q',rev:1,question:'Which API?'}]});
+    const saved=new Map<string,string>(), notifications:{id:string;message:string}[]=[];
+    let rejectAnswer=true;
+    f.dsa.send=async(id,to,kind,message)=>{
+      const body=String(message);
+      if(kind==='answer' && rejectAnswer) return {outcome:'rejected',reason:'answer transport unavailable'};
+      if(kind==='notify') {
+        notifications.push({id,message:body});
+        if(saved.has(id) && saved.get(id)!==body) return {outcome:'conflict'};
+        saved.set(id,body);
+      }
+      return {outcome:'applied',spec_digest:'digest'};
+    };
+    const options={cwd:f.cwd,as:parent,node:'a',text:'Use API v2',rid:reviewer.rid,dsa:f.dsa};
+    await assert.rejects(ops.answer(options),/answer transport unavailable.*Retry exactly:/);
+    const entry=(await ops.readState(f)).entries.findLast(e=>e.kind==='rule')!;
+    await ops.rule({cwd:f.cwd,as:parent,nodes:['a'],text:'New independent guidance',dsa:f.dsa});
+    rejectAnswer=false;
+    const retry=await ops.answer({...options,qid:'q',rev:1});
+    assert.equal(retry.entry.seq,entry.seq);
+    assert.deepEqual(retry.rulingDelivery!.failures,[],'different follow-up bytes never conflict');
+    await ops.answer({...options,qid:'q',rev:1});
+    const sameRule=notifications.filter(n=>n.id.startsWith(`owed-rule-${entry.seq}-${writer.rid}`));
+    assert.equal(sameRule.length,3);
+    assert.notEqual(sameRule[0]!.message,sameRule[1]!.message);
+    assert.notEqual(sameRule[0]!.id,sameRule[1]!.id);
+    assert.equal(sameRule[1]!.message,sameRule[2]!.message);
+    assert.equal(sameRule[1]!.id,sameRule[2]!.id);
+    for(const n of sameRule) assert.equal(n.id,`owed-rule-${entry.seq}-${writer.rid}-${sha256(n.message).slice(0,12)}`);
+  } finally { await f.done(); }
+});
+
+test('DR4 review #1938: target answer failure retains successful and failed other-role notifications and exact retry', {timeout:120_000},async()=>{
+  const f=await fixture([node('a',[],{review:{count:2,min_rank:1}})]);
+  try {
+    await f.candidate('a'); const reviewer=await f.launch('a','reviewer');
+    const state=(await ops.readState(f)).state, writer=state.nodes.a!.runs[0]!.launches[0]!;
+    const rid=runId(projectId(state),'a',1,'reviewer',2);
+    await ops.launch({cwd:f.cwd,as:parent,node:'a',attempt:1,role:'reviewer',rid,spec:'{}',labels:runLabels(projectId(state),'a',1,'reviewer'),rulings:0});
+    f.dsa.views.set(writer.rid,{rid:writer.rid,state:'asking',questions:[{qid:'q',rev:1,question:'Which API?'}]});
+    f.dsa.views.set(reviewer.rid,{rid:reviewer.rid,state:'running'}); f.dsa.views.set(rid,{rid,state:'running'});
+    const sent:{to:string;kind:string}[]=[];
+    f.dsa.send=async(_id,to,kind)=>{
+      sent.push({to,kind});
+      if(kind==='answer') return {outcome:'rejected',reason:'TARGET-ANSWER-FAIL'};
+      if(to===rid) return {outcome:'rejected',reason:'OTHER-ROLE-NOTIFY-FAIL'};
+      return {outcome:'applied',spec_digest:'digest'};
+    };
+    let error:Error|undefined;
+    try { await ops.answer({cwd:f.cwd,as:parent,node:'a',text:'Use v2',rid:writer.rid,dsa:f.dsa}); } catch(e) { error=e as Error; }
+    assert.ok(error,'target answer must fail');
+    assert.match(error.message,/TARGET-ANSWER-FAIL/);
+    assert.match(error.message,/delivered to 1 running calls \(a\/reviewer\)/);
+    assert.ok(error.message.includes(`a/reviewer (${rid}): rejected: OTHER-ROLE-NOTIFY-FAIL`));
+    const entry=(await ops.readState(f)).entries.findLast(e=>e.kind==='rule')!;
+    assert.equal(entry.kind,'rule');
+    assert.ok(error.message.endsWith(`Retry exactly: ${answers.answerRetry('a',entry)}`));
+    assert.deepEqual(sent,[{to:reviewer.rid,kind:'notify'},{to:rid,kind:'notify'},{to:writer.rid,kind:'answer'}]);
   } finally { await f.done(); }
 });

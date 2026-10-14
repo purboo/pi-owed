@@ -1457,7 +1457,7 @@ async function applyMergeWaiting(dir: string, state: State, view: StatusView): P
       if (!n?.slot?.open || n.merged || wait.attempt !== n.slot.attempt || wait.candidate !== n.candidate?.seq || typeof wait.reason !== 'string' || !Number.isFinite(Date.parse(wait.since))) continue;
       current[id] = wait;
       const progress = view.summary?.progress.find(p => p.node === id);
-      if (progress && n.accepted) progress.phase = `merge waiting for ${oneLine(wait.reason)} since ${new Date(wait.since).toISOString().slice(11,16)}`;
+      if (progress && n.candidate) progress.phase = `${n.accepted ? 'merge' : 'measure'} waiting for ${oneLine(wait.reason)} since ${new Date(wait.since).toISOString().slice(11,16)}`;
     }
     if (Object.keys(current).length) view.mergeWaiting = current;
   } catch { /* cache miss */ }
