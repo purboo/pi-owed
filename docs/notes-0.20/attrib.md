@@ -19,9 +19,12 @@ halt). If the slot base differs from trunk, the merge refusal (CLI and the drive
 
     merge tree does not pass <inv>[, <inv>…] (trunk passes); trunk moved <N> commits since the slot base: rebase → owed rebase <node>
 
-and the trunk-red text (waive/sweep/adopt suggestions) is absent. The Needs-you line of the halt therefore reads
-`<node>: driver halted: merge refused: merge tree does not pass <inv> (trunk passes) → owed rebase <node>`.
-The same lead is added to the "not yet accepted" refusal when the node's blocking merge failures lie on such a tree.
+and the trunk-red text (waive/sweep/adopt suggestions) is absent. The lead is always the FIRST sentence: of the merge
+refusal (also before `Node <node> current candidate is not yet accepted` when a retry is refused because the
+candidate's blocking merge failures lie on such a tree), of the driver halt reason (which then has no
+`merge refused: ` prefix), and so of the Needs-you line:
+`<node>: driver halted: merge tree does not pass <inv> (trunk passes) → owed rebase <node>`.
+New ops export: `MERGE_TREE_BREAK` (the lead's first words).
 New reducer export: `mergeTreeBreaks(s, node, commit)`.
 
 ## AT2 New tests use the slot base as red reference
@@ -57,10 +60,12 @@ Trees of the refused node (its own observations and merge trees) are never evide
 ## AT5 Defer carry
 
 An owner defer recorded for invariant `<inv>` on merge key K (open attempt) carries to the node's next merge key K'
-(derived in `mergeGuard`, no new entry) when: the merge tree at K failed; trunk failed the same names before the
-defer (trunk-own); the merge tree at K' fails only names that failed at K; the current trunk key still fails each
-of them; and the signatures of each name are recorded and equal on the pre-defer trunk failure, current trunk and
-K'. The carried item is owner debt with detail
+(derived in `mergeGuard`, no new entry; only consulted when the merge cannot inherit the trunk failure) and is
+fail-closed (ruling after review #1924). It carries only when the deciding observations at K (deferred), at the
+current trunk key and at K' (current) are each `testOnlyFailure` and `failedNamesComplete` (every failing test named:
+counts.fail equals the number of names; no timeout/crash/missing counts), the current names are a subset of the
+deferred names, trunk failed them before the defer (trunk-own) and still fails each, every name has the same recorded
+signature on all three, and the current observation meets the invariant's `min_tests`. The carried item is owner debt with detail
 
     inv:<inv> owner deferred, still debt; defer #<seq> carried (same trunk failure)
 
@@ -74,7 +79,8 @@ merge-failure hints FH1 (AT4), ledger `obs` fields (signatures).
 
 ## Interpretation choices
 
-- AT1 lead is only printed when trunk actually moved since the slot base (N ≥ 1); otherwise the normal refusal stays.
+- AT1 lead is only printed when trunk actually moved since the slot base (N ≥ 1, parent ruling); otherwise the normal
+  refusal stays.
 - AT3 applies to the driver and parking; the CLI not-accepted merge refusal text is unchanged (GH2 behavior kept).
 - AT4 "different error" requires known signatures on both sides.
 - AT5 requires signatures; observations from 0.17 never carry a defer.

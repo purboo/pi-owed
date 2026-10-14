@@ -7,6 +7,11 @@ import { Ledger } from '../src/ledger.ts';
 import { parsePlan } from '../src/plan.ts';
 import { decide, type DriveOpts } from '../src/drive.ts';
 import type { Draft, Entry, ObsEntry } from '../src/types.ts';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Dsa } from '../src/dsa.ts';
+import { Driver } from '../src/drive-run.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 
@@ -53,14 +58,28 @@ async function breakFixture(tests: string[] | undefined) {
   } catch (e) { await r.cleanup(); throw e; }
 }
 
+/** One real driver pass: it merges the accepted candidate, is refused and halts; returns the halt reason. */
+async function driverHalt(root: string, cwd: string): Promise<string> {
+  const fakeDir = join(root, 'dsa'); await mkdir(join(fakeDir, 'agents'), { recursive: true });
+  // The launched writer seals ok at once (its candidate is already submitted and accepted).
+  await writeFile(join(fakeDir, 'agents', 'a-writer.sh'), 'exit 0\n');
+  const logs: string[] = [];
+  const d = new Driver({ cwd, once: true, log: (l: unknown) => { logs.push(String(l)); }, dsa: new Dsa({ bin: fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url)), env: { FAKE_DSA_DIR: fakeDir } }) });
+  for (let i = 0; i < 4 && !(await (await Ledger.open(cwd)).read()).some(e => e.kind === 'halt'); i++) { await d.pass(); await d.settle(); }
+  const all = await (await Ledger.open(cwd)).read(), halts = all.filter(e => e.kind === 'halt');
+  assert.equal(halts.length, 1, `the driver halted once: ${logs.join('\n')}; ${all.slice(-4).map(e => JSON.stringify(e)).join('\n')}`);
+  return halts[0]!.kind === 'halt' ? halts[0]!.reason : '';
+}
 const LEAD = 'merge tree does not pass inv:build (trunk passes); trunk moved 1 commits since the slot base: rebase → owed rebase a';
 
 test('AT1/AT2: a merge-tree break leads the refusal, halt and Needs-you with rebase; new tests are never probed on trunk', async () => {
   for (const tests of [['t/own.test'], undefined]) {
     const r = await breakFixture(tests);
     try {
-      const message = await refusal(r.cwd);
+      // The real merge refusal: through the driver (its halt text) for one variant, through ops.merge for the other.
+      const message = tests ? await driverHalt(r.root, r.cwd) : await refusal(r.cwd);
       assert.ok(message.startsWith(LEAD), message);
+      assert.ok(message.indexOf('not yet accepted') === -1 || message.indexOf(LEAD) < message.indexOf('not yet accepted'), message);
       assert.doesNotMatch(message, /trunk-red|owed waive|owed sweep|owed adopt|not shown to be the cause/);
       const probes = (await observations(r.cwd)).filter(e => e.probe === 'trunk');
       if (tests) {
@@ -78,13 +97,16 @@ test('AT1/AT2: a merge-tree break leads the refusal, halt and Needs-you with reb
       // A retry on the same state (candidate no longer accepted) keeps the same lead, through the CLI too.
       const retry = await cli(r.cwd, ['merge', 'a', '--as', 'parent:test']);
       assert.equal(retry.code, 1);
-      assert.ok(retry.stderr.includes(LEAD), retry.stderr);
+      const stderr = retry.stderr.replace(/^Refused: /, '');
+      assert.ok(stderr.startsWith(LEAD), retry.stderr);
+      assert.ok(stderr.indexOf(LEAD) < stderr.indexOf('not yet accepted'), retry.stderr);
       assert.doesNotMatch(retry.stderr, /trunk-red|owed waive|owed sweep/);
-      // The driver halts with `merge refused: <refusal>`; Needs-you leads with it and suggests the rebase.
-      await ops.halt({ cwd: r.cwd, as: driver, node: 'a', attempt: 1, reason: `merge refused: ${message}`, needs: 'human' });
-      const status = views.renderStatus(await ops.status({ cwd: r.cwd }));
-      assert.match(status, /a: driver halted: merge refused: merge tree does not pass inv:build \(trunk passes\) → owed rebase a/);
-      assert.doesNotMatch(status, /owed waive|owed sweep|owed adopt/);
+      if (tests) {
+        // Needs-you leads with the break and suggests the rebase.
+        const status = views.renderStatus(await ops.status({ cwd: r.cwd }));
+        assert.ok(status.includes('  a: driver halted: merge tree does not pass inv:build (trunk passes) → owed rebase a'), status);
+        assert.doesNotMatch(status, /owed waive|owed sweep|owed adopt/);
+      }
     } finally { await r.cleanup(); }
   }
 });
@@ -160,19 +182,24 @@ test('AT4: known intermittent needs a same-key flip or the same error on trunk; 
   assert.deepEqual(r.hints(current), [`known intermittent: ${name} failed and passed on the same key (#${pass.seq})`]);
 });
 
-/** app 2026-10-13 20:2x (RG-OFF): trunk red from genesis with an incomplete name list, so IR2 cannot inherit it. */
+/**
+ * app 2026-10-13 20:2x (RG-OFF): trunk fails `old bug` (complete, named), trunk then moves outside the invariant's
+ * reads, so the merge cannot inherit the trunk failure (its trunk observation is from an older commit): the owner
+ * defers the merge key; the writer resubmits, which changes the merge key.
+ */
 async function deferFixture() {
   const r = await repo();
   try {
     const inv = [
       'if grep -q broken flag; then',
       "  echo 'TAP version 13'; echo 'not ok 1 - old bug'; echo '  ---'; echo \"  error: '$(cat sig)'\"; echo '  ...'",
-      "  echo '# tests 2'; echo '# pass 0'; echo '# fail 2'; exit 1",
+      "  if grep -q extra impl; then echo 'not ok 2 - new bug'; echo '  ---'; echo \"  error: 'boom new'\"; echo '  ...'; echo '# tests 2'; echo '# pass 0'; echo '# fail 2'; exit 1; fi",
+      "  echo '# tests 1'; echo '# pass 0'; echo '# fail 1'; exit 1",
       'fi',
       "echo '# tests 1'; echo '# pass 1'",
     ].join('\n');
-    await commitAt(r.cwd, { flag: 'broken', sig: 'boom A', other: '1', impl: 'base', 'inv.sh': `${inv}\n` });
-    const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [{ id: 'suite', run: 'bash inv.sh', reads: ['flag', 'sig', 'other', 'impl', 'inv.sh'] }], nodes: [{ id: 'a', writes: ['impl'], checks: [] }] };
+    await commitAt(r.cwd, { flag: 'broken', sig: 'boom A', unrelated: '1', impl: 'base', 'inv.sh': `${inv}\n` });
+    const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [{ id: 'suite', run: 'bash inv.sh', reads: ['flag', 'sig', 'impl', 'inv.sh'] }], nodes: [{ id: 'a', writes: ['impl'], checks: [] }] };
     await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated' });
     const genesis = (await observations(r.cwd)).find(e => e.obligation === 'inv:suite')!;
     assert.equal(genesis.verdict, 'fail');
@@ -181,18 +208,24 @@ async function deferFixture() {
     await commitAt(a.worktree, { impl: 'candidate' });
     await ops.submit({ cwd: a.worktree, node: 'a', as: writer });
     assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
-    assert.match(await refusal(r.cwd), /invariant suite new debt: failed names truncated/);
+    await commitAt(r.cwd, { unrelated: '2' });
+    await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'trunk moved outside the invariant reads' });
+    assert.match(await refusal(r.cwd), /invariant suite new debt/);
     const failed = (await observations(r.cwd)).findLast(e => e.merging === 'a' && e.obligation === 'inv:suite')!;
     const defer = await ops.defer({ cwd: r.cwd, node: 'a', as: owner, channel: 'delegated', reason: 'trunk-own failure', items: [{ id: 'suite', key: failed.key }] });
-    return { ...r, a, failed, defer };
+    const resubmit = async (impl: string) => {
+      await commitAt(a.worktree, { impl });
+      await ops.submit({ cwd: a.worktree, node: 'a', as: writer });
+      assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    };
+    return { ...r, a, failed, defer, resubmit };
   } catch (e) { await r.cleanup(); throw e; }
 }
 
 test('AT5: an owner defer of a trunk-own failure carries to the next merge key while trunk fails the same way', async () => {
   const r = await deferFixture();
   try {
-    await commitAt(r.cwd, { other: '2' });
-    await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'trunk moved; same failure' });
+    await r.resubmit('candidate 2');
     const result = await ops.merge({ cwd: r.cwd, node: 'a', as: parent });
     assert.equal(result.entry.kind, 'merge');
     const item = result.deferred.find(i => i.obligation === 'inv:suite')!;
@@ -204,15 +237,50 @@ test('AT5: an owner defer of a trunk-own failure carries to the next merge key w
   } finally { await r.cleanup(); }
 });
 
-test('AT5: a defer does not carry when trunk now fails with another signature; the refusal says where it was bound', async () => {
+test('AT5: a new failing name on the next merge key does not carry; the refusal says where the defer was bound', async () => {
   const r = await deferFixture();
   try {
-    await commitAt(r.cwd, { other: '2', sig: 'boom B' });
-    await ops.adopt({ cwd: r.cwd, as: owner, channel: 'delegated', note: 'trunk moved; different error' });
+    await r.resubmit('candidate extra');
     const message = await refusal(r.cwd);
     assert.ok(message.includes(`defer #${r.defer.seq} was bound to merge key ${r.failed.key.slice(0, 12)} (trunk moved)`), message);
     assert.doesNotMatch(message, /carried/);
-    const s = await stateOf(r.cwd);
-    assert.equal(reducer.carriedDefer(s, 'a', 'suite', 'unmeasured-key')?.carried, false);
+    assert.equal((await stateOf(r.cwd)).nodes.a!.merged, undefined);
   } finally { await r.cleanup(); }
+});
+
+/** AT ruling #1924: fail-closed carry on synthetic observations (deferred K, trunk, current K2). */
+function carryRig(minTests = 3) {
+  const p = parsePlan(JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [{ id: 'suite', run: 'true', min_tests: minTests }], nodes: [{ id: 'a', writes: ['impl'] }] }));
+  const entries: Entry[] = [];
+  const add = (draft: Draft) => { const e = { ...draft, seq: entries.length, ts: '2026-10-15T00:00:00Z', prev: 'x', hash: 'x' } as Entry; entries.push(e); return e; };
+  add({ kind: 'genesis', by: 'owner:pi', trunk: 'main', plan: 'p', commit: 'base', state: { commit: 'base', tree: 'tree', invKeys: { suite: 'tk' } } });
+  add({ kind: 'dispatch', by: 'parent:test', node: 'a', attempt: 1, base: 'base', branch: 'a', worktree: 'a', packet: 'p', rulings_seen: -1 });
+  add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts: { commit: 'c1', tree: 't1', base: 'base', patch: 'p', changed: ['impl'], closureTouched: false, keys: { writes: 'w', rulings: 'r' } } });
+  const sound = { verdict: 'fail', exit: 1, counts: { tests: 3, pass: 2, fail: 1, format: 'tap' }, failed: ['old bug'], signatures: { 'old bug': 'boom' }, execution: { completed: true, countOK: true } } as const;
+  const obs = (extra: Partial<ObsEntry>) => add({ kind: 'obs', by: 'executor:owed', subject: 'trunk', obligation: 'inv:suite', key: 'tk', durationMs: 1, commit: 'base', ...structuredClone(sound), ...extra } as Draft);
+  obs({});
+  obs({ key: 'K', commit: 'm1', merging: 'a' });
+  const defer = add({ kind: 'defer', by: 'owner:pi', node: 'a', reason: 'trunk-own', items: [{ id: 'suite', key: 'K' }] });
+  return { defer, carry: (current: Partial<ObsEntry>) => {
+    obs({ key: 'K2', commit: 'm2', merging: 'a', ...current });
+    return reducer.carriedDefer(reducer.reduce(entries, () => p), 'a', 'suite', 'K2');
+  } };
+}
+
+test('AT5 ruling #1924: carry is fail-closed for unknown, new, timed-out and too-few-test failures', () => {
+  const ok = carryRig();
+  assert.deepEqual(ok.carry({}), { defer: { seq: ok.defer.seq, node: 'a', id: 'suite', key: 'K' }, carried: true }, 'control: a sound same failure carries');
+  const cases: [string, Partial<ObsEntry>, number?][] = [
+    ['unknown failure (fail=2, one name)', { counts: { tests: 3, pass: 1, fail: 2, format: 'tap' } }],
+    ['new failing name', { counts: { tests: 3, pass: 1, fail: 2, format: 'tap' }, failed: ['old bug', 'new bug'], signatures: { 'old bug': 'boom', 'new bug': 'boom' } }],
+    ['timeout (exit 124, not completed)', { exit: 124, execution: { completed: false, countOK: true } }],
+    ['min_tests unmet', { counts: { tests: 3, pass: 2, fail: 1, format: 'tap' } }, 5],
+    ['missing counts', { counts: undefined }],
+    ['other signature', { signatures: { 'old bug': 'bang' } }],
+    ['no signature', { signatures: undefined }],
+  ];
+  for (const [what, current, minTests] of cases) {
+    const r = carryRig(minTests);
+    assert.equal(r.carry(current)?.carried, false, what);
+  }
 });
