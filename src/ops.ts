@@ -9,11 +9,11 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.
 import { rebasePending, rebasePendingText } from './rebase-view.ts';
 import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
-import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
+import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
-import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantErrors, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, writesAllowed } from './reducer.ts';
+import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantErrors, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, writesAllowed, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
@@ -24,7 +24,7 @@ import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun } from './views.ts';
+import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -44,12 +44,12 @@ export interface GenesisAttest { complete: boolean; recorded: string[]; failed: 
 export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView; genesis: GenesisAttest; lease?: string }
 export interface InitPreview { trunk: string; commit: string; planSha: string; nodes: number; invariants: string[] }
 export interface AttestGenesisResult extends GenesisAttest { observations: Entry[]; lease?: string }
-export interface AttestTrunkResult { refresh?: Entry; changed: string[]; observations: Entry[]; superseded: JobRef[]; failed: string[]; missing: string[]; lease?: string }
+export interface AttestTrunkResult { refresh?: Entry; changed: string[]; observations: Entry[]; superseded: JobRef[]; failed: string[]; missing: string[]; lease?: string; /** MS1: `--remeasure` jobs and their observations. */ remeasured?: string[]; remeasuredObs?: Entry[] }
 export function attestTrunkText(r: AttestTrunkResult): string {
-  return `${r.refresh ? `Trunk refresh #${r.refresh.seq}: ${r.changed.join(', ')}` : r.observations.length ? 'Trunk refresh resumed' : 'Nothing to refresh on trunk'}; ${r.observations.length} observations recorded${r.failed.length ? `; failed ${r.failed.join(', ')}` : ''}${r.missing.length ? `; missing ${r.missing.join(', ')} — owed attest --trunk` : ''}${supersededText(r.superseded)}`;
+  return `${r.remeasured ? `${remeasureText(undefined,r.remeasured,r.remeasuredObs ?? [])}\n` : ''}${r.refresh ? `Trunk refresh #${r.refresh.seq}: ${r.changed.join(', ')}` : r.observations.length ? 'Trunk refresh resumed' : 'Nothing to refresh on trunk'}; ${r.observations.length} observations recorded${r.failed.length ? `; failed ${r.failed.join(', ')}` : ''}${r.missing.length ? `; missing ${r.missing.join(', ')} — owed attest --trunk` : ''}${supersededText(r.superseded)}`;
 }
 export interface DispatchPacket { node: string; attempt: number; worktree: string; branch: string; packet: string; entry: Entry; subagent: { agent: 'worker'; cwd: string; task: string } }
-export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard; lease?: string }
+export interface AttestResult { node: string; observations: Entry[]; superseded: JobRef[]; accepted: boolean; receipt: ReceiptCard; lease?: string; /** MS1: obligations `--remeasure` measured again. */ remeasured?: string[] }
 export interface MergeResult { node: string; commit: string; tree: string; entry: Entry; deferred: ItemView[]; unguarded: string[]; lease?: string }
 /** `cacheMismatch` (N4): plan shas whose persistent cache entry disagreed with the YAML blob; verify rewrote them. */
 /**
@@ -338,7 +338,7 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
   // Records one observation under the lock when its item is still current (D24.1).
   const record = async (job: AttestJob, obs: Draft, lockSignal?: AbortSignal) => ledger.withLock(async () => {
     const { state } = await load(ledger);
-    const freshTrunk = job.subject !== 'trunk' || !trunkJobs(snapshot).some(j => sameJob(j,job)) || (job.commit === state.trunk.commit && (await git.stateFacts(cwd,state.plan,state.trunk.commit)).invKeys[job.obligation.slice(4)] === job.key);
+    const freshTrunk = job.subject !== 'trunk' || !trunkJobs(snapshot).some(j => sameJob(j,job)) || (job.commit === state.trunk.commit && (await git.stateFacts(cwd,state.plan,state.trunk.commit,stateQuarantine(state))).invKeys[job.obligation.slice(4)] === job.key);
     if (!jobCurrent(state,job) || !freshTrunk) { out.superseded.push({ subject:job.subject, obligation:job.obligation, key:job.key }); return; }
     const drafts = job.kind === 'writes' && !job.attribution && obs.kind === 'obs' && obs.verdict !== 'error' ? await writesGrantDrafts(cwd, ledger, state, job, obs) : [obs];
     for (const d of drafts) guard(state,d);
@@ -451,7 +451,7 @@ export async function initPreview(o: Context & { plan: string }): Promise<InitPr
  */
 export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; lease?: boolean; measure?: boolean; commit?: string }): Promise<InitResult> {
   owner(o); checkAbort(o.signal); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
-  const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit);
+  const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit,quarantineNames(p.plan,() => false));
   if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
   const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
   const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
@@ -504,28 +504,35 @@ export async function attestGenesis(o: MeasurementContext): Promise<AttestGenesi
   } finally { genesisRuns.delete(run); }
 }
 /** IR1: a shared-machine lease, then trunk-refresh lock, then short ledger locks (never commands under ledger lock). */
-export async function attestTrunk(o: Context & { signal?: AbortSignal; lease?: boolean }): Promise<AttestTrunkResult> {
+export async function attestTrunk(o: Context & { signal?: AbortSignal; lease?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestTrunkResult> {
   checkAbort(o.signal);
   if (!measurementScope()) return leased(o, signal => attestTrunk({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     const prepared = await ledger.withLock(async () => {
       const { state } = await load(ledger); inited(state);
-      const facts = await git.stateFacts(o.cwd,state.plan,state.trunk.commit), changed = refreshChanged(state,facts);
+      const facts = await git.stateFacts(o.cwd,state.plan,state.trunk.commit,stateQuarantine(state)), changed = refreshChanged(state,facts);
       if (!changed.length) return { changed };
       const d: Draft = { kind:'refresh', by:'executor:owed', commit:state.trunk.commit, state:facts };
       guard(state,d); return { changed, refresh:(await ledger.append([d]))[0]! };
     },undefined,o.signal);
     const { state } = await load(ledger), jobs = trunkJobs(state);
     const r = await runJobs(o.cwd,ledger,state,jobs,o.signal,undefined,parallelOf(state.plan));
+    const again = o.remeasure ? await trunkRemeasure(o.cwd,ledger,r.recorded,o.all,o.signal) : undefined;
     const latest = (await load(ledger)).state;
-    return { ...prepared, observations:r.recorded, superseded:r.superseded, missing:trunkJobs(latest).map(j => j.obligation.slice(4)), failed:trunkInvariantReds(latest).map(i => i.obligation.slice(4)) };
+    return { ...prepared, ...again, observations:r.recorded, superseded:r.superseded, missing:trunkJobs(latest).map(j => j.obligation.slice(4)), failed:trunkInvariantReds(latest).map(i => i.obligation.slice(4)) };
   },'trunk-refresh',o.signal,{ busy:who => `attest --trunk is already running (${heldBy(who)}); its observations will appear in owed status` });
+}
+/** MS1: `attest --trunk --remeasure`: current trunk keys whose latest observation failed (`all`: every one), except those this call just measured. */
+async function trunkRemeasure(cwd: string, ledger: Ledger, measured: Entry[], all: boolean | undefined, signal?: AbortSignal): Promise<{ remeasured: string[]; remeasuredObs: Entry[] }> {
+  const { state } = await load(ledger), jobs = trunkRemeasureJobs(state,all).filter(j => !measured.some(e => e.kind === 'obs' && e.obligation === j.obligation && e.key === j.key));
+  const r = await runJobs(cwd,ledger,state,jobs,signal,undefined,parallelOf(state.plan));
+  return { remeasured:jobs.map(j => j.obligation), remeasuredObs:r.recorded };
 }
 /** Read-only driver preflight: current-plan trunk keys or interrupted refresh measurements need work. */
 export async function trunkRefreshPending(o: Context): Promise<boolean> {
   const { state } = await load(await Ledger.open(o.cwd)); inited(state);
-  return !!trunkJobs(state).length || !!refreshChanged(state,await git.stateFacts(o.cwd,state.plan,state.trunk.commit)).length;
+  return !!trunkJobs(state).length || !!refreshChanged(state,await git.stateFacts(o.cwd,state.plan,state.trunk.commit,stateQuarantine(state))).length;
 }
 /** Genesis invariant ids that still lack an observation (empty when not initialized). */
 export async function genesisPending(o: Context): Promise<string[]> { return (await genesisReport(o)).missing; }
@@ -575,7 +582,7 @@ async function withCarries(cwd: string, latest: Awaited<ReturnType<typeof load>>
     if (!c || !slot?.open || !spec || !invalidates(s.plan,next,n.id) || !carryable(s.plan,next,n.id)) continue;
     let carry: Draft;
     try {
-      const facts = await git.candidateFacts(cwd,next,spec,slot.base,c.commit,slot.attempt);
+      const facts = await git.candidateFacts(cwd,next,spec,slot.base,c.commit,slot.attempt,quarantineNames(next,id => !!s.nodes[id]?.merged));
       Object.assign(facts.keys,manualKeys(spec,facts.patch));
       carry = { kind:'submit', by:'executor:owed', node:n.id, attempt:slot.attempt, facts, carry:c.seq };
     } catch (e) { skipped.push({ node:n.id, reason:`facts of ${c.commit.slice(0,12)} cannot be computed: ${(e instanceof Error ? e.message : String(e)).trim().split('\n')[0]}` }); continue; }
@@ -988,26 +995,57 @@ export async function submit(o: Actor & { node: string; commit?: string; model?:
   const commit = await git.revParse(o.commit ? o.cwd : n.slot.worktree,o.commit ?? 'HEAD');
   if (!await git.isAncestor(o.cwd,n.slot.base,commit)) throw new OwedError('submit commit must be a descendant of slot base');
   await git.checkCandidateLimits(o.cwd,state.plan.limits,n.slot.base,commit);
-  const spec = state.plan.nodes.find(x => x.id === o.node)!, facts = await git.candidateFacts(o.cwd,state.plan,spec,n.slot.base,commit,n.slot.attempt);
+  const spec = state.plan.nodes.find(x => x.id === o.node)!, facts = await git.candidateFacts(o.cwd,state.plan,spec,n.slot.base,commit,n.slot.attempt,stateQuarantine(state));
   // D23: approve and evidence keys derive from the patch, like review.
   Object.assign(facts.keys, manualKeys(spec,facts.patch));
   const model = await recordedModel(o.cwd,state,o.node,by(o),o.model);
   return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts, ...(model !== undefined ? { model } : {}) }; guard(current,d); return (await ledger.append([d]))[0]!; });
 }
-export async function attest(o: MeasurementContext & { node: string; rerun?: boolean }): Promise<AttestResult> {
+export async function attest(o: MeasurementContext & { node: string; rerun?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestResult> {
   checkAbort(o.signal);
   if (!measurementScope()) return leased(o, signal => attest({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
+  if (o.remeasure) return ledger.withLock(async () => {
+    const r = await remeasureMerge(o,ledger), card = await why(o);
+    return { node:o.node, observations:r.recorded, superseded:r.superseded, accepted:card.accepted, receipt:card, remeasured:r.remeasured };
+  },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner) });
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node), jobs = attestJobs(state,o.node);
     if (o.rerun) for (const c of state.plan.nodes.find(x => x.id === o.node)!.checks) for (const kind of ['check', ...(c.red ? ['red'] : [])] as ('check'|'red')[]) {
       const obligation = `${kind}:${c.id}`, key = n.candidate!.keys[obligation]!;
-      if (!jobs.some(j => j.key === key && j.obligation === obligation)) jobs.push({kind,subject:o.node,obligation,key,spec:c,commit:n.candidate!.commit,base:n.slot!.base});
+      if (!jobs.some(j => j.key === key && j.obligation === obligation)) jobs.push(quarantinedJob(state,{kind,subject:o.node,obligation,key,spec:c,commit:n.candidate!.commit,base:n.slot!.base}));
     }
     if (o.rerun && !jobs.some(j => j.obligation === 'writes' && j.key === n.candidate!.keys.writes)) jobs.push({ kind:'writes',subject:o.node,obligation:'writes',key:n.candidate!.keys.writes!,commit:n.candidate!.commit,base:n.slot!.base });
     const r = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.signal), card = await why(o);
     return { node:o.node, observations:r.recorded, superseded:r.superseded, accepted:card.accepted, receipt:card };
   },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner) });
+}
+/**
+ * MS1: measures again, on the node's current merge tree, every invariant whose latest observation on the merge key
+ * failed (`all`: every invariant) and records the new observations on the same keys (merging = node). Nothing else
+ * is invalidated; the usual aggregation applies. Recorded only when trunk, plan and the node's slot did not move.
+ */
+async function remeasureMerge(o: MeasurementContext & { node: string; all?: boolean }, ledger: Ledger): Promise<{ recorded: Entry[]; superseded: JobRef[]; remeasured: string[] }> {
+  const { state } = await load(ledger), n = candidate(state,o.node);
+  { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
+  const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
+  if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
+  const m = await mergeFacts(o.cwd,state,o.node,built.commit), jobs = remeasureJobs(state,o.node,m,o.all);
+  const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async job => ({ ...await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job), merging:o.node }) as Draft);
+  const observations = run.observations.filter((x): x is Draft => x !== undefined);
+  if (run.aborted) return abortWith(ledger,state,observations,o.node);
+  return ledger.withLock(async () => {
+    const latest = await load(ledger); nodeStable(state,latest,o.node);
+    const moved = latest.state.planSha !== state.planSha || !!await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
+    const kept = moved ? [] : observations.filter(d => !validateDraft(latest.state,d).length);
+    const superseded = observations.filter(d => !kept.includes(d)).flatMap(d => d.kind === 'obs' ? [{ subject:d.subject, obligation:d.obligation, key:d.key }] : []);
+    return { recorded:kept.length ? await ledger.append(kept) : [], superseded, remeasured:jobs.map(j => j.obligation) };
+  },undefined,o.signal);
+}
+/** MS1: one line about what `attest --remeasure` measured again. */
+export function remeasureText(node: string | undefined, remeasured: string[], recorded: Entry[]): string {
+  if (!remeasured.length) return `Nothing to remeasure: no ${node ? `merge-tree invariant of ${node}` : 'trunk invariant'} failed on its current key (--all measures every one)`;
+  return `Remeasured on the same ${node ? 'merge ' : ''}key: ${recorded.map(e => e.kind === 'obs' ? `${e.obligation} #${e.seq} ${e.verdict}` : `#${e.seq}`).join(', ') || 'nothing recorded'}`;
 }
 /**
  * K1: the attest lock of one node, `attest-<first 16 hex of sha256(node id)>`: attests of different nodes run in
@@ -1155,9 +1193,9 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       const spec = state.plan.nodes.find(x => x.id === o.node)!.checks.find(c => `check:${c.id}` === i.obligation)!;
       const fresh = await newCheckTests(o.cwd,n,spec);
       if (fresh) { slotBaseRed.push(fresh); continue; }
-      const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit);
+      const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit,stateQuarantine(state));
       if (entriesOf(state).some(e => e.kind === 'obs' && e.probe === 'trunk' && e.subject === o.node && e.obligation === i.obligation && e.key === key && e.commit === state.trunk.commit && e.verdict !== 'error')) continue;
-      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal}, {kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit});
+      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal}, quarantinedJob(state,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit}));
       probes.push({...obs,probe:'trunk'});
     }
     if (o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
@@ -1174,7 +1212,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       const currentProbes: Draft[] = [];
       for (const p of probes) if (p.kind === 'obs' && spec) {
         const c = spec.checks.find(c => `check:${c.id}` === p.obligation);
-        if (c && p.key === await git.trunkCheckKey(o.cwd,latest.state.plan,c,latest.state.trunk.commit)) currentProbes.push(p);
+        if (c && p.key === await git.trunkCheckKey(o.cwd,latest.state.plan,c,latest.state.trunk.commit,stateQuarantine(latest.state))) currentProbes.push(p);
       }
       const current = prospective({...latest,state:merged.state},currentProbes);
       kept.push(...currentProbes);
@@ -1197,7 +1235,8 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
         }));
         const trunkRed = (g?.nodeItems ?? []).filter(i => i.status === 'D').flatMap(i => i.evidence.flatMap(seq => trunkRedHint(current,seq,i.key) ?? []));
         const lead = await mergeTreeBreakLead(o.cwd,current,o.node,[built.commit]);
-        throw new OwedError([...lead, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs)].join('; '));
+        const reused = reusedHint(o.node,failedObs.filter(e => e.subject === 'trunk' && e.seq <= latest.state.seq),Date.now(),by(o) === DRIVER);
+        throw new OwedError([...lead, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs), ...(reused ? [reused] : [])].join('; '));
       }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
@@ -1236,7 +1275,7 @@ async function newCheckTests(cwd: string, n: NodeState, spec: CheckSpec): Promis
 /** The merge result's candidate and state facts of node `id` under the plan of `s` (merge commit `commit` on the ledger trunk). */
 async function mergeFacts(cwd: string, s: State, id: string, commit: string): Promise<{ facts: CandidateFacts; state: StateFacts }> {
   const spec = s.plan.nodes.find(x => x.id === id)!, n = s.nodes[id]!;
-  return { facts:await git.candidateFacts(cwd,s.plan,spec,s.trunk.commit,commit,n.slot!.attempt), state:await git.stateFacts(cwd,s.plan,commit) };
+  return { facts:await git.candidateFacts(cwd,s.plan,spec,s.trunk.commit,commit,n.slot!.attempt,stateQuarantine(s,id)), state:await git.stateFacts(cwd,s.plan,commit,stateQuarantine(s,id)) };
 }
 const sameJob = (a: JobRef, b: JobRef): boolean => a.subject === b.subject && a.obligation === b.obligation && a.key === b.key;
 /**
@@ -1317,7 +1356,7 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel?
     const { state } = await load(ledger); inited(state);
     const p = await adoptable(o.cwd,state,o.commit);
     if (o.as.role === 'parent') { const outside = unadoptable(state.plan,p.changed); if (outside !== undefined) throw new OwedError(`parent adoption refused: changed path ${outside} is not under an allow adopt prefix (${adoptPrefixes(state.plan).join(', ') || 'none'}); the owner must adopt it`); }
-    const sf = await git.stateFacts(o.cwd,state.plan,p.commit);
+    const sf = await git.stateFacts(o.cwd,state.plan,p.commit,stateQuarantine(state));
     // M1: up to exec.parallel jobs at once, observations in job order; an abort keeps the completed ones (abortWith).
     const run = await measureAll([...genesisJobs(state),...adoptJobs(state,sf)],parallelOf(state.plan),o.signal,job => runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job));
     const observations = run.observations.filter((x): x is Draft => x !== undefined);
@@ -1521,7 +1560,7 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
   const receipts = entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.merge !== undefined && included(e));
   const superseded = supersededOf(state,Object.values(state.nodes)).filter(b => included({seq:b.supersededBy}));
-  return {...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  return {...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(quarantineDebt(state).length ? {quarantine:quarantineDebt(state).map(quarantineText)} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
 }
 /**
  * Verifies the hash chain and replays the ledger. N4: never reads the plan caches; every plan is parsed from its YAML
@@ -1604,20 +1643,20 @@ export async function send(o: Actor & { node: string; attempt: number; rid: stri
  * obligation and starts a new repair epoch; with `after` the node waits until that node merges. `merged`: `after` is
  * already merged (the node resumes now).
  */
-type ResumeArgs = Actor & { node: string; after?: string | string[]; expect?: 'report'; note?: string };
+type ResumeArgs = Actor & { node: string; after?: string | string[]; expect?: 'report'; note?: string; /** MS2 */ remeasure?: boolean };
 /** ED2/FL2/FL3: both commands draft and normalize resume against their prospective state under the ledger lock. */
 function resumeDraft(o: ResumeArgs, s: State): Extract<Draft, { kind:'resume' }> {
   if (o.as.role !== 'parent' && o.as.role !== 'owner') throw new OwedError(`resume insufficient permissions; requires parent/owner (got ${o.as.role})`);
   const n = node(s,o.node);
   if (!n.slot?.open && n.held !== undefined) {
-    if (o.after !== undefined || o.expect !== undefined) throw new OwedError('hold release does not take --after or --expect; dispatch a new attempt first', 'usage');
+    if (o.after !== undefined || o.expect !== undefined || o.remeasure) throw new OwedError('hold release does not take --after, --expect or --remeasure; dispatch a new attempt first', 'usage');
     return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot!.attempt, release:'hold', ...(o.note ? { note:o.note } : {}) };
   }
   if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
   const unruled = unruledBlocks(s,o.node);
   if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}), so the driver would halt again at once; record it with owed rule --nodes ${o.node} "<decision>" (the ruling also clears the halt)`);
   const after = o.after === undefined ? undefined : typeof o.after === 'string' && !o.after.includes(',') ? o.after : [...new Set(afterNodes(o.after).flatMap(x => x.split(',')).map(x => x.trim()))];
-  return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(after !== undefined ? { after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}) };
+  return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(after !== undefined ? { after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}), ...(o.remeasure ? { remeasure:true as const } : {}) };
 }
 export interface ResumeResult { entry: Entry; merged?: boolean; entries?: Entry[] }
 /** PO2: validate the whole batch under one ledger lock before any append. */
