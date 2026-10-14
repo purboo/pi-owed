@@ -62,7 +62,7 @@ async function scenario() {
   for (const id of ['d', 'b']) {
     const w = await dispatch(id);
     await commitAt(w, { [`${id}.txt`]: 'good\n', 'closure.txt': `${id}\n` }); await run(w, ['submit', id]);
-    await run(r.cwd, ['attest', id], 3);
+    await run(r.cwd, ['attest', id], 4);
   }
   await run(r.cwd, ['review', 'b', '--obligation', 'closure-review', '--block', '--rank', '2', '--as', 'reviewer:r2', '--note', 'closure change unexplained']);
   const we = await dispatch('e');
