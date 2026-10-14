@@ -3,7 +3,7 @@ import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesGlob } from 'node:path';
 import { matchesAny, driveConfig } from './plan.ts';
-import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, driveReviewerSlot, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq } from './reducer.ts';
 import { canonical } from './canon.ts';
 import { rebasePendingText, type RebasePending } from './rebase-view.ts';
@@ -304,6 +304,20 @@ export function repairingBlock(s: State, node: string): Block | undefined {
   if (!block) return undefined;
   return (n.candidate?.seq !== undefined && n.candidate.seq > block.seq || n.runs.find(r => r.attempt === slot.attempt)?.sends.some(x => x.reason === 'repair' && x.seq > block.seq)) ? block : undefined;
 }
+/** NY1 parent ruling: mirror drive.ownerNeeded's predicate without a views -> drive import cycle. */
+function repairNeedsOwner(s: State, node: string): boolean {
+  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
+  if (!n) return false;
+  const ownerBlocks = n.blocks.filter(b => {
+    if (b.state === 'flaky') return true;
+    if (b.state !== 'active' || b.kind !== 'judgment' || (b.rank ?? 0) < 2) return false;
+    const by = entriesOf(s).find(e => e.seq === b.seq)?.by ?? '';
+    const k = n.slot?.open && spec ? driveReviewerSlot(by, node, n.slot.attempt) : undefined;
+    return !((b.rank ?? 0) <= 2 && k !== undefined && k <= Math.max(spec!.review.count, 1));
+  });
+  if (!n.slot?.open || !n.candidate) return ownerBlocks.length > 0;
+  return n.items.some(i => i.status === 'D' && (i.mark === '⊤' || ownerBlocks.some(b => b.obligation === i.obligation) || i.obligation === 'review' && (spec?.review.min_rank ?? 1) > 2));
+}
 /** NY5: derive the receipt from the exact recorded prior/next plans, not the current board. */
 export function planReceipt(e: Entry, prior: Plan, next: Plan): string {
   if (e.kind !== 'plan') return renderEntry(e);
@@ -342,7 +356,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
     if (i.obligation === 'driver-halt' || i.obligation === 'dispatch' || v.needsRuling?.some(b => b.node === i.subject && b.obligation === i.obligation)) continue;
     if (i.obligation === 'approve' && waitingFor(s, i.subject)) continue;
-    if (reviewObligation(i.obligation) && repairingBlock(s, i.subject)) continue;
+    if (reviewObligation(i.obligation) && repairingBlock(s, i.subject) && !repairNeedsOwner(s, i.subject)) continue;
     const red = i.subject === 'trunk' ? v.trunkRed?.find(r => r.obligation === i.obligation && r.key === i.key) : undefined;
     if (red) {
       if (!needs.some(n => n.node === 'trunk' && n.reason === oneLine(red.text) && n.command === '')) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
