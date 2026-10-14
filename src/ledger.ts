@@ -75,6 +75,13 @@ function alive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return isCode(e, 'EPERM'); }
 }
+/**
+ * TR1: an unlocked reader may race an append in flight, so a final fragment without a trailing `\n` is ignored and
+ * only the complete lines before it are read. A malformed complete line still fails. Locked reads skip this (TR2).
+ */
+function dropTornTail(text: string): string {
+  return text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1);
+}
 export class Ledger {
   readonly dir: string;
   private held = new AsyncLocalStorage<Set<string>>();
@@ -83,6 +90,7 @@ export class Ledger {
   async read(): Promise<Entry[]> {
     let text: string;
     try { text = await readFile(join(this.dir, 'ledger.jsonl'), 'utf8'); } catch (e) { if (isCode(e, 'ENOENT')) return []; throw e; }
+    if (!this.held.getStore()?.has('lock')) text = dropTornTail(text);
     const lines = text.split('\n'); if (lines.at(-1) === '') lines.pop();
     const entries = lines.map((line, seq) => { try { return JSON.parse(line) as Entry; } catch { throw new OwedError(`ledger seq ${seq}: invalid JSON`, 'internal'); } });
     const result = verifyChain(entries);
