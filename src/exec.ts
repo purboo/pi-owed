@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
-import type { Plan, AttestJob, ObsEntry, Counts } from './types.ts';
+import type { Plan, AttestJob, ObsEntry, Counts, QuarantineEntry } from './types.ts';
 import type { Ledger } from './ledger.ts';
-import { git, materialize, overlay, mutantPaths } from './git.ts';
+import { git, materialize, overlay, mutantPaths, keyCommitsTo } from './git.ts';
 import { leaseEnvironment } from './lease.ts';
 
 /**
@@ -266,6 +266,31 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     });
   });
 }
+/** MS4: the job's active quarantine entries, when its key commits to exactly their names (never on red/mutants runs). */
+async function excusableQuarantine(ctx: ExecContext, job: AttestJob): Promise<QuarantineEntry[]> {
+  const q = job.quarantined ?? [];
+  if (!q.length || (job.kind !== 'check' && job.kind !== 'inv')) return [];
+  return await keyCommitsTo(ctx.cwd, ctx.plan, job, q.map(e => e.test)) ? q : [];
+}
+/**
+ * MS4: the quarantine entries that excuse a run: it completed (no timeout, signal, spawn or command-not-found exit),
+ * its counts name every failing test (fail = the number of distinct names, more than zero tests) and each failing
+ * name exactly equals an active entry. Undefined otherwise: a crash, timeout, non-TAP failure or other name still fails.
+ */
+export function quarantineExcuse(q: QuarantineEntry[], r: CommandResult, counts: Counts | undefined, failed: string[]): QuarantineEntry[] | undefined {
+  const names = [...new Set(failed)];
+  if (!q.length || !names.length || r.error || r.spawn || r.code === null || [124, 126, 127, 137, 143].includes(r.code)) return undefined;
+  if (!counts || counts.format === 'mutants' || !counts.tests || counts.fail !== names.length) return undefined;
+  const hit = names.map(n => q.find(e => e.test === n));
+  return hit.every(e => e !== undefined) ? hit as QuarantineEntry[] : undefined;
+}
+/** MS4: counts without the excused tests: they count neither as passed nor as failed (min_tests sees the rest). */
+function withoutQuarantined(c: Counts, excused: QuarantineEntry[]): Counts {
+  const names = new Set(excused.map(e => e.test)), failed = c.failed?.filter(n => !names.has(n));
+  return { ...c, tests: (c.tests ?? 0) - names.size, fail: (c.fail ?? 0) - names.size, ...(c.failed ? { failed } : {}) };
+}
+/** MS4: `quarantined: <name> (fix: <node>)`, comma-separated. */
+export const quarantineNote = (q: Map<string, string>): string => `quarantined: ${[...q].map(([test, fix]) => `${test} (fix: ${fix})`).join(', ')}`;
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   const start = Date.now();
   const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
@@ -334,17 +359,22 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const repeat = spec.repeat, runs = repeat?.runs ?? 1, need = repeat?.need ?? runs;
       if (repeat && (job.kind === 'red' || spec.red || spec.mutants)) throw new Error('repeat is not allowed on red or mutants checks');
       if (repeat) obs.runs = [];
+      const excusable = await excusableQuarantine(ctx, job), quarantined = new Map<string, string>();
       let passed = 0, allCompleted = true, allCountsOK = true;
       const failed = new Set<string>(), failureLogs: string[] = [];
       for (let index = 0; index < runs; index++) {
         if (ctx.signal?.aborted) throw new Error('aborted');
         const runStart = Date.now();
         if (repeat) capture(`\n=== run ${index + 1}/${runs} ===\n`);
-        const result = await command(spec.run, work.path, spec.timeout_s); obs.exit = result.code;
+        const raw = await command(spec.run, work.path, spec.timeout_s); obs.exit = raw.code;
         obs.note = undefined; obs.verdict = 'error';
         const warnings: string[] = [];
-        obs.counts = parseCounts(result.log, note => { warnings.push(note); protocolWarnings++; });
-        const runFailed = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(result.log);
+        obs.counts = parseCounts(raw.log, note => { warnings.push(note); protocolWarnings++; });
+        const named = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(raw.log);
+        // MS4: a completed run whose only failing tests are active quarantine names counts as if they had not run.
+        const excused = quarantineExcuse(excusable, raw, obs.counts, named);
+        if (excused) { for (const e of excused) quarantined.set(e.test, e.fix); obs.counts = withoutQuarantined(obs.counts!, excused); }
+        const runFailed = excused ? [] : named, result = excused ? { ...raw, code: 0 } : raw;
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
         if (runFailed.length) failureLogs.push(result.log);
         if (failed.size) obs.failed = [...failed];
@@ -394,7 +424,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
           if (job.kind !== 'red') obs.execution = { completed:allCompleted, countOK:allCountsOK };
           if (warnings.length) obs.note = `${obs.note ? `${obs.note}; ` : ''}${warnings.length} malformed owed-counts line(s) ignored`;
           if (repeat) {
-            obs.runs!.push({ verdict: obs.verdict, exit: result.code, counts: obs.counts, durationMs: Date.now() - runStart, log: await ctx.ledger.putBlob(result.log), ...(obs.note ? { note: obs.note } : {}), ...(runFailed.length ? { failed: runFailed } : {}), execution });
+            obs.runs!.push({ verdict: obs.verdict, exit: raw.code, counts: obs.counts, durationMs: Date.now() - runStart, log: await ctx.ledger.putBlob(result.log), ...(obs.note ? { note: obs.note } : {}), ...(runFailed.length ? { failed: runFailed } : {}), execution });
             obs.noisy = obs.runs!.some(r => r.verdict === 'pass') && obs.runs!.some(r => r.verdict === 'fail');
           }
         }
@@ -410,6 +440,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         }
       }
       if (obs.noisy) obs.note = `${obs.note ? `${obs.note}; ` : ''}noisy (${passed}/${obs.runs!.length} passed)`;
+      if (quarantined.size) { obs.quarantined = [...quarantined.keys()]; obs.note = `${obs.note ? `${obs.note}; ` : ''}${quarantineNote(quarantined)}`; }
     }
   } catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`; capture(`\n${obs.note}\n`); }
   finally {

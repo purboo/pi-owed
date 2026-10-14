@@ -2,7 +2,7 @@ import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
 import { canonical } from './canon.ts';
-import type { Plan, CheckSpec, InvariantSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
+import type { QuarantineEntry, Plan, CheckSpec, InvariantSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
 export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
@@ -387,6 +387,7 @@ export function parsePlan(text: string): Plan {
           return { test, fix };
         });
       }
+      if (c.quarantine !== undefined) out.quarantine = parseQuarantine(c.quarantine, `${p}.quarantine`, errors);
       return out;
     });
   };
@@ -418,6 +419,7 @@ export function parsePlan(text: string): Plan {
   for (const id of ids.keys()) visit(id);
   const plan: Plan = { version: 1, trunk: str(r.trunk, 'trunk'), closure: strings(r.closure ?? [], 'closure'), invariants: checks(r.invariants, 'invariants'), nodes };
   for (const inv of plan.invariants) for (const entry of inv.known_red ?? []) if (!ids.has(entry.fix)) errors.push(`invariants: ${inv.id}: known_red fix ${entry.fix} is not a node of this plan`);
+  errors.push(...quarantineFixErrors(plan, ids));
   if (r.setup !== undefined) plan.setup = str(r.setup, 'setup');
   if (r.slot_setup !== undefined) {
     if (r.slot_setup === false) plan.slot_setup = false;
@@ -489,8 +491,51 @@ export function knownRedDowngrades(prev: Plan, next: Plan): Downgrade[] {
     return old?.fix === entry.fix ? [] : [{ node: 'trunk', what: `inv:${inv.id} known_red ${JSON.stringify(entry.test)} ${old ? `fix changed from ${old.fix} to` : 'added with fix'} ${entry.fix} (owner only)` }];
   }));
 }
+/** MS4: `quarantine: [{test, fix, note?}]` of an invariant or check: exact names, unique, at most 20. */
+function parseQuarantine(v: unknown, label: string, errors: string[]): QuarantineEntry[] {
+  if (!Array.isArray(v)) { errors.push(`${label}: expected array`); return []; }
+  if (v.length > 20) errors.push(`${label}: at most 20 entries`);
+  const names = new Set<string>();
+  return v.map((entry, index) => {
+    const q = `${label}[${index}]`;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) { errors.push(`${q}: expected object`); return { test: '', fix: '' }; }
+    const e = entry as Record<string, unknown>;
+    for (const k of Object.keys(e)) if (!['test', 'fix', 'note'].includes(k)) errors.push(`${q}.${k}: unknown key`);
+    const text = (x: unknown, what: string): string => { if (typeof x !== 'string' || !x.trim()) { errors.push(`${q}.${what}: expected non-empty string`); return ''; } return x; };
+    const test = text(e.test, 'test'), fix = text(e.fix, 'fix');
+    if (names.has(test)) errors.push(`${q}: duplicate quarantine test ${test}`);
+    names.add(test);
+    return { test, fix, ...(e.note !== undefined ? { note: text(e.note, 'note') } : {}) };
+  });
+}
+/** MS4: every quarantine `fix` names a node of the plan. */
+function quarantineFixErrors(plan: Plan, ids: Map<string, NodeSpec>): string[] {
+  const one = (where: string, c: CheckSpec): string[] => (c.quarantine ?? []).filter(e => e.fix && !ids.has(e.fix)).map(e => `${where}: quarantine fix ${e.fix} is not a node of this plan`);
+  return [...plan.invariants.flatMap(c => one(`invariants: ${c.id}`, c)), ...plan.nodes.flatMap(n => n.checks.flatMap(c => one(`${n.id}: check ${c.id}`, c)))];
+}
+/**
+ * MS4: the active quarantine entries of a check or invariant: its `fix` is a node of `plan`, not merged, and not the
+ * node being merged (`merging`, whose merge result is measured as if it had merged).
+ */
+export function activeQuarantine(plan: Plan, spec: CheckSpec, merged: (id: string) => boolean, merging?: string): QuarantineEntry[] {
+  return (spec.quarantine ?? []).filter(e => e.fix !== merging && plan.nodes.some(n => n.id === e.fix) && !merged(e.fix));
+}
+/** MS4: the sorted active quarantine names per spec, the part of a check/invariant key (empty = the 0.17 key). */
+export type QuarantineNames = (spec: CheckSpec) => string[];
+export function quarantineNames(plan: Plan, merged: (id: string) => boolean, merging?: string): QuarantineNames {
+  return spec => activeQuarantine(plan, spec, merged, merging).map(e => e.test).sort();
+}
+/** MS4: adding a quarantine name or changing its fix is an owner-only downgrade (no allow rule covers it); deletion is free. */
+export function quarantineDowngrades(prev: Plan, next: Plan): Downgrade[] {
+  const one = (node: string, label: string, before: CheckSpec | undefined, after: CheckSpec): Downgrade[] => (after.quarantine ?? []).flatMap(entry => {
+    const old = before?.quarantine?.find(e => e.test === entry.test);
+    return old?.fix === entry.fix ? [] : [{ node, what: `${label} quarantine ${JSON.stringify(entry.test)} ${old ? `fix changed from ${old.fix} to` : 'added with fix'} ${entry.fix} (owner only)` }];
+  });
+  return [...next.invariants.flatMap(c => one('trunk', `inv:${c.id}`, prev.invariants.find(i => i.id === c.id), c)),
+    ...next.nodes.flatMap(n => n.checks.flatMap(c => one(n.id, `check ${c.id}`, prev.nodes.find(x => x.id === n.id)?.checks.find(x => x.id === c.id), c)))];
+}
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
-  const out: Downgrade[] = knownRedDowngrades(prev, next);
+  const out: Downgrade[] = [...knownRedDowngrades(prev, next), ...quarantineDowngrades(prev, next)];
   function compare(node: string, before: CheckSpec[], after: CheckSpec[]): void {
     for (const c of before) {
       const n = after.find(x => x.id === c.id);
