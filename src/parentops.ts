@@ -50,13 +50,18 @@ export async function launchedReviewAck(state: State, node: string, by: string, 
   if (end < 0 || start < 0) return undefined;
   const section = task.slice(start,end)+'\n';
   // Compare exact parent-written ruling bytes; launch metadata alone is not acknowledgment evidence.
-  return Math.max(0,...applicableRules(state,node).filter(r => r.seq < launch.seq && section.includes(`\n- #${r.seq} ${r.text}\n`)).map(r => r.seq));
+  let ack = 0;
+  for (const ruling of applicableRules(state,node).filter(r => r.seq < launch.seq).sort((a,b) => a.seq-b.seq)) {
+    if (!section.includes(`\n- #${ruling.seq} ${ruling.text}\n`)) break;
+    ack = ruling.seq;
+  }
+  return ack;
 }
 
 /** PO5: failed measurements take precedence over outstanding obligations. */
-export function attestExit(failed: boolean, outstanding: boolean): 0 | 1 | 3 {
-  return failed ? 1 : outstanding ? 3 : 0;
+export function attestExit(failed: boolean, outstanding: boolean): 0 | 1 | 4 {
+  return failed ? 1 : outstanding ? 4 : 0;
 }
-export function measuredFailure(items: readonly { observations: Entry[] }[]): boolean {
-  return items.some(i => i.observations.some(e => e.kind === 'obs' && e.verdict === 'fail' && e.probe === undefined));
+export function measuredFailure(observations: readonly Entry[]): boolean {
+  return observations.some(e => e.kind === 'obs' && e.verdict === 'fail');
 }

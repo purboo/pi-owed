@@ -154,7 +154,7 @@ test('D24.2/3/5: init with a genesis error reports incomplete (exit 0, no retry)
     assert.equal((await cli(r.cwd, ['attest', '--genesis', '--rerun'])).code, 2);
     assert.equal((await cli(r.cwd, ['attest', 'a', '--genesis'])).code, 2);
     const still = await cli(r.cwd, ['attest', '--genesis']);
-    assert.equal(still.code, 3, still.stderr);
+    assert.equal(still.code, 4, still.stderr);
     assert.match(still.stdout, /Genesis attest: 1 observation recorded; observed build; missing flaky/);
     await writeFile(ok, '');
     const done = await cli(r.cwd, ['attest', '--genesis', '--json']);

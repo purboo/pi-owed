@@ -901,10 +901,10 @@ export class Driver {
 
   /**
    * `pi-durable-subagents hold machine --shared --no-wait -- owed attest <node>` when dsa is available (D6/D9, dsa >=
-   * 1.0.27), else `owed attest <node>`; resolves with how the loop handles the result. Exit 0/1/3: done (the ledger says
+   * 1.0.27), else `owed attest <node>`; resolves with how the loop handles the result. Exit 0/1/4: done (the ledger says
    * what follows). Exit 75: busy, nothing was queued, retry on a later pass: through hold either hold refusing the lease
    * or `owed attest` itself exiting 75 because another attest of the node runs (K1); directly only the latter. Anything
-   * else — an owed usage error (2), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
+   * else — an owed error (2/3), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
    * a human on attempt `attempt` (D14.3).
    */
   private async attest(node: string, attempt: number, lease: boolean): Promise<Ended> {
@@ -925,7 +925,7 @@ export class Driver {
     } else {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
-    if (ran.exit === 0 || ran.exit === 1 || ran.exit === 3) return ok(report('done', `${ran.exit === 0 ? 'accepted' : 'not accepted yet'}${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`));
+    if (ran.exit === 0 || ran.exit === 1 || ran.exit === 4) return ok(report('done', `${ran.exit === 0 ? 'accepted' : 'not accepted yet'}${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`));
     if (ran.exit === 75) return busy(busyDetail(node, tail(ran.stderr || ran.stdout)));
     return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
   }

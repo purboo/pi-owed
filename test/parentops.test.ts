@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, chmod } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
@@ -95,7 +96,7 @@ test('PO3: metrics divide a batch and multi-node ruling, separating pending and 
     const since = (await entries(r.cwd)).at(-1)!.seq;
     await call(r.cwd,['resume','a,b']); await ops.rule({cwd:r.cwd,as:parent,nodes:['a','b'],text:'shared guidance'});
     await ops.rule({cwd:r.cwd,as:parent,nodes:'*',text:'general policy'});
-    await call(r.cwd,['attest','a'],3);
+    await call(r.cwd,['attest','a'],4);
     // Rulings still require independent acknowledgment, even on a checkless node.
     await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'fresh'},node:'a',verdict:'ok',rank:1,note:'ack',ack_rulings:(await entries(r.cwd)).at(-2)!.seq});
     await ops.merge({cwd:r.cwd,as:parent,node:'a'});
@@ -124,27 +125,34 @@ test('PO4: plan and edit dry run warn once for critical overlap, suppress depend
   } finally { await r.cleanup(); }
 });
 
-test('PO5: attest exits 3 for open review/error, 1 for measured failures, 0 only after obligations close; trunk/genesis failures exit 1', async () => {
+test('PO5: attest exits 4 for open review/error, 1 for newly measured failures, 0 after closure; cached failures are not new measurements', async () => {
   const r = await setup(plan([{id:'a',writes:['a/'],review:{count:1,min_rank:1}},{id:'b',writes:['b/'],checks:[{id:'bad',run:'echo "owed-counts {\"pass\":0,\"fail\":1,\"failed\":[\"broken\"]}"; exit 1',reads:['b/']}]},{id:'c',writes:['c/'],checks:[{id:'error',run:'exit 126',reads:['c/']}]}]));
   try {
-    await candidate(r.cwd,'a'); await call(r.cwd,['attest','a'],3);
+    await candidate(r.cwd,'a'); await call(r.cwd,['attest','a'],4);
     await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'independent'},node:'a',verdict:'ok',rank:1,note:'review'}); await call(r.cwd,['attest','a']);
     await candidate(r.cwd,'b'); await call(r.cwd,['attest','b'],1); await call(r.cwd,['attest','b'],1);
-    await candidate(r.cwd,'c'); await call(r.cwd,['attest','c'],3);
+    await candidate(r.cwd,'c'); await call(r.cwd,['attest','c'],4);
     const updated = plan([{id:'a',writes:['a/'],review:{count:1,min_rank:1}},{id:'b',writes:['b/'],checks:[{id:'bad',run:'echo "owed-counts {\"pass\":0,\"fail\":1,\"failed\":[\"broken\"]}"; exit 1',reads:['b/']}]},{id:'c',writes:['c/'],checks:[{id:'error',run:'exit 126',reads:['c/']}]}],{invariants:[{id:'bad',run:'exit 1',reads:['seed']}]});
     await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',plan:updated,note:'new invariant'});
     await call(r.cwd,['attest','--trunk'],1);
-    const genesis = await setup(plan([],{invariants:[{id:'bad',run:'exit 1',reads:['seed']}]}));
-    try { await call(genesis.cwd,['attest','--genesis'],1); } finally { await genesis.cleanup(); }
-    assert.match((await call(r.cwd,['--help'])).stdout,/attest exit codes: 0 = .*1 = .*3 =/);
+    const genesis = await repo(), trigger = join(genesis.root,'fail-now');
+    try {
+      await genesis.put('seed','seed'); await genesis.commit();
+      await ops.init({cwd:genesis.cwd,as:owner,channel:'delegated',plan:plan([],{invariants:[{id:'bad',run:`if test -f '${trigger}'; then exit 1; else exit 126; fi`,reads:['seed']}]})});
+      await writeFile(trigger,'fail'); await call(genesis.cwd,['attest','--genesis'],1);
+      await call(genesis.cwd,['attest','--genesis']); // Existing fail diagnostics are not observations of this action.
+    } finally { await genesis.cleanup(); }
+    const help = (await call(r.cwd,['--help'])).stdout;
+    assert.match(help,/attest exit codes: 0 = .*1 = .*4 = .*3 = internal error/);
+    assert.match(help,/an observation recorded by this action has verdict fail, including known_red/);
   } finally { await r.cleanup(); }
 });
 
-test('PO5: driver treats attest exit 3 as completed measurement instead of halting', async () => {
+test('PO5: driver treats attest exit 4 as completed measurement instead of halting', async () => {
   const r = await setup(plan([{id:'a',writes:['a/']}]));
   try {
     await candidate(r.cwd,'a');
-    const script = join(r.root,'attest-open.sh'); await writeFile(script,'#!/bin/sh\nexit 3\n'); await chmod(script,0o755);
+    const script = join(r.root,'attest-open.sh'); await writeFile(script,'#!/bin/sh\nexit 4\n'); await chmod(script,0o755);
     const state = (await ops.readState({cwd:r.cwd})).state, launch = writerLaunch(state,'a',projectId(state));
     await ops.launch({cwd:r.cwd,as:{role:'parent',id:'drive'},node:'a',attempt:1,role:'writer',rid:launch.rid,spec:launch.spec,labels:launch.labels,rulings:launch.rulings});
     class SealedDsa extends Dsa { async inspect(rid:string): Promise<{view:RunView}> { return {view:{rid,state:'sealed',status:'ok'}}; } }
@@ -154,10 +162,41 @@ test('PO5: driver treats attest exit 3 as completed measurement instead of halti
   } finally { await r.cleanup(); }
 });
 
+test('PO5: driver halts on actual CLI ENOTDIR internal error and never silently re-attests', async () => {
+  const r = await setup(plan([{id:'a',writes:['a/']}]));
+  try {
+    await candidate(r.cwd,'a');
+    const invalid = join(r.root,'not-a-directory'), script = join(r.root,'attest-internal.sh');
+    await writeFile(invalid,'file');
+    await writeFile(script,`#!/bin/sh\nexport OWED_DIR='${invalid}'\nexec '${process.execPath}' '${fileURLToPath(new URL('../bin/owed.js',import.meta.url))}' "$@"\n`); await chmod(script,0o755);
+    const state = (await ops.readState({cwd:r.cwd})).state, launch = writerLaunch(state,'a',projectId(state));
+    await ops.launch({cwd:r.cwd,as:{role:'parent',id:'drive'},node:'a',attempt:1,role:'writer',rid:launch.rid,spec:launch.spec,labels:launch.labels,rulings:launch.rulings});
+    class SealedDsa extends Dsa { async inspect(rid:string): Promise<{view:RunView}> { return {view:{rid,state:'sealed',status:'ok'}}; } }
+    const driver = new Driver({cwd:r.cwd,log:()=>{},dsa:new SealedDsa({bin:join(r.root,'missing-dsa')}),owed:[script]});
+    assert.ok((await driver.pass()).actions.some(e => e.do === 'attest' && e.outcome === 'started'));
+    await driver.drain(30_000);
+    const next = await driver.pass();
+    assert.ok((await entries(r.cwd)).some(e => e.kind === 'halt' && /attest error:.*exited 3:.*ENOTDIR/s.test(e.reason)));
+    assert.ok(!next.actions.some(e => e.do === 'attest' && e.outcome === 'started'));
+    assert.ok(!(await driver.pass()).actions.some(e => e.do === 'attest' && e.outcome === 'started'));
+  } finally { await r.cleanup(); }
+});
+
+test('PO5: a newly recorded known_red trunk failure exits 1 despite an empty failed diagnostic list', async () => {
+  const r = await setup(plan([{id:'fix',writes:['fix/']}]));
+  try {
+    const updated = plan([{id:'fix',writes:['fix/']}],{invariants:[{id:'bad',run:'echo \'owed-counts {"pass":1,"fail":1,"failed":["broken"]}\'; exit 1',reads:['seed'],min_tests:1,known_red:[{test:'broken',fix:'fix'}]}]});
+    await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',plan:updated,note:'track known red'});
+    const result = JSON.parse((await call(r.cwd,['attest','--trunk','--json'],1)).stdout) as {failed:string[];observations:Array<{verdict:string}>};
+    assert.deepEqual(result.failed,[]); assert.ok(result.observations.some(e => e.verdict === 'fail'));
+    await call(r.cwd,['attest','--trunk']); // No newly recorded failure on the cached invocation.
+  } finally { await r.cleanup(); }
+});
+
 test('PO6: review derives only the current driver launch ack; post-launch rulings and manual reviewers stay outstanding', async () => {
   const r = await setup(plan([{id:'a',writes:['a/'],review:{count:1,min_rank:1}}]));
   try {
-    await candidate(r.cwd,'a'); await call(r.cwd,['attest','a'],3);
+    await candidate(r.cwd,'a'); await call(r.cwd,['attest','a'],4);
     const ruling = await ops.rule({cwd:r.cwd,as:parent,nodes:['a'],text:'in reviewer packet'});
     const state = (await ops.readState({cwd:r.cwd})).state;
     const action = reviewerLaunch(state,'a',1,projectId(state),r.cwd);
@@ -174,16 +213,34 @@ test('PO6: review derives only the current driver launch ack; post-launch ruling
   } finally { await r.cleanup(); }
 });
 
-test('PO6: launch metadata cannot acknowledge ruling bytes absent from its recorded packet', async () => {
+test('PO6: missing earliest ruling with the latest present cannot derive an acknowledgment', async () => {
   const r = await setup(plan([{id:'a',writes:['a/'],review:{count:1,min_rank:1}}]));
   try {
     await candidate(r.cwd,'a');
     const ruling = await ops.rule({cwd:r.cwd,as:parent,nodes:['a'],text:'must inspect this ruling'});
+    const latest = await ops.rule({cwd:r.cwd,as:parent,nodes:['a'],text:'latest is still in the packet'});
     const state = (await ops.readState({cwd:r.cwd})).state, action = reviewerLaunch(state,'a',1,projectId(state),r.cwd);
     const spec = JSON.parse(action.spec) as {task:string}; spec.task = spec.task.replace(`- #${ruling.seq} ${ruling.kind === 'rule' ? ruling.text : ''}\n`,'');
-    await ops.launch({cwd:r.cwd,as:{role:'parent',id:'drive'},node:'a',attempt:1,role:'reviewer',rid:action.rid,spec:JSON.stringify(spec),labels:action.labels,rulings:ruling.seq});
+    assert.ok(spec.task.includes(`- #${latest.seq} latest is still in the packet\n`));
+    await ops.launch({cwd:r.cwd,as:{role:'parent',id:'drive'},node:'a',attempt:1,role:'reviewer',rid:action.rid,spec:JSON.stringify(spec),labels:action.labels,rulings:latest.seq});
     const review = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'metadata is not a packet'});
     assert.ok(review.kind === 'review'); assert.equal(review.ack_rulings,0);
+    assert.equal((await ops.why({cwd:r.cwd,node:'a'})).items.find(i => i.obligation === 'rulings')!.status,'D');
+  } finally { await r.cleanup(); }
+});
+
+test('PO6: a missing middle ruling caps the derived ack at the complete earlier prefix', async () => {
+  const r = await setup(plan([{id:'a',writes:['a/'],review:{count:1,min_rank:1}}]));
+  try {
+    await candidate(r.cwd,'a');
+    const first = await ops.rule({cwd:r.cwd,as:parent,nodes:['a'],text:'first\nmultiline ruling'});
+    const middle = await ops.rule({cwd:r.cwd,as:parent,nodes:['a'],text:'middle'});
+    await ops.rule({cwd:r.cwd,as:parent,nodes:['a'],text:'latest'});
+    const state = (await ops.readState({cwd:r.cwd})).state, action = reviewerLaunch(state,'a',1,projectId(state),r.cwd);
+    const spec = JSON.parse(action.spec) as {task:string}; spec.task = spec.task.replace(`- #${middle.seq} middle\n`,'');
+    await ops.launch({cwd:r.cwd,as:{role:'parent',id:'drive'},node:'a',attempt:1,role:'reviewer',rid:action.rid,spec:JSON.stringify(spec),labels:action.labels,rulings:action.rulings});
+    const review = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'incomplete packet'});
+    assert.ok(review.kind === 'review'); assert.equal(review.ack_rulings,first.seq);
     assert.equal((await ops.why({cwd:r.cwd,node:'a'})).items.find(i => i.obligation === 'rulings')!.status,'D');
   } finally { await r.cleanup(); }
 });
