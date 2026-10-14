@@ -8,6 +8,52 @@ The main agent is the owner (0.5, delegated owner): a human states the task in n
 
 It provides a CLI, a pi extension, and an agent skill. It is not an agent scheduler, a sandbox, or a replacement for code review. Your agent runner does the work; owed keeps acceptance evidence and guards the merge.
 
+## What's new in 0.20
+
+Upgrade every driver, CLI and pi plugin together: only optional entry fields
+and plan keys are added, with no new entry kind, but older versions can ignore,
+misread or refuse them. Repeat across several observations on one key now pools
+all runs (an old pass/fail conflict can replay as pass or fail).
+
+- **Measure again, not invalidate:** `owed attest <node> --remeasure [--all]`
+  remeasures current merge-tree invariants on the same key; use `--trunk` for
+  trunk keys or `owed resume <node> --remeasure` for a driver retry. Without
+  repeat, pass+fail still needs the owner; repeat pools `passes*N >= K*total`.
+  Reused-observation refusals name the seq, age and remeasure command.
+- **Native quarantine:** owner-only check/invariant `quarantine: [{test,fix,note?}]`
+  excludes exact failing names until the fix merges; the fix's own prospective
+  merge is measured without its quarantine, so it must repair those tests. Only a plain allowlisted `node --test` exit 1 with complete TAP,
+  every failure quarantined and enough remaining tests can be excused. Cargo,
+  templates, wrappers, red/mutants runs and crashes/timeouts are not excused.
+  Status/brief/report list the debt; `why <fix>` lists what its merge lifts.
+- **Check templates:** `cargo-tests`, `node-tap` and `evidence-json` replace
+  handwritten `run`; versioned expansions appear in receipts. `min_ok` counts
+  successful tests only, not skips/ignored tests or empty TAP file wrappers.
+  JSON evidence checks own-field presence, not truthiness. See SPEC §3.6/RC2.
+- **Attribution and actionable state:** merge-tree breaks on moved trunk lead
+  with rebase, new tests use the slot base, and new submits do not re-halt on
+  old candidate blocks. Intermittency and defer carry require recorded proof.
+  Repair progress hides Needs you only when the driver needs no owner decision;
+  approval waits stay waiting, guidance precedes labelled overrides, and
+  `why --full` restores quiet confirmation history. Plan receipts precede boards;
+  wake reasons appear once. Rebase packets compute upstream and say commit first.
+- **Critical-path driver:** merge-ready nodes outrank background trunk attest /
+  sweeps, by unfinished transitive dependent count then acceptance age. Status
+  shows merge/measure waiting reasons and accepted age. Submit/review `--model`
+  (pi `model`) records actual models; why warns about matching/mismatched models.
+  Rules/answers immediately notify running roles and report delivery failures
+  with stable body-bound ids, preserving exact answer retry commands.
+- **Fewer parent acts:** covered amend is unnecessary; `owed resume A,B,C`
+  (pi `node` array) is atomic. Metrics attribute acts per node and count batches
+  once; plan/edit warn about critical-path write overlaps. Attest exits 0 = done,
+  1 = newly measured failure, 4 = no new failure but obligations open; usage 2,
+  internal 3 and busy 75 remain. Reviewer launch packets can derive only a
+  complete-prefix ruling ack; brief edits preserve multiline / equals text.
+- **Torn-read tolerance:** unlocked `Ledger.read()` ignores a final non-newline
+  fragment; locked reads and malformed complete lines still fail. Other readers,
+  stronger quarantine allowlist restrictions and cargo exemptions remain backlog
+  (SPEC §7.17), not implemented guarantees.
+
 ## When to use owed
 
 Small, low-risk fixes can be committed directly, then recorded by the parent with one
@@ -91,7 +137,7 @@ owed attest greeting
 owed why greeting
 ```
 
-At this point `attest` exits **1** because the required independent review is still missing, even though the content check passed. Have an independent reviewer inspect the diff and receipt, then record that review using their identity:
+At this point `attest` exits **4** because the required independent review is still missing, even though the content check passed. Have an independent reviewer inspect the diff and receipt, then record that review using their identity:
 
 ```sh
 git diff main...owed/greeting/1
@@ -141,8 +187,9 @@ without moving trunk commit/seq, then measures the changed keys as trunk
 observations. It is abortable and leased; an interrupted refresh resumes on
 retry. No changed keys means `Nothing to refresh on trunk` and no new entries.
 JSON returns `refresh?`, `changed`, `observations`, `superseded`, `failed`,
-`missing`, `lease?`; completion exits 0 even for failing tests, missing results
-exit 1. Merge does this automatically before measuring, retaining refresh and
+`missing`, `lease?`; newly recorded failures exit 1 (including known_red),
+otherwise complete results exit 0 and missing results exit 4. Merge does this
+before measuring, retaining refresh and
 trunk observations on refusal; the driver refreshes on an otherwise quiet pass.
 
 A merge failing only named tests already failed on recorded trunk can proceed
@@ -176,13 +223,13 @@ When a node check fails on the merge tree, `owed merge` first measures that same
 
 Merge refusals (0.16.2) also show the latest pass of a failing invariant on the current trunk: `inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`. This appears once per obligation, including anonymous failures, before intermittent and fix-candidate hints; if no such pass exists it is omitted. The node's current candidate adds `; node diff touches <p1>, <p2>, <p3> (+<N> more)` when it has changed paths. Merge refusals, driver halts, `why` merge-block hints and `Merge checks:` share the delta. This changes only text; 0.16.0, 0.16.1 and 0.16.2 share ledger fields, replay and keys.
 
-Merge refusals (0.16) add `known intermittent: <name> also failed on #a, #b (other trees)` when the same failed test name appears in other failing observations on different commits. Only the last 5000 ledger entries are scanned, with at most three sequences shown newest first. For names of at least six characters, an unmerged node with an open slot, accepted candidate or ready phase whose title, brief, check command or tests list contains the name verbatim adds `fix candidate: <node> (<phase>) — owed resume <refused> --after <node>`. CLI merge refusals, driver merge-refused halts and `why` block lines carry these hints; `why` also shows hinted current merge-key failures, including invariants, under `Merge checks:`. Same-commit history adds no intermittent hint; anonymous failures add neither hint. This is advisory text and changes no gate, key, verdict or ledger schema; 0.15 and 0.16 can share the ledger.
+Merge refusals (0.20) say `known intermittent` only with failed-and-passed evidence on the same key or a matching error signature on trunk; different known errors say `same test failed on older trees (different error)`. The node's own other trees are not independent evidence. Only the last 5000 ledger entries are scanned, with at most three sequences shown newest first. For names of at least six characters, an unmerged node with an open slot, accepted candidate or ready phase whose title, brief, check command or tests list contains the name verbatim adds `fix candidate: <node> (<phase>) — owed resume <refused> --after <node>`. CLI merge refusals, driver merge-refused halts and `why` block lines carry these hints; `why` also shows hinted current merge-key failures, including invariants, under `Merge checks:`. Anonymous failures add neither named-test hint; missing signatures do not justify a different-error claim. These hints are advisory and change no gate or key; 0.20 signature fields require upgrading readers together.
 
-`owed status` now starts with `owed: <M> merged · <R> in progress · <A> need you · trunk <name> <short> <✔|✘> invariants (<ok>/<n>)`. `Needs you (<A>):` lists current parent/owner actions as `<node>: <plain reason> → <command>` (or `Needs you: none`); a trunk-red invariant from status `trunkRed` instead has one `trunk: <curated red-on-trunk text>` line with its options, and its Debt line is unchanged; ready nodes need manual dispatch only when no driver runs. `In progress (<R>):` lists open work as writing, measuring, reviewing, waiting for dependencies, held, or accepted (merge pending), with its age. `Debt:` appears only for trunk-red invariants, active known-red tests, owner defers that still bind the current merge invariant key and waivers of open nodes. The last line is `Details: owed status --full · owed why <node>`. Empty progress/debt sections are omitted. `owed status --full` (pi `owed_status {full:true}`) keeps the 0.14 evidence and pending queues, plus new invariant debt lines; historical confirmation, superseded-block and carried-candidate audit lines live there. JSON retains every existing field; `summary` adds merged totals, current actions, phases/ages and debt. `report --since <sequence-or-ISO-time>` summarizes merges, E/W/D changes, rulings, downgrades, and owner decisions.
+`owed status` now starts with `owed: <M> merged · <R> in progress · <A> need you · trunk <name> <short> <✔|✘> invariants (<ok>/<n>)`. `Needs you (<A>):` lists current parent/owner actions as `<node>: <plain reason> → <command>` (or `Needs you: none`); a trunk-red invariant from status `trunkRed` instead has one `trunk: <curated red-on-trunk text>` line with its options, and its Debt line is unchanged; ready nodes need manual dispatch only when no driver runs. `In progress (<R>):` lists open work as writing, measuring, reviewing, waiting for dependencies, held, or accepted (merge pending), with its age. `Debt:` appears for trunk-red invariants, active known-red/quarantine tests, owner defers that still bind the current merge invariant key and waivers of open nodes. The last line is `Details: owed status --full · owed why <node>`. Empty progress/debt sections are omitted. `owed status --full` (pi `owed_status {full:true}`) keeps the 0.14 evidence and pending queues, plus new invariant debt lines; historical confirmation, superseded-block and carried-candidate audit lines live there. JSON retains every existing field; `summary` adds merged totals, current actions, phases/ages and debt. `report --since <sequence-or-ISO-time>` summarizes merges, E/W/D changes, rulings, downgrades, and owner decisions.
 
 Pi act replies for `dispatch`, `plan`, `edit`, `amend`, `rule`, `defer`, `abandon` and `resume` use a brief status (0.16.2): the same outcome line, current `Needs you (<A>):` items and commands when non-empty, then `Details: owed status · owed why <node>`. They omit the progress and debt lists. Dispatch keeps its packet and subagents arguments; plan/edit/amend keep their act lines and warnings; rule/defer show the recorded entry; abandon/resume show the entry and node phase, with resume's waits-for text retained. Structured tool results are unchanged. Use `owed status` for the full progress/debt lists, `owed why <node>` for a receipt and `owed report` for the report. The CLI versions of these acts currently append no full status, so their existing outputs stay unchanged; CLI `init` and pi `adopt` retain their existing status output. Explicit status, why, report and `/owed` views keep their existing content.
 
-`owed status --full` (pi `owed_status {full:true}`) also shows `Merge queue: a, b, c` (`none` when empty), and status JSON adds `mergeQueue: string[]`. In 0.16, accepted open attempts merge in acceptance order: first targets of an outstanding latest `resume --after` wait, then all others; within each group, derived `nodes.<id>.acceptedSince` ascending, dependent count descending, then id. This sequence records when the current candidate became continuously accepted; losing acceptance or replacing the candidate with a new submit resets it. `owed resume X --after Y` (also list waits and `owed_resume`) raises accepted Y's priority without a plan change; replacing the resume, closing the waiting attempt or merging Y removes it. Implicit dependencies alone do not raise priority. The driver's single merge slot takes the first eligible merge action; other actions retain their existing order and every gate still applies. A continuously accepted, eligible node merges after at most the accepted nodes ahead of it; only a waited-on node can newly overtake it. These are derived state and result fields: 0.15 and 0.16 share a ledger with unchanged keys and no new entry kind or field.
+`owed status --full` (pi `owed_status {full:true}`) also shows `Merge queue: a, b, c` (`none` when empty), and status JSON adds `mergeQueue: string[]`. In 0.20, accepted open attempts merge by unique unfinished transitive dependent count descending, continuous `nodes.<id>.acceptedSince` ascending, then id. This sequence records when the current candidate became continuously accepted; losing acceptance or replacing the candidate with a new submit resets it. `owed resume X --after Y` (also list waits and `owed_resume`) is a dependency wait, not a priority override. The driver's single merge slot takes the first eligible merge action; other actions retain their existing order and every gate still applies. Higher-weight accepted nodes can overtake lower-weight ones; background trunk attest and sweeps yield to merge-ready work. This ordering is derived, with no new ledger kind or key; 0.20 receipt fields still require upgrading readers together.
 
 `owed report --metrics [--since <seq|ISO>] [--until <seq|ISO>] [--json]` (0.15) measures merged nodes, interruptions (driver halts plus parent/owner answer rulings) and interruptions per merged node; submit-to-merge median/p90/max and first-dispatch-to-merge median/p90; first-pass acceptance (attempt 1, no block on any candidate); and repairs per merged node. Repairs sum writer submits after the first separately for each attempt, including abandoned attempts, excluding executor carry submits. `since` is exclusive and `until` inclusive; merges and interruptions count by their own entries, while earlier history supplies timing and classification. An ending entry can decide a halt: between the halt and the next resume/submit/merge/abandon/halt, a parent/owner rule naming the node or `*`, answer, waive, defer, abandon, hold, approval, evidence, owner review, or plan change to that node's spec/deps makes it `decision`; otherwise it is `no-decision`. Entries after `until` cannot decide a halt. The short text block lists the top five reasons per class, with digits and ids normalized. JSON returns all numeric summaries (durations in milliseconds, ratios as fractions, unavailable values `null`), per-merge attempts/repairs and per-halt classes, ending sequences and decision sequences; SPEC §9 defines each field. It reads only the ledger and recorded plan blobs, preserves old ledger states and keys, and records nothing. `--until` requires `--metrics`; ordinary `report` output is unchanged.
 
@@ -700,8 +747,9 @@ starting it from a top-level session or systemd-run --user`.
 Notices start with `Needs you: <node> — <decision> → <one command>`, then
 `Done: <merged nodes>` when any, and `Driver continues (<n> in progress)` or
 `Driver stopped: <reason>`. Full original log text, run ids, seqs, repeat counts,
-commands and the halt hint stay under `Details:`; `Next: owed status / owed why
-<node>` stays last. Action log `inProgress` counts open slots.
+commands and the halt hint remain, but in 0.20 each question/reason appears
+once without a repeating `Details:` block; `Next: owed status / owed why <node>`
+stays last. Action log `inProgress` counts open slots.
 
 An answer recorded with `owed answer` suppresses the question in both the driver
 and pi delivery, even while the run remains `asking` in the model queue. The
@@ -723,7 +771,7 @@ In pi a wake is never handed to the session while its agent is running: the
 follower holds it until the agent settles, then drops what was resolved
 meanwhile (a question no longer open in dsa, a node line whose node gained
 ledger entries) and delivers the rest, with `(<n> wake(s) resolved before
-delivery)` in Details; if nothing is left the session is not woken. With `--stay`
+delivery)` in the wake; if nothing is left the session is not woken. With `--stay`
 (`owed_drive` `stay: true`) an idle driver does not exit: it wakes the session
 once (`idle: nothing open and nothing ready; staying until the ledger changes
 (owed drive --stop ends it)`), keeps the lock and resumes when the ledger
