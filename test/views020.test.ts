@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { git } from '../src/git.ts';
 import { stateOf } from '../src/drive-run.ts';
-import { decide, writerLaunch } from '../src/drive.ts';
+import { decide, ownerNeeded, writerLaunch } from '../src/drive.ts';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
 import { statusView } from '../src/views.ts';
@@ -37,10 +37,10 @@ async function block(cwd: string, rank = 1, by = 'independent') {
   return ops.review({cwd,node:'a',as:{role:'reviewer',id:by},verdict:'block',rank,note:'repair the ownership collision',ack_rulings:0});
 }
 
-test('NY1/NY3: valid blocks offer guidance first; repair and newer submit leave Needs-you without changing the gate', async () => {
+test('NY1/NY3: driver-authored rank-2 repair hides review debt only when the driver needs no owner', async () => {
   const {r,slot,rid} = await fixture();
   try {
-    const b = await block(r.cwd,2);
+    const b = await block(r.cwd,2,'drive-a-1-1');
     let status = await ops.status({cwd:r.cwd});
     assert.equal(status.nodes.a!.accepted,false);
     const need = status.summary!.needs.find(n => n.node === 'a')!;
@@ -51,15 +51,51 @@ test('NY1/NY3: valid blocks offer guidance first; repair and newer submit leave 
     await ops.send({cwd:r.cwd,...driver,node:'a',attempt:1,rid,sendKind:'follow-up',reason:'repair',message:'repair the collision',rulings:0});
     status = await ops.status({cwd:r.cwd});
     assert.equal(status.summary!.progress.find(p => p.node === 'a')!.phase,`repairing (block #${b.seq})`);
+    assert.equal(ownerNeeded(await stateOf(r.cwd),'a'),undefined);
     assert.equal(status.summary!.needs.filter(n => n.node === 'a').length,0);
     await commitAt(slot.worktree,{'a.txt':'fixed'});
     await ops.submit({cwd:slot.worktree,node:'a',as:{role:'writer',id:'a#1'}});
+    await ops.attest({cwd:r.cwd,node:'a',lease:false});
     status = await ops.status({cwd:r.cwd});
+    assert.equal(ownerNeeded(await stateOf(r.cwd),'a'),undefined);
     assert.equal(status.summary!.needs.filter(n => n.node === 'a').length,0);
     assert.equal(status.nodes.a!.accepted,false,'a new submit never clears a valid block by presentation');
+    const conflict = await stateOf(r.cwd);
+    conflict.nodes.a!.items.find(i => i.obligation === 'review')!.mark = '⊤';
+    assert.ok(ownerNeeded(conflict,'a'));
+    assert.ok(statusView(conflict).summary!.needs.some(n => n.node === 'a'),'a conflict stays visible even during a driver-authored repair');
     await block(r.cwd,2,'new-reviewer');
     status = await ops.status({cwd:r.cwd});
     assert.ok(status.summary!.needs.some(n => n.node === 'a'),'a later valid block is not hidden by an older repair');
+  } finally { await r.cleanup(); }
+});
+
+test('NY1 parent ruling: external rank-2 blocks stay in Needs-you during repair and after resubmit plus attest', async () => {
+  const {r,slot,rid} = await fixture();
+  try {
+    const b = await block(r.cwd,2);
+    const consistent = async () => {
+      const s = await stateOf(r.cwd), status = await ops.status({cwd:r.cwd});
+      assert.match(ownerNeeded(s,'a')!,new RegExp(`rank 2 review block #${b.seq} on review needs the owner`));
+      assert.ok(status.summary!.needs.some(n => n.node === 'a'),'owner review debt remains visible');
+      assert.equal(status.summary!.progress.find(p => p.node === 'a')!.phase,`repairing (block #${b.seq})`);
+      const actions = decide(s,s.plan,new Map([[rid,{rid,state:'running' as const}]]),{max:2,repairs:2,project:projectId(s),root:r.cwd,applied:new Set(),rejected:new Map()});
+      assert.ok(actions.some(a => a.node === 'a' && a.do === 'notify' && /needs the owner/.test(a.text)),'driver owner notification agrees with Needs-you');
+      assert.equal(status.nodes.a!.accepted,false);
+    };
+    await ops.send({cwd:r.cwd,...driver,node:'a',attempt:1,rid,sendKind:'follow-up',reason:'repair',message:'repair the collision',rulings:0});
+    await consistent();
+    await commitAt(slot.worktree,{'a.txt':'fixed'});
+    await ops.submit({cwd:slot.worktree,node:'a',as:{role:'writer',id:'a#1'}});
+    await ops.attest({cwd:r.cwd,node:'a',lease:false});
+    await consistent();
+    // Owner-only rank and flaky state keep the same presentation predicate as the driver.
+    for (const kind of ['rank3','flaky'] as const) {
+      const s = await stateOf(r.cwd), block = s.nodes.a!.blocks.find(x => x.seq === b.seq)!;
+      if (kind === 'rank3') block.rank = 3; else block.state = 'flaky';
+      assert.ok(ownerNeeded(s,'a'));
+      assert.ok(statusView(s).summary!.needs.some(n => n.node === 'a'),`${kind} remains visible while repairing`);
+    }
   } finally { await r.cleanup(); }
 });
 
