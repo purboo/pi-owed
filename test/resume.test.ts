@@ -1,5 +1,6 @@
 // L1 (contract 0.8, app #16-#18): `owed resume` clears a driver halt without an obligation, starts a new repair epoch
 // and can make the node wait for another node to merge; halts and wakes name the dsa call address; hints.
+import { assertWakeLines } from './helpers/wake.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -269,9 +270,9 @@ test('L1.5: why and status suggest owed resume for a halt; the wake message with
     const got: string[] = [];
     const f = new Follower({ log, repo: '/r', pid: process.pid, from: 0, deliver: m => { got.push(m); } });
     await writeFile(log, `${JSON.stringify({ do: 'notify', node: 'x', outcome: 'notify', text: 'x asks' })}\n`, { flag: 'a' });
-    assert.deepEqual(f.tick()?.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'x asks', 'Next: owed status / owed why <node>'], 'no halt: no hint');
+    assertWakeLines(f.tick(), ['owed drive (/r):', 'x asks', 'Next: owed status / owed why <node>'], 'no halt: no hint');
     await writeFile(log, `${JSON.stringify({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail: 'stuck' })}\n`, { flag: 'a' });
-    assert.deepEqual(f.tick()?.split('Details:\n')[1]!.split('\n'), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — stuck', haltHintText, 'Next: owed status / owed why <node>']);
+    assertWakeLines(f.tick(), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — stuck', haltHintText, 'Next: owed status / owed why <node>']);
     assert.equal(haltHintText, 'To clear a halt without an obligation: owed resume <node> --note "<why>" (add --after <node> to wait until that node merges); owed rule gives the writer and reviewers guidance they must acknowledge');
     f.stop();
   } finally { await rm(dir, { recursive: true, force: true }); }

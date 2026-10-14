@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
+import { rebasePending, type RebasePending } from './rebase-view.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
@@ -458,12 +459,15 @@ export class Driver {
    * stored bytes `decide` may need for retries. `rejected`: the attempt's sends dsa decided rejected (every pass; cached
    * once terminal) and the runs and sends rejected in this process.
    */
-  private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]> }> {
+  private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]>; rebasePending: Map<string, RebasePending> }> {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
+    const pendingBases = new Map<string, RebasePending>();
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
       // K6: while measuring, describe only the runs PR2 needs for prospective notices.
       if (!n.slot?.open || n.phase === 'removed') continue;
+      const pendingBase = await rebasePending(s, n.id);
+      if (pendingBase) pendingBases.set(n.id, pendingBase);
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), epoch = reviewEpoch(s, n.id);
       if (!ar) continue;
       const policy = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
@@ -507,7 +511,7 @@ export class Driver {
       const rb = n.slot.rebase;
       if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
     }
-    return { runs, blobs, rejected, conflicts };
+    return { runs, blobs, rejected, conflicts, rebasePending:pendingBases };
   }
 
   /**
@@ -561,8 +565,8 @@ export class Driver {
     const s = await loadState(ledger), cfg = driveConfig(s.plan);
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
-    const { runs, blobs, rejected, conflicts } = await this.observe(s, measuring);
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, measuring, now: Date.now(), noticed: this.facts.once });
+    const { runs, blobs, rejected, conflicts, rebasePending } = await this.observe(s, measuring);
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, measuring, now: Date.now(), noticed: this.facts.once });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass

@@ -204,7 +204,7 @@ test('TP2/P2: full once-key separates queued groups with identical truncated fai
       await ops.abandon({ cwd: r.cwd, node: 'a', as: parent, reason: 'resolve only group ending in d' });
       busy = false; await follower.step();
       assert.equal(delivered.length, 1);
-      const redLines = delivered[0]!.split('Details:')[1]!.split('\n').filter(l => l.includes('without any candidate'));
+      const redLines = delivered[0]!.split('\n').filter(l => l.includes('without any candidate'));
       assert.equal(redLines.length, 1, 'resolved d group must not borrow the remaining e group');
       assert.match(redLines[0]!, /waiting: b\./); assert.doesNotMatch(redLines[0]!, /waiting: a/);
     } finally { follower.stop(); }

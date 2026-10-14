@@ -59,8 +59,10 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   out.adoptGuard = attempt(() => r.adoptGuard(s, { commit: 'adopted', tree: 'adopted-tree', invKeys: { ...s.trunk.invKeys } }));
   out.planAt = attempt(() => r.planAt(s, s.seq + 1)); out.entries = r.entriesOf(s).length;
   // QT1 intentionally changes only the rendered human halt wording, never the ledger value or acceptance state.
-  const rendered = (text: string): string => m === BASE ? text.replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
-    'halted by driver #$1 (attempt $2), needs the parent (the main agent acts; owed lists the command):') : text;
+  const rendered = (text: string): string => (m === BASE ? text.replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
+    'halted by driver #$1 (attempt $2), needs the parent (the main agent acts; owed lists the command):') : text)
+    // NY1 changes guidance/override labels only; retain the exact resolving review command in this differential.
+    .replace(/owed rule --nodes \S+ "<guidance>"; /g, '').replace(/ \(overrides a valid block: state the accepted risk\)/g, '');
   // FL1/FL4 intentionally change waiting presentation, not historical acceptance state/keys.
   // Adapt only the frozen view's waiting fields and QT1 halt text; everything else compares exactly.
   const wait = (id: string): cur.Waiting | undefined => {
@@ -120,9 +122,10 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
         lines.splice(at < 0 ? 1 : at,0,`⏳ ${curViews.waitingLine(w)}; the driver acts again when ${nodes.join(', ')} ${nodes.length > 1 ? 'merge' : 'merges'} or after another resume`);
         return rendered(lines.join('\n'));
       }
-      return rendered(v.renderReceipt(card));
+      // NY6: full preserves the frozen receipt's weak-confirmation provenance.
+      return rendered(m === CUR ? curViews.renderReceipt(card as curViews.ReceiptCard,{full:true}) : v.renderReceipt(card));
     });
-    q.owner = attempt(() => v.ownerCommands(s, id));
+    q.owner = attempt(() => v.ownerCommands(s, id).map(rendered));
     if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(reviewState, id));
     out[`node:${id}`] = q;
   }
