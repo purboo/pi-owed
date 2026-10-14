@@ -77,9 +77,20 @@ test('CT1 node-tap: unfiltered empty files fail and mixed files count only real 
   }
   const mixed = await measured({ template: 'node-tap', files: ['test/empty.mjs', 'test/real.mjs'], min_ok: 1 }, { 'test/empty.mjs': '', 'test/real.mjs': nodeCheck('real') });
   try { assert.equal(mixed.result.accepted, true); assert.equal(observation(mixed).counts?.pass, 1); assert.equal(observation(mixed).counts?.tests, 1); } finally { await mixed.cleanup(); }
-  // A path-like title is ambiguous with a wrapper: conservatively do not count it.
+  // CT parent ruling: a path-like title differing from the input file is a real test.
   const ambiguous = await measured({ template: 'node-tap', files: ['test/real.mjs'], min_ok: 1 }, { 'test/real.mjs': nodeCheck('test/looks-like-file.mjs') });
-  try { assert.equal(ambiguous.result.accepted, false); assert.equal(observation(ambiguous).counts?.pass, 0); } finally { await ambiguous.cleanup(); }
+  try { assert.equal(ambiguous.result.accepted, true); assert.equal(observation(ambiguous).counts?.pass, 1); } finally { await ambiguous.cleanup(); }
+  for (const files of [['./test/empty.mjs'], ['test/*.mjs']]) {
+    const empty = await measured({ template: 'node-tap', files, min_ok: 1 }, { 'test/empty.mjs': '' });
+    try { assert.equal(empty.result.accepted, false); assert.equal(observation(empty).counts?.pass, 0); } finally { await empty.cleanup(); }
+  }
+  const glob = await measured({ template: 'node-tap', files: ['test/*.mjs'], min_ok: 1 }, { 'test/empty.mjs': '', 'test/real.mjs': nodeCheck('test/looks-like-file.mjs') });
+  try { assert.equal(glob.result.accepted, true); assert.equal(observation(glob).counts?.pass, 1); } finally { await glob.cleanup(); }
+  const nested = await measured({ template: 'node-tap', files: ['test/real.mjs'], min_ok: 2 }, { 'test/real.mjs': "import test from 'node:test';test('test/real.mjs',async t=>{await t.test('child',()=>{})});" });
+  try { assert.equal(nested.result.accepted, true); assert.equal(observation(nested).counts?.pass, 2); } finally { await nested.cleanup(); }
+  // Exact input-file names are wrappers only without subtests; ./ and backslashes normalize equally.
+  const normalized = await measured({ template: 'node-tap', files: ['./test/real.mjs'], min_ok: 1 }, { 'test/real.mjs': nodeCheck('  ./test\\real.mjs  ') });
+  try { assert.equal(normalized.result.accepted, false); assert.equal(observation(normalized).counts?.pass, 0); } finally { await normalized.cleanup(); }
 });
 
 test('CT1 version constant alone changes generated commands, recognition and check/invariant keys', async () => {
