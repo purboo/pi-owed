@@ -2,7 +2,7 @@ import type { AdoptionView, AttemptRuns, Block, Entry, EscapeClass, EvidenceEntr
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesGlob } from 'node:path';
-import { matchesAny, driveConfig } from './plan.ts';
+import { matchesAny, driveConfig, isCheckTemplateRun } from './plan.ts';
 import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, driveReviewerSlot, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq } from './reducer.ts';
 import { canonical } from './canon.ts';
@@ -15,8 +15,8 @@ export interface ReceiptCard {
   rebasePending?: RebasePending;
   node: string; phase: NodeState['phase']; accepted: boolean;
   /** TR: failing checks on the current merge key; separate from candidate acceptance. */
-  mergeChecks?: (ItemView & { observations: Entry[] })[];
-  items: (ItemView & { observations: Entry[] })[];
+  mergeChecks?: (ItemView & { observations: Entry[]; run?: string })[];
+  items: (ItemView & { observations: Entry[]; run?: string })[];
   /**
    * `ruling` (D18/D18b.4): only on a needs-parent block recorded on the current candidate: `'needed'` while no ruling
    * naming the node follows it, else the seq of that ruling. A stale needs-parent block has none (stale wording).
@@ -213,13 +213,18 @@ function receiptItem(i: ItemView, entries: readonly Entry[]): ItemView & { obser
   }
   return { ...i, observations };
 }
+/** CT1: expanded template commands in receipts; ordinary 0.17 cards keep exactly their old shape. */
+export function templateReceiptRun(s: State, item: ItemView): { run?: string } {
+  const spec = item.obligation.startsWith('inv:') ? s.plan.invariants.find(c => `inv:${c.id}` === item.obligation) : s.plan.nodes.find(n => n.id === item.subject)?.checks.find(c => `check:${c.id}` === item.obligation || `red:${c.id}` === item.obligation);
+  return spec && isCheckTemplateRun(spec.run) ? { run: spec.run } : {};
+}
 export function receipt(s: State, entries: readonly Entry[], node: string, mergeChecks: ItemView[] = []): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   const outOfWrites = outsideWrites(s, node), superseded = supersededOf(s, [n]);
   return { node, phase: n.phase, accepted: n.accepted,
-    items: n.items.map(i => receiptItem(i, entries)),
-    ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => receiptItem(i, entries)) } : {}),
+    items: n.items.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })),
+    ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })) } : {}),
     blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: mergeBlockClearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
     ...(superseded.length ? { superseded } : {}),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
@@ -417,7 +422,8 @@ const phaseNames: Record<string,string> = { ready: 'ready', blocked: 'blocked by
 /** RC1: noisy is descriptive, not a conflicting ledger verdict. */
 const noise = (e: Entry): string => e.kind === 'obs' && e.noisy && e.runs ? ` noisy (${e.runs.filter(r => r.verdict === 'pass').length}/${e.runs.length} passed)` : '';
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
-function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[]; hint?: string }): string {
+function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[]; hint?: string; run?: string }): string {
+  if (i.run !== undefined) { const { run, ...plain } = i; return `${itemText(plain)}\n  run: ${run}`; }
   if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${haltClear(i.subject)}`;
   if (i.status === 'W' && i.subject === 'trunk' && i.obligation.startsWith('inv:')) return `${i.mark} ${i.detail}`;
   if (i.status === 'W') return waivedText(i);
