@@ -290,11 +290,11 @@ export function matchesAny(path: string, globs: string[]): boolean { return glob
 /** CT1: version 1 expansions are frozen: normalized plans store only run/min_tests, never template metadata. */
 export const CHECK_TEMPLATE_VERSION = 1;
 /** Template-generated commands carry their expansion version in the keyed command itself. */
-export const isCheckTemplateRun = (run: string): boolean => run.startsWith('# owed-template/v1/');
+export const isCheckTemplateRun = (run: string): boolean => run.startsWith(`# owed-template/v${CHECK_TEMPLATE_VERSION}/`);
 const templateQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
 /** CT1: count successful tests only (not skipped/ignored); pipefail retains crashes and runner failures. */
-function templateCounter(format: 'cargo' | 'tap', min: number): string {
-  const script = `let log='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>{log+=x;process.stdout.write(x)});process.stdin.on('end',()=>{let pass=0,fail=0,seen=false;${format === 'cargo' ? "for(const m of log.matchAll(/^test result: (?:ok|FAILED)\\. (\\d+) passed; (\\d+) failed; (\\d+) ignored/gm)){seen=true;pass+=Number(m[1]);fail+=Number(m[2])}" : "const p=[...log.matchAll(/^# pass (\\d+)\\s*$/gm)].at(-1),f=[...log.matchAll(/^# fail (\\d+)\\s*$/gm)].at(-1);if(p&&f){seen=true;pass=Number(p[1])-[...log.matchAll(/^1\\.\\.0\\r?\\n# Subtest: [^\\n]*\\r?\\nok \\d+ - /gm)].length;fail=Number(f[1])}"}if(seen){const failed=[...log.matchAll(${format === 'cargo' ? '/^test (.+) \\.\\.\\. FAILED\\s*$/gm' : '/^\\s*not ok \\d+\\s*-\\s*(.+)$/gm'})].map(m=>m[1]);console.log('owed-counts '+JSON.stringify({pass,fail,...(failed.length?{failed}:{})}))}if(!seen||fail||pass<${min})process.exitCode=1});`;
+function templateCounter(format: 'cargo' | 'tap', min: number, files: string[] = []): string {
+  const script = `let log='';process.stdin.setEncoding('utf8');process.stdin.on('data',x=>{log+=x;process.stdout.write(x)});process.stdin.on('end',()=>{let pass=0,fail=0,seen=false;${format === 'cargo' ? "for(const m of log.matchAll(/^test result: (?:ok|FAILED)\\. (\\d+) passed; (\\d+) failed; (\\d+) ignored/gm)){seen=true;pass+=Number(m[1]);fail+=Number(m[2])}" : `const p=[...log.matchAll(/^# pass (\\d+)\\s*$/gm)].at(-1),f=[...log.matchAll(/^# fail (\\d+)\\s*$/gm)].at(-1);if(p&&f){seen=true;const files=${JSON.stringify(files)};let real=0;for(const m of log.matchAll(/^([ \\t]*)ok \\d+ - ([^\\r\\n]+)\\r?\\n\\1  ---\\r?\\n([\\s\\S]*?)^\\1  \\.\\.\\.\\s*$/gm)){const name=m[2],body=m[3];if(!/ # (?:SKIP|TODO)\\b/.test(name)&&!files.includes(name)&&!/[\\/\\\\]/.test(name)&&!/\\.(?:[cm]?[jt]s|[jt]sx)$/i.test(name)&&/^\\s*type: ['"]test['"]\\s*$/m.test(body))real++}pass=Math.min(Number(p[1]),real);fail=Number(f[1])}`}if(seen){const failed=[...log.matchAll(${format === 'cargo' ? '/^test (.+) \\.\\.\\. FAILED\\s*$/gm' : '/^\\s*not ok \\d+\\s*-\\s*(.+)$/gm'})].map(m=>m[1]);console.log('owed-counts '+JSON.stringify({pass,fail,...(failed.length?{failed}:{})}))}if(!seen||fail||pass<${min})process.exitCode=1});`;
   return `node -e ${templateQuote(script)}`;
 }
 /** CT1: validate template-specific input before expanding into the existing check interface. */
@@ -320,7 +320,7 @@ function expandCheckTemplate(c: Record<string, unknown>, p: string, errors: stri
     const path = str('path'), required = list('required');
     required.forEach((field, i) => { if (field.split('.').some(part => !part)) errors.push(`${p}.required[${i}]: expected dot-separated field path without empty segments`); });
     const script = "const fs=require('node:fs');const [path,...required]=process.argv.slice(1);try{const data=JSON.parse(fs.readFileSync(path,'utf8'));for(const field of required){let value=data;for(const part of field.split('.')){if(value===null||typeof value!=='object'||!Object.hasOwn(value,part))throw new Error('missing field '+field);value=value[part]}}console.log('owed-counts '+JSON.stringify({pass:1,fail:0}))}catch(e){console.error('evidence-json: '+e.message);console.log('owed-counts '+JSON.stringify({pass:0,fail:1,failed:['evidence-json: '+path]}));process.exitCode=1}";
-    return { run: errors.length === start ? `# owed-template/v1/evidence-json\nnode -e ${templateQuote(script)} -- ${[path, ...required].map(templateQuote).join(' ')}` : '' };
+    return { run: errors.length === start ? `# owed-template/v${CHECK_TEMPLATE_VERSION}/evidence-json\nnode -e ${templateQuote(script)} -- ${[path, ...required].map(templateQuote).join(' ')}` : '' };
   }
   const min = c.min_ok;
   if (typeof min !== 'number' || !Number.isSafeInteger(min) || min < 0) errors.push(`${p}.min_ok: expected integer >= 0`);
@@ -334,7 +334,7 @@ function expandCheckTemplate(c: Record<string, unknown>, p: string, errors: stri
     const pattern = prefix?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     command = `node --test --test-reporter=tap${pattern === undefined ? '' : ` --test-name-pattern=${templateQuote(`^${pattern}`)}`} -- ${files.map(templateQuote).join(' ')}`;
   }
-  return { run: errors.length === start ? `# owed-template/v1/${c.template}\nset -o pipefail; ${command} | ${templateCounter(c.template === 'cargo-tests' ? 'cargo' : 'tap', min as number)}` : '', ...(typeof min === 'number' ? { min_tests: min } : {}) };
+  return { run: errors.length === start ? `# owed-template/v${CHECK_TEMPLATE_VERSION}/${c.template}\nset -o pipefail; ${command} | ${templateCounter(c.template === 'cargo-tests' ? 'cargo' : 'tap', min as number, c.template === 'node-tap' ? c.files as string[] : [])}` : '', ...(typeof min === 'number' ? { min_tests: min } : {}) };
 }
 export function parsePlan(text: string): Plan {
   const errors: string[] = [];

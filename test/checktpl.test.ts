@@ -1,14 +1,16 @@
 // CT1: plan templates exercise the same CLI, observations, keys and receipt paths as handwritten checks.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
 import { candidateFacts, stateFacts } from '../src/git.ts';
-import { parsePlan } from '../src/plan.ts';
+import * as templatePlan from '../src/plan.ts';
+const { parsePlan, CHECK_TEMPLATE_VERSION, isCheckTemplateRun } = templatePlan;
 import type { ObsEntry } from '../src/types.ts';
 
 const cargoWrapper = { exec: { wrap: ['bash', '-c', 'cargo() { node test/cargo.cjs "$@"; }; export -f cargo; exec "$@"', '--'] } };
@@ -66,6 +68,43 @@ test('CT1 node-tap: multiple files exclude empty wrappers and a timeout remains 
   try { assert.equal(f.result.accepted, true); assert.equal(observation(f).counts?.pass, 1); } finally { await f.cleanup(); }
   const timeout = await measured({ template: 'node-tap', files: ['test/gate.mjs'], min_ok: 1, timeout_s: 1 }, { 'test/gate.mjs': "import test from 'node:test';test('hangs',async()=>{await new Promise(r=>setTimeout(r,10000))});" });
   try { assert.equal(timeout.result.accepted, false); assert.equal(observation(timeout).verdict, 'error'); assert.match(observation(timeout).note!, /timeout/); } finally { await timeout.cleanup(); }
+});
+
+test('CT1 node-tap: unfiltered empty files fail and mixed files count only real tests', async () => {
+  for (const empty of ['', "console.log('diagnostic only');"]) {
+    const f = await measured({ template: 'node-tap', files: ['test/empty.mjs'], min_ok: 1 }, { 'test/empty.mjs': empty });
+    try { assert.equal(f.result.accepted, false); assert.equal(observation(f).verdict, 'fail'); assert.equal(observation(f).counts?.pass, 0); assert.equal(observation(f).counts?.tests, 0); } finally { await f.cleanup(); }
+  }
+  const mixed = await measured({ template: 'node-tap', files: ['test/empty.mjs', 'test/real.mjs'], min_ok: 1 }, { 'test/empty.mjs': '', 'test/real.mjs': nodeCheck('real') });
+  try { assert.equal(mixed.result.accepted, true); assert.equal(observation(mixed).counts?.pass, 1); assert.equal(observation(mixed).counts?.tests, 1); } finally { await mixed.cleanup(); }
+  // A path-like title is ambiguous with a wrapper: conservatively do not count it.
+  const ambiguous = await measured({ template: 'node-tap', files: ['test/real.mjs'], min_ok: 1 }, { 'test/real.mjs': nodeCheck('test/looks-like-file.mjs') });
+  try { assert.equal(ambiguous.result.accepted, false); assert.equal(observation(ambiguous).counts?.pass, 0); } finally { await ambiguous.cleanup(); }
+});
+
+test('CT1 version constant alone changes generated commands, recognition and check/invariant keys', async () => {
+  const r = await repo();
+  try {
+    await r.put('src/value', 'base'); const commit = await r.commit();
+    const sourceURL = new URL('../src/plan.ts', import.meta.url);
+    const source = await readFile(sourceURL, 'utf8');
+    // Import an isolated copy, changing ONLY the version constant; never mutate the tested source tree.
+    const changed = source.replace(/export const CHECK_TEMPLATE_VERSION = \d+;/, `export const CHECK_TEMPLATE_VERSION = ${CHECK_TEMPLATE_VERSION + 1};`);
+    assert.notEqual(changed, source, 'version constant must exist');
+    const resolved = changed.replace(/from '(\.[^']+|yaml)'/g, (_all, spec: string) => `from '${spec === 'yaml' ? import.meta.resolve('yaml') : new URL(spec, sourceURL).href}'`);
+    const path = join(r.root, 'plan-next.ts'); await writeFile(path, resolved);
+    const next = await import(pathToFileURL(path).href) as typeof import('../src/plan.ts');
+    assert.equal(next.CHECK_TEMPLATE_VERSION, CHECK_TEMPLATE_VERSION + 1);
+    for (const check of [{ template: 'node-tap', files: ['test/gate.mjs'], min_ok: 1 }, { template: 'cargo-tests', package: 'pkg', min_ok: 1 }, { template: 'evidence-json', path: 'data.json', required: ['value'] }]) {
+      const before = parsePlan(planText(check)), after = next.parsePlan(planText(check));
+      const run = before.nodes[0]!.checks[0]!.run, nextRun = after.nodes[0]!.checks[0]!.run;
+      assert.ok(run.startsWith(`# owed-template/v${CHECK_TEMPLATE_VERSION}/`));
+      assert.equal(nextRun, run.replace(`# owed-template/v${CHECK_TEMPLATE_VERSION}/`, `# owed-template/v${next.CHECK_TEMPLATE_VERSION}/`));
+      assert.ok(isCheckTemplateRun(run)); assert.ok(next.isCheckTemplateRun(nextRun)); assert.equal(next.isCheckTemplateRun(run), false);
+      assert.notEqual((await candidateFacts(r.cwd, before, before.nodes[0]!, commit, commit, 1)).keys['check:gate'], (await candidateFacts(r.cwd, after, after.nodes[0]!, commit, commit, 1)).keys['check:gate']);
+      assert.notEqual((await stateFacts(r.cwd, parsePlan(planText(check, true)), commit)).invKeys.gate, (await stateFacts(r.cwd, next.parsePlan(planText(check, true)), commit)).invKeys.gate);
+    }
+  } finally { await r.cleanup(); }
 });
 
 test('CT1 cargo-tests: package, optional target and multiple filters are quoted argv; counts exclude ignored tests', async () => {
