@@ -82,10 +82,13 @@ test('MS1 ruling: with repeat, remeasured runs are pooled (passes*N >= K*total),
     let s = (await ops.readState({ cwd: r.cwd })).state, m = { facts: s.nodes.a!.candidate!, state: { commit: '', tree: '', invKeys: { x: key } } };
     const itemOf = (st: typeof s) => reducer.mergeGuard(st, 'a', m as never).invItems[0]!;
     assert.equal(itemOf(s).mark, '✘'); assert.match(itemOf(s).detail, /pooled 1\/3 runs on this key \(need 1\/2\)/);
-    // Still failing: the latest observation passed, so the default remeasure has nothing to do; --all measures again.
-    await ops.attest({ cwd: r.cwd, node: 'a', remeasure: true, all: true });
+    // Still failing by the pool although the latest observation passed: the default remeasure measures it again.
+    await ops.attest({ cwd: r.cwd, node: 'a', remeasure: true });
     s = (await ops.readState({ cwd: r.cwd })).state;
     assert.equal(itemOf(s).status, 'E'); assert.match(itemOf(s).detail, /satisfied; pooled 2\/4 runs on this key \(need 1\/2\)/);
+    // Now passing by the pool: the default remeasure selects nothing, --all still selects it.
+    assert.deepEqual(reducer.remeasureJobs(s, 'a', m as never).map(j => j.obligation), []);
+    assert.deepEqual(reducer.remeasureJobs(s, 'a', m as never, true).map(j => j.obligation), ['inv:x']);
     const done = await ops.merge({ cwd: r.cwd, node: 'a', as: parent });
     assert.equal(done.entry.kind, 'merge');
   } finally { await r.cleanup(); }

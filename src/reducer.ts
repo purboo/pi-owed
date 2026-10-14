@@ -1533,19 +1533,20 @@ export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; stat
   }
   return jobs;
 }
-/** MS1: the latest observation with a verdict (non-error, counted) of one item, if any. */
-function latestVerdict(s: State, subject: string, obligation: string, key: string): ObsEntry | undefined {
-  return counted(s, subject, obligation, key).findLast(e => e.verdict !== 'error');
+/** MS1: whether an item still fails on its key: its latest verdict failed, or (repeat) its pooled runs fail. */
+function remeasureWanted(s: State, subject: string, obligation: string, key: string): boolean {
+  const obs = counted(s, subject, obligation, key);
+  return obs.findLast(e => e.verdict !== 'error')?.verdict === 'fail' || pooledRuns(s, subject, obligation, obs)?.pass === false;
 }
 /**
  * MS1: remeasure jobs of node `id` on its merge facts `m`: every invariant whose latest observation on the merge key
- * failed (`all`: every invariant), measured again on the merge commit and recorded on the same key.
+ * failed or whose pooled repeat runs fail (`all`: every invariant), measured again on the merge commit and recorded on the same key.
  */
 export function remeasureJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }, all = false): AttestJob[] {
   if (!s.nodes[id]?.candidate) throw new OwedError(`Node ${id} has no current candidate`);
   return s.plan.invariants.flatMap(i => {
     const key = m.state.invKeys[i.id], o = `inv:${i.id}`;
-    if (!key || !(all || latestVerdict(s, 'trunk', o, key)?.verdict === 'fail')) return [];
+    if (!key || !(all || remeasureWanted(s, 'trunk', o, key))) return [];
     return [quarantinedJob(s, job(undefined, 'trunk', o, key, m.state.commit, m.state.commit, s.plan)!, id)];
   });
 }
@@ -1553,7 +1554,7 @@ export function remeasureJobs(s: State, id: string, m: { facts: CandidateFacts; 
 export function trunkRemeasureJobs(s: State, all = false): AttestJob[] {
   return s.plan.invariants.flatMap(i => {
     const key = s.trunk.invKeys[i.id], o = `inv:${i.id}`;
-    if (!key || !(all || latestVerdict(s, 'trunk', o, key)?.verdict === 'fail')) return [];
+    if (!key || !(all || remeasureWanted(s, 'trunk', o, key))) return [];
     return [quarantinedJob(s, job(undefined, 'trunk', o, key, s.trunk.commit, s.trunk.commit, s.plan)!)];
   });
 }

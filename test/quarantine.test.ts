@@ -47,7 +47,7 @@ test('MS4: plan validation, owner-only additions, free removal, edit path', () =
   assert.match(editText(JSON.stringify(raw()), { invariant: 'unit', set: [`quarantine=${JSON.stringify(Q)}`] }), /flaky one/);
 });
 
-test('MS4 fail-closed (#1907 ruling): excused only for one complete runner invocation with its test-failure exit', () => {
+test('MS4 fail-closed (#1907/#1925 rulings): excused only for a plain complete `node --test` run that exits 1', () => {
   const q = [{ test: 'flaky one', fix: 'fix' }], run = 'node --test --test-reporter=tap test/suite.test.cjs';
   const tapLog = 'TAP version 13\nnot ok 1 - flaky one\nok 2 - other\n1..2\n# tests 2\n# pass 1\n# fail 1\n';
   const tap = { format: 'tap', tests: 2, pass: 1, fail: 1 }, r = { code: 1, log: tapLog };
@@ -55,9 +55,11 @@ test('MS4 fail-closed (#1907 ruling): excused only for one complete runner invoc
   const why = (...a: Parameters<typeof quarantineExcuse>) => quarantineExcuse(...a).reason;
   assert.equal(why(q, run, r, tap, ['Flaky one']), '1 failing test is not quarantined', 'exact names only');
   assert.equal(why(q, run, r, { ...tap, fail: 2 }, ['flaky one']), '2 failing tests but 1 failing names');
-  // Reviewer's reproduction: the compound command's own exit is not the runner's.
-  for (const c of [`${run}; exit 3`, `${run} && verify`, `${run} || true`, `${run} | tee log`, `${run} &`, `${run}\nexit 3`, `x=$(true) ${run}`, `\`true\` ${run}`, `${run} "unterminated`]) assert.equal(why(q, c, r, tap, ['flaky one']), 'compound command', c);
-  assert.deepEqual(quarantineExcuse(q, `${run} --test-name-pattern='a;b|c' "x && y"`, r, tap, ['flaky one']).excused, q, 'quoted operators are one invocation');
+  // Allowlist (rulings 2): only a plain `node --test` run; wrappers, quoting, $'…', redirection and operators are not.
+  const unknown = [`${run}; exit 3`, `${run} && verify`, `${run} || true`, `${run} | tee log`, `${run} &`, `${run}\nexit 3`, `x=$(true) ${run}`, `\`true\` ${run}`,
+    'npm test', 'pnpm test', 'bash scripts/ci.sh', 'sh -c node', `node --test $'\\'' ; exit 3 ; '`, `${run} --test-name-pattern='a b'`, `${run} "x"`, `${run} > out.log`, `${run} 2>&1`, 'node test/x.test.ts', 'nodejs --test x', `${run}\\ x`];
+  for (const c of unknown) assert.equal(why(q, c, r, tap, ['flaky one']), 'not a known test runner', c);
+  for (const c of ['node --test --test-reporter=tap test/x.test.ts', `FOO=1 ${run}`, `FOO=1 BAR=a:b ${run}`, `  ${run}  --test-concurrency=2`]) assert.deepEqual(quarantineExcuse(q, c, r, tap, ['flaky one']).excused, q, c);
   assert.equal(why(q, run, { code: 3, log: tapLog }, tap, ['flaky one']), 'exit 3 is not a test failure');
   assert.match(why(q, run, { code: null, error: 'timeout after 5s', log: tapLog }, tap, ['flaky one'])!, /did not complete/);
   assert.equal(why(q, run, { code: 1, log: 'not ok 1 - flaky one\n# tests 2\n# fail 1\n' }, tap, ['flaky one']), 'no TAP plan');
@@ -66,14 +68,10 @@ test('MS4 fail-closed (#1907 ruling): excused only for one complete runner invoc
   // min_tests: the remaining tests must still meet it, else the run fails as without quarantine.
   assert.equal(why(q, run, r, tap, ['flaky one'], 2), '1 tests left, below min_tests 2');
   assert.deepEqual(quarantineExcuse(q, run, r, tap, ['flaky one'], 1).excused, q);
-  // cargo: exit 101, --no-fail-fast, every test binary has its summary, no build error.
-  const cargoLog = '     Running unittests src/lib.rs (target/x)\ntest flaky one ... FAILED\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured\n   Doc-tests crate\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured\n';
-  const cargo = { format: 'cargo', tests: 2, pass: 1, fail: 1 }, cr = { code: 101, log: cargoLog };
-  assert.deepEqual(quarantineExcuse(q, 'cargo test --no-fail-fast', cr, cargo, ['flaky one']).excused, q);
-  assert.equal(why(q, 'cargo test', cr, cargo, ['flaky one']), 'cargo without --no-fail-fast');
-  assert.equal(why(q, 'cargo test --no-fail-fast', { code: 1, log: cargoLog }, cargo, ['flaky one']), 'exit 1 is not a test failure');
-  assert.equal(why(q, 'cargo test --no-fail-fast', { code: 101, log: cargoLog.replace(/test result: ok.*\n$/, '') }, cargo, ['flaky one']), 'cargo ran 2 test targets but printed 1 test results');
-  assert.equal(why(q, 'cargo test --no-fail-fast', { code: 101, log: `error: could not compile \`b\`\n${cargoLog}` }, cargo, ['flaky one']), 'cargo build error');
+  // cargo is never excused in 0.20 (backlog).
+  const cargoLog = 'test flaky one ... FAILED\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured\n';
+  const cargo = { format: 'cargo', tests: 2, pass: 1, fail: 1 };
+  for (const c of ['cargo test --no-fail-fast', 'cargo test', 'cargo +nightly test --no-fail-fast']) assert.equal(why(q, c, { code: 101, log: cargoLog }, cargo, ['flaky one']), 'cargo runs are not excused in 0.20', c);
   assert.deepEqual(quarantineExcuse([], run, r, tap, ['flaky one']), {});
   assert.deepEqual(quarantineExcuse(q, run, { code: 0, log: '' }, { format: 'tap', tests: 2, pass: 2, fail: 0 }, []), {}, 'a passing run needs no excuse');
 });
@@ -139,7 +137,7 @@ test('MS4/MS5: active quarantine excuses only its name, joins the key, shows as 
   } finally { await r.cleanup(); }
 });
 
-test('MS4 fail-closed: a compound command (`...; exit 3`) is not excused and why says so', { timeout: 120_000 }, async () => {
+test('MS4 fail-closed: `...; exit 3` is not a known test runner: not excused, and why says so', { timeout: 120_000 }, async () => {
   const r = await repo();
   try {
     await r.put('test/suite.test.cjs', suite); await r.put('test/broken', 'x'); await r.put('src/v', '0'); await r.commit();
@@ -154,6 +152,6 @@ test('MS4 fail-closed: a compound command (`...; exit 3`) is not excused and why
     assert.equal(obs.verdict, 'fail'); assert.equal(obs.exit, 3); assert.equal(obs.quarantined, undefined);
     assert.deepEqual(obs.failed, ['flaky one']);
     const why = (await cli(r.cwd, ['why', 'other'])).stdout;
-    assert.match(why, /other\/check:c/); assert.match(why, /note #\d+:\n {4}quarantine not applied: compound command; failed tests:/);
+    assert.match(why, /other\/check:c/); assert.match(why, /note #\d+:\n {4}quarantine not applied: not a known test runner; failed tests:/);
   } finally { await r.cleanup(); }
 });
