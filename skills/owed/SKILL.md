@@ -27,7 +27,7 @@ Default `owed status` / `owed_status` shows outcome, parent/owner next actions, 
 In 0.16, status/brief keep current-attempt recorded defers visible when rechecking is blocked: `owner defer (not rechecked: trunk moved)` or `(not rechecked: merge conflicts)`; JSON `deferred[].unverified` is `drift` or `conflict`. These are unverified debt, never acceptance evidence.
 After an upgrade, the pi restart hint appears once per session per installed version; full status and mismatch refusals retain it.
 
-Merge order (0.16): `status --full` lists `Merge queue` (JSON `mergeQueue`); accepted attempts use derived `acceptedSince` FIFO, with outstanding `resume X --after Y` targets first, then dependent count and id for ties. Use `resume --after` to prioritize an accepted fix without changing the plan; replacement resumes or closed waits remove that priority, and all gates still apply.
+Merge order (0.20): `status --full` lists `Merge queue` (JSON `mergeQueue`); accepted attempts order by unique unfinished transitive dependent count descending, then continuous `acceptedSince` oldest first and id. `resume --after` waits for dependencies, not a priority override; all gates still apply.
 
 For measured workflow outcomes, use `owed report --metrics [--since seq|ISO] [--until seq|ISO] [--json]` (0.15): merged nodes, interruptions/merge, decision vs no-decision halts, merge timing, first-pass acceptance and repairs/merge, computed only from the ledger and plan blobs; since is exclusive, until inclusive.
 
@@ -35,6 +35,39 @@ In 0.17, use `parentActs.perMergedNode` as the gate metric: all non-driver owner
 
 In 0.16, metrics `--since`/`--until` also accept date-only `YYYY-MM-DD` at UTC midnight.
 Metrics halt groups preserve plain-word node ids in prose; they normalize only in node positions (start before `:`, before `/`, after `node ` or `--after `, or the argument of `owed <verb> `).
+
+## 0.20 agent quick rules
+
+- Upgrade every driver, CLI and pi plugin together; optional new fields/plan keys add no entry kind but old readers can ignore, misread or refuse them.
+- Use `owed_attest {node, remeasure:true}` / `owed attest <node> --remeasure` for same-key merge invariant remeasurement, not candidate checks; `all:true` / `--all` measures all invariants.
+- Use `trunk:true, remeasure:true` / `attest --trunk --remeasure` to remeasure failed current trunk keys after refresh.
+- Use `owed_resume {node, remeasure:true}` for one driver remeasure before retrying merge; do not combine hold release with remeasure.
+- Read reused seq/age hints before retrying; without repeat a new pass plus old fail still requires the owner.
+- Repeat pools every non-error run on a key: `passes*N >= K*total`; old multi-observation repeat ledgers can replay former conflicts as pass/fail.
+- Only the owner adds/reassigns `quarantine: [{test,fix,note?}]`; exact names leave counts until fix merge, whose own merge must repair them.
+- Quarantine excuses only plain allowlisted `node --test`, exit 1, complete TAP, all failures named/quarantined and remaining `min_tests`; never cargo, templates, red/mutants or crashes/timeouts.
+- Read quarantine Debt in status/brief/report and `why <fix>` for the entries that fix will lift.
+- Use `cargo-tests` / `node-tap` / `evidence-json` templates instead of run; inspect the versioned expanded receipt command and set reads/red tests explicitly.
+- Template `min_ok` counts successful tests only, excluding skips/ignored tests and empty input-file wrappers; path-shaped real test titles still count.
+- Evidence JSON templates require own-field presence, not truthiness; invalid JSON/missing fields fail.
+- Rebase when moved-trunk merge-tree breaks lead with `merge tree does not pass`; new candidate tests use the slot base, not trunk probes.
+- Submit a new candidate to avoid old-candidate merge-block driver halts; existing blocks still bind until properly cleared.
+- Trust `known intermittent` only with same-key pass/fail or same-signature trunk proof; defer carry requires complete named test-only failures/signatures and current min_tests.
+- `repairing (block #S)` hides Needs you only without an owner-needed condition; guidance precedes any explicitly labelled valid-block override.
+- Owner approval after dependencies/resume waits is not actionable until they merge; only ⊤ review says an owner decision is needed.
+- Read the plan receipt before its board; use `owed_why {full:true}` / `why --full` for quiet weak-confirmation history, and expect each wake reason once.
+- On `rebase pending`, commit work first, then use owed's computed `git rebase --onto <base> <upstream>` command; never guess upstream or stash per packet.
+- Let merge-ready critical-path nodes preempt only driver-owned trunk attest/sweeps; status shows merge/measure wait reason and continuous acceptance age.
+- Set submit/review `model` / `--model` to actual used model when known; why reports unknown and matching/selected-model mismatch warnings without changing gates.
+- Ordinary rules/answers immediately notify running roles; audit delivery/failure receipts and exact answer retry command, with no notification retry loop or implicit ack.
+- Do not amend paths fully covered by allow.writes: edit task-needed files freely and let owed grant them during measurement.
+- Batch `owed resume A,B,C` / `owed_resume {node:["A","B","C"]}` is atomic with shared options; any member refusal records nothing.
+- Use parentActs.byNode/perMergedNodeAttributed/pending/unattributed to audit per-node effort; resume batches count as one act.
+- Treat critical-path write overlap warnings on plan/edit dry-run as guidance to add deps, never acceptance evidence.
+- Attest codes are 0 done, 1 newly recorded fail (including known_red), 4 obligations open without a new fail, 2 usage, 3 internal, 75 busy; driver halts on internal errors.
+- Omitted review ack derives only a byte-exact complete prefix of applicable pre-launch rulings in the current driver reviewer packet; later/missing rulings still owe ack.
+- Edit brief text with multiline/equals/colon content literally; empty briefs still refuse.
+- Unlocked Ledger.read ignores only a final fragment without newline; locked reads and malformed complete lines still fail, and other readers/stronger runner restrictions remain backlog.
 
 1. Use `owed_status` (CLI `owed status`) to inspect ready nodes and pending queues. Dependencies must have merge records before dispatch; a verbal claim of completion is not a receipt.
 2. Use `owed_dispatch` to dispatch a ready node. Pass its `subagents` object to subagents/dsa: `agent: worker`, `cwd` must be the slot worktree, `isolation: none`, and `task` must contain the complete packet. owed has already created an isolated worktree; do not add another isolation layer.
@@ -65,7 +98,7 @@ Merge refusals (0.16), driver merge-refused halts and `why` blocks name other-tr
 
     Answers (0.16): an open question uses dsa's current rev; with none open, `--rev N` / tool `rev` (positive integer) retries that prior revision, otherwise the latest rid/qid rule. Re-asks get a new rule/request even for identical text; same-rev different text refuses. Retry hints include `--rev`. Re-ask rules carry `supersedes` (latest prior answer seq, lower rev); ledgers then require every reader to use 0.16 (0.15 refuses with `version`).
 
-    Notices (0.15): ledger answers keep queued asking runs quiet; `drive.answer_grace_s` (seconds, default 900) gives one exact retry reminder per rid/qid if still open. Earlier-driver terminal lines ride along while a newer owner runs. Wakes lead with `Needs you`, `Done` and whether the driver continues; all original commands and mechanics remain in `Details:`, with `Next:` last.
+    Notices (0.20): ledger answers keep queued asking runs quiet; `drive.answer_grace_s` (seconds, default 900) gives one exact retry reminder per rid/qid if still open. Earlier-driver terminal lines ride along while a newer owner runs. Wakes lead with `Needs you`, `Done` and whether the driver continues; reasons/commands appear once without the repeating Details block, with `Next:` last.
 
     Measurements (0.7): the driver runs attests and merges in the background while it serves other nodes: at most `drive.measure` at once (plan `drive:` key, default 2) and one merge. A busy attest (machine lease, or another attest of the node running) is retried on a later pass, never a halt. `owed_drive` status and `/owed` list what is in flight (`<node> attest|merge since <time>`). Stop waits for in-flight measurements; `now` aborts them.
 
