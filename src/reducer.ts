@@ -2,7 +2,7 @@ import { matchesGlob } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
-import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades, matchesAny } from './plan.ts';
+import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades, quarantineDowngrades, activeQuarantine, quarantineNames, type QuarantineNames, matchesAny } from './plan.ts';
 import { execKey } from './git.ts';
 import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
 
@@ -158,6 +158,15 @@ export function activeKnownRed(s: State, invId: string, merging?: string): { tes
 export function fixOwnedKnownRed(s: State, invId: string, merging: string): string[] {
   return (s.plan.invariants.find(i => i.id === invId)?.known_red ?? []).filter(e => e.fix === merging).map(e => e.test);
 }
+/** MS4: the quarantine names of keys computed on state `s` (a fix that merged or left the plan is inactive; `merging` counts as merged). */
+export function stateQuarantine(s: State, merging?: string): QuarantineNames { return quarantineNames(s.plan, id => !!s.nodes[id]?.merged, merging); }
+/** MS4: the active quarantine entries of `spec` on state `s`. */
+export function activeQuarantineOf(s: State, spec: CheckSpec, merging?: string): import('./types.ts').QuarantineEntry[] { return activeQuarantine(s.plan, spec, id => !!s.nodes[id]?.merged, merging); }
+/** MS4: `j` with the active quarantine entries of its spec (the executor applies them only when the key commits to them). */
+export function quarantinedJob(s: State, j: AttestJob, merging?: string): AttestJob {
+  const q = j.spec && (j.kind === 'check' || j.kind === 'inv') ? activeQuarantineOf(s, j.spec, merging) : [];
+  return q.length ? { ...j, quarantined: q } : j;
+}
 /** Seq of the current plan law (genesis or latest plan), never part of an obligation key. */
 export function knownRedPlanSeq(s: State): number { return context(s).lastPlan ?? context(s).genesis?.seq ?? -1; }
 function knownRedItem(s: State, obligation: string, failures: ObsEntry[], merging?: string): string | undefined {
@@ -166,11 +175,29 @@ function knownRedItem(s: State, obligation: string, failures: ObsEntry[], mergin
   const fixes = [...new Set(entries.filter(e => names.includes(e.test)).map(e => e.fix))];
   return `${obligation} known red: ${names.join(', ')} (fix: ${fixes.join(', ')}; plan #${knownRedPlanSeq(s)})`;
 }
+/** The check or invariant spec an execution obligation of `subject` runs under in the current plan. */
+function execSpec(s: State, subject: string, obligation: string): CheckSpec | undefined {
+  const id = obligation.slice(obligation.indexOf(':') + 1);
+  return subject === 'trunk' ? (obligation.startsWith('inv:') ? s.plan.invariants.find(i => i.id === id) : undefined) : obligation.startsWith('check:') ? nodeSpec(s, subject)?.checks.find(c => c.id === id) : undefined;
+}
+/**
+ * MS1 (parent ruling 10-15): with `repeat {runs: N, need: K}`, every run of every non-error observation on one key is
+ * pooled (an observation without runs is one run): the item passes iff passes*N >= K*total, else it fails (never ⊤).
+ * Undefined without repeat or without a verdict; `text` only when more than one observation is pooled.
+ */
+function pooledRuns(s: State, subject: string, obligation: string, obs: ObsEntry[]): { pass: boolean; text?: string } | undefined {
+  const repeat = execSpec(s, subject, obligation)?.repeat, voted = obs.filter(e => e.verdict !== 'error');
+  if (!repeat || !voted.length) return undefined;
+  const runs = voted.flatMap(e => e.runs?.length ? e.runs.map(r => r.verdict) : [e.verdict]), passes = runs.filter(v => v === 'pass').length;
+  const need = repeat.need ?? repeat.runs, pass = passes * repeat.runs >= need * runs.length;
+  return { pass, ...(voted.length > 1 ? { text: `pooled ${passes}/${runs.length} runs on this key (need ${need}/${repeat.runs})` } : {}) };
+}
 function item(s: State, subject: string, obligation: string, key: string, merging?: string, pending?: ObsEntry): ItemView {
   const node = s.nodes[subject];
   const spec = nodeSpec(s, subject);
   const blocks = node?.blocks.filter(b => b.obligation === obligation && active(b)) ?? [];
   const out: ItemView = { subject, obligation, key, status: 'D', mark: '⊥', discharger: 'executor', evidence: [], detail: `${obligation} awaiting observation` };
+  let pooled: string | undefined;
   if (!key) return { ...out, detail: subject === 'trunk' && obligation.startsWith('inv:') ? `${obligation} not measured on trunk yet — owed attest --trunk` : `${obligation} missing fact key` };
   if (obligation === 'review' || obligation === 'closure-review') {
     const rank = obligation === 'closure-review' ? 2 : spec?.review.min_rank ?? 1;
@@ -206,14 +233,16 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
   } else {
     const obs = counted(s, subject, obligation, key);
     if (pending) obs.push(pending);
-    const pass = obs.some(e => e.verdict === 'pass');
-    const fail = obs.some(e => e.verdict === 'fail');
+    const pool = pooledRuns(s, subject, obligation, obs);
+    if (pool) pooled = pool.text;
+    const pass = pool ? pool.pass : obs.some(e => e.verdict === 'pass');
+    const fail = pool ? !pool.pass : obs.some(e => e.verdict === 'fail');
     out.evidence = obs.map(e => e.seq);
     if (pass && fail) Object.assign(out, { mark: '⊤', discharger: 'owner', detail: `${obligation} conflicting pass and fail observations on the same key` });
     else if (fail) {
       const detail = subject === 'trunk' && obligation.startsWith('inv:') ? knownRedItem(s, obligation, obs.filter(e => e.verdict === 'fail'), merging) : undefined;
       if (detail) return { ...out, status: 'W', mark: '⚠', discharger: undefined, detail, evidence: [...out.evidence, knownRedPlanSeq(s)] };
-      Object.assign(out, { mark: '✘', discharger: 'writer', detail: `${obligation} current content failed` });
+      Object.assign(out, { mark: '✘', discharger: 'writer', detail: `${obligation} current content failed${pooled ? `; ${pooled}` : ''}` });
     }
     else if (pass) out.status = 'E';
   }
@@ -225,7 +254,7 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
     out.discharger = out.mark === '⊤' || blocks.some(b => b.state === 'flaky' || (b.kind === 'judgment' && (b.rank ?? 0) >= 2)) ? 'owner' : blocks.some(b => b.kind === 'judgment') ? 'reviewer' : currentFailed ? 'writer' : 'executor';
     out.detail = `${obligation} still blocked: ${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' flaky' : ''}`).join(', ')}`;
   }
-  if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied${isManual(obligation) ? ' (manual)' : ''}` };
+  if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied${isManual(obligation) ? ' (manual)' : ''}${pooled ? `; ${pooled}` : ''}` };
   if (subject !== 'trunk' && !obligation.startsWith('inv:')) {
     const waiver = listed(context(s).waives, subject).findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
     if (waiver?.kind === 'waive') return { ...out, status: 'W', mark: '⚠', discharger: undefined, evidence: [...out.evidence, waiver.seq], detail: `${obligation} owner waived: ${waiver.reason}${waiver.channel === 'flag' ? ' (flag weak confirmation)' : waiver.channel === 'delegated' ? ' (delegated)' : ''}` };
@@ -361,7 +390,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -389,6 +418,7 @@ export function newerEntry(e: Entry): OwedError | undefined {
     if (extra) return refuse(`resume ${extra}`);
     if (x.release !== undefined && x.release !== 'hold') return refuse(`resume release ${shown(x.release)}`);
     if (x.expect !== undefined && x.expect !== 'report') return refuse(`resume expect ${shown(x.expect)}`);
+    if (x.remeasure !== undefined && x.remeasure !== true) return refuse(`resume remeasure ${shown(x.remeasure)}`);
     if (x.after !== undefined && typeof x.after !== 'string' && (!Array.isArray(x.after) || x.after.some(v => typeof v !== 'string'))) return refuse('resume after shape');
   }
   return undefined;
@@ -878,7 +908,7 @@ const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64
  */
 function execChanged(prev: Plan, next: Plan): boolean { return canonical(execKey(prev) ?? {}) !== canonical(execKey(next) ?? {}); }
 function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
-  const result: Downgrade[] = knownRedDowngrades(prev, next);
+  const result: Downgrade[] = [...knownRedDowngrades(prev, next), ...quarantineDowngrades(prev, next)];
   const add = (node: string, what: string): void => { result.push({ node, what }); };
   const checks = (node: string, a: Plan['invariants'], b: Plan['invariants']): void => {
     for (const c of a) {
@@ -1122,6 +1152,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         const ex = measured.execution;
         if (ex !== undefined && (!ex || typeof ex !== 'object' || Array.isArray(ex) || typeof ex.completed !== 'boolean' || typeof ex.countOK !== 'boolean' || Object.keys(ex).some(k => !['completed','countOK'].includes(k)))) errors.push('obs execution must be {completed, countOK} booleans');
       }
+      if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
       break;
     case 'review':
       allow('reviewer', 'owner'); slot(); current(d.obligation, d.key, true);
@@ -1270,6 +1301,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.expect !== undefined && d.expect !== 'report') errors.push('resume expect must be report');
       if (d.batch !== undefined) errors.push(...resumeBatchErrors(s,d));
       if (d.note !== undefined && typeof d.note !== 'string') errors.push('resume note must be a string');
+      if (d.remeasure !== undefined && (d.remeasure !== true || d.release === 'hold')) errors.push('resume remeasure must be true and only on an open slot');
       break;
     case 'halt':
       allow('parent'); slot();
@@ -1343,7 +1375,7 @@ function resumeBatchErrors(s: State, d: Extract<Draft,{kind:'resume'}>): string[
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch', 'remeasure'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
@@ -1427,13 +1459,13 @@ export function attestJobs(s: State, id: string): AttestJob[] {
     seen.add(token);
     const plan = obsPlan(context(s), b.seq)!;
     const j = job(plan.nodes.find(x => x.id === id), id, b.obligation, b.key, e.commit, e.base ?? e.commit, plan);
-    if (j) jobs.push({ ...j, attribution: true });
+    if (j) jobs.push(quarantinedJob(s, { ...j, attribution: true }));
   }
   if (n.candidate && n.slot?.open) for (const o of required(nodeSpec(s, id)!, n.candidate)) {
     const key = n.candidate.keys[o];
     if (!key || hasVerdict(s, id, o, key)) continue;
     const j = job(nodeSpec(s, id), id, o, key, n.candidate.commit, n.slot.base, s.plan);
-    if (j) jobs.push(j);
+    if (j) jobs.push(quarantinedJob(s, j));
   }
   return jobs;
 }
@@ -1446,7 +1478,7 @@ export function trunkJobs(s: State): AttestJob[] {
   return s.plan.invariants.flatMap(i => {
     const key = s.trunk.invKeys[i.id], red = context(s).invRed?.get(`inv:${i.id}`);
     if (!key || red?.kind !== 'refresh' || red.key !== key || !listed(context(s).bySeq, red.seq).some(e => e.kind === 'refresh' && e.commit === s.trunk.commit) || counted(s, 'trunk', `inv:${i.id}`, key).some(e => e.commit === s.trunk.commit && e.verdict !== 'error')) return [];
-    return [job(undefined, 'trunk', `inv:${i.id}`, key, s.trunk.commit, s.trunk.commit, s.plan)!];
+    return [quarantinedJob(s, job(undefined, 'trunk', `inv:${i.id}`, key, s.trunk.commit, s.trunk.commit, s.plan)!)];
   });
 }
 export function genesisJobs(s: State): AttestJob[] {
@@ -1455,7 +1487,7 @@ export function genesisJobs(s: State): AttestJob[] {
   return s.plan.invariants.flatMap(i => {
     const key = g.state.invKeys[i.id];
     if (!key || hasVerdict(s, 'trunk', `inv:${i.id}`, key)) return [];
-    return [job(undefined, 'trunk', `inv:${i.id}`, key, g.commit, g.commit, s.plan)!];
+    return [quarantinedJob(s, job(undefined, 'trunk', `inv:${i.id}`, key, g.commit, g.commit, s.plan)!)];
   });
 }
 /**
@@ -1493,20 +1525,53 @@ export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; stat
   const jobs: AttestJob[] = [];
   for (const c of spec.checks) {
     const o = `check:${c.id}`, key = m.facts.keys[o];
-    if (key && !hasVerdict(s, id, o, key)) jobs.push(job(spec, id, o, key, m.facts.commit, m.facts.base, s.plan)!);
+    if (key && !hasVerdict(s, id, o, key)) jobs.push(quarantinedJob(s, job(spec, id, o, key, m.facts.commit, m.facts.base, s.plan)!, id));
   }
   for (const i of s.plan.invariants) {
     const key = m.state.invKeys[i.id];
-    if (key && !hasVerdict(s, 'trunk', `inv:${i.id}`, key)) jobs.push(job(undefined, 'trunk', `inv:${i.id}`, key, m.state.commit, m.state.commit, s.plan)!);
+    if (key && !hasVerdict(s, 'trunk', `inv:${i.id}`, key)) jobs.push(quarantinedJob(s, job(undefined, 'trunk', `inv:${i.id}`, key, m.state.commit, m.state.commit, s.plan)!, id));
   }
   return jobs;
+}
+/** MS1: the latest observation with a verdict (non-error, counted) of one item, if any. */
+function latestVerdict(s: State, subject: string, obligation: string, key: string): ObsEntry | undefined {
+  return counted(s, subject, obligation, key).findLast(e => e.verdict !== 'error');
+}
+/**
+ * MS1: remeasure jobs of node `id` on its merge facts `m`: every invariant whose latest observation on the merge key
+ * failed (`all`: every invariant), measured again on the merge commit and recorded on the same key.
+ */
+export function remeasureJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }, all = false): AttestJob[] {
+  if (!s.nodes[id]?.candidate) throw new OwedError(`Node ${id} has no current candidate`);
+  return s.plan.invariants.flatMap(i => {
+    const key = m.state.invKeys[i.id], o = `inv:${i.id}`;
+    if (!key || !(all || latestVerdict(s, 'trunk', o, key)?.verdict === 'fail')) return [];
+    return [quarantinedJob(s, job(undefined, 'trunk', o, key, m.state.commit, m.state.commit, s.plan)!, id)];
+  });
+}
+/** MS1: `attest --trunk --remeasure`: current trunk invariant keys whose latest trunk observation failed (`all`: every one). */
+export function trunkRemeasureJobs(s: State, all = false): AttestJob[] {
+  return s.plan.invariants.flatMap(i => {
+    const key = s.trunk.invKeys[i.id], o = `inv:${i.id}`;
+    if (!key || !(all || latestVerdict(s, 'trunk', o, key)?.verdict === 'fail')) return [];
+    return [quarantinedJob(s, job(undefined, 'trunk', o, key, s.trunk.commit, s.trunk.commit, s.plan)!)];
+  });
+}
+/**
+ * MS2: the resume (with `remeasure`) whose remeasure the driver still owes on node `id`: the latest resume of the open
+ * attempt asks for it and no merge-tree observation of the node and no driver halt was recorded after it.
+ */
+export function remeasureDue(s: State, id: string): ResumeEntry | undefined {
+  const r = resumeOf(s, id);
+  if (!r?.remeasure) return undefined;
+  return context(s).entries.some(e => e.seq > r.seq && ((e.kind === 'obs' && e.merging === id) || (e.kind === 'halt' && e.node === id))) ? undefined : r;
 }
 /** Invariants of the plan whose key on the adopted state `st` lacks a verdict (key changed relative to the trunk, as for merge). */
 export function adoptJobs(s: State, st: StateFacts): AttestJob[] {
   return s.plan.invariants.flatMap(i => {
     const key = st.invKeys[i.id];
     if (!key || key === s.trunk.invKeys[i.id] || hasVerdict(s, 'trunk', `inv:${i.id}`, key)) return [];
-    return [job(undefined, 'trunk', `inv:${i.id}`, key, st.commit, st.commit, s.plan)!];
+    return [quarantinedJob(s, job(undefined, 'trunk', `inv:${i.id}`, key, st.commit, st.commit, s.plan)!)];
   });
 }
 export interface AdoptGuard { ok: boolean; reasons: string[]; failed: string[]; invItems: ItemView[] }
