@@ -177,6 +177,20 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string): { group
   }
   return { groups: [...groups.values()].sort((a, b) => b.names.length - a.names.length), hasError: [...picked.values()].some(p => !!p.message) };
 }
+/** AT4: a stable error signature: the first error line with hex ids, durations and temp paths masked. */
+export function errorSignature(message: string): string {
+  return message.replace(/\b(?:0x)?[0-9a-f]{8,}\b/gi, '<hex>').replace(/\b\d+(?:\.\d+)?\s*(?:ms|s)\b/g, '<t>').replace(/\/tmp\/[^\s'",)]+/g, '<tmp>');
+}
+/** AT4: keep the first signature seen per failed name of `obs` (at most 50), from the run log; names without error text get none. */
+function recordSignatures(obs: { failed?: string[]; signatures?: Record<string, string> }, log: string, names: readonly string[]): void {
+  if (!names.length) return;
+  const out = obs.signatures ?? {};
+  for (const g of groupsAt(log, names).groups) {
+    if (g.message === '(no error text)') continue;
+    for (const name of g.names) if (out[name] === undefined && obs.failed?.includes(name)) out[name] = errorSignature(g.message);
+  }
+  if (Object.keys(out).length) obs.signatures = out;
+}
 /** FG1: distinct errors, most common first, then first appearance; no ambient cwd or state. */
 export function errorGroups(log: string, failed: readonly string[]): ErrorGroup[] { return groupsAt(log, failed).groups; }
 function failedTests(log: string, failed: readonly string[], cwd: string): string {
@@ -334,6 +348,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
         if (runFailed.length) failureLogs.push(result.log);
         if (failed.size) obs.failed = [...failed];
+        recordSignatures(obs, result.log, runFailed);
         // IR2: facts about this run remain independent of failure names and display-note separators.
         const execution = { completed:false, countOK:false };
         try {

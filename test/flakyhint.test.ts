@@ -52,18 +52,16 @@ async function fixture(names: string[] | null = [name], invariant = false, optio
   } catch (e) { await r.cleanup(); throw e; }
 }
 
-test('FH1: other commits cite the three newest sequences, across subjects and obligations', () => {
+test('FH1 (AT4 0.20): other trees without a matching signature or a same-key flip are not intermittent', () => {
   const r = historyRig();
-  const older = r.fail('other-1');
-  const b = r.fail('other-2', [name], { subject: 'trunk', obligation: 'inv:suite' });
-  const c = r.fail('other-3');
-  const d = r.fail('other-4');
+  r.fail('other-1');
+  r.fail('other-2', [name], { subject: 'trunk', obligation: 'inv:suite' });
+  r.fail('other-3');
   r.fail('current');
   r.fail('other-pass', [name], { verdict: 'pass' });
   const current = r.fail('current');
   const lines = views.mergeFailureHints(r.state(), 'a', [current]);
-  assert.equal(lines[0], `known intermittent: ${name} also failed on #${d.seq}, #${c.seq}, #${b.seq} (other trees)`);
-  assert.ok(!lines[0]!.includes(`#${older.seq}`));
+  assert.ok(!lines.some(l => /known intermittent|older trees/.test(l)), lines.join('\n'));
 });
 
 test('FH1: failures on only the same commit produce no intermittent hint', () => {
@@ -122,8 +120,9 @@ test('FH1/2/TP1: CLI and why retain diagnostic lines while trunk-red driver park
     assert.equal(result.code, 1, result.stderr);
     const s = await r.state(), failed = entriesOf(s).find((e): e is ObsEntry => e.kind === 'obs' && e.merging === 'a' && e.verdict === 'fail')!;
     const hints = views.mergeFailureHints(s, 'a', [failed]);
-    assert.equal(hints.length, 2);
-    assert.match(hints[0]!, /^known intermittent: .*also failed on #\d+ \(other trees\)$/);
+    // AT4 (0.20): trunk fails the same name deterministically without a known signature: not intermittent.
+    assert.equal(hints.length, 1);
+    assert.match(hints[0]!, /^fix candidate:/);
     const card = await ops.why({ cwd: r.cwd, node: 'a' }), text = views.renderReceipt(card);
     const actions = decide(s, s.plan, new Map(), { max: 1, repairs: 2, project: 'fixture', root: r.cwd, applied: new Set(), rejected: new Map() });
     assert.ok(!actions.some(a => a.do === 'halt'));
@@ -180,9 +179,9 @@ test('FH review #1619: retrying an ordinary merge-check block preserves all refu
     assert.equal(first.code, 1, first.stderr);
     assert.doesNotMatch(first.stderr, /trunk-red:/);
     const hints = refusalHints(first.stderr);
-    assert.equal(hints.length, 2, first.stderr);
-    assert.match(hints[0]!, /^known intermittent:/);
-    assert.equal(hints[1], 'fix candidate: fix (ready) — owed resume a --after fix');
+    // AT4 (0.20): an earlier tree of the same node is no evidence of an intermittent failure.
+    assert.equal(hints.length, 1, first.stderr);
+    assert.equal(hints[0], 'fix candidate: fix (ready) — owed resume a --after fix');
     const s = await r.state();
     assert.equal(s.nodes.a!.accepted, false);
     assert.ok(s.nodes.a!.blocks.some(b => b.state === 'active' && b.obligation === 'check:runtime'));
@@ -210,9 +209,9 @@ test('FH review #1619: a reused invariant failure names identical hints for the 
     const result = await cli(r.cwd, ['merge', 'b', '--as', 'parent:test']);
     assert.equal(result.code, 1, result.stderr);
     const hints = refusalHints(result.stderr);
-    assert.equal(hints.length, 2, result.stderr);
-    assert.match(hints[0]!, /^known intermittent:/);
-    assert.equal(hints[1], 'fix candidate: fix (ready) — owed resume b --after fix');
+    // AT4 (0.20): A's tree failed the same name without a known signature: no intermittent label.
+    assert.equal(hints.length, 1, result.stderr);
+    assert.equal(hints[0], 'fix candidate: fix (ready) — owed resume b --after fix');
     const before = await r.ledger.read();
     assert.equal(before.filter(e => e.kind === 'obs' && e.merging === 'b').length, 0, 'B reused the invariant verdict without measuring');
     const deciding = before.findLast((e): e is ObsEntry => e.kind === 'obs' && e.merging === 'a' && e.obligation === 'inv:runtime' && e.verdict === 'fail')!;
