@@ -578,13 +578,13 @@ export class Follower {
     const needs = new Map<string, string>(), done: string[] = [];
     for (const p of lines) {
       if (p.json?.do === 'merge' && p.json.outcome === 'merged' && typeof p.json.node === 'string') done.push(p.json.node);
-      if (p.wake && p.json) { const need = plainNeed(p.json, p.text); if (need) needs.set(String(p.json.node), need); }
+      if (p.wake && p.json) { const need = plainNeed(p.json, p.text); if (need) needs.set(p.text, `Needs you: ${p.text}`); }
     }
     const terminal = lines.findLast(p => p.wake && p.terminal);
-    const reason = terminal?.json?.event === 'exit' ? String(terminal.json.error ?? terminal.json.reason ?? 'exited') : terminal?.terminal?.event;
+    const reason = terminal?.json?.event === 'exit' ? String(terminal.json.error ?? terminal.json.reason ?? 'exited') : terminal?.json ? terminal.terminal?.event : terminal?.text;
     const status = terminal ? `Driver stopped: ${oneLine(reason!)}` : `Driver continues (${this.inProgress} in progress)`;
     return [...needs.values(), ...(done.length ? [`Done: ${[...new Set(done)].join(', ')}`] : []), status,
-      'Details:', `owed drive (${this.o.repo}):`, ...lines.map(p => p.text),
+      `owed drive (${this.o.repo}):`, ...lines.filter(p => !needs.has(p.text) && !(p.wake && p.terminal)).map(p => p.text),
       ...(lines.some(p => p.wake && p.halt) ? [haltHintText] : []), ...(resolved ? [resolvedText(resolved)] : []),
       'Next: owed status / owed why <node>'].join('\n');
   }

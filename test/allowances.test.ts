@@ -153,7 +153,7 @@ test('parent plan updates: covered downgrades need no owner, stay in ΔO⁻ labe
     await writeFile(join(r.root, 'q0.json'), JSON.stringify(edit(widened, 'q', n => { n.review = { count: 0, min_rank: 1 }; })));
     const out = await cli(r.cwd, ['plan', join(r.root, 'q0.json')]);
     assert.equal(out.code, 0, out.stderr);
-    assert.match(out.stdout, new RegExp(`updated plan from .*, downgrades q: review count lowered\\nDowngrades by parent:cli under allowance \\(plan #${o.seq}\\): q: review count lowered; q: review count/rank reduced`));
+    assert.match(out.stdout, new RegExp(`^Recorded plan #\\d+ \\(v1 : \\+0 nodes \\[\\], -0, ~1 changed; downgrades: q: review count lowered\\)\\nDowngrades by parent:cli under allowance \\(plan #${o.seq}\\): q: review count lowered; q: review count/rank reduced`));
     // Deleting a whole rule is not a downgrade, but it changes allow: S moves again.
     const narrowed = { ...edit(widened, 'q', n => { n.review = { count: 0, min_rank: 1 }; }), allow: ALLOW };
     const del = await setPlan(r.cwd, narrowed);
@@ -235,7 +235,7 @@ test('pi: owed_adopt and owed_plan as parent under an allowance show no dialog; 
     await writeFile(join(r.cwd, 'eased.json'), JSON.stringify(edit(base(), 'w', n => { n.writes = ['w.txt', 'docs/']; })));
     const p = await h.call('owed_plan', { plan: 'eased.json' });
     assert.notEqual(p.isError, true, text(p));
-    assert.match(text(p), new RegExp(`^Downgrades by parent:pi under allowance \\(plan #${genesis.seq}\\): w: writes widened; w: writes scope expanded\\n`));
+    assert.match(text(p), new RegExp(`^Recorded plan #\\d+ \\(v1 : \\+0 nodes \\[\\], -0, ~1 changed; downgrades: w: writes widened\\)\\nDowngrades by parent:pi under allowance \\(plan #${genesis.seq}\\): w: writes widened; w: writes scope expanded\\n`));
     assert.deepEqual(h.prompts, []);
     assert.equal((await entries(r.cwd)).at(-1)!.by, 'parent:pi');
     // Uncovered: the owner dialog by default; an explicit parent is refused with the uncovered items.
