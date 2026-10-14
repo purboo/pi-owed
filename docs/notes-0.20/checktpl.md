@@ -17,7 +17,7 @@ No new CLI flags, pi tool parameters, ledger fields or ledger entry kinds. The e
 
 ## Frozen expansion version 1
 
-`src/plan.ts` pins `CHECK_TEMPLATE_VERSION = 1`; the frozen implementations are `expandCheckTemplate`, `templateQuote`, and `templateCounter`. Any future change to expansion semantics must use a new command version marker, not silently change v1.
+`src/plan.ts` pins `CHECK_TEMPLATE_VERSION = 1`; it is the sole source of the generated `# owed-template/v<N>/` markers and `isCheckTemplateRun` recognition. The frozen implementations are `expandCheckTemplate`, `templateQuote`, and `templateCounter`. Any future change after release to expansion semantics must use a new command version marker, not silently change v1. A regression imports an isolated copy changing only this constant and verifies that all three expansions, recognition, check keys and invariant keys change.
 
 The following notation specifies exact expansion: `Q(x)` surrounds x with single quotes and replaces each embedded single quote by `'"'"'`. Arrays preserve input order; no sorting or ambient configuration is involved. Every generated command starts with the following exact comment plus a newline:
 
@@ -33,7 +33,7 @@ The command after that newline is:
 
 Brackets above denote optional fragments, not literal brackets. Prefix escaping replaces each character matched by `/[.*+?^${}()|[\]\\]/g` with a backslash plus that character. Files are quoted argv, not shell-expanded globs (Node may apply its own supported file patterns).
 
-Counter programs stream the original runner stdout unchanged and collect it to count at EOF. Cargo sums all column-zero summaries matching `/^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/gm`. TAP takes the final column-zero `# pass` and `# fail` summaries, then subtracts successful empty-file wrappers matched by `/^1\.\.0\r?\n# Subtest: [^\n]*\r?\nok \d+ - /gm` (Node 24 reports such a wrapper after a zero-match name filter). Ignored/skipped tests and empty-file wrappers do not satisfy `min_ok`.
+Counter programs stream the original runner stdout unchanged and collect it to count at EOF. Cargo sums all column-zero summaries matching `/^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored/gm`. TAP retains the final column-zero `# fail` summary but counts successful real-test points conservatively, capped by the final `# pass` summary. Candidates match `/^([ \t]*)ok \d+ - ([^\r\n]+)\r?\n\1  ---\r?\n([\s\S]*?)^\1  \.\.\.\s*$/gm` and must contain a `type: 'test'` (or double-quoted `test`) diagnostic. SKIP/TODO points, names equal to any supplied file, path-like names containing slash/backslash, and names ending in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`, `.jsx`, or `.tsx` are not counted. The supplied files array is embedded using `JSON.stringify(files)` in the counter. Uncertain points are intentionally not counted: this can undercount legitimate path-like test titles rather than falsely accept empty file wrappers. Ordinary empty files, diagnostic-only files and filtered empty wrappers are all excluded, with or without a preceding `1..0`. Ignored/skipped tests and empty-file wrappers do not satisfy `min_ok`.
 
 When summaries are present, counters print `owed-counts ` followed by `JSON.stringify({pass,fail,...(failed.length?{failed}:{})})`. Failed names come from `/^test (.+) \.\.\. FAILED\s*$/gm` for Cargo and `/^\s*not ok \d+\s*-\s*(.+)$/gm` for TAP. The existing parser bounds stored names to 50. A counter exits 1 for missing summaries, any failing count or fewer successful tests than `min_ok`. Bash `pipefail` also retains a runner nonzero exit, including a crash after otherwise successful summaries. Standard runner diagnostics remain in the measurement log; timeout remains an executor error, never a counted pass. Templates require Bash and Node; Cargo templates additionally require Cargo. They do not install dependencies.
 
@@ -55,14 +55,15 @@ Errors name the full check/invariant field path (`nodes[0].checks[0]` or `invari
 
 ## Behavioral verification
 
-`test/checktpl.test.ts` adds seven behavioral tests through CLI/ops/views and repository helpers: all three templates, shell-sensitive argv, literal prefix filtering, multiple files, skips/zero matches, insufficient successes, crashes/nonzero runner exits, timeout, evidence validation, invariant merge measurements, command receipt visibility, exact normalized/key equivalence, and field-specific no-write validation. Cargo uses a hermetic argv-validating stand-in that emits libtest output; this verifies the command and count behavior without a Rust build dependency. No existing tests changed.
+`test/checktpl.test.ts` contains nine tests through CLI/ops/views and repository helpers: all three templates, shell-sensitive argv, literal prefix filtering, multiple files, skips/zero matches, insufficient successes, crashes/nonzero runner exits, timeout, evidence validation, invariant merge measurements, command receipt visibility, exact normalized/key equivalence, and field-specific no-write validation. The #1908 repair adds ordinary unfiltered empty/diagnostic-only files, empty plus real files (counts exactly one real pass), conservative ambiguous-title exclusion and isolated version-constant mutation/key regression. All seven original cases remain. Cargo uses a hermetic argv-validating stand-in that emits libtest output: this proves argv and count logic only, NOT actual Cargo execution or a real Rust build. No other existing test files changed.
 
 Remote checks against the current source/test tree:
 
-- Focused: `node --test --test-reporter=tap test/checktpl.test.ts`: 7/7 pass, exit 0; `/tmp/owed-ipc/logs/checktpl-1-002802.log`.
-- Typecheck: `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`: exit 0; `/tmp/owed-ipc/logs/checktpl-1-002855.log`.
-- Red on `a46d7ca151ff`: 0/7 pass, 7 fail, exit 1 (`red=shown`); `/tmp/owed-ipc/logs/checktpl-1-red-002855.log`.
-- Full (once): `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`: 1052/1052 pass, exit 0; `/tmp/owed-ipc/logs/checktpl-1-003046.log`.
+- Focused: `node --test --test-reporter=tap test/checktpl.test.ts`: 9/9 pass, exit 0; `/tmp/owed-ipc/logs/checktpl-1-012520.log`.
+- Typecheck: `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`: exit 0; `/tmp/owed-ipc/logs/checktpl-1-012553.log`.
+- Red on `a46d7ca151ff`: 0/9 pass, 9 fail, exit 1 (`red=shown`); `/tmp/owed-ipc/logs/checktpl-1-red-012608.log`.
+- Repair red on previous submission `acca2ad572b1`: 7/9 pass, 2 fail (new empty-file and version regressions), exit 1 (`red=shown`); `/tmp/owed-ipc/logs/checktpl-1-red-012628.log`.
+- Full (once on repaired tree): `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`: 1054/1054 pass, exit 0; `/tmp/owed-ipc/logs/checktpl-1-012708.log`.
 
 All commands ran using `/tmp/owed-ipc/run.sh` (or `/tmp/owed-ipc/red.sh`) with the assigned worktree and prescribed bounded timeouts. No Node, npm, tsc or tests ran locally.
 
