@@ -59,7 +59,7 @@ test('IR1: added invariant has actionable not-measured text before refresh', asy
 });
 test('IR1/3: attest --trunk records refresh plus named trunk failure and routes only to parent', async () => {
   const r=await fixture(); try {
-    const out=await cli(r.cwd,['attest','--trunk']); assert.equal(out.code,0,out.stderr);
+    const out=await cli(r.cwd,['attest','--trunk']); assert.equal(out.code,1,out.stderr);
     const es=await r.entries(), entry=es.find(e=>e.kind==='refresh')!;
     assert.equal(entry.by,'executor:owed'); assert.ok(entry.kind==='refresh'); assert.equal(entry.commit,r.before.commit);
     const obs=es.find((e):e is ObsEntry=>e.kind==='obs')!;

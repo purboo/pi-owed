@@ -20,6 +20,7 @@ import { renderSweep, unguardedText } from './sweep.ts';
 import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
+import { parentOverlapWarnings } from './parentops.ts';
 import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus, renderStatusBrief } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
@@ -199,7 +200,7 @@ export default function owed(pi: ExtensionAPI): void {
     if (!p.node) throw new OwedError('attest requires a node or trunk: true', 'usage');
     const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal, lease: p.lease }); return result(r, `${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}${leaseText(r)}`);
   });
-  tool('review', 'Independent review; explicitly specify reviewer:id (or owner:id: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), candidate: candidateParam, cwd }), async (p, ctx, dir, signal) => {
+  tool('review', 'Independent review; omitted ack_rulings derives only from the current driver reviewer launch packet. Explicitly specify reviewer:id (or owner:id: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair.', Type.Object({ node, as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Integer({ minimum: 0 })), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), candidate: candidateParam, cwd }), async (p, ctx, dir, signal) => {
     if (!p.as || !['reviewer', 'owner'].includes(principal(p.as).role)) throw new OwedError('review requires an explicit reviewer:id or owner:id');
     const { cwd: _cwd, needs_parent, candidate, ...args } = p;
     // G1.2: under the gate the owner's dialog shows the candidate the review lands on, and pins it.
@@ -233,11 +234,12 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.abandon({ ...await actor(ctx, dir, who, `Abandon the open attempt of node ${oneLine(p.node)}`, { Note: note ?? '(none)' }, signal), node: p.node, reason: note ?? '', ...(p.hold ? { hold:true } : {}) });
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node })).split('\n')[0]}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
-  tool('resume', 'Clear a driver halt on the open attempt of a node, or release an abandon hold with no open slot without an obligation (parent or owner; never the driver): the driver acts on its next pass and the repair budget starts again. after: a node, comma-separated string or list; wait until all merge first. expect: report asks for findings without requiring a candidate (the driver leaves the node alone meanwhile, except asking notices). note: why (the writer gets it with the next follow-up). Use owed_rule instead for guidance the writer and reviewers must acknowledge.', Type.Object({ node, after: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })])), expect: Type.Optional(Type.Literal('report')), note: Type.Optional(Type.String({ description: 'Why (recorded; quoted to the writer).' })), as, cwd }), async (p, ctx, dir, signal) => {
+  tool('resume', 'Clear a driver halt on the open attempt of a node or an atomic node list, or release an abandon hold with no open slot without an obligation (parent or owner; never the driver): the driver acts on its next pass and the repair budget starts again. after: a node, comma-separated string or list; wait until all merge first. expect: report asks for findings without requiring a candidate (the driver leaves the node alone meanwhile, except asking notices). note: why (the writer gets it with the next follow-up). Use owed_rule instead for guidance the writer and reviewers must acknowledge.', Type.Object({ node: Type.Union([node, Type.Array(node, { minItems: 1 })]), after: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })])), expect: Type.Optional(Type.Literal('report')), note: Type.Optional(Type.String({ description: 'Why (recorded; quoted to the writer).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'resume');
-    const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(p.node)}${p.after !== undefined ? ` after ${oneLine(String(p.after))}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}), ...(p.note !== undefined ? { note: p.note } : {}) });
+    const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(String(p.node))}${p.after !== undefined ? ` after ${oneLine(String(p.after))}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}), ...(p.note !== undefined ? { note: p.note } : {}) });
     const tail = p.after === undefined ? '' : r.merged ? `\n${p.after} is already merged: ${p.node} resumes now` : `\n${p.node} waits for ${p.after} (resume #${r.entry.seq}); the driver acts again when ${p.after} merges`;
-    return result(r.entry, `${renderEntry(r.entry)}${tail}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node })).split('\n')[0]}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
+    const phase = r.entries ? '' : `\n${renderReceipt(await ops.why({ cwd: dir, node: r.entry.kind === 'resume' ? r.entry.node : String(p.node) })).split('\n')[0]}`;
+    return result(r.entries ? r : r.entry, `${(r.entries ?? [r.entry]).map(renderEntry).join('\n')}${tail}${phase}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('gc', 'Reclaim worktrees and branches of merged or abandoned attempts (parent or owner); dry_run only reports.', Type.Object({ dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'run gc');
@@ -254,6 +256,7 @@ export default function owed(pi: ExtensionAPI): void {
   });
   tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades need the owner (the main agent as owner:pi, delegated, with a note saying why; a dialog only under OWED_CONFIRM=owner) unless an `allow` rule of the current plan covers them all (then the parent records them, labelled under allowance).', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), note: Type.Optional(Type.String({ description: 'Why (recorded); required for a delegated owner downgrade (D25.5).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const read = await ops.readPlan({ cwd: dir, path: p.plan, rev: p.rev }), text = read.plan;
+    const before = (await ops.readState({ cwd: dir })).state;
     const prior = await currentPlan(dir), next = parsePlan(text), downgrades = planDowngrades(prior, next);
     // D21.3: downgrades that an allowance of the current plan covers need no owner; the parent records them.
     const gaps = downgrades.length ? uncoveredDowngrades(prior, next, downgrades) : [];
@@ -266,7 +269,7 @@ export default function owed(pi: ExtensionAPI): void {
     const d = principal(who).role === 'owner' ? undefined : (await ops.report({ cwd: dir, since: r.seq - 1 })).downgrades.find(x => x.seq === r.seq);
     // H2.2: warnings for check-less nodes of the new plan, after the result.
     const state = await ops.status({ cwd: dir });
-    const warnings = planWarnings(next, new Set(Object.values(state.nodes).filter(n => n.phase === 'merged').map(n => n.id)));
+    const warnings = [...planWarnings(next, new Set(Object.values(state.nodes).filter(n => n.phase === 'merged').map(n => n.id))), ...parentOverlapWarnings(next,before)];
     // H1.3: dispatchable ready nodes and no driver: one hint line before the H2.2 warnings and CR brief (the
     // parent decides; nothing starts automatically).
     const ready = await readyHint(dir);
@@ -277,7 +280,7 @@ export default function owed(pi: ExtensionAPI): void {
   });
   tool('edit', 'ED1/ED2: atomically edit node/check fields or an invariant in the recorded plan file, keeping comments and layout outside the target. YAML assignments are path=value strings. Append the plan (same authority and carries as owed_plan), optional ruling and optional resume in one lock. A refusal records nothing and leaves the file unchanged; dry_run returns the diff and downgrades.', Type.Object({ node: Type.Optional(node), invariant: Type.Optional(node), node_new: Type.Optional(Type.Boolean()), set: Type.Optional(Type.Array(Type.String({ minLength:1 }))), unset: Type.Optional(Type.Array(Type.String({ minLength:1 }))), note: Type.String({ minLength:1 }), plan: Type.Optional(Type.String({ minLength:1 })), rule: Type.Optional(Type.String({ minLength:1 })), writer: Type.Optional(Type.Boolean()), resume: Type.Optional(Type.Boolean()), after: Type.Optional(Type.Union([Type.String(),Type.Array(Type.String())])), expect: Type.Optional(Type.Literal('report')), dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const args: ops.EditArgs = { ...p, cwd:dir }, e = await ops.editPreview(args);
-    if (p.dry_run) return result(e,`${e.diff}\nDowngrades: ${JSON.stringify(e.downgrades)}`);
+    if (p.dry_run) return result(e,`${e.diff}\nDowngrades: ${JSON.stringify(e.downgrades)}${e.warnings.map(w => `\n${w}`).join('')}`);
     const gaps = e.downgrades.length ? uncoveredDowngrades(e.prior,e.plan,e.downgrades) : [], who = p.as ?? (gaps.length ? ownerDefault() : 'parent:pi');
     if (gaps.length && principal(who).role !== 'owner') throw new OwedError(`Only owner may confirm plan downgrades; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}`);
     const r = await ops.edit({ ...args, ...await actor(ctx,dir,who,`Edit plan ${oneLine(e.path)}\nDowngraded obligations: ${JSON.stringify(e.downgrades)}`, { Note:p.note },signal) }) as ops.EditResult;

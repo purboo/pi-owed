@@ -13,13 +13,14 @@ import { parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErro
 import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
-import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantErrors, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf } from './reducer.ts';
+import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantErrors, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, writesAllowed } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
 import { readLock } from './drive-bg.ts';
+import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
@@ -645,6 +646,7 @@ async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<Amen
   if (!isMap(item)) throw new OwedError(`cannot edit ${read.path}: node ${o.node} is not a map in its nodes list`);
   const added = paths.filter(p => !spec.writes.includes(p)), present = paths.filter(p => spec.writes.includes(p));
   if (!added.length) throw new OwedError(`writes of ${o.node} already include ${present.join(', ')}; nothing to amend`);
+  if (writesAllowed(s.plan,o.node,added)) throw new OwedError(`not needed: ${added.join(', ')} are covered by allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}); owed grants them at measurement; tell the writer to edit them`);
   const next = spliceWrites(read.plan,doc,item,added);
   if (next === undefined) throw new OwedError(`cannot edit ${read.path}: writes of node ${o.node} is not a list`);
   const plan = planBlob(next).plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
@@ -716,7 +718,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
 }
 // ---------- ED: atomic node/check/invariant plan edits ----------
 export type EditArgs = Context & EditFields & { note: string; plan?: string; rule?: string; writer?: boolean; resume?: boolean; after?: string | string[]; expect?: 'report'; dry_run?: boolean };
-export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades> }
+export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades>; warnings: string[] }
 export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string }
 async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<EditPreview> {
   inited(s);
@@ -728,7 +730,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next).plan;
-  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan) };
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:parentOverlapWarnings(plan,s) };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
 export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
@@ -1001,8 +1003,8 @@ export const attestBusyText = (node: string, owner: LockOwner): string => `attes
  * process for the writer-worktree rail (G2.1; o.cwd and process.cwd() are always checked).
  */
 export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[] }): Promise<Entry> {
-  const given = candidateArg(o.named);
-  return mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings,...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
+  const given = candidateArg(o.named), ledger = await Ledger.open(o.cwd);
+  return mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString()),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<Entry> {
@@ -1552,14 +1554,27 @@ function resumeDraft(o: ResumeArgs, s: State): Extract<Draft, { kind:'resume' }>
   const after = o.after === undefined ? undefined : typeof o.after === 'string' && !o.after.includes(',') ? o.after : [...new Set(afterNodes(o.after).flatMap(x => x.split(',')).map(x => x.trim()))];
   return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(after !== undefined ? { after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}) };
 }
-export async function resume(o: ResumeArgs): Promise<{ entry: Entry; merged?: boolean }> {
-  let merged = false;
-  const entry = await mutate(o,s => {
-    const d = resumeDraft(o,s), after = afterNodes(d.after);
-    merged = !!after.length && after.every(id => !!s.nodes[id]?.merged);
-    return d;
+export interface ResumeResult { entry: Entry; merged?: boolean; entries?: Entry[] }
+/** PO2: validate the whole batch under one ledger lock before any append. */
+export async function resume(o: Omit<ResumeArgs,'node'> & { node: string | string[] }): Promise<ResumeResult> {
+  const ids = Array.isArray(o.node) ? o.node : o.node.split(',');
+  const nodes = [...new Set(ids.map(id => id.trim()))];
+  if (!nodes.length || nodes.some(id => !id)) throw new OwedError('resume needs a non-empty node list','usage');
+  owner(o); const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => {
+    const latest = await load(ledger), drafts: Draft[] = [], first = latest.state.seq+1;
+    let merged = false;
+    for (const id of nodes) {
+      const state = drafts.length ? replayed(latest,drafts) : latest.state;
+      const d = resumeDraft({ ...o, node:id },state);
+      if (nodes.length > 1) d.batch = first;
+      guard(state,d); drafts.push(d);
+      const after = afterNodes(d.after);
+      merged = !!after.length && after.every(dep => !!state.nodes[dep]?.merged);
+    }
+    const entries = await ledger.append(drafts);
+    return { entry:entries[0]!, ...(merged ? { merged:true } : {}), ...(nodes.length > 1 ? { entries } : {}) };
   });
-  return { entry, ...(merged ? { merged:true } : {}) };
 }
 /** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. `since`: as for launch (F1). */
 export async function halt(o: Actor & { node: string; attempt: number; reason: string; needs: 'human' | 'owner'; since?: number }): Promise<HaltEntry> {

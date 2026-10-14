@@ -17,7 +17,7 @@ export interface MergedMetric {
 export type ParentActClass = 'writes' | 'answer' | 'trunk' | 'resume' | 'rule' | 'plan' | 'review' | 'waive' | 'defer' | 'evidence' | 'abandon' | 'approve' | 'other';
 const parentActClasses: readonly ParentActClass[] = ['writes','answer','trunk','resume','rule','plan','review','waive','defer','evidence','abandon','approve','other'];
 export interface Metrics {
-  parentActs: { total: number; perMergedNode: number | null; byClass: Record<ParentActClass, number> };
+  parentActs: { total: number; perMergedNode: number | null; byClass: Record<ParentActClass, number>; byNode: Record<string, number>; perMergedNodeAttributed: number | null; pending: number; unattributed: number };
   grants: { total: number; perMergedNode: number | null };
   since: number | string; until: number | string | null; mergedNodes: number; merged: MergedMetric[];
   interruptions: { total: number; halts: number; answers: number; perMergedNode: number | null };
@@ -87,6 +87,14 @@ function haltNormalizer(nodeIds: ReadonlySet<string>): (reason: string) => strin
   };
 }
 
+/** PO3: explicit node targets, including changed/added/removed plan nodes. */
+function actNodes(e: Entry, prev?: Plan, next?: Plan): string[] {
+  if ('node' in e) return [e.node];
+  if (e.kind === 'rule') return e.nodes === '*' ? [] : [...new Set(e.nodes)];
+  if (e.kind === 'plan' && prev && next) return [...new Set([...prev.nodes,...next.nodes].map(n => n.id))].filter(id => canonical(prev.nodes.find(n => n.id === id)) !== canonical(next.nodes.find(n => n.id === id)));
+  return [];
+}
+
 /** MT: pure ledger computation; plans are the recorded blobs, never current Git or dsa state. */
 export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<string, Plan>, window: MetricsWindow = {}): Metrics {
   const since = metricsBound(window.since,'since') ?? -1, until = metricsBound(window.until,'until');
@@ -110,6 +118,12 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
   const active = new Map<string,HaltMetric>(), halts: HaltMetric[] = [], merged: MergedMetric[] = [];
   let planSpecs = new Map<string,string>(), answers = 0, previousPlan: Plan | undefined, parentActsTotal = 0, grantsTotal = 0;
   const byClass = Object.fromEntries(parentActClasses.map(cls => [cls,0])) as Record<ParentActClass,number>;
+  const byNode: Record<string,number> = {}, countedBatches = new Set<number>();
+  let unattributed = 0;
+  const batchNodes = new Map<number,string[]>();
+  for (const e of history) if (e.kind === 'resume' && e.batch !== undefined) {
+    const nodes = batchNodes.get(e.batch) ?? []; if (!nodes.includes(e.node)) nodes.push(e.node); batchNodes.set(e.batch,nodes);
+  }
   const lastHalts = new Map<string,string>();
   const endHalt = (node: string, seq: number): void => { const h = active.get(node); if (h) { h.endedBy = seq; active.delete(node); } };
   const decision = (node: string, seq: number): void => { const h = active.get(node); if (h) { h.class = 'decision'; h.decisionSeqs.push(seq); } };
@@ -122,7 +136,14 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     const nextPlan = e.kind === 'genesis' || e.kind === 'plan' ? plans.get(e.plan) : undefined;
     if (included(e)) {
       if (parentAct(e) && !['dispatch','launch','send'].includes(e.kind)) {
-        parentActsTotal++; byClass[parentActClass(e,previousPlan,nextPlan,lastHalts)]++;
+        const batch = e.kind === 'resume' ? e.batch : undefined;
+        if (batch === undefined || !countedBatches.has(batch)) {
+          if (batch !== undefined) countedBatches.add(batch);
+          parentActsTotal++; byClass[parentActClass(e,previousPlan,nextPlan,lastHalts)]++;
+          const targets = batch === undefined ? actNodes(e,previousPlan,nextPlan) : batchNodes.get(batch)!;
+          if (!targets.length) unattributed++;
+          for (const id of targets) byNode[id] = (byNode[id] ?? 0)+1/targets.length;
+        }
       }
       // GR is implemented in parallel; do not depend on its entry type being present yet.
       if ((e.kind as string) === 'grant') grantsTotal++;
@@ -171,8 +192,10 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     return [...reasons].map(([reason,count]) => ({reason,count})).sort((a,b) => b.count-a.count || a.reason.localeCompare(b.reason)).slice(0,5);
   };
   const firstPass = merged.filter(m => m.firstPass).length, repairs = merged.reduce((sum,m) => sum+m.repairs,0), n = merged.length;
+  const mergedIds = new Set(merged.map(m => m.node)), attributed = Object.entries(byNode).filter(([id]) => mergedIds.has(id)).reduce((sum,[,v]) => sum+v,0);
+  const pending = Object.entries(byNode).filter(([id]) => !mergedIds.has(id)).reduce((sum,[,v]) => sum+v,0);
   return { since,until:until ?? null,mergedNodes:n,merged,
-    parentActs:{total:parentActsTotal,perMergedNode:ratio(parentActsTotal,n),byClass},
+    parentActs:{total:parentActsTotal,perMergedNode:ratio(parentActsTotal,n),byClass,byNode,perMergedNodeAttributed:ratio(attributed,n),pending,unattributed},
     grants:{total:grantsTotal,perMergedNode:ratio(grantsTotal,n)},
     interruptions:{total:halts.length+answers,halts:halts.length,answers,perMergedNode:ratio(halts.length+answers,n)},halts,
     haltReasons:{decision:top('decision'),'no-decision':top('no-decision')},
@@ -189,6 +212,8 @@ export function renderMetrics(m: Metrics): string {
     .sort(([a,x],[b,y]) => y-x || a.localeCompare(b)).slice(0,5).map(([cls,count]) => `${cls} ${count}`).join(', ');
   return [`Metrics (since ${m.since === -1 ? 'start' : m.since}, until ${m.until ?? 'latest'}); merged nodes: ${m.mergedNodes}`,
     `Parent acts per merged node: ${number(m.parentActs.perMergedNode)} (${m.parentActs.total} total); top classes: ${classes || 'none'}`,
+    `Attributed parent acts per merged node: ${number(m.parentActs.perMergedNodeAttributed)}; pending ${number(m.parentActs.pending)}; unattributed ${number(m.parentActs.unattributed)}`,
+    `Parent acts by node: ${Object.entries(m.parentActs.byNode).sort(([a],[b]) => a.localeCompare(b)).map(([id,v]) => `${id} ${number(v)}`).join(', ') || 'none'}`,
     `Grants: ${m.grants.total}; per merged node ${number(m.grants.perMergedNode)}`,
     `Driver halts + answers per merged node (partial): ${number(m.interruptions.perMergedNode)} (${m.interruptions.total} total: ${m.interruptions.halts} halts, ${m.interruptions.answers} answers)`,
     `Halts: decision ${m.halts.filter(h => h.class === 'decision').length}, no-decision ${m.halts.filter(h => h.class === 'no-decision').length}`,
