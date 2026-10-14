@@ -9,7 +9,7 @@ export interface EditFields {
   set?: string[]; unset?: string[];
 }
 function usage(text: string): never { throw new OwedError(text,'usage'); }
-const checkFields = ['run','timeout_s','reads','min_tests','red','tests','red_expect','mutants','min_kill','repeat'];
+const checkFields = ['run','timeout_s','reads','min_tests','red','tests','red_expect','mutants','min_kill','repeat','quarantine'];
 function parts(path: string, o: EditFields): string[] {
   const p = path.split('.');
   if (p.some(x => !x || ['__proto__','prototype','constructor'].includes(x))) usage(`Invalid edit path: ${path}`);

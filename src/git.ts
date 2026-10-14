@@ -8,7 +8,7 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } fr
 import { realpath } from 'node:fs/promises';
 import { H, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
-import { matchesAny } from './plan.ts';
+import { matchesAny, type QuarantineNames } from './plan.ts';
 import type { Plan, NodeSpec, CandidateFacts, StateFacts, CheckSpec, ExecConfig } from './types.ts';
 
 /** Buffered git output is bounded, including stderr; the review diff uses the streaming path below. */
@@ -158,14 +158,25 @@ export function execKey(plan: Plan): Pick<ExecConfig, 'env' | 'wrap' | 'touch'> 
   const touch = plan.exec?.touch;
   return env || wrap || touch ? { env, wrap, touch } : undefined;
 }
-async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, closure: string, o: string): Promise<string> {
-  return H({ o, id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, repeat: spec.repeat ? { runs: spec.repeat.runs, need: spec.repeat.need ?? spec.repeat.runs } : undefined, closure, reads: await readsDigest(cwd, commit, spec.reads) });
+/** MS4: `quarantine` (sorted active names) is present only when non-empty, so a key without active entries is the 0.17 key. */
+async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, closure: string, o: string, quarantine: string[] = []): Promise<string> {
+  return H({ o, id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, repeat: spec.repeat ? { runs: spec.repeat.runs, need: spec.repeat.need ?? spec.repeat.runs } : undefined, closure, reads: await readsDigest(cwd, commit, spec.reads), quarantine: quarantine.length ? [...quarantine].sort() : undefined });
 }
 /** TR1: the node check's own key on trunk, with closure pinned from that same commit. */
-export async function trunkCheckKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string): Promise<string> {
-  return checkKey(cwd, plan, spec, commit, await readsDigest(cwd, commit, plan.closure), 'check');
+export async function trunkCheckKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, q?: QuarantineNames): Promise<string> {
+  return checkKey(cwd, plan, spec, commit, await readsDigest(cwd, commit, plan.closure), 'check', q?.(spec));
 }
-export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, base: string, commit: string, attempt: number): Promise<CandidateFacts> {
+/**
+ * MS4: whether the key of check/inv job (`kind`, `spec`, `key`, measured on `commit`, closure from `base` for a
+ * check and `commit` for an invariant) commits to exactly the quarantine names `names`. The executor excuses a
+ * quarantined failure only then, so a stale key can never be satisfied by an excuse it does not name.
+ */
+export async function keyCommitsTo(cwd: string, plan: Plan, job: { kind: string; spec?: CheckSpec; key: string; commit: string; base: string }, names: string[]): Promise<boolean> {
+  if (!job.spec || (job.kind !== 'inv' && job.kind !== 'check')) return false;
+  const closure = await readsDigest(cwd, job.kind === 'inv' ? job.commit : job.base, plan.closure);
+  return await checkKey(cwd, plan, job.spec, job.commit, closure, job.kind, names) === job.key;
+}
+export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, base: string, commit: string, attempt: number, q?: QuarantineNames): Promise<CandidateFacts> {
   base = await revParse(cwd, base); commit = await revParse(cwd, commit);
   const changed = (await git(cwd, ['diff', '--no-renames', '--name-only', '-z', base, commit])).stdout.split('\0').filter(Boolean);
   // Review identity preserves 0.13's UTF-8 decoding, while retaining only one stdout chunk at a time.
@@ -173,7 +184,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
   const patch = await diffHash(cwd, base, commit);
   const closure = await readsDigest(cwd, base, plan.closure), keys: Record<string,string> = {};
   for (const c of node.checks) {
-    keys[`check:${c.id}`] = await checkKey(cwd, plan, c, commit, closure, 'check');
+    keys[`check:${c.id}`] = await checkKey(cwd, plan, c, commit, closure, 'check', q?.(c));
     if (c.mutants) keys[`strength:${c.id}`] = await strengthKey(cwd, plan, c, base, commit, closure);
     if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
@@ -192,10 +203,10 @@ async function strengthKey(cwd: string, plan: Plan, spec: CheckSpec, base: strin
   const mutants = H((await files(cwd, base)).filter(([p]) => matchesAny(p, spec.mutants ?? []) && matchesAny(p, plan.closure)));
   return H({ o: 'strength', id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, min_kill: spec.min_kill ?? 1, closure, mutants, reads: await readsDigest(cwd, commit, spec.reads) });
 }
-export async function stateFacts(cwd: string, plan: Plan, commit: string): Promise<StateFacts> {
+export async function stateFacts(cwd: string, plan: Plan, commit: string, q?: QuarantineNames): Promise<StateFacts> {
   commit = await revParse(cwd, commit);
   const closure = await readsDigest(cwd, commit, plan.closure), invKeys: Record<string,string> = {};
-  for (const c of plan.invariants) invKeys[c.id] = await checkKey(cwd, plan, c, commit, closure, 'inv');
+  for (const c of plan.invariants) invKeys[c.id] = await checkKey(cwd, plan, c, commit, closure, 'inv', q?.(c));
   return { commit, tree: await tree(cwd, commit), invKeys };
 }
 export async function buildMerge(cwd: string, prior: string, cand: string, message: string): Promise<{ commit: string; tree: string } | { conflicts: string[] }> {

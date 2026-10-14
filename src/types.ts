@@ -19,7 +19,11 @@ export interface CheckSpec {
   min_kill?: number;          // fraction of mutants that must be killed, in (0,1]; default 1
   /** RC1: K passing runs out of at most N (1 <= need <= runs <= 9); not on red or mutants checks. */
   repeat?: { runs: number; need?: number };
+  /** MS4 (0.20): exact failing test names excused while their fix node is in the plan and not merged; active names are part of the key. */
+  quarantine?: QuarantineEntry[];
 }
+/** MS4 (0.20): one quarantined test name, owned by a fix node; inactive once `fix` merges or leaves the plan. */
+export interface QuarantineEntry { test: string; fix: string; note?: string }
 /** KR: exact failed-test names, owned by a fix node until it merges; never part of an item key. */
 export interface KnownRed { test: string; fix: string }
 export interface InvariantSpec extends CheckSpec { known_red?: KnownRed[] }
@@ -162,6 +166,8 @@ export interface ObsEntry extends Base {
   failed?: string[];
   /** AT4 (0.20): failed name -> normalized first error line, for names whose output had one (first run that failed it). */
   signatures?: Record<string, string>;
+  /** MS4 (0.20): failing test names excused by active quarantine entries (they neither passed nor failed). */
+  quarantined?: string[];
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }
@@ -210,7 +216,7 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  * 0.8 (L1): the parent or owner clears the node's driver halt without an obligation and starts a new repair epoch;
  * `after`: the node waits until that node merges. Strict fields.
  */
-export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold'; /** PO2: first resume seq of an atomic batch. */ batch?: number }
+export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold'; /** PO2: first resume seq of an atomic batch. */ batch?: number; /** MS2 (0.20): the driver remeasures failed merge-tree invariants before its next merge. */ remeasure?: boolean }
 export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
 export type Entry = GrantEntry | RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
@@ -337,5 +343,7 @@ export interface AttestJob {
   commit: string;              // C (or M / trunk state)
   base: string;                // B (closure source)
   attribution?: boolean;
+  /** MS4 (0.20): active quarantine entries of the spec; the executor applies them only when the key commits to their names. */
+  quarantined?: QuarantineEntry[];
 }
 export interface MergeGuard { ok: boolean; reasons: string[]; nodeItems: ItemView[]; invItems: ItemView[] }

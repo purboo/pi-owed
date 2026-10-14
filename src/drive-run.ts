@@ -21,7 +21,7 @@ import { DISK_FULL } from './exec.ts';
 import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
 import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
-import { DRIVER, entriesOf } from './reducer.ts';
+import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
@@ -1001,12 +1001,22 @@ export class Driver {
     }
   }
 
+  /**
+   * MS2: after `owed resume <node> --remeasure`, measure the failed merge-tree invariants again (same lease) before the
+   * merge reuses them. A refusal here (trunk moved, rebase needed) is left to the merge, which reports it as usual.
+   */
+  private async remeasureFirst(node: string, signal?: AbortSignal): Promise<void> {
+    if (!remeasureDue(await loadState(this.ledger!), node)) return;
+    try { await ops.attest({ cwd: this.o.cwd, node, remeasure: true, signal }); }
+    catch (e) { if (!(e instanceof OwedError) || e.code === 'aborted' || e.code === 'busy') throw e; }
+  }
   private async merge(node: string, attempt: number, signal?: AbortSignal): Promise<() => Promise<ActionReport[]>> {
     const cwd = this.o.cwd, as = DRIVE_PRINCIPAL;
     const measuredSince = (await this.ledger!.read()).length;
     let noisy = '';
     const report = (outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(`${detail}${noisy}`) });
     try {
+      await this.remeasureFirst(node, signal);
       const r = leaseResult(await ops.merge({ cwd, as, node, signal }));
       return async () => [report('merged', `trunk ${r.commit.slice(0, 12)}${leaseText(r).replace('\n', '; ')}; ${unguardedText(r.unguarded)}${await this.noisyDetail(node, measuredSince)}`)];
     } catch (e) {
