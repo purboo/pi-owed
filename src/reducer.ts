@@ -1564,7 +1564,9 @@ export function trunkInvariantReds(s: State): { obligation: string; key: string;
  * AT5 (derived, no entry): the latest owner defer of `inv` by `node` in its open attempt on another merge key, and
  * whether it carries to merge key `key`: the deferred merge-tree failure was trunk-own (its names failed on trunk before
  * the defer), and now the merge tree fails only those names while current trunk still fails each of them with the same
- * error signature as then. Signatures (0.20 field) are required, so a ledger without them never carries.
+ * error signature. Fail-closed: the deferred, trunk and current observations must each be a complete, named,
+ * test-only failure (`testOnlyFailure`, `failedNamesComplete`), the current one must meet `min_tests`, and every name
+ * needs the same recorded signature (0.20 field) on all three; a ledger without signatures never carries.
  */
 export function carriedDefer(s: State, node: string, inv: string, key: string): { defer: State['deferred'][number]; carried: boolean } | undefined {
   const o = `inv:${inv}`, n = s.nodes[node];
@@ -1573,11 +1575,15 @@ export function carriedDefer(s: State, node: string, inv: string, key: string): 
   const deferred = decidingInvariantFail(s, o, defer.key), now = decidingInvariantFail(s, o, key);
   const before = context(s).entries.findLast((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === 'trunk' && e.merging === undefined && e.probe === undefined && e.obligation === o && e.verdict === 'fail' && e.seq < defer.seq);
   const trunkKey = s.trunk.invKeys[inv], trunk = trunkKey ? decidingInvariantFail(s, o, trunkKey) : undefined;
+  const minTests = s.plan.invariants.find(i => i.id === inv)?.min_tests;
+  // Fail-closed (AT ruling #1924): only complete, named, test-only failures with recorded equal signatures carry.
+  const sound = (e: ObsEntry | undefined): e is ObsEntry => !!e && testOnlyFailure(e) && failedNamesComplete(e);
   const names = now?.failed ?? [];
-  const carried = !!deferred && !!before && !!trunk && names.length > 0 && (now!.counts?.fail ?? 0) <= (deferred.counts?.fail ?? 0)
+  const carried = sound(deferred) && sound(trunk) && sound(now) && !!before && names.length > 0
+    && (minTests === undefined || (now.counts?.tests ?? 0) >= minTests)
     && names.every(name => {
-      const sig = before.signatures?.[name];
-      return sig !== undefined && deferred.failed?.includes(name) && trunk.failed?.includes(name) && trunk.signatures?.[name] === sig && now!.signatures?.[name] === sig;
+      const sig = deferred.signatures?.[name];
+      return sig !== undefined && deferred.failed!.includes(name) && before.failed?.includes(name) === true && trunk.failed!.includes(name) && trunk.signatures?.[name] === sig && now.signatures?.[name] === sig;
     });
   return { defer, carried };
 }

@@ -1091,11 +1091,11 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     if (!n.accepted) {
       const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
       const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === o.node && n.blocks.some(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky') && b.seq === e.seq));
-      const hints = [...await mergeTreeBreakLead(o.cwd,state,o.node,failures.map(e => e.commit)), ...mergeFailureHints(state,o.node,failures)];
+      const lead = await mergeTreeBreakLead(o.cwd,state,o.node,failures.map(e => e.commit)), hints = mergeFailureHints(state,o.node,failures);
       const writesHint = n.items.some(i => i.obligation === 'writes' && i.status === 'D') ? grantHint(state,o.node) : undefined;
       const suffix = writesHint ? `\n${writesHint}` : '';
-      if (trunkRed.length) throw new OwedError([...trunkRed, ...hints].join('; ') + suffix);
-      throw new OwedError([`Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; ') + suffix);
+      if (trunkRed.length) throw new OwedError([...lead, ...trunkRed, ...hints].join('; ') + suffix);
+      throw new OwedError([...lead, `Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; ') + suffix);
     }
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     // IR1: trunk measurements persist even if the later merge guard refuses.
@@ -1176,12 +1176,14 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
  * AT1: refusal lead when merge trees `commits` of `node` break an invariant trunk passes and trunk moved since the
  * slot base: the remedy is a rebase, never a waiver, sweep or adoption. Empty otherwise.
  */
+/** AT1: the first words of the merge-tree break lead (the driver keeps it first in its halt text). */
+export const MERGE_TREE_BREAK = 'merge tree does not pass ';
 async function mergeTreeBreakLead(cwd: string, s: State, node: string, commits: string[]): Promise<string[]> {
   const breaks = [...new Set(commits)].flatMap(c => mergeTreeBreaks(s,node,c)), base = s.nodes[node]?.slot?.base;
   if (!breaks.length || !base || base === s.trunk.commit) return [];
   const moved = await git.countCommits(cwd,base,s.trunk.commit).catch(() => 0);
   if (!moved) return [];
-  return [`merge tree does not pass ${[...new Set(breaks.map(b => b.obligation))].join(', ')} (trunk passes); trunk moved ${moved} commits since the slot base: rebase → owed rebase ${node}`];
+  return [`${MERGE_TREE_BREAK}${[...new Set(breaks.map(b => b.obligation))].join(', ')} (trunk passes); trunk moved ${moved} commits since the slot base: rebase → owed rebase ${node}`];
 }
 /** AT5: refused invariant debt whose owner defer was recorded on another merge key and does not carry. */
 function deferBoundHints(s: State, node: string, items: ItemView[]): string[] {
