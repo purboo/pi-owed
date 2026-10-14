@@ -2,6 +2,7 @@
 // the executor's in-process facts, and returns the actions of one pass. No I/O, no clock, no git: everything it uses
 // comes from its arguments. Executing the actions (dsa calls, ledger appends, attest, merge) belongs to the executor.
 import { canonical, sha256 } from './canon.ts';
+import { rebaseFollowupSent, rebaseWorkText, type RebasePending } from './rebase-view.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping } from './reducer.ts';
@@ -50,6 +51,7 @@ export interface MergeRefusal {
  * ledger's blob store); they make the result a pure function of the arguments.
  */
 export interface DriveOpts {
+  rebasePending?: ReadonlyMap<string, RebasePending>;
   /** Concurrent open attempts below which the driver dispatches ready nodes. */
   max: number;
   /** Repair follow-ups (failed check, measured or review block) per attempt before halting. */
@@ -202,9 +204,9 @@ const conflictText = (conflicts?: readonly string[]): string => conflicts ? ` (f
  * Rebase follow-up after the slot's latest rebase (stable: it names the rebase entry's bases, not the current trunk).
  * `conflicts` (G3.7): the paths that conflict between the previous candidate and the new base, when known.
  */
-export function rebaseMessage(s: State, node: string, conflicts?: readonly string[]): string {
+export function rebaseMessage(s: State, node: string, conflicts?: readonly string[], work?: RebasePending): string {
   const slot = s.nodes[node]!.slot!, r = slot.rebase!;
-  return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): in ${slot.worktree} run \`git rebase --onto ${r.base} ${r.from}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
+  return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${r.base} ${r.from}`}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
 }
 /** The latest submit of the node's open attempt (also one a plan change or rebase no longer counts as the candidate). */
 const lastSubmit = (s: State, node: string): SubmitEntry | undefined => {
@@ -262,7 +264,7 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
   return { rulings: carried(rules), message: [
     ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`)] : []),
     `Review blocks on your candidate ${last.facts.commit} (submit #${last.seq}) of ${node}, attempt ${slot.attempt} (the reviewer's note):`, ...notes,
-    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
+    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): first commit your work, then in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
       : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
     `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
 }
@@ -557,7 +559,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (line && resumeOf(s, id)?.expect === 'report') {
       const rules = undelivered(s, id, ar, l, opts.rejected);
       const rebase = slot.rebase && !ar.sends.some(x => x.seq > slot.rebase!.seq && x.sendKind === 'follow-up')
-        ? rebaseMessage(s,id,opts.conflicts?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
+        ? rebaseMessage(s,id,opts.conflicts?.get(id),opts.rebasePending?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
       return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${oneLine(r.text)}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
     }
     return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
@@ -761,6 +763,15 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
   // Row 7: writer sealed non-ok (0.8, L3.1: a due ruling follow-up first).
   if (wSealed && wStatus !== 'ok') return rulingFirst() ?? halt(`writer run ${at(writer)} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
+  const drift = opts.rebasePending?.get(id);
+  if (drift && !reportPending) {
+    const unruled = submitBlocks(s, id).filter(b => awaitingRuling(s, b));
+    if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
+    if (rebaseFollowupSent(s, id)) return undefined;
+    const message = slot.rebase ? rebaseMessage(s, id, opts.conflicts?.get(id), drift) : `${rebaseWorkText(drift)} In ${slot.worktree}, run \`owed submit ${id}\`.`;
+    const m = writerMsg(message);
+    return send(writer, 'follow-up', 'rebase', m.message, m.rulings);
+  }
   // Row 8: writer done without a current candidate (after a rebase: the rebase follow-up first).
   if (wSealed && !c) {
     const rb = slot.rebase;

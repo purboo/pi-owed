@@ -149,7 +149,7 @@ test('D24.2/3/5: init with a genesis error reports incomplete (exit 0, no retry)
     assert.deepEqual(json.genesis, { observed: 1, total: 2, pending: ['flaky'] });
     const planned = await cli(r.cwd, ['plan', 'plan2.json']);
     assert.equal(planned.code, 0, planned.stderr);
-    assert.match(planned.stdout, /updated plan/);
+    assert.match(planned.stdout, /^Recorded plan #\d+ /);
     assert.match(planned.stdout, /Warning: genesis attest pending for flaky/);
     assert.equal((await cli(r.cwd, ['attest', '--genesis', '--rerun'])).code, 2);
     assert.equal((await cli(r.cwd, ['attest', 'a', '--genesis'])).code, 2);

@@ -144,7 +144,7 @@ test('QN1 repair #1514: grace retry held while pi is busy survives owed resume a
     await driver.pass(); // the driver has consumed its once mark; it cannot replace a dropped retry
     assert.equal(lines.filter(x => x.answerRetry).length, 1);
     busy = false;
-    assert.match(await follower.step() ?? '', /recorded answer still needs delivery/);
+    assert.match(await follower.step() ?? '', /still shows question q1; retry delivery:/);
     assert.equal(delivered.length, 1); assert.ok(delivered[0]!.includes(answerRetry('a', e)));
     await driver.pass(); await driver.pass();
     assert.equal(await follower.step(), undefined); assert.equal(await follower.step(), undefined);
@@ -266,7 +266,7 @@ test('QN2: current driver terminals and terminals with no owner still wake and s
       if (withOwner) l.lock();
       const follower = new Follower({ log: l.log, repo: f.cwd, pid: process.pid, start: procStart(process.pid), deliver() {} });
       l.line({ event: 'stopped', driver: l.owner });
-      assert.match(follower.tick() ?? '', /^Driver stopped: stopped\nDetails:/);
+      assert.match(follower.tick() ?? '', /^Driver stopped: stopped\nowed drive /);
       assert.equal(follower.stopped, true);
     } finally { await f.cleanup(); }
   }
@@ -281,7 +281,7 @@ test('QN2: identical terminal text from old and current drivers keeps the curren
     l.line({ event: 'stopped', driver: l.owner });
     const text = follower.tick()!;
     assert.match(text, /^Driver stopped: stopped/);
-    assert.match(text, /earlier driver/); assert.match(text, /\nstopped\nNext:/);
+    assert.match(text, /earlier driver/); assert.match(text, /^Driver stopped: stopped\n/);
     assert.equal(follower.stopped, true);
   } finally { await f.cleanup(); }
 });
@@ -313,21 +313,21 @@ test('QN2: explicit follow of a replacement driver preserves held earlier termin
   } finally { watch.stopAll(); await f.cleanup(); }
 });
 
-test('QN3: the summary selects one owner command and keeps quoted answer retry text intact', async () => {
+test('NY4/QN3: the single notice keeps owner alternatives and quoted answer retry text intact', async () => {
   const f = await repo(), l = logFixture(f.root);
   try {
     const follower = new Follower({ log: l.log, repo: f.cwd, pid: process.pid, start: procStart(process.pid), deliver() {} });
     l.line({ do: 'notify', node: 'a', outcome: 'notify', text: 'a: needs the owner (the main agent decides; owed lists the command): flaky block #42 on check:unit; the driver leaves it alone; the main agent resolves it with: owed waive a check:unit --reason "<why>" | owed abandon a --note "<why>"' });
     const owner = follower.tick()!.split('\n');
-    assert.equal(owner[0], 'Needs you: a — decide whether to accept the conflicting measurement → owed waive a check:unit --reason "<why>"');
-    assert.ok(owner.slice(owner.indexOf('Details:')).join('\n').includes(' | owed abandon'));
+    assert.match(owner[0]!, /^Needs you: a: needs the owner .*flaky block #42/);
+    assert.ok(owner[0]!.includes('owed waive a check:unit --reason "<why>" | owed abandon'));
     const retry = "owed answer 'b' --rid 'r' --qid 'q' -- 'Use API v2; then check'";
     l.line({ do: 'notify', node: 'b', outcome: 'notify', answerRetry: true, text: `b: answer #7 recorded 900s ago but run r still shows question q; retry delivery: ${retry}` });
-    assert.equal(follower.tick()!.split('\n')[0], `Needs you: b — recorded answer still needs delivery → ${retry}`);
+    assert.equal(follower.tick()!.split('\n')[0], `Needs you: b: answer #7 recorded 900s ago but run r still shows question q; retry delivery: ${retry}`);
   } finally { await f.cleanup(); }
 });
 
-test('QN3: Needs you, Done, driver status, Details and Next order; Details keeps original lines and halt commands', async () => {
+test('NY4/QN3: Needs you, Done, driver status and Next order; every original notice and halt command occurs once', async () => {
   const f = await repo(), l = logFixture(f.root);
   try {
     const follower = new Follower({ log: l.log, repo: f.cwd, pid: process.pid, start: procStart(process.pid), deliver() {} });
@@ -335,9 +335,12 @@ test('QN3: Needs you, Done, driver status, Details and Next order; Details keeps
     const ask = { do: 'notify', node: 'a', outcome: 'notify', rid: 'rid-a', qid: 'q1', rev: 1, text: 'a: writer run rid-a asks (qid q1, rev 1): which db? — the driver never answers; answer: owed answer a --rid rid-a --qid q1 "<text>"; in pi: owed_answer {node:"a"}' };
     l.line({ do: 'merge', node: 'm', outcome: 'merged', detail: 'trunk 1' }); l.line(ask); l.line(halt);
     const text = follower.tick()!, lines = text.split('\n');
-    assert.equal(lines[0], 'Needs you: a — decide which db? → owed answer a --rid rid-a --qid q1 "<text>"');
-    assert.equal(lines[1], 'Needs you: b — choose the API → owed why b');
-    assert.deepEqual(lines.slice(2, 5), ['Done: m', 'Driver continues (3 in progress)', 'Details:']);
+    assert.equal(lines[0], `Needs you: ${ask.text}`);
+    assert.match(lines[1]!, /^Needs you: halt b attempt 1, needs the parent .*halted — choose the API$/);
+    assert.deepEqual(lines.slice(2, 5), ['Done: m', 'Driver continues (3 in progress)', `owed drive (${f.cwd}):`]);
+    assert.equal(text.split(ask.text).length - 1,1);
+    assert.equal(text.split('choose the API').length - 1,1);
+    assert.doesNotMatch(text,/\nDetails:/);
     assert.ok(text.includes(ask.text)); assert.match(text, /halt b attempt 1, needs the parent/);
     assert.ok(text.includes(haltHintText)); assert.equal(lines.at(-1), 'Next: owed status / owed why <node>');
   } finally { await f.cleanup(); }

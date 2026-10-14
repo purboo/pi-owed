@@ -106,7 +106,7 @@ test('H2.2 check-less nodes: CLI init/plan print warnings after the result, JSON
     const plan = await cli(r.cwd, ['plan', 'next.json']);
     assert.equal(plan.code, 0, plan.stderr);
     const lines = plan.stdout.trimEnd().split('\n');
-    assert.match(lines[0]!, /updated plan/);
+    assert.match(lines[0]!, /^Recorded plan #\d+ /);
     assert.deepEqual(lines.slice(-2), [WARN('d'), WARN('e')]);
     assert.ok(!plan.stdout.includes(WARN('b')));
     // JSON: warnings array; with no check-less node it is empty.

@@ -57,7 +57,7 @@ test('CLI real processes: DAG, laundering, closure, writes, invariant defer, CAS
     const merged=await call<{deferred:unknown[]}>(r.cwd,['merge','b']); assert.equal(merged.deferred.length,1);
     const report=await cli(r.cwd,['report']); assert.match(report.stdout,/flag/); assert.match(report.stdout,/deferred|defer/);
     assert.match((await cli(r.cwd,['status','--full'])).stdout,/flag weak confirmation/);
-    assert.match((await cli(r.cwd,['why','a'])).stdout,/flag weak confirmation/);
+    assert.match((await cli(r.cwd,['why','a','--full'])).stdout,/flag weak confirmation/);
     await call(r.cwd,['verify']);
     const ledger=join(r.root,'ledger','ledger.jsonl'), lines=(await readFile(ledger,'utf8')).split('\n'), first=JSON.parse(lines[0]!); first.by='owner:tampered'; lines[0]=JSON.stringify(first); await writeFile(ledger,lines.join('\n'));
     const tampered=await cli(r.cwd,['verify']); assert.equal(tampered.code,3); assert.match(tampered.stdout,/invalid hash/);
