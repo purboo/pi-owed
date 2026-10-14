@@ -47,17 +47,35 @@ test('MS4: plan validation, owner-only additions, free removal, edit path', () =
   assert.match(editText(JSON.stringify(raw()), { invariant: 'unit', set: [`quarantine=${JSON.stringify(Q)}`] }), /flaky one/);
 });
 
-test('MS4: excuse rules: exact names of a completed run with complete names only', () => {
-  const q = [{ test: 'flaky one', fix: 'fix' }], ok = { code: 1, log: '' };
-  const tap = { format: 'tap', tests: 2, pass: 1, fail: 1 };
-  assert.deepEqual(quarantineExcuse(q, ok, tap, ['flaky one']), q);
-  assert.equal(quarantineExcuse(q, ok, tap, ['Flaky one']), undefined, 'exact names only');
-  assert.equal(quarantineExcuse(q, ok, { ...tap, fail: 2 }, ['flaky one', 'other']), undefined, 'any other failing name still fails');
-  assert.equal(quarantineExcuse(q, ok, { ...tap, fail: 2 }, ['flaky one']), undefined, 'incomplete names');
-  assert.equal(quarantineExcuse(q, { code: null, error: 'timeout after 5s', log: '' }, tap, ['flaky one']), undefined, 'timeout');
-  assert.equal(quarantineExcuse(q, { code: 137, log: '' }, tap, ['flaky one']), undefined, 'killed');
-  assert.equal(quarantineExcuse(q, ok, undefined, ['flaky one']), undefined, 'no recognizable counts');
-  assert.equal(quarantineExcuse([], ok, tap, ['flaky one']), undefined);
+test('MS4 fail-closed (#1907 ruling): excused only for one complete runner invocation with its test-failure exit', () => {
+  const q = [{ test: 'flaky one', fix: 'fix' }], run = 'node --test --test-reporter=tap test/suite.test.cjs';
+  const tapLog = 'TAP version 13\nnot ok 1 - flaky one\nok 2 - other\n1..2\n# tests 2\n# pass 1\n# fail 1\n';
+  const tap = { format: 'tap', tests: 2, pass: 1, fail: 1 }, r = { code: 1, log: tapLog };
+  assert.deepEqual(quarantineExcuse(q, run, r, tap, ['flaky one']), { excused: q });
+  const why = (...a: Parameters<typeof quarantineExcuse>) => quarantineExcuse(...a).reason;
+  assert.equal(why(q, run, r, tap, ['Flaky one']), '1 failing test is not quarantined', 'exact names only');
+  assert.equal(why(q, run, r, { ...tap, fail: 2 }, ['flaky one']), '2 failing tests but 1 failing names');
+  // Reviewer's reproduction: the compound command's own exit is not the runner's.
+  for (const c of [`${run}; exit 3`, `${run} && verify`, `${run} || true`, `${run} | tee log`, `${run} &`, `${run}\nexit 3`, `x=$(true) ${run}`, `\`true\` ${run}`, `${run} "unterminated`]) assert.equal(why(q, c, r, tap, ['flaky one']), 'compound command', c);
+  assert.deepEqual(quarantineExcuse(q, `${run} --test-name-pattern='a;b|c' "x && y"`, r, tap, ['flaky one']).excused, q, 'quoted operators are one invocation');
+  assert.equal(why(q, run, { code: 3, log: tapLog }, tap, ['flaky one']), 'exit 3 is not a test failure');
+  assert.match(why(q, run, { code: null, error: 'timeout after 5s', log: tapLog }, tap, ['flaky one'])!, /did not complete/);
+  assert.equal(why(q, run, { code: 1, log: 'not ok 1 - flaky one\n# tests 2\n# fail 1\n' }, tap, ['flaky one']), 'no TAP plan');
+  assert.equal(why(q, run, { code: 1, log: 'not ok 1 - flaky one\n1..2\n' }, tap, ['flaky one']), 'TAP plan 1..2 but 1 top-level results');
+  assert.equal(why(q, run, r, { ...tap, format: 'owed' }, ['flaky one']), 'counts are not TAP');
+  // min_tests: the remaining tests must still meet it, else the run fails as without quarantine.
+  assert.equal(why(q, run, r, tap, ['flaky one'], 2), '1 tests left, below min_tests 2');
+  assert.deepEqual(quarantineExcuse(q, run, r, tap, ['flaky one'], 1).excused, q);
+  // cargo: exit 101, --no-fail-fast, every test binary has its summary, no build error.
+  const cargoLog = '     Running unittests src/lib.rs (target/x)\ntest flaky one ... FAILED\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured\n   Doc-tests crate\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured\n';
+  const cargo = { format: 'cargo', tests: 2, pass: 1, fail: 1 }, cr = { code: 101, log: cargoLog };
+  assert.deepEqual(quarantineExcuse(q, 'cargo test --no-fail-fast', cr, cargo, ['flaky one']).excused, q);
+  assert.equal(why(q, 'cargo test', cr, cargo, ['flaky one']), 'cargo without --no-fail-fast');
+  assert.equal(why(q, 'cargo test --no-fail-fast', { code: 1, log: cargoLog }, cargo, ['flaky one']), 'exit 1 is not a test failure');
+  assert.equal(why(q, 'cargo test --no-fail-fast', { code: 101, log: cargoLog.replace(/test result: ok.*\n$/, '') }, cargo, ['flaky one']), 'cargo ran 2 test targets but printed 1 test results');
+  assert.equal(why(q, 'cargo test --no-fail-fast', { code: 101, log: `error: could not compile \`b\`\n${cargoLog}` }, cargo, ['flaky one']), 'cargo build error');
+  assert.deepEqual(quarantineExcuse([], run, r, tap, ['flaky one']), {});
+  assert.deepEqual(quarantineExcuse(q, run, { code: 0, log: '' }, { format: 'tap', tests: 2, pass: 2, fail: 0 }, []), {}, 'a passing run needs no excuse');
 });
 
 test('MS4/MS5: active quarantine excuses only its name, joins the key, shows as debt, and lifts when the fix merges', { timeout: 180_000 }, async () => {
@@ -94,6 +112,9 @@ test('MS4/MS5: active quarantine excuses only its name, joins the key, shows as 
     assert.equal(stale.verdict, 'fail'); assert.equal(stale.quarantined, undefined);
     const fresh = await runJob({ cwd: r.cwd, plan: s.plan, ledger }, { ...job, key: s.trunk.invKeys.unit! });
     assert.equal(fresh.verdict, 'pass'); assert.deepEqual(fresh.quarantined, ['flaky one']);
+    // A red run is never excused: its failing test is the counterfactual (exit stays non-zero, red passes).
+    const red = await runJob({ cwd: r.cwd, plan: s.plan, ledger }, { ...job, kind: 'red', subject: 'other', obligation: 'red:c', key: 'red-key', spec: { ...job.spec!, red: true, tests: ['test/suite.test.cjs'] } });
+    assert.equal(red.verdict, 'pass', red.note); assert.equal(red.quarantined, undefined); assert.notEqual(red.exit, 0);
     // The fix node: its merge measures the key without its own entries (fresh measurement), and lifts them.
     // A first attempt that does not fix the name (and breaks another one) is refused: no excuse on its merge key.
     const f = await ops.dispatch({ cwd: r.cwd, node: 'fix', as: parent });
@@ -115,5 +136,24 @@ test('MS4/MS5: active quarantine excuses only its name, joins the key, shows as 
     assert.equal(lifted.verdict, 'pass'); assert.equal(lifted.quarantined, undefined);
     assert.doesNotMatch((await cli(r.cwd, ['status'])).stdout, /quarantine unit/);
     assert.deepEqual(views.quarantineDebt(s), []);
+  } finally { await r.cleanup(); }
+});
+
+test('MS4 fail-closed: a compound command (`...; exit 3`) is not excused and why says so', { timeout: 120_000 }, async () => {
+  const r = await repo();
+  try {
+    await r.put('test/suite.test.cjs', suite); await r.put('test/broken', 'x'); await r.put('src/v', '0'); await r.commit();
+    const plan = { version: 1, trunk: 'main', closure: [], invariants: [], nodes: [{ id: 'fix', writes: ['test/'] }, { id: 'other', writes: ['src/'],
+      checks: [{ id: 'c', run: 'node --test --test-reporter=tap test/suite.test.cjs; exit 3', min_tests: 1, reads: ['test/**', 'src/**'], quarantine: Q }] }] };
+    await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated' });
+    const o = await ops.dispatch({ cwd: r.cwd, node: 'other', as: parent });
+    await commitAt(o.worktree, { 'src/v': '1' });
+    await ops.submit({ cwd: o.worktree, node: 'other', as: { role: 'writer', id: 'other#1' } });
+    await ops.attest({ cwd: r.cwd, node: 'other' });
+    const obs = (await (await Ledger.open(r.cwd)).read()).findLast((e): e is ObsEntry => e.kind === 'obs' && e.obligation === 'check:c')!;
+    assert.equal(obs.verdict, 'fail'); assert.equal(obs.exit, 3); assert.equal(obs.quarantined, undefined);
+    assert.deepEqual(obs.failed, ['flaky one']);
+    const why = (await cli(r.cwd, ['why', 'other'])).stdout;
+    assert.match(why, /other\/check:c/); assert.match(why, /note #\d+:\n {4}quarantine not applied: compound command; failed tests:/);
   } finally { await r.cleanup(); }
 });
