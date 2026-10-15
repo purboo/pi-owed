@@ -51,14 +51,14 @@ test('MD1: nested dsa pool strings and model/afterMs members ignore thinking lev
   const config = { pools: { sol: ['nested', { model: 'gateway/gpt-6.1-sol:high', afterMs: 1000 }], nested: ['proxy/ide/gpt-6.1-sol:high'] } };
   for (const used of ['proxy/ide/gpt-6.1-sol:low', 'gateway/gpt-6.1-sol:medium']) {
     const f = await fixture('sol', used, { config });
-    try { assert.doesNotMatch(await f.why(), /differs from|pool membership unknown/); }
+    try { assert.doesNotMatch(await f.why(['--full']), /differs from|pool membership unknown/); }
     finally { await f.done(); }
   }
 });
 
 test('MD1: direct model thinking differences are quiet, known pool nonmembers still warn', { timeout: 120_000 }, async () => {
   const direct = await fixture('proxy/ide/gpt-6.1-sol:high', 'proxy/ide/gpt-6.1-sol:low');
-  try { assert.doesNotMatch(await direct.why(), /differs from|pool membership unknown/); } finally { await direct.done(); }
+  try { assert.doesNotMatch(await direct.why(['--full']), /differs from|pool membership unknown/); } finally { await direct.done(); }
   const other = await fixture('sol', 'other/model:high', { config: { pools: { sol: ['gateway/gpt-6.1-sol:high'] } } });
   try { assert.match(await other.why(), /model used other\/model:high differs from the one selected sol/); } finally { await other.done(); }
 });
@@ -67,7 +67,7 @@ test('MD1: unknown, missing, malformed and cyclic pool configs are explicit, not
   for (const options of [{}, { raw: '{broken' }, { config: { pools: {} } }, { config: { pools: { sol: ['nested'], nested: ['sol'] } } }]) {
     const f = await fixture('sol', 'gateway/gpt-6.1-sol:high', options);
     try {
-      const text = await f.why();
+      const text = await f.why(['--full']);
       assert.match(text, /selected sol \(pool membership unknown\)/);
       assert.doesNotMatch(text, /differs from/);
     } finally { await f.done(); }
@@ -76,7 +76,7 @@ test('MD1: unknown, missing, malformed and cyclic pool configs are explicit, not
 
 test('MD1: default HOME config resolves pools when DSA_HOME is unset', { timeout: 120_000 }, async () => {
   const f = await fixture('sol', 'gateway/gpt-6.1-sol:low', { defaultHome: true, config: { pools: { sol: [{ model: 'gateway/gpt-6.1-sol:high', afterMs: 0 }] } } });
-  try { assert.doesNotMatch(await f.why(), /differs from|pool membership unknown/); } finally { await f.done(); }
+  try { assert.doesNotMatch(await f.why(['--full']), /differs from|pool membership unknown/); } finally { await f.done(); }
 });
 
 for (const same of ['top', 'node'] as const) test(`MD2: ${same} same_model ack is quiet by default, retained in full/JSON, never a gate`, { timeout: 120_000 }, async () => {

@@ -12,7 +12,7 @@ import owed from '../src/extension.ts';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { OwedError } from '../src/errors.ts';
-import { renderStatus, renderReceipt, renderReport, renderBrief } from '../src/views.ts';
+import { renderStatus, renderWhy, renderReport, renderBrief } from '../src/views.ts';
 import * as views from '../src/views.ts';
 import { revalidator } from '../src/drive-bg.ts';
 import { repo } from './helpers/repo.ts';
@@ -103,7 +103,7 @@ test('G2 text/details equal the in-process views; worker errors retain exact cod
   const r = await fixture(), h = harness(r.cwd);
   try {
     for (const [name, fn, render, args] of [
-      ['status', ops.status, renderStatus, {}], ['why', ops.why, renderReceipt, { node: 'n0' }],
+      ['status', ops.status, renderStatus, {}], ['why', ops.why, renderWhy, { node: 'n0' }],
       ['report', ops.report, renderReport, {}], ['brief', ops.brief, renderBrief, {}],
     ] as const) {
       const actual = await h.call(name, args);

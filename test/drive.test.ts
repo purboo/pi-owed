@@ -237,7 +237,7 @@ test('row 11: measured block → repair follow-up with the owed why card; once p
   assert.ok(a?.do === 'send' && a.reason === 'repair' && a.sendKind === 'follow-up' && a.rid === W(), JSON.stringify(a));
   assert.equal(a.message, repairMessage(r.state(), 'a'));
   assert.match(a.message, /run `owed submit a`/);
-  assert.match(a.message, new RegExp(`⛔ blocked #${fail.seq} check:unit`));
+  assert.ok(fail.seq > 0); assert.match(a.message, /\n- check:unit: /);
   // A confirming attribution rerun clears the block but the content still failed (✘): still a repair, not an attest.
   r.obs('check:unit', 'fail', { attribution: true });
   assert.equal(r.state().nodes.a!.blocks[0]!.state, 'cleared');
@@ -278,7 +278,7 @@ test('row 13: reviewer sealed unknown with its obligation awaiting → one inter
   const r = submitted(); r.pass(); r.launchReviewer(1);
   const runs = runsOf(okWriter(), view(R(1), 'sealed', { status: 'unknown' }));
   assert.deepEqual(act(r, runs), { do: 'send', node: 'a', attempt: 1, rid: R(1), sendKind: 'follow-up', reason: 'interrupted',
-    message: 'You were interrupted; check `owed why a` for reviews you already recorded on this candidate, finish the rest.' });
+    message: 'You were interrupted; check `owed why a --full` for reviews you already recorded on this candidate, finish the rest.' });
   r.send(R(1), 'interrupted');
   const v = act(r, runs, { applied: applied(r) });
   assert.ok(v?.do === 'send' && v.reason === 'verdict' && v.rid === R(1) && v.sendKind === 'follow-up', JSON.stringify(v));

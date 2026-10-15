@@ -10,7 +10,7 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText, slotGitInProgress, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
-import { planReceipt, renderEntry, withActHistory } from './views.ts';
+import { planReceipt, renderEntry, withActHistory, mergedLine } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
@@ -23,7 +23,7 @@ import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
-import { unruledBlocks } from './drive.ts';
+import { unruledBlocks, stillAskingNeeds, type StillAsking } from './drive.ts';
 import { driveStatus, readLock, driveStart, type DriveStart } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
@@ -2071,6 +2071,7 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   const red=await sweepRed(cwd,entries,state.trunk.commit);
   if (red) view.sweepRed=red;
   await applyMergeWaiting(cwd, dir, state, view);
+  if (driverRunning) await applyStillAsking(dir, state, view, now);
   const pendingBases: NonNullable<StatusView['rebasePending']> = {};
   for (const id of Object.keys(state.nodes)) {
     const r = await rebasePending(state, id);
@@ -2135,6 +2136,22 @@ async function candidateConflicts(cwd: string, state: State, only?: string): Pro
   }
   return conflicts;
 }
+/**
+ * QT4 (QT-R1 6): one `<node> merged (<commit12>); measured <n>, waived <n>, debt <n>` line per merged node. Best-effort:
+ * the read runs after the merge was committed, so a failure there only shortens the line to `<node> merged (<commit12>)`.
+ * `debt`: the deferred obligations per node when the caller knows them; otherwise the ledger's open defers of the node.
+ */
+export async function mergedLines(cwd: string, merged: readonly { node: string; commit: string }[], debt?: Readonly<Record<string, number>>): Promise<string[]> {
+  let state: State | undefined;
+  try { if (!debt) state = (await readState({ cwd })).state; } catch { state = undefined; }
+  return Promise.all(merged.map(async ({ node, commit }) => {
+    try {
+      const n = debt?.[node] ?? (state ? state.deferred.filter(d => d.node === node).length : undefined);
+      if (n === undefined) throw new Error('no state');
+      return mergedLine(await why({ cwd, node }), commit, n);
+    } catch { return `${node} merged (${commit.slice(0, 12)})`; }
+  }));
+}
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
   if (o.node === 'trunk' && !state.nodes.trunk) {
@@ -2162,6 +2179,18 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   return card;
 }
 /** DR2: a missing/corrupt busy file cannot create acceptance evidence or hide a gate. */
+/** QT5: answered questions the running driver last saw still open on the subagent host, as Needs-you items. */
+async function applyStillAsking(dir: string, state: State, view: StatusView, now: number): Promise<void> {
+  if (!view.summary) return;
+  let cached: unknown;
+  try { cached = JSON.parse(await readFile(join(dir,'drive','asking.json'),'utf8')); } catch { return; }
+  if (!Array.isArray(cached)) return;
+  const valid = cached.filter((a): a is StillAsking => !!a && typeof a.node === 'string' && typeof a.rid === 'string' && typeof a.qid === 'string' && Number.isSafeInteger(a.rev));
+  for (const { node, text } of stillAskingNeeds(state, valid, now)) {
+    const reason = text.slice(node.length + 2);
+    if (!view.summary.needs.some(n => n.node === node && n.reason === reason)) view.summary.needs.unshift({ node, reason, command: '' });
+  }
+}
 async function applyMergeWaiting(cwd: string, dir: string, state: State, view: StatusView): Promise<void> {
   const driver = await driveStatus({ cwd });
   const measuring = driver.running ? driver.measuring ?? [] : [];

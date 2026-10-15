@@ -101,7 +101,7 @@ test('MS4/MS5: active quarantine excuses only its name, joins the key, shows as 
     assert.match((await cli(r.cwd, ['status'])).stdout, new RegExp(line));
     assert.match((await cli(r.cwd, ['brief'])).stdout, new RegExp(line));
     assert.match((await cli(r.cwd, ['report'])).stdout, /Debt \(quarantine\)[\s\S]*quarantine unit\/flaky one until fix merges/);
-    assert.match((await cli(r.cwd, ['why', 'fix'])).stdout, /merging fix lifts quarantine: unit\/flaky one/);
+    assert.match((await cli(r.cwd, ['why', 'fix', '--full'])).stdout, /merging fix lifts quarantine: unit\/flaky one/);
     assert.doesNotMatch((await cli(r.cwd, ['why', 'other'])).stdout, /lifts quarantine/);
     // A job whose key does not commit to the names gets no excuse (a stale key can never be satisfied by it).
     s = (await ops.readState({ cwd: r.cwd })).state;
@@ -154,7 +154,7 @@ test('MS4 fail-closed: `...; exit 3` is not a known test runner: not excused, an
     assert.equal(obs.verdict, 'fail'); assert.equal(obs.exit, 3); assert.equal(obs.quarantined, undefined);
     assert.equal(measuredFailure([obs as never]), true, 'PO5: a run quarantine did not excuse is a measured failure');
     assert.deepEqual(obs.failed, ['flaky one']);
-    const why = (await cli(r.cwd, ['why', 'other'])).stdout;
+    const why = (await cli(r.cwd, ['why', 'other', '--full'])).stdout;
     assert.match(why, /other\/check:c/); assert.match(why, /note #\d+:\n {4}quarantine not applied: not a known test runner; failed tests:/);
   } finally { await r.cleanup(); }
 });

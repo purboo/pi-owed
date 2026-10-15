@@ -138,7 +138,7 @@ test('NT models: nested pool edges, empty/partial cycles and thinking suffixes s
       [{pool:['provider/other:high']},/differs from/],
     ] as const) {
       await writeFile(join(process.env.DSA_HOME!,'config.json'),JSON.stringify({pools}));
-      const result=await cli(r.cwd,['why','a']);assert.equal(result.code,0,result.stderr);
+      const result=await cli(r.cwd,['why','a','--full']);assert.equal(result.code,0,result.stderr);
       if(expected) assert.match(result.stdout,expected);else assert.doesNotMatch(result.stdout,/differs from|pool membership unknown/);
     }
   } finally {if(prior===undefined) delete process.env.DSA_HOME;else process.env.DSA_HOME=prior;await r.cleanup();}

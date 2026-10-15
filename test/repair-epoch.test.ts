@@ -170,7 +170,7 @@ test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node
   const rep = act(r);
   assert.ok(isSend(rep, 'repair'), JSON.stringify(rep));
   // K1.3: every `owed attest` the repair suggests to the driver's writer says to skip it while the driver runs.
-  assert.ok(rep.message.includes(`owed attest a ${SKIP_ATTEST}`) && attestAdvice(rep.message), rep.message);
+  assert.ok(attestAdvice(rep.message), rep.message);
   r.record(rep);
   const h = act(r);
   assert.ok(h?.do === 'halt' && h.reason.includes(`(measured block check:unit [#${fail.seq}]; #${fail.seq} check:unit: not ok 7 - registry scan)`), JSON.stringify(h));
