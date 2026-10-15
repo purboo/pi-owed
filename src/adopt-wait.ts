@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import type { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
+import { clockTime } from './clock.ts';
 
 export interface AdoptPending { pid: number; host: string; commit: string; since: string; until: string }
 export function adoptWaitMs(wait?: number): number | undefined {
@@ -31,8 +32,8 @@ export async function pendingAdopt(dir: string): Promise<AdoptPending | undefine
   }
   return live.sort((a,b)=>Date.parse(a.since)-Date.parse(b.since))[0];
 }
-export const mergeWaitSuffix = (reason: string, since: string): string => reason.startsWith('adopt (pending since ') ? '' : ` since ${new Date(since).toISOString().slice(11,16)}`;
-export const adoptPendingReason = (p: AdoptPending): string => `adopt (pending since ${p.since.slice(11,16)})`;
+export const mergeWaitSuffix = (reason: string, since: string): string => reason.startsWith('adopt (pending since ') ? '' : ` since ${clockTime(since)}`;
+export const adoptPendingReason = (p: AdoptPending): string => `adopt (pending since ${clockTime(p.since)})`;
 
 // Tools may share a PID. Briefly serialize only publication, never lease/merge work;
 // keep the oldest request visible and restore the next one when it finishes.

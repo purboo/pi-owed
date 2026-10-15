@@ -9,6 +9,7 @@ import { H, ZERO, sha256 } from './canon.ts';
 import { git } from './git.ts';
 import { currentLockDeadline } from './lock-deadline.ts';
 import { ledgerLocks } from './lock-context.ts';
+import { clockTime } from './clock.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import type { Entry, Draft } from './types.ts';
 
@@ -65,7 +66,7 @@ export interface LockOptions {
 }
 /** The text of a lock wait that timed out (code `busy`); `lock` is the ledger lock. */
 export function lockActivityText(owner: LockOwner): string {
-  return owner.activity ? ` (${owner.activity.replace(/[\r\n]/g, ' ')} since ${(owner.activitySince ?? owner.ts).slice(11,16)})` : '';
+  return owner.activity ? ` (${owner.activity.replace(/[\r\n]/g, ' ')} since ${clockTime(owner.activitySince ?? owner.ts)})` : '';
 }
 export function lockTimeoutText(name: string, owner?: LockOwner): string {
   const what = name === 'lock' ? 'the ledger lock' : `the ${name} lock`;
