@@ -157,10 +157,12 @@ export default function owed(pi: ExtensionAPI): void {
     pi.on('session_start', async (_event, ctx) => { agent.ctx = ctx; if (process.env.DSA_EXEC || process.env.DSA_CALL) return; await watch.attach(ctx.cwd).catch(() => undefined); await attachIdle(ctx.cwd); });
     pi.on('session_shutdown', () => { watch.stopAll(); idleWatch.stopAll(); for (const c of genesisRuns) c.abort(); });
   }
+  const core = new Set(['status', 'why', 'decide', 'drive', 'start', 'submit', 'review']);
+  const allTools = process.env.OWED_TOOLS?.trim() === 'all';
   // `signal`: the tool call's abort signal; attest, merge and adopt pass it to ops, which then end their checks (D16.4);
   // drive's single pass stops after the current action.
   function tool<S extends TSchema>(name: string, description: string, parameters: S, run: (p: Static<S>, ctx: ExtensionContext, dir: string, signal?: AbortSignal) => Promise<ReturnType<typeof result>>) {
-    pi.registerTool({ name: `owed_${name}`, label: `owed ${name}`, description, parameters, exposure: 'direct', executionMode: 'sequential',
+    pi.registerTool({ name: `owed_${name}`, label: `owed ${name}`, description: `${description}${core.has(name) ? ' Other owed operations are owed_* tools: load any that are not declared with tool_search, or use the owed <command> CLI (owed help).' : ''}`, parameters, exposure: allTools || core.has(name) ? 'direct' : 'deferred', executionMode: 'sequential',
       async execute(_id, p, signal, _update, ctx) {
         try {
           // G2.3 (F5): refused everywhere, reads included.
@@ -188,7 +190,7 @@ export default function owed(pi: ExtensionAPI): void {
   tool('dispatch', 'Dispatch a node; return the packet and arguments ready to pass to subagents. Refused while its writes overlap an open slot unless allow_overlap.', Type.Object({ node, allow_overlap: Type.Optional(Type.Boolean({ description: 'Dispatch although writes overlap another open slot; recorded in the entry.' })), as, cwd }), async (p, ctx, dir, signal) => {
     const r = await ops.dispatch({ ...await actor(ctx, dir, p.as, `Dispatch node ${oneLine(p.node)}${p.allow_overlap ? ' (allowing overlapping writes)' : ''}`, {}, signal), node: p.node, allowOverlap: !!p.allow_overlap });
     const subagents = { ...r.subagent, isolation: 'none' as const };
-    return result({ ...r, subagents }, `${r.packet}\n\nsubagents: ${JSON.stringify(subagents)}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
+    return result({ ...r, subagents }, `${r.packet}\n\nsubagents: ${JSON.stringify({ ...subagents, task: '<the complete packet above>' })}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('submit', 'Submit a committed, clean writer worktree; infer the writer when cwd (or the session) is the slot worktree. model records the actual model used, otherwise the recorded dsa launch is inspected.', Type.Object({ node, commit: Type.Optional(Type.String()), model: Type.Optional(Type.String({ minLength: 1 })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = p.as ?? await slotWriter(dir, p.node);
@@ -383,6 +385,13 @@ export default function owed(pi: ExtensionAPI): void {
     const payload = await readText(dir, p.file!), decoys = ops.decoyPayload(payload).decoys;
     const a = await actor(ctx, dir, who, `Reveal decoys from ${oneLine(p.file!)}: ${decoys.map(d => oneLine(d.node)).join(', ')}\nThe revealed list must match an earlier unrevealed commitment; outcomes become part of the escape metrics.`, {}, signal);
     const r = await ops.decoyReveal({ ...a, channel: a.channel!, payload }); return result(r, renderEntry(r));
+  });
+  tool('start', 'Preflight a repository and plan, initialize as delegated owner when needed, record changed plans under existing permissions, and start or reuse the background driver. No blocking dialog or implicit downgrade approval. Omit plan to reread the latest recorded plan file.', Type.Object({ plan:Type.Optional(Type.String({minLength:1})), max:Type.Optional(Type.Integer({minimum:1})), stay:Type.Optional(Type.Boolean()), cwd }), async (p, _ctx, dir, signal) => {
+    const r = await ops.start({ ...p, cwd:dir, signal });
+    // A reused driver is followed from the log's current end (no replay of old wakes); a new one from its fresh log.
+    if (r.driver.alreadyRunning) await watch.attach(dir).catch(() => undefined);
+    else if (!r.driver.exited) watch.follow({ log:r.driver.log, repo:r.driver.repo, pid:r.driver.pid, ...(r.driver.start ? {start:r.driver.start} : {}), from:0 });
+    return result(r, ops.startText(r));
   });
   tool('drive', 'The owed driver as parent:drive: dispatch ready nodes, launch writers and reviewers through pi-durable-subagents (>= 1.0.27), send follow-ups, attest under `hold machine --shared --no-wait`, merge, rebase, halt for decisions. It never answers questions, waives, changes the plan or forces restarts. action once (default): one pass (`owed drive --once`). To run the DAG to completion use action start: a detached background driver (`owed drive --detach`; like a loop in a terminal or a `systemd-run --user` unit, never a long loop inside a tool or dsa call) that survives pi exiting; this session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or the driver exits, so do not poll status. With stay: true the started driver does not exit when idle: it wakes this session once (idle-wait) and waits for ledger changes (e.g. a plan update), then continues. action status reports the background driver; action stop stops it after its current action and its in-flight attests and merges (now: at once). Refused while another driver runs for the repository.', Type.Object({ action: Type.Optional(Type.Union([Type.Literal('once'), Type.Literal('start'), Type.Literal('status'), Type.Literal('stop')], { description: 'once (default): one pass; start: background driver with wake-ups; status; stop.' })), max: Type.Optional(Type.Integer({ minimum: 1, description: 'Concurrent open attempts (overrides drive.max); action once or start.' })), now: Type.Optional(Type.Boolean({ description: 'action stop: stop at once (second SIGTERM after 1 s) instead of after the current action.' })), stay: Type.Optional(Type.Boolean({ description: 'action start: when idle, keep running and wait for ledger changes instead of exiting (this session is woken once per idle period); use it when the plan will grow. Stop it with action stop.' })), cwd }), async (p, _ctx, dir, signal) => {
     const action = p.action ?? 'once';

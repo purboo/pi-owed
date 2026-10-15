@@ -96,6 +96,8 @@ const describeOwner = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since
 // ---------- --detach ----------
 export interface DriveStart {
   pid: number; log: string; repo: string;
+  /** SF2: start reused the running driver without rotating its log or recording an act. */
+  alreadyRunning?: boolean;
   /** Start time of the driver process (`/proc`), to tell a reused pid from it. */
   start?: string;
   /** The driver already ended (e.g. idle at once) without an error; its exit record. */
@@ -116,11 +118,12 @@ export const FROM_DSA_NOTE = 'note: started from inside a dsa call; if that call
  * first with no exit record or with an error record refuses with the log tail; one that has not taken the lock after
  * `waitMs` (30 s) is sent SIGTERM (pid and start time checked) and the start refuses with the log tail.
  */
-export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number }): Promise<DriveStart> {
+export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number; reuse?: boolean }): Promise<DriveStart> {
   const ledger = await Ledger.open(o.cwd), dir = ledger.dir, repo = await git.mainRoot(o.cwd);
   if (!(await ledger.read()).length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   return ledger.withLock(async () => {
     const log = logPath(dir), held = readLock(dir);
+    if (held.state === 'live' && o.reuse) return { pid:held.owner.pid, log, repo, alreadyRunning:true, ...(held.owner.start ? { start:held.owner.start } : {}), ...(held.owner.session ? { session:held.owner.session } : {}) };
     if (held.state === 'live') throw new OwedError(`a driver is running for this repository: ${describeOwner(held.owner)}; log ${log} (owed drive --status, owed drive --stop)`);
     if (held.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${held.owner.pid} on host ${held.owner.host} (since ${clockTime(held.owner.at)}); a lock of another host is never taken over: check that host, and if no driver runs there remove the lock by hand; log ${log}`);
     mkdirSync(join(dir, 'drive'), { recursive: true });

@@ -84,7 +84,7 @@ test('CR2 dispatch preserves the packet and subagent arguments and appends a bri
     const reply = await r.h.call('dispatch', { node: 'a' });
     const d = reply.details as Awaited<ReturnType<typeof ops.dispatch>> & { subagents: object };
     assert.deepEqual(d.subagents, { ...d.subagent, isolation: 'none' });
-    assert.ok(text(reply).startsWith(`${d.packet}\n\nsubagents: ${JSON.stringify(d.subagents)}\n`));
+    assert.ok(text(reply).startsWith(`${d.packet}\n\nsubagents: ${JSON.stringify({ ...d.subagents, task: '<the complete packet above>' })}\n`));
     const suffix = text(reply).slice(text(reply).indexOf('\nsubagents:'));
     compact(suffix); assert.ok(text(reply).endsWith(detailsLine));
   } finally { await r.cleanup(); }
