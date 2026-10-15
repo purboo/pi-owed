@@ -167,6 +167,8 @@ export interface ObsEntry extends Base {
   failed?: string[];
   /** SG1: failed name -> v2 error/innermost repository test frame/assertion values (first failing run). Untagged legacy signatures remain readable. */
   signatures?: Record<string, string>;
+  /** WG5: only refusals are ownership overlaps; retry once when every named slot closes. */
+  waits_on?: string[];
   /** MS4 (0.20): failing test names excused by active quarantine entries (they neither passed nor failed). */
   quarantined?: string[];
 }

@@ -1,3 +1,4 @@
+import { writesEntryError, writeCovers } from './writes.ts';
 import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
@@ -278,7 +279,7 @@ function parseAllow(v: unknown, errors: string[]): AllowRule[] {
     const count = int(r.review_count, `${p}.review_count`, 0, Infinity), rank = int(r.review_rank, `${p}.review_rank`, 1, 3);
     if (count !== undefined) out.review_count = count;
     if (rank !== undefined) out.review_rank = rank;
-    for (const k of ['writes', 'checks', 'adopt'] as const) { const l = list(r[k], `${p}.${k}`); if (l) out[k] = l; }
+    for (const k of ['writes', 'checks', 'adopt'] as const) { const l = list(r[k], `${p}.${k}`); if (l) { out[k] = l; if (k !== 'checks') for (const entry of l) { const error = writesEntryError(entry); if (error) errors.push(`${p}.${k}: ${error}`); } } }
     if (!['review_count', 'review_rank', 'writes', 'checks', 'adopt'].some(k => r[k] !== undefined)) errors.push(`${p}: a rule needs at least one permission (review_count, review_rank, writes, checks or adopt)`);
     return out;
   });
@@ -406,6 +407,7 @@ export function parsePlan(text: string): Plan {
     const p = `nodes[${i}]`, n = obj(x, p), review = obj(n.review ?? {}, `${p}.review`);
     const out: NodeSpec = { id: str(n.id, `${p}.id`), deps: strings(n.deps ?? [], `${p}.deps`), writes: strings(n.writes ?? [], `${p}.writes`), checks: checks(n.checks, `${p}.checks`), review: { count: num(review.count ?? 0, `${p}.review.count`, 0), min_rank: num(review.min_rank ?? 1, `${p}.review.min_rank`, 1) } };
     if (out.review.min_rank > 3) errors.push(`${p}.review.min_rank must be <= 3`);
+    for (const entry of out.writes) { const error = writesEntryError(entry); if (error) errors.push(`${p}.writes: ${error}`); }
     if (out.checks.length && !out.writes.length) errors.push(`${p}: writes required with checks`);
     if (n.title !== undefined) out.title = str(n.title, `${p}.title`);
     if (n.brief !== undefined) out.brief = str(n.brief, `${p}.brief`);
@@ -562,7 +564,7 @@ export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
     compare(n.id, n.checks, m.checks);
     if (m.review.count < n.review.count) out.push({ node: n.id, what: 'review count lowered' });
     if (m.review.min_rank < n.review.min_rank) out.push({ node: n.id, what: 'review rank lowered' });
-    if (m.writes.some(p => !n.writes.some(old => p.startsWith(old)))) out.push({ node: n.id, what: 'writes widened' });
+    if (m.writes.some(p => !n.writes.some(old => writeCovers(old, p)))) out.push({ node: n.id, what: 'writes widened' });
     out.push(...manualDowngrades(n.id, n, m));
   }
   if (allowWidened(prev, next)) out.push({ node: 'trunk', what: 'allow changed' });
