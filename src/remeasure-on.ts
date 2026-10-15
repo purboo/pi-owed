@@ -1,17 +1,22 @@
 import { parse } from 'yaml';
-import { errorGroups, lastLines } from './exec.ts';
+import { errorGroups } from './exec.ts';
 import type { ObsEntry } from './types.ts';
 
 /** RO2: match error text, never a test title or a passing-output tail when failures were parsed. */
 export function matchesRemeasureOn(obs: Pick<ObsEntry, 'verdict' | 'failed' | 'counts'>, log: string, needles: readonly string[]): boolean {
-  const texts = remeasureErrorTexts(obs,log);
-  return texts.length > 0 && needles.length > 0 && texts.every(text => needles.some(n => text.includes(n)));
+  return remeasureMatches(obs,log,needles).length > 0;
 }
-/** Full matching evidence retained on the failure for deterministic blob-free replay validation. */
+/** Bounded provenance: only configured literals, and only when EVERY failure matched. */
+export function remeasureMatches(obs: Pick<ObsEntry, 'verdict' | 'failed' | 'counts'>, log: string, needles: readonly string[]): string[] {
+  const texts = remeasureErrorTexts(obs,log);
+  if (!texts.length || !needles.length || !texts.every(text => needles.some(n => text.includes(n)))) return [];
+  return [...new Set(needles.filter(n => texts.some(text => text.includes(n))))];
+}
+/** Measurement-only raw text; never persisted in the ledger. */
 export function remeasureErrorTexts(obs: Pick<ObsEntry, 'verdict' | 'failed' | 'counts'>, log: string): string[] {
   if (obs.verdict !== 'fail') return [];
   const names = obs.failed ?? [];
-  if (!names.length) return [lastLines(log, 20).join('\n')];
+  if (!names.length) return [log];
   // The executor caps names at 50. An incomplete list cannot prove EVERY failure matched.
   if ((obs.counts?.fail ?? names.length) > names.length) return [];
   const groups = errorGroups(log, names, true);
