@@ -5,21 +5,27 @@ import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import * as R from '../src/reducer.ts';
 import { parsePlan, planDowngrades } from '../src/plan.ts';
-import { git } from '../src/git.ts';
+import { git, stateFacts, candidateFacts } from '../src/git.ts';
 import { Ledger, entryHash } from '../src/ledger.ts';
 import { decide, writerLaunch } from '../src/drive.ts';
-import { renderReceipt } from '../src/views.ts';
+import { renderReceipt, renderStatusBrief } from '../src/views.ts';
+import { canonical } from '../src/canon.ts';
+import { stringify } from 'yaml';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 import type { Draft, Entry, Plan, State } from '../src/types.ts';
 const owner = {role:'owner' as const,id:'test'}, parent = {role:'parent' as const,id:'test'};
 const node = (id:string,writes:string[]) => ({id,writes,checks:[],review:{count:0,min_rank:1}});
 const plan = (extra:Record<string,unknown> = {}) => ({version:1,trunk:'main',closure:[],invariants:[],nodes:[node('a',['src/']),node('b',['docs/shared/'])],allow:[{nodes:['a'],writes:['docs/']}],...extra});
-async function fixture(p=plan()) {
+async function fixture(p=plan(), legacy=false) {
   const r=await repo();
-  await commitAt(r.cwd,{'src/base':'base','docs/base':'base'});
-  await ops.init({cwd:r.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'});
-  const slot=await ops.dispatch({cwd:r.cwd,node:'a',as:parent}), ledger=await Ledger.open(r.cwd);
+  const commit=await commitAt(r.cwd,{'src/base':'base','docs/base':'base'}), ledger=await Ledger.open(r.cwd);
+  if (legacy) {
+    const parsed=parsePlan(JSON.stringify(p)), sha=await ledger.putBlob(stringify(JSON.parse(canonical(parsed)),{sortMapEntries:true}));
+    const facts=await stateFacts(r.cwd,parsed,commit);
+    await ledger.withLock(()=>ledger.append([{kind:'genesis',by:'owner:test',channel:'flag',trunk:'main',commit,plan:sha,state:facts}]));
+  } else await ops.init({cwd:r.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'});
+  const slot=await ops.dispatch({cwd:r.cwd,node:'a',as:parent});
   const state=async()=>{
     const es=await ledger.read(), plans=new Map<string,Plan>();
     for(const e of es) if(e.kind==='genesis'||e.kind==='plan') plans.set(e.plan,parsePlan((await ledger.getBlob(e.plan)).toString()));
@@ -40,19 +46,24 @@ async function driverState(r:Awaited<ReturnType<typeof fixture>>) {
   return {s:launched,actions};
 }
 
-test('WG1 rejects unsupported writes grammar on plan load and CLI amend, naming the entry',async()=>{
+test('WG1 keeps historical parsing lenient but rejects unsupported syntax at new plan entry points',async()=>{
   const bad=['/absolute','a/../b','a/[xy]','a/{x}','!a','a/b**','a/**suffix','a/***/x'];
-  for(const entry of bad) for(const where of ['node','writes','adopt']) {
-    const p=where==='node'?plan({nodes:[node('a',[entry])]}):plan({allow:[{nodes:['a'],[where]:[entry]}]});
-    assert.throws(()=>parsePlan(JSON.stringify(p)),e=>e instanceof Error&&e.message.includes(entry),`${where}: ${entry}`);
-  }
+  const fresh=await repo();try {
+    for(const entry of bad) for(const where of ['node','writes','adopt']) {
+      const p=where==='node'?plan({nodes:[node('a',[entry])]}):plan({allow:[{nodes:['a'],[where]:[entry]}]});
+      assert.doesNotThrow(()=>parsePlan(JSON.stringify(p)),`historical ${where}: ${entry}`);
+      await assert.rejects(ops.init({cwd:fresh.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'}),e=>e instanceof Error&&e.message.includes(entry),`${where}: ${entry}`);
+    }
+  }finally{await fresh.cleanup();}
   const r=await fixture();try {
     const file=join(r.cwd,'plan.json');await writeFile(file,JSON.stringify(plan()));
     for(const entry of bad) {
       const out=await cli(r.cwd,['amend','a','--plan',file,'--writes',`+${entry}`,'--note','test','--as','owner:test','--i-am-owner']);
       assert.notEqual(out.code,0);assert.ok((out.stdout+out.stderr).includes(entry),out.stdout+out.stderr);
+      await assert.rejects(ops.planSet({cwd:r.cwd,as:owner,channel:'flag',plan:JSON.stringify(plan({nodes:[node('a',[entry])]}))}),e=>e instanceof Error&&e.message.includes(entry));
+      await assert.rejects(ops.edit({cwd:r.cwd,node:'a',as:owner,channel:'flag',plan:file,note:'test',set:[`writes=${JSON.stringify([entry])}`]}),e=>e instanceof Error&&e.message.includes(entry));
     }
-    assert.equal((await r.ledger.read()).length,2,'refused amendments record nothing');
+    assert.equal((await r.ledger.read()).length,2,'refused plan entry points record nothing');
   }finally{await r.cleanup();}
 });
 
@@ -193,5 +204,106 @@ test('WG5 ordinary writes failures retain same-key conflicts and cannot forge wa
     assert.throws(()=>R.reduceFrom(s,[forged(s,d)],lookup),/waits_on/);
     const next=R.reduceFrom(s,[forged(s,{...d,waits_on:undefined,verdict:'pass',exit:0})],lookup);
     assert.equal(next.nodes.a!.items.find(i=>i.obligation==='writes')!.mark,'⊤');assert.equal(next.nodes.a!.accepted,false);
+  }finally{await r.cleanup();}
+});
+
+test('WG2098 legacy brackets and wildcard prefixes replay cold and retain grants, overlap, exec and adopt semantics',async()=>{
+  const {writesSyntax}=await import('../src/writes.ts');
+  const p=plan({nodes:[node('a',['app/[id]/','a*b/','q?/']),node('b',['axxb/'])],allow:[{nodes:['a'],writes:['grant*/','grant?/'],adopt:['tool?/']}]});
+  const r=await fixture(p,true);try{
+    let {s,es,lookup}=await r.state();assert.equal('writes_syntax' in es[0]!,false);
+    assert.equal(R.withinWrites(s,'a','app/[id]/x'),true);assert.equal(R.withinWrites(s,'a','app/i/x'),false);
+    assert.equal(R.withinWrites(s,'a','a*b/x'),true);assert.equal(R.withinWrites(s,'a','axxb/x'),false);
+    assert.equal(R.withinWrites(s,'a','q?/x'),true);assert.equal(R.withinWrites(s,'a','qz/x'),false);
+    await ops.dispatch({cwd:r.cwd,node:'b',as:parent});assert.deepEqual(R.overlapping((await r.state()).s,'a'),[]);
+    assert.equal(R.writesAllowed(s.plan,'a',['grant*/x','grant?/y']),true);assert.equal(R.writesAllowed(s.plan,'a',['grantZZ/x']),false);
+    await r.submit({'app/[id]/x':'a','a*b/x':'b','q?/x':'q','grant*/x':'g'});assert.equal((await r.attest()).accepted,true);
+    ({s,es,lookup}=await r.state());assert.deepEqual(grants(es)[0]!.paths,['grant*/x']);
+    assert.equal(writesSyntax(R.unpackState(structuredClone(R.packState(s)),lookup).plan),1);
+    // A fresh CLI process must reparse the historical blob after an old-version cache is discarded.
+    await r.ledger.removeSnapshot();await writeFile(join(r.ledger.dir,'cache','plans',`${s.planSha}.json`),JSON.stringify({v:'plan-cache/1 owed/0.20.0',sha:s.planSha,plan:s.plan}));
+    const status=await cli(r.cwd,['status','--full']);assert.equal(status.code,0,status.stdout+status.stderr);
+    assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
+    const before=(await r.ledger.read()).length;
+    await assert.rejects(ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'}),/app\/\[id\]\//);
+    assert.equal((await r.ledger.read()).length,before);
+    await ops.merge({cwd:r.cwd,node:'a',as:parent});
+    await commitAt(r.cwd,{'tool?/run':'allowed'});await ops.adopt({cwd:r.cwd,note:'literal legacy prefix',as:parent});
+    await commitAt(r.cwd,{'toolX/run':'outside'});await assert.rejects(ops.adopt({cwd:r.cwd,note:'not a literal match',as:parent}),/toolX\/run/);
+  }finally{await r.cleanup();}
+});
+
+test('WG2098 identical plan blobs keep distinct recorded syntax, keys and historical queries',async()=>{
+  const {writesSyntax,withWritesSyntax}=await import('../src/writes.ts');
+  const p=plan({nodes:[node('a',['a*b/'])],allow:[]}), r=await fixture(p,true);try{
+    await r.submit({'a*b/file':'literal prefix'});assert.equal((await r.attest()).accepted,true);
+    let {s}=await r.state();const oldKey=s.nodes.a!.candidate!.keys.writes!, sha=s.planSha;
+    await assert.rejects(ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),as:parent}),/owner|writes/i);
+    const entry=await ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'});
+    assert.equal(entry.kind,'plan');if(entry.kind!=='plan')return;
+    assert.equal(entry.writes_syntax,2);assert.equal(entry.plan,sha,'dialect is on the entry, not in the blob');
+    let {es,lookup}=await r.state();s=(await r.state()).s;
+    assert.equal(writesSyntax(R.planAt(s,entry.seq)),1);assert.equal(writesSyntax(R.planAt(s,entry.seq+1)),2);
+    assert.equal(R.withinWrites({...s,plan:R.planAt(s,entry.seq)},'a','a*b/file'),true);
+    assert.equal(R.withinWrites(s,'a','a*b/file'),false);
+    assert.notEqual(s.nodes.a!.candidate!.keys.writes,oldKey,'carry recomputes an isolated writes key');
+    const restored=R.unpackState(structuredClone(R.packState(s)),lookup);assert.equal(writesSyntax(restored.plan),2);assert.equal(R.withinWrites(restored,'a','a*b/file'),false);
+    assert.equal((await r.attest()).accepted,false);es=(await r.state()).es;assert.equal(writes(es).at(-1)!.verdict,'fail');
+    await r.ledger.removeSnapshot();await r.ledger.removePlanCache(`${sha}.json`);
+    assert.equal((await cli(r.cwd,['status'])).code,0);
+    const modern=withWritesSyntax(parsePlan(JSON.stringify(p)),2);
+    assert.notEqual((await candidateFacts(r.cwd,modern,modern.nodes[0]!,s.nodes.a!.candidate!.base,s.nodes.a!.candidate!.commit,1)).keys.writes,oldKey);
+  }finally{await r.cleanup();}
+});
+
+test('WG2098 syntax opt-in for wildcard allowances needs owner authority and records a new allowance seq',async()=>{
+  const p=plan({allow:[{nodes:['a'],writes:['docs/*'],adopt:['scripts/?']}]}), r=await fixture(p,true);try{
+    let {s}=await r.state();assert.equal(R.writesAllowed(s.plan,'a',['docs/file']),false);assert.equal(R.unadoptable(s.plan,['scripts/x']),'scripts/x');
+    await assert.rejects(ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),as:parent}),/owner|allow/i);
+    const e=await ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'});
+    s=(await r.state()).s;assert.equal(R.allowanceSeq(s),e.seq);assert.equal(R.writesAllowed(s.plan,'a',['docs/file']),true);assert.equal(R.unadoptable(s.plan,['scripts/x']),undefined);
+    await r.submit({'docs/file':'g'});assert.equal((await r.attest()).accepted,true);assert.equal(grants((await r.state()).es)[0]!.allowance,e.seq);
+  }finally{await r.cleanup();}
+});
+
+test('WG2098 every new genesis/plan/edit/amend records syntax 2 and rejects unknown syntax versions',async()=>{
+  const p=plan({allow:[]}), r=await fixture(p);try{
+    const file=join(r.cwd,'plan.json');await writeFile(file,JSON.stringify(p));
+    await ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),path:file,as:owner,channel:'flag'});
+    await ops.edit({cwd:r.cwd,node:'a',plan:file,set:['title=edited'],note:'new title',as:owner,channel:'flag'});
+    await ops.amend({cwd:r.cwd,node:'a',plan:file,writes:['+more/'],note:'new ownership',as:owner,channel:'flag'});
+    const {s,es,lookup}=await r.state(), laws=es.filter(e=>e.kind==='genesis'||e.kind==='plan');
+    assert.equal(laws.length,4);for(const e of laws)if(e.kind==='genesis'||e.kind==='plan')assert.equal(e.writes_syntax,2);
+    const d={kind:'plan',by:'owner:test',prior:s.planSha,plan:s.planSha,downgrades:[],writes_syntax:3} as unknown as Draft;
+    assert.throws(()=>R.reduceFrom(s,[forged(s,d)],lookup),/writes_syntax/);
+  }finally{await r.cleanup();}
+});
+
+test('WG2098 new overlap observations and automatic retry also work under legacy prefix semantics',async()=>{
+  const p=plan({nodes:[node('a',['a*b/']),node('b',['axxb/'])],allow:[{nodes:['a'],writes:['axxb/']}]}), r=await fixture(p,true);try{
+    await ops.dispatch({cwd:r.cwd,node:'b',as:parent});
+    await r.submit({'axxb/x':'outside the literal wildcard prefix'});await r.attest();
+    let {s,es}=await r.state();const first=writes(es)[0]!;assert.deepEqual(first.waits_on,['b']);
+    assert.equal(R.withinWrites(s,'a','axxb/x'),false);assert.equal('writes_syntax' in es[0]!,false);
+    assert.deepEqual(R.attestJobs(s,'a'),[]);
+    await ops.abandon({cwd:r.cwd,node:'b',as:parent,reason:'release legacy ownership'});
+    assert.equal((await r.attest()).accepted,true);({s,es}=await r.state());
+    assert.equal(writes(es).at(-1)!.key,first.key);assert.deepEqual(grants(es)[0]!.paths,['axxb/x']);
+    assert.equal(s.nodes.a!.blocks[0]!.state,'cleared');
+  }finally{await r.cleanup();}
+});
+
+test('WG2098 driver halts with Needs-you for a writes ownership cycle and names a resolution',async()=>{
+  const p=plan({nodes:[node('a',['a/']),node('b',['b/'])],allow:[{nodes:['*'],writes:['a/','b/']}]}), r=await fixture(p);try{
+    const b=await ops.dispatch({cwd:r.cwd,node:'b',as:parent});
+    await r.submit({'b/x':'a owns b path'});await r.attest();
+    assert.equal(R.writesWaitCycle((await r.state()).s,'a'),undefined,'an owner without a waiting candidate is not a cycle');
+    await commitAt(b.worktree,{'a/x':'b owns a path'});await ops.submit({cwd:b.worktree,node:'b',as:{role:'writer',id:'b#1'}});await ops.attest({cwd:r.cwd,node:'b'});
+    assert.deepEqual(R.writesWaitCycle((await r.state()).s,'a'),['a','b','a']);
+    const {actions}=await driverState(r), halt=actions().find(a=>a.do==='halt'&&a.node==='a');assert.ok(halt&&halt.do==='halt');
+    assert.match(halt.reason,/writes ownership wait cycle: a -> b -> a/);assert.match(halt.reason,/owed resume a/);
+    await ops.halt({cwd:r.cwd,node:'a',attempt:1,reason:halt.reason,needs:halt.needs,as:{role:'parent',id:'drive'}});
+    assert.match(renderStatusBrief(await ops.status({cwd:r.cwd})),/Needs you[\s\S]*writes ownership wait cycle: a -> b -> a/);
+    await ops.abandon({cwd:r.cwd,node:'b',as:parent,reason:'break cycle'});assert.equal(R.writesWaitCycle((await r.state()).s,'a'),undefined);
   }finally{await r.cleanup();}
 });

@@ -1,4 +1,4 @@
-import { matchesWrite, writeCovers, writeOverlaps } from './writes.ts';
+import { matchesWrite, writeCovers, writeOverlaps, writesSyntax, withWritesSyntax, writesKeySyntax, writesAllowChanged, type WritesSyntax } from './writes.ts';
 import { matchesGlob } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
@@ -130,7 +130,7 @@ function latestRule(s: State, node: string): number {
   return Math.max(-1, ...applicableRules(s, node).map(r => r.seq));
 }
 /** WG3: potential writes overlap is conservative; matching grants remains exact. */
-export const writesOverlap = (a: string[], b: string[]): boolean => a.some(p => b.some(q => writeOverlaps(p, q)));
+export const writesOverlap = (a: string[], b: string[], aSyntax: WritesSyntax = 2, bSyntax: WritesSyntax = aSyntax): boolean => a.some(p => b.some(q => writeOverlaps(p, q, aSyntax, bSyntax)));
 /** Other nodes with an open slot whose `writes` overlap those of node `id`, sorted. */
 export function overlapping(s: State, id: string): string[] {
   return Object.values(s.nodes).filter(x => x.id !== id && x.slot?.open && effectiveWritesOverlap(s, id, x.id)).map(x => x.id).sort();
@@ -140,18 +140,22 @@ export function grantsOf(s: State, id: string): import('./types.ts').GrantEntry[
   const attempt = s.nodes[id]?.slot?.attempt;
   return (context(s).grants?.get(id) ?? []).filter(e => e.attempt === attempt);
 }
-function planWrites(s: State, id: string): string[] {
+function planForWrites(s: State, id: string): Plan {
   const n = s.nodes[id];
-  return (nodeSpec(s, id) ?? (n?.slot?.open ? planAt(s, n.slot.dispatchSeq).nodes.find(x => x.id === id) : undefined))?.writes ?? [];
+  return nodeSpec(s,id) || !n?.slot?.open ? s.plan : planAt(s,n.slot.dispatchSeq);
+}
+function planWrites(s: State, id: string): string[] {
+  return planForWrites(s,id).nodes.find(x => x.id === id)?.writes ?? [];
 }
 export function effectiveWrites(s: State, id: string): string[] { return [...planWrites(s, id), ...grantsOf(s, id).flatMap(g => g.paths)]; }
 /** Plan writes are prefixes or globs; granted paths are exact repository paths, never prefixes. */
 export function withinWrites(s: State, id: string, path: string): boolean {
-  return planWrites(s, id).some(w => matchesWrite(path, w)) || grantsOf(s, id).some(g => g.paths.includes(path));
+  return planWrites(s, id).some(w => matchesWrite(path, w, writesSyntax(planForWrites(s,id)))) || grantsOf(s, id).some(g => g.paths.includes(path));
 }
 export function effectiveWritesOverlap(s: State, a: string, b: string): boolean {
   const pa = planWrites(s, a), pb = planWrites(s, b), ga = s.nodes[a]?.slot?.open ? grantsOf(s, a).flatMap(g => g.paths) : [], gb = s.nodes[b]?.slot?.open ? grantsOf(s, b).flatMap(g => g.paths) : [];
-  return writesOverlap(pa, pb) || ga.some(p => pb.some(w => matchesWrite(p, w)) || gb.includes(p)) || gb.some(p => pa.some(w => matchesWrite(p, w)));
+  const aSyntax = writesSyntax(planForWrites(s,a)), bSyntax = writesSyntax(planForWrites(s,b));
+  return writesOverlap(pa, pb, aSyntax, bSyntax) || ga.some(p => pb.some(w => matchesWrite(p, w, bSyntax)) || gb.includes(p)) || gb.some(p => pa.some(w => matchesWrite(p, w, aSyntax)));
 }
 /** Detail of a satisfied `rulings` item when no ruling is in scope for the node (shown as "no rulings apply"). */
 export const NO_RULINGS = 'no ruling is in scope for this node';
@@ -341,6 +345,9 @@ function lawPlan(h: History, sha: string): Plan {
   if (!p) { p = own(h.plans(sha)); h.planObjs.set(sha, p); }
   return p;
 }
+function recordedPlan(h: History, e: Pick<import('./types.ts').PlanEntry, 'plan' | 'writes_syntax'>): Plan {
+  return withWritesSyntax(lawPlan(h,e.plan),e.writes_syntax ?? 1);
+}
 /** The plan in force at executor observation `seq` (attribution reruns, supersede). */
 const obsPlan = (h: History, seq: number): Plan | undefined => { const sha = h.obsPlans.get(seq); return sha === undefined ? undefined : lawPlan(h, sha); };
 function blank(plans: PlanLookup): State {
@@ -442,7 +449,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
     if (errors.length) throw new OwedError(`Entry #${e.seq} invalid: ${errors.join('; ')}`);
     if (e.kind === 'genesis') {
       h.genesis = e;
-      s.plan = lawPlan(h, e.plan); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
+      s.plan = recordedPlan(h, e); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
       s.trunk = { name: e.trunk, ...e.state, seq: e.seq };
       if (s.plan.allow !== undefined) h.allowSeq = e.seq;
     } else if (e.kind === 'refresh') {
@@ -451,7 +458,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       for (const id of changed) red.set(`inv:${id}`, { key: e.state.invKeys[id]!, seq: e.seq, kind: 'refresh' });
       s.trunk.invKeys = { ...e.state.invKeys };
     } else if (e.kind === 'plan') {
-      const next = lawPlan(h, e.plan);
+      const next = recordedPlan(h, e);
       const detected = downgradeDetails(s.plan, next);
       // A candidate's facts were computed under the old plan; if its node's
       // obligations, setup, exec or closure changed, the writer must submit again.
@@ -459,7 +466,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       // K3: the node `drive` only chooses later launches' agents and models; changing it never invalidates a candidate.
       // N1 (0.10): a carry submit by executor:owed may follow the plan entry and restore the same commit as candidate.
       for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && invalidates(s.plan, next, n.id)) n.candidate = undefined;
-      const allowChanged = canonical(s.plan.allow) !== canonical(next.allow);
+      const allowChanged = canonical(s.plan.allow) !== canonical(next.allow) || writesAllowChanged(s.plan,next);
       supersede(s, h, e.seq, next);
       s.plan = next; s.planSha = e.plan; h.dependents = dependentCounts(next);
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
@@ -599,7 +606,10 @@ export function unpackState(p: PackedState, plans: PlanLookup, planOf: (sha: str
   const planObjs = new Map(p.plans.map(sha => [sha, planOf(sha)] as const)), s = p.state;
   Object.setPrototypeOf(s.nodes, null);
   const h: History = { ...p.history, plans, planObjs };
-  if (s.planSha) s.plan = lawPlan(h, s.planSha);
+  if (s.planSha) {
+    const law = h.entries.findLast(e => e.kind === 'genesis' || e.kind === 'plan')! as import('./types.ts').PlanEntry | import('./types.ts').GenesisEntry;
+    s.plan = recordedPlan(h,law);
+  }
   Object.defineProperty(s, history, { value: h });
   return s;
 }
@@ -622,7 +632,7 @@ export function sameReplay(a: State, b: State): boolean { return isDeepStrictEqu
  * and `drive`), or the plan's setup, exec or closure changed.
  */
 export function invalidates(prev: Plan, next: Plan, id: string): boolean {
-  return canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure);
+  return canonical(writesKeySyntax(prev,prev.nodes.find(x => x.id === id)?.writes ?? [])) !== canonical(writesKeySyntax(next,next.nodes.find(x => x.id === id)?.writes ?? [])) || canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure);
 }
 /** N1: the node spec fields whose change still lets owed carry a candidate (its facts are recomputed). */
 export const CARRY_FIELDS: readonly string[] = ['checks', 'writes', 'type', 'drive', 'later'];
@@ -771,7 +781,7 @@ export function observationsOf(s: State, subject: string, obligation: string, ke
 export function planAt(s: State, seq: number): Plan {
   const law = context(s).entries.findLast(e => e.seq < seq && (e.kind === 'genesis' || e.kind === 'plan'));
   if (!law || (law.kind !== 'genesis' && law.kind !== 'plan')) throw new OwedError(`No plan is in force before #${seq}`, 'internal');
-  return context(s).plans(law.plan);
+  return recordedPlan(context(s),law);
 }
 /**
  * The ruling that resolves a needs-parent review block (D18 as amended): the first ruling naming the block's node
@@ -945,7 +955,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
     if (!m) { add(n.id, 'node removed'); continue; }
     checks(n.id, n.checks, m.checks);
     if (m.review.count < n.review.count || m.review.min_rank < n.review.min_rank) add(n.id, 'review count/rank reduced');
-    if (m.writes.some(w => !n.writes.some(p => writeCovers(p, w)))) add(n.id, 'writes scope expanded');
+    if (m.writes.some(w => !n.writes.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))))) add(n.id, 'writes scope expanded');
     if (n.deps.some(d => !m.deps.includes(d))) add(n.id, 'dependency removed');
     result.push(...manualDowngrades(n.id, n, m));
   }
@@ -955,7 +965,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
 /** `allow` changed other than by deleting whole rules: some rule of `next` deep-equals no rule of `prev` (D21.2). */
 function allowWidened(prev: Plan, next: Plan): boolean {
   const before = new Set((prev.allow ?? []).map(r => canonical(r)));
-  return (next.allow ?? []).some(r => !before.has(canonical(r)));
+  return writesAllowChanged(prev,next) || (next.allow ?? []).some(r => !before.has(canonical(r)));
 }
 /** Rules of `plan` whose node globs match node id `node` (path.matchesGlob on the id). */
 const rulesFor = (plan: Plan, node: string): AllowRule[] => (plan.allow ?? []).filter(r => r.nodes.some(g => matchesGlob(node, g)));
@@ -980,7 +990,7 @@ function covered(prev: Plan, next: Plan, d: Downgrade, claimed: boolean): boolea
     const rank = after.review.min_rank >= before.review.min_rank || rules.some(r => r.review_rank !== undefined && after.review.min_rank >= r.review_rank);
     return count && rank;
   }
-  if (what === 'writes scope expanded' || what === 'writes widened') return after.writes.every(w => before.writes.some(p => writeCovers(p, w)) || rules.some(r => r.writes?.some(p => writeCovers(p, w))));
+  if (what === 'writes scope expanded' || what === 'writes widened') return after.writes.every(w => before.writes.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))) || rules.some(r => r.writes?.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next)))));
   // Every reading of the item must be covered by a `checks` glob, and there must be one: as `<id><suffix>` naming a
   // check of the node, and (D21.1/D23.2) as `evidence <id> removed|weakened` naming an evidence obligation of the node.
   // An item readable both ways (e.g. check id `evidence`, evidence id `check`) is covered only if both readings are.
@@ -1007,7 +1017,7 @@ export function writesHint(prev: Plan, next: Plan, gaps: Downgrade[]): string | 
   if (!gaps.length || !gaps.every(g => g.what === 'writes widened' || g.what === 'writes scope expanded')) return undefined;
   const nodes = [...new Set(gaps.map(g => g.node))], writes = [...new Set(nodes.flatMap(id => {
     const before = prev.nodes.find(n => n.id === id), after = next.nodes.find(n => n.id === id), rules = rulesFor(prev, id);
-    return before && after ? after.writes.filter(w => !before.writes.some(p => writeCovers(p, w)) && !rules.some(r => r.writes?.some(p => writeCovers(p, w)))) : [];
+    return before && after ? after.writes.filter(w => !before.writes.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))) && !rules.some(r => r.writes?.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))))) : [];
   }))];
   if (!writes.length) return undefined;
   const list = (xs: string[]): string => `[${xs.map(x => JSON.stringify(x)).join(', ')}]`;
@@ -1027,16 +1037,16 @@ export function adoptPrefixes(plan: Plan): string[] { return (plan.allow ?? []).
 /** The first changed path not under an `adopt` prefix of `plan`, or undefined when a parent may adopt them all (D21.4). */
 export function unadoptable(plan: Plan, changed: readonly string[]): string | undefined {
   const prefixes = adoptPrefixes(plan);
-  return changed.find(p => !prefixes.some(x => matchesWrite(p, x)));
+  return changed.find(p => !prefixes.some(x => matchesWrite(p, x, writesSyntax(plan))));
 }
 /** Whether a matching rule authorizes each exact changed path (not a scope widening). */
 export function writesAllowed(plan: Plan, node: string, paths: readonly string[]): boolean {
   const rules = rulesFor(plan, node);
-  return paths.length > 0 && paths.every(p => rules.some(r => r.writes?.some(x => matchesWrite(p, x))));
+  return paths.length > 0 && paths.every(p => rules.some(r => r.writes?.some(x => matchesWrite(p, x, writesSyntax(plan)))));
 }
 /** WG3: coverage of a scope widening must be provable by literal prefixes or exact entry equality. */
 export function writesCovered(plan: Plan, node: string, entries: readonly string[]): boolean {
-  return entries.length > 0 && entries.every(w => rulesFor(plan, node).some(r => r.writes?.some(p => writeCovers(p, w))));
+  return entries.length > 0 && entries.every(w => rulesFor(plan, node).some(r => r.writes?.some(p => writeCovers(p, w, writesSyntax(plan), 2))));
 }
 /** Seq of the genesis/plan entry that last changed the `allow` block (S of `under allowance (plan #S)`, D21.3), if any. */
 export function allowanceSeq(s: State): number | undefined { return context(s).allowSeq; }
@@ -1052,7 +1062,7 @@ export function grantErrors(s: State, d: Omit<import('./types.ts').GrantEntry, '
     return errors;
   }
   if (paths.some(p => !n?.candidate?.changed.includes(p))) errors.push('grant paths must be in the current candidate changed paths');
-  if (paths.some(p => spec?.writes.some(w => matchesWrite(p, w)))) errors.push('grant paths must be outside plan writes');
+  if (paths.some(p => spec?.writes.some(w => matchesWrite(p, w, writesSyntax(s.plan))))) errors.push('grant paths must be outside plan writes');
   if (!writesAllowed(s.plan, d.node, paths)) errors.push('not covered by an allow rule');
   if (!Number.isSafeInteger(d.allowance) || d.allowance !== allowanceSeq(s)) errors.push('grant allowance must match the current allowance plan seq');
   if (paths.some(p => matchesAny(p, s.plan.closure))) errors.push('under closure');
@@ -1079,6 +1089,20 @@ export function writesWaiting(s: State, id: string): ObsEntry | undefined {
   const latest = observationsOf(s,id,'writes',c.keys.writes ?? '').at(-1);
   return latest?.verdict === 'fail' && latest.waits_on?.length && latest.commit === c.commit && latest.base === c.base ? latest : undefined;
 }
+/** WG ruling #2098: find an actual ownership cycle reachable from a waiting candidate. */
+export function writesWaitCycle(s: State, id: string): string[] | undefined {
+  const path: string[] = [], done = new Set<string>();
+  const visit = (node: string): string[] | undefined => {
+    const at = path.indexOf(node);
+    if (at >= 0) return [...path.slice(at),node];
+    if (done.has(node) || !s.nodes[node]?.slot?.open || !writesWaiting(s,node)) return undefined;
+    path.push(node);
+    const owners = [...new Set(writesRefusals(s,node,s.nodes[node]!.candidate!.changed).flatMap(r => r.owners))].sort();
+    for (const owner of owners) { const cycle = visit(owner); if (cycle) return cycle; }
+    path.pop(); done.add(node); return undefined;
+  };
+  return visit(id);
+}
 /** GR7: advisory only, for the uncovered paths; does not authorize a write. */
 export function grantHint(s: State, id: string, paths = s.nodes[id]?.candidate?.changed ?? []): string | undefined {
   const uncovered = paths.filter(p => !withinWrites(s, id, p) && !writesAllowed(s.plan, id, [p]));
@@ -1093,6 +1117,7 @@ export function validateDraft(s: State, d: Draft): string[] {
   if (!/^(owner|parent|writer|reviewer|executor):.+$/.test(d.by)) errors.push('Invalid identity format');
   // G2.3 (F5): parent:drive is the driver's name only; it records nothing the driver never writes (append and replay).
   if (d.by === DRIVER && !DRIVER_WRITES.includes(d.kind)) errors.push(`${d.kind} by ${DRIVER}: the driver records only ${DRIVER_WRITES.join(', ')}`);
+  if ((d.kind === 'genesis' || d.kind === 'plan') && d.writes_syntax !== undefined && d.writes_syntax !== 2) errors.push('plan writes_syntax must be 2; upgrade owed before replaying this plan');
   if (d.kind === 'genesis') {
     allow('owner');
     if (s.seq !== -1) errors.push('genesis must be the first entry');
@@ -1118,7 +1143,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('owner', 'parent');
       if (d.prior !== s.planSha) errors.push('plan prior must reference the current plan sha');
       let downgrade = d.downgrades.length > 0, gaps: Downgrade[] = d.downgrades, hint: string | undefined;
-      try { const next = context(s).plans(d.plan); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); hint = writesHint(s.plan, next, gaps); } catch { errors.push('Cannot read new plan'); }
+      try { const next = withWritesSyntax(context(s).plans(d.plan),d.writes_syntax ?? 1); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); hint = writesHint(s.plan, next, gaps); } catch { errors.push('Cannot read new plan'); }
       // D21.3: a parent needs no owner when an allowance of the current (prior) plan covers every downgrade.
       if (downgrade && r !== 'owner' && (r !== 'parent' || gaps.length)) errors.push(`Only owner may approve a plan that reduces obligations${r === 'parent' ? `; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}${hint ? `\n${hint}` : ''}` : ''}`);
       if (d.note !== undefined && typeof d.note !== 'string') errors.push('plan note must be a string');

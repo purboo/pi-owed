@@ -1,3 +1,4 @@
+import { withWritesSyntax, writesSyntax } from './writes.ts';
 import { canonical } from './canon.ts';
 import { OwedError } from './errors.ts';
 import { planDowngrades } from './plan.ts';
@@ -51,7 +52,7 @@ const elapsed = (start: Entry | undefined, end: Entry): number | null => {
 const parentAct = (e: Entry): boolean => e.by !== 'parent:drive' && /^(parent|owner):/.test(e.by);
 /** PA: compare recorded laws, ignoring allowance coverage only while detecting downgrades. */
 function writesOnlyDowngrades(prev: Plan, next: Plan): boolean {
-  const ds = [...planDowngrades(prev,next), ...uncoveredDowngrades({...prev,allow:[]},{...next,allow:[]})];
+  const ds = [...planDowngrades(prev,next), ...uncoveredDowngrades(withWritesSyntax({...prev,allow:[]},writesSyntax(prev)),withWritesSyntax({...next,allow:[]},writesSyntax(next)))];
   return ds.length > 0 && ds.every(d => d.what === 'writes widened' || d.what === 'writes scope expanded');
 }
 function knownRedOnly(prev: Plan, next: Plan): boolean {
@@ -133,7 +134,8 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     active.set(e.node,h); if (included(e)) halts.push(h);
   };
   for (const e of history) {
-    const nextPlan = e.kind === 'genesis' || e.kind === 'plan' ? plans.get(e.plan) : undefined;
+    const rawPlan = e.kind === 'genesis' || e.kind === 'plan' ? plans.get(e.plan) : undefined;
+    const nextPlan = rawPlan && (e.kind === 'genesis' || e.kind === 'plan') ? withWritesSyntax(rawPlan,e.writes_syntax ?? 1) : undefined;
     if (included(e)) {
       if (parentAct(e) && !['dispatch','launch','send'].includes(e.kind)) {
         const batch = e.kind === 'resume' ? e.batch : undefined;
