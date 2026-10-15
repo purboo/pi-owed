@@ -146,6 +146,29 @@ export class Dsa {
     } finally { await rm(dir, { recursive: true, force: true }); }
   }
 
+  /** WD: read-only host facts; bounded by this client's invocation timeout. */
+  async watchdogFacts(): Promise<{ calls?: { state: string; labels?: Record<string, string> }[]; machineHeld: boolean }> {
+    let calls: { state: string; labels?: Record<string, string> }[] | undefined;
+    try {
+      const status = await this.exec(['status', '--json']), view = parseWhole(status.stdout);
+      if (status.exit !== 0 || status.timedOut || !Array.isArray(view?.workflows)) throw new DsaError('dsa status unavailable');
+      calls = (view.workflows as Json[]).flatMap(w => {
+        if (!Array.isArray(w.calls)) throw new DsaError('dsa status: missing calls');
+        return (w.calls as Json[]).map(c => ({ state: str(c.status ?? c.phase), labels: (c.labels ?? w.labels) as Record<string, string> | undefined }));
+      });
+    } catch { /* Call activity unknown: WD1(d) uses age alone. */ }
+    // Failure to inspect the machine must not manufacture proof that it is free.
+    let machineHeld = true;
+    try {
+      const leases = await this.exec(['leases', '--json']);
+      const resources: unknown = JSON.parse(leases.stdout);
+      if (leases.exit === 0 && !leases.timedOut && Array.isArray(resources)) {
+        machineHeld = (resources as Json[]).some(r => r.resource === 'machine' && (!Array.isArray(r.holders) || r.holders.length > 0));
+      }
+    } catch { /* Conservatively busy. */ }
+    return { calls, machineHeld };
+  }
+
   /** `describe --key <rid> --json` reduced to a RunView. Failures (non-zero exit, timeout, unparsable output) throw. */
   async describe(rid: string): Promise<RunView> { return (await this.inspect(rid)).view; }
 

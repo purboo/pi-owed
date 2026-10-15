@@ -1,3 +1,4 @@
+import { idleWake } from './watchdog.ts';
 import { withWritesSyntax } from './writes.ts';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
@@ -142,16 +143,18 @@ export default function owed(pi: ExtensionAPI): void {
     if (agent.running) return true;
     try { return typeof agent.ctx?.isIdle === 'function' ? !agent.ctx.isIdle() : false; } catch { return false; }
   };
+  const idleWatch = idleWake(pi, { busy });
+  const attachIdle = async (dir: string) => { if (!process.env.DSA_EXEC && !process.env.DSA_CALL) await idleWatch.attach(dir).catch(() => undefined); };
   const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, revalidate: repo => revalidator({ cwd: repo }) });
   if (typeof pi.on === 'function') {
     // Internal worker tick: the timer lives in pi, all log/git/replay work lives here.
-    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { agent.ctx = ctx; return watch.flush(); });
+    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { agent.ctx = ctx; await watch.flush(); await idleWatch.flush(); });
     pi.on('agent_start', (_event, ctx) => { agent.running = true; agent.ctx = ctx; });
-    pi.on('agent_settled', async (_event, ctx) => { agent.running = false; agent.ctx = ctx; await watch.flush(); });
+    pi.on('agent_settled', async (_event, ctx) => { agent.running = false; agent.ctx = ctx; await watch.flush(); await idleWatch.flush(); });
     // D17a.1: auto-attach only in a session that is not inside a dsa call (dsa writers and reviewers run in worktrees of
     // the same repository and must not be woken by its driver); every top-level session in the repository is woken.
-    pi.on('session_start', async (_event, ctx) => { agent.ctx = ctx; if (process.env.DSA_EXEC || process.env.DSA_CALL) return; await watch.attach(ctx.cwd).catch(() => undefined); });
-    pi.on('session_shutdown', () => { watch.stopAll(); for (const c of genesisRuns) c.abort(); });
+    pi.on('session_start', async (_event, ctx) => { agent.ctx = ctx; if (process.env.DSA_EXEC || process.env.DSA_CALL) return; await watch.attach(ctx.cwd).catch(() => undefined); await attachIdle(ctx.cwd); });
+    pi.on('session_shutdown', () => { watch.stopAll(); idleWatch.stopAll(); for (const c of genesisRuns) c.abort(); });
   }
   // `signal`: the tool call's abort signal; attest, merge and adopt pass it to ops, which then end their checks (D16.4);
   // drive's single pass stops after the current action.
@@ -161,7 +164,10 @@ export default function owed(pi: ExtensionAPI): void {
         try {
           // G2.3 (F5): refused everywhere, reads included.
           if ((p as { as?: unknown }).as === 'parent:drive') throw new OwedError(ops.DRIVER_CLAIM);
-          return await run(p, ctx, await target(ctx, (p as { cwd?: string }).cwd), signal);
+          agent.ctx = ctx;
+          const dir = await target(ctx, (p as { cwd?: string }).cwd);
+          try { return await run(p, ctx, dir, signal); }
+          finally { await attachIdle(dir); }
         }
         catch (e) {
           if (!(e instanceof OwedError)) throw e;

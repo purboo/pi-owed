@@ -78,7 +78,7 @@ export class ToolWorker {
     if (m.method === 'message') {
       const session = this.sessions.get(m.session);
       try {
-        if (!session || ((m.args[0] as { customType: string }).customType === 'owed-drive' && !session.canDeliver())) throw new Error('session busy or stopped');
+        if (!session || (['owed-drive', 'owed-idle'].includes((m.args[0] as { customType: string }).customType) && !session.canDeliver())) throw new Error('session busy or stopped');
         session.pi.sendMessage(...m.args as Parameters<ExtensionAPI['sendMessage']>);
         w.postMessage({ id: m.callback, method: 'answer', args: [true] });
       } catch { w.postMessage({ id: m.callback, method: 'answer', args: [false] }); }
