@@ -287,7 +287,7 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
   if (out.status === 'D' && trunkRed.length) Object.assign(out, { discharger: 'parent', detail: trunkRed.map(r => `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}`).join('; ') });
   if (subject === 'trunk') {
     const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key && (!automaticInvariantConflict(s,obligation,key) || d.node === merging));
-    if (defer) Object.assign(out, { mark: '⏸', discharger: 'owner', detail: `${obligation} deferred, still debt`, evidence: [...out.evidence, defer.seq] });
+    if (defer) Object.assign(out, { mark: '⏸', discharger: 'owner', detail: `${obligation} ${deferLabel(defer)}, still debt`, evidence: [...out.evidence, defer.seq] });
     else {
       const red = context(s).invRed?.get(obligation), fail = decidingInvariantFail(s, obligation, key);
       if (red?.key === key && fail && out.mark === '✘') Object.assign(out, { discharger: 'parent', detail: red.kind === 'merge'
@@ -444,6 +444,10 @@ export function newerEntry(e: Entry): OwedError | undefined {
     if (x.auto_remeasure !== undefined && x.auto_remeasure !== true) return refuse(`obs auto_remeasure ${shown(x.auto_remeasure)}`);
   }
   // FL2/FL3: from 0.13 unknown resume shapes are compatibility errors, not silently interpreted.
+  if (kind === 'defer') {
+    const extra = Object.keys(x).find(k => x[k] !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !['node', 'items', 'reason', 'allowance'].includes(k));
+    if (extra) return refuse(`defer ${extra}`);
+  }
   if (kind === 'abandon' || kind === 'hold') {
     const known = kind === 'abandon' ? ['node', 'attempt', 'reason'] : ['node', 'abandon', 'reason'];
     const extra = Object.keys(x).find(k => x[k] !== undefined && !ENTRY_BASE_FIELDS.includes(k) && !known.includes(k));
@@ -567,7 +571,9 @@ function fold(s: State, entries: Iterable<Entry>): void {
         else { b.state = 'cleared'; b.clearedBy = e.seq; }
       }
     } else if (e.kind === 'defer') {
-      for (const i of e.items) s.deferred.push({ seq: e.seq, node: e.node, id: i.id, key: i.key });
+      for (const i of e.items) s.deferred.push({ seq: e.seq, node: e.node, id: i.id, key: i.key, ...(e.allowance !== undefined ? { allowance: e.allowance } : {}) });
+      // FS6: an executor defer under allowance is an untested obligation (ΔO⁻), like a grant.
+      if (e.allowance !== undefined) s.downgrades.push({ seq: e.seq, by: e.by, items: e.items.map(i => ({ node: e.node, what: `inv:${i.id} deferred: ${e.reason}` })), allowance: e.allowance });
     } else if (e.kind === 'merge') {
       const n = s.nodes[e.node]!;
       const inherited = mergeGuard(s, e.node, { facts: e.facts, state: e.state, batch: e.batch }).invItems.filter(i => i.key !== s.trunk.invKeys[i.obligation.slice(4)] && i.detail.startsWith('trunk-red:'));
@@ -777,6 +783,202 @@ export function trunkRedText(r: { merge: ObsEntry; probe: ObsEntry }): string {
   return `trunk-red: ${r.merge.obligation} fails on trunk ${r.probe.commit.slice(0,12)} without ${r.merge.subject} (${r.merge.failed?.join(', ') || 'unknown failed tests'})`;
 }
 
+// ---------- FS (0.23): shared failures are a repository condition ----------
+/** FS: the AT4 scan window. */
+const SHARED_WINDOW = 5000;
+/** FS: per failed name of O, the trunk observation T that also failed it; `nameOnly` when no signature was recorded on either side (ruling: FS1-FS5 only). */
+export interface SharedFailure { names: string[]; trunk: ObsEntry[]; nameOnly: boolean }
+/**
+ * FS: T was measured without `node`'s candidate: a trunk refresh/genesis/adopt observation (no `merging`), a trunk probe
+ * of the same node check, or (ruling on 59f36934) another node's non-batch merge tree measured while `node` was unmerged.
+ */
+function measuredWithout(s: State, o: ObsEntry, t: ObsEntry, node: string | undefined): boolean {
+  if (t.batch !== undefined || t.attribution) return false;
+  if (!o.obligation.startsWith('inv:')) return t.probe === 'trunk' && t.subject === o.subject;
+  if (t.subject !== 'trunk' || t.probe !== undefined) return false;
+  if (t.merging === undefined) return true;
+  const merged = node === undefined ? undefined : s.nodes[node]?.merged;
+  return node !== undefined && t.merging !== node && !(merged && merged.seq < t.seq);
+}
+/**
+ * FS: failing observation `o` is shared when it is a complete, test-only failure and every failed name also failed
+ * (test-only) in an earlier observation measured without `node`'s candidate within the AT4 window, with the same
+ * recorded signature. Name-only matches (no signature on either side) count unless `strict` (FS6). Diagnostic only.
+ */
+export function sharedFailure(s: State, o: ObsEntry, node: string | undefined = o.merging, strict = false): SharedFailure | undefined {
+  if (o.verdict !== 'fail' || !/^(inv|check):/.test(o.obligation) || !testOnlyFailure(o) || !failedNamesComplete(o)) return undefined;
+  const entries = context(s).entries, trunk: ObsEntry[] = [];
+  let nameOnly = false;
+  for (const name of o.failed!) {
+    const sig = o.signatures?.[name];
+    if (strict && sig === undefined) return undefined;
+    let found: ObsEntry | undefined;
+    for (let i = entries.length - 1; i >= 0 && entries[i]!.seq >= o.seq - SHARED_WINDOW; i--) {
+      const e = entries[i]!;
+      if (e.seq >= o.seq || e.kind !== 'obs' || e.by !== 'executor:owed' || e.obligation !== o.obligation || e.verdict !== 'fail') continue;
+      if (e.failed?.includes(name) && e.signatures?.[name] === sig && testOnlyFailure(e) && measuredWithout(s, o, e, node)) { found = e; break; }
+    }
+    if (!found) return undefined;
+    if (sig === undefined) nameOnly = true;
+    trunk.push(found);
+  }
+  return { names: [...o.failed!], trunk, nameOnly };
+}
+/** FS1/FS4: `a, b, c, +N` and the name-only suffix. */
+export function sharedNames(names: readonly string[]): string { return `${names.slice(0, 3).join(', ')}${names.length > 3 ? `, +${names.length - 3}` : ''}`; }
+export const NAME_ONLY = ' (same name; no error signature recorded)';
+/** FS3: one parked refusal reason of a node: a shared merge-key failure or a trunk-key (trunk-caused) refusal. */
+export interface SharedPark { kind: 'shared' | 'trunk-red'; obligation: string; key: string; names: string[]; /** shared: the trunk obs T; trunk-red: the failing trunk-key obs */ trunk?: number; /** trunk-red: the conflicting pass */ pass?: number; nameOnly: boolean; fix?: string; candidates: { id: string; phase: string; accepted: boolean }[] }
+/** FS5: the FH fix candidates of failed `names`: unmerged nodes other than `node` whose title, brief, check run or tests contain a name (>= 6 chars) verbatim. */
+export function fixCandidates(s: State, node: string, names: readonly string[]): { id: string; phase: string; accepted: boolean }[] {
+  const out: { id: string; phase: string; accepted: boolean }[] = [];
+  for (const spec of s.plan.nodes) {
+    const n = s.nodes[spec.id];
+    if (spec.id === node || !n || n.merged || !(n.slot?.open || n.accepted || n.phase === 'ready')) continue;
+    const text = [spec.title, spec.brief, ...spec.checks.flatMap(c => [c.run, ...(c.tests ?? [])])];
+    if (names.some(name => name.length >= 6 && text.some(t => t?.includes(name)))) out.push({ id: spec.id, phase: n.phase, accepted: n.accepted && !!n.slot?.open && !halted(s, spec.id) });
+  }
+  return out;
+}
+/** FS3: merge-tree invariant observations of `node`'s current candidate under the current plan, latest per obligation. */
+function latestMergeTreeObs(s: State, node: string): Map<string, ObsEntry> {
+  const n = s.nodes[node]!, since = Math.max(n.candidate!.seq, knownRedPlanSeq(s), n.slot!.rebase?.seq ?? -1), out = new Map<string, ObsEntry>();
+  for (const e of context(s).entries) if (e.seq > since && e.kind === 'obs' && e.by === 'executor:owed' && e.subject === 'trunk' && e.merging === node && e.batch === undefined && e.obligation.startsWith('inv:')) out.set(e.obligation, e);
+  return out;
+}
+/**
+ * FS3 (derived, no entry): the reasons a merge of `node` is refused when ALL of them are shared failures (or same-key
+ * pass/fail conflicts of shared failures) on its merge key, or trunk-caused (its merge key is the trunk key and that
+ * trunk item refuses). Empty when anything else refuses, nothing was measured, or FS3's bound of 3 merge keys is reached.
+ */
+/**
+ * FS3(b) (ruling #2458): the node's merge key of invariant `id` equals the trunk key: the candidate changed no path
+ * under the invariant's reads or the plan closure (the key hashes the spec, exec, closure and reads digests; the merge
+ * tree takes trunk's version of every file the candidate did not change).
+ */
+export function trunkKeyUnchanged(s: State, node: string, id: string): boolean {
+  const n = s.nodes[node], inv = s.plan.invariants.find(i => i.id === id);
+  if (!n?.candidate || !inv) return false;
+  return !n.candidate.changed.some(p => matchesAny(p, inv.reads ?? []) || matchesAny(p, s.plan.closure));
+}
+/** FS3(b): the trunk-red park of invariant `inv` for a node whose merge key is the trunk key, when that key has an automatic owner conflict. */
+function trunkRedPark(s: State, node: string, inv: CheckSpec): SharedPark | undefined {
+  const o = `inv:${inv.id}`, key = s.trunk.invKeys[inv.id];
+  if (!key || !automaticInvariantConflict(s, o, key) || item(s, 'trunk', o, key, node).mark === '\u23f8') return undefined;
+  const obs = counted(s, 'trunk', o, key), fail = obs.findLast(x => x.verdict === 'fail'), pass = obs.findLast(x => x.verdict === 'pass');
+  return { kind: 'trunk-red', obligation: o, key, names: fail?.failed ?? [], ...(fail ? { trunk: fail.seq } : {}), ...(pass ? { pass: pass.seq } : {}), nameOnly: false, candidates: [] };
+}
+export function sharedParked(s: State, node: string): SharedPark[] {
+  const n = s.nodes[node];
+  if (!n?.slot?.open || !n.candidate || !n.accepted || n.merged || n.phase === 'removed') return [];
+  const out: SharedPark[] = [], measured = latestMergeTreeObs(s, node);
+  for (const inv of s.plan.invariants) {
+    const o = `inv:${inv.id}`;
+    // Ruling #2458 (F2): a trunk-red park needs proof that the merge key is the trunk key, never a missing observation.
+    if (trunkKeyUnchanged(s, node, inv.id)) { const p = trunkRedPark(s, node, inv); if (p) out.push(p); continue; }
+    const e = measured.get(o);
+    if (!e) continue;
+    const key = e.key, trunkKey = s.trunk.invKeys[inv.id], v = item(s, 'trunk', o, key, node);
+    if (key === trunkKey || v.status !== 'D' || v.mark === '⏸') continue;
+    if (s.deferred.some(d => d.node === node && d.id === inv.id && d.key === key && d.seq > n.slot!.dispatchSeq)) continue;
+    const conflict = automaticInvariantConflict(s, o, key);
+    if (!conflict && v.mark !== '⊤' && invariantTrunkComparison(s, node, inv, key, e.commit).inherited) continue;
+    const fail = counted(s, 'trunk', o, key).findLast(x => x.verdict === 'fail');
+    const shared = fail && sharedFailure(s, fail, node);
+    if (!shared) return [];
+    out.push({ kind: 'shared', obligation: o, key, names: shared.names, trunk: shared.trunk.at(-1)!.seq, nameOnly: shared.nameOnly, candidates: [] });
+  }
+  if (!out.length || sharedPersisted(s, node, out)) return [];
+  for (const p of out) {
+    p.candidates = fixCandidates(s, node, p.names);
+    const fix = p.candidates.find(c => c.accepted);
+    if (fix) p.fix = fix.id;
+  }
+  return out;
+}
+/** FS3 bound: shared failures of the same names on 3 distinct merge keys of the open attempt stop parking. */
+export function sharedPersisted(s: State, node: string, parks: readonly Pick<SharedPark, 'kind' | 'obligation' | 'names'>[]): boolean {
+  const n = s.nodes[node];
+  if (!n?.slot) return false;
+  return parks.some(p => {
+    if (p.kind !== 'shared') return false;
+    const want = [...p.names].sort().join('\0'), keys = new Set<string>();
+    for (const e of context(s).entries) if (e.seq > n.slot!.dispatchSeq && e.kind === 'obs' && e.subject === 'trunk' && e.merging === node && e.batch === undefined && e.obligation === p.obligation && e.verdict === 'fail' && [...(e.failed ?? [])].sort().join('\0') === want && e.key !== s.trunk.invKeys[p.obligation.slice(4)]) keys.add(e.key);
+    return keys.size >= 3;
+  });
+}
+/** FS3: the bound's halt suffix when parking stopped on the third merge key, else undefined. */
+export function sharedBoundText(s: State, node: string): string | undefined {
+  const n = s.nodes[node];
+  if (!n?.slot?.open || !n.candidate || !n.accepted) return undefined;
+  const parks: Pick<SharedPark, 'kind' | 'obligation' | 'names'>[] = [];
+  for (const [o, e] of latestMergeTreeObs(s, node)) {
+    const fail = counted(s, 'trunk', o, e.key).findLast(x => x.verdict === 'fail');
+    const shared = fail && sharedFailure(s, fail, node);
+    if (shared) parks.push({ kind: 'shared', obligation: o, names: shared.names });
+  }
+  return sharedPersisted(s, node, parks) ? 'shared failure persisted on 3 merge keys' : undefined;
+}
+/**
+ * FS6: the executor defer an `allow` rule with `defer` pre-authorizes for invariant `id` on merge key `key` of `node`:
+ * the rule of the current plan covers node and invariant, the latest failure on the key is shared with matching
+ * signatures (never name-only, errors, timeouts or new names) and the same key also has a pass. Undefined otherwise.
+ */
+export function allowanceDeferDraft(s: State, node: string, id: string | undefined, key: string | undefined): Extract<Draft, { kind: 'defer' }> | undefined {
+  const n = s.nodes[node], allowance = allowanceSeq(s);
+  if (!id || !key || !n?.slot?.open || !n.candidate || allowance === undefined || !s.plan.invariants.some(i => i.id === id)) return undefined;
+  if (!rulesFor(s.plan, node).some(r => r.defer?.some(g => matchesGlob(id, g)))) return undefined;
+  const obs = counted(s, 'trunk', `inv:${id}`, key), fail = obs.findLast(e => e.verdict === 'fail'), pass = obs.findLast(e => e.verdict === 'pass');
+  const shared = fail && pass && sharedFailure(s, fail, node, true);
+  if (!fail || !pass || !shared) return undefined;
+  return { kind: 'defer', by: 'executor:owed', node, items: [{ id, key }], reason: `shared intermittent ${sharedNames(shared.names)}: failed on trunk #${shared.trunk.at(-1)!.seq}; pass #${pass.seq} and fail #${fail.seq} on this merge key`, allowance };
+}
+/** FS6 replay: an executor defer must equal the derived allowance defer exactly. */
+function executorDeferErrors(s: State, d: Extract<Draft, { kind: 'defer' }>): string[] {
+  const items = Array.isArray(d.items) ? d.items : [], expected = items.length === 1 ? allowanceDeferDraft(s, d.node, items[0]?.id, items[0]?.key) : undefined;
+  const fields = (x: Extract<Draft, { kind: 'defer' }>) => canonical({ by: x.by, channel: x.channel ?? null, node: x.node, items: x.items, reason: x.reason, allowance: x.allowance ?? null });
+  return expected && fields(d) === fields(expected) ? [] : ['executor defer requires an allow defer rule of the current plan covering the node and invariant, a shared failure with matching signatures, a pass and a fail on that merge key, and the derived reason and allowance'];
+}
+/** FS6: how a defer reads in item details. */
+export function deferLabel(d: { allowance?: number }): string { return d.allowance !== undefined ? `deferred by owed under allowance (plan #${d.allowance})` : 'deferred'; }
+/** FS3: the status phase of a parked node. */
+export function sharedPhase(s: State, parks: readonly SharedPark[]): string {
+  const p = parks[0]!;
+  if (p.fix) return `waiting: fix ${p.fix}`;
+  return p.kind === 'shared' ? `waiting: shared failure (${p.obligation} ${sharedNames(p.names)})` : `waiting: trunk red (${p.obligation} on trunk ${s.trunk.commit.slice(0, 12)})`;
+}
+/** FS3: the driver's level-trigger: the merge is retried when the trunk commit, a trunk invariant item (or this node's defers of it), the plan or the candidate changes. */
+export function sharedParkKey(s: State, node: string): string {
+  const items = s.invariants.map(i => `${i.obligation}:${i.key}:${i.mark}:${i.evidence.join(',')}`).join('|');
+  const defers = s.deferred.filter(d => d.node === node).map(d => d.seq).join(',');
+  return `shared-park\u0000${node}\u0000${s.trunk.commit}\u0000${s.nodes[node]?.candidate?.seq ?? -1}\u0000${s.planSha}\u0000${knownRedPlanSeq(s)}\u0000${items}\u0000${defers}`;
+}
+/** FS4: one repository notice per (obligation, sorted names, trunk commit). No ledger field. */
+export function sharedParkNotices(s: State): { once: string; obligation: string; nodes: string[]; text: string }[] {
+  const groups = new Map<string, { kind: SharedPark['kind']; obligation: string; names: string[]; nodes: Set<string>; nameOnly: boolean; candidates: Map<string, string>; fail?: number; pass?: number }>();
+  for (const node of Object.keys(s.nodes).sort()) {
+    if (halted(s, node)) continue;
+    for (const p of sharedParked(s, node)) {
+      const names = [...new Set(p.names)].sort();
+      // Ruling #2458 (F1): a trunk-red park is a repository condition too, with its own once-key.
+      const once = `${p.kind === 'shared' ? 'shared' : 'trunk'}\u0000${p.obligation}\u0000${names.join('\u0000')}\u0000${s.trunk.commit}`;
+      const g = groups.get(once) ?? { kind: p.kind, obligation: p.obligation, names, nodes: new Set<string>(), nameOnly: false, candidates: new Map<string, string>(), ...(p.kind === 'trunk-red' ? { fail: p.trunk, pass: p.pass } : {}) };
+      g.nodes.add(node); g.nameOnly ||= p.nameOnly;
+      for (const c of p.candidates) g.candidates.set(c.id, c.phase);
+      groups.set(once, g);
+    }
+  }
+  return [...groups].map(([once, g]) => {
+    const list = [...g.nodes];
+    const fixes = [...g.candidates].map(([id, phase]) => `${id} (${phase})`);
+    const tail = `waiting: ${list.join(', ')}. owed retries after trunk moves. To merge now: owed decide ${list.join(',')} --defer ${g.obligation} (or an allow defer rule); to fix: a node whose brief names the test.${fixes.length ? ` Fix candidate: ${fixes.join(', ')}.` : ''}`;
+    const head = g.kind === 'shared'
+      ? `shared failure: ${g.obligation} ${sharedNames(g.names)}${g.nameOnly ? NAME_ONLY : ''} fails without any candidate; `
+      : `trunk red: ${g.obligation} ${g.names.length ? `${sharedNames(g.names)} ` : ''}fails on trunk ${s.trunk.commit.slice(0, 12)} (${g.fail !== undefined ? `#${g.fail}` : 'no named failure'}${g.pass !== undefined ? `, pass #${g.pass}: owner conflict` : ''}); `;
+    return { once, obligation: g.obligation, nodes: list, text: head + tail };
+  }).sort((a, b) => a.once.localeCompare(b.once));
+}
+
 // ---------- driver (SPEC §12) ----------
 const DRIVE_KINDS: readonly string[] = ['launch', 'send', 'halt'];
 export const DRIVER = 'parent:drive';
@@ -884,7 +1086,7 @@ export function batchFailed(s: State, members: string[]): boolean {
  * `size` batchable members whose writes pairwise do not overlap. Empty when `size` < 2, the head is not batchable, fewer
  * than 2 qualify, or this set already failed on the current trunk (its members then merge one at a time).
  */
-export function mergeBatchPlan(s: State, size: number, queue: string[] = mergeQueue(s).filter(id => !waitingFor(s,id) && !halted(s,id) && !trunkParked(s,id).length && reportedOf(s,id) === undefined && !nodeSpec(s,id)?.later)): string[] {
+export function mergeBatchPlan(s: State, size: number, queue: string[] = mergeQueue(s).filter(id => !waitingFor(s,id) && !halted(s,id) && !trunkParked(s,id).length && !sharedParked(s,id).length && reportedOf(s,id) === undefined && !nodeSpec(s,id)?.later)): string[] {
   if (size < 2 || queue.length < 2 || !batchable(s, queue[0]!)) return [];
   const out: string[] = [];
   for (const id of queue) {
@@ -1317,7 +1519,10 @@ export function validateDraft(s: State, d: Draft): string[] {
         const prior = observations(s,d.subject,d.obligation,d.key), first = prior.at(-1);
         const needles = s.plan.invariants.find(i => `inv:${i.id}` === d.obligation)?.remeasure_on ?? [];
         if (prior.some(e => e.auto_remeasure)) errors.push('obs auto_remeasure already consumed on this key');
-        if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || !first.remeasure_match?.length || !needles.length || !first.remeasure_match.every(text => needles.includes(text))) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on');
+        const ro2 = !!first?.remeasure_match?.length && needles.length > 0 && first.remeasure_match.every(text => needles.includes(text));
+        // FS2: or the preceding failure is shared (recomputed from the ledger); its retry carries no remeasure_match.
+        const shared = !ro2 && !!first && d.remeasure_match === undefined && !s.plan.invariants.find(i => `inv:${i.id}` === d.obligation)?.repeat && !!sharedFailure(s, first, first.merging);
+        if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || (!ro2 && !shared)) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on or be shared');
       }
       errors.push(...batchObsErrors(d));
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
@@ -1342,6 +1547,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     }
     case 'defer':
+      if (d.by === 'executor:owed' || d.allowance !== undefined) { errors.push(...executorDeferErrors(s, d)); break; }
       allow('owner');
       if (!n?.slot?.open || !n.candidate) errors.push('defer requires a current candidate');
       if (!d.reason.trim() || !d.items.length) errors.push('defer must list obligations and give a reason');
@@ -1917,7 +2123,7 @@ function scopedMergeGuard(s: State, id: string, m: { facts: CandidateFacts; stat
     else if (!key) reasons.push(`invariant ${i.id} missing merge obligation key`);
     else if ((key !== s.trunk.invKeys[i.id] || automaticInvariantConflict(s,`inv:${i.id}`,key)) && v.status === 'D') {
       const d = s.deferred.findLast(d => d.node === id && d.id === i.id && d.key === key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
-      if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner deferred, still debt` });
+      if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} ${d.allowance !== undefined ? deferLabel(d) : 'owner deferred'}, still debt` });
       else {
         const red = invariantTrunkComparison(s, id, i, key, inv.commit);
         if (automaticInvariantConflict(s,`inv:${i.id}`,key)) { reasons.push(`invariant ${i.id} owner conflict: ${v.detail}; fix the invariant or defer it for ${id}`); return v; }
