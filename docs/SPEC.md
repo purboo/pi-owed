@@ -24,14 +24,34 @@ Field-free historical ledgers without the new plan policies retain their
 states and keys. Runtime additions are `sweep-due`, `alreadyRecorded`,
 `reviewRequirement`, `reviewRequirements` and report/metrics `reviews.sameModel`.
 
-**0.24 upgrade order:** upgrade every reader — CLI, driver and every pi
-session that loads owed, restarted — before (1) a 0.24 sweep records a
-confirmed boundary or automatic escape, and (2) the plan enables `risk` or
-`closure_neutral`. In case (2), older readers ignore the unknown keys and
-would derive different review requirements: this is a conservative mismatch,
-not a false pass. Scheduling itself changes no sweep definition or acceptance
-key; risk changes requirements, not evidence keys; closure neutrality changes
-the closure-review fact, not full-file check hashes.
+**0.24 upgrade order:** upgrade every reader to 0.24 — CLI, every driver
+and every pi session that loads owed, with each driver/session restarted —
+before (1) a 0.24 sweep records a confirmed boundary or automatic escape,
+(2) the plan sets `sweep.every`, or (3) the plan sets `risk` or
+`closure_neutral`.
+
+In (1), older readers refuse entries containing `sweep.boundary` or
+`escape.sweep`. In (2), 0.23 rejects `sweep.every` as an unknown nested
+plan key: once a plan containing it is recorded, old CLI, driver and pi
+readers cannot read the ledger state.
+
+In (3), 0.23 ignores the unknown top-level keys `risk` and
+`closure_neutral`. **Risk is not conservative:** a matched rule replaces the
+node's review for that path, and diff-wide maxima can raise or lower the
+requirement (§6.2a). An old executor ignoring a raising rule can merge with
+too few or too-low-rank reviews for the 0.24 policy; 0.24 replay then refuses
+the entire ledger at that merge. Conversely, a 0.24 merge relying on a
+lowering rule can have too few or too-low-rank reviews for the old node
+requirement; old replay refuses the entire ledger at that merge. Neither
+direction is safely interchangeable.
+
+Only `closure_neutral` used alone is conservative: an old executor ignores
+it and computes `closureTouched=true` for a new submit that changes closure,
+requiring closure-review even if 0.24 would call the change neutral. Replay
+retains recorded candidate facts; it does not recompute `closureTouched`
+for existing submits. Scheduling itself changes no sweep definition or
+acceptance key; risk changes requirements, not evidence keys; closure
+neutrality changes the closure-review fact, not full-file check hashes.
 
 0.23 adds no ledger entry kind. New optional fields on existing entries are
 `submit.facts.carry`, `submit.facts.rebased` (§7.25), `defer.allowance`
@@ -1471,11 +1491,12 @@ reviewer slots, suggested commands and owner escalation.
 closure-review key or obligation. Such a candidate may join a batch (§7.21):
 the batch remeasures final Mn using Mn's closure, and owner-declared neutral
 paths cannot change test behaviour. Neutrality is a plan policy, not proof
-that an arbitrary ignored JSON property is harmless. When owed answers or
-decides on a node, the other-role delivery check (`needsRole`) counts a
-missing reviewer-role delivery as pending only if the node's derived review
-count is greater than 0 or its candidate has `closureTouched`. For an
-all-neutral closure change, ruling/answer delivery therefore does not wait
+that an arbitrary ignored JSON property is harmless. Every ruling delivery
+through `deliverRuling` — from `owed rule`, `owed decide` or `owed answer` —
+runs the other-role delivery check (`needsRole`). It counts a missing
+reviewer-role delivery as pending only if the node's derived review count is
+greater than 0 or its candidate has `closureTouched`. For an all-neutral
+closure change, ruling/answer delivery therefore does not wait
 for a closure reviewer. A positive derived review count still makes a missing
 reviewer-role delivery pending; existing reviewer runs still receive applicable
 rulings.
@@ -1612,8 +1633,9 @@ Conflicts in merge-tree → the merge is refused with a `writer` debt
   waiver let it through). Refused unless `merge` is the seq of a `merge` entry
   whose node is n; `note` must be non-empty; `evidence` is optional text.
   `state.escapes` lists them in ledger order. Parent/owner may record manual
-  escapes; a confirmed sweep can record one as `executor:owed`, class
-  `missing`, with optional `escape.sweep` (§7.15b).
+  escapes without `escape.sweep`; that field is refused for their entries.
+  A confirmed sweep can record one as `executor:owed`, class `missing`,
+  which MUST carry `escape.sweep` citing its confirmed boundary (§7.15b).
 - `escape`, `decoy-commit`, `decoy-reveal` and `adopt` entries carry exactly the fields
   of the entry table (plus `kind`, `by`, `channel` and the ledger-assigned
   `seq`, `ts`, `prev`, `hash`); any other field is refused.
@@ -2211,8 +2233,9 @@ run. The final passing predecessor `sweep` entry carries optional
 `boundary: {head, merge}`, referencing earlier head and culprit-merge entries.
 Under the short ledger lock, after measurement, owed validates the complete
 run and atomically appends it with at most one `escape`: `by: "executor:owed"`,
-class `missing`, node and merge from the culprit, `escape.sweep` citing the
-boundary, evidence `sweep #<boundary seq>: <names, max 5>`. Replay validates
+class `missing`, node and merge from the culprit, REQUIRED `escape.sweep`
+citing the boundary, evidence `sweep #<boundary seq>: <names, max 5>`.
+Parent/owner manual escapes must omit `escape.sweep`. Replay validates
 principal, boundary, current definition, matching node/merge, canonical
 evidence and dedupe; forged or duplicate executor escapes refuse.
 
