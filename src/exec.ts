@@ -301,7 +301,8 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment() };
     const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
     const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    const collect = (b: Buffer) => { capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
+    let measurementLog: string | undefined;
+    const collect = (b: Buffer) => { if (measurementLog !== undefined) return; capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
     p.stdout.on('data', collect); p.stderr.on('data', collect);
     let escalation: NodeJS.Timeout | undefined;
     const kill = (sig: NodeJS.Signals = 'SIGKILL') => { if (p.pid) { try { process.kill(-p.pid, sig); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
@@ -312,7 +313,10 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     };
     let timeoutDetails: Promise<string> | undefined;
     const timer = setTimeout(() => {
+      // Ruling #2118: freeze evidence at the boundary, before any diagnostic can alter the tree.
+      measurementLog = output.toString();
       error = `timeout after ${timeout}s`;
+      kill('SIGSTOP');
       timeoutDetails = (async () => {
         let diagnostic = '';
         try {
@@ -331,14 +335,13 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
       clearTimeout(timer); clearTimeout(escalation); ctx.signal?.removeEventListener('abort', abort);
       const details = timeoutDetails ? await timeoutDetails : undefined;
       kill();
-      const measurementLog = details !== undefined ? output.toString() : undefined;
       if (details !== undefined) {
         output = output.subarray(Math.max(0, output.length - 256 * 1024));
         const appendix = `\n${error}\n${details}\n`;
         capture(Buffer.from(appendix));
         output = Buffer.concat([output, Buffer.from(appendix)]);
       }
-      resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(measurementLog !== undefined ? { measurementLog } : {}), ...(spawnError ? { spawn: true } : {}) });
+      resolve({ code: measurementLog !== undefined ? null : code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(measurementLog !== undefined ? { measurementLog } : {}), ...(spawnError ? { spawn: true } : {}) });
     });
   });
 }
@@ -416,7 +419,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   const command = async (run: string, cwd: string, timeout: number, onTimeout?: string): Promise<CommandResult> => {
     const result = await runCommand(ctx, run, cwd, timeout, capture, onTimeout);
     if (result.error?.startsWith('timeout after')) {
-      const beforeTimeout = result.log.split(`\n${result.error}\n`)[0]!;
+      const beforeTimeout = result.measurementLog ?? result.log;
       const tail = lastLines(beforeTimeout, 3);
       timeoutNote = `${result.error}${tail.length ? `; ${tail.join(' | ')}` : ''}`;
       bytes = Buffer.from(result.log); truncated = false;
@@ -453,7 +456,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
           }
           const result = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout), counts = parseCounts(result.measurementLog ?? result.log, () => { protocolWarnings++; });
           if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
-          diskFull(result.code, counts, result.log, `mutant ${path} run exited ${result.code}`);
+          diskFull(result.code, counts, result.measurementLog ?? result.log, `mutant ${path} run exited ${result.code}`);
           if (result.error && !result.error.startsWith('timeout')) throw new Error(result.error);
           const kill = counts?.tests !== 0 && (result.code !== 0 || (counts?.fail ?? 0) > 0);
           if (kill) killed++;
@@ -497,7 +500,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (excused) { for (const e of excused) quarantined.set(e.test, e.fix); obs.counts = withoutQuarantined(obs.counts!, excused); }
         const runFailed = excused ? [] : named, result = excused ? { ...raw, code: 0 } : raw;
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
-        if (runFailed.length) failureLogs.push(result.log);
+        if (runFailed.length) failureLogs.push(result.measurementLog ?? result.log);
         if (failed.size) obs.failed = [...failed];
         recordSignatures(obs, result.measurementLog ?? result.log, runFailed, tree);
         // IR2: facts about this run remain independent of failure names and display-note separators.
@@ -505,7 +508,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         try {
           // F2.1: a failed run whose output says the disk is full measured the environment, not the code.
           if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
-          diskFull(result.code, obs.counts, result.log, `command exited ${result.code}`);
+          diskFull(result.code, obs.counts, result.measurementLog ?? result.log, `command exited ${result.code}`);
           if (result.error) throw new Error(result.error);
           execution.completed = result.code !== null;
           execution.countOK = obs.counts?.tests !== undefined && obs.counts.tests > 0 && (spec.min_tests === undefined || obs.counts.tests >= spec.min_tests);

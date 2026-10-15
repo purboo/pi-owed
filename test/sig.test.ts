@@ -216,6 +216,61 @@ test('SG5: absent and hanging diagnostics cannot pass or keep the owned process 
   } finally { await r.cleanup(); }
 });
 
+test('SG5 ruling #2118: timeout freezes mutant evidence and stops its group throughout the diagnostic', async () => {
+  const r = await execFixture();
+  try {
+    await r.put('impl', 'base\n');
+    await r.put('mutant.patch', 'diff --git a/impl b/impl\n--- a/impl\n+++ b/impl\n@@ -1 +1 @@\n-base\n+mutated\n');
+    const commit = await r.commit();
+    const plan = { ...r.plan, closure: ['mutant.patch'] };
+    const check = { ...plan.nodes[0]!.checks[0]!, timeout_s: 1, mutants: ['mutant.patch'] };
+    const run = `echo '# tests 0'; while [ ! -f released ]; do sleep 0.05; done; echo '# tests 1'; echo '# fail 1'; echo 'not ok 1 - late failure'; echo progressed > progressed; exit 1`;
+    const measure = (on_timeout?: string) => runJob({ cwd: r.cwd, plan, ledger: r.ledger }, { kind: 'strength', subject: 'a', obligation: 'strength:suite', key: 'strength', base: commit, commit, spec: { ...check, run, ...(on_timeout ? { on_timeout } : {}) } });
+    const without = await measure();
+    const hooked = await measure(`touch released; sleep 0.4; if [ -f progressed ]; then echo group-running; else echo group-stopped; fi; echo 'owed-counts {"pass":0,"fail":1}'; echo ENOSPC; exit 0`);
+    assert.equal(without.verdict, 'fail');
+    assert.equal(hooked.verdict, without.verdict, 'diagnostic cannot turn a zero-test non-kill into a kill');
+    assert.deepEqual(hooked.counts, without.counts);
+    assert.equal(hooked.counts?.pass, 0);
+    assert.equal(hooked.failed, undefined); assert.equal(hooked.signatures, undefined);
+    assert.equal(hooked.note, 'timeout after 1s; # tests 0');
+    const log = (await r.ledger.getBlob(hooked.log!)).toString();
+    assert.match(log, /on_timeout \(diagnostic only\):\ngroup-stopped/);
+    assert.doesNotMatch(log.split('on_timeout (diagnostic only):')[0]!, /# tests 1|late failure|group-running/);
+    assert.doesNotMatch(log, /group-running/);
+    assert.match(log, /survived mutant.patch: timeout after 1s, tests 0/);
+    const checkObs = await r.run(run, { timeout_s: 1, on_timeout: 'touch released; sleep 0.4' });
+    assert.equal(checkObs.verdict, 'error'); assert.equal(checkObs.exit, null);
+    assert.equal(checkObs.counts?.tests, 0); assert.equal(checkObs.failed, undefined); assert.equal(checkObs.signatures, undefined);
+    assert.equal(checkObs.note, 'timeout after 1s; # tests 0');
+  } finally { await r.cleanup(); }
+});
+
+test('SG3 ruling #2118: same check name on another node or another run definition cannot provide trunk-red evidence', () => {
+  const plan = (run = 'true') => parsePlan(JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], nodes: ['a', 'b'].map(id => ({ id, writes: [id], checks: [{ id: 'suite', run: id === 'a' ? run : 'true' }] })) }));
+  const plans = new Map([['p1', plan()], ['p2', plan('echo changed-run')]]), entries: Entry[] = [];
+  const add = (d: Draft) => { const e = { ...d, seq: entries.length, ts: '2026-10-15T00:00:00Z', prev: 'x', hash: 'x' } as Entry; entries.push(e); return e; };
+  add({ kind: 'genesis', by: 'owner:pi', trunk: 'main', plan: 'p1', commit: 'base', state: { commit: 'base', tree: 't', invKeys: {} } });
+  for (const node of ['a', 'b']) {
+    add({ kind: 'dispatch', by: 'parent:test', node, attempt: 1, base: 'base', branch: node, worktree: node, packet: 'p', rulings_seen: -1 });
+    add({ kind: 'submit', by: `writer:${node}#1`, node, attempt: 1, facts: { commit: `candidate-${node}`, tree: 't', base: 'base', patch: 'p', changed: [], closureTouched: false, keys: { writes: 'w', rulings: 'r', 'check:suite': 'ck' } } });
+  }
+  const obs = (subject: string, probe = false) => add({ kind: 'obs', by: 'executor:owed', subject, obligation: 'check:suite', key: probe ? 'trunk-key' : 'merge-key', commit: probe ? 'base' : `candidate-${subject}`, base: 'base', verdict: 'fail', exit: 1, durationMs: 1, failed: [name], signatures: { [name]: 'v2|same' }, ...(probe ? { probe: 'trunk' as const } : {}) }) as ObsEntry;
+  const bProbe = obs('b', true), aFail = obs('a');
+  const hints = (failure: ObsEntry) => views.mergeFailureHints(reduce(entries, sha => plans.get(sha)!), failure.subject, [failure]).join('\n');
+  assert.doesNotMatch(hints(aFail), /trunk red since/, 'another node probe is not evidence');
+  const aProbe = obs('a', true);
+  assert.match(hints(aFail), new RegExp(`trunk red since #${aProbe.seq}`), 'same definition is a positive control');
+  assert.doesNotMatch(hints(aFail), new RegExp(`trunk red since #${bProbe.seq}`));
+  add({ kind: 'plan', by: 'owner:pi', prior: 'p1', plan: 'p2', downgrades: [], note: 'new run definition' });
+  add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts: { commit: 'candidate-a', tree: 't', base: 'base', patch: 'p', changed: [], closureTouched: false, keys: { writes: 'w', rulings: 'r', 'check:suite': 'changed-ck' } } });
+  const changedFailure = obs('a');
+  assert.doesNotMatch(hints(changedFailure), /trunk red since/, 'old run probe is not evidence for new run');
+  const changedProbe = obs('a', true);
+  assert.match(hints(changedFailure), new RegExp(`trunk red since #${changedProbe.seq}`));
+  assert.doesNotMatch(hints(changedFailure), new RegExp(`trunk red since #${aProbe.seq}`));
+});
+
 test('SG5: on_timeout is optional, validated and editable on checks and invariants without changing keys', async () => {
   const r = await repo();
   try {
