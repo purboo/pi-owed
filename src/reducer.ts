@@ -414,7 +414,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure', 'remeasure_errors'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -1227,6 +1227,13 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (d.obligation !== 'writes' || d.verdict !== 'fail' || d.attribution !== undefined || d.merging !== undefined || d.probe !== undefined || !target?.slot?.open || !c || d.commit !== c.commit || d.base !== c.base || d.key !== c.keys.writes || !Array.isArray(d.waits_on) || !d.waits_on.length || canonical(d.waits_on) !== canonical(expected) || !refused.length || refused.some(r => r.reasons.some(reason => !reason.startsWith('overlaps open node ')))) errors.push('obs waits_on requires only current candidate writes overlaps with the named open nodes');
       }
       if (d.auto_remeasure !== undefined && (d.auto_remeasure !== true || d.subject !== 'trunk' || !d.obligation.startsWith('inv:') || d.probe !== undefined || d.attribution)) errors.push('obs auto_remeasure must be true on a non-attribution invariant observation');
+      if (d.remeasure_errors !== undefined && (d.subject !== 'trunk' || d.verdict !== 'fail' || !Array.isArray(d.remeasure_errors) || !d.remeasure_errors.length || d.remeasure_errors.some(x => typeof x !== 'string' || !x) || (d.failed?.length ? d.remeasure_errors.length !== d.failed.length : d.remeasure_errors.length !== 1))) errors.push('obs remeasure_errors must contain full matching text for every invariant failure');
+      if (d.auto_remeasure === true) {
+        const prior = observations(s,d.subject,d.obligation,d.key), first = prior.at(-1);
+        const needles = s.plan.invariants.find(i => `inv:${i.id}` === d.obligation)?.remeasure_on ?? [];
+        if (prior.some(e => e.auto_remeasure)) errors.push('obs auto_remeasure already consumed on this key');
+        if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || !first.remeasure_errors?.length || !needles.length || !first.remeasure_errors.every(text => needles.some(n => text.includes(n)))) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on');
+      }
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
       break;
     case 'review':
@@ -1663,6 +1670,10 @@ export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
     const key = st.invKeys[i.id] ?? '', o = `inv:${i.id}`;
     const v = item(s, 'trunk', o, key);
     if (!key) reasons.push(`invariant ${i.id} missing adopt obligation key`);
+    else if (v.mark === '⊤' && automaticInvariantConflict(s,o,key)) {
+      failed.push(i.id);
+      reasons.push(`invariant ${i.id} owner conflict: ${v.detail}; fix the invariant before adopt`);
+    }
     else if (key !== s.trunk.invKeys[i.id] && v.status === 'D' && item(s, 'trunk', o, s.trunk.invKeys[i.id] ?? '').status !== 'D') {
       failed.push(i.id);
       reasons.push(`invariant ${i.id} new debt: satisfied on the current trunk but not on the adopted commit (${v.detail})`);
@@ -1691,9 +1702,14 @@ export function failedNamesComplete(e: ObsEntry): boolean {
   const union = new Set(failures.flatMap(r => r.failed!));
   return union.size === e.failed?.length && e.failed.every(name => union.has(name));
 }
+/** RO ruling #2097: an automatic same-key conflict is negative evidence, never an inherited pass. */
+function automaticInvariantConflict(s: State, obligation: string, key: string): boolean {
+  const obs = counted(s,'trunk',obligation,key);
+  return !s.plan.invariants.find(i => `inv:${i.id}` === obligation)?.repeat && obs.some(e => e.auto_remeasure) && obs.some(e => e.verdict === 'pass') && obs.some(e => e.verdict === 'fail');
+}
 function decidingInvariantFail(s: State, obligation: string, key: string, commit?: string): ObsEntry | undefined {
   const obs = counted(s, 'trunk', obligation, key);
-  if (obs.some(e => e.verdict === 'pass')) return undefined;
+  if (obs.some(e => e.verdict === 'pass') && !automaticInvariantConflict(s,obligation,key)) return undefined;
   return obs.findLast(e => e.verdict === 'fail' && (commit === undefined || e.commit === commit));
 }
 /** IR2/KR3: fix-owned names are not inheritable trunk debt when their fixing node merges. */
@@ -1777,11 +1793,12 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
     const owned = fixOwnedKnownRed(s, i.id, id), stillFail = [...new Set(counted(s, 'trunk', `inv:${i.id}`, key).filter(e => e.verdict === 'fail').flatMap(e => (e.failed ?? []).filter(name => owned.includes(name))))];
     if (stillFail.length) reasons.push(`${id} is the fix node of known-red ${stillFail.join(', ')} on inv:${i.id}, which still fail on the merge result`);
     else if (!key) reasons.push(`invariant ${i.id} missing merge obligation key`);
-    else if (key !== s.trunk.invKeys[i.id] && v.status === 'D') {
+    else if ((key !== s.trunk.invKeys[i.id] || automaticInvariantConflict(s,`inv:${i.id}`,key)) && v.status === 'D') {
       const d = s.deferred.findLast(d => d.node === id && d.id === i.id && d.key === key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
       if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner deferred, still debt` });
       else {
         const red = invariantTrunkComparison(s, id, i, key, m.state.commit);
+        if (automaticInvariantConflict(s,`inv:${i.id}`,key)) { reasons.push(`invariant ${i.id} owner conflict: ${v.detail}; fix the invariant or defer it for ${id}`); return v; }
         const carry = red.inherited ? undefined : carriedDefer(s, id, i.id, key);
         if (red.inherited) Object.assign(v, { discharger: 'parent', detail: `trunk-red: inv:${i.id} already failed on trunk before ${id} (${red.merge!.failed!.join(', ')}); merge #${s.seq + 1}` });
         else if (carry?.carried) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, carry.defer.seq])], detail: `inv:${i.id} owner deferred, still debt; defer #${carry.defer.seq} carried (same trunk failure)` });

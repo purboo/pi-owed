@@ -393,7 +393,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     const reason = i.obligation === 'approve' ? 'awaiting owner approval'
       : reviewObligation(i.obligation) ? i.mark === '⊤' ? `${i.obligation} needs an owner decision` : i.mark === '⛔' ? `${i.obligation} blocked: guidance needed` : `awaiting ${i.obligation}`
       : i.obligation.startsWith('evidence:') ? `awaiting manual evidence: ${i.obligation.slice(9)}`
-      : `${i.obligation}: ${plain(i.detail)}`;
+      : `${i.obligation}: ${i.subject === 'trunk' && i.mark === '⊤' && i.detail.includes('automatic same-key remeasure:') ? i.detail : plain(i.detail)}`;
     add(i.subject, reason, command);
   }
   if (!driverRunning) for (const id of v.ready) {
