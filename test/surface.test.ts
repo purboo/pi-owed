@@ -26,24 +26,66 @@ async function env<T>(extra: Record<string,string | undefined>, run: () => Promi
   for (const [k,v] of Object.entries(extra)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   try { return await run(); } finally { for (const [k,v] of prior) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 }
-function harness(cwd: string, host: 'new' | 'old' | 'missing' | 'loading' = 'new') {
+function harness(cwd: string) {
   const tools = new Map<string, ToolDefinition>(), handlers = new Map<string, (e: unknown, ctx: ExtensionContext) => unknown>();
-  let loading = host === 'loading', prompts = 0;
+  const messages: string[] = [];
+  let prompts = 0;
   const api = {
-    registerTool(t: ToolDefinition) { tools.set(t.name,t); }, registerCommand() {}, sendMessage() {},
+    registerTool(t: ToolDefinition) { tools.set(t.name,t); }, registerCommand() {}, sendMessage(m: { content: string }) { messages.push(m.content); },
     on(name: string, h: (e: unknown, ctx: ExtensionContext) => unknown) { handlers.set(name,h); },
-    ...(host === 'missing' ? {} : { getAllTools() {
-      if (loading) throw new Error('Extension runtime not initialized');
-      return [{name:'read', ...(host === 'old' ? {} : {exposure:'direct'})}, ...[...tools.values()].map(t => ({name:t.name, ...(host === 'old' ? {} : {exposure:t.exposure})}))];
-    } }),
   };
   const ctx = {cwd,hasUI:true,ui:{notify() {},confirm() { prompts++; throw new Error('start must not open a dialog'); }}} as unknown as ExtensionContext;
   owed(api as unknown as ExtensionAPI);
-  return { tools, get prompts() { return prompts; }, async call(name: string, args: object = {}) {
+  return { tools, messages, get prompts() { return prompts; }, async call(name: string, args: object = {}) {
     const tool = tools.get(`owed_${name}`); assert.ok(tool, `${name} registered`);
     const r = await tool.execute('test',args,undefined,undefined,ctx as Parameters<ToolDefinition['execute']>[4]);
     return {...r,text:r.content.map(c => c.type === 'text' ? c.text : '').join('\n')};
-  }, async startSession() { loading=false; await handlers.get('session_start')?.({},ctx); }, async shutdown() { await handlers.get('session_shutdown')?.({},ctx); } };
+  }, async startSession() { await handlers.get('session_start')?.({},ctx); }, async shutdown() { await handlers.get('session_shutdown')?.({},ctx); } };
+}
+/**
+ * A faithful fake of the pi 1.2.0 tool registry (dist/core): before binding, `getAllTools` is the throwing
+ * notInitialized stub (extensions/loader.js:125); registration (loader.js registerTool → runtime.refreshTools →
+ * agent-session.js _refreshToolRegistry ~2840) activates only newly declarable tools (`direct`/`model-only`,
+ * _isDeclarable/_isActivatedOnRegistration ~2925) and never deactivates (re-registering keeps the prior active set);
+ * the session binds with includeAllExtensionTools (~2963); `setActiveTools` ignores unknown/hidden names;
+ * `getAllTools` reports exposure and reachesTools (types.d.ts ToolInfo). The host tool_search is registered inactive
+ * (defaultActive false) with reachesTools. `search`: reaching (present), none (absent), stuck (cannot be activated);
+ * `legacy`: a host without exposure (ignores the field, ToolInfo without exposure).
+ */
+function fakeHost(cwd: string, search: 'reaching' | 'none' | 'stuck' | 'legacy') {
+  type Def = ToolDefinition & { defaultActive?: boolean; reachesTools?: unknown };
+  const defs = new Map<string, Def>(), active = new Set<string>(['read','bash','edit','write']), handlers = new Map<string, (e: unknown, ctx: ExtensionContext) => unknown>();
+  let bound = false;
+  const exposure = (d: Def) => search === 'legacy' ? 'direct' : d.exposure ?? 'direct';
+  const declarable = (d: Def) => ['direct','model-only'].includes(exposure(d));
+  const activatedOnRegistration = (d: Def) => declarable(d) && d.defaultActive !== false;
+  if (search !== 'none') defs.set('tool_search', { name:'tool_search', label:'tool_search', description:'search', parameters:{} as never, defaultActive:false, reachesTools: () => 'all', execute: async () => ({content:[],details:undefined}) } as unknown as Def);
+  const register = (t: Def) => {
+    const before = defs.get(t.name), was = before ? activatedOnRegistration(before) : false;
+    defs.set(t.name, t);
+    if (bound && !was && activatedOnRegistration(t)) active.add(t.name);
+  };
+  const api = {
+    registerTool: register, registerCommand() {}, sendMessage() {},
+    on(name: string, h: (e: unknown, ctx: ExtensionContext) => unknown) { handlers.set(name,h); },
+    getAllTools() {
+      if (!bound) throw new Error('Extension runtime not initialized');
+      return [...defs.values()].map(d => ({ name:d.name, ...(search === 'legacy' ? {} : { exposure:exposure(d) }), ...(d.reachesTools ? { reachesTools:d.reachesTools } : {}) }));
+    },
+    getActiveTools() { if (!bound) throw new Error('Extension runtime not initialized'); return [...active]; },
+    setActiveTools(names: string[]) { active.clear(); for (const n of names) if (defs.has(n) || ['read','bash','edit','write'].includes(n)) if (!(search === 'stuck' && n === 'tool_search')) active.add(n); },
+  };
+  const ctx = {cwd,hasUI:false,ui:{notify() {},async confirm() { return false; }}} as unknown as ExtensionContext;
+  owed(api as unknown as ExtensionAPI);
+  return {
+    defs,
+    /** The session binds the runtime, activates the extension tools, then emits session_start. */
+    async startSession() { bound = true; for (const d of defs.values()) if (activatedOnRegistration(d)) active.add(d.name); await handlers.get('session_start')?.({},ctx); },
+    /** Tools declared to the model: active and declarable. */
+    declared: () => [...active].filter(n => n.startsWith('owed_') || n === 'tool_search').filter(n => declarable(defs.get(n)!)).sort(),
+    owed: () => [...defs.keys()].filter(n => n.startsWith('owed_')).sort(),
+    async shutdown() { await handlers.get('session_shutdown')?.({},ctx); },
+  };
 }
 async function cli(cwd: string, args: string[], extra: NodeJS.ProcessEnv = {}) {
   const childEnv = {...process.env,...identity,OWED_CONFIRM:'',OWED_DSA:FAKE,...extra};
@@ -65,43 +107,45 @@ async function fixture(p = plan()) {
     await r.cleanup();
   }};
 }
-const compact = (text: string) => assert.ok(text.trim().split('\n').length <= 3, text);
+/** At most 3 lines besides the lint warnings, which each take their own line (SF6). */
+const compact = (text: string) => assert.ok(text.trim().split('\n').filter(l => !l.startsWith('warning:')).length <= 3, text);
 
-test('SF1 core declares exactly seven tools, keeps deferred tools registered and explains discovery', async () => {
-  await env({OWED_TOOLS:undefined},async () => {
-    const h=harness('/tmp');
-    try {
-      assert.deepEqual([...h.tools.values()].filter(t => t.exposure === 'direct').map(t => t.name).sort(),core);
-      assert.ok(h.tools.size > core.length);
-      for (const t of h.tools.values()) if (core.includes(t.name)) assert.match(t.description,/tool_search/); else assert.equal(t.exposure,'deferred',t.name);
-    } finally { await h.shutdown(); }
-  });
-});
-test('SF1 OWED_TOOLS=all declares every registered tool directly', async () => {
-  await env({OWED_TOOLS:'all'},async () => {
-    const h=harness('/tmp');
-    try { assert.ok(h.tools.has('owed_start')); for (const t of h.tools.values()) assert.equal(t.exposure,'direct',t.name); }
-    finally { await h.shutdown(); }
-  });
-});
-test('SF1 unsupported host APIs fall back to direct without relying on a pi version', async () => {
-  await env({OWED_TOOLS:undefined},async () => {
-    for (const host of ['old','missing'] as const) {
-      const h=harness('/tmp',host);
-      try { assert.ok(h.tools.has('owed_start')); for (const t of h.tools.values()) assert.equal(t.exposure,'direct'); }
-      finally { await h.shutdown(); }
-    }
-  });
-});
-test('SF1 unbound loading API falls back, then detects exposure before the first session turn', async () => {
+// DSA_CALL keeps session_start from attaching watchers to /tmp; the tool-exposure handling runs regardless.
+test('SF1 core with a reaching tool_search: deferred registration at load, tool_search activated, exactly core + tool_search declared', async () => {
   await env({OWED_TOOLS:undefined,DSA_CALL:'fixture'},async () => {
-    const h=harness('/tmp','loading');
+    const h=fakeHost('/tmp','reaching');
     try {
-      for (const t of h.tools.values()) assert.equal(t.exposure,'direct');
+      for (const n of h.owed()) assert.equal(h.defs.get(n)!.exposure, core.includes(n) ? 'direct' : 'deferred', n);
+      assert.ok(h.owed().length > core.length);
+      for (const n of core) assert.match(h.defs.get(n)!.description,/owed_\* tools: load any that are not declared with tool_search, or use the owed <command> CLI \(owed help\)/);
       await h.startSession();
-      assert.deepEqual([...h.tools.values()].filter(t => t.exposure === 'direct').map(t => t.name).sort(),core);
+      assert.deepEqual(h.declared(),[...core,'tool_search'].sort());
+      for (const n of h.owed()) assert.ok(h.defs.has(n),'every tool stays registered');
     } finally { await h.shutdown(); }
   });
+});
+for (const search of ['none','stuck','legacy'] as const) test(`SF1 core without a reachable tool_search (${search}): every owed tool is declared`, async () => {
+  await env({OWED_TOOLS:undefined,DSA_CALL:'fixture'},async () => {
+    const h=fakeHost('/tmp',search);
+    try {
+      await h.startSession();
+      assert.deepEqual(h.declared().filter(n => n !== 'tool_search'),h.owed());
+      assert.ok(!h.declared().includes('tool_search'));
+    } finally { await h.shutdown(); }
+  });
+});
+test('SF1 OWED_TOOLS=all declares every owed tool and leaves tool_search alone', async () => {
+  await env({OWED_TOOLS:'all',DSA_CALL:'fixture'},async () => {
+    const h=fakeHost('/tmp','reaching');
+    try {
+      for (const n of h.owed()) assert.equal(h.defs.get(n)!.exposure,'direct',n);
+      await h.startSession();
+      assert.deepEqual(h.declared(),h.owed());
+    } finally { await h.shutdown(); }
+  });
+});
+test('SF1 owed help prints the command list', async () => {
+  const out=await cli('/tmp',['help']); assert.equal(out.code,0,out.stderr); assert.match(out.stdout,/^owed — multi-agent acceptance ledger\n[\s\S]*start \[--plan FILE\]/);
 });
 
 test('SF2 CLI fresh start initializes delegated owner, starts a staying driver and second start records nothing', {timeout:90_000},async () => {
@@ -151,6 +195,20 @@ test('SF2 owed_start uses cwd, returns compact output and never opens an owner d
     const again=await env(identity,() => h.call('start',{cwd:f.cwd}));
     assert.notEqual(again.isError,true,again.text); assert.match(again.text,/already running/); assert.deepEqual(await entries(f.cwd),before);
   } finally { await h.shutdown(); await f.done(); }
+});
+test('SF6 owed_start follows a new driver from its log start but a reused driver from the current end (no replayed wakes)', {timeout:90_000},async () => {
+  const f=await fixture(), a=harness(f.root), b=harness(f.root);
+  const wait = async (h: ReturnType<typeof harness>, ms: number) => { const end=Date.now()+ms; while (!h.messages.length && Date.now() < end) await new Promise(r => setTimeout(r,100)); };
+  try {
+    const first=await env(identity,() => a.call('start',{cwd:f.cwd,plan:'plan.json',stay:true}));
+    assert.notEqual(first.isError,true,first.text);
+    await wait(a,20_000);
+    assert.match(a.messages.join('\n'),/idle/,'positive control: the new driver idle-wait is delivered from the log start');
+    const again=await env(identity,() => b.call('start',{cwd:f.cwd}));
+    assert.match(again.text,/already running/);
+    await wait(b,6_000);
+    assert.deepEqual(b.messages,[],'the old idle-wait is not replayed to the reusing session');
+  } finally { await a.shutdown(); await b.shutdown(); await f.done(); }
 });
 test('SF2 start rereads the latest plan path, records a changed plan once, and ignores formatting-only changes', {timeout:90_000},async () => {
   const f=await fixture();

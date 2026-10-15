@@ -707,11 +707,11 @@ export async function start(o: Context & { plan?: string; max?: number; stay?: b
   const driver = await driveStart({ cwd:o.cwd, max:o.max, stay:o.stay, reuse:true });
   return { initialized:fresh, updated:changed, plan:read.path, warnings, driver };
 }
-/** SF2: one action line, one driver line and one next step; full lint warnings remain structured. */
+/** SF2: one action line, one driver line and one next step; each lint warning on its own line after the action (SF6). */
 export function startText(r: StartResult): string {
   const action = r.initialized ? 'initialized ledger' : r.updated ? 'updated plan' : 'plan unchanged';
   const driver = r.driver.alreadyRunning ? 'already running' : r.driver.exited ? `ended (${r.driver.exited.reason}, exit ${r.driver.exited.code})` : 'started';
-  return [`start: ${action}${r.warnings.length ? `; ${r.warnings.map(oneLine).join('; ')}` : ''}`, `driver: ${driver}`, r.driver.exited ? 'Next: owed status shows what remains; use owed start --stay to wait for new work.' : 'Next: wait for driver wake-ups; use owed status for progress and owed decide for decisions.'].join('\n');
+  return [`start: ${action}`, ...r.warnings.map(oneLine), `driver: ${driver}`, r.driver.exited ? 'Next: owed status shows what remains; use owed start --stay to wait for new work.' : 'Next: wait for driver wake-ups; use owed status for progress and owed decide for decisions.'].join('\n');
 }
 /** N1 (23:4x): a carry `owed plan` skipped (facts not computable or validation refused it); the candidate stays invalidated. */
 export interface NotCarried { node: string; reason: string }
