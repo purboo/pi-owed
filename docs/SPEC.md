@@ -12,7 +12,7 @@ Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-workt
 rail §2.1.7) are rails against accidents and instructions, not security
 boundaries: a process can unset the variables or change directory.
 
-### Compatibility (0.20)
+### Compatibility (0.20 / 0.20.1)
 
 0.20 adds only optional fields to existing entry kinds and optional plan keys;
 it adds **no new entry kind**. Upgrade every driver, CLI and pi plugin together:
@@ -24,6 +24,17 @@ with `needs a newer owed`. New optional ledger fields are `obs.signatures`,
 `files`, `name_prefix`, `path` and `required` (§3.6). Runtime/view fields are not
 ledger entries. Without these additions keys and replay remain as in 0.17,
 except pooled repeat across several observations on one key (§7 RC1).
+
+0.20.1 adds no ledger entry kind or field. Existing `obs.signatures` use a
+`v2|` encoding (§5, SG1); untagged signatures replay unchanged but never equal
+new signatures, including for signature-based defer carry. New optional plan
+keys are check/invariant `on_timeout` (§7.18) and global/node
+`drive.same_model: accepted` (§12.2). Older readers ignore `on_timeout`, reject
+`same_model`, or retain misleading failure/model diagnostics: upgrade executors,
+drivers, CLI and pi plugins together before using these keys. Receipt JSON
+`modelWarnings` now admits acknowledged objects as well as strings (§12.5.2).
+Merge-wait `ahead`/`job` are runtime-only fields (§9); old caches remain readable.
+No acceptance gate is weakened by diagnostic hooks, acknowledgements or retries.
 
 ## 1. Storage
 
@@ -767,8 +778,18 @@ harness, materialization failure) is ⊥: no information, no block.
 
 ### Optional 0.20 fields on existing entries
 
-- `obs.signatures?: Record<string,string>`: per failed test name, normalized
-  first error line of the first run that failed it; absent without error text.
+- `obs.signatures?: Record<string,string>`: per failed test name, the first
+  signature from a run that failed it; absent without error text. **SG1
+  (0.20.1):** `v2|` followed by a JSON array of masked first error line,
+  innermost repository test stack frame (`path:line`, tree-relative, or null),
+  expected value and actual value (each independently masked, at most 120
+  characters, or null when absent). Masks replace long hex ids, durations and
+  `/tmp/` paths. TAP YAML assertion values and Node assertion diffs supply the
+  values, including `undefined` omitted from YAML. Test frames are under
+  `test/` or `tests/`, have `.test.` / `.spec.` basenames, or `_tests.<ext>`
+  basenames; external absolute paths and node_modules frames are excluded.
+  TAP creation-site `location` is display-only when no test frame is found,
+  never part of the signature. Historical untagged signatures never equal v2.
   Normalization masks hex ids of 8+ digits as `<hex>`, durations as `<t>` and
   `/tmp/...` paths as `<tmp>`. Used for diagnostic/carry proof, not a new key.
 - `obs.quarantined?: string[]`: non-empty list of excused names (§7.16).
@@ -991,15 +1012,28 @@ hint still applies. Delta lines appear once per obligation after failure text
 and before intermittent-history and fix-candidate hints. The same lines appear
 in merge refusals, driver halts, `why` merge-block hints and merge-check details.
 
-**AT4 (0.20):** a named merge failure gets `known intermittent: <name> failed
-and passed on the same key (#a, #b, #c)` only with same-key pass evidence (also
-mixed repeated runs), or `known intermittent: <name> failed with the same error
-on trunk (#...)` with matching normalized signatures on a trunk key/probe.
-The refused node's different trees are not independent evidence. Other-tree
-failures with known different signatures instead say `same test failed on older
-trees (different error): <name> (#...)`; missing signatures claim neither.
-The lookup scans the last 5000 ledger entries, citing at most three seqs,
-newest first. These hints never clear a block or weaken acceptance.
+**AT4 / SG2–SG3 (0.20.1):** a named merge failure gets
+`known intermittent: <name> failed and passed on the same key (#a, #b, #c);
+inspect the matching failures before retrying` only when one subject/obligation
+key has both pass and failure evidence (also mixed repeated runs). If the
+current failure has a signature, a failing observation must match it. A
+same-signature failure on trunk alone is **not** intermittent; the refused
+node's different trees are not independent evidence.
+
+Current-key trunk failures take precedence. A matching latest failure on the
+current trunk invariant key or a trunk probe key at `s.trunk.commit` says
+`<name>: trunk red since #S (after merge #M NODE); fix trunk before retrying`
+or `(after adopt #A)`. Subject/obligation and recorded run definition must
+match. S is the first observation in the uninterrupted sequence of matching
+trunk failures; a pass, missing name or different signature breaks the run.
+The latest merge/adopt at or before S supplies provenance; without one that
+suffix is omitted. This scan uses complete trunk observation history.
+
+Other-tree failures with known different signatures instead say
+`same test failed on older trees (different error): <name> (#...)`; missing
+signatures claim neither. Generic intermittent/older-tree lookup scans the
+last 5000 ledger entries, citing at most three seqs, newest first. These hints
+never clear a block or weaken acceptance.
 
 For each failed name of at least six characters, an unmerged node other than
 the refused node is a fix candidate when it has an open slot, is accepted, or
@@ -1756,37 +1790,32 @@ Counts and observations retain up to 50 failing names from `owed`'s `failed`,
 TAP `not ok N - name` and cargo `test name ... FAILED` lines; diagnostic cargo
 lines inside TAP are not names. Repeated observations retain a capped ordered
 union across executed runs in `failed`. A failed red verdict (including a
-`red_expect` mismatch) gets the same names-first short-tail note; a successful
-red counterfactual stays unchanged. A merge refusal and subsequent driver halt
-carry the stored names and short tail even when the failing merge-key observation
-is reused rather than freshly measured (ruling #1274).
-A failed item's note, `why`, driver halt
-detail and repair message include a log tail of at most 15
-non-empty lines (ANSI stripped, each at most 200 characters). Since 0.16.2
-(FG), TAP YAML `error` diagnostics and both cargo panic formats group failing
-tests by distinct error text, ordered by group size descending then first
-appearance. TAP quoted/plain scalars are decoded; block scalars (`|`, `|-`,
-`>`, `>-`) display their first non-empty line. A `subtestsFailed` parent is
-omitted from groups when another failing point has an error. Unparsed names
-form a `(no error text)` group. ANSI is stripped, whitespace collapsed,
-semicolons replaced by commas and messages limited to 160 characters with `…`.
-Locations retain `file:line` without a column: absolute paths under the run
-cwd become relative, other absolute paths keep their last three segments.
-A group's location is shown only if every name shares it.
+`red_expect` mismatch) gets the same failure quote; a successful red
+counterfactual stays unchanged. A merge refusal and subsequent driver halt
+carry the stored note even when the failing merge-key observation is reused
+rather than freshly measured (ruling #1274).
 
-When any group has parsed error text, the single-run and repeat-union
-`obs.note` prefix is
-`failed tests: <N> failed, <K> distinct error(s): "<m1>" (<loc1>) ×<n1> | "<m2>" ×<n2> | … (+<R> more errors) — <name1>, <name2>, <name3> (+<M> more)`.
-Show at most three groups and three names; omit zero-count remainder suffixes
-and absent locations. This segment contains no semicolon, preserving the
-existing prefix parser and `; last output:` tail. Without parsed errors the
-0.16.0 segment is unchanged. The capped `obs.failed` union and full log retain
-the names/evidence used by `why` and intermittent hints. Refusals and halts
-quote the stored grouped note without extracting errors again. Only display
-text changes: 0.16.0, 0.16.1 and 0.16.2 share ledger fields, replay and keys.
-Failures without
-names also receive a bounded tail; existing count-failure notes and the
-5-line no-count command-failure note remain unchanged.
+**SG4 (0.20.1):** single-run and repeat-union notes quote at most three failed
+tests in recorded name order as
+`failed tests: <name> (<path:line>): expected <X>, actual <Y> | ... (+<N> more)`.
+Both assertion values must be present; otherwise use the first error line,
+or `(no error text)` when missing. Omit absent locations. TAP YAML errors,
+quoted/plain/block scalars and both cargo panic formats remain recognized.
+ANSI is stripped, whitespace collapsed, semicolons replaced by commas and
+error messages limited to 160 characters with `…`. Prefer the repository test
+stack frame (§5 SG1); otherwise display the TAP/cargo location without a column,
+relative to the run cwd (other absolute paths keep their last three segments).
+Assertion values are independently masked and limited to 120 characters.
+The `errorGroups` helper still groups errors for extraction, but notes no
+longer display frequency groups. The capped `obs.failed` union and full log
+retain names/evidence for `why` and intermittent hints.
+
+Refusals, `why`, halts and repair messages quote the stored per-test note.
+Named failures do not append unrelated summary/last-output tails; separate
+count-failure reasons remain. Anonymous failures retain a tail of at most 15
+non-empty lines (ANSI stripped, each at most 200 characters), or the existing
+5-line no-count command-failure tail. Timeouts use §7.18 instead. These display
+changes add no ledger fields or obligation keys.
 
 Compatibility (RC1–RC3, ruling #1243): use owed >= 0.13 for repeat and the
 `obs` fields `runs`, `noisy`, `failed`, and `counts.failed`/format `owed`.
@@ -1954,6 +1983,59 @@ allowlisted runs: a quarantine on a template never excuses in 0.20.
   unavailable dsa status leaves `model unknown` (§12.5.2).
 - Prospective merge-tree invariant measurement before review, stopping surplus
   reviewers, and a unified decision/lighter release API remain future work.
+
+### 7.18 Timeout evidence and diagnostics (0.20.1, SG5)
+
+A measurement timeout remains an **error**, never a passing measurement. Its
+log blob retains the last 256 KiB of captured stdout/stderr, followed by
+`timeout after Ns`, optional diagnostic output and a best-effort pre-kill
+process tree. The note is `timeout after Ns` plus the last three measurement
+output lines. The measurement process group is stopped at the timeout boundary;
+counts, failed names and signatures use frozen pre-diagnostic output, so hook
+output cannot inject measurement evidence.
+
+Optional check/invariant `on_timeout: "<shell command>"` runs once before the
+measurement group is killed, with a separate 30-second limit and the same
+materialized tree, environment and `exec.wrap`. Its output is appended under
+`on_timeout (diagnostic only)` with its exit code; neither output nor exit code
+changes the measurement verdict. Diagnostic output is bounded to its last
+256 KiB. Missing, failing or hanging hooks cannot prevent group cleanup.
+`owed edit A --set 'checks.C.on_timeout=...'` and
+`owed edit --invariant I --set 'on_timeout=...'` use the existing edit API;
+there is no new CLI flag. Diagnostic-only edits change no check/invariant key.
+
+The snapshot uses best-effort `ps -axo` fields pid, ppid, state, wchan, elapsed
+and args (args cut to 200 characters), bounded to 4 MiB of ps input, 1000 selected
+rows and a 2-second deadline. Unavailable ps is explicitly recorded. Linux is
+behaviorally covered; macOS ps is best effort, not verified on the Linux host.
+
+### 7.19 0.20.1 regression coverage
+
+- `test/sig.test.ts` covers signature masks/frames/assertion values and legacy
+  inequality, same-key intermittency, uninterrupted trunk-red provenance,
+  bounded quotes, timeout output/process cleanup, missing/hanging hooks and
+  diagnostic-protocol isolation (including mutant evidence). Matching trunk
+  evidence is scoped to the subject/check and recorded run definition.
+- `test/models.test.ts` covers direct/nested/delayed pool membership, thinking
+  normalization, unknown/malformed/cyclic/default-HOME config, known nonmembers,
+  global/node acknowledgement, full/JSON visibility, acknowledgement removal
+  without downgrade, retained mismatches/blocks and invalid key values.
+- `test/drivefix.test.ts` covers a real plan change during dispatch, bounded CAS
+  retries/rollback, non-CAS setup failure, merge blocker/job/time/queue ordering,
+  removed/held nodes, new unmerged dependencies, new open-slot overlap and
+  exclusion of obsolete cached ahead for nodes outside the queue.
+
+Existing tests changed only for the revised behavior: `test/attrib.test.ts`
+requires same-key pass/fail and versioned defer signatures (SG1–SG2);
+`test/counts-exit.test.ts` (#557), seven FG2/FG3 note-surface cases in
+`test/refusalnotice.test.ts`, and four RC3 note-surface cases in
+`test/repeat.test.ts` expect per-test quotes instead of groups/tails (SG4),
+retaining their verdict/count/repeat/defer gates. `test/driver020.test.ts`
+expects unknown bare pool membership instead of forced mismatch (MD1) and
+job/time/ahead status instead of a generic internal-job list (DQ2).
+`test/cas-retry.test.ts` and `test/slotsetup.test.ts` expect fresh-plan dispatch
+retry after complete rollback, including stale setup cleanup and a single
+successful dispatch receipt (DQ1).
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
@@ -2201,13 +2283,20 @@ needs a 0.16 parser. Owed 0.15 ignores unknown top-level plan fields, including
 `slot_setup`, and runs no setup at dispatch. Mixing versions changes no
 acceptance, only whether setup runs at dispatch.
 
-In 0.10 (N2), dispatch and plan retry CAS refusals for at most three attempts in
-total, each starting with a fresh ledger read, only while the plan sha is
-unchanged. Dispatch keeps its dispatch lock across the attempts and completes
-worktree, branch and directory rollback before retrying; a failed rollback is
-returned immediately. A different plan sha prevents retry. The third CAS
-failure returns the last refusal with the same error class and exit code. Other
-failures (authority, validation, git, lock timeout) are not retried.
+**N2 / DQ1 (0.20.1):** dispatch retries CAS refusals for at most three attempts
+in total (initial attempt plus two retries), each with a fresh ledger read,
+including when plan, candidate, trunk or open slots change. Every attempt
+checks current node membership, hold, readiness and unmerged dependencies,
+then writes overlap before computing paths or creating a worktree. A removed,
+held, no-longer-ready or overlapping node is a normal non-CAS refusal.
+Dispatch keeps its dispatch lock across attempts and finishes worktree, branch,
+directory and setup-exclude rollback before retrying; a failed rollback is
+returned immediately. The third CAS failure returns the last refusal with its
+original error class/code; the driver reports only the exhausted refusal as
+`retry next pass`, never Needs you or a halt. Other failures (authority,
+validation, git, setup, lock timeout) are not retried. Plan/amend/edit retain
+N2's three-attempt bound **only while the plan sha stays unchanged**; a changed
+plan prevents their retry. No acceptance gate changes.
 
 When the trunk branch is checked out in a linked worktree, a merge fast-forwards
 it there (`git merge --ff-only` in that worktree) and refuses when it has
@@ -2348,9 +2437,20 @@ while genesis items lack observations.
 - **DR2:** current driver busy receipts show `merge waiting for <reason> since
   <HH:MM>` for accepted nodes, `measure waiting for <reason> since <HH:MM>` for
   open not-yet-accepted candidates, also in plain status. Times are UTC. Accepted
-  progress age is since continuous acceptance, not dispatch. Runtime
-  `drive/waiting.json` maps nodes to `{reason,since,attempt,candidate?}`;
-  status JSON exposes `mergeWaiting`. Atomic driver-owned writes survive restart,
+  progress age is since continuous acceptance, not dispatch.
+  **DQ2 (0.20.1):** ordinary/full status identify a driver-internal blocker as
+  `merge waiting for driver-internal job (catalog merge, since 09:12);
+  2 merges ahead`, preferring a running merge over other measurements.
+  `drive/waiting.json` maps nodes to `{reason,since,attempt,candidate?,job?}`;
+  status JSON exposes `mergeWaiting[id]` with optional `job: string` (e.g.
+  `catalog merge` or `trunk attest`) and `ahead: number`, the current zero-based
+  position in the 0.20 merge queue. Accepted predecessors count even while
+  merging; status recomputes ahead, ignoring cached values. Nodes outside the
+  queue omit ahead and queue-count text. Lease waits keep their existing
+  reason/since text, adding ahead only for queued nodes. `since` is the continuous
+  candidate/attempt wait start; the internal-job time is that job's UTC start.
+  Old caches without job remain readable until refreshed; brief keeps its scope.
+  Atomic driver-owned writes survive restart,
   but are ignored when candidate/attempt stale or missing/corrupt. Completion,
   replacement, merge or closure clears them; they are cache, not evidence.
 - **DR3:** why adds `models` (`writer <model> · reviewer <model>`) and optional
@@ -3035,8 +3135,8 @@ nodes:
       reviewer: { model: "example/model-small" }  # model only: the plan's reviewer agent with this model
 ```
 
-Shape `{writer?: {agent?, model?}, reviewer?: {agent?, model?}}`, validated
-like the plan's roles (unknown keys and bad types are errors, e.g.
+Shape `{writer?: {agent?, model?}, reviewer?: {agent?, model?},
+same_model?: accepted}`, validated like the plan's roles (unknown keys and bad types are errors, e.g.
 `nodes[0].drive.writer.effort: unknown key`); `max` and `repairs` stay
 plan-wide. `drive: {}` and an empty role object count as absent: they are
 dropped from the parsed plan, so a plan without node `drive` keeps its
@@ -3057,6 +3157,13 @@ invalidates no candidate (the reducer compares node specs without `type` and
 `drive`) and affects only later launches. A re-launch of a recorded run sends
 its stored spec bytes, as before (§12.5 row 3). owed 0.6.x ignores a node's
 `drive` (it does not validate node keys) and launches with the plan's drive.
+
+**MD2 (0.20.1):** optional `drive.same_model: accepted`, globally or in a
+node's `drive`, acknowledges only the informational same-writer/reviewer-model
+warning (§12.5.2). Other values refuse. A node can acknowledge without role
+overrides; absent node acknowledgement inherits the global value. Adding or
+removing it changes no obligation key, downgrade, review block or acceptance
+rule; removing it restores the warning without invalidating evidence.
 
 ### 12.3 Ledger entries (D3)
 
@@ -3662,8 +3769,29 @@ before taking the ledger lock; latest listed `calls[].model` takes precedence
 over top-level `model`. Failed status leaves the field absent. Stale review
 candidate/attempt discards stale metadata. Already-written entries are not
 rewritten/supplemented; unknown models stay explicit. Selected model comes
-from launch spec model or array's first entry; opaque pool names are not guessed.
-Why's matching-model/mismatch warnings (§9) never affect gates.
+from launch spec model or array's first entry.
+
+**MD1 (0.20.1):** selected direct models and recorded used models compare by
+`provider/id`, ignoring only the trailing `:thinking`; ids with multiple slashes
+(e.g. `mccodex/ide/gpt-6.1-sol`) are preserved. A selected name resolves through
+dsa `pools` in `$DSA_HOME/config.json`, default
+`~/.pi/durable-subagents/config.json`, including nested pools and
+`{model, afterMs}` entries. Any discovered member, including fallback models,
+is a match. Unknown, empty, cyclic, malformed or partially unresolved pools
+cannot prove a mismatch; a discovered member in a valid branch still matches.
+Unmatched used models warn only for fully known pools; otherwise why shows
+`selected <name> (pool membership unknown)`. Unreadable/malformed config and
+missing launch selection blobs are unknown, not guessed mismatches. Pools are
+read from current local config when rendering, not snapshotted in the ledger;
+this changes no dsa routing or fallback behavior.
+
+**MD2:** actual same-model identity also ignores thinking. Unacknowledged
+warnings suggest an independent model or `drive.same_model: accepted`.
+Acknowledged warnings are hidden in compact why, restored by `why --full`
+with `(acknowledged)`, and retained in JSON `modelWarnings` as
+`{message: string, acknowledged: true}`; unacknowledged warnings remain strings.
+Selection mismatch warnings remain visible. JSON consumers must handle both
+shapes. Why's model warnings (§9) never affect gates or introduce evidence.
 
 **DR4 live ruling delivery:** after rule append and lock release, a
 non-prospective rule inspects named nodes' current writer/reviewer calls,
