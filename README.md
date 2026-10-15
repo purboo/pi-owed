@@ -27,6 +27,12 @@ retain their recorded writes dialect; no automatic migration rewrites them.
   its own tree, with its own eligible automatic remeasure. Batch observations
   never carry `remeasure_match`/`auto_remeasure`, block a member or count as its
   remeasure receipt. The same failed set is not batched until trunk moves.
+  Every member compares inherited debt with pre-train trunk. A later individual
+  merge can identify old debt from a completed batch's trunk failure while still
+  measuring its own tree; new/truncated failures and automatic retry conflicts
+  still refuse. Replay rejects batch retry metadata, and single-merge retry
+  diagnostics ignore batch votes. Planned batches exclude waiting, later, halted,
+  parked and reported nodes; running members say `merge in batch with <leader>`.
 - **Writes patterns:** node/allow writes and adopt scopes accept `*`, `?` and
   whole-segment `**`; `dir/**` equals `dir/`. Literal prefixes keep their old
   meaning. New input refuses absolute paths, parent traversal, brackets,
@@ -34,12 +40,20 @@ retain their recorded writes dialect; no automatic migration rewrites them.
   and unproven widenings still need the owner. Matching grants authorize exact
   files; overlap may conservatively delay disjoint globs sharing a prefix.
   New recorded plans carry `writes_syntax: 2`; historical entries stay literal.
+  Plan/edit/amend may preserve invalid legacy entries at their original node or
+  allowance position; new invalid entries still refuse, permission gates remain,
+  and recording a new plan still opts into syntax 2. Runtime plan copies retain
+  the dialect without adding it to plan JSON or changing its hash.
 - **Partial grants and waits:** eligible files receive grants even when others
   refuse. If all refusals are ownership overlaps, `obs.waits_on` lets the driver
   wait until those slots merge or abandon, then remeasure writes once on the
   same key. The subsequent observation supersedes the earlier overlap-only
   failure. Mixed reasons keep normal repair/conflict rules. Waiting cycles halt
   with a plan/abandon/resume action. Without a driver, attest after slots close.
+  Grant hints use optional structured `grant_refused` on closure/overlap
+  refusals, not failure-note wording; uncovered-only paths do not set it.
+  Historical field-free observations are not inferred from text. Upgrade older
+  readers that reject unknown fields before reading new grant refusals.
 - **Invariant retry policy:** `remeasure_on: ["connection refused"]` matches
   literal case-sensitive raw failure diagnostics, or captured raw output when
   no tests were parsed. Every failure must match; incomplete/missing diagnostics
@@ -86,6 +100,10 @@ retain their recorded writes dialect; no automatic migration rewrites them.
   120 seconds, wakes only a settled agent and claims one notification per host,
   repository and idle period across sessions. This is advisory; unlabelled calls
   and a crash between claim and delivery can hide activity or a wake.
+
+Batch-tail recovery also handles oversized non-final member lines. Existing
+model-warning acknowledgments preserve candidate commits and keys while
+independent review blocks remain binding.
 
 For complete semantics and known limits, see [SPEC](docs/SPEC.md), especially
 §3.7, §7.17–7.23, §8.4, §9.2 and §12.8.2. Torn batch tails must be completed

@@ -722,8 +722,11 @@ is equivalent to prefix `dir/`. Literal prefixes keep `startsWith` semantics,
 including when no trailing slash is present. Other regular-expression
 punctuation is literal. New plan inputs refuse absolute paths, parent-traversal
 segments, bracket/brace/negation syntax, backslashes and embedded `**` segments,
-identifying the offending entry. `amend --writes` retains comma-separated
-`+PATH` syntax. Historical plan parsing remains lenient.
+identifying the offending entry. Plan set/edit/amend may retain an invalid
+legacy entry in the same node or allowance position; newly introduced invalid
+entries still refuse. Permission and downgrade checks still apply, and recording
+a new plan opts into syntax 2, including wildcard semantics. `amend --writes`
+retains comma-separated `+PATH` syntax. Historical plan parsing remains lenient.
 
 Containment proves coverage only by equality or an enclosing literal prefix
 (including trailing `/**` equivalents). A glob can authorize a grant for an
@@ -735,8 +738,9 @@ The same matching rules govern writes, grants, adoption and merge rechecks.
 Newly recorded genesis/plan entries carry optional `writes_syntax: 2` metadata;
 this is not a YAML key. Without it, entries retain 0.20 literal-prefix semantics,
 including literal `*`, `?` and brackets. Replay, snapshots and attribution use
-the recording entry's dialect, not the plan blob hash. Historical and
-wildcard-free writes keys stay unchanged; syntax-2 wildcard-bearing node
+the recording entry's dialect, not the plan blob hash. Runtime plan copies
+retain that dialect without adding it to plan JSON or changing its content hash.
+Historical and wildcard-free writes keys stay unchanged; syntax-2 wildcard-bearing node
 scopes include the dialect in the writes key. Switching wildcard scopes or
 allowances is checked as a permission change and may require the owner.
 
@@ -2112,6 +2116,13 @@ Reasons identify all open owners, closure paths and uncovered paths. Exact
 path grants never widen a prefix. Fresh replay state recomputes eligibility
 under the ledger lock before append; replay validates grants and wait metadata.
 
+Optional writes observation `grant_refused: true` identifies closure or open-node
+overlap grant refusals independently of the explanatory note. An uncovered path
+alone does not receive it. Status hints use this structured field, not wording
+matches. Historical field-free observations replay without inferring a refusal
+from their text. Older readers that reject unknown observation fields must
+upgrade before reading newly recorded grant refusals; plan hashes are unchanged.
+
 An overlap-only current-candidate writes failure carries optional
 `obs.waits_on: [ids]`, sorted and unique. The driver waits without a writes
 repair or halt until every named slot closes by merge or abandon, then schedules
@@ -2166,6 +2177,9 @@ a refusal of any member. The batch falls back to per-member merges; each member
 then gets its own one same-key automatic remeasure on its own tree when eligible.
 Batch observations never carry `remeasure_match` or `auto_remeasure` and never
 count as a remeasure receipt for a non-batch merge (§7.21, ruling #2110).
+Replay refuses batch observations containing either field. Single-merge
+automatic-remeasure diagnostics also exclude batch observations when selecting
+the first failure to quote.
 
 ### 7.21 Batch merge / merge train (0.22, MT)
 
@@ -2191,7 +2205,8 @@ identical optional `merge.batch: {final, state, keys, members}`: `keys` maps
 member ids to their obligation keys on Mn. The guard uses `batch.state` for
 invariants and `batch.keys[node]` for node checks; base, acceptance, blocks,
 writes and rulings retain their normal gates. The last member's commit/state
-equal final/state.
+equal final/state. Inherited invariant debt is compared against trunk before
+the train for every member, never an unmeasured intermediate Mi.
 
 On measurement failure, optional `obs.batch: [ids]` attributes results to the
 batch, never one member: no `merging`, `probe` or `attribution`. These votes add
@@ -2199,13 +2214,21 @@ no execution block, decoy catch or trunk failure-signature provenance. They are
 evidence only for that batch; a later single merge measures its own tree with
 `merging` even on an equal key and never uses batch votes in pass/fail pooling
 or automatic-remeasure receipts (RO2, §7.20). Status counts batch evidence only
-after its batch merges and the final tree becomes trunk. The driver reports a
-retry, then merges members singly in queue order. A recorded batch failure
+after its batch merges and the final tree becomes trunk. A later single-node
+merge may use that completed batch's trunk failure to identify existing debt,
+while independently measuring its own merge tree. New failure names, incomplete
+or truncated failure lists and automatic remeasure conflicts still refuse under
+the existing gates. This debt comparison does not reuse batch votes as the
+single-node measurement verdict. The driver reports a retry, then merges
+members singly in queue order. A recorded batch failure
 prevents the same set being batched again until trunk moves.
 
 `status --full` shows the planned batch beside Merge queue; JSON exposes optional
-`mergeBatch: [ids]`. CLI success names member commits, dropped conflicts and the
-final trunk. Batch entries must be consecutive, ordered and identical in metadata;
+`mergeBatch: [ids]`. The displayed plan excludes dependency/continuation waits,
+`later`, halted, trunk-parked and reported nodes. A member of a running batch is
+shown as `merge in batch with <leader>`. CLI success names member commits,
+dropped conflicts and the final trunk. Batch entries must be consecutive,
+ordered and identical in metadata;
 replay rejects other shapes. `verify.incompleteBatch` reports a torn batch tail.
 The next owed write completes missing entries as `executor:owed` under the ledger
 lock when the trunk ref is at `batch.final` and its first-parent history agrees.
@@ -2213,7 +2236,8 @@ Otherwise writes refuse: restore the trunk ref to the full final hash, using
 reflog recovery if needed, then write again. Lost batch history requires manual
 repair; `owed adopt` cannot close an incomplete batch. Tail detection reads
 backwards in bounded chunks and loads full recovery state only for an incomplete
-batch tail; ordinary operations may still load it for their own validation.
+batch tail, including oversized non-final member lines; ordinary operations
+may still load it for their own validation.
 
 ### 7.22 Wrapped measurement templates (0.22, RX)
 
@@ -3451,7 +3475,8 @@ node's `drive`, acknowledges only the informational same-writer/reviewer-model
 warning (§12.5.2). Other values refuse. A node can acknowledge without role
 overrides; absent node acknowledgement inherits the global value. Adding or
 removing it changes no obligation key, downgrade, review block or acceptance
-rule; removing it restores the warning without invalidating evidence.
+rule; the candidate commit is preserved, and removing it restores the warning
+without invalidating evidence.
 
 ### 12.3 Ledger entries (D3)
 
