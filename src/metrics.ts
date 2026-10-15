@@ -65,7 +65,7 @@ function parentActClass(e: Entry, prev: Plan | undefined, next: Plan | undefined
     return prev && next && knownRedOnly(prev,next) ? 'trunk' : 'plan';
   }
   // ops.amend already writes this marker; ordinary prose mentioning writes does not qualify.
-  if (e.kind === 'rule') return /^writes of .+ widened by plan #\d+: .+\. Limit: /.test(e.text) ? 'writes' : e.answer ? 'answer' : 'rule';
+  if (e.kind === 'rule') return /^writes of .+ widened by plan #\d+: .+\. Limit: /.test(e.text) ? 'writes' : e.answer || e.answers?.length ? 'answer' : 'rule';
   if (e.kind === 'adopt' || e.kind === 'resume' && lastHalts.get(e.node)?.startsWith('merge refused: trunk-red')) return 'trunk';
   if (e.kind === 'review') return e.by.startsWith('owner:') ? 'review' : 'other';
   const kind: string = e.kind;
@@ -160,7 +160,8 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     if (parentAct(e)) {
       if (e.kind === 'rule') {
         for (const node of e.nodes === '*' ? active.keys() : e.nodes) decision(node,e.seq);
-        if (e.answer && included(e)) answers++;
+        // DF3: each element of a decision's answers[] is an answer, like a rule with one answer.
+        if (included(e)) answers += e.answers?.length ?? (e.answer ? 1 : 0);
       } else if ('node' in e && (['waive','defer','abandon','hold','evidence'].includes(e.kind) || e.kind === 'review' && e.by.startsWith('owner:'))) decision(e.node,e.seq);
     }
     if (e.kind === 'halt') { endHalt(e.node,e.seq); if (e.by === 'parent:drive') addHalt(e); }
