@@ -12,7 +12,17 @@ Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-workt
 rail §2.1.7) are rails against accidents and instructions, not security
 boundaries: a process can unset the variables or change directory.
 
-### Compatibility (0.20 / 0.20.1)
+### Compatibility (0.20–0.22)
+
+0.22 ships the previously unreleased 0.20.1 and 0.21 changes together.
+Upgrade every driver, CLI and pi plugin to **0.22 or newer before enabling
+`drive.merge_batch`**, issuing an explicit batch merge, or using writes globs,
+`waits_on` or `remeasure_on`. Older readers can misjudge batch merge guards,
+interpret globs as literal prefixes, or refuse new observation fields.
+Existing entries keep their recorded writes dialect; no migration rewrites them.
+String-template `exec.wrap` changes measurement keys only when configured;
+legacy argv wrappers and absent wrappers keep their existing keys (§7.22).
+No new ledger entry kind is introduced.
 
 0.20 adds only optional fields to existing entry kinds and optional plan keys;
 it adds **no new entry kind**. Upgrade every driver, CLI and pi plugin together:
@@ -207,7 +217,7 @@ nodes:
   - id: auth-api
     title: "Add token refresh"
     deps: [schema]
-    writes: ["src/auth/", "test/auth/"]   # path prefixes the node may change
+    writes: ["src/auth/", "test/auth/"]   # prefixes or supported path globs (§3.7)
     checks:                    # node acceptance checks (become invariants after merge only if listed in invariants)
       - id: auth-tests
         run: "node --test test/auth"
@@ -434,7 +444,8 @@ the branch and worktree recorded in its dispatch entry (§8.1).
 ```yaml
 exec:                            # optional; unknown keys and bad types are errors
   env: { CARGO_TARGET_DIR: /abs/shared/target }   # string values, no expansion
-  wrap: ["/abs/tmp/qa/heavy.sh"]                  # non-empty argv prefix of non-empty strings
+  wrap: ["/abs/tmp/qa/heavy.sh"]                  # legacy argv prefix; alternatively a shell template (§7.22)
+  wrap_grace_s: 30                # template-wrapper shutdown grace; nonnegative integer, default 30
   parallel: 4                    # 0.9: jobs one merge/adopt/genesis attest measures at once (integer >= 1, default 1)
   trees: reuse                   # 0.9: fresh (default) | reuse: stable measurement worktrees (§7.12)
   touch: reset                   # 0.11: reset (default) | always | never; tracked mtimes in reused trees
@@ -514,8 +525,8 @@ invalidates a candidate.
 - **Coverage.** A downgrade of a plan update is *covered* when a rule of the
   **prior** plan (never the new one) whose `nodes` match the node permits it:
   review count (rank) lowered to a value ≥ the rule's `review_count`
-  (`review_rank`); every newly widened writes prefix lies under one of the rule's
-  `writes` prefixes; a check weakening (removed, red disabled, `min_tests`
+  (`review_rank`); every widened writes scope is provably covered by a rule's
+  `writes` scope under §3.7; a check weakening (removed, red disabled, `min_tests`
   lowered, mutants removed/changed, `min_kill` lowered, definition changed)
   whose check id matches one of the rule's `checks` globs; an evidence obligation
   removed or weakened (`evidence <id> removed`, `evidence <id> weakened`, §3.3)
@@ -572,24 +583,27 @@ invalidates a candidate.
   In 0.11 (F4, app #31) a looped check whose command runs `cargo test` (also
   `cargo +<toolchain> test`) gets no warning: its `test result:` lines are summed.
 - **Parent adoptions** (§6.6): `adopt` by role parent is valid iff every path of
-  `changed` lies under an `adopt` prefix of a rule of the **current** plan and
+  `changed` matches an `adopt` scope of a rule of the **current** plan and
   `adoptGuard` passes. No owner channel is needed.
-- **Writes grants (0.17, GR).** At measurement, owed grants all newly out-of-writes
-  paths together when an owner-written `allow.writes` rule of the current plan covers
-  them. It appends `grant` before the passing writes observation, without a plan edit,
+- **Writes grants (0.22, GR / WG).** At measurement, owed grants independently eligible
+  newly out-of-writes paths covered by an owner-written `allow.writes` rule.
+  It appends one sorted `grant` before the writes observation, which passes
+  only if no refused paths remain (§7.19), without a plan edit,
   ruling or parent round trip. A ruling still never accepts out-of-writes paths.
   Every replay validates the grant: only `executor:owed`; matching open node/attempt
   and current candidate commit; nonempty sorted unique exact repository paths, all
   in the candidate's `changed` and outside plan writes; current `writesAllowed`
   coverage and `allowanceSeq`; no closure match or path owned by another open slot's
-  effective writes; no path previously granted to the attempt. A refusal grants
-  nothing and the writes observation stays fail, appending the first reason
-  (`not covered by an allow rule`, `under closure`, `overlaps open node <id>`).
-  Effective writes are plan prefixes plus exact granted paths (not new prefixes),
+  effective writes; no path previously granted to the attempt. Refused paths
+  retain their reasons (`not covered by an allow rule`, `under closure`,
+  `overlaps open node <id>`), while unrelated eligible paths still receive grants.
+  Effective writes are plan scopes plus exact granted paths (not new prefixes),
   used for measurement, merge recheck and dispatch/grant overlap. Grants survive
   candidate, rebase, plan and allowance changes within the attempt; a new attempt
   starts without grants. Attribution reruns retain the original writes measurement.
-  The writes key stays `H({o: "writes", base, cand, writes: node.writes})`.
+  The writes key remains `H({o: "writes", base, cand, writes: node.writes})`
+  for legacy/wildcard-free scopes; syntax-2 wildcard scopes also include
+  `writes_syntax: 2` (§3.7).
   The pass note is `all changed paths within writes (granted #<seq>: <paths>)`
   (multiple relevant grants are separated by `; `).
   Each grant enters ΔO⁻ as `{node, what: "writes granted: <paths>"}`, with
@@ -698,6 +712,54 @@ frozen `templateCounter` / `expandCheckTemplate` implementations in
 `src/plan.ts`; their exact counting contract is §7 RC2. Templates require Bash
 and Node, and `cargo-tests` additionally Cargo. The expanded run is shown in
 packets, keys and receipts, not the template declaration (§9).
+
+### 3.7 Writes patterns and shell admission (0.22, WG / PL)
+
+Node `writes`, `allow.writes` and `allow.adopt` accept literal prefixes or
+whole-path globs: `*` matches characters except `/`, `?` matches one such
+character, and whole-segment `**` matches zero or more segments. `dir/**`
+is equivalent to prefix `dir/`. Literal prefixes keep `startsWith` semantics,
+including when no trailing slash is present. Other regular-expression
+punctuation is literal. New plan inputs refuse absolute paths, parent-traversal
+segments, bracket/brace/negation syntax, backslashes and embedded `**` segments,
+identifying the offending entry. Plan set/edit/amend may retain an invalid
+legacy entry in the same node or allowance position; newly introduced invalid
+entries still refuse. Permission and downgrade checks still apply, and recording
+a new plan opts into syntax 2, including wildcard semantics. `amend --writes`
+retains comma-separated `+PATH` syntax. Historical plan parsing remains lenient.
+
+Containment proves coverage only by equality or an enclosing literal prefix
+(including trailing `/**` equivalents). A glob can authorize a grant for an
+exact file without proving that a requested scope widening is covered.
+Unproven widening requires the owner. Overlap is conservative: scopes may
+intersect unless their literal prefixes before the first wildcard are disjoint.
+The same matching rules govern writes, grants, adoption and merge rechecks.
+
+Newly recorded genesis/plan entries carry optional `writes_syntax: 2` metadata;
+this is not a YAML key. Without it, entries retain 0.20 literal-prefix semantics,
+including literal `*`, `?` and brackets. Replay, snapshots and attribution use
+the recording entry's dialect, not the plan blob hash. Runtime plan copies
+retain that dialect without adding it to plan JSON or changing its content hash.
+Historical and wildcard-free writes keys stay unchanged; syntax-2 wildcard-bearing node
+scopes include the dialect in the writes key. Switching wildcard scopes or
+allowances is checked as a permission change and may require the owner.
+
+Plan admission (`init`, `plan`, `edit`, `amend`, including edit dry runs)
+checks new or changed shell commands with `bash --noprofile --norc -n` before
+publishing the plan. This covers expanded check/invariant templates, `setup`,
+string `slot_setup`, `on_timeout`, and expanded string `exec.wrap` templates.
+Statically resolvable nested `bash -c`/`bash -lc` scripts are checked recursively
+without executing expansions; ordinary arguments, comments and here-document
+data are not invocations. Supported command positions include absolute Bash
+paths and common `env`/`command`/`exec` prefixes. Sweep commands are linted too.
+
+Syntax refusal identifies the command and first Bash error and asks to fix it.
+Identical commands at the same identity are skipped; old invalid commands
+remain loadable until changed. Missing Bash warns once per successful admission
+in text and JSON `warnings`; install Bash and record the plan again. Other
+lint execution errors refuse. Each syntax process has a five-second limit and
+bounded output. Lint runs outside the ledger lock with normal plan/trunk CAS,
+changes no measurement key and is not acceptance evidence.
 
 ## 4. Items and keys
 
@@ -1165,7 +1227,8 @@ invalid entry.
    command exits 126 or 127 (not executable / not found), or that cannot be
    spawned, is an `error` observation, not a pass, even when `red_expect`
    matches. Verdict `pass` means "the counterfactual was rejected as specified".
-3. `writes`: every path in `diff --name-only B C` starts with a `writes` prefix.
+3. `writes`: every path in `diff --name-only B C` matches the node's recorded
+   writes dialect or an exact attempt grant (§3.7, §7.19).
 4. `closure-review` iff the diff touches closure globs: needs a review `ok` with
    rank ≥ 2 by a non-writer, or an owner waiver.
 5. `review` iff `review.count > 0`: needs `count` distinct reviewers with rank ≥
@@ -1446,7 +1509,9 @@ moved ref silently.
   is inherited; otherwise, when the item on the current trunk is satisfied
   (E or active known-red W), the item on the adopted key must also be satisfied
   (E or W). An invariant that is already debt on the current
-  trunk (D: failing, ⊥, ⊤ or deferred) does not block. Genesis observations must
+  trunk (D: failing, ⊥, ⊤ or deferred) ordinarily does not block. An automatic
+  same-key pass/fail conflict is the exception: adoption refuses until owner
+  resolution (§7.20). Genesis observations must
   be finished (§6.4 rule 4). There is no owner `defer` for an adoption: the owner
   fixes trunk and adopts again. The refusal names each failing invariant with the
   observation that decides it (`h1 (obs #3)`): the obs appended by this adopt,
@@ -1454,7 +1519,7 @@ moved ref silently.
   existing trunk obs of that invariant at the adopted state's key.
 - **Parent adoption** (§3.4, D21.4): role parent may adopt instead of the owner
   when the current plan has `adopt` allowances and every path of `changed` lies
-  under one of their prefixes; otherwise the entry is refused (no prefixes:
+  matches one of their scopes (§3.7); otherwise the entry is refused (no scopes:
   `adopt insufficient permissions; requires owner`; else `parent adoption
   refused: changed path <first uncovered path> is not under an allow adopt prefix
   (…)`). `adoptGuard` applies as for the owner. `state.adoptions` carries
@@ -1548,7 +1613,7 @@ moved ref silently.
    owed's own process except `DSA_HOME` — `DSA_CALL`, `DSA_EXEC`,
    `DSA_SESSION`, … — are not inherited, so owed commands inside a check are
    not refused as subagent acts, D25.3; `DSA_HOME` is configuration, not call
-   identity, and stays; a `DSA_*` name set in `exec.env` is passed as written) and runs as `[...exec.wrap, "bash", "-lc", <command>]` instead
+   identity, and stays; a `DSA_*` name set in `exec.env` is passed as written). An argv-array wrapper runs as `[...exec.wrap, "bash", "-lc", <command>]` instead
    of `["bash", "-lc", <command>]`: same cwd (the materialized tree), same new
    process group, same timeout and abort handling (SIGKILL to the group, so
    the wrapper is killed with its group). Wrapper contract: run the trailing
@@ -1563,6 +1628,8 @@ moved ref silently.
    is set (use `red_expect` with wrappers). A wrapper that cannot be started is
    an `error`. A relative `wrap[0]` containing a slash resolves against the
    materialized tree (the cwd); a bare name is looked up in `PATH`.
+   String-template wrappers use the same environment with the execution and
+   timeout rules in §7.22, including evidence freeze and shutdown grace.
 
 ### 7.10 Observations are facts about keys (D24)
 
@@ -1967,7 +2034,34 @@ plan field still parses and keys. `owed-counts` is not TAP and cannot be
 excused. All template expansions are multi-line scripts/pipelines, not plain
 allowlisted runs: a quarantine on a template never excuses in 0.20.
 
-### 7.17 Known limitations and backlog (0.20)
+### 7.17 Known limitations and backlog (0.22)
+
+- LKR: `advanceTrunk`'s fast-forward of the already measured commit with
+  `git merge --ff-only` is the single named Git exemption inside the ledger
+  lock. Owed never detaches the trunk worktree. Merge hooks, including
+  post-merge and reference-transaction hooks, run under that lock; a slow hook
+  can delay ledger writers. No general Git command timeout is added.
+- The ledger-lock command guard tracks the current async context, including
+  nested Ledger instances; it cannot detect a lock held by an external process.
+  External harnesses must manage their own lock scope. Operation locks and the
+  machine lease may remain held while measurements run (§7.23).
+- Conservative glob overlap can delay disjoint patterns sharing a literal prefix.
+  Overlap-only writes retries require a driver; without one, attest after the
+  named slots close. Mixed refusal reasons do not receive automatic retries.
+- A batch refusal without a newly recorded failing observation is remembered
+  only by the running driver; status may still propose that batch. A plan CAS
+  change during batch measurement discards its results and falls back to
+  individual merges. Batch members are not bisected (§7.21).
+- `remeasure_on` reacts to a measurement in the current operation, not cached
+  failures. Manual remeasurement remains available. A crash or stale/aborted
+  result before append leaves no completed automatic retry receipt (§7.20).
+- Shell lint is bounded static analysis: runtime expansions, generated scripts,
+  computed Bash names and indirect wrappers cannot be resolved (§3.7).
+- Wrapper provisioning and remote process termination belong to the wrapper;
+  killing a local client does not prove that remote work has stopped (§7.22).
+- Idle detection is an advisory snapshot. Unlabelled calls cannot be attributed
+  to a repository, and a crash between claiming and delivering a wake can
+  suppress that idle period's notification (§12.8.2).
 
 - Cargo quarantine exemption/completeness proof is not implemented.
 - The MS4 allowlist still permits leading `PATH`/`NODE_OPTIONS` assignments
@@ -1993,8 +2087,10 @@ and the strength observation can pass if killed/total meets `min_kill`.
 The timeout log blob retains the last 256 KiB of captured stdout/stderr, followed by
 `timeout after Ns`, optional diagnostic output and a best-effort pre-kill
 process tree. The note is `timeout after Ns` plus the last three measurement
-output lines. The measurement process group is stopped at the timeout boundary;
-counts, failed names and signatures use frozen pre-diagnostic output, so hook
+output lines. The measurement output freezes at the timeout boundary;
+legacy argv/local measurement groups are stopped then, while string-template
+wrappers retain their shutdown grace (§7.22).
+Counts, failed names and signatures use frozen pre-diagnostic output, so hook
 output cannot inject measurement evidence.
 
 Optional check/invariant `on_timeout: "<shell command>"` runs once before the
@@ -2012,33 +2108,188 @@ and args (args cut to 200 characters), bounded to 4 MiB of ps input, 1000 select
 rows and a 2-second deadline. Unavailable ps is explicitly recorded. Linux is
 behaviorally covered; macOS ps is best effort, not verified on the Linux host.
 
-### 7.19 0.20.1 regression coverage
+### 7.19 Partial grants and ownership waits (0.22, WG4–WG5)
 
-- `test/sig.test.ts` covers signature masks/frames/assertion values and legacy
-  inequality, same-key intermittency, uninterrupted trunk-red provenance,
-  bounded quotes, timeout output/process cleanup, missing/hanging hooks and
-  diagnostic-protocol isolation (including mutant evidence). Matching trunk
-  evidence is scoped to the subject/check and recorded run definition.
-- `test/models.test.ts` covers direct/nested/delayed pool membership, thinking
-  normalization, unknown/malformed/cyclic/default-HOME config, known nonmembers,
-  global/node acknowledgement, full/JSON visibility, acknowledgement removal
-  without downgrade, retained mismatches/blocks and invalid key values.
-- `test/drivefix.test.ts` covers a real plan change during dispatch, bounded CAS
-  retries/rollback, non-CAS setup failure, merge blocker/job/time/queue ordering,
-  removed/held nodes, new unmerged dependencies, new open-slot overlap and
-  exclusion of obsolete cached ahead for nodes outside the queue.
+Measurement grants every independently eligible out-of-scope changed path in
+one sorted grant entry, then fails writes only for the remaining refused paths.
+Reasons identify all open owners, closure paths and uncovered paths. Exact
+path grants never widen a prefix. Fresh replay state recomputes eligibility
+under the ledger lock before append; replay validates grants and wait metadata.
 
-Existing tests changed only for the revised behavior: `test/attrib.test.ts`
-requires same-key pass/fail and versioned defer signatures (SG1–SG2);
-`test/counts-exit.test.ts` (#557), seven FG2/FG3 note-surface cases in
-`test/refusalnotice.test.ts`, and four RC3 note-surface cases in
-`test/repeat.test.ts` expect per-test quotes instead of groups/tails (SG4),
-retaining their verdict/count/repeat/defer gates. `test/driver020.test.ts`
-expects unknown bare pool membership instead of forced mismatch (MD1) and
-job/time/ahead status instead of a generic internal-job list (DQ2).
-`test/cas-retry.test.ts` and `test/slotsetup.test.ts` expect fresh-plan dispatch
-retry after complete rollback, including stale setup cleanup and a single
-successful dispatch receipt (DQ1).
+Optional writes observation `grant_refused: true` identifies closure or open-node
+overlap grant refusals independently of the explanatory note. An uncovered path
+alone does not receive it. Status hints use this structured field, not wording
+matches. Historical field-free observations replay without inferring a refusal
+from their text. Older readers that reject unknown observation fields must
+upgrade before reading newly recorded grant refusals; plan hashes are unchanged.
+
+An overlap-only current-candidate writes failure carries optional
+`obs.waits_on: [ids]`, sorted and unique. The driver waits without a writes
+repair or halt until every named slot closes by merge or abandon, then schedules
+one fresh measurement of that candidate's same writes key. A subsequent writes
+observation supersedes the earlier overlap-only vote; a non-error writes
+measurement clears its execution block, including on a fresh candidate/rebase
+key. This exception is confined to earlier failures carrying `waits_on`;
+ordinary writes failures keep pass/fail conflicts. Other checks and review
+blocks still receive their normal handling while writes waits. Mixed overlap
+and closure/uncovered failures receive no automatic retry metadata.
+
+An ownership waiting cycle halts with Needs you naming the cycle. Resolve it
+with a plan change or by abandoning one slot, then resume the affected node.
+An owner without a waiting candidate is not a cycle. Historical prefix-dialect
+plans can also receive new overlap-only wait observations.
+
+### 7.20 Automatic invariant remeasurement (0.22, RO1–RO3)
+
+Invariant-only `remeasure_on: ["connection refused"]` is a list of non-empty,
+literal, case-sensitive substrings; an empty list disables the policy. It is
+scheduling policy, absent from measurement keys. Changing the list clears no
+failure and does not reset the durable same-key budget.
+
+RO2: an eligible failing single-node merge-tree or trunk invariant measurement
+is remeasured once on the same key before refusal. Every parsed failure must
+match a configured substring in its full raw error or expected/actual diagnostic,
+without display truncation or normalization. Titles and passing output cannot
+authorize retry. With no parsed tests, matching uses the captured raw log,
+subject to the capture cap. Missing diagnostics or an incomplete capped failure
+list fails closed. Errors, timeouts and execution failures do not trigger it.
+
+Both observations remain evidence: `repeat` pools their runs; without repeat,
+pass plus fail remains an owner conflict. Refusal, halt and trunk details quote
+both votes and direct the owner to fix the invariant or defer debt for the
+specific node. A defer for one node neither resolves the trunk conflict nor
+authorizes adoption or another merge. Exact-key structured observations govern
+this conflict even on unchanged keys; known-red/trunk comparison cannot turn it
+into a pass. Manual remeasurement remains possible after the automatic budget.
+
+Optional `obs.remeasure_match` contains only unique configured literals after
+all failures match, bounded by that list; no raw matching diagnostics are added
+as ledger fields. `obs.auto_remeasure: true` marks the consumed retry. Replay
+requires the immediately preceding same-key eligible failure with matching
+provenance and refuses a second automatic marker. Normal stale-result, CAS,
+abort and attribution rules remain intact; retry keeps the caller's lease and
+outer measurement lock, never the ledger append lock. Eligible measurements
+from merge, adopt, trunk/genesis refresh and explicit remeasurement use this
+policy.
+
+**RO2 and `merge_batch` (ruling #2270 BR):** a batch measurement failure is not
+a refusal of any member. The batch falls back to per-member merges; each member
+then gets its own one same-key automatic remeasure on its own tree when eligible.
+Batch observations never carry `remeasure_match` or `auto_remeasure` and never
+count as a remeasure receipt for a non-batch merge (§7.21, ruling #2110).
+Replay refuses batch observations containing either field. Single-merge
+automatic-remeasure diagnostics also exclude batch observations when selecting
+the first failure to quote.
+
+### 7.21 Batch merge / merge train (0.22, MT)
+
+`drive.merge_batch: N` accepts integers 1..8, default 1 (off), and changes no
+obligation key. Upgrade every driver, CLI and plugin to >= 0.22 before enabling
+it. The driver batches only at N >= 2; an explicit parent/owner
+`owed merge A,B[,C...]` may request a batch independently of that setting.
+Members are ordered by the merge queue, must be accepted, have pairwise
+non-overlapping writes, touch no closure and owe no `--remeasure`; pending
+owner approval prevents acceptance. A refusal names the member and next action.
+
+Build M1 = merge(T,c1), then Mi = merge(M(i-1),ci). Conflicting members drop
+out and need individual rebase/merge; fewer than two survivors refuses without
+recording. Measure invariants and each member's node checks on final Mn, using
+Mn's closure/keys and quarantine with every member treated as merged. Reusable
+verdicts and genesis jobs follow their existing rules.
+
+On success, CAS checks plan, ledger trunk, member slots/candidates and trunk ref.
+Under the short ledger lock, one merge entry per member is recorded in order,
+with prior M(i-1), commit Mi and facts against its prior. The trunk ref advances
+once T -> Mn; intermediate Mi never become trunk heads. Every member carries
+identical optional `merge.batch: {final, state, keys, members}`: `keys` maps
+member ids to their obligation keys on Mn. The guard uses `batch.state` for
+invariants and `batch.keys[node]` for node checks; base, acceptance, blocks,
+writes and rulings retain their normal gates. The last member's commit/state
+equal final/state. Inherited invariant debt is compared against trunk before
+the train for every member, never an unmeasured intermediate Mi.
+
+On measurement failure, optional `obs.batch: [ids]` attributes results to the
+batch, never one member: no `merging`, `probe` or `attribution`. These votes add
+no execution block, decoy catch or trunk failure-signature provenance. They are
+evidence only for that batch; a later single merge measures its own tree with
+`merging` even on an equal key and never uses batch votes in pass/fail pooling
+or automatic-remeasure receipts (RO2, §7.20). Status counts batch evidence only
+after its batch merges and the final tree becomes trunk. A later single-node
+merge may use that completed batch's trunk failure to identify existing debt,
+while independently measuring its own merge tree. New failure names, incomplete
+or truncated failure lists and automatic remeasure conflicts still refuse under
+the existing gates. This debt comparison does not reuse batch votes as the
+single-node measurement verdict. The driver reports a retry, then merges
+members singly in queue order. A recorded batch failure
+prevents the same set being batched again until trunk moves.
+
+`status --full` shows the planned batch beside Merge queue; JSON exposes optional
+`mergeBatch: [ids]`. The displayed plan excludes dependency/continuation waits,
+`later`, halted, trunk-parked and reported nodes. A member of a running batch is
+shown as `merge in batch with <leader>`. CLI success names member commits,
+dropped conflicts and the final trunk. Batch entries must be consecutive,
+ordered and identical in metadata;
+replay rejects other shapes. `verify.incompleteBatch` reports a torn batch tail.
+The next owed write completes missing entries as `executor:owed` under the ledger
+lock when the trunk ref is at `batch.final` and its first-parent history agrees.
+Otherwise writes refuse: restore the trunk ref to the full final hash, using
+reflog recovery if needed, then write again. Lost batch history requires manual
+repair; `owed adopt` cannot close an incomplete batch. Tail detection reads
+backwards in bounded chunks and loads full recovery state only for an incomplete
+batch tail, including oversized non-final member lines; ordinary operations
+may still load it for their own validation.
+
+### 7.22 Wrapped measurement templates (0.22, RX)
+
+`exec.wrap` accepts a shell template as well as the legacy nonempty argv array:
+
+```yaml
+exec:
+  wrap: ssh runner /opt/project/run-check {cwd} {timeout} {cmd}
+  wrap_grace_s: 30
+```
+
+`{cmd}` is required; only `{cwd}` (absolute original measurement directory),
+`{timeout}` (integer seconds) and `{cmd}` (original command) are allowed.
+Substitutions are POSIX single-quoted shell words, including embedded quotes;
+do not quote placeholders again. The expanded template runs through `bash -lc`
+in the existing environment, including `OWED_TREE` and, while leased,
+`OWED_LEASED`. Admission validates placeholders and applies `bash -n` lint.
+
+Checks, red runs, mutants, invariants, trunk probes, sweeps, setup and timeout
+diagnostics share this path. Git, worktrees, ledger and lease acquisition remain
+local. Provisioning/mirroring the prepared directory is the wrapper's job.
+Propagate command exit status and stdout/stderr without adding test-protocol
+output. Exit 126/127 when transport/provisioning prevents execution; use
+`red_expect` to distinguish intended red failures from wrapper failures.
+
+`exec.wrap_grace_s` is a nonnegative integer, default 30. At `timeout_s`,
+evidence freezes: later output and diagnostics cannot supply counts, signatures
+or retry matches. A string wrapper can finish during grace, but the measurement
+remains timed out. Owed kills the local process group by timeout plus grace
+(and cleans up remaining group members on wrapper exit); abort retains existing
+termination behavior. The wrapper must bound remote work and propagate termination.
+Legacy argv wrappers retain their existing timeout semantics.
+
+Absent string templates preserve previous keys; a configured template enters
+check/red/strength/invariant and trunk-probe keys verbatim. Substituted paths
+and grace do not enter those keys. Sweep identity includes execution configuration;
+local writes/review identities are unchanged. Wrapper configuration requires owner
+authority. Old plans/argv wrappers replay unchanged; templates and grace require
+0.22-capable readers.
+
+### 7.23 Ledger lock scope (0.22, LK / LKR)
+
+Shared command and job runners refuse with an internal error before spawning
+inside an async context holding ledger `lock`, including wrapped commands and
+timeout diagnostics. Nested Ledger instances do not bypass the guard. Worktree
+add/remove/prune, clean/reset/switch/checkout and arbitrary Git merge commands
+are guarded too. Driver cleanup of never-launched slots removes worktrees after
+releasing the ledger lock. Merge, attest, trunk-refresh and sweep operation locks
+still allow commands; short recording locks retain existing CAS and stale-result
+checks. The only Git exemption is `advanceTrunk`'s already measured ff-only
+advance; hook and external-harness limits are stated in §7.17. Owed never
+detaches the user's trunk to perform the advance.
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
@@ -2126,8 +2377,8 @@ questions "is the cwd this slot's worktree" (writer inference, submit's
 dirty check) use the per-worktree top level.
 
 Dispatch refuses when the node's `writes` overlap the writes of another node
-with an open slot (path-prefix rule: `p` overlaps `q` iff one is a prefix of the
-other, as for `writes` in §6.2), naming that node; `allowOverlap`
+with an open slot (conservative literal-prefix-before-wildcard overlap, §3.7),
+naming that node; `allowOverlap`
 (`--allow-overlap`) dispatches anyway and records `overlaps: [node ids]` in the
 dispatch entry. Overlap is checked by the operation, not the reducer.
 
@@ -2141,13 +2392,14 @@ A merge whose candidate conflicts with trunk refuses with
 
 `merge` marks every `obs` it appends for the merge result — invariants and
 checks on M, pass or fail, refused or not — with `merging: <node>` (§6.5).
+Batch merge-tree observations instead carry `batch: [ids]` (§7.21).
 Genesis invariants that merge measures first on the current trunk are not
 merge results and carry no `merging`.
 
 `adopt` (owner, or a parent when the current plan has `adopt` allowances, §3.4;
 role checked first, then a confirmation channel for the owner) checks,
-before any ledger effect (for a parent also that every changed path lies under an
-`adopt` prefix, naming the first one that does not): `note` is non-empty; `commit` (default
+before any ledger effect (for a parent also that every changed path
+matches an `adopt` scope, naming the first one that does not): `note` is non-empty; `commit` (default
 refs/heads/<trunk>) resolves to a commit equal to the current refs/heads/<trunk>
 (adopt what is on trunk, nothing else); it differs from the ledger trunk
 ("nothing to adopt" otherwise); the ledger trunk commit exists in the repository
@@ -2408,6 +2660,35 @@ while genesis items lack observations.
 - **PO7 brief:** edit `set: ["brief=<text>"]` preserves unquoted multiline,
   colon-bearing and equals-containing text literally. Quoted/YAML block strings
   also work. Empty/whitespace-only values still refuse without file/ledger change.
+
+### 8.4 Adopt waiting and operation activity (0.22, AW)
+
+`owed adopt --wait SECONDS` / `owed_adopt {wait: seconds}` sets one total
+acquisition budget, default 60 seconds. Finite nonnegative fractional seconds
+are allowed within the supported timestamp range; zero attempts without waiting.
+Busy retains exit 75. The deadline spans nested Ledger instances, machine lease,
+merge and final ledger acquisition. Measurements keep their own execution
+timeouts, while their elapsed time consumes remaining acquisition budget. A
+free lock may still be acquired with zero remaining wait. Lock order remains
+machine lease -> merge -> short ledger locks; no adopt-queue lock is added.
+
+Before waiting, each adopter publishes `adopt-pending/<host>-<pid>.json` in the
+owed directory with `{pid, host, commit, since, until}`. Expiry is start plus
+budget plus 60 seconds. Missing/malformed/expired deadlines are stale on every
+host; before expiry, local PIDs must be live, while foreign PIDs are not probed.
+Legacy singleton markers are ignored. The driver finishes its running merge
+but starts no new one while a marker is live, naming the oldest pending adopt.
+Completion/refusal/timeout/cancellation removes that request's marker. Same-PID
+calls share a file with request ownership and publish the oldest live request;
+cleanup cannot delete another request or recreate a completed group. Crashes
+rely on liveness/expiry, with PID-reuse limits bounded by expiry.
+
+Lock owners may expose `activity` and ISO UTC `activitySince`; Busy appends the
+operation and UTC start time. Nested trunk refresh updates the operation holder;
+parallel measurements show the most recently started job while acquisition
+`ts` remains unchanged. Activity/marker updates use atomic rename and introduce
+no ledger fields, keys or gate changes. Upgrade the active driver to obtain
+adopt priority; old readers ignore these runtime fields.
 
 ## 9. Views
 
@@ -2819,6 +3100,34 @@ when the trunk branch is checked out in a worktree other than the main worktree:
 clean).`; `--json` has `trunkWorktree: <path>`. Nothing is shown when the trunk
 is checked out in the main worktree or nowhere.
 
+### 9.2 Review guidance and conflict diagnostics (0.22, UX)
+
+Active review blocks suggest a writer-action ruling
+(`owed rule --nodes <node> --writer "<guidance>"`), repair and resubmission.
+Rank-3 owner review appears only as an explicitly labelled override; reviewer
+clearance and accepted-risk rules remain unchanged.
+
+If a ruling reaches zero running calls, its delivery receipt lists affected
+open slots, known driver-recorded writer call ids and exact follow-up messages.
+Unknown calls say to use the slot writer; JSON quoting preserves message text.
+Delivery does not acknowledge a ruling.
+
+`status` (including full) and `why <node>` show `conflicts with trunk: <files>`
+and `conflicts with <node>: <files>` for other open candidates. `none` means a
+clean probe; `unknown; retry owed status` means a failed probe. Rebase-required
+merge refusals name conflict files. Probes use
+`git merge-tree --write-tree --name-only` with NUL-separated paths and cache
+immutable commit-pair results under the common Git directory's `owed/cache`.
+Invalid caches are recomputed. Probes neither measure checks nor grant acceptance.
+
+Reviews missing applicable ruling acknowledgment still record their verdict
+and warn with an exact candidate-pinned re-record command. It preserves verdict,
+rank, identity, obligation, note, model and needs-parent flag. `--ack-rulings`
+remains one numeric watermark, not a comma list. Complete driver-packet automatic
+acknowledgment remains unchanged. Optional response `warnings`, delivery `slots`
+and view `conflicts` (path arrays or null for unknown) are runtime diagnostics,
+not ledger evidence. No plan key, CLI flag or entry kind is added.
+
 ## 10. CLI
 
 `owed <command> [args] [--json]`; commands mirror §8: `init <plan.yaml>`,
@@ -3166,7 +3475,8 @@ node's `drive`, acknowledges only the informational same-writer/reviewer-model
 warning (§12.5.2). Other values refuse. A node can acknowledge without role
 overrides; absent node acknowledgement inherits the global value. Adding or
 removing it changes no obligation key, downgrade, review block or acceptance
-rule; removing it restores the warning without invalidating evidence.
+rule; the candidate commit is preserved, and removing it restores the warning
+without invalidating evidence.
 
 ### 12.3 Ledger entries (D3)
 
@@ -4358,6 +4668,41 @@ polling.
   `Next: owed status / owed why <node>` is always last. These fields
   are runtime log metadata only, not ledger data; JSON tool outputs retain
   their existing fields.
+
+### 12.8.2 Idle watchdog (0.22, WD)
+
+`owed idle [--json]` assesses a repository without starting a driver or changing
+the ledger. Exit codes are 0 idle, 3 successful not-idle, 2 usage (including a
+missing ledger), and 70 internal error; other error categories keep their normal
+codes. Idle text gives one plain sentence, at most five node states with exact
+status next commands, and the last-progress time. JSON adds reason, progress
+and whether subagent activity is known. CLI polling suits cron/systemd and does
+not claim a pi wake marker.
+
+All conditions must hold: ready work, an open submitted/accepted/blocked or
+rebase-pending attempt, or active next action exists; no live background driver;
+no held ledger/merge/trunk-refresh/adopt lock or machine measurement holder;
+no running/asking durable-subagent call labelled `node` for an unmerged plan
+node; and last ledger progress is older than `drive.watch_idle_min` minutes.
+This nonnegative integer defaults to 15; 0 disables it. It is independent of
+`drive.idle_rewake_min`. Foreign/unreadable lock owners count as busy; dead local
+owners are ignored without removing files. Missing subagent tooling leaves call
+activity unknown and age plus other conditions decides. Installed tooling with
+failed machine-holder inspection conservatively prevents a wake.
+
+Top-level pi sessions watch repositories used through owed tools and initialized
+repositories containing their initial cwd. Every 120 seconds the watchdog
+assesses them, never waking a running agent. Writer/reviewer subagent sessions
+do not automatically attach. Delivery rechecks latest progress and sends the
+CLI's plain text as an `owed-idle` follow-up with `triggerTurn: true`.
+An atomic create of `owed/watch/idle-<last progress sequence>` under the Git
+common directory (or configured `OWED_DIR`) permits one wake per host/repository/
+idle period across sessions; new progress permits a new wake. Restarting pi does
+not repeat an old delivered period; rejected delivery releases its claim.
+
+No ledger kind or measurement key changes. Absent watchdog keys preserve old
+plan shape; older versions reject the new drive key. Upgrade CLI, driver and
+plugin together. Snapshot/crash/label limits are in §7.17.
 
 ### 12.9 Live wakes, staying driver and ready hint (0.6.1, H1)
 
