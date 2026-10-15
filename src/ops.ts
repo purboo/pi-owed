@@ -1114,7 +1114,8 @@ async function remeasureMerge(o: MeasurementContext & { node: string; all?: bool
   return ledger.withLock(async () => {
     const latest = await load(ledger); nodeStable(state,latest,o.node);
     const moved = latest.state.planSha !== state.planSha || !!await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
-    const kept = moved ? [] : observations.filter(d => !validateDraft(latest.state,d).length);
+    const kept: Draft[] = [];
+    if (!moved) for (const d of observations) if (!validateDraft(prospective(latest,kept),d).length) kept.push(d);
     const superseded = observations.filter(d => !kept.includes(d)).flatMap(d => d.kind === 'obs' ? [{ subject:d.subject, obligation:d.obligation, key:d.key }] : []);
     return { recorded:kept.length ? await ledger.append(kept) : [], superseded, remeasured:jobs.map(j => j.obligation) };
   },undefined,o.signal);

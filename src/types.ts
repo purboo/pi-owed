@@ -173,6 +173,8 @@ export interface ObsEntry extends Base {
   quarantined?: string[];
   /** RO3: this observation consumed the one automatic invariant remeasure on its key. */
   auto_remeasure?: true;
+  /** RO: full per-failure matching text (or anonymous last-20-line tail), for replay provenance. */
+  remeasure_errors?: string[];
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }

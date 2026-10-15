@@ -7,20 +7,21 @@ import { Ledger } from '../src/ledger.ts';
 import { Driver, DRIVE_PRINCIPAL } from '../src/drive-run.ts';
 import { Dsa } from '../src/dsa.ts';
 import { runId, runLabels } from '../src/reducer.ts';
-import { entriesOf, observationsOf } from '../src/reducer.ts';
-import type { ObsEntry } from '../src/types.ts';
+import { entriesOf, observationsOf, reduce, invariantTrunkComparison } from '../src/reducer.ts';
+import type { ObsEntry, Entry } from '../src/types.ts';
+import { parsePlan } from '../src/plan.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 
 const owner = { role:'owner', id:'pi' } as const, parent = { role:'parent', id:'main' } as const;
 const counts = (pass: number, fail: number) => `echo 'owed-counts {"pass":${pass},"fail":${fail}}'`;
 const tapFailure = (name: string, error: string, extra = '') => `not ok 1 - ${name}\n  ---\n  error: '${error}'\n${extra}  ...\n1..1\n# tests 1\n# pass 0\n# fail 1\n`;
-async function fixture(options: {repeat?: object; failure?: string; trunk?: boolean; needles?: unknown; always?: boolean; parallel?: number} = {}) {
+async function fixture(options: {repeat?: object; failure?: string; trunk?: boolean; needles?: unknown; always?: boolean; parallel?: number; reads?: string[]} = {}) {
   const r = await repo(), counter = join(r.root,'counter');
   await r.put('README','base'); await r.commit();
   const failure = options.failure ?? tapFailure('browser fixture','browser fixture timed out after 20000ms');
   const run = `${options.trunk ? '' : `if [ ! -f src/value ]; then ${counts(1,0)}; exit 0; fi; `}n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > '${counter}'; if [ "$n" -le ${options.repeat ? 2 : options.always ? 99 : 1} ]; then printf '%s' '${failure.replace(/'/g,"'\\''")}'; exit 1; else ${counts(1,0)}; fi`;
-  const plan = JSON.stringify({version:1,trunk:'main',closure:[],...(options.parallel ? {exec:{parallel:options.parallel}} : {}),invariants:[{id:'x',run,min_tests:1,reads:['src/**'],remeasure_on:options.needles ?? ['browser fixture timed out'],...(options.repeat ? {repeat:options.repeat} : {})}],nodes:[{id:'a',writes:['src/']}]});
+  const plan = JSON.stringify({version:1,trunk:'main',closure:[],...(options.parallel ? {exec:{parallel:options.parallel}} : {}),invariants:[{id:'x',run,min_tests:1,reads:options.reads ?? ['src/**'],remeasure_on:options.needles ?? ['browser fixture timed out'],...(options.repeat ? {repeat:options.repeat} : {})}],nodes:[{id:'a',writes:['src/']}]});
   return {...r,counter,plan,init: () => ops.init({cwd:r.cwd,plan,as:owner,channel:'delegated'}), obs: async () => entriesOf((await ops.readState({cwd:r.cwd})).state).filter((e): e is ObsEntry => e.kind === 'obs' && e.obligation === 'inv:x'), candidate: async () => {
     await ops.init({cwd:r.cwd,plan,as:owner,channel:'delegated'});
     const d = await ops.dispatch({cwd:r.cwd,node:'a',as:parent});
@@ -162,4 +163,73 @@ test('RO2/RO3: driver halts only after the automatic retry and quotes both votes
     await driver.pass(); await driver.drain(60_000);
     assert.equal((await r.obs()).filter(e => e.merging === 'a').length,2);
   } finally { await r.cleanup(); }
+});
+
+
+test('RO ruling #2097: unchanged trunk-key auto conflict blocks CLI merge and adopt until owner defer; status names both votes', {timeout:120_000}, async () => {
+  const r = await fixture({trunk:true,reads:['README']});
+  try {
+    await r.candidate();
+    const obs = await r.obs(), key = obs[0]!.key;
+    assert.deepEqual(obs.map(e => e.verdict),['fail','pass']);
+    const status = await ops.status({cwd:r.cwd});
+    assert.ok(status.pending.owner!.some(i => i.obligation === 'inv:x' && i.mark === '⊤'));
+    const shown = await cli(r.cwd,['status']);
+    assert.match(shown.stdout,/Needs you/);
+    for (const e of obs) assert.match(shown.stdout,new RegExp(`#${e.seq} ${e.verdict}`));
+    const out = await cli(r.cwd,['merge','a','--as','parent:main']);
+    assert.notEqual(out.code,0); assert.match(out.stderr,/owner conflict/);
+    for (const e of obs) assert.match(out.stderr,new RegExp(`#${e.seq} ${e.verdict}`));
+    assert.equal((await ops.status({cwd:r.cwd})).nodes.a!.merged,undefined);
+    const s = (await ops.readState({cwd:r.cwd})).state;
+    assert.equal(s.trunk.invKeys.x,key);
+    const comparison = invariantTrunkComparison(s,'a',s.plan.invariants[0]!,key,s.trunk.commit);
+    assert.equal(comparison.trunk?.verdict,'fail'); assert.equal(comparison.merge?.verdict,'fail');
+    await commitAt(r.cwd,{'other':'outside owed'});
+    await assert.rejects(ops.adopt({cwd:r.cwd,as:owner,channel:'delegated',note:'unchanged invariant'}),/owner conflict/);
+  } finally { await r.cleanup(); }
+  const deferred = await fixture({trunk:true,reads:['README']});
+  try {
+    await deferred.candidate();
+    const key = (await deferred.obs())[0]!.key;
+    await ops.defer({cwd:deferred.cwd,as:owner,channel:'delegated',node:'a',items:[{id:'x',key}],reason:'explicit owner acceptance of invariant debt for this node'});
+    assert.equal((await ops.merge({cwd:deferred.cwd,node:'a',as:parent})).entry.kind,'merge');
+  } finally { await deferred.cleanup(); }
+});
+
+test('RO ruling #2097: reduce refuses unproven, nonmatching, non-adjacent and duplicate auto_remeasure receipts', {timeout:120_000}, async () => {
+  const r = await fixture({trunk:true});
+  try {
+    await r.init();
+    const ledger = await Ledger.open(r.cwd), entries = await ledger.read(), [first,retry] = await r.obs();
+    const lookup = () => parsePlan(r.plan);
+    const throughFirst = entries.filter(e => e.seq <= first!.seq);
+    const replay = (prefix: Entry[], changes: Partial<ObsEntry> = {}) => reduce([...prefix,{...retry!,...changes,seq:(prefix.at(-1)?.seq ?? -1)+1} as Entry],lookup);
+    assert.throws(() => replay(entries.filter(e => e.seq < first!.seq)),/preceding same-key failure/);
+    assert.throws(() => replay([...throughFirst,{...first!,verdict:'pass',remeasure_errors:undefined,seq:first!.seq+1} as Entry]),/preceding same-key failure/);
+    assert.throws(() => replay(throughFirst.map(e => e.seq === first!.seq ? {...first!,remeasure_errors:['unrelated failure']} as Entry : e)),/preceding same-key failure/);
+    assert.throws(() => replay(throughFirst.map(e => e.seq === first!.seq ? {...first!,remeasure_errors:undefined} as Entry : e)),/preceding same-key failure/);
+    assert.throws(() => replay(entries),/already consumed on this key/);
+    assert.equal(reduce(entries,lookup).invariants[0]!.mark,'⊤');
+    assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
+  } finally { await r.cleanup(); }
+});
+
+test('RO ruling #2097: full first-line error matches past character 180 without display truncation authorizing second-line text', {timeout:120_000}, async () => {
+  const error = 'x'.repeat(190) + ' browser fixture timed out';
+  const r = await fixture({failure:tapFailure('long fixture',error)});
+  try {
+    await r.candidate();
+    await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}));
+    const obs = (await r.obs()).filter(e => e.merging === 'a');
+    assert.deepEqual(obs.map(e => e.verdict),['fail','pass']);
+    assert.ok(obs[0]!.remeasure_errors![0]!.includes(error));
+    assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
+  } finally { await r.cleanup(); }
+  const multiline = await fixture({failure:tapFailure('multiline fixture','placeholder').replace("error: 'placeholder'","error: |\n    unrelated first line\n    browser fixture timed out")});
+  try {
+    await multiline.candidate();
+    await assert.rejects(ops.merge({cwd:multiline.cwd,node:'a',as:parent}));
+    assert.equal((await multiline.obs()).filter(e => e.merging === 'a').length,1);
+  } finally { await multiline.cleanup(); }
 });
