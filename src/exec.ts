@@ -6,6 +6,8 @@ import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths, keyCommitsTo } from './git.ts';
 import { leaseEnvironment } from './lease.ts';
 import { remeasureMatches } from './remeasure-on.ts';
+import { resolve as absolutePath } from 'node:path';
+import { expandWrap } from './exec-wrap.ts';
 
 /**
  * K2.1: the note of a non-red check that fails on its count: `zero tests; exit <code>`, or `min_tests unmet: counted
@@ -300,8 +302,10 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     // Nested test runners and dsa call identities must not leak into child commands; DSA_HOME is configuration.
     delete inherited.NODE_TEST_CONTEXT;
     for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
+    cwd = absolutePath(cwd);
     const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment() };
-    const argv = [...(ctx.plan.exec?.wrap ?? []), 'bash', '-lc', run];
+    const wrap = ctx.plan.exec?.wrap, wrapped = typeof wrap === 'string';
+    const argv = wrapped ? ['bash', '-lc', expandWrap(wrap, cwd, timeout, run)] : [...(wrap ?? []), 'bash', '-lc', run];
     const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let measurementLog: string | undefined;
     const collect = (b: Buffer) => { if (measurementLog !== undefined) return; capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
@@ -313,28 +317,41 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
       if (ctx.abortGraceMs) { kill('SIGTERM'); escalation = setTimeout(() => kill(), ctx.abortGraceMs); }
       else kill();
     };
-    let timeoutDetails: Promise<string> | undefined;
+    let timeoutDetails: Promise<string> | undefined, wrapperDeadline: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       // Ruling #2118: freeze evidence at the boundary, before any diagnostic can alter the tree.
       measurementLog = output.toString();
       error = `timeout after ${timeout}s`;
-      kill('SIGSTOP');
+      // A remote wrapper must remain runnable to finish/terminate its remote command.
+      // Evidence still freezes at timeout_s, even when the wrapper exits during its grace.
+      if (wrapped) {
+        // Node timers overflow beyond 2^31-1 ms; keep large valid grace values bounded per timer.
+        const deadline = Date.now() + (ctx.plan.exec?.wrap_grace_s ?? 30) * 1000;
+        const arm = () => {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) { kill(); return; }
+          wrapperDeadline = setTimeout(arm, Math.min(remaining, 2_147_483_647));
+        };
+        arm();
+      } else kill('SIGSTOP');
       timeoutDetails = (async () => {
         let diagnostic = '';
         try {
+          // Snapshot before a wrapper's hard deadline, not after a slow diagnostic.
+          const wrapperTree = wrapped ? await timeoutProcessTree(p.pid) : undefined;
           if (onTimeout) {
             const result = await runCommand(ctx, onTimeout, cwd, 30);
             diagnostic = `\non_timeout (diagnostic only):\n${Buffer.from(result.log).subarray(-256 * 1024).toString()}${result.error ? `\n${result.error}` : ''}\nexit ${result.code ?? 'none'}`;
           }
-          return `${diagnostic}\n${await timeoutProcessTree(p.pid)}`;
+          return `${diagnostic}\n${wrapperTree ?? await timeoutProcessTree(p.pid)}`;
         } catch (e) { return `${diagnostic}\nprocess tree unavailable (${String(e).slice(0, 200)})`; }
-        finally { kill(); }
+        finally { if (!wrapped) kill(); }
       })();
     }, timeout * 1000);
     ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
     p.on('error', e => { error = e.message; spawnError = true; });
     p.on('close', async (code, signal) => {
-      clearTimeout(timer); clearTimeout(escalation); ctx.signal?.removeEventListener('abort', abort);
+      clearTimeout(timer); clearTimeout(escalation); clearTimeout(wrapperDeadline); ctx.signal?.removeEventListener('abort', abort);
       const details = timeoutDetails ? await timeoutDetails : undefined;
       kill();
       if (details !== undefined) {
