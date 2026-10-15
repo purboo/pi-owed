@@ -23,6 +23,8 @@ import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
 import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
+import { mergeBatchPlan } from './reducer.ts';
+import { mergeBatchSize } from './plan.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
@@ -433,6 +435,13 @@ export class Driver {
    */
   private cycle = 0;
   private readonly busyAt = new Map<string, number>();
+  /** MT4: batches refused in this process (`<trunk>\0<members>`): their members merge one at a time until trunk moves. */
+  private readonly batchRefused = new Set<string>();
+  /** MT1: the batch to merge this pass: the plan's batch over this pass's merge actions, unless refused on this trunk. */
+  private batchOf(s: State, actions: Action[]): string[] {
+    const b = mergeBatchPlan(s, mergeBatchSize(s.plan), actions.flatMap(a => a.do === 'merge' ? [a.node] : []));
+    return b.length && !this.batchRefused.has(`${s.trunk.commit}\0${b.join('\0')}`) ? b : [];
+  }
   /** DR2: private runtime state; never a ledger act or acceptance evidence. */
   private readonly mergeWaiting = new Map<string, { reason: string; since: string; attempt: number; candidate?: number; job?: string }>();
   private recordMergeWaiting(node: string, reason?: string, s?: State, job?: string): void {
@@ -642,7 +651,7 @@ export class Driver {
     /** F2.3: whether the disk is low this pass (checked once, before the first measurement it would start). */
     let low: boolean | undefined;
     // DR1: start a merge before node attests consume the measurement capacity.
-    const scheduled = [...actions.filter(a => a.do === 'merge'), ...actions.filter(a => a.do !== 'merge')];
+    const scheduled = [...actions.filter(a => a.do === 'merge'), ...actions.filter(a => a.do !== 'merge')], batch = this.batchOf(s, actions);
     for (const a of scheduled) {
       if (this.stopping) break;
       // F2.2: a notify with a `once` key (the environment back-off) is printed once per key.
@@ -666,7 +675,7 @@ export class Driver {
           const pending = await pendingAdopt(ledger.dir);
           if (pending) { this.recordMergeWaiting(a.node,adoptPendingReason(pending),s); continue; }
         }
-        const r = this.start(s, a.do, a.node);
+        const r = this.start(s, a.do, a.node, a.do === 'merge' && batch[0] === a.node ? batch : undefined);
         reports.push(r); this.emit(r, s);
         continue;
       }
@@ -772,10 +781,10 @@ export class Driver {
     return { do:'attest', node:'trunk', scope:'repo', outcome:'started', at };
   }
   /** Starts the attest or merge of `node` without awaiting it; returns its `started` report. */
-  private start(s: State, what: 'attest' | 'merge', node: string): ActionReport {
+  private start(s: State, what: 'attest' | 'merge', node: string, batch?: string[]): ActionReport {
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
     const m: Measurement = { do: what, node, attempt, at, done: false, ended: Promise.resolve() };
-    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false);
+    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && { members: batch, trunk: s.trunk.commit });
     let busy: ActionReport | undefined;
     m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
       .finally(() => {
@@ -787,7 +796,7 @@ export class Driver {
         this.ended.push(m); this.waker?.();
       });
     this.measuring.set(node, m);
-    return { do: what, node, outcome: 'started', at };
+    return { do: what, node, outcome: 'started', at, ...(batch ? { detail: `batch of ${batch.length}: ${batch.join(', ')}` } : {}) };
   }
   /** A measurement ended and awaits `reap`: the loop's wait ends at once. */
   get woken(): boolean { return this.ended.length > 0 || this.sweepRun?.done === true; }
@@ -1008,9 +1017,9 @@ export class Driver {
    * retry line plus the trunk drift notify, never a halt (ruling #559 c); any other refusal halts needing a human.
    */
   /** LE2: busy merge acquisition has the same back-off and status lifecycle as attest, never a halt. */
-  private async leasedMerge(node: string, attempt: number, lease: boolean): Promise<Ended> {
+  private async leasedMerge(node: string, attempt: number, lease: boolean, batch?: { members: string[]; trunk: string }): Promise<Ended> {
     try {
-      const finish = await withMachineLease({ cwd: this.root!, lease, dsa: this.dsa, noWait: true, signal: this.abort.signal }, signal => this.merge(node, attempt, signal));
+      const finish = await withMachineLease({ cwd: this.root!, lease, dsa: this.dsa, noWait: true, signal: this.abort.signal }, signal => batch ? this.mergeBatch(batch.members, batch.trunk, signal) : this.merge(node, attempt, signal));
       return { finish };
     } catch (e) {
       if (e instanceof OwedError && e.code === 'busy') {
@@ -1031,6 +1040,24 @@ export class Driver {
     if (!remeasureDue(await loadState(this.ledger!), node)) return;
     try { await ops.attest({ cwd: this.o.cwd, node, remeasure: true, signal }); }
     catch (e) { if (!(e instanceof OwedError) || e.code === 'aborted' || e.code === 'busy') throw e; }
+  }
+  /**
+   * MT: one batch merge of `members` (planned on trunk `trunk`). A pass reports every member merged; any refusal is
+   * remembered for this trunk and reported as a retry: the next pass merges the members one at a time (never a halt).
+   */
+  private async mergeBatch(members: string[], trunk: string, signal?: AbortSignal): Promise<() => Promise<ActionReport[]>> {
+    const report = (node: string, outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(detail) });
+    try {
+      const r = leaseResult(await ops.mergeBatch({ cwd: this.o.cwd, as: DRIVE_PRINCIPAL, nodes: members, signal }));
+      return async () => r.nodes.map(id => report(id, 'merged', `trunk ${r.commit.slice(0, 12)} (batch of ${r.nodes.length}: ${r.nodes.join(', ')})${leaseText(r).replace('\n', '; ')}`));
+    } catch (e) {
+      if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
+      this.batchRefused.add(`${trunk}\0${members.join('\0')}`);
+      return async () => {
+        const now = await loadState(this.ledger!), d = /trunk changed \(CAS\)/.test(e.message) ? await git.trunkDrift(this.root!, now.trunk.name, now.trunk.commit).catch(() => undefined) : undefined;
+        return [report(members[0]!, 'retry', `batch merge refused (${e.message}); ${members.join(', ')} merge one at a time from the next pass`), ...(d ? [driftReport(now, d)] : [])];
+      };
+    }
   }
   private async merge(node: string, attempt: number, signal?: AbortSignal): Promise<() => Promise<ActionReport[]>> {
     const cwd = this.o.cwd, as = DRIVE_PRINCIPAL;
