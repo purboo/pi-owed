@@ -142,7 +142,10 @@ test('metrics: no halts, empty denominators, top-five normalization and short re
   const m=computeMetrics(f.entries,f.plans);
   assert.equal(m.haltReasons['no-decision'].length,5);
   assert.ok(m.haltReasons['no-decision'].every(r => r.count === 2));
-  assert.ok(renderMetrics(m).split('\n').length <= 20);
+  const text = renderMetrics(m);
+  assert.match(text, /Reviews by the writer's model: 0/);
+  // RK adds one required review-correlation line to the compact metrics report.
+  assert.ok(text.split('\n').length <= 21);
 });
 
 test('metrics: first-pass tracks execution and judgment blocks on earlier candidates, excluding probes and attribution', () => {
