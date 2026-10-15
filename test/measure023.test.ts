@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { Ledger, entryHash } from '../src/ledger.ts';
@@ -210,6 +210,34 @@ test('MX2 ER: a missing commit or a row without a candidate is unknown, never cl
   } finally { await r.cleanup(); }
 });
 
+test('MX2 ER: only 200 merge-tree calls are made; additional clean candidates become unknown', { timeout: 120_000 }, async () => {
+  const { classifyRebases, MAX_REBASE_CHECKS } = await import('../src/counterfactual.ts');
+  const { execFileSync } = await import('node:child_process');
+  type CounterRow = Parameters<typeof classifyRebases>[1][number];
+  const r = await repo(), priorPath = process.env.PATH;
+  try {
+    await r.put('README', 'cap fixture'); const head = await r.commit();
+    const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const bin = join(r.root, 'bin'), calls = join(r.root, 'merge-tree-calls');
+    await mkdir(bin);
+    await writeFile(join(bin, 'git'), `#!/bin/sh\nif [ "$1" = merge-tree ]; then printf 'call\\n' >> '${calls}'; fi\nexec '${realGit}' "$@"\n`);
+    await chmod(join(bin, 'git'), 0o755);
+    process.env.PATH = `${bin}:${priorPath ?? ''}`;
+    const rows: CounterRow[] = Array.from({ length: 203 }, (_, i) => ({
+      seq: i * 2, node: `n${i}`, attempt: 1, reason: 'cap', class: 'unchanged', acts: [], saved: 0, merged: false,
+      rebase: { seq: i * 2 + 1, from: head, base: head, candidate: head }
+    }));
+    await classifyRebases(r.cwd, rows);
+    assert.equal(MAX_REBASE_CHECKS, 200);
+    assert.equal((await readFile(calls, 'utf8')).trim().split('\n').length, 200, 'actual merge-tree invocation count');
+    assert.deepEqual(rows.slice(0, 200).map(row => row.class), Array(200).fill('clean-rebase'));
+    assert.deepEqual(rows.slice(200).map(row => row.class), ['unknown', 'unknown', 'unknown'], 'even valid clean candidates are unknown beyond the cap');
+  } finally {
+    if (priorPath === undefined) delete process.env.PATH; else process.env.PATH = priorPath;
+    await r.cleanup();
+  }
+});
+
 // ---------- MX3: lease_wait_ms on obs and merge entries ----------
 const FAKE = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
@@ -227,6 +255,95 @@ log({ event: 'granted', pid: process.pid, child: p.pid });
 for (const s of ['SIGTERM','SIGINT','SIGHUP']) process.on(s,()=>{ try { process.kill(-p.pid,s); } catch {} });
 p.on('close', code=>{ log({event:'released',code}); process.exit(code??1); });
 `;
+test('MX3 inherited OWED_LEASED and CLI --no-lease omit lease_wait_ms; a newly acquired lease records it', { timeout: 120_000 }, async () => {
+  const r = await repo(), bin = join(r.root, 'fake-dsa.mjs');
+  const prior = { OWED_DSA: process.env.OWED_DSA, LEASE_TEST_DIR: process.env.LEASE_TEST_DIR, OWED_LEASED: process.env.OWED_LEASED };
+  process.env.OWED_DSA = bin; process.env.LEASE_TEST_DIR = r.root; delete process.env.OWED_LEASED;
+  try {
+    await writeFile(bin, FAKE); await chmod(bin, 0o755);
+    await r.put('README', 'inherited and opt-out fixture'); await r.commit();
+    const plan = { version: 1, trunk: 'main', closure: [], invariants: [], drive: { min_free_mb: 0 }, nodes: ['a', 'b', 'c'].map(id => ({
+      id, writes: [`src/${id}`], review: { count: 0, min_rank: 1 },
+      checks: [{ id: 'u', reads: ['src/**'], min_tests: 1, run: `test "$OWED_LEASED" ${id === 'b' ? '!=' : '='} 1 && printf '1..1\\nok 1 - marker\\n'` }]
+    })) };
+    await ops.init({ cwd: r.cwd, as: owner, channel: 'flag', plan: JSON.stringify(plan), lease: false } as Parameters<typeof ops.init>[0]);
+    for (const id of ['a', 'b', 'c']) {
+      const d = await ops.dispatch({ cwd: r.cwd, node: id, as: parent });
+      await commitAt(d.worktree, { [`src/${id}`]: id });
+      await ops.submit({ cwd: d.worktree, node: id, as: { role: 'writer', id: `${id}#1` } });
+    }
+    const holdsBefore = existsSync(join(r.root, 'holds')) ? await readFile(join(r.root, 'holds'), 'utf8') : '';
+    process.env.OWED_LEASED = '1';
+    for (const args of [['attest', 'a'], ['merge', 'a']]) {
+      const result = await cli(r.cwd, args); assert.equal(result.code, 0, result.stderr);
+    }
+    delete process.env.OWED_LEASED;
+    for (const args of [['attest', 'b', '--no-lease'], ['merge', 'b', '--no-lease']]) {
+      const result = await cli(r.cwd, args); assert.equal(result.code, 0, result.stderr);
+    }
+    assert.equal(existsSync(join(r.root, 'holds')) ? await readFile(join(r.root, 'holds'), 'utf8') : '', holdsBefore, 'neither path acquires a lease');
+    const unleased = await (await Ledger.open(r.cwd)).read();
+    for (const id of ['a', 'b']) {
+      const obs = unleased.filter(e => e.kind === 'obs' && e.subject === id);
+      const merges = unleased.filter(e => e.kind === 'merge' && e.node === id);
+      assert.ok(obs.length > 0); assert.equal(merges.length, 1);
+      assert.ok([...obs, ...merges].every(e => !('lease_wait_ms' in e)), `${id}: neither inherited nor opted-out measurements write the field`);
+    }
+    // Positive control makes this test distinguish the new behavior from the baseline that never records waits.
+    const acquired = await cli(r.cwd, ['attest', 'c']); assert.equal(acquired.code, 0, acquired.stderr);
+    const entries = await (await Ledger.open(r.cwd)).read(), leased = entries.filter(e => e.kind === 'obs' && e.subject === 'c');
+    assert.ok(leased.length > 0);
+    assert.ok(leased.every(e => e.kind === 'obs' && Number.isSafeInteger(e.lease_wait_ms) && e.lease_wait_ms! >= 0), 'a newly acquired lease must record lease_wait_ms');
+    const m = await ops.reportMetrics({ cwd: r.cwd });
+    assert.equal(m.latency.leaseWaitMs.samples, leased.length, 'only the newly acquired lease contributes samples');
+  } finally {
+    for (const [k, v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    await r.cleanup();
+  }
+});
+
+test('MX1/MX3 old ledger replays unchanged and new metrics have defined empty defaults', { timeout: 60_000 }, async () => {
+  const r = await repo();
+  try {
+    await r.put('README', 'old ledger fixture'); await r.commit();
+    const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [], drive: { min_free_mb: 0 }, nodes: [{
+      id: 'a', writes: ['src/a'], review: { count: 0, min_rank: 1 },
+      checks: [{ id: 'u', run: `printf '1..1\\nok 1 - old ledger\\n'`, min_tests: 1, reads: ['src/a'] }]
+    }] };
+    await ops.init({ cwd: r.cwd, as: owner, channel: 'flag', plan: JSON.stringify(plan) });
+    const d = await ops.dispatch({ cwd: r.cwd, node: 'a', as: parent });
+    await commitAt(d.worktree, { 'src/a': 'old ledger' });
+    await ops.submit({ cwd: d.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    await ops.merge({ cwd: r.cwd, node: 'a', as: parent });
+    const ledger = await Ledger.open(r.cwd), entries = await ledger.read(), original = await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8');
+    assert.ok(entries.some(e => e.kind === 'obs')); assert.ok(entries.some(e => e.kind === 'merge'));
+    assert.ok(entries.every(e => !('lease_wait_ms' in e) && newerEntry(e) === undefined));
+    assert.equal((await ops.verify({ cwd: r.cwd })).ok, true, 'a field-free old ledger replays');
+    const m = await ops.reportMetrics({ cwd: r.cwd });
+    // Existing metrics keep the values implied by this legacy ledger, before checking new defaults.
+    assert.equal(m.mergedNodes, 1); assert.equal(m.parentActs.total, 1); assert.equal(m.parentActs.perMergedNode, 1);
+    assert.deepEqual(m.grants, { total: 0, perMergedNode: 0 });
+    assert.deepEqual({ total: m.interruptions.total, halts: m.interruptions.halts, answers: m.interruptions.answers, perMergedNode: m.interruptions.perMergedNode }, { total: 0, halts: 0, answers: 0, perMergedNode: 0 });
+    assert.deepEqual(m.halts, []); assert.deepEqual(m.repairs, { total: 0, perMergedNode: 0 });
+    assert.deepEqual(m.firstPassAcceptance, { nodes: 1, rate: 1 });
+    const submit = entries.find(e => e.kind === 'submit')!, merge = entries.find(e => e.kind === 'merge')!, dispatch = entries.find(e => e.kind === 'dispatch')!;
+    const duration = (start: Entry) => { const ms = Date.parse(merge.ts) - Date.parse(start.ts); return { samples: 1, median: ms, p90: ms, max: ms }; };
+    assert.deepEqual(m.submitToMergeMs, duration(submit)); assert.deepEqual(m.dispatchToMergeMs, duration(dispatch));
+    const empty = { samples: 0, median: null, p90: null, max: null };
+    assert.deepEqual(m.latency?.leaseWaitMs, empty, 'old ledger has an explicit zero-sample lease-wait metric');
+    assert.equal(m.decisions, 1); assert.equal(m.actsPerDecision, 1);
+    assert.deepEqual(m.parentActs.mergedOnly, { total: 0, perMergedNode: 0 });
+    assert.deepEqual(m.interruptions.byClass, Object.fromEntries(['shared', 'trunk-red', 'fix-wait', 'review', 'writes', 'no-submit', 'repairs-exhausted', 'attest-error', 'other'].map(key => [key, 0])));
+    const late = await ops.reportMetrics({ cwd: r.cwd, since: entries.at(-1)!.seq });
+    assert.equal(late.decisions, 0); assert.equal(late.actsPerDecision, null);
+    assert.deepEqual(late.parentActs.mergedOnly, { total: 0, perMergedNode: null });
+    assert.deepEqual(late.latency, { phases: { measure: empty, review: empty, mergeWait: empty }, leaseWaitMs: empty });
+    assert.ok(!renderMetrics(m).includes('Machine lease wait'));
+    assert.equal(await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8'), original, 'replay and reporting preserve the original ledger');
+  } finally { await r.cleanup(); }
+});
+
 test('MX3 lease_wait_ms: recorded on leased obs and merge entries, absent without a lease, strictly validated, reported as a median', { timeout: 120_000 }, async () => {
   const r = await repo(), bin = join(r.root, 'fake-dsa.mjs');
   const prior = { OWED_DSA: process.env.OWED_DSA, LEASE_TEST_DIR: process.env.LEASE_TEST_DIR, OWED_LEASED: process.env.OWED_LEASED };

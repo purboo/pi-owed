@@ -1261,12 +1261,12 @@ function batchMergeErrors(d: Extract<Draft, { kind: 'merge' }>): string[] {
   if (!last && d.commit === b.final) return ['only the last batch member merges the final batch commit'];
   return [];
 }
-/** MT4: a batch observation names at least 2 distinct members (its node subject among them) and is never merging, a probe or an attribution rerun. */
 /** MX3: optional measurement metadata, never part of a key or verdict. */
 function leaseWaitErrors(d: { kind: string; lease_wait_ms?: unknown }): string[] {
   const v = d.lease_wait_ms;
   return v === undefined || (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) ? [] : [`${d.kind} lease_wait_ms must be a non-negative integer of milliseconds`];
 }
+/** MT4: a batch observation names at least 2 distinct members (its node subject among them) and is never merging, a probe or an attribution rerun. */
 function batchObsErrors(d: Extract<Draft, { kind: 'obs' }>): string[] {
   const b = d.batch;
   if (b === undefined) return [];

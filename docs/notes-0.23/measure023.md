@@ -50,33 +50,28 @@ observation and merge entry of one leased command carries the same value. Absent
 (`--no-lease`, plan `lease: false`, no pi-durable-subagents, an inherited lease).
 
 ## Compatibility
-- New optional field `lease_wait_ms` on `obs` and `merge` entries: a non-negative integer, validated on replay
-  (anything else refuses the entry). Owed before 0.23 refuses an `obs` carrying it (needs a newer owed); it ignores
-  the field on `merge`. Keys, verdicts and gates do not read it. Old ledgers replay unchanged.
+- `lease_wait_ms` is an optional non-negative integer on `obs` and `merge`, validated on replay. Retaining it is
+  an explicit compatibility exception under MX-P2, in the same category as ER6; keys, verdicts and gates do not read it.
+- Owed ≤0.22 (including 0.13–0.22) checks `obs` against the `OBS_FIELDS` whitelist: an `obs` carrying
+  `lease_wait_ms` causes code `version` and refuses the entire ledger. This refusal applies only to `obs`;
+  those versions ignore the field when reading `merge`.
+- Upgrade the CLI, driver and pi sessions before the first leased `attest` under 0.23, which writes this field.
+  Old ledgers without the field still replay, retain their existing metrics, and have zero lease-wait samples.
+- The driver acquires its lease with `noWait`: busy means retry on a later tick. Waiting across ticks is not
+  included in `lease_wait_ms`, so the driver's recorded wait is a lower bound.
 - No new entry kind, plan key or ledger field besides the one above.
 - Metrics JSON gains `decisions`, `actsPerDecision`, `latency`, `parentActs.mergedOnly`, `interruptions.byClass` and
   `halts[].interruption`; existing fields are unchanged.
 
 ## Known limits (ruling #2572)
 - `--counterfactual` is one cold, validating replay of the whole ledger: its time is about one full replay without
-  a snapshot. On the app ledger (14.4k entries, 578 plans, 397 driver halts): a plain replay took 47 s on the
-  test host (profile: state refresh of node items 25 s, plan downgrade analysis across the 578 plans 14 s, entry
+  a snapshot. On the app ledger a plain replay took 47 s on the test host (profile: state refresh of node
+  items 25 s, plan downgrade analysis 14 s, entry
   validation 12 s); the command took 60–98 s on that shared host, while `owed status` (tail snapshot) took 2.2 s.
   A per-halt cache or a faster reducer is deferred.
-- On that ledger it reproduces the diagnosis: 25 halts `shared` (among them #13276, #13287, #13345, #13388, #13411,
-  #13515, #13528), 3 `fix-wait` (#13632, #13641 and one earlier), 3 `trunk-red` (TP halts), 28 `unknown` (their
-  commits were not in the replay repository) and 338 `unchanged`; 37 of 537 parent acts after those halts would be
-  unnecessary.
+- The temporary Git object directory is cleaned on normal completion and thrown errors, but not on SIGINT;
+  an interrupted report can leave that directory behind.
 - `--metrics` does not replay: its interruption classes come from the halt text, so a pre-0.23 AT1 halt that was a
   shared failure counts as `other` there; `--counterfactual` gives its state-based class. `--metrics` itself
   costs what it cost before (about 40 s on app, dominated by the existing per-plan act classification).
 - Phases are derived from ledger entries, not from a replayed acceptance state.
-- Changed existing tests: `test/metrics.test.ts` (three `interruptions` deep-equals now ignore the new `byClass`)
-  and `test/parentacts.test.ts` (the 0.16 legacy-field deep-equal excludes the new fields); both still assert every
-  previous value.
-
-## Baseline regression evidence
-- Against `aeccfdc`, the MX1 metrics test fails its assertion because `decisions` is absent (expected the grouped decision total).
-- The MX2 counterfactual replay test fails when its internal dynamic import loads the counterfactual module, which the baseline lacks.
-- The MX2 missing-commit test independently fails at its internal dynamic import for the same missing module.
-- The MX3 lease test reaches the leased observations and fails its assertion because those entries lack `lease_wait_ms`.
