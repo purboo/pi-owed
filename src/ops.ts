@@ -1716,13 +1716,20 @@ async function hintedMergeChecks(cwd: string, s: State, id: string, existing: It
   return out;
 }
 /** UX3: only open candidates participate; diagnostics never discharge an obligation. */
-async function candidateConflicts(cwd: string, state: State): Promise<NonNullable<StatusView['conflicts']>> {
+async function candidateConflicts(cwd: string, state: State, only?: string): Promise<NonNullable<StatusView['conflicts']>> {
   const candidates = Object.entries(state.nodes).filter(([, n]) => n.slot?.open && n.candidate && !n.merged);
   const conflicts: NonNullable<StatusView['conflicts']> = {};
-  for (const [id, n] of candidates) {
-    const row: Record<string, string[] | null> = { trunk: await git.conflictPaths(cwd,state.trunk.commit,n.candidate!.commit) ?? null };
-    for (const [other, peer] of candidates) if (other !== id) row[other] = await git.conflictPaths(cwd,n.candidate!.commit,peer.candidate!.commit) ?? null;
-    conflicts[id] = row;
+  if (!candidates.length || (only !== undefined && !candidates.some(([id]) => id === only))) return conflicts;
+  const probe = await git.conflictProbe(cwd, [state.trunk.commit, ...candidates.map(([, n]) => n.candidate!.commit)]);
+  for (const [id, n] of candidates) if (only === undefined || only === id) {
+    conflicts[id] = { trunk: await probe(state.trunk.commit,n.candidate!.commit) ?? null };
+  }
+  for (let i = 0; i < candidates.length; i++) for (let j = i + 1; j < candidates.length; j++) {
+    const [id, n] = candidates[i]!, [other, peer] = candidates[j]!;
+    if (only !== undefined && id !== only && other !== only) continue;
+    const paths = await probe(n.candidate!.commit,peer.candidate!.commit) ?? null;
+    if (conflicts[id]) conflicts[id]![other] = paths;
+    if (conflicts[other]) conflicts[other]![id] = paths;
   }
   return conflicts;
 }
@@ -1740,7 +1747,7 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   node(view,o.node);
   const mergeChecks = await currentTrunkRedChecks(o.cwd,view,o.node);
   const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks));
-  card.conflicts = (await candidateConflicts(o.cwd,view))[o.node];
+  card.conflicts = (await candidateConflicts(o.cwd,view,o.node))[o.node];
   const pending = await rebasePending(view, o.node);
   if (pending) card.rebasePending = pending;
   await applyModels(ledger,view,entries,o.node,card);

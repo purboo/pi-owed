@@ -10,15 +10,6 @@
 
 No plan keys, CLI flags or ledger entry kinds are added. Existing ledgers replay unchanged. `warnings`, delivery `slots` and view `conflicts` are optional runtime response fields; they are not persisted as acceptance evidence. Conflict values are path arrays, or null when the probe is unknown. Existing acknowledgment, review, write and merge gates remain in force.
 
-## Validation
-
-All compiler/test commands ran remotely through `/tmp/owed-ipc/run.sh`, sequentially; none ran on the development host.
-
-- `npx tsc --noEmit -p . && node --test --test-reporter=tap test/ux.test.ts test/brief.test.ts`: exit 0, 10/10; `/tmp/owed-ipc/logs/ux-1-135702.log`.
-- Required single full-suite run, `node --test --test-reporter=tap test/*.test.ts`: exit 1, 1202/1205; `/tmp/owed-ipc/logs/ux-1-135802.log`. It found an adopt wall-time budget failure, Exec heading displacement by conflict lines, and the frozen differential adapter's old review suggestion. The latter two were addressed by preserving the heading and narrowly adapting UX1 labels.
-- Final code tree: `npx tsc --noEmit -p . && node --test --test-reporter=tap test/ux.test.ts test/exec-env.test.ts test/adoptwait.test.ts test/perf.test.ts`: exit 0, 36/36; `/tmp/owed-ipc/logs/ux-1-140252.log`. This includes all three previously failing cases; the adopt timing failure did not recur in this focused run. The full suite was not repeated.
-- `git diff --check`: passed. Base-trunk red evidence remains the owed-managed `ux-red` check, not a locally claimed result.
-
 ## Existing test changes
 
 All existing-test changes follow UX1's new suggestion and explicit override wording:
