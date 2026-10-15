@@ -125,11 +125,11 @@ export interface ExecutionResult { completed: boolean; countOK: boolean }
 export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[]; execution?: ExecutionResult }
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
-export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; state: StateFacts }
+export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; writes_syntax?: 2; state: StateFacts }
 /** IR1: current-plan facts on the ledger trunk; refresh changes invariant keys, never the trunk commit/seq. */
 export interface RefreshEntry extends Base { kind: 'refresh'; commit: string; state: StateFacts }
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
-export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
+export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; writes_syntax?: 2; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface AnswerRef { rid: string; qid: string; rev: number }
 export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; answer?: AnswerRef; /** AR: latest prior answer rule for this rid/qid; re-ask ledgers require 0.16. */ supersedes?: number }
 export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
@@ -167,6 +167,8 @@ export interface ObsEntry extends Base {
   failed?: string[];
   /** SG1: failed name -> v2 error/innermost repository test frame/assertion values (first failing run). Untagged legacy signatures remain readable. */
   signatures?: Record<string, string>;
+  /** WG5: only refusals are ownership overlaps; retry once when every named slot closes. */
+  waits_on?: string[];
   /** MS4 (0.20): failing test names excused by active quarantine entries (they neither passed nor failed). */
   quarantined?: string[];
 }

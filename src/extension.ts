@@ -1,3 +1,4 @@
+import { withWritesSyntax } from './writes.ts';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
@@ -114,7 +115,7 @@ async function currentPlan(dir: string) {
   const ledger = await Ledger.open(dir);
   const law = (await ledger.read()).findLast(e => e.kind === 'plan' || e.kind === 'genesis');
   if (!law || (law.kind !== 'plan' && law.kind !== 'genesis')) throw new OwedError('Missing plan');
-  return parsePlan((await ledger.getBlob(law.plan)).toString());
+  return withWritesSyntax(parsePlan((await ledger.getBlob(law.plan)).toString()),law.writes_syntax ?? 1);
 }
 /** Writer of the open slot of node when dir is inside that slot worktree (submit and rebase infer it). */
 async function slotWriter(dir: string, id: string): Promise<string | undefined> {
@@ -260,7 +261,7 @@ export default function owed(pi: ExtensionAPI): void {
   tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades need the owner (the main agent as owner:pi, delegated, with a note saying why; a dialog only under OWED_CONFIRM=owner) unless an `allow` rule of the current plan covers them all (then the parent records them, labelled under allowance).', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), note: Type.Optional(Type.String({ description: 'Why (recorded); required for a delegated owner downgrade (D25.5).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const read = await ops.readPlan({ cwd: dir, path: p.plan, rev: p.rev }), text = read.plan;
     const before = (await ops.readState({ cwd: dir })).state;
-    const prior = await currentPlan(dir), next = parsePlan(text), downgrades = planDowngrades(prior, next);
+    const prior = await currentPlan(dir), next = withWritesSyntax(parsePlan(text),2), downgrades = planDowngrades(prior, next);
     // D21.3: downgrades that an allowance of the current plan covers need no owner; the parent records them.
     const gaps = downgrades.length ? uncoveredDowngrades(prior, next, downgrades) : [];
     const who = p.as ?? (gaps.length ? ownerDefault() : 'parent:pi');

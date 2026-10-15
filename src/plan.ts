@@ -1,3 +1,4 @@
+import { writeCovers, writesSyntax, writesAllowChanged } from './writes.ts';
 import { parse } from 'yaml';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
@@ -289,7 +290,7 @@ function parseAllow(v: unknown, errors: string[]): AllowRule[] {
  */
 export function allowWidened(prev: Plan, next: Plan): boolean {
   const before = new Set((prev.allow ?? []).map(r => canonical(r)));
-  return (next.allow ?? []).some(r => !before.has(canonical(r)));
+  return writesAllowChanged(prev,next) || (next.allow ?? []).some(r => !before.has(canonical(r)));
 }
 export function globMatch(path: string, glob: string): boolean {
   return glob === '**' || (glob.endsWith('/') ? path.startsWith(glob) : matchesGlob(path, glob));
@@ -562,7 +563,7 @@ export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
     compare(n.id, n.checks, m.checks);
     if (m.review.count < n.review.count) out.push({ node: n.id, what: 'review count lowered' });
     if (m.review.min_rank < n.review.min_rank) out.push({ node: n.id, what: 'review rank lowered' });
-    if (m.writes.some(p => !n.writes.some(old => p.startsWith(old)))) out.push({ node: n.id, what: 'writes widened' });
+    if (m.writes.some(p => !n.writes.some(old => writeCovers(old, p, writesSyntax(prev), writesSyntax(next))))) out.push({ node: n.id, what: 'writes widened' });
     out.push(...manualDowngrades(n.id, n, m));
   }
   if (allowWidened(prev, next)) out.push({ node: 'trunk', what: 'allow changed' });

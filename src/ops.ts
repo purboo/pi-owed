@@ -13,10 +13,11 @@ import { rebasePending, rebasePendingText } from './rebase-view.ts';
 import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
-import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
+import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
-import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantErrors, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, writesAllowed, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs } from './reducer.ts';
+import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
+import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
@@ -320,8 +321,8 @@ async function writerTree(s: State, id: string, dirs: string[], env: NodeJS.Proc
  * The plan blob bytes and sha stored for a plan text (canonical YAML); refuses a `worktrees:` block a new plan must
  * not have (G4) and node ids equal ignoring case.
  */
-function planBlob(text: string) {
-  const plan = parsePlan(text), hygiene = [...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan), ...execEnvErrors(plan)];
+function planBlob(text: string, checkWrites = true) {
+  const plan = withWritesSyntax(parsePlan(text),2), hygiene = [...(checkWrites ? writesSyntaxErrors(plan) : []),...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan), ...execEnvErrors(plan)];
   if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
   const source = JSON.parse(canonical(plan));
   // PL1: retain diagnostic source even before SG's parsed check field is integrated.
@@ -387,21 +388,21 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
   }
   return out;
 }
-/** GR4: grant + observation are one locked append; fresh replay validates all paths, never a partial grant. */
+/** WG4: grantable paths and the writes observation are appended atomically under the ledger lock. */
 async function writesGrantDrafts(cwd: string, ledger: Ledger, s: State, job: AttestJob, obs: import('./types.ts').ObsEntry | Extract<Draft, { kind:'obs' }>): Promise<Draft[]> {
   const n = s.nodes[job.subject]!;
   const paths = (await git.git(cwd,['diff','--no-renames','--name-only','-z',job.base,job.commit])).stdout.split('\0').filter(Boolean);
   const bad = paths.filter(p => !withinWrites(s,job.subject,p)).sort(), drafts: Draft[] = [];
-  let reason: string | undefined;
-  if (bad.length) {
-    const grant: Extract<Draft,{kind:'grant'}> = {kind:'grant',by:'executor:owed',node:job.subject,attempt:n.slot!.attempt,commit:job.commit,paths:bad,allowance:allowanceSeq(s) ?? -1};
-    reason = grantErrors(s,grant)[0];
-    if (!reason) drafts.push(grant);
-  }
+  const refused = writesRefusals(s,job.subject,bad), denied = new Set(refused.map(r => r.path));
+  const grantable = bad.filter(p => !denied.has(p));
+  if (grantable.length) drafts.push({kind:'grant',by:'executor:owed',node:job.subject,attempt:n.slot!.attempt,commit:job.commit,paths:grantable,allowance:allowanceSeq(s) ?? -1});
   const grants = grantsOf(s,job.subject).filter(g => g.paths.some(p => paths.includes(p)));
-  const labels = [...grants.map(g => `granted #${g.seq}: ${g.paths.join(', ')}`), ...(drafts.length ? [`granted #${s.seq + 1}: ${bad.join(', ')}`] : [])];
-  const note = reason ? `outside writes: ${bad.join(', ')}; ${reason}` : `all changed paths within writes${labels.length ? ` (${labels.join('; ')})` : ''}`;
-  drafts.push({...obs,verdict:reason ? 'fail' : 'pass',exit:reason ? 1 : 0,note,log:await ledger.putBlob(note)});
+  const labels = [...grants.map(g => `granted #${g.seq}: ${g.paths.join(', ')}`), ...(grantable.length ? [`granted #${s.seq + 1}: ${grantable.join(', ')}`] : [])];
+  const owners = [...new Set(refused.flatMap(r => r.owners))].sort();
+  const overlapOnly = refused.length > 0 && refused.every(r => r.reasons.every(reason => reason.startsWith('overlaps open node ')));
+  const failures = refused.map(r => `${r.path} (${r.reasons.filter(reason => !reason.startsWith('overlaps open node ')).concat(r.owners.map(id => `owned by open node ${id}`)).join('; ')})`);
+  const note = refused.length ? `outside writes: ${failures.join(', ')}${overlapOnly ? `; re-measured automatically after ${owners.join(', ')} merges` : owners.length ? `; resolve other refusals, then re-measure after ${owners.join(', ')} merges` : ''}${labels.length ? `; ${labels.join('; ')}` : ''}` : `all changed paths within writes${labels.length ? ` (${labels.join('; ')})` : ''}`;
+  drafts.push({...obs,verdict:refused.length ? 'fail' : 'pass',exit:refused.length ? 1 : 0,note,log:await ledger.putBlob(note),...(overlapOnly ? {waits_on:owners} : {})});
   return drafts;
 }
 /**
@@ -413,7 +414,7 @@ async function jobPlan(ledger: Ledger, snapshot: State, job: AttestJob): Promise
   const h = await load(ledger);
   const block = h.entries.find(e => e.kind === 'obs' && e.probe === undefined && e.subject === job.subject && e.obligation === job.obligation && e.key === job.key && e.verdict === 'fail' && !e.attribution);
   const law = h.entries.filter(e => e.seq <= (block?.seq ?? -1) && (e.kind === 'plan' || e.kind === 'genesis')).at(-1);
-  return law && (law.kind === 'plan' || law.kind === 'genesis') ? h.lookup(law.plan) : snapshot.plan;
+  return law && (law.kind === 'plan' || law.kind === 'genesis') ? withWritesSyntax(h.lookup(law.plan),law.writes_syntax ?? 1) : snapshot.plan;
 }
 /** M1: `exec.parallel` of a plan (default 1). */
 export const parallelOf = (plan: Plan): number => plan.exec?.parallel ?? 1;
@@ -470,7 +471,7 @@ export async function init(o: Actor & { plan: string; channel: Channel; signal?:
   const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit,quarantineNames(p.plan,() => false));
   if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
-  const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
+  const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, writes_syntax:2, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
   const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
   let error: string | undefined, lease: string | undefined;
   if (o.measure !== false) {
@@ -584,7 +585,7 @@ type PlanArgs = Actor & { rev?: string; path?: string; note?: string; notCarried
  * the same authority rules.
  */
 async function planDrafts(o: PlanArgs, ledger: Ledger, p: { plan: Plan; sha: string }, before: State): Promise<{ latest: Awaited<ReturnType<typeof load>>; drafts: Draft[] }> {
-  const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d);
+  const latest = await load(ledger,[p.sha]), { state } = latest; stable(before,state); const d: Draft = { kind:'plan', by:by(o), channel:o.channel, prior:before.planSha, plan:p.sha, writes_syntax:2, downgrades:planDowngrades(state.plan,p.plan), ...(o.rev !== undefined ? { rev:o.rev } : {}), ...(o.path !== undefined ? { path:o.path } : {}), ...(o.note !== undefined && o.note.trim() ? { note:o.note } : {}) }; guard(state,d);
   return { latest, drafts: await withCarries(o.cwd,latest,d,p.plan,o.notCarried) };
 }
 /**
@@ -645,6 +646,8 @@ export function amendPaths(writes: string[]): string[] {
     if (!t.startsWith('+')) throw new OwedError(`amend only widens writes: each path must start with + (got ${JSON.stringify(w)}); removing writes needs owed plan`,'usage');
     const p = t.slice(1).trim();
     if (!p) throw new OwedError('amend: empty path after +','usage');
+    const error = writesEntryError(p);
+    if (error) throw new OwedError(error,'usage');
     if (!out.includes(p)) out.push(p);
   }
   return out;
@@ -669,13 +672,13 @@ async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<Amen
   if (!spec) throw new OwedError(`Node ${o.node} does not exist`);
   if (s.nodes[o.node]?.merged) throw new OwedError(`Node ${o.node} is merged; amend widens the writes of a node that is not merged`);
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
-  if (planBlob(read.plan).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
+  if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const doc = parseDocument(read.plan);
   const nodes = doc.get('nodes'), item = isSeq(nodes) ? nodes.items.find(x => isMap(x) && x.get('id') === o.node) : undefined;
   if (!isMap(item)) throw new OwedError(`cannot edit ${read.path}: node ${o.node} is not a map in its nodes list`);
   const added = paths.filter(p => !spec.writes.includes(p)), present = paths.filter(p => spec.writes.includes(p));
   if (!added.length) throw new OwedError(`writes of ${o.node} already include ${present.join(', ')}; nothing to amend`);
-  if (writesAllowed(s.plan,o.node,added)) throw new OwedError(`not needed: ${added.join(', ')} are covered by allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}); owed grants them at measurement; tell the writer to edit them`);
+  if (writesCovered(s.plan,o.node,added)) throw new OwedError(`not needed: ${added.join(', ')} are covered by allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}); owed grants them at measurement; tell the writer to edit them`);
   const next = spliceWrites(read.plan,doc,item,added);
   if (next === undefined) throw new OwedError(`cannot edit ${read.path}: writes of node ${o.node} is not a list`);
   const plan = planBlob(next).plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
@@ -757,7 +760,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   if (o.invariant !== undefined && (o.rule !== undefined || o.resume)) throw new OwedError('invariant edits do not take --rule or --resume','usage');
   if (o.rule !== undefined && !o.rule.trim()) throw new OwedError('--rule needs non-empty text','usage');
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
-  if (planBlob(read.plan).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
+  if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next).plan;
   return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString())] };
 }
@@ -1167,7 +1170,7 @@ export async function closeStaleSlot(o: Context & { node:string; attempt:number 
 export async function recordedPlanReceipt(o: Context & { entry: Entry }): Promise<string> {
   const ledger = await Ledger.open(o.cwd), e = o.entry;
   if (e.kind !== 'plan') return renderEntry(e);
-  const prior = parsePlan((await ledger.getBlob(e.prior)).toString()), next = parsePlan((await ledger.getBlob(e.plan)).toString());
+  const { state } = await load(ledger), prior = planAt(state,e.seq), next = planAt(state,e.seq+1);
   return planReceipt(e, prior, next);
 }
 export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }

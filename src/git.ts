@@ -1,3 +1,4 @@
+import { writesKeySyntax } from './writes.ts';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat, lutimes } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
@@ -188,7 +189,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
     if (c.mutants) keys[`strength:${c.id}`] = await strengthKey(cwd, plan, c, base, commit, closure);
     if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
-  keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes });
+  keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes, ...writesKeySyntax(plan,node.writes) });
   const closureTouched = changed.some(p => matchesAny(p, plan.closure));
   if (closureTouched) keys['closure-review'] = H({ o: 'closure-review', patch });
   keys.review = H({ o: 'review', patch });

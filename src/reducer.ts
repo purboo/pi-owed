@@ -1,3 +1,4 @@
+import { matchesWrite, writeCovers, writeOverlaps, writesSyntax, withWritesSyntax, writesKeySyntax, writesAllowChanged, type WritesSyntax } from './writes.ts';
 import { matchesGlob } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
@@ -90,7 +91,11 @@ function dependentCounts(plan: Plan): Map<string, number> {
  */
 const waivedFail = (s: State, e: ObsEntry): boolean => e.verdict === 'fail' && e.merging !== undefined && e.merging === e.subject && listed(context(s).waives, e.subject).some(w => w.kind === 'waive' && w.node === e.subject && w.obligation === e.obligation && w.key !== e.key && w.seq > e.seq && (w.accept_risk ?? []).includes(e.seq));
 /** The observations that count for an item: exclude diagnostic probes and waived merge-key fails (F3). */
-const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e) && grantPassReusable(s,e));
+const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => {
+  const obs = observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e) && grantPassReusable(s,e));
+  // WG5 supersedes an earlier overlap-only failure; ordinary failures keep their conflict semantics.
+  return obligation === 'writes' ? obs.filter((e,i) => !e.waits_on || i === obs.length - 1) : obs;
+};
 /** GR3: the unchanged writes key must not carry a grant-supported pass into a new attempt. */
 function grantPassReusable(s: State, e: ObsEntry): boolean {
   if (e.obligation !== 'writes' || e.verdict !== 'pass') return true;
@@ -124,8 +129,8 @@ export const applicableRules = (s: State, node: string): Rule[] => s.rules.filte
 function latestRule(s: State, node: string): number {
   return Math.max(-1, ...applicableRules(s, node).map(r => r.seq));
 }
-/** Two `writes` prefix lists overlap when some prefix of one starts with a prefix of the other (a path could match both). */
-export const writesOverlap = (a: string[], b: string[]): boolean => a.some(p => b.some(q => p.startsWith(q) || q.startsWith(p)));
+/** WG3: potential writes overlap is conservative; matching grants remains exact. */
+export const writesOverlap = (a: string[], b: string[], aSyntax: WritesSyntax = 2, bSyntax: WritesSyntax = aSyntax): boolean => a.some(p => b.some(q => writeOverlaps(p, q, aSyntax, bSyntax)));
 /** Other nodes with an open slot whose `writes` overlap those of node `id`, sorted. */
 export function overlapping(s: State, id: string): string[] {
   return Object.values(s.nodes).filter(x => x.id !== id && x.slot?.open && effectiveWritesOverlap(s, id, x.id)).map(x => x.id).sort();
@@ -135,18 +140,22 @@ export function grantsOf(s: State, id: string): import('./types.ts').GrantEntry[
   const attempt = s.nodes[id]?.slot?.attempt;
   return (context(s).grants?.get(id) ?? []).filter(e => e.attempt === attempt);
 }
-function planWrites(s: State, id: string): string[] {
+function planForWrites(s: State, id: string): Plan {
   const n = s.nodes[id];
-  return (nodeSpec(s, id) ?? (n?.slot?.open ? planAt(s, n.slot.dispatchSeq).nodes.find(x => x.id === id) : undefined))?.writes ?? [];
+  return nodeSpec(s,id) || !n?.slot?.open ? s.plan : planAt(s,n.slot.dispatchSeq);
+}
+function planWrites(s: State, id: string): string[] {
+  return planForWrites(s,id).nodes.find(x => x.id === id)?.writes ?? [];
 }
 export function effectiveWrites(s: State, id: string): string[] { return [...planWrites(s, id), ...grantsOf(s, id).flatMap(g => g.paths)]; }
-/** Plan writes are prefixes; granted paths are exact repository paths, never prefixes. */
+/** Plan writes are prefixes or globs; granted paths are exact repository paths, never prefixes. */
 export function withinWrites(s: State, id: string, path: string): boolean {
-  return planWrites(s, id).some(w => path.startsWith(w)) || grantsOf(s, id).some(g => g.paths.includes(path));
+  return planWrites(s, id).some(w => matchesWrite(path, w, writesSyntax(planForWrites(s,id)))) || grantsOf(s, id).some(g => g.paths.includes(path));
 }
 export function effectiveWritesOverlap(s: State, a: string, b: string): boolean {
   const pa = planWrites(s, a), pb = planWrites(s, b), ga = s.nodes[a]?.slot?.open ? grantsOf(s, a).flatMap(g => g.paths) : [], gb = s.nodes[b]?.slot?.open ? grantsOf(s, b).flatMap(g => g.paths) : [];
-  return writesOverlap(pa, pb) || ga.some(p => pb.some(w => p.startsWith(w)) || gb.includes(p)) || gb.some(p => pa.some(w => p.startsWith(w)));
+  const aSyntax = writesSyntax(planForWrites(s,a)), bSyntax = writesSyntax(planForWrites(s,b));
+  return writesOverlap(pa, pb, aSyntax, bSyntax) || ga.some(p => pb.some(w => matchesWrite(p, w, bSyntax)) || gb.includes(p)) || gb.some(p => pa.some(w => matchesWrite(p, w, aSyntax)));
 }
 /** Detail of a satisfied `rulings` item when no ruling is in scope for the node (shown as "no rulings apply"). */
 export const NO_RULINGS = 'no ruling is in scope for this node';
@@ -254,6 +263,10 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
     out.discharger = out.mark === '⊤' || blocks.some(b => b.state === 'flaky' || (b.kind === 'judgment' && (b.rank ?? 0) >= 2)) ? 'owner' : blocks.some(b => b.kind === 'judgment') ? 'reviewer' : currentFailed ? 'writer' : 'executor';
     out.detail = `${obligation} still blocked: ${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' flaky' : ''}`).join(', ')}`;
   }
+  if (obligation === 'writes') {
+    const waiting = writesWaiting(s,subject);
+    if (waiting && waiting.key === key) out.detail = waiting.note ?? `writes waiting for ${waiting.waits_on!.join(', ')}; re-measured automatically after ownership closes`;
+  }
   if (out.status === 'E') return { ...out, mark: '✔', discharger: undefined, detail: `${obligation} satisfied${isManual(obligation) ? ' (manual)' : ''}${pooled ? `; ${pooled}` : ''}` };
   if (subject !== 'trunk' && !obligation.startsWith('inv:')) {
     const waiver = listed(context(s).waives, subject).findLast(e => e.kind === 'waive' && role(e.by) === 'owner' && e.node === subject && e.obligation === obligation && e.key === key && blocks.every(b => (e.accept_risk ?? []).includes(b.seq) && e.seq > b.seq));
@@ -332,6 +345,9 @@ function lawPlan(h: History, sha: string): Plan {
   if (!p) { p = own(h.plans(sha)); h.planObjs.set(sha, p); }
   return p;
 }
+function recordedPlan(h: History, e: Pick<import('./types.ts').PlanEntry, 'plan' | 'writes_syntax'>): Plan {
+  return withWritesSyntax(lawPlan(h,e.plan),e.writes_syntax ?? 1);
+}
 /** The plan in force at executor observation `seq` (attribution reruns, supersede). */
 const obsPlan = (h: History, seq: number): Plan | undefined => { const sha = h.obsPlans.get(seq); return sha === undefined ? undefined : lawPlan(h, sha); };
 function blank(plans: PlanLookup): State {
@@ -390,7 +406,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -433,7 +449,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
     if (errors.length) throw new OwedError(`Entry #${e.seq} invalid: ${errors.join('; ')}`);
     if (e.kind === 'genesis') {
       h.genesis = e;
-      s.plan = lawPlan(h, e.plan); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
+      s.plan = recordedPlan(h, e); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
       s.trunk = { name: e.trunk, ...e.state, seq: e.seq };
       if (s.plan.allow !== undefined) h.allowSeq = e.seq;
     } else if (e.kind === 'refresh') {
@@ -442,7 +458,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       for (const id of changed) red.set(`inv:${id}`, { key: e.state.invKeys[id]!, seq: e.seq, kind: 'refresh' });
       s.trunk.invKeys = { ...e.state.invKeys };
     } else if (e.kind === 'plan') {
-      const next = lawPlan(h, e.plan);
+      const next = recordedPlan(h, e);
       const detected = downgradeDetails(s.plan, next);
       // A candidate's facts were computed under the old plan; if its node's
       // obligations, setup, exec or closure changed, the writer must submit again.
@@ -450,7 +466,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       // K3: the node `drive` only chooses later launches' agents and models; changing it never invalidates a candidate.
       // N1 (0.10): a carry submit by executor:owed may follow the plan entry and restore the same commit as candidate.
       for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && invalidates(s.plan, next, n.id)) n.candidate = undefined;
-      const allowChanged = canonical(s.plan.allow) !== canonical(next.allow);
+      const allowChanged = canonical(s.plan.allow) !== canonical(next.allow) || writesAllowChanged(s.plan,next);
       supersede(s, h, e.seq, next);
       s.plan = next; s.planSha = e.plan; h.dependents = dependentCounts(next);
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
@@ -511,6 +527,11 @@ function fold(s: State, entries: Iterable<Entry>): void {
           if (b.state === 'superseded') { h.shadow.set(b.seq, e.verdict === 'fail' ? 'cleared' : 'flaky'); continue; }
           b.state = e.verdict === 'fail' ? 'cleared' : 'flaky';
           if (b.state === 'cleared') b.clearedBy = e.seq;
+        }
+        // WG5: a later writes verdict supersedes only overlap-only execution blocks.
+        if (e.obligation === 'writes' && e.verdict !== 'error' && !e.attribution) for (const b of n.blocks.filter(b => b.kind === 'exec' && underlying(h,b) === 'active' && b.obligation === 'writes')) {
+          const prior = listed(h.bySeq,b.seq)[0];
+          if (prior?.kind === 'obs' && prior.waits_on) { b.state = 'cleared'; b.clearedBy = e.seq; }
         }
         if (e.verdict === 'fail' && !e.attribution) n.blocks.push({ seq: e.seq, node: e.subject, obligation: e.obligation, kind: 'exec', key: e.key, state: 'active' });
       }
@@ -585,7 +606,10 @@ export function unpackState(p: PackedState, plans: PlanLookup, planOf: (sha: str
   const planObjs = new Map(p.plans.map(sha => [sha, planOf(sha)] as const)), s = p.state;
   Object.setPrototypeOf(s.nodes, null);
   const h: History = { ...p.history, plans, planObjs };
-  if (s.planSha) s.plan = lawPlan(h, s.planSha);
+  if (s.planSha) {
+    const law = h.entries.findLast(e => e.kind === 'genesis' || e.kind === 'plan')! as import('./types.ts').PlanEntry | import('./types.ts').GenesisEntry;
+    s.plan = recordedPlan(h,law);
+  }
   Object.defineProperty(s, history, { value: h });
   return s;
 }
@@ -608,7 +632,7 @@ export function sameReplay(a: State, b: State): boolean { return isDeepStrictEqu
  * and `drive`), or the plan's setup, exec or closure changed.
  */
 export function invalidates(prev: Plan, next: Plan, id: string): boolean {
-  return canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure);
+  return canonical(writesKeySyntax(prev,prev.nodes.find(x => x.id === id)?.writes ?? [])) !== canonical(writesKeySyntax(next,next.nodes.find(x => x.id === id)?.writes ?? [])) || canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure);
 }
 /** N1: the node spec fields whose change still lets owed carry a candidate (its facts are recomputed). */
 export const CARRY_FIELDS: readonly string[] = ['checks', 'writes', 'type', 'drive', 'later'];
@@ -757,7 +781,7 @@ export function observationsOf(s: State, subject: string, obligation: string, ke
 export function planAt(s: State, seq: number): Plan {
   const law = context(s).entries.findLast(e => e.seq < seq && (e.kind === 'genesis' || e.kind === 'plan'));
   if (!law || (law.kind !== 'genesis' && law.kind !== 'plan')) throw new OwedError(`No plan is in force before #${seq}`, 'internal');
-  return context(s).plans(law.plan);
+  return recordedPlan(context(s),law);
 }
 /**
  * The ruling that resolves a needs-parent review block (D18 as amended): the first ruling naming the block's node
@@ -931,7 +955,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
     if (!m) { add(n.id, 'node removed'); continue; }
     checks(n.id, n.checks, m.checks);
     if (m.review.count < n.review.count || m.review.min_rank < n.review.min_rank) add(n.id, 'review count/rank reduced');
-    if (m.writes.some(w => !n.writes.some(p => w.startsWith(p)))) add(n.id, 'writes scope expanded');
+    if (m.writes.some(w => !n.writes.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))))) add(n.id, 'writes scope expanded');
     if (n.deps.some(d => !m.deps.includes(d))) add(n.id, 'dependency removed');
     result.push(...manualDowngrades(n.id, n, m));
   }
@@ -941,7 +965,7 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
 /** `allow` changed other than by deleting whole rules: some rule of `next` deep-equals no rule of `prev` (D21.2). */
 function allowWidened(prev: Plan, next: Plan): boolean {
   const before = new Set((prev.allow ?? []).map(r => canonical(r)));
-  return (next.allow ?? []).some(r => !before.has(canonical(r)));
+  return writesAllowChanged(prev,next) || (next.allow ?? []).some(r => !before.has(canonical(r)));
 }
 /** Rules of `plan` whose node globs match node id `node` (path.matchesGlob on the id). */
 const rulesFor = (plan: Plan, node: string): AllowRule[] => (plan.allow ?? []).filter(r => r.nodes.some(g => matchesGlob(node, g)));
@@ -966,7 +990,7 @@ function covered(prev: Plan, next: Plan, d: Downgrade, claimed: boolean): boolea
     const rank = after.review.min_rank >= before.review.min_rank || rules.some(r => r.review_rank !== undefined && after.review.min_rank >= r.review_rank);
     return count && rank;
   }
-  if (what === 'writes scope expanded' || what === 'writes widened') return after.writes.every(w => before.writes.some(p => w.startsWith(p)) || rules.some(r => r.writes?.some(p => w.startsWith(p))));
+  if (what === 'writes scope expanded' || what === 'writes widened') return after.writes.every(w => before.writes.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))) || rules.some(r => r.writes?.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next)))));
   // Every reading of the item must be covered by a `checks` glob, and there must be one: as `<id><suffix>` naming a
   // check of the node, and (D21.1/D23.2) as `evidence <id> removed|weakened` naming an evidence obligation of the node.
   // An item readable both ways (e.g. check id `evidence`, evidence id `check`) is covered only if both readings are.
@@ -993,7 +1017,7 @@ export function writesHint(prev: Plan, next: Plan, gaps: Downgrade[]): string | 
   if (!gaps.length || !gaps.every(g => g.what === 'writes widened' || g.what === 'writes scope expanded')) return undefined;
   const nodes = [...new Set(gaps.map(g => g.node))], writes = [...new Set(nodes.flatMap(id => {
     const before = prev.nodes.find(n => n.id === id), after = next.nodes.find(n => n.id === id), rules = rulesFor(prev, id);
-    return before && after ? after.writes.filter(w => !before.writes.some(p => w.startsWith(p)) && !rules.some(r => r.writes?.some(p => w.startsWith(p)))) : [];
+    return before && after ? after.writes.filter(w => !before.writes.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))) && !rules.some(r => r.writes?.some(p => writeCovers(p, w, writesSyntax(prev), writesSyntax(next))))) : [];
   }))];
   if (!writes.length) return undefined;
   const list = (xs: string[]): string => `[${xs.map(x => JSON.stringify(x)).join(', ')}]`;
@@ -1013,12 +1037,16 @@ export function adoptPrefixes(plan: Plan): string[] { return (plan.allow ?? []).
 /** The first changed path not under an `adopt` prefix of `plan`, or undefined when a parent may adopt them all (D21.4). */
 export function unadoptable(plan: Plan, changed: readonly string[]): string | undefined {
   const prefixes = adoptPrefixes(plan);
-  return changed.find(p => !prefixes.some(x => p.startsWith(x)));
+  return changed.find(p => !prefixes.some(x => matchesWrite(p, x, writesSyntax(plan))));
 }
-/** Whether a rule of `plan` matching node `node` lets the parent widen writes to cover every path in `paths` (D21.5). */
+/** Whether a matching rule authorizes each exact changed path (not a scope widening). */
 export function writesAllowed(plan: Plan, node: string, paths: readonly string[]): boolean {
   const rules = rulesFor(plan, node);
-  return paths.length > 0 && paths.every(p => rules.some(r => r.writes?.some(x => p.startsWith(x))));
+  return paths.length > 0 && paths.every(p => rules.some(r => r.writes?.some(x => matchesWrite(p, x, writesSyntax(plan)))));
+}
+/** WG3: coverage of a scope widening must be provable by literal prefixes or exact entry equality. */
+export function writesCovered(plan: Plan, node: string, entries: readonly string[]): boolean {
+  return entries.length > 0 && entries.every(w => rulesFor(plan, node).some(r => r.writes?.some(p => writeCovers(p, w, writesSyntax(plan), 2))));
 }
 /** Seq of the genesis/plan entry that last changed the `allow` block (S of `under allowance (plan #S)`, D21.3), if any. */
 export function allowanceSeq(s: State): number | undefined { return context(s).allowSeq; }
@@ -1034,7 +1062,7 @@ export function grantErrors(s: State, d: Omit<import('./types.ts').GrantEntry, '
     return errors;
   }
   if (paths.some(p => !n?.candidate?.changed.includes(p))) errors.push('grant paths must be in the current candidate changed paths');
-  if (paths.some(p => spec?.writes.some(w => p.startsWith(w)))) errors.push('grant paths must be outside plan writes');
+  if (paths.some(p => spec?.writes.some(w => matchesWrite(p, w, writesSyntax(s.plan))))) errors.push('grant paths must be outside plan writes');
   if (!writesAllowed(s.plan, d.node, paths)) errors.push('not covered by an allow rule');
   if (!Number.isSafeInteger(d.allowance) || d.allowance !== allowanceSeq(s)) errors.push('grant allowance must match the current allowance plan seq');
   if (paths.some(p => matchesAny(p, s.plan.closure))) errors.push('under closure');
@@ -1044,6 +1072,36 @@ export function grantErrors(s: State, d: Omit<import('./types.ts').GrantEntry, '
   if (paths.some(p => grantsOf(s, d.node).some(g => g.paths.includes(p)))) errors.push('grant paths already granted to this attempt');
   errors.push(...Object.keys(d).filter(k => !ENTRY_BASE_FIELDS.includes(k) && !['node', 'attempt', 'commit', 'paths', 'allowance'].includes(k)).map(k => `grant unknown field ${k}`));
   return errors;
+}
+/** WG4: classify exact paths independently, using the same replay gate as a real grant. */
+export function writesRefusals(s: State, id: string, paths: readonly string[]): { path: string; reasons: string[]; owners: string[] }[] {
+  const n = s.nodes[id];
+  return paths.filter(p => !withinWrites(s,id,p)).sort().flatMap(path => {
+    const reasons = grantErrors(s,{kind:'grant',by:'executor:owed',node:id,attempt:n?.slot?.attempt ?? -1,commit:n?.candidate?.commit ?? '',paths:[path],allowance:allowanceSeq(s) ?? -1});
+    const owners = Object.values(s.nodes).filter(other => other.id !== id && other.slot?.open && withinWrites(s,other.id,path)).map(other => other.id).sort();
+    return reasons.length ? [{path,reasons,owners}] : [];
+  });
+}
+/** WG5: latest overlap-only writes failure for this candidate, including while its owners remain open. */
+export function writesWaiting(s: State, id: string): ObsEntry | undefined {
+  const c = s.nodes[id]?.candidate;
+  if (!c) return undefined;
+  const latest = observationsOf(s,id,'writes',c.keys.writes ?? '').at(-1);
+  return latest?.verdict === 'fail' && latest.waits_on?.length && latest.commit === c.commit && latest.base === c.base ? latest : undefined;
+}
+/** WG ruling #2098: find an actual ownership cycle reachable from a waiting candidate. */
+export function writesWaitCycle(s: State, id: string): string[] | undefined {
+  const path: string[] = [], done = new Set<string>();
+  const visit = (node: string): string[] | undefined => {
+    const at = path.indexOf(node);
+    if (at >= 0) return [...path.slice(at),node];
+    if (done.has(node) || !s.nodes[node]?.slot?.open || !writesWaiting(s,node)) return undefined;
+    path.push(node);
+    const owners = [...new Set(writesRefusals(s,node,s.nodes[node]!.candidate!.changed).flatMap(r => r.owners))].sort();
+    for (const owner of owners) { const cycle = visit(owner); if (cycle) return cycle; }
+    path.pop(); done.add(node); return undefined;
+  };
+  return visit(id);
 }
 /** GR7: advisory only, for the uncovered paths; does not authorize a write. */
 export function grantHint(s: State, id: string, paths = s.nodes[id]?.candidate?.changed ?? []): string | undefined {
@@ -1059,6 +1117,7 @@ export function validateDraft(s: State, d: Draft): string[] {
   if (!/^(owner|parent|writer|reviewer|executor):.+$/.test(d.by)) errors.push('Invalid identity format');
   // G2.3 (F5): parent:drive is the driver's name only; it records nothing the driver never writes (append and replay).
   if (d.by === DRIVER && !DRIVER_WRITES.includes(d.kind)) errors.push(`${d.kind} by ${DRIVER}: the driver records only ${DRIVER_WRITES.join(', ')}`);
+  if ((d.kind === 'genesis' || d.kind === 'plan') && d.writes_syntax !== undefined && d.writes_syntax !== 2) errors.push('plan writes_syntax must be 2; upgrade owed before replaying this plan');
   if (d.kind === 'genesis') {
     allow('owner');
     if (s.seq !== -1) errors.push('genesis must be the first entry');
@@ -1084,7 +1143,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('owner', 'parent');
       if (d.prior !== s.planSha) errors.push('plan prior must reference the current plan sha');
       let downgrade = d.downgrades.length > 0, gaps: Downgrade[] = d.downgrades, hint: string | undefined;
-      try { const next = context(s).plans(d.plan); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); hint = writesHint(s.plan, next, gaps); } catch { errors.push('Cannot read new plan'); }
+      try { const next = withWritesSyntax(context(s).plans(d.plan),d.writes_syntax ?? 1); downgrade = downgradeDetails(s.plan, next).length > 0 || downgrade; gaps = uncoveredDowngrades(s.plan, next, d.downgrades); hint = writesHint(s.plan, next, gaps); } catch { errors.push('Cannot read new plan'); }
       // D21.3: a parent needs no owner when an allowance of the current (prior) plan covers every downgrade.
       if (downgrade && r !== 'owner' && (r !== 'parent' || gaps.length)) errors.push(`Only owner may approve a plan that reduces obligations${r === 'parent' ? `; not covered by an allowance of the current plan: ${gaps.map(g => `${g.node}: ${g.what}`).join('; ')}${hint ? `\n${hint}` : ''}` : ''}`);
       if (d.note !== undefined && typeof d.note !== 'string') errors.push('plan note must be a string');
@@ -1151,6 +1210,12 @@ export function validateDraft(s: State, d: Draft): string[] {
       for (const measured of [d, ...(d.runs ?? [])]) {
         const ex = measured.execution;
         if (ex !== undefined && (!ex || typeof ex !== 'object' || Array.isArray(ex) || typeof ex.completed !== 'boolean' || typeof ex.countOK !== 'boolean' || Object.keys(ex).some(k => !['completed','countOK'].includes(k)))) errors.push('obs execution must be {completed, countOK} booleans');
+      }
+      if (d.waits_on !== undefined) {
+        const target = s.nodes[d.subject], c = target?.candidate;
+        const refused = c ? writesRefusals(s,d.subject,c.changed) : [];
+        const expected = [...new Set(refused.flatMap(r => r.owners))].sort();
+        if (d.obligation !== 'writes' || d.verdict !== 'fail' || d.attribution !== undefined || d.merging !== undefined || d.probe !== undefined || !target?.slot?.open || !c || d.commit !== c.commit || d.base !== c.base || d.key !== c.keys.writes || !Array.isArray(d.waits_on) || !d.waits_on.length || canonical(d.waits_on) !== canonical(expected) || !refused.length || refused.some(r => r.reasons.some(reason => !reason.startsWith('overlaps open node ')))) errors.push('obs waits_on requires only current candidate writes overlaps with the named open nodes');
       }
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
       break;
@@ -1453,7 +1518,7 @@ export function attestJobs(s: State, id: string): AttestJob[] {
   const seen = new Set<string>();
   for (const b of n.blocks) if (b.kind === 'exec' && b.state === 'active') {
     const e = listed(context(s).bySeq, b.seq).find((e): e is ObsEntry => e.kind === 'obs' && e.seq === b.seq);
-    if (!e) continue;
+    if (!e || e.waits_on) continue;
     const token = `${b.obligation}\0${b.key}`;
     if (seen.has(token)) continue;
     seen.add(token);
@@ -1463,7 +1528,9 @@ export function attestJobs(s: State, id: string): AttestJob[] {
   }
   if (n.candidate && n.slot?.open) for (const o of required(nodeSpec(s, id)!, n.candidate)) {
     const key = n.candidate.keys[o];
-    if (!key || hasVerdict(s, id, o, key)) continue;
+    const retry = o === 'writes' ? writesWaiting(s,id) : undefined;
+    const due = retry && retry.waits_on!.every(owner => !s.nodes[owner]?.slot?.open);
+    if (!key || hasVerdict(s, id, o, key) && !due) continue;
     const j = job(nodeSpec(s, id), id, o, key, n.candidate.commit, n.slot.base, s.plan);
     if (j) jobs.push(quarantinedJob(s, j));
   }
