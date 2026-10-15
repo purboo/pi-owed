@@ -7,6 +7,10 @@ import { matchesAny, driveConfig, isCheckTemplateRun } from './plan.ts';
 import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, driveReviewerSlot, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq, activeQuarantineOf } from './reducer.ts';
 import { canonical } from './canon.ts';
+import { mergeBatchPlan } from './reducer.ts';
+import { mergeBatchSize } from './plan.ts';
+/** MT6: the planned batch after the merge queue (`; batch of N: A, B`). */
+const batchPlanText = (b: string[] | undefined): string => b?.length ? `; batch of ${b.length}: ${b.join(', ')}` : '';
 import { rebasePendingText, type RebasePending } from './rebase-view.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
@@ -88,6 +92,8 @@ export interface StatusView {
   trunk: State['trunk']; nodes: Record<string, NodeState>; groups: Record<string, string[]>;
   /** MO3: accepted open attempts in the driver's merge order (empty when none). */
   mergeQueue: string[];
+  /** MT6 (0.21): the batch the driver merges next with `drive.merge_batch` >= 2 (absent when none). */
+  mergeBatch?: string[];
   /** DR2: private driver busy receipts scoped to the current candidate/attempt. */
   mergeWaiting?: Record<string, { reason: string; since: string; attempt: number; candidate?: number; ahead?: number; job?: string }>;
   /** IR3: parent-only trunk invariant diagnostics. */
@@ -318,6 +324,7 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   const trunkRed = trunkInvariantReds(s);
   const view: StatusView = { ...knownRedDebt(s), ...(trunkRed.length ? { trunkRed } : {}), ...(held.length ? { held } : {}), ...(reported.length ? { reported } : {}), ...(later.length ? { later } : {}), ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, mergeQueue: mergeQueue(s), groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
   if (currentDefers.length) view.deferred = currentDefers;
+  { const batch = mergeBatchPlan(s, mergeBatchSize(s.plan)); if (batch.length) view.mergeBatch = batch; }
   view.summary = summaryView(s, entries, view, now, driverRunning, currentDefers);
   return view;
 }
@@ -603,7 +610,7 @@ function summaryHead(trunk: StatusView['trunk'], invariants: ItemView[], summary
 }
 /** SQ2: preserve the 0.14 renderer plus trunk invariant-red diagnostics. */
 export function renderStatusFull(v: StatusView): string {
-  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, `Merge queue: ${v.mergeQueue.join(', ') || 'none'}`, ...Object.entries(v.rebasePending ?? {}).map(([id,r]) => `${id}: ${rebasePendingText(r)}`), ...Object.entries(v.mergeWaiting ?? {}).map(([id, w]) => `${id}: ${mergeWaitingText(w)}`), ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.held?.length ? v.held.map(h => `${h.node}: held by abandon #${h.abandon}; release with owed resume ${h.node}`) : []), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(i => itemText({ ...i, detail:v.trunkRed?.find(r => r.obligation === i.obligation)?.text ?? i.detail })), ...(v.knownRed?.length ? ['Known-red debt:', ...v.knownRed.map(knownRedText)] : []), ...(v.lapsedKnownRed?.length ? ['Lapsed known-red entries:', ...v.lapsedKnownRed.map(lapsedKnownRedText)] : []), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, `Merge queue: ${v.mergeQueue.join(', ') || 'none'}${batchPlanText(v.mergeBatch)}`, ...Object.entries(v.rebasePending ?? {}).map(([id,r]) => `${id}: ${rebasePendingText(r)}`), ...Object.entries(v.mergeWaiting ?? {}).map(([id, w]) => `${id}: ${mergeWaitingText(w)}`), ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.held?.length ? v.held.map(h => `${h.node}: held by abandon #${h.abandon}; release with owed resume ${h.node}`) : []), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(i => itemText({ ...i, detail:v.trunkRed?.find(r => r.obligation === i.obligation)?.text ?? i.detail })), ...(v.knownRed?.length ? ['Known-red debt:', ...v.knownRed.map(knownRedText)] : []), ...(v.lapsedKnownRed?.length ? ['Lapsed known-red entries:', ...v.lapsedKnownRed.map(lapsedKnownRedText)] : []), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -612,7 +619,7 @@ function entryLine(e: Entry): string {
     case 'grant': return `${head} granted writes ${e.paths.join(', ')} for ${e.node} attempt ${e.attempt} under allowance (plan #${e.allowance})`;
     case 'obs': return `${head} observed ${e.subject}/${e.obligation} ${e.verdict}${noise(e)}${e.note ? `: ${e.note}` : ''}`;
     case 'sweep': return `${head} sweep ${e.commit.slice(0, 12)}: ${e.verdict}${e.bisect ? ' (bisect)' : ''}; log ${e.log}${e.failed.length ? `; failed: ${e.failed.join(', ')}` : ''}`;
-    case 'merge': return `${head} merged ${e.node} → ${e.commit.slice(0, 12)}`;
+    case 'merge': return `${head} merged ${e.node} → ${e.commit.slice(0, 12)}${e.batch ? ` (batch of ${e.batch.members.length} → ${e.batch.final.slice(0, 12)})` : ''}`;
     case 'waive': return `${head} waived ${e.node}/${e.obligation}: ${e.reason}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(x => `#${x}`).join(', ')})` : ''}`;
     case 'defer': return `${head} deferred ${e.node} post-merge invariants ${e.items.map(i => i.id).join(', ')}: ${e.reason}`;
     case 'refresh': return `${head} refreshed trunk invariant keys on ${e.commit.slice(0, 12)}`;
@@ -829,7 +836,7 @@ function signatureTrunkRed(s: State, failures: readonly ObsEntry[], name: string
     const definition = trunkRunDefinition(planAt(s, failure.seq), failure);
     if (definition === undefined || definition !== trunkRunDefinition(s.plan, failure)) continue;
     const trunk = entriesOf(s).slice().reverse().filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.obligation === failure.obligation
-      && e.subject === failure.subject && (e.probe === 'trunk' || (e.subject === 'trunk' && e.merging === undefined))
+      && e.subject === failure.subject && (e.probe === 'trunk' || (e.subject === 'trunk' && e.merging === undefined && e.batch === undefined))
       && trunkRunDefinition(planAt(s, e.seq), e) === definition);
     const key = failure.obligation.startsWith('inv:') ? s.trunk.invKeys[failure.obligation.slice(4)] : trunk.find(e => e.commit === s.trunk.commit)?.key;
     const current = trunk.find(e => e.key === key);

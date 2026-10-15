@@ -28,6 +28,8 @@ const terminal: CliIo = { log: text => console.log(text), error: text => console
 /** Commands that run checks (D16): a signal aborts them and ends the check started; exit 130 for SIGINT, 143 for SIGTERM and SIGHUP. */
 const ABORTABLE = ['attest','merge','init','adopt','sweep'], SIGNALS: NodeJS.Signals[] = ['SIGINT','SIGTERM','SIGHUP'];
 const signalExit = (s: NodeJS.Signals): number => s === 'SIGINT' ? 130 : 143;
+/** MT: the receipt of a batch merge: one line per member merge entry, then the trunk move. */
+const batchMergeText = (r: ops.BatchMergeResult): string => [...r.entries.map(e => renderEntry(e)), ...(r.dropped.length ? [`Not batched (conflict; merge alone after a rebase): ${r.dropped.join(', ')}`] : []), `Trunk advanced to ${r.commit} (batch of ${r.nodes.length}: ${r.nodes.join(', ')})${leaseText(r)}`].join('\n');
 /** Signals within this time of the first are one stop request (D16a.3). */
 const SAME_REQUEST_MS = 1000;
 export async function main(argv: string[], io: CliIo = terminal): Promise<number> {
@@ -164,7 +166,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
       case 'approve': result=await ops.approve({...actor,node,note:value('note'),block:opts.has('block'),named,...(approvePin ? {candidate:approvePin} : {})}); break;
       case 'evidence': result=await ops.evidence({...actor,node,id:args[1]!,files,note:value('note',true)!,named}); break;
       case 'sweep': { const r=await ops.sweep({cwd,commit:value('commit'),signal,lease}); result=r; text=renderSweep(r); exit=r.entry.verdict === 'pass' ? 0 : 1; break; }
-      case 'merge': { const r=await ops.merge({...actor,node,signal,lease}); result=r; text=`${renderEntry(r.entry)}${leaseText(r)}\n${unguardedText(r.unguarded)}\nTrunk advanced to ${r.commit}${r.deferred.length ? `\nDeferred debt remains: ${r.deferred.map(i => `${i.subject}/${i.obligation}`).join(', ')}` : ''}`; break; }
+      case 'merge': { if(node.includes(',')) { const r=await ops.mergeBatch({...actor,nodes:node.split(',').map(x => x.trim()).filter(Boolean),signal,lease}); result=r; text=batchMergeText(r); break; } const r=await ops.merge({...actor,node,signal,lease}); result=r; text=`${renderEntry(r.entry)}${leaseText(r)}\n${unguardedText(r.unguarded)}\nTrunk advanced to ${r.commit}${r.deferred.length ? `\nDeferred debt remains: ${r.deferred.map(i => `${i.subject}/${i.obligation}`).join(', ')}` : ''}`; break; }
       case 'adopt': { const note=value('note',true)!; const r=await ops.adopt({...actor,channel:channel!,commit:adoptCommit ?? value('commit'),note,signal,lease,wait}); result=r; text=`${renderEntry(r.entry)}${leaseText(r)}${r.allowance !== undefined ? `\nAdopted by ${r.entry.by} under allowance (plan #${r.allowance})` : ''}\nInvariant observations: ${r.observations.length}\nLedger trunk ${r.trunk} is now ${r.commit}`; break; }
       case 'status': { const r=await ops.status({cwd}); result=r; text=renderStatus(r,{full:opts.has('full')}); break; }
       case 'why': { const r=await ops.why({cwd,node}); result=r; text=renderReceipt(r,{full:opts.has('full')}); break; }
