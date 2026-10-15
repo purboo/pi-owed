@@ -132,6 +132,14 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
   const idle = (): boolean => { try { return !stopped && !running && (typeof context?.isIdle !== 'function' || context.isIdle()); } catch { return !stopped && !running; } };
   const session = rpc.register(pi, idle);
   const notices = new Set<string>();
+  const registered = new Map<string, ToolDefinition>();
+  // Older hosts expose ToolInfo without exposure. During factory loading getAllTools may
+  // not be bound yet; fall back to direct, then retry on session_start before a model turn.
+  const supportsExposure = (): boolean => {
+    try { return typeof pi.getAllTools === 'function' && pi.getAllTools().some(t => typeof t.exposure === 'string'); }
+    catch { return false; }
+  };
+  const publish = (t: ToolDefinition) => pi.registerTool({ ...t, exposure: t.exposure === 'deferred' && !supportsExposure() ? 'direct' : t.exposure });
   const plain = (ctx: ExtensionContext): Context => ({ cwd: ctx.cwd, hasUI: ctx.hasUI, idle: idle() });
   const event = async (name: string, ctx: ExtensionContext) => rpc.call('event', [session, name, plain(ctx)], ctx);
   const timer = setInterval(() => {
@@ -141,7 +149,7 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
   return {
     ...pi,
     registerTool(t: ToolDefinition) {
-      pi.registerTool({ ...t, async execute(id, p, signal, _update, ctx) {
+      const local: ToolDefinition = { ...t, async execute(id, p, signal, _update, ctx) {
         context = ctx;
         try {
           const r = await rpc.call('tool', [session, t.name, id, p, plain(ctx)], ctx, signal);
@@ -154,7 +162,8 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
           const error = e as OwedError;
           return versionNotice({ content: [{ type: 'text' as const, text: `Refused: ${error.message}` }], details: { code: error.code, reason: error.message }, isError: true }, {seen:notices});
         }
-      } });
+      } };
+      registered.set(t.name, local); publish(local);
     },
     registerCommand(name, command) {
       pi.registerCommand(name, { ...command, async handler(args, ctx) {
@@ -167,7 +176,10 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
       if ((name as string) === 'owed_tick' || typeof pi.on !== 'function') return () => undefined;
       return (pi.on as (name: string, handler: (_e: unknown, ctx: ExtensionContext) => Promise<void>) => () => void)(name, async (_e: unknown, ctx: ExtensionContext) => {
         context = ctx;
-        if (name === 'session_start') notices.clear();
+        if (name === 'session_start') {
+          notices.clear();
+          if (supportsExposure()) for (const t of registered.values()) if (t.exposure === 'deferred') publish(t);
+        }
         if (name === 'agent_start') running = true;
         if (name === 'agent_settled') running = false;
         if (name === 'session_shutdown') { stopped = true; clearInterval(timer); }

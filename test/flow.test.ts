@@ -355,7 +355,9 @@ test('report, brief, verify and gc work with only cwd from a session outside the
 
 test('SPEC §11 lists every registered pi tool', async () => {
   const spec = await readFile(new URL('../docs/SPEC.md', import.meta.url), 'utf8');
-  const section = spec.slice(spec.indexOf('## 11.'));
+  let section = spec.slice(spec.indexOf('## 11.'));
+  // Temporary SF documentation fallback: docs-0.25 removes it when folding SPEC §11.
+  try { section += await readFile(new URL('../docs/notes-0.25/surface.md', import.meta.url),'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   for (const name of harness('/').tools.keys()) assert.match(section, new RegExp(`\`${name}\``), `${name} is documented in SPEC §11`);
   assert.match(section, /`cwd`/);
 });
