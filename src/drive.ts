@@ -325,7 +325,7 @@ const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntr
 /** LO-W4: the rulings the slot writer may still need, for why's manual forwarding section. */
 export function rulingToForward(s: State, node: string): string | undefined {
   const n = s.nodes[node], slot = n?.slot;
-  if (!n || !slot) return undefined;
+  if (!n || !slot?.open || n.merged) return undefined;
   const ar = n.runs.find(r => r.attempt === slot.attempt), writer = ar?.launches.find(l => l.role === 'writer');
   let rules: Rule[];
   if (ar && writer) rules = undelivered(s, node, ar, writer);

@@ -292,6 +292,26 @@ test('LO-W4: a failed delivery of only a global ruling remains available in why'
   } finally { dsa.restore(); await f.cleanup(); }
 });
 
+for (const closed of ['merged', 'abandoned'] as const) test(`LO-W5: why omits later global rulings for a ${closed} node`, async () => {
+  const f = await fixture();
+  try {
+    await candidate(f, 'a', closed === 'merged');
+    if (closed === 'merged') await ops.merge({ cwd: f.cwd, as: parent, node: 'a' });
+    else await ops.abandon({ cwd: f.cwd, as: parent, node: 'a', reason: 'close the fixture attempt' });
+    const n = (await ops.readState(f)).state.nodes.a!;
+    assert.ok(n.slot, 'closed slots remain in the state'); assert.equal(n.slot.open, false);
+    assert.equal(!!n.merged, closed === 'merged');
+    const text = 'Global ruling after the slot closed';
+    const rule = await ops.rule({ cwd: f.cwd, as: parent, nodes: '*', text });
+    assert.equal(rule.delivery?.slots?.find(s => s.node === 'a'), undefined);
+    assert.equal((await ops.why({ cwd: f.cwd, node: 'a' })).rulingFollowUp, undefined);
+    for (const args of [['why', 'a'], ['why', 'a', '--full']]) {
+      const why = await cli(f.cwd, args); assert.equal(why.code, 0, why.stderr);
+      assert.doesNotMatch(why.stdout, /Ruling to forward:/); assert.ok(!why.stdout.includes(text), why.stdout);
+    }
+  } finally { await f.cleanup(); }
+});
+
 test('LO-W4: why shows only undelivered rulings for a launched writer and removes them after delivery', async () => {
   const f = await fixture();
   const dsa = { async describe(rid: string) { return { rid, state: 'sealed' as const }; }, async send() { throw new Error('sealed writer'); } };
