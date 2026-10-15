@@ -20,7 +20,7 @@ export function countNote(counts: Counts | undefined, minTests: number | undefin
   const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
   return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
 }
-export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void }
+export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void }
 function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
   for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
@@ -537,6 +537,8 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (runFailed.length) failureLogs.push(result.measurementLog ?? result.log);
         if (failed.size) obs.failed = [...failed];
         recordSignatures(obs, result.measurementLog ?? result.log, runFailed, tree);
+        if (ctx.onFailureFiles && runFailed.length) ctx.onFailureFiles([...new Set(runFailed.flatMap(name =>
+          groupsAt(result.measurementLog ?? result.log,[name],tree).groups.flatMap(g => g.location ? [g.location.replace(/:\d+(?::\d+)?$/,'')] : [])))]);
         // IR2: facts about this run remain independent of failure names and display-note separators.
         const execution = { completed:false, countOK:false };
         try {

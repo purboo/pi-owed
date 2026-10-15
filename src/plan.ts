@@ -460,9 +460,18 @@ export function parsePlan(text: string): Plan {
   if (r.lease !== undefined) { if (typeof r.lease !== 'boolean') errors.push('lease: expected boolean'); else plan.lease = r.lease; }
   if (r.sweep !== undefined) {
     const sw = obj(r.sweep, 'sweep');
-    for (const k of Object.keys(sw)) if (!['run', 'timeout_s', 'reads'].includes(k)) errors.push(`sweep.${k}: unknown key`);
+    for (const k of Object.keys(sw)) if (!['run', 'timeout_s', 'reads', 'every'].includes(k)) errors.push(`sweep.${k}: unknown key`);
     plan.sweep = { run: str(sw.run, 'sweep.run'), timeout_s: num(sw.timeout_s ?? 600, 'sweep.timeout_s', 1) };
     if (sw.reads !== undefined) plan.sweep.reads = strings(sw.reads, 'sweep.reads');
+    if (sw.every !== undefined) {
+      const every = obj(sw.every, 'sweep.every');
+      for (const k of Object.keys(every)) if (!['merges','minutes'].includes(k)) errors.push(`sweep.every.${k}: unknown key`);
+      if (every.merges === undefined && every.minutes === undefined) errors.push('sweep.every: at least one of merges or minutes is required');
+      plan.sweep.every = {
+        ...(every.merges !== undefined ? {merges:num(every.merges,'sweep.every.merges',1)} : {}),
+        ...(every.minutes !== undefined ? {minutes:num(every.minutes,'sweep.every.minutes',1)} : {}),
+      };
+    }
   }
   if (r.limits !== undefined) {
     const limits = obj(r.limits, 'limits');
