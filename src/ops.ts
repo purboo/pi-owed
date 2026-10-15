@@ -6,7 +6,9 @@ import { performance } from 'node:perf_hooks';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
-import { Ledger, PLAN_CACHE_VERSION, entryHash, type LockOwner } from './ledger.ts';
+import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type LockOwner } from './ledger.ts';
+import { withLockDeadline } from './lock-deadline.ts';
+import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason, mergeWaitSuffix } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText } from './rebase-view.ts';
 import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
@@ -522,7 +524,7 @@ export async function attestTrunk(o: Context & { signal?: AbortSignal; lease?: b
     const again = o.remeasure ? await trunkRemeasure(o.cwd,ledger,r.recorded,o.all,o.signal) : undefined;
     const latest = (await load(ledger)).state;
     return { ...prepared, ...again, observations:r.recorded, superseded:r.superseded, missing:trunkJobs(latest).map(j => j.obligation.slice(4)), failed:trunkInvariantReds(latest).map(i => i.obligation.slice(4)) };
-  },'trunk-refresh',o.signal,{ busy:who => `attest --trunk is already running (${heldBy(who)}); its observations will appear in owed status` });
+  },'trunk-refresh',o.signal,{ busy:who => `attest --trunk is already running (${heldBy(who)}); its observations will appear in owed status`, activity:'attest --trunk' });
 }
 /** MS1: `attest --trunk --remeasure`: current trunk keys whose latest observation failed (`all`: every one), except those this call just measured. */
 async function trunkRemeasure(cwd: string, ledger: Ledger, measured: Entry[], all: boolean | undefined, signal?: AbortSignal): Promise<{ remeasured: string[]; remeasuredObs: Entry[] }> {
@@ -1009,7 +1011,7 @@ export async function attest(o: MeasurementContext & { node: string; rerun?: boo
   if (o.remeasure) return ledger.withLock(async () => {
     const r = await remeasureMerge(o,ledger), card = await why(o);
     return { node:o.node, observations:r.recorded, superseded:r.superseded, accepted:card.accepted, receipt:card, remeasured:r.remeasured };
-  },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner) });
+  },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner), activity:`attest ${o.node}` });
   return ledger.withLock(async () => {
     const { state } = await load(ledger), n = candidate(state,o.node), jobs = attestJobs(state,o.node);
     if (o.rerun) for (const c of state.plan.nodes.find(x => x.id === o.node)!.checks) for (const kind of ['check', ...(c.red ? ['red'] : [])] as ('check'|'red')[]) {
@@ -1019,7 +1021,7 @@ export async function attest(o: MeasurementContext & { node: string; rerun?: boo
     if (o.rerun && !jobs.some(j => j.obligation === 'writes' && j.key === n.candidate!.keys.writes)) jobs.push({ kind:'writes',subject:o.node,obligation:'writes',key:n.candidate!.keys.writes!,commit:n.candidate!.commit,base:n.slot!.base });
     const r = await runJobs(o.cwd,ledger,state,[...genesisJobs(state),...jobs],o.signal), card = await why(o);
     return { node:o.node, observations:r.recorded, superseded:r.superseded, accepted:card.accepted, receipt:card };
-  },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner) });
+  },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner), activity:`attest ${o.node}` });
 }
 /**
  * MS1: measures again, on the node's current merge tree, every invariant whose latest observation on the merge key
@@ -1053,7 +1055,7 @@ export function remeasureText(node: string | undefined, remeasured: string[], re
  * parallel (each observation is appended under the ledger lock only if its item is still current, D24).
  */
 export const attestLock = (node: string): string => `attest-${sha256(node).slice(0,16)}`;
-const heldBy = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since ${o.ts}`;
+const heldBy = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since ${o.ts}${lockActivityText(o)}`;
 /** K1: the `busy` message of an attest of `node` while another attest of it holds its lock. */
 export const attestBusyText = (node: string, owner: LockOwner): string => `attest of ${node} is already running (${heldBy(owner)}); its observations will appear in owed why ${node}`;
 /** `needs: 'parent'` marks a block that needs a parent ruling (D18); the ledger refuses it on an ok verdict. */
@@ -1159,6 +1161,10 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
   if (!measurementScope()) return leased(o, signal => merge({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
+    if (by(o) === DRIVER) {
+      const pending = await pendingAdopt(ledger.dir);
+      if (pending) throw new OwedError(`merge waiting for ${adoptPendingReason(pending)}; retry next pass`,'busy');
+    }
     let snapshot = await load(ledger), state = snapshot.state;
     const n = candidate(state,o.node);
     if (!n.accepted) {
@@ -1244,7 +1250,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       const entry = (await ledger.append([...kept,d])).at(-1)!;
       return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D'),unguarded:unguardedPaths(current.plan,lm.facts.changed)};
     },undefined,o.signal);
-  },'merge',o.signal);
+  },'merge',o.signal,{activity:`merge ${o.node}`});
 }
 /**
  * AT1: refusal lead when merge trees `commits` of `node` break an invariant trunk passes and trunk moved since the
@@ -1345,14 +1351,24 @@ export async function adoptPreview(o: Context & { commit?: string }): Promise<Ad
  * abort (D16a, SPEC §7.8): observations measured before it are recorded when the ledger is stable and they pass the
  * guard, without a ref check (abortWith).
  */
-export async function adopt(o: Actor & { commit?: string; note: string; channel?: Channel; signal?: AbortSignal; lease?: boolean }): Promise<AdoptResult> {
+export async function adopt(o: Actor & { commit?: string; note: string; channel?: Channel; signal?: AbortSignal; lease?: boolean; wait?: number }): Promise<AdoptResult> {
+  const start = Date.now(), deadline = start+(adoptWaitMs(o.wait) ?? lockWait.ms);
+  return withLockDeadline(deadline,() => adoptRequested(o,start,deadline));
+}
+async function adoptRequested(o: Parameters<typeof adopt>[0], start: number, deadline: number): Promise<AdoptResult> {
   owner(o);
   // D21.4: a parent may adopt only under an `adopt` allowance of the current plan (paths checked below, before any effect).
   if (o.as.role !== 'owner' && !(o.as.role === 'parent' && adoptPrefixes((await load(await Ledger.open(o.cwd))).state.plan).length)) throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('adopt requires a note','usage');
   checkAbort(o.signal);
-  if (!measurementScope()) return leased(o, signal => adopt({ ...o, signal }));
-  const ledger = await Ledger.open(o.cwd);
+  const ledger = await Ledger.open(o.cwd), { state } = await load(ledger);
+  const commit = await git.revParse(o.cwd,o.commit ?? (state.seq >= 0 ? `refs/heads/${state.trunk.name}` : 'HEAD'));
+  return withAdoptPending(ledger,commit,start,deadline,() => measurementScope()
+    ? adoptHeld(o,ledger)
+    : leased(o,signal => adoptHeld({...o,signal},ledger)));
+}
+/** AW: pending spans lease acquisition and all merge-lock outcomes. */
+async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger): Promise<AdoptResult> {
   return ledger.withLock(async () => {
     const { state } = await load(ledger); inited(state);
     const p = await adoptable(o.cwd,state,o.commit);
@@ -1383,7 +1399,7 @@ export async function adopt(o: Actor & { commit?: string; note: string; channel?
       const appended = await ledger.append([...observations,d]), allowance = o.as.role === 'parent' ? allowanceSeq(latest.state) : undefined;
       return {...p,entry:appended.at(-1)!,observations:appended.slice(0,-1),...(allowance !== undefined ? { allowance } : {})};
     },undefined,o.signal);
-  },'merge',o.signal);
+  },'merge',o.signal,{activity:'adopt'});
 }
 export async function status(o: Context): Promise<StatusView> {
   const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = inited(reduceFrom(loaded.state,[],loaded.lookup)), entries = loaded.entries;
@@ -1491,13 +1507,15 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
 async function applyMergeWaiting(dir: string, state: State, view: StatusView): Promise<void> {
   try {
     const busy = JSON.parse(await readFile(join(dir,'drive','waiting.json'),'utf8')) as NonNullable<StatusView['mergeWaiting']>;
+    const adoptPending = await pendingAdopt(dir);
     const current: NonNullable<StatusView['mergeWaiting']> = {};
     for (const [id, wait] of Object.entries(busy)) {
       const n = state.nodes[id];
       if (!n?.slot?.open || n.merged || wait.attempt !== n.slot.attempt || wait.candidate !== n.candidate?.seq || typeof wait.reason !== 'string' || !Number.isFinite(Date.parse(wait.since))) continue;
+      if (wait.reason.startsWith('adopt (pending since ') && !adoptPending) continue;
       current[id] = wait;
       const progress = view.summary?.progress.find(p => p.node === id);
-      if (progress && n.candidate) progress.phase = `${n.accepted ? 'merge' : 'measure'} waiting for ${oneLine(wait.reason)} since ${new Date(wait.since).toISOString().slice(11,16)}`;
+      if (progress && n.candidate) progress.phase = `${n.accepted ? 'merge' : 'measure'} waiting for ${oneLine(wait.reason)}${mergeWaitSuffix(wait.reason,wait.since)}`;
     }
     if (Object.keys(current).length) view.mergeWaiting = current;
   } catch { /* cache miss */ }

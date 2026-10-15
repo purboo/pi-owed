@@ -1,7 +1,7 @@
 // SW: advisory trunk sweeps. Lease -> sweep operation lock -> short ledger append lock;
 // measurements never hold the ledger lock and never write observations or escapes.
 import { canonical, sha256 } from './canon.ts';
-import { Ledger } from './ledger.ts';
+import { Ledger, lockActivityText } from './ledger.ts';
 import { readState } from './ops.ts';
 import { git, revParse, isAncestor } from './git.ts';
 import { runJob } from './exec.ts';
@@ -149,7 +149,7 @@ export async function sweep(o: LeaseOptions & { commit?: string; once?: boolean;
         return finish({first:{commit:first.commit,node:first.node,merge:first.seq,
           command:`owed escape ${quote(first.node)} --merge ${first.seq} --class missing --note ${quote(note)}`}});
       } catch (e) { if (e === budget) return inconsistent('confirmation budget exhausted'); throw e; }
-    },'sweep',signal,{busy:()=> 'sweep already running; retry next pass'});
+    },'sweep',signal,{busy:owner=> `sweep already running${lockActivityText(owner)}; retry next pass`,activity:'sweep'});
   }
 }
 export function renderSweep(r: SweepResult): string {

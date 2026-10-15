@@ -7,6 +7,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { H, ZERO, sha256 } from './canon.ts';
 import { git } from './git.ts';
+import { currentLockDeadline } from './lock-deadline.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import type { Entry, Draft } from './types.ts';
 
@@ -48,11 +49,13 @@ async function discard(path: string): Promise<void> {
   await rm(trash, { recursive: true, force: true });
 }
 /** The owner file of a lock directory: who took it and when (ISO time). */
-export interface LockOwner { pid: number; host: string; ts: string }
+export interface LockOwner { pid: number; host: string; ts: string; activity?: string; activitySince?: string }
 /** @internal Test hook: how long withLock waits for a lock before it fails with code `busy` (default 60 s). */
 export const lockWait = { ms: 60_000 };
 /** Options of `withLock`. */
 export interface LockOptions {
+  waitMs?: number;
+  activity?: string;
   /**
    * The `busy` message of this lock: given, a lock whose owner is a live process on this host fails at once with code
    * `busy` and this message instead of waiting, and a wait that times out fails with it too (K1).
@@ -60,14 +63,17 @@ export interface LockOptions {
   busy?: (owner: LockOwner) => string;
 }
 /** The text of a lock wait that timed out (code `busy`); `lock` is the ledger lock. */
+export function lockActivityText(owner: LockOwner): string {
+  return owner.activity ? ` (${owner.activity.replace(/[\r\n]/g, ' ')} since ${(owner.activitySince ?? owner.ts).slice(11,16)})` : '';
+}
 export function lockTimeoutText(name: string, owner?: LockOwner): string {
   const what = name === 'lock' ? 'the ledger lock' : `the ${name} lock`;
-  return owner ? `timed out waiting for ${what} held by pid ${owner.pid} on ${owner.host} since ${owner.ts}; retry` : `timed out waiting for ${what}; retry`;
+  return owner ? `timed out waiting for ${what} held by pid ${owner.pid} on ${owner.host} since ${owner.ts}${lockActivityText(owner)}; retry` : `timed out waiting for ${what}; retry`;
 }
 async function readOwner(path: string): Promise<LockOwner | undefined> {
   try {
     const o = JSON.parse(await readFile(join(path, 'owner.json'), 'utf8')) as Partial<LockOwner>;
-    return { pid: Number(o.pid), host: String(o.host), ts: String(o.ts) };
+    return { pid: Number(o.pid), host: String(o.host), ts: String(o.ts), ...(typeof o.activity === 'string' ? { activity:o.activity } : {}), ...(typeof o.activitySince === 'string' ? { activitySince:o.activitySince } : {}) };
   } catch (e) { if (isCode(e, 'ENOENT') || e instanceof SyntaxError) return undefined; throw e; }
 }
 /** Whether `pid` on this host is a live process (EPERM: alive, owned by another user). */
@@ -82,6 +88,7 @@ function alive(pid: number): boolean {
 function dropTornTail(text: string): string {
   return text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1);
 }
+const lockActivities = new AsyncLocalStorage<Map<string,string>>();
 export class Ledger {
   readonly dir: string;
   private held = new AsyncLocalStorage<Set<string>>();
@@ -109,7 +116,9 @@ export class Ledger {
     if (!/^[a-zA-Z0-9_-]+$/.test(lockName)) throw new OwedError('invalid lock name', 'usage');
     if (this.held.getStore()?.has(lockName)) throw new OwedError(`nested lock ${lockName}`, 'internal');
     const aborted = () => new OwedError('aborted', 'aborted');
-    const path = join(this.dir, lockName), deadline = Date.now() + lockWait.ms;
+    const inheritedDeadline = currentLockDeadline();
+    const deadline = Math.min(inheritedDeadline ?? Infinity,opts.waitMs !== undefined ? Date.now()+opts.waitMs : inheritedDeadline ?? Date.now()+lockWait.ms);
+    const path = join(this.dir, lockName);
     let owner: LockOwner | undefined;
     let delay = 10;
     const token = randomUUID();
@@ -119,7 +128,7 @@ export class Ledger {
       // file is complete whenever the lock path exists.
       const staged = join(this.dir, `.${lockName}-${token}`);
       await mkdir(staged, { recursive: true });
-      await writeFile(join(staged, 'owner.json'), JSON.stringify({ pid: process.pid, host: hostname(), token, ts: new Date().toISOString() }));
+      await writeFile(join(staged, 'owner.json'), JSON.stringify({ pid: process.pid, host: hostname(), token, ts: new Date().toISOString(), ...(opts.activity ? { activity:opts.activity } : {}) }));
       try { await rename(staged, path); break; } catch (e) {
         await rm(staged, { recursive: true, force: true });
         if (!isCode(e, 'EEXIST') && !isCode(e, 'ENOTEMPTY')) throw e;
@@ -151,15 +160,34 @@ export class Ledger {
       if (signal?.aborted) throw aborted();
       await new Promise<void>((resolve, reject) => {
         const stop = () => { clearTimeout(timer); reject(aborted()); };
-        const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, delay);
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, Math.min(delay,Math.max(0,deadline-Date.now())));
         signal?.addEventListener('abort', stop, { once: true });
       });
       delay = Math.min(250, delay * 2);
     }
     const owned = new Set(this.held.getStore()); owned.add(lockName);
+    const activities = new Map(lockActivities.getStore());
+    if (opts.activity) activities.set(join(path,'owner.json'),opts.activity);
     try {
-      return await this.held.run(owned, fn);
+      return await lockActivities.run(activities,() => this.held.run(owned, fn));
     } finally { owned.delete(lockName); await discard(path); }
+  }
+  private activityUpdate: Promise<void> = Promise.resolve();
+  /** AW2: serialize atomic owner-file updates for parallel measurements under this holder. */
+  async measuringActivity(obligation: string): Promise<void> {
+    const activities = [...(lockActivities.getStore() ?? [])];
+    const update = this.activityUpdate.then(async () => {
+      for (const [path,activity] of activities) {
+        const owner = JSON.parse(await readFile(path,'utf8')) as LockOwner & { token: string };
+        owner.activity = `${activity}: measuring ${obligation}`;
+        owner.activitySince = new Date().toISOString();
+        const temp = `${path}.${randomUUID()}`;
+        try { await writeFile(temp,JSON.stringify(owner)); await rename(temp,path); }
+        finally { await rm(temp,{force:true}); }
+      }
+    });
+    this.activityUpdate = update.catch(() => {});
+    await update;
   }
   async append(drafts: Draft[]): Promise<Entry[]> {
     if (!this.held.getStore()?.has('lock')) throw new OwedError('append requires withLock()', 'internal');
