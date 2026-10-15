@@ -10,11 +10,18 @@ It provides a CLI, a pi extension, and an agent skill. It is not an agent schedu
 
 ## What's new in 0.24
 
-Upgrade every reader — CLI, driver and every pi session loading owed, restarted
-— before a sweep records a confirmed boundary/automatic escape or the plan
-enables `risk` or `closure_neutral`. Older readers refuse the new sweep/escape
-fields; ignoring the new review policies produces a conservative mismatch,
-not a false pass. No new ledger entry kind is added.
+Upgrade every reader to 0.24 — CLI, every driver and every pi session loading
+owed, with each driver/session restarted — before (1) a sweep records a
+confirmed boundary/automatic escape, (2) the plan sets `sweep.every`, or
+(3) the plan sets `risk` or `closure_neutral`. Older readers refuse the new
+sweep/escape fields; 0.23 rejects plans containing `sweep.every` as an unknown
+key and cannot read their ledger state. It ignores top-level `risk` and
+`closure_neutral`. Risk can raise or lower review requirements: old executors
+can merge below a raising policy, making 0.24 replay refuse the entire ledger;
+0.24 merges relying on a lowering policy can make old replay refuse the entire
+ledger. Only `closure_neutral` used alone is conservative: old executors compute
+`closureTouched=true` for new submits changing closure, while replay retains
+recorded facts. No new ledger entry kind is added.
 See [SPEC compatibility](docs/SPEC.md#compatibility-020024).
 
 - **Scheduled sweeps and automatic escapes:** `sweep.every: {merges: N,
