@@ -19,7 +19,17 @@ export async function rebasePending(s: State, node: string, includeAligned = fal
     if (!dispatch || dispatch.kind !== 'dispatch') return undefined;
     upstream = (await git(slot.worktree, ['merge-base', head, dispatch.base])).stdout.trim();
   }
+  upstream = await trunkUpstream(slot.worktree, head, slot.base, upstream);
   return { head, base: slot.base, upstream, command: `git rebase --onto ${slot.base} ${upstream}` };
+}
+/**
+ * SB2: trunk commits HEAD already contains (a merge of trunk or a rebase onto it) are never replayed: the upstream
+ * advances to merge-base(HEAD, new base) when that descends from the recorded upstream.
+ */
+async function trunkUpstream(cwd: string, head: string, base: string, upstream: string): Promise<string> {
+  const r = await git(cwd, ['merge-base', head, base], { allowFail: true });
+  const shared = r.code ? '' : r.stdout.trim();
+  return shared && shared !== upstream && await isAncestor(cwd, upstream, shared) ? shared : upstream;
 }
 export function rebaseFollowupSent(s: State, node: string): boolean {
   const slot = s.nodes[node]?.slot;

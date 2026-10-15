@@ -433,10 +433,22 @@ async function automaticInvariantResults(cwd: string, ledger: Ledger, state: Sta
   }
   return out;
 }
+/**
+ * SB3: a candidate recorded before the SB1 submit check that contains trunk commits after its slot base fails writes
+ * with the cause and the fix, and nothing is granted (its base..commit diff holds other nodes' merged paths).
+ */
+async function trunkAfterBaseWrites(cwd: string, ledger: Ledger, s: State, job: AttestJob, obs: import('./types.ts').ObsEntry | Extract<Draft, { kind:'obs' }>, paths: string[]): Promise<Draft | undefined> {
+  const latest = await git.trunkAfterBase(cwd,job.base,job.commit,s.trunk.commit);
+  if (!latest) return undefined;
+  const note = `writes not judged: ${trunkAfterBaseText(job.subject,job.commit,job.base,latest,s.trunk.commit)} (${paths.length} changed paths since the slot base include other merged work; nothing granted)`;
+  return { ...obs, verdict:'fail', exit:1, note, log:await ledger.putBlob(note) };
+}
 /** WG4: grantable paths and the writes observation are appended atomically under the ledger lock. */
 async function writesGrantDrafts(cwd: string, ledger: Ledger, s: State, job: AttestJob, obs: import('./types.ts').ObsEntry | Extract<Draft, { kind:'obs' }>): Promise<Draft[]> {
   const n = s.nodes[job.subject]!;
   const paths = (await git.git(cwd,['diff','--no-renames','--name-only','-z',job.base,job.commit])).stdout.split('\0').filter(Boolean);
+  const later = await trunkAfterBaseWrites(cwd,ledger,s,job,obs,paths);
+  if (later) return [later];
   const bad = paths.filter(p => !withinWrites(s,job.subject,p)).sort(), drafts: Draft[] = [];
   const refused = writesRefusals(s,job.subject,bad), denied = new Set(refused.map(r => r.path));
   const grantable = bad.filter(p => !denied.has(p));
@@ -1066,12 +1078,24 @@ async function recordedModel(cwd: string, s: State, id: string, principal: strin
   const { Dsa } = await import('./dsa.ts');
   try { return (await new Dsa({ cwd, timeoutMs: 5000 }).describe(l.rid)).model; } catch { return undefined; }
 }
+/**
+ * SB1/SB3: what is wrong with a candidate that already contains trunk commits after its slot base (its writes would
+ * be diffed against the old base and claim other nodes' merged paths) and the fix: the SB2 rebase command.
+ */
+export const trunkAfterBaseText = (node: string, commit: string, base: string, latest: string, trunk: string): string =>
+  `commit ${commit.slice(0,12)} contains trunk commits after its slot base ${base.slice(0,12)} (latest ${latest.slice(0,12)}); run owed rebase ${node}, then in the slot worktree run \`git rebase --onto ${trunk} ${latest}\`, then submit again`;
+/** SB1: refuses (nothing recorded) a submit whose commit contains trunk commits the slot base does not. */
+async function refuseTrunkAfterBase(cwd: string, s: State, node: string, base: string, commit: string): Promise<void> {
+  const latest = await git.trunkAfterBase(cwd,base,commit,s.trunk.commit);
+  if (latest) throw new OwedError(`submit refused: ${trunkAfterBaseText(node,commit,base,latest,s.trunk.commit)}`);
+}
 export async function submit(o: Actor & { node: string; commit?: string; model?: string }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd), { state } = await load(ledger), n = node(state,o.node);
   if (!n.slot?.open) throw new OwedError('No open writer slot');
   if ((!o.commit || resolve(await git.repoRoot(o.cwd)) === resolve(n.slot.worktree)) && !await git.isClean(n.slot.worktree)) throw new OwedError('slot worktree is dirty');
   const commit = await git.revParse(o.commit ? o.cwd : n.slot.worktree,o.commit ?? 'HEAD');
   if (!await git.isAncestor(o.cwd,n.slot.base,commit)) throw new OwedError('submit commit must be a descendant of slot base');
+  await refuseTrunkAfterBase(o.cwd,state,o.node,n.slot.base,commit);
   await git.checkCandidateLimits(o.cwd,state.plan.limits,n.slot.base,commit);
   const spec = state.plan.nodes.find(x => x.id === o.node)!, facts = await git.candidateFacts(o.cwd,state.plan,spec,n.slot.base,commit,n.slot.attempt,stateQuarantine(state));
   // D23: approve and evidence keys derive from the patch, like review.

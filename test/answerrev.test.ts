@@ -200,7 +200,7 @@ test('AR CLI: --rev retries the named rule; an open re-ask sends current rev wit
     assert.equal(first.code, 0, first.stderr); const one = JSON.parse(first.stdout);
     await fake.ask(2);
     const second = await cli(f.cwd, [...args, '--rev', '1', 'Use API v2']);
-    assert.equal(second.code, 0, second.stderr); assert.match(second.stdout, /qid q1, rev 2, request owed-answer-/);
+    assert.equal(second.code, 0, second.stderr); assert.match(second.stdout, /^answered writer question q1 of \S+ \(rule #\d+\); the call resumes now$/m);
     const [r1, r2] = await f.rules(); assert.equal(r1!.seq, one.entry.seq); assert.equal(r2!.supersedes, r1!.seq);
     assert.equal((await cli(f.cwd, [...args, '--rev', '1', 'Use API v1'])).code, 0);
     assert.equal((await cli(f.cwd, [...args, '--rev', '2', 'Use API v2'])).code, 0);
