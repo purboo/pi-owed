@@ -7,7 +7,7 @@ import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { parsePlan } from '../src/plan.ts';
 import { reduce, validateDraft, packState, unpackState, sameReplay } from '../src/reducer.ts';
-import { Driver } from '../src/drive-run.ts';
+import { Driver, drive, driveOnce } from '../src/drive-run.ts';
 import { Dsa } from '../src/dsa.ts';
 import { writerLaunch } from '../src/drive.ts';
 import { projectId } from '../src/reducer.ts';
@@ -43,6 +43,76 @@ async function until(f:()=>boolean|Promise<boolean>) {
   const end=Date.now()+10_000;
   while(!await f()) { assert.ok(Date.now()<end,'bounded wait for fixture'); await new Promise(r=>setTimeout(r,20)); }
 }
+
+test('SW1 ruling1 once and pi pass report a due sweep without starting or waiting for it',async()=>{
+  const r=await rig(['a'],{sweep:{run:RUN,timeout_s:10,every:{merges:1}}});
+  try {
+    await ops.sweep({cwd:r.cwd}); await r.merge('a','good-a');
+    const marker=join(r.root,'once-must-not-start');
+    await ops.planSet({cwd:r.cwd,as:parent,plan:JSON.stringify({...r.plan,sweep:{...r.plan.sweep,run:`touch '${marker}'; sleep .2; true`}})});
+    const line='sweep due; --once does not start it (run owed sweep --due or a background driver)';
+    const text=await cli(r.cwd,['drive','--once']);
+    const json=await cli(r.cwd,['drive','--once','--json']);
+    const pi=await driveOnce({cwd:r.cwd});
+    assert.equal(text.code,0,text.stderr); assert.equal(text.stdout.trim(),line);
+    assert.equal(json.code,0,json.stderr);
+    assert.deepEqual(json.stdout.trim().split('\n').map(l=>JSON.parse(l).event),['sweep-due']);
+    assert.equal(pi.error,undefined); assert.deepEqual(pi.lines,[line]);
+    assert.equal(existsSync(marker),false,'no sweep command was started');
+    assert.equal((await r.entries()).filter(e=>e.kind==='sweep').length,1);
+    // The once calls released the drive lock; the explicit cron path still measures.
+    const cron=await cli(r.cwd,['sweep','--due']); assert.equal(cron.code,0,cron.stderr);
+    assert.equal(existsSync(marker),true);
+  } finally {await r.done();}
+});
+
+class QuietEvents extends Dsa {
+  override async events(): ReturnType<Dsa['events']> {return {outcome:'applied',events:[],head:'fixture:0',more:false};}
+}
+
+test('SW1 ruling1 a continuous non-staying driver starts and completes a due sweep',async()=>{
+  const r=await rig(['a'],{sweep:{run:RUN,timeout_s:10,every:{merges:1}}});
+  try {
+    await ops.sweep({cwd:r.cwd}); await r.merge('a','good-a');
+    const lines:string[]=[];
+    const code=await drive({cwd:r.cwd,json:true,dsa:new QuietEvents(),pollMs:10,passMs:50,handleSignals:false,log:l=>lines.push(l)});
+    assert.equal(code,0,lines.join('\n'));
+    assert.equal(lines.map(l=>JSON.parse(l)).filter(l=>l.do==='sweep'&&l.outcome==='started').length,1);
+    assert.equal(lines.map(l=>JSON.parse(l)).filter(l=>l.do==='sweep'&&l.outcome==='pass').length,1);
+    assert.equal((await r.entries()).filter(e=>e.kind==='sweep').length,2);
+  } finally {await r.done();}
+});
+
+test('SW1 ruling1 idle minutes use one deadline and no passes or ledger reads between ledger changes and due time',async t=>{
+  const r=await rig([],{sweep:{run:RUN,timeout_s:10,every:{minutes:1}}}), ac=new AbortController();
+  const timeout=setTimeout, pause=(ms:number)=>new Promise<void>(resolve=>timeout(resolve,ms));
+  const ready=async(f:()=>boolean)=>{const end=performance.now()+10_000; while(!f()){assert.ok(performance.now()<end,'bounded fake-clock wait'); await pause(10);}};
+  let pending:Promise<number>|undefined, passes=0, reads=0;
+  const pass=Driver.prototype.pass, read=Ledger.prototype.read;
+  t.mock.method(Driver.prototype,'pass',async function(this:Driver){passes++; return pass.call(this);});
+  t.mock.method(Ledger.prototype,'read',async function(this:Ledger){reads++; return read.call(this);});
+  t.mock.timers.enable({apis:['setTimeout','Date'],now:Date.now()});
+  try {
+    const lines:string[]=[];
+    pending=drive({cwd:r.cwd,stay:true,json:true,dsa:new QuietEvents(),pollMs:1000,passMs:5000,handleSignals:false,signal:ac.signal,
+      log:l=>{lines.push(l); const event=JSON.parse(l); if(event.do==='sweep'&&event.outcome==='pass') ac.abort();}});
+    await ready(()=>lines.some(l=>JSON.parse(l).event==='idle-wait')); await pause(20);
+    const initial={passes,reads};
+    t.mock.timers.tick(20_000); await pause(50);
+    assert.deepEqual({passes,reads},initial,'polling alone neither passes nor reads the full ledger');
+    await ops.rule({cwd:r.cwd,as:parent,nodes:'*',text:'wake the idle driver after a ledger change'});
+    t.mock.timers.tick(1000); await ready(()=>passes>initial.passes); await pause(50);
+    assert.equal(passes,initial.passes+1,'a ledger change causes one new pass');
+    const afterChange={passes,reads};
+    t.mock.timers.tick(38_000); await pause(50);
+    assert.deepEqual({passes,reads},afterChange,'the re-armed deadline remains quiet until one minute from driver start');
+    t.mock.timers.tick(1000);
+    await ready(()=>lines.some(l=>{const x=JSON.parse(l); return x.do==='sweep'&&x.outcome==='started';}));
+    await ready(()=>ac.signal.aborted);
+    assert.equal(await pending,0);
+    assert.equal((await r.entries()).filter(e=>e.kind==='sweep').length,1,'the minute deadline woke the driver without another ledger change');
+  } finally {ac.abort(); await pending; t.mock.timers.reset(); await r.done();}
+});
 
 test('SW1 every validates positive integers and changes neither measurement nor sweep definition keys',async()=>{
   const r=await rig();
