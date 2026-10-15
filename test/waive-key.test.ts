@@ -114,7 +114,7 @@ test('F3.2: a waived merge-key fail measured again and failing again still refus
   } finally { await x.cleanup(); }
 });
 
-test('F3.1: accept_risk naming another node\'s block, another obligation\'s block or a cleared block is refused', { timeout: 300_000 }, async () => {
+test('F3.1/ID1: foreign or differently judged cleared risks refuse; an identical waiver retry succeeds', { timeout: 300_000 }, async () => {
   const { x } = await fixture(['c', 'd']);
   try {
     const unit = (await obs(x.cwd, 'c')).find(e => e.verdict === 'fail')!, lint = (await obs(x.cwd, 'c', 'check:lint')).find(e => e.verdict === 'fail')!;
@@ -126,10 +126,13 @@ test('F3.1: accept_risk naming another node\'s block, another obligation\'s bloc
     await assert.rejects(waive([lint.seq]), /accept_risk must reference active blocks/);
     await assert.rejects(waive([unit.seq, other.seq]), /accept_risk must reference active blocks/);
     assert.equal((await entries(x.cwd)).length, n, 'nothing recorded');
-    // The block of the node and obligation is accepted; once cleared, naming it again is refused.
-    await waive([unit.seq]);
+    // ID1: the exact retry accepts no additional risk and appends nothing; a changed judgment still refuses.
+    const recorded = await waive([unit.seq]);
     assert.equal((await ops.why({ cwd: x.cwd, node: 'c' })).blocks.some(b => b.seq === unit.seq), false);
-    await assert.rejects(waive([unit.seq]), /accept_risk must reference active blocks/);
+    const beforeRetry = await entries(x.cwd);
+    assert.equal((await waive([unit.seq])).seq, recorded.seq);
+    assert.deepEqual(await entries(x.cwd), beforeRetry);
+    await assert.rejects(ops.waive({ cwd:x.cwd, node:'c', obligation:'check:unit', reason:'different judgment', accept_risk:[unit.seq], ...owner }), /accept_risk must reference active blocks/);
   } finally { await x.cleanup(); }
 });
 
