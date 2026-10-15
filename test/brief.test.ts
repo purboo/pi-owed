@@ -97,7 +97,7 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     const v = await brief();
     // (1) owner decisions sorted by blocked downstream nodes (plan order is d before b), each with a discharging command.
     assert.deepEqual(v.decisions.map(d => [d.node, d.obligation, d.blockedDownstream]), [['b', 'closure-review', 1], ['d', 'closure-review', 0]]);
-    assert.match(v.decisions[0]!.command, /^owed rule --nodes b --writer "<guidance>"; writer repairs and submits again; override only: owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12} \(overrides a valid block: state the accepted risk\)$/);
+    assert.match(v.decisions[0]!.command, /^owed decide b --writer --text "<guidance>"; writer repairs and submits again; override only: owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12} \(overrides a valid block: state the accepted risk\)$/);
     // (2) merged: a waived check is counted as waived and never as measured.
     assert.equal(v.merged.length, 1);
     const m = v.merged[0]!;
@@ -125,7 +125,7 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     assert.ok(order.every(i => i >= 0), text);
     assert.deepEqual([...order].sort((x, y) => x - y), order, 'sections in order');
     const lines = text.split('\n');
-    assert.match(lines.find(l => l.includes('b: closure-review blocked: guidance needed'))!, /→ owed rule --nodes b --writer "<guidance>"; writer repairs and submits again; override only: owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12} \(overrides a valid block: state the accepted risk\)$/);
+    assert.match(lines.find(l => l.includes('b: closure-review blocked: guidance needed'))!, /→ owed decide b --writer --text "<guidance>"; writer repairs and submits again; override only: owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12} \(overrides a valid block: state the accepted risk\)$/);
     assert.ok(lines.findIndex(l => l.includes('b: closure-review blocked: guidance needed')) < lines.findIndex(l => l.includes('d: awaiting closure-review')));
     assert.match(lines.find(l => /^ {2}a #\d+ → /.test(l))!, /: 1 measured, 1 waived \(check:a\), 1 reviewed, 1 untested change; reviewers: reviewer:r1$/);
     assert.match(text, new RegExp(`e/check:e failing obs #${eFail} → `));

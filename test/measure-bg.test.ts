@@ -500,7 +500,7 @@ test('item 7: a ruling follow-up dsa rejects halts in the same pass (the log say
     assert.deepEqual(added.map(e => e.kind === 'send' ? `send ${e.reason}` : e.kind), ['send ruling', 'halt'], 'the halt is recorded in the same pass');
     const reason = (added[1] as Extract<Entry, { kind: 'halt' }>).reason;
     assert.match(reason, /^dsa rejected send \S+ \(to:"w1\/main"\): fault; the attempt is not lost:/, 'L1.4/SR4: keep the call address with recoverable-send guidance');
-    assert.match(reason, /`owed resume v`/);
+    assert.match(reason, /`owed decide v --text "<retry run>"`/);
     assert.doesNotMatch(reason, /start a new attempt/);
   } finally { await f.done(); }
 });

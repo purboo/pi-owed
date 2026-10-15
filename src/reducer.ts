@@ -412,18 +412,92 @@ const enums = (): Record<string, Record<string, readonly unknown[]>> => enumCach
   escape: { class: ESCAPE_CLASSES },
 };
 /** AR / ruling #1600: re-asks are history; supersedes makes their version boundary explicit. */
-function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | undefined, supersedes?: number): string[] {
-  const history = s.rules.filter(x => x.answer && x.answer.rid === a?.rid && x.answer.qid === a?.qid);
+function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | undefined, supersedes?: number, decision = false): string[] {
+  const history = s.rules.flatMap(x => ruleAnswers(x).filter(ref => ref.rid === a?.rid && ref.qid === a?.qid).map(ref => ({ seq:x.seq, ref })));
   const latest = history.at(-1), errors: string[] = [];
-  if (history.some(x => x.answer!.rev === a?.rev)) errors.push(`answer for this rid/qid/rev (rev ${a?.rev}) is already recorded; retry its send`);
+  if (history.some(x => x.ref.rev === a?.rev)) errors.push(`answer for this rid/qid/rev (rev ${a?.rev}) is already recorded; retry its send`);
   if (latest) {
-    if (!Number.isSafeInteger(supersedes) || supersedes !== latest.seq || !(latest.answer!.rev < a!.rev)) errors.push(`answer supersedes must name latest prior answer rule #${latest.seq} for this rid/qid with a lower rev`);
+    if (!(latest.ref.rev < a!.rev) || (!decision && (!Number.isSafeInteger(supersedes) || supersedes !== latest.seq))) errors.push(`answer supersedes must name latest prior answer rule #${latest.seq} for this rid/qid with a lower rev`);
   } else if (supersedes !== undefined) errors.push('answer supersedes must be absent without a prior answer for this rid/qid');
+  return errors;
+}
+/** DC/AN: common answer lookup for delivery, retries and driver notices. */
+export function ruleAnswers(r: { answer?: import('./types.ts').AnswerRef; answers?: import('./types.ts').DecisionAnswer[] }): import('./types.ts').AnswerRef[] { return r.answers ?? (r.answer ? [r.answer] : []); }
+
+/** DC: multi-answer facts are versioned, sorted and scoped to current launches. */
+function decisionAnswersErrors(s: State, d: Extract<Draft,{kind:'rule'}>): string[] {
+  const refs = d.answers, errors: string[] = [];
+  if (d.decision === undefined || d.answer !== undefined || d.supersedes !== undefined || !Array.isArray(refs) || refs.length < 2) return ['rule answers requires a decision, at least two answers and no answer/supersedes'];
+  const seen = new Set<string>();
+  for (const a of refs) {
+    if (!a || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).some(k => !['node','rid','qid','rev'].includes(k)) || typeof a.node !== 'string' || typeof a.rid !== 'string' || !a.rid.trim() || typeof a.qid !== 'string' || !a.qid.trim() || !Number.isSafeInteger(a.rev) || a.rev < 1) { errors.push('rule answers must list {node, rid, qid, rev} with nonempty ids and positive integer revisions'); continue; }
+    const target = s.nodes[a.node], launch = target?.slot?.open ? target.runs.find(r => r.attempt === target.slot!.attempt)?.launches.find(l => l.rid === a.rid) : undefined;
+    if (!Array.isArray(d.nodes) || !d.nodes.includes(a.node) || !launch) errors.push('rule answers must name current launches of decided nodes');
+    if (seen.has(a.node)) errors.push('decision answers one unambiguous question per node');
+    seen.add(a.node); errors.push(...answerRevisionErrors(s,a,undefined,true));
+  }
+  if (!errors.length && canonical(refs) !== canonical([...refs].sort((a,b) => a.node.localeCompare(b.node) || a.qid.localeCompare(b.qid)))) errors.push('rule answers must be sorted by node then qid');
+  return errors;
+}
+/** DC: infer the decided nodes from a writes-only amend; all gain identical additions. */
+export function decisionPlanNodes(prior: Plan, next: Plan): string[] {
+  const nodes: string[] = [], additions: string[][] = [];
+  if (prior.nodes.length !== next.nodes.length) throw new OwedError('decision plan must contain writes-only additions');
+  const expected = { ...prior, nodes:prior.nodes.map((n,i) => {
+    const changed = next.nodes[i]!;
+    if (n.id !== changed.id || n.writes.some((p,j) => changed.writes[j] !== p)) throw new OwedError('decision plan must contain writes-only additions');
+    const added = changed.writes.slice(n.writes.length);
+    if (added.length) { nodes.push(n.id); additions.push(added); }
+    return { ...n, writes:changed.writes };
+  }) };
+  if (!nodes.length || canonical(expected) !== canonical(next) || additions.some(a => canonical(a) !== canonical(additions[0])) || additions.some((a,i) => a.some(p => prior.nodes.find(n => n.id === nodes[i])!.writes.includes(p)) || new Set(a).size !== a.length)) throw new OwedError('decision plan must contain writes-only additions of the same paths to every decided node');
+  return nodes;
+}
+const decisionRank = (d: Draft): number => ['plan','submit','defer','rule','resume'].indexOf(d.kind);
+function decisionMembers(s: State): Entry[] {
+  const es = entriesOf(s), last = es.at(-1);
+  return last?.decision === undefined ? [] : es.slice(last.decision);
+}
+/** A final group needs its one ruling; private drafting may temporarily have a plan/defer prefix. */
+export function decisionTailErrors(s: State): string[] {
+  const members = decisionMembers(s);
+  return members.length && members.filter(e => e.kind === 'rule').length !== 1 ? [`decision #${members[0]!.seq} is incomplete: its one ruling is missing (an interrupted atomic write); nothing else may follow it; inspect the ledger tail before retrying`] : [];
+}
+function decisionErrors(s: State, d: Draft): string[] {
+  const first = d.decision, own = s.seq+1, prior = decisionMembers(s);
+  if (first === undefined) return decisionTailErrors(s);
+  if (!Number.isSafeInteger(first) || first < 0 || first > own) return ['decision must reference its first entry seq'];
+  const members = first === own ? [] : prior;
+  if (first === own && decisionTailErrors(s).length) return decisionTailErrors(s);
+  if (first !== own && (!members.length || members[0]?.seq !== first || members.some(e => e.decision !== first) || members.length !== own-first)) return ['decision entries must be contiguous and reference their first entry'];
+  const head = members[0] ?? d, rank = decisionRank(d), lastRank = members.length ? decisionRank(members.at(-1)!) : -1;
+  const errors: string[] = [];
+  if (rank < 0 || rank < lastRank || (d.kind === 'plan' && members.length) || (d.kind === 'rule' && members.some(e => e.kind === 'rule')) || (d.kind === 'resume' && !members.some(e => e.kind === 'rule'))) errors.push('decision order must be plan, carries, defers, one rule, resumes');
+  if (!['owner','parent'].includes(role(head.by)) || head.by === DRIVER) errors.push('decision requires one parent or owner principal');
+  if (d.by !== head.by || d.channel !== head.channel) {
+    if (!(d.kind === 'submit' && d.by === 'executor:owed' && d.carry !== undefined && head.kind === 'plan')) errors.push('decision entries must use one principal and channel (except amend carry submits)');
+  }
+  let nodes: string[] | undefined;
+  if (head.kind === 'plan') {
+    try { nodes = decisionPlanNodes(withWritesSyntax(context(s).plans(head.prior),2),withWritesSyntax(context(s).plans(head.plan),2)); } catch (e) { errors.push((e as Error).message); }
+  } else {
+    const rule = members.find(e => e.kind === 'rule') ?? (d.kind === 'rule' ? d : undefined);
+    if (rule?.kind === 'rule' && Array.isArray(rule.nodes)) nodes = rule.nodes;
+    if (!members.length && !['rule','defer'].includes(d.kind)) errors.push('decision without writes starts with a rule or defer');
+  }
+  if (d.kind === 'rule') {
+    if (!Array.isArray(d.nodes) || !d.nodes.length || new Set(d.nodes).size !== d.nodes.length || d.nodes.some(x => typeof x !== 'string' || !x.trim()) || d.prospective) errors.push('decision ruling must name distinct decided nodes, not prospective or *');
+    if (nodes && canonical([...d.nodes].sort()) !== canonical([...nodes].sort())) errors.push('decision ruling nodes must equal the writes-only decided set');
+    if (typeof d.text !== 'string' || !d.text.trim()) errors.push('decision requires nonempty text');
+  }
+  if (nodes && [...members,d].some(e => 'node' in e && !nodes.includes(e.node))) errors.push('decision entries may name only the decided nodes');
+  if ('node' in d && members.some(e => e.kind === d.kind && 'node' in e && e.node === d.node)) errors.push('decision repeats an act for the same node');
+  if (d.kind === 'submit' && head.kind !== 'plan') errors.push('decision carry requires its amend plan');
   return errors;
 }
 
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
-const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
+const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision', 'text', 'nodes', 'writer', 'prospective', 'answer', 'answers', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
 const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'grant_refused', 'waits_on', 'auto_remeasure', 'remeasure_match', 'batch'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
@@ -500,7 +574,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
     } else if (e.kind === 'grant') {
       s.downgrades.push({ seq: e.seq, by: e.by, items: [{ node: e.node, what: `writes granted: ${e.paths.join(', ')}` }], allowance: e.allowance });
     } else if (e.kind === 'rule') {
-      s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.prospective !== undefined ? { prospective: e.prospective } : {}), ...(e.answer !== undefined ? { answer: e.answer } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
+      s.rules.push({ seq: e.seq, by: e.by, text: e.text, nodes: e.nodes, ...(e.writer !== undefined ? { writer: e.writer } : {}), ...(e.prospective !== undefined ? { prospective: e.prospective } : {}), ...(e.answer !== undefined ? { answer: e.answer } : {}), ...(e.answers !== undefined ? { answers: e.answers } : {}), ...(e.decision !== undefined ? { decision:e.decision } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
       // F5: a writer ruling names the candidates that need a new submit; blocks and keys retain their semantics.
       if (e.writer && e.nodes !== '*') for (const id of e.nodes) {
         const n = s.nodes[id];
@@ -992,6 +1066,8 @@ const DRIVER_WRITES: readonly string[] = ['dispatch', 'launch', 'send', 'halt', 
  */
 function clearsHalt(e: Entry, node: string): boolean {
   if (e.kind === 'dispatch' && e.node === node) return true;
+  // DC: only the explicit resume clears a decision's halt (--no-resume preserves it).
+  if (e.decision !== undefined && e.kind !== 'resume') return false;
   if (DRIVE_KINDS.includes(e.kind) || e.by === DRIVER || role(e.by) === 'executor') return false;
   return ('node' in e && e.node === node) || (e.kind === 'rule' && !e.prospective && e.nodes !== '*' && e.nodes.includes(node));
 }
@@ -1403,7 +1479,7 @@ export function grantHint(s: State, id: string, paths = s.nodes[id]?.candidate?.
 }
 export function validateDraft(s: State, d: Draft): string[] {
   const errors: string[] = [];
-  errors.push(...batchOrderErrors(s, d));
+  errors.push(...batchOrderErrors(s, d), ...decisionErrors(s,d));
   const r = role(d.by);
   const allow = (...roles: string[]): void => { if (!roles.includes(r)) errors.push(`${d.kind} insufficient permissions; requires ${roles.join('/')}`); };
   if (!/^(owner|parent|writer|reviewer|executor):.+$/.test(d.by)) errors.push('Invalid identity format');
@@ -1450,12 +1526,13 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.prospective !== undefined && typeof d.prospective !== 'boolean') errors.push('rule prospective must be a boolean');
       if (d.prospective && d.writer) errors.push('--prospective cannot be combined with --writer');
       // AN2: an answer names one launch of the node's current open attempt; delivery never invalidates a candidate.
+      if (d.answers !== undefined) errors.push(...decisionAnswersErrors(s,d));
       if (d.answer !== undefined) {
         const a = d.answer;
-        if (!a || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).some(k => !['rid', 'qid', 'rev'].includes(k)) || typeof a.rid !== 'string' || !a.rid.trim() || typeof a.qid !== 'string' || !a.qid.trim() || !Number.isInteger(a.rev) || a.rev < 1) errors.push('rule answer must be {rid, qid, rev} with nonempty ids and a positive integer rev');
-        if (!Array.isArray(d.nodes) || d.nodes.length !== 1 || d.writer !== false) errors.push('answer rule requires one node and writer: false');
+        if (!a || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).some(k => !['rid', 'qid', 'rev'].includes(k)) || typeof a.rid !== 'string' || !a.rid.trim() || typeof a.qid !== 'string' || !a.qid.trim() || !Number.isSafeInteger(a.rev) || a.rev < 1) errors.push('rule answer must be {rid, qid, rev} with nonempty ids and a positive integer rev');
+        if (!Array.isArray(d.nodes) || (d.decision === undefined && (d.nodes.length !== 1 || d.writer !== false))) errors.push('answer rule requires one node and writer: false');
         else {
-          const target = s.nodes[d.nodes[0]!], launch = target?.slot?.open ? target.runs.find(x => x.attempt === target.slot!.attempt)?.launches.find(x => x.rid === a?.rid) : undefined;
+          const launch = d.nodes.flatMap(id => { const target = s.nodes[id]; return target?.slot?.open ? target.runs.find(x => x.attempt === target.slot!.attempt)?.launches ?? [] : []; }).find(x => x.rid === a?.rid);
           if (!launch) errors.push('answer rid must name a launch of the node current open attempt');
           else if (typeof d.text !== 'string' || !d.text.startsWith(`Answer to ${launch.role} question ${a.qid}: `) || !d.text.slice(`Answer to ${launch.role} question ${a.qid}: `.length).trim()) errors.push('answer rule text must name the role and question and include the answer');
         }
@@ -1748,7 +1825,7 @@ function resumeBatchErrors(s: State, d: Extract<Draft,{kind:'resume'}>): string[
 }
 
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
-const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash'];
+const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
 const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch', 'remeasure'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
