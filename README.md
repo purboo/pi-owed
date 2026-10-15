@@ -8,6 +8,44 @@ The main agent is the owner (0.5, delegated owner): a human states the task in n
 
 It provides a CLI, a pi extension, and an agent skill. It is not an agent scheduler, a sandbox, or a replacement for code review. Your agent runner does the work; owed keeps acceptance evidence and guards the merge.
 
+## What's new in 0.23
+
+Upgrade the CLI, driver and every pi session that loads owed (restart it)
+before enabling 0.23 decisions, automatic rebases or leased measurements.
+Older readers ignore writer review carry conservatively, reject executor
+rebase submits, and refuse ledgers with the new observation lease-wait field.
+See [SPEC compatibility](docs/SPEC.md#compatibility-020023) for the upgrade order.
+
+- **One parent decision:** `owed decide A,B --text "<decision>"` combines one
+  ruling, unambiguous question answers and default recovery of halted/held
+  nodes. Add `--writes +path`, owner `--defer INV`, `--after NODE`,
+  `--remeasure` or `--writer` as needed; `--no-resume` preserves a halt.
+  Validation and append are atomic; external delivery follows, with exact
+  answer retry guidance. The pi tool is `owed_decide`. Older commands remain.
+- **Shared failures:** matching failures observed without a candidate can
+  park affected nodes under one repository notice. Eligible invariant failures
+  get one same-key retry; pass plus fail still needs an owner decision. Accepted
+  fix candidates merge first. Owner `allow[].defer` rules can pre-authorize
+  visible invariant debt only with matching signatures and a same-key pass.
+  Name-only matches support diagnostics and waiting, never automatic deferral.
+- **Clean rebases:** exact clean-rebase trees carry independent OK reviews;
+  checks and invariants still obey their keys. The driver rebases eligible
+  clean, sealed writer slots without a writer turn. Parent/owner CLI
+  `owed rebase A --apply` requests this explicitly; conflicts return to the
+  writer route after rollback. Later rulings still need acknowledgment.
+- **Measured coordination:** `owed report --metrics` adds decisions, acts per
+  decision, acts targeting only merged nodes, halt classes, phase latency and
+  lease wait. `owed report --counterfactual` estimates which historical halts
+  would now park or rebase cleanly; it is read-only and costs about one cold
+  replay, potentially tens of seconds on a large ledger. Driver lease samples
+  exclude waiting between passes.
+- **Quiet, current views:** rule receipts report delivery counts and direct
+  failed/unknown deliveries to why's `Ruling to forward`. Active measurements
+  replace stale wait labels. Text timestamps use local time when displayed;
+  ledger and JSON timestamps stay ISO UTC.
+
+Details and limits: SPEC §7.14a, §7.17, §7.24–7.25, §8.3.1 and §9.3–9.4.
+
 ## What's new in 0.22
 
 0.22 includes the previously unreleased 0.20.1 and 0.21 changes below.
@@ -71,7 +109,7 @@ retain their recorded writes dialect; no automatic migration rewrites them.
   budget (default 60; finite nonnegative fractional values allowed) across lease
   and lock waits. Measurements retain their own timeouts. Per-process expiring
   pending markers make the driver finish its running merge and yield new merges
-  to the oldest adopter. Busy messages name holder activity and its UTC start.
+  to the oldest adopter. Busy messages name holder activity and its local start time.
 - **Remote measurements:** string-template `exec.wrap` supports `{cwd}`,
   `{timeout}` and required `{cmd}` with shell-safe substitution. It covers setup,
   checks/red/mutants/invariants/probes/sweeps and diagnostics; Git, ledger and
@@ -85,8 +123,9 @@ retain their recorded writes dialect; no automatic migration rewrites them.
   Owed never detaches trunk. Merge hooks still run under the ledger lock and may
   delay writers; an external process's lock is outside the async-context guard.
 - **Review and conflict guidance:** active blocks suggest writer-action rulings
-  and repair; owner review is explicitly labelled an override. Zero-call ruling
-  deliveries list open slots and exact follow-ups. Status/why show conflict files
+  and repair; owner review is explicitly labelled an override. Ruling delivery
+  details retain open slots and full follow-ups; concise 0.23 receipts direct
+  manual forwarding to `owed why`. Status/why show conflict files
   against trunk and other candidates; `none` means a clean Git probe, `unknown`
   requires retry. Probes are cached diagnostics, not acceptance evidence. Missing
   ruling acknowledgments warn with a candidate-pinned re-record command, while
@@ -137,7 +176,7 @@ must accept acknowledged `modelWarnings` objects as well as warning strings.
   fresh readiness/ownership checks and completed rollback, at most three total
   attempts. Exhaustion reports `retry next pass`, not Needs you or a halt.
 - **Merge waiting:** ordinary/full status name the internal blocking job and
-  its UTC start plus the current number of accepted merges ahead. JSON adds
+  its locally displayed start plus the current number of accepted merges ahead. JSON adds
   optional runtime-only `mergeWaiting[id].job` and `.ahead`; queue positions
   are derived on each read, not taken from stale cache.
 
@@ -211,7 +250,7 @@ For the standalone CLI:
 npm i -g pi-owed
 ```
 
-Reload pi after installing. `/owed` shows status; `/owed why <node>` explains an acceptance decision. Tools: `owed_status`, `owed_why`, `owed_report`, `owed_brief`, `owed_verify`, `owed_dispatch`, `owed_submit`, `owed_rebase`, `owed_attest`, `owed_review`, `owed_merge`, `owed_adopt`, `owed_abandon`, `owed_gc`, `owed_rule`, `owed_answer`, `owed_plan`, `owed_waive`, `owed_defer`, `owed_escape` and `owed_decoy`; each accepts an absolute `cwd` inside the target repository, so a session started elsewhere can drive it (docs/SPEC.md §11 lists the parameters). Owner confirmation dialogs show free text (notes, reasons, rulings, evidence) after the Repository and Identity lines, escaped onto one line. Those dialogs appear only under `OWED_CONFIRM=owner`, and wait at most `OWED_CONFIRM_TIMEOUT` seconds (default 120, `0` = no limit): a timeout records nothing (`Owner confirmation not given within N s; nothing was recorded.`). By default owner tools are delegated to the main agent (`owner:pi`, channel `delegated`, no dialog); `owed_plan` takes `note`, which a delegated downgrade requires. In a pi-durable-subagents call (`DSA_CALL`/`DSA_EXEC` set) owed refuses owner and parent acts in tools and CLI alike, and refuses a review or evidence on a node from inside that node's open slot worktree (run reviews from the repository root) — accident rails, not security boundaries. `parent:drive` is the driver's identity only: `--as parent:drive` / `as: "parent:drive"` is refused, and the ledger refuses entries by it other than dispatch, launch, send, halt, rebase and abandon of its own stale never-launched slot. The `owed` skill describes the full agent workflow. A subagents/dsa runner is a separate integration: dispatch returns a ready-to-use call specification with `agent: worker`, the slot worktree as `cwd`, and `isolation: none`.
+Reload pi after installing. `/owed` shows status; `/owed why <node>` explains an acceptance decision. Tools: `owed_status`, `owed_why`, `owed_report`, `owed_brief`, `owed_verify`, `owed_dispatch`, `owed_submit`, `owed_rebase`, `owed_attest`, `owed_review`, `owed_merge`, `owed_adopt`, `owed_abandon`, `owed_gc`, `owed_rule`, `owed_decide`, `owed_answer`, `owed_plan`, `owed_waive`, `owed_defer`, `owed_escape` and `owed_decoy`; each accepts an absolute `cwd` inside the target repository, so a session started elsewhere can drive it (docs/SPEC.md §11 lists the parameters). Owner confirmation dialogs show free text (notes, reasons, rulings, evidence) after the Repository and Identity lines, escaped onto one line. Those dialogs appear only under `OWED_CONFIRM=owner`, and wait at most `OWED_CONFIRM_TIMEOUT` seconds (default 120, `0` = no limit): a timeout records nothing (`Owner confirmation not given within N s; nothing was recorded.`). By default owner tools are delegated to the main agent (`owner:pi`, channel `delegated`, no dialog); `owed_plan` takes `note`, which a delegated downgrade requires. In a pi-durable-subagents call (`DSA_CALL`/`DSA_EXEC` set) owed refuses owner and parent acts in tools and CLI alike, and refuses a review or evidence on a node from inside that node's open slot worktree (run reviews from the repository root) — accident rails, not security boundaries. `parent:drive` is the driver's identity only: `--as parent:drive` / `as: "parent:drive"` is refused, and the ledger refuses entries by it other than dispatch, launch, send, halt, rebase and abandon of its own stale never-launched slot. The `owed` skill describes the full agent workflow. A subagents/dsa runner is a separate integration: dispatch returns a ready-to-use call specification with `agent: worker`, the slot worktree as `cwd`, and `isolation: none`.
 
 ## Five-minute quickstart
 
@@ -256,6 +295,17 @@ background, showing progress in `owed_status` and sending one message when done.
 attest/merge measure the missing invariants first.
 
 Dispatch prints the packet and creates `.owed/wt/greeting-1`. Since 0.16 it also runs the plan's `setup` in that worktree before recording dispatch. Optional `slot_setup: "<command>"` overrides `setup` for slots; `slot_setup: false` skips it. Commands use the measurement shell/environment/wrapper (`bash -lc`, `exec.env`, `exec.wrap`, `CI=1 OWED=1 OWED_TREE=<slot worktree>`) and a 600-second timeout. Success adds `Setup: ran \`<command>\` in this worktree (exit 0)` to the packet, escaping the command onto one line (newlines as literal `\n`, backslashes doubled). Failure refuses with the exit code or timeout and the last 20 lines of combined output, rolls back the worktree (including setup artifacts), unchanged branch and newly created directories, and records no entry. Setup outputs never enter the candidate (SS5, ruling #1607): a successful setup changing tracked paths refuses with the paths and the same rollback. Newly created untracked, not-ignored paths, found by comparing `git status --porcelain -z --untracked-files=normal` before/after, are appended once to the common `info/exclude` as anchored literal `/<path>` rules (directories retain `/`); existing rules stay, already ignored outputs are skipped, and repeated dispatches add no duplicate rules. Glob/backslash/leading `!` or `#`/trailing-space characters are escaped; newline or carriage-return paths refuse with one-line escaped names and rollback. After appending, SS6 (ruling #1656) verifies the outputs are actually ignored using `git status --porcelain -z --untracked-files=all`, including directory descendants. A tracked `.gitignore` negation such as `!/artifact` overrides `info/exclude`: any still-visible output refuses with one-line escaped paths and guidance to ignore setup outputs in the repository or change `slot_setup`. Rollback removes only this dispatch's appended exclude bytes, preserving pre-existing rules, removes the slot worktree/branch and records nothing; owed never edits tracked ignore files. The successful packet then ends `(exit 0; excluded: /a, /b)`. Rules apply to all worktrees and persist. Rebase reuses the worktree without rerunning setup (rerun on rebase is deferred). `slot_setup` enters no key and changing it alone invalidates no evidence or candidate; the existing `setup` keys are unchanged. No ledger kind or field is added, so 0.15 and 0.16 share a ledger. The field needs a 0.16 parser: 0.15 ignores unknown top-level fields, including `slot_setup`, and runs no setup at dispatch (parent ruling #1601); mixing versions changes no acceptance, only whether dispatch runs setup.
+
+If the writer needs a requirement clarified, the parent can record and deliver
+one decision from the repository root:
+
+```sh
+owed decide greeting --text "Keep hello.txt to one line with a trailing newline."
+```
+
+This also answers the node's sole open question and resumes it if halted or
+held. Use `--writer` when an existing candidate must be changed and submitted
+again, or `--no-resume` to record the decision while retaining a halt.
 
 Act as the writer in that worktree:
 
@@ -362,7 +412,7 @@ Merge refusals (0.20.1) say `known intermittent` only when one key has both pass
 
 Pi act replies for `dispatch`, `plan`, `edit`, `amend`, `rule`, `defer`, `abandon` and `resume` use a brief status (0.16.2): the same outcome line, current `Needs you (<A>):` items and commands when non-empty, then `Details: owed status · owed why <node>`. They omit the progress and debt lists. Dispatch keeps its packet and subagents arguments; plan/edit/amend keep their act lines and warnings; rule/defer show the recorded entry; abandon/resume show the entry and node phase, with resume's waits-for text retained. Structured tool results are unchanged. Use `owed status` for the full progress/debt lists, `owed why <node>` for a receipt and `owed report` for the report. The CLI versions of these acts currently append no full status, so their existing outputs stay unchanged; CLI `init` and pi `adopt` retain their existing status output. Explicit status, why, report and `/owed` views keep their existing content.
 
-`owed status --full` (pi `owed_status {full:true}`) also shows `Merge queue: a, b, c` (`none` when empty), and status JSON adds `mergeQueue: string[]`. In 0.20, accepted open attempts merge by unique unfinished transitive dependent count descending, continuous `nodes.<id>.acceptedSince` ascending, then id. This sequence records when the current candidate became continuously accepted; losing acceptance or replacing the candidate with a new submit resets it. In 0.20.1, ordinary/full status show `merge waiting for driver-internal job (catalog merge, since 09:12); 2 merges ahead`, selecting a running merge before other measurements. `mergeWaiting[id].job` names that internal job; `.ahead` is the current zero-based merge queue position, counting accepted predecessors even while merging. Reads recompute positions and omit ahead/count text for nodes outside the queue, even with stale cached values. Lease waits retain their existing reason/since with ahead added only for queued nodes. The internal time is the job's UTC start; `since` remains the continuous candidate/attempt wait start. Old waiting caches without job remain readable; brief keeps its existing scope. These fields are runtime cache, never ledger evidence. `owed resume X --after Y` (also list waits and `owed_resume`) is a dependency wait, not a priority override. The driver's single merge slot takes the first eligible merge action; other actions retain their existing order and every gate still applies. Higher-weight accepted nodes can overtake lower-weight ones; background trunk attest and sweeps yield to merge-ready work. This ordering is derived, with no new ledger kind or key; 0.20 receipt fields still require upgrading readers together.
+`owed status --full` (pi `owed_status {full:true}`) also shows `Merge queue: a, b, c` (`none` when empty), and status JSON adds `mergeQueue: string[]`. In 0.20, accepted open attempts merge by unique unfinished transitive dependent count descending, continuous `nodes.<id>.acceptedSince` ascending, then id. This sequence records when the current candidate became continuously accepted; losing acceptance or replacing the candidate with a new submit resets it. In 0.20.1, ordinary/full status show `merge waiting for driver-internal job (catalog merge, since 09:12); 2 merges ahead`, selecting a running merge before other measurements. `mergeWaiting[id].job` names that internal job; `.ahead` is the current zero-based merge queue position, counting accepted predecessors even while merging. Reads recompute positions and omit ahead/count text for nodes outside the queue, even with stale cached values. Lease waits retain their existing reason/since with ahead added only for queued nodes. The internal time is the job's start displayed in the reader's local zone; `since` remains the continuous candidate/attempt wait start. Old waiting caches without job remain readable; brief keeps its existing scope. These fields are runtime cache, never ledger evidence. `owed resume X --after Y` (also list waits and `owed_resume`) is a dependency wait, not a priority override. The driver's single merge slot takes the first eligible merge action; other actions retain their existing order and every gate still applies. Higher-weight accepted nodes can overtake lower-weight ones; background trunk attest and sweeps yield to merge-ready work. This ordering is derived, with no new ledger kind or key; 0.20 receipt fields still require upgrading readers together.
 
 `owed report --metrics [--since <seq|ISO>] [--until <seq|ISO>] [--json]` (0.15) measures merged nodes, interruptions (driver halts plus parent/owner answer rulings) and interruptions per merged node; submit-to-merge median/p90/max and first-dispatch-to-merge median/p90; first-pass acceptance (attempt 1, no block on any candidate); and repairs per merged node. Repairs sum writer submits after the first separately for each attempt, including abandoned attempts, excluding executor carry submits. `since` is exclusive and `until` inclusive; merges and interruptions count by their own entries, while earlier history supplies timing and classification. An ending entry can decide a halt: between the halt and the next resume/submit/merge/abandon/halt, a parent/owner rule naming the node or `*`, answer, waive, defer, abandon, hold, approval, evidence, owner review, or plan change to that node's spec/deps makes it `decision`; otherwise it is `no-decision`. Entries after `until` cannot decide a halt. The short text block lists the top five reasons per class, with digits and ids normalized. JSON returns all numeric summaries (durations in milliseconds, ratios as fractions, unavailable values `null`), per-merge attempts/repairs and per-halt classes, ending sequences and decision sequences; SPEC §9 defines each field. It reads only the ledger and recorded plan blobs, preserves old ledger states and keys, and records nothing. `--until` requires `--metrics`; ordinary `report` output is unchanged.
 
@@ -1061,9 +1111,37 @@ once, with its latest qualifying review; this is view-only deduplication and
 changes neither replayed state nor acceptance rules. Stopping already-surplus
 reviewer runs remains deferred (SPEC RR4); 0.16.1 adds no driver `stop` effect.
 
-### Resume or rule? (0.8)
+### Parent decisions and recovery (0.23)
 
-Answer a writer or reviewer question with `owed answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (pi `owed_answer {node, text, qid?, rid?, rev?}`, parent or owner). Omit qid when one open question matches; rid disambiguates questions across the node's current writer and reviewer runs. Ambiguity refuses and lists the open questions. The command records one rule naming the node, `writer: false`, text `Answer to <role> question <qid>: <text>`, and `answer: {rid, qid, rev}`, then sends dsa `kind: answer` with request id `owed-answer-<rule seq>`. A delivery failure retains the rule and reports its seq and an exact retry command including `--rev`. Use `--` before text beginning with `--`; exact retry commands include it. The driver does not send that answer rule back to the target rid as a ruling steer or follow-up. Other runs receive it normally and reviewers still acknowledge it. Successful text shows the rule seq, rid, qid, rev and request id; `--json` and the tool return `{entry, request, delivery}`.
+Prefer `owed decide <node[,node...]> --text "<decision>"` (pi
+`owed_decide {nodes: ["A"], text: "..."}`) for guidance that combines ruling,
+question answer and recovery. It answers at most one open question per node
+across writer and reviewer runs and resumes halted/held nodes by default.
+`--writer` requires resubmission; `--no-resume` keeps the halt. Add
+`--writes +path` to amend the recorded plan with the same authority as amend,
+`--defer INV` as owner to retain current merge-key debt, `--after FIX` to wait,
+or `--remeasure` to request same-key invariant measurement. After/remeasure
+imply resume and cannot combine with no-resume. Every part validates before
+one append; a refused part records nothing. Answer delivery is external: use
+the exact retry command if it fails. Decisions do not clear review blocks or
+acknowledge rulings for reviewers.
+
+For one shared failure blocking several nodes, inspect the repository notice
+and fix the common cause once; name the failed test in the fix node's brief.
+An accepted, non-halted fix candidate takes precedence automatically. To retain
+the debt knowingly, use owner
+`owed decide A,B --defer inv:integration --text "<reason>"`. A narrow owner
+`allow[].defer` can authorize executor deferral when both a matching-signature
+shared failure and a pass exist on the merge key. Waiting and name-only
+matching never grant acceptance. See SPEC §7.24.
+
+The separate commands below remain valid. Use `owed answer` to disambiguate
+multiple questions or retry a recorded answer; `owed resume` for a retry with
+no new ruling or `--expect report`; `owed rule` for global/prospective policy;
+`owed amend` for a standalone writes amendment, and `owed edit` for other plan
+changes.
+
+Answer a selected writer or reviewer question with `owed answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (pi `owed_answer {node, text, qid?, rid?, rev?}`, parent or owner). Omit qid when one open question matches; rid disambiguates questions across the node's current writer and reviewer runs. Ambiguity refuses and lists the open questions. The command records one rule naming the node, `writer: false`, text `Answer to <role> question <qid>: <text>`, and `answer: {rid, qid, rev}`, then sends dsa `kind: answer` with request id `owed-answer-<rule seq>`. A delivery failure retains the rule and reports its seq and an exact retry command including `--rev`. Use `--` before text beginning with `--`; exact retry commands include it. The driver does not send that answer rule back to the target rid as a ruling steer or follow-up. Other runs receive it normally and reviewers still acknowledge it. Successful text names the answered role/question/run and rule, then any other-role delivery result; `--json` and the tool retain the request id and full details.
 
 Revision-aware answers (0.16, dsa 1.0.38 re-asks): identity is rid+qid+rev. An open matching question always uses its current rev from dsa describe, even if `--rev` names an old rule. A newer re-ask records a new rule and request id, with either the same or different answer text. Same rid+qid+rev and text retry the original request; different text at that rev refuses and names the rev. With no matching open question, `--rev N` retries that prior revision; omit it to retry the latest prior rule for rid+qid. The rid may be found from current-attempt launches when history identifies exactly one run; an explicit rid/qid retry also works after the slot closes. Without matching history, "No matching open question" refuses. `--rev` / tool `rev` must be a positive integer, otherwise a usage error. The driver still covers only questions at revisions <= the recorded answer rev, so q@2 after a q@1 answer remains an open question.
 
@@ -1076,10 +1154,11 @@ repair budget: use it for "measure again", "retry the merge, the disk was full",
 (`owed status`: `waiting for <other> (resume #<seq>)`; the driver leaves it alone
 except for questions) until `<other>` merges; then the driver carries on, and the
 writer's next follow-up starts with `The parent resumed this node (#<seq>) after
-<other> merged at <commit>: <why>`. Use `owed rule --nodes <node> "<decision>"`
-instead when the writer and reviewers must follow and acknowledge a decision (a
+<other> merged at <commit>: <why>`. Use `owed decide <node> --text "<decision>"`
+when the writer and reviewers must follow and acknowledge a decision (a
 changed requirement, a contract answer): a ruling is an obligation, a resume is
-not. Add `--writer` (pi `owed_rule` parameter `writer: true`) when the decision
+not. The older `owed rule --nodes <node> "<decision>"` still works. Add `--writer`
+(pi `owed_decide` parameter `writer: true`) when the decision
 requires the writer to act: a ruling recorded after a named node's open submit
 invalidates that candidate and requires a new submit, even of the same commit.
 The driver sends the ruling to a sealed writer as a `ruling` follow-up or to a
