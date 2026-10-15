@@ -87,7 +87,7 @@ test('SW failing sweep without green ancestor does not bisect, record escape, or
   } finally { await r.done(); }
 });
 
-test('SW bisects first-parent owed merges, records every step, and prints an executable proposal only', async () => {
+test('SW bisects first-parent owed merges, records every step, and automatically records one escape', async () => {
   const r = await rig(['a','b','c','d','e']);
   try {
     await sw(r.cwd);
@@ -97,8 +97,8 @@ test('SW bisects first-parent owed merges, records every step, and prints an exe
     assert.equal(fail.first?.node,'c'); assert.equal(fail.first?.merge,first.entry.seq); assert.equal(fail.first?.commit,first.commit);
     assert.ok(fail.steps.length>=4 && fail.steps.length<=Math.ceil(Math.log2(5))+3); assert.ok(fail.steps.every(e => e.bisect===true));
     assert.match(fail.first!.command,/owed escape 'c' --merge \d+ --class missing --note '/);
-    const text = await cli(r.cwd,['sweep']); assert.equal(text.code,1); assert.match(text.stdout,/First failing merge:.*node c merge #/); assert.match(text.stdout,/promote escaped behavior to an invariant/);
-    assert.equal((await r.entries()).filter(e => e.kind === 'escape').length,0);
+    const text = await cli(r.cwd,['sweep']); assert.equal(text.code,1); assert.match(text.stdout,/First failing merge:.*node c merge #/); assert.doesNotMatch(text.stdout,/^escape:/m,'a duplicate boundary emits no new escape notice');
+    assert.equal((await r.entries()).filter(e => e.kind === 'escape').length,1);
     assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
   } finally { await r.done(); }
 });
@@ -196,12 +196,12 @@ test('SW staying idle driver sweeps once per trunk across restart; once driver a
   } finally { await r.done(); }
 });
 
-test('SW failures wake parent with names/proposal once; stale results stay bound to their measured commit', async () => {
+test('SW failures wake parent with one automatic escape notice; stale results stay bound to their measured commit', async () => {
   const r = await rig(['a']);
   try {
     await sw(r.cwd); await r.merge('a','bad'); const lines:string[]=[];
     const d=new Driver({cwd:r.cwd,stay:true,json:true,log:l=>lines.push(l),handleSignals:false}); await d.pass(); await d.settle(); await d.pass();
-    const notices=lines.map(l=>JSON.parse(l)).filter(l=>l.do==='notify'); assert.equal(notices.length,1); assert.match(notices[0].text,/Proposal: owed escape 'a'/); assert.match(notices[0].text,/promote escaped behavior to an invariant/);
+    const notices=lines.map(l=>JSON.parse(l)).filter(l=>l.do==='notify'); assert.equal(notices.length,1); assert.match(notices[0].text,/escape: a \(merge #/); assert.match(notices[0].text,/coverage: add the test to an invariant/);
     const marker=join(r.root,'mark'), gate=join(r.root,'continue');
     await ops.planSet({cwd:r.cwd,as:parent,plan:JSON.stringify({...r.plan,sweep:{run:`touch '${marker}'; for i in $(seq 1 100); do test ! -f '${gate}' || break; sleep .02; done; ${RUN}`,timeout_s:10}})});
     const old=(await ops.status({cwd:r.cwd})).trunk.commit, pending=sw(r.cwd); await until(()=>existsSync(marker),'pinned sweep running');

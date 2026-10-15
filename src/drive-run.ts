@@ -26,7 +26,7 @@ import { pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { Ledger } from './ledger.ts';
 import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
-import { renderSweep, unguardedText } from './sweep.ts';
+import { renderSweep, unguardedText, sweepDue } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
 import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
@@ -432,7 +432,8 @@ export class Driver {
   readonly abort = new AbortController();
   /** K6: measurements in flight by node, in start order; `ended`: those that ended and await `reap`, in end order. */
   readonly measuring = new Map<string, Measurement>();
-  private sweepRun?: { abort:AbortController; ended:Promise<void>; done:boolean; committing:boolean; reports:ActionReport[] };
+  private sweepRun?: { abort:AbortController; ended:Promise<void>; done:boolean; committing:boolean; scheduled:boolean; reports:ActionReport[] };
+  private readonly startedAt=Date.now();
   private sweepBusyAt?: number;
   private readonly ended: Measurement[] = [];
   /** Ends the loop's current `wait` (a measurement ended). */
@@ -671,7 +672,7 @@ export class Driver {
     }
     // Sweep checks own detached process groups. Cancellation is asynchronous: a ready action never
     // awaits the sweep/bisect; it signals preemption and proceeds in this same pass.
-    if (this.sweepRun && !this.sweepRun.done && !this.sweepRun.committing && (this.stopping || drift || mergeReady || actions.some(a=>a.do !== 'notify') || Object.values(s.nodes).some(n=>n.phase === 'ready'))) {
+    if (this.sweepRun && !this.sweepRun.done && !this.sweepRun.committing && (this.stopping || (!this.sweepRun.scheduled && (drift || mergeReady || actions.some(a=>a.do !== 'notify') || Object.values(s.nodes).some(n=>n.phase === 'ready'))))) {
       this.sweepRun.abort.abort(this.stopping ? 'stopped' : 'preempted');
     }
     /** F2.3: whether the disk is low this pass (checked once, before the first measurement it would start). */
@@ -723,11 +724,16 @@ export class Driver {
       low ??= await this.diskLow(s,reports);
       if (!low && this.busyAt.get('trunk') !== this.cycle) { const r = this.startTrunkRefresh(s); reports.push(r); this.emit(r); }
     }
-    // SW: a staying idle driver schedules the detached sweep and returns without awaiting it.
+    // Scheduled sweeps have their own shared lease and operation lock, outside node measurement capacity.
+    // Legacy sweeps retain idle-only scheduling and preemption.
     let sweepBusy = this.sweepBusyAt === this.cycle;
-    if (!mergeReady && this.o.stay && !this.o.once && !this.stopping && !drift && checked && s.plan.sweep && !this.sweepRun && !sweepBusy && !this.measuring.size && !Object.values(s.nodes).some(n=>n.phase === 'ready') && !actions.some(a=>a.do !== 'notify')) {
+    const scheduledSweep=!!s.plan.sweep?.every;
+    const idleSweep=!mergeReady && this.o.stay && !this.o.once && !this.measuring.size && !Object.values(s.nodes).some(n=>n.phase === 'ready') && !actions.some(a=>a.do !== 'notify');
+    if ((scheduledSweep || idleSweep) && !this.stopping && !drift && checked && s.plan.sweep && !this.sweepRun && !sweepBusy) {
       const entries = await ledger.read();
-      if (!entries.some(e=>e.kind === 'sweep' && e.commit === s.trunk.commit)) {
+      const due=scheduledSweep ? (await sweepDue(this.root!,s.plan,entries,s.trunk.commit,Date.now(),this.startedAt)).due
+        : !entries.some(e=>e.kind === 'sweep' && !e.bisect && e.commit === s.trunk.commit);
+      if (due) {
         low ??= await this.diskLow(s,reports);
         if (low) sweepBusy=true;
         else { const r=this.startSweep(s); reports.push(r); this.emit(r); }
@@ -764,14 +770,17 @@ export class Driver {
   }
 
   private startSweep(s:State): ActionReport {
-    const run={abort:new AbortController(),ended:Promise.resolve(),done:false,committing:false,reports:[] as ActionReport[]};
+    const run={abort:new AbortController(),ended:Promise.resolve(),done:false,committing:false,scheduled:!!s.plan.sweep?.every,reports:[] as ActionReport[]};
     const abort=()=>run.abort.abort(this.abort.signal.reason);
     this.abort.signal.addEventListener('abort',abort,{once:true});
     if (this.abort.signal.aborted) abort();
-    run.ended=ops.sweep({cwd:this.root!,commit:s.trunk.commit,once:true,noWait:true,dsa:this.dsa,signal:run.abort.signal,onCommit:()=>{run.committing=true;}})
-      .then(r=> {
-        if (!r.skipped) run.reports.push(r.entry.verdict === 'pass'
-          ? {do:'sweep',node:'sweep',scope:'repo',outcome:'pass',detail:renderSweep(r)}
+    const options={cwd:this.root!,commit:s.trunk.commit,noWait:true,dsa:this.dsa,signal:run.abort.signal,onCommit:()=>{run.committing=true;}};
+    const pending=run.scheduled ? ops.sweep({...options,due:true,startedAt:this.startedAt}) : ops.sweep({...options,once:true});
+    run.ended=pending.then(r=> {
+        if ('notDue' in r || r.skipped) return;
+        if (r.notice) run.reports.push({do:'notify',node:'sweep',scope:'repo',outcome:'notify',text:r.notice,facts:r.escape!.seq});
+        else run.reports.push(r.entry.verdict === 'pass' || r.first
+          ? {do:'sweep',node:'sweep',scope:'repo',outcome:r.entry.verdict,detail:renderSweep(r)}
           : {do:'notify',node:'sweep',scope:'repo',outcome:'notify',text:renderSweep(r),facts:r.entry.seq});
       },(e:unknown)=> {
         if (run.abort.signal.aborted) run.reports.push({do:'sweep',node:'sweep',scope:'repo',outcome:'aborted',detail:`sweep aborted: ${run.abort.signal.reason === 'preempted' ? 'preempted' : 'stopped'}`});
@@ -870,6 +879,7 @@ export class Driver {
   }
   /** Stop (SPEC §12.7): waits for every in-flight measurement to end and handles it; returns at once on a stop at once. */
   async settle(out: ActionReport[] = []): Promise<void> {
+    if (this.stopping && !this.sweepRun?.committing) this.sweepRun?.abort.abort('stopped');
     while ((this.measuring.size || this.sweepRun) && !this.hard) {
       await Promise.all([...this.measuring.values()].map(m=>m.ended).concat(this.sweepRun ? [this.sweepRun.ended] : []));
       if (this.hard) return;
@@ -1340,7 +1350,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
             idleWake = Date.now(); const e: LoopEvent = { event:'idle-wait', at:new Date(idleWake).toISOString(), counts }; say(reportText(e),e);
           }
           // Waiting/reported runs may ask questions, or complete a pending report, without ledger changes.
-          if (counts.open) { await poll(); driver.tick(); break; }
+          if (counts.open || (await loadState(ledger)).plan.sweep?.every) { await poll(); driver.tick(); break; }
         }
         driver.tick();
       } else {

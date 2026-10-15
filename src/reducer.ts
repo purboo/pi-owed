@@ -5,6 +5,7 @@ import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades, quarantineDowngrades, activeQuarantine, quarantineNames, type QuarantineNames, matchesAny } from './plan.ts';
 import { execKey } from './git.ts';
+import { executorEscapeErrors, sweepBoundaryErrors } from './sweep-policy.ts';
 import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeBatch, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
@@ -1744,6 +1745,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (!blobHash(d.log)) errors.push('sweep log must be a blob hash');
       if (!Array.isArray(d.failed) || d.failed.length > 50 || d.failed.some(x => typeof x !== 'string')) errors.push('sweep failed must list at most 50 names');
       if (d.bisect !== undefined && d.bisect !== true) errors.push('sweep bisect must be true when present');
+      if (d.boundary !== undefined) errors.push(...sweepBoundaryErrors(entriesOf(s),d,s.plan));
       if (d.counts !== undefined && (!d.counts || typeof d.counts !== 'object' || Array.isArray(d.counts) || Object.entries(d.counts).some(([k, v]) => k === 'format' ? typeof v !== 'string' : k === 'failed' ? !Array.isArray(v) || v.length > 50 || v.some(n=>typeof n !== 'string') : !['tests', 'pass', 'fail', 'skip'].includes(k) || !Number.isInteger(v) || (v as number) < 0))) errors.push('sweep counts must be non-negative integer counts');
       break;
     case 'note': break;
@@ -1772,7 +1774,8 @@ export function validateDraft(s: State, d: Draft): string[] {
   if ((d.kind === 'submit' || d.kind === 'review') && d.model !== undefined && (typeof d.model !== 'string' || !d.model.trim())) errors.push(`${d.kind} model must be nonempty text`);
   switch (d.kind) {
     case 'escape': {
-      allow('owner', 'parent');
+      if (r === 'executor' || d.sweep !== undefined) errors.push(...executorEscapeErrors(entriesOf(s),d));
+      else allow('owner', 'parent');
       const m = Number.isInteger(d.merge) ? listed(context(s).bySeq, d.merge)[0] : undefined;
       if (m?.kind !== 'merge' || m.node !== d.node) errors.push(`escape merge #${d.merge} is not a merge of node ${d.node}`);
       if (!ESCAPE_CLASSES.includes(d.class)) errors.push(`escape class must be one of ${ESCAPE_CLASSES.join(', ')}`);
@@ -1902,7 +1905,7 @@ function resumeBatchErrors(s: State, d: Extract<Draft,{kind:'resume'}>): string[
 /** Fields every entry may carry (assigned by the ledger or common to drafts). */
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
-const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch', 'remeasure'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect', 'boundary'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch', 'remeasure'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence', 'sweep'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
