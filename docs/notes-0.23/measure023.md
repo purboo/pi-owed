@@ -75,3 +75,12 @@ observation and merge entry of one leased command carries the same value. Absent
   shared failure counts as `other` there; `--counterfactual` gives its state-based class. `--metrics` itself
   costs what it cost before (about 40 s on app, dominated by the existing per-plan act classification).
 - Phases are derived from ledger entries, not from a replayed acceptance state.
+
+## Changed existing tests
+- `test/metrics.test.ts`, 3 assertions: the full-ledger, cutoff-window and empty-ledger `interruptions` deep-equals
+  set the new `byClass` field to `undefined` on both sides, then continue to assert the original total, halts,
+  answers and per-merged-node values. Reason: MX1 adds `byClass`, and an exact deep-equal would otherwise fail
+  only because of that new field.
+- `test/parentacts.test.ts`, 1 assertion: the legacy-field deep-equal removes the new `decisions`,
+  `actsPerDecision`, `latency` and `interruptions.byClass` fields, then continues to assert the exact 0.16 values.
+  Reason: MX1/MX3 add these fields, and the test is intended to protect the existing values.
