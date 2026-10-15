@@ -30,7 +30,7 @@ import { renderSweep, unguardedText } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
 import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
-import { mergeBatchPlan } from './reducer.ts';
+import { mergeBatchPlan, sharedParked, sharedParkKey, sharedPhase } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
 import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
@@ -1087,6 +1087,11 @@ export class Driver {
         const current = await loadState(this.ledger!);
         // TP1 (#1814): refuse the gate without blaming the writer or recording a halt.
         if (trunkParked(current, node).length) return [report('parked', 'waiting: trunk-red; repository notice follows next pass')];
+        // FS3: every reason is a shared or trunk-caused failure: park (no halt, no writer follow-up); retried when the state moves.
+        if (e instanceof ops.SharedRefusal && !halted(current, node)) {
+          const parks = sharedParked(current, node);
+          if (parks.length) { this.facts.once.add(sharedParkKey(current, node)); return [report('parked', `${sharedPhase(current, parks)}; owed retries the merge after trunk moves`)]; }
+        }
         const waiting = waitingFor(current, node);
         if (waiting) return [report('waiting', `merge refused (${e.message}); ${waitingText(node, waiting.after, waiting.resume)}`)];
         if (e.message === MERGE_TRANSIENT) return [report('retry', `merge refused (${e.message}); retry next pass`)];
@@ -1105,7 +1110,7 @@ export class Driver {
           return [report('retry', `merge refused (${e.message}); retry next pass`), ...(d ? [driftReport(now, d)] : [])];
         }
         // AT1: a merge-tree break lead stays the first sentence of the halt (and so of the Needs-you line).
-        await this.halt(node, attempt, e.message.startsWith(ops.MERGE_TREE_BREAK) ? e.message : `merge refused: ${e.message}`);
+        await this.halt(node, attempt, e.message.startsWith(ops.MERGE_TREE_BREAK) || e.message.startsWith(ops.SHARED_LEAD) ? e.message : `merge refused: ${e.message}`);
         return [report('refused', `${e.message}; halted (${NEEDS_PARENT})`)];
       };
     }

@@ -14,7 +14,7 @@ import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
-import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
+import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, type SharedPark } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
@@ -34,7 +34,7 @@ import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
 import type { Brief } from './views.ts';
-import type { CheckSpec, NodeState } from './types.ts';
+import type { CheckSpec, NodeState, MergeGuard } from './types.ts';
 import type { AnswerRef, RuleEntry, AttestJob, CandidateFacts, StateFacts, Channel, DecoyPayload, Draft, Entry, EscapeClass, EvidenceEntry, EvidenceFile, HaltEntry, ItemView, LaunchEntry, NodeSpec, ObsEntry, Plan, Principal, RunRole, SendEntry, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 export type { ReceiptCard, StatusView, Report } from './views.ts';
 export type { Brief } from './views.ts';
@@ -398,14 +398,27 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
 async function automaticInvariantRemeasure(cwd: string, ledger: Ledger, snapshot: State, job: AttestJob, first: Draft, signal?: AbortSignal): Promise<Draft | undefined> {
   if (signal?.aborted || job.kind !== 'inv' || job.attribution || first.kind !== 'obs') return;
   const needles = snapshot.plan.invariants.find(i => i.id === job.spec?.id)?.remeasure_on ?? [];
-  if (!needles.length || first.verdict !== 'fail') return;
+  if (first.verdict !== 'fail') return;
   const latest = (await load(ledger)).state;
   if (latest.planSha !== snapshot.planSha || latest.trunk.commit !== snapshot.trunk.commit) return;
   if (entriesOf(latest).some(e => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === job.obligation && e.key === job.key && e.auto_remeasure)) return;
-  if (!first.remeasure_match?.length || !first.remeasure_match.every(n => needles.includes(n))) return;
+  const ro2 = needles.length > 0 && !!first.remeasure_match?.length && first.remeasure_match.every(n => needles.includes(n));
+  // FS2: a shared failure gets the same single same-key retry by default, even without remeasure_on.
+  // Ruling #2458: never for `repeat` invariants (pooling extra runs would loosen the K-of-N gate).
+  if (!ro2 && (job.spec?.repeat || !sharedDraft(latest,first))) return;
   checkAbort(signal);
   const retry = await runJob({cwd,ledger,plan:snapshot.plan,signal},job);
-  return { ...retry, ...(first.merging ? { merging:first.merging } : {}), auto_remeasure:true };
+  const { remeasure_match: _match, ...plain } = retry as Extract<Draft,{kind:'obs'}>;
+  return { ...(ro2 ? retry : plain), ...(first.merging ? { merging:first.merging } : {}), auto_remeasure:true } as Draft;
+}
+/** FS2: whether failing draft `first` is shared on `s` (the recorded entry when the attest loop already appended it). */
+function sharedDraft(s: State, first: Extract<Draft,{kind:'obs'}>): boolean {
+  const recorded = entriesOf(s).findLast((e): e is ObsEntry => e.kind === 'obs' && e.subject === first.subject && e.obligation === first.obligation && e.key === first.key && e.commit === first.commit && e.log === first.log && e.merging === first.merging);
+  const o = recorded ?? { ...first, seq:s.seq + 1, ts:'', prev:'', hash:'' } as ObsEntry;
+  // A trunk already red with these names (IR lineage: inherited merge debt, or a persistently red trunk) gains nothing from a retry.
+  const before = entriesOf(s).findLast((e): e is ObsEntry => e.kind === 'obs' && e.seq < o.seq && e.subject === 'trunk' && e.obligation === o.obligation && e.merging === undefined && e.batch === undefined && e.verdict !== 'error' && e.key !== o.key);
+  if (before?.verdict === 'fail' && o.failed?.every(name => before.failed?.includes(name))) return false;
+  return !!sharedFailure(s, o, first.merging);
 }
 /** RO3: a refusal quotes both votes; a fail/pass conflict cannot be repaired by another retry. */
 function automaticRemeasureHints(state: State, items: ItemView[], node: string): { lines: string[]; keys: Set<string> } {
@@ -1339,10 +1352,16 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       kept.push(...currentProbes);
       // Last abort point (D16): after it trunk moves and the merge entry must follow.
       if (o.signal?.aborted) { if (kept.length) await ledger.append(kept); throw aborted(); }
-      const g = spec ? mergeGuard(current,o.node,lm) : undefined;
-      if (g) reasons.push(...g.reasons);
+      let g = spec ? mergeGuard(current,o.node,lm) : undefined;
       // A job of the latest state this run did not measure (a key the plan update introduced) refuses; a retry measures it.
       const missed = spec ? unmeasured(current,o.node,lm,observations) : [];
+      // FS6: owner-allowed executor defers of shared intermittent invariant failures, kept only when the merge then passes.
+      let defers = g && !g.ok && !missed.length ? allowanceDefers(current,o.node,g) : [], guarded = current;
+      if (defers.length) {
+        const after = prospective({...latest,state:current},defers), retried = mergeGuard(after,o.node,lm);
+        if (retried.ok) { g = retried; guarded = after; } else defers = [];
+      }
+      if (g) reasons.push(...g.reasons);
       if (missed.length) reasons.push(`not measured: ${missed.map(j => `${j.subject}/${j.obligation} (key ${j.key.slice(0,12)})`).join(', ')} (the plan changed while merge measured); run owed merge again: it measures only what lacks a verdict`);
       if (reasons.length || !g) {
         if (kept.length) await ledger.append(kept);
@@ -1355,14 +1374,18 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
           return e.note || e.failed?.length ? [`${e.subject}/${e.obligation}: ${e.note ?? `failed tests: ${e.failed!.join(', ')}`}`] : [];
         }));
         const trunkRed = (g?.nodeItems ?? []).filter(i => i.status === 'D').flatMap(i => i.evidence.flatMap(seq => trunkRedHint(current,seq,i.key) ?? []));
-        const lead = await mergeTreeBreakLead(o.cwd,current,o.node,[built.commit]);
+        const lead = await mergeTreeBreakLead(o.cwd,current,o.node,[built.commit],failedObs.filter(e => e.subject === 'trunk'));
         const automatic = automaticRemeasureHints(current,g?.invItems ?? [],o.node);
         const reused = reusedHint(o.node,failedObs.filter(e => e.subject === 'trunk' && e.seq <= latest.state.seq && !automatic.keys.has(e.key)),Date.now(),by(o) === DRIVER);
-        throw new OwedError([...automatic.lines, ...lead, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs), ...(reused ? [reused] : [])].join('; '));
+        // FS1: the shared remedy is the first sentence; FS3: the bound names itself.
+        const first = lead[0]?.startsWith(SHARED_LEAD) ? [...lead, ...automatic.lines] : [...automatic.lines, ...lead], bound = sharedBoundText(current,o.node);
+        const text = [...first, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs), ...(reused ? [reused] : []), ...(bound ? [bound] : [])].join('; ');
+        const parks = !missed.length && g ? parkedRefusal(current,o.node,reasons,g) : [];
+        throw parks.length ? new SharedRefusal(text,parks) : new OwedError(text);
       }
-      const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
+      const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(guarded,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
-      const entry = (await ledger.append([...kept,d])).at(-1)!;
+      const entry = (await ledger.append([...kept,...defers,d])).at(-1)!;
       return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D'),unguarded:unguardedPaths(current.plan,lm.facts.changed)};
     },undefined,o.signal);
   },'merge',o.signal,{activity:`merge ${o.node}`});
@@ -1517,12 +1540,46 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
  */
 /** AT1: the first words of the merge-tree break lead (the driver keeps it first in its halt text). */
 export const MERGE_TREE_BREAK = 'merge tree does not pass ';
-async function mergeTreeBreakLead(cwd: string, s: State, node: string, commits: string[]): Promise<string[]> {
+async function mergeTreeBreakLead(cwd: string, s: State, node: string, commits: string[], reused: readonly ObsEntry[] = []): Promise<string[]> {
+  const shared = sharedLead(s,node,[...entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'trunk' && e.merging === node && e.batch === undefined && e.verdict === 'fail' && commits.includes(e.commit)), ...reused]);
+  if (shared) return [shared];
   const breaks = [...new Set(commits)].flatMap(c => mergeTreeBreaks(s,node,c)), base = s.nodes[node]?.slot?.base;
   if (!breaks.length || !base || base === s.trunk.commit) return [];
   const moved = await git.countCommits(cwd,base,s.trunk.commit).catch(() => 0);
   if (!moved) return [];
   return [`${MERGE_TREE_BREAK}${[...new Set(breaks.map(b => b.obligation))].join(', ')} (trunk passes); trunk moved ${moved} commits since the slot base: rebase → owed rebase ${node}`];
+}
+/** FS3: a merge refusal whose every reason is a parked shared or trunk-caused invariant (`parks`); the driver parks instead of halting. */
+export class SharedRefusal extends OwedError {
+  readonly parks: SharedPark[];
+  constructor(message: string, parks: SharedPark[]) { super(message); this.parks = parks; }
+}
+/** FS3: the parks covering every refusal reason, or [] for a mixed refusal. */
+function parkedRefusal(s: State, node: string, reasons: readonly string[], g: MergeGuard): SharedPark[] {
+  const parks = sharedParked(s,node);
+  // Ruling #2458 (F2): trunk-red needs the guard's own merge key = trunk key and an owner conflict ('new debt' never);
+  // shared needs the measured key = the guard's merge key. Anything else is a mixed refusal and halts.
+  const covered = (r: string): boolean => {
+    const m = /^invariant (\S+) (new debt|owner conflict)/.exec(r);
+    if (!m) return false;
+    const id = m[1]!, key = g.invItems.find(i => i.obligation === `inv:${id}`)?.key, p = parks.find(x => x.obligation === `inv:${id}`);
+    if (!p || key === undefined) return false;
+    return p.kind === 'trunk-red' ? m[2] === 'owner conflict' && key === s.trunk.invKeys[id] && p.key === key : p.key === key;
+  };
+  return reasons.length && reasons.every(covered) ? parks : [];
+}
+/** FS6: executor defer drafts for every refused merge-key invariant an allow defer rule pre-authorizes. */
+function allowanceDefers(s: State, node: string, g: MergeGuard): Draft[] {
+  return g.invItems.flatMap(i => i.status === 'D' && i.mark !== '\u23f8' ? [allowanceDeferDraft(s,node,i.obligation.slice(4),i.key)].filter((d): d is Extract<Draft,{kind:'defer'}> => !!d) : []);
+}
+/** FS1: the shared-failure remedy replacing AT1 when every failing merge-tree observation is shared. */
+export const SHARED_LEAD = 'shared failure: ';
+function sharedLead(s: State, node: string, fails: readonly ObsEntry[]): string | undefined {
+  const unique = [...new Map(fails.filter(e => e.merging === node && e.obligation.startsWith('inv:')).map(e => [e.seq, e])).values()];
+  if (!unique.length) return undefined;
+  const shared = unique.map(e => ({ e, r: sharedFailure(s,e,node) }));
+  if (shared.some(x => !x.r)) return undefined;
+  return shared.map(({ e, r }) => `${SHARED_LEAD}${e.obligation} ${sharedNames(r!.names)}${r!.nameOnly ? NAME_ONLY : ''} also failed on trunk without ${node} (#${r!.trunk.at(-1)!.seq}); not attributed to ${node}`).filter((x, i, a) => a.indexOf(x) === i).join('; ');
 }
 /** AT5: refused invariant debt whose owner defer was recorded on another merge key and does not carry. */
 function deferBoundHints(s: State, node: string, items: ItemView[]): string[] {
