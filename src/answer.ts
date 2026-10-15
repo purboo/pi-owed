@@ -51,6 +51,20 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
 export function rulingDeliveryText(r: RulingDelivery): string {
   return `delivered to ${r.delivered.length} running calls (${r.delivered.join(', ')}); ${r.pending} will get it at their next dispatch or follow-up${r.failures.length ? `; delivery failures: ${r.failures.join('; ')}` : ''}${!r.delivered.length ? (r.slots ?? []).map(s => `\n${s.node}: writer call ${s.writer ?? 'unknown'}; send follow-up${s.writer ? ` to ${s.writer}` : ' to the slot writer'}: ${JSON.stringify(s.followUp)}`).join('') : ''}`;
 }
+/** LO3: receipts stay brief; full follow-ups remain plain strings in delivery.slots. */
+function rulingDeliveryWarnings(r: RulingDelivery): string[] {
+  const failures = r.failures.map(f => {
+    const node = f.split('/')[0]!.split(':')[0]!;
+    return `${oneLine(node)}: ${oneLine(f.slice(node.length).replace(/^\//, ''))}; owed why ${oneLine(node)} shows the ruling to forward`;
+  });
+  const unknown = (r.slots ?? []).filter(s => !s.writer).map(s => `${oneLine(s.node)}: writer call unknown; owed why ${oneLine(s.node)} shows the ruling to forward`);
+  return [...failures, ...unknown];
+}
+export function ruleText(r: RuleEntry & { delivery?: RulingDelivery }): string {
+  const delivery = r.delivery ?? { delivered: [], pending: 0, failures: [] };
+  const nodes = r.nodes === '*' ? 'all nodes' : r.nodes.join(', ');
+  return [`Recorded #${r.seq} ruling (${nodes}); delivered ${delivery.delivered.length}/${delivery.delivered.length + delivery.pending + delivery.failures.length}`, ...rulingDeliveryWarnings(delivery)].join('\n');
+}
 type Question = { launch: LaunchEntry; question: RunQuestion };
 const shell = (s: string): string => /[\r\n]/.test(s) ? `$'${s.replaceAll('\\','\\\\').replaceAll("'","\\'").replaceAll('\n','\\n').replaceAll('\r','\\r')}'` : `'${s.replaceAll("'", "'\\''")}'`;
 export const answerRetry = (node: string, entry: RuleEntry, ref?: import('./types.ts').AnswerRef): string => {

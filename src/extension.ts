@@ -11,7 +11,7 @@ const Type: typeof import('@earendil-works/pi-ai').Type = isMainThread
   : new Proxy({}, { get: () => () => ({}) }) as typeof import('@earendil-works/pi-ai').Type;
 import type { Static, TSchema } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { answerText, rulingDeliveryText } from './answer.ts';
+import { answerText, ruleText } from './answer.ts';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
@@ -272,7 +272,7 @@ export default function owed(pi: ExtensionAPI): void {
     return result(r, answerText(p.node, r));
   });
   tool('rule', 'Record a ruling for the applicable nodes. prospective: policy binding only attempts dispatched after it; older unsealed runs receive a notice without a new acknowledgment. Cannot combine with writer. writer: invalidate named open candidates and ask their writers to apply it and submit again (the same commit is allowed); reviewers still acknowledge it. Non-prospective rulings immediately notify running writer and reviewer calls and report delivery failures.', Type.Object({ text: reason, nodes: Type.Union([Type.Literal('*'), Type.Array(node)]), writer: Type.Optional(Type.Boolean()), prospective: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
-    const r = await ops.rule({ text: p.text, nodes: p.nodes, ...(p.writer !== undefined ? { writer: p.writer } : {}), ...(p.prospective !== undefined ? { prospective: p.prospective } : {}), ...await actor(ctx, dir, p.as, `Ruling for ${JSON.stringify(p.nodes)}`, { Ruling: p.text }, signal) }); return result(r, `${renderEntry(r)}${r.delivery ? `\n${rulingDeliveryText(r.delivery)}` : ''}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
+    const r = await ops.rule({ text: p.text, nodes: p.nodes, ...(p.writer !== undefined ? { writer: p.writer } : {}), ...(p.prospective !== undefined ? { prospective: p.prospective } : {}), ...await actor(ctx, dir, p.as, `Ruling for ${JSON.stringify(p.nodes)}`, { Ruling: p.text }, signal) }); return result(r, ruleText(r));
   });
   tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades need the owner (the main agent as owner:pi, delegated, with a note saying why; a dialog only under OWED_CONFIRM=owner) unless an `allow` rule of the current plan covers them all (then the parent records them, labelled under allowance).', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), note: Type.Optional(Type.String({ description: 'Why (recorded); required for a delegated owner downgrade (D25.5).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const read = await ops.readPlan({ cwd: dir, path: p.plan, rev: p.rev }), text = read.plan;

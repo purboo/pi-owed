@@ -7,7 +7,7 @@ import { createInterface } from 'node:readline/promises';
 import { attestExit, measuredFailure, parentOverlapWarnings } from './parentops.ts';
 import { renderMetrics } from './metrics.ts';
 import { renderCounterfactual } from './counterfactual.ts';
-import { answerText, rulingDeliveryText } from './answer.ts';
+import { answerText, ruleText } from './answer.ts';
 import * as ops from './ops.ts';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
@@ -158,7 +158,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
         if(raw !== undefined && (!/^\d+$/.test(raw) || !Number.isSafeInteger(rev) || rev! < 1)) usage('--rev must be a positive integer');
         const r=await ops.answer({...actor,node,text:args[1]!,qid:value('qid'),rid:value('rid'),rev}); result=r; text=answerText(node,r); break;
       }
-      case 'rule': { if(opts.has('prospective') && opts.has('writer')) usage('--prospective cannot be combined with --writer'); const nodes=value('nodes',true)!; const r=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(','),...(opts.has('writer') ? {writer:true} : {}),...(opts.has('prospective') ? {prospective:true} : {})}); result=r; if(r.delivery) text=`${renderEntry(r)}\n${rulingDeliveryText(r.delivery)}`; break; }
+      case 'rule': { if(opts.has('prospective') && opts.has('writer')) usage('--prospective cannot be combined with --writer'); const nodes=value('nodes',true)!; const r=await ops.rule({...actor,text:node,nodes:nodes === '*' ? '*' : nodes.split(','),...(opts.has('writer') ? {writer:true} : {}),...(opts.has('prospective') ? {prospective:true} : {})}); result=r; text=ruleText(r); break; }
       case 'dispatch': { const r=await ops.dispatch({...actor,node,allowOverlap:opts.has('allow-overlap')}); result=r; text=`${r.packet}\n\n---\nDispatched ${r.node} attempt ${r.attempt}\nworktree: ${r.worktree}\nbranch: ${r.branch}\nwriter: commit in the worktree, then run owed submit ${r.node}`; break; }
       case 'submit': result=await ops.submit({...actor,node,commit:value('commit'),model:value('model')}); break;
       case 'rebase': { const r=await ops.rebase({...actor,node,apply:opts.has('apply')}); result=r; text=r.applied ? `${renderEntry(r.entry)}; ${r.packet}; submitted #${r.submit!.seq}; owed measures checks next${r.callerAssertion ? `; ${r.callerAssertion}` : ''}` : [renderEntry(r.entry), ...(r.applied === false ? [`rebase --apply fallback: ${r.conflicts?.length ? `conflicts: ${r.conflicts.map(oneLine).join(', ')}` : `error: ${oneLine(r.error ?? 'unknown error')}`}`] : []), r.packet, renderReceipt(await ops.why({cwd,node}))].join('\n'); break; }

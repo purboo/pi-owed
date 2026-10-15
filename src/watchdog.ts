@@ -7,6 +7,7 @@ import { driveDir, readLock } from './drive-bg.ts';
 import { readState, summaryStatusView } from './ops.ts';
 import { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
+import { clockTime } from './clock.ts';
 import type { StatusView } from './views.ts';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
@@ -34,7 +35,7 @@ export function idleText(r: IdleAssessment): string {
   // No ledger or measurement vocabulary in prose; commands are kept byte-exact.
   return [`Nothing has moved for ${r.ageMin} min and nobody is working on it.`,
     ...r.nodes.slice(0, 5).map(n => `${n.id}: ${n.state}; next: ${n.next}`),
-    `Last progress: ${r.last!.ts}`].join('\n');
+    `Last progress: ${clockTime(r.last!.ts)}`].join('\n');
 }
 /** Reuse the status summary's exact next command; never quote its internal reason text in a wake. */
 export function idleNodes(v: StatusView): IdleNode[] {
