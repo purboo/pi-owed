@@ -879,13 +879,19 @@ async function setupSlot(plan: Plan, worktree: string): Promise<{ line: string; 
   const excluded = paths.length ? `; excluded: ${paths.map(path => oneLine(`/${path}`)).join(', ')}` : '';
   return { line: `Setup: ran \`${oneLine(run)}\` in this worktree (exit 0${excluded})`, excludes, paths };
 }
+function readyDispatchNode(state: State, id: string) {
+  const n = node(state, id), spec = state.plan.nodes.find(x => x.id === id);
+  if (!spec) throw new OwedError(`Node ${id} does not exist in the current plan; refresh the plan before dispatching`);
+  if (n.held !== undefined) throw new OwedError(`${id} is held by abandon #${n.held}; release it with owed resume ${id}`);
+  if (n.phase !== 'ready' || n.slot?.open) throw new OwedError('dispatch requires a ready node with no open slot');
+  return { n, spec };
+}
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
   // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
   // Resolved first, so an unverifiable layout is refused before any ledger, exclude or worktree effect.
   owner(o); const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
   return ledger.withLock(() => retryCas(ledger, async state => {
-    const n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
-    if (n.held !== undefined) throw new OwedError(`${o.node} is held by abandon #${n.held}; release it with owed resume ${o.node}`);
+    const { n, spec } = readyDispatchNode(state, o.node);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('Node id is unsafe for a worktree path','usage');
     // Overlapping writes of concurrent slots produce conflicts or ambiguous ownership; refuse unless explicitly allowed.
     const overlaps = overlapping(state,o.node);
@@ -1514,7 +1520,8 @@ async function applyMergeWaiting(dir: string, state: State, view: StatusView): P
       const n = state.nodes[id];
       if (!n?.slot?.open || n.merged || wait.attempt !== n.slot.attempt || wait.candidate !== n.candidate?.seq || typeof wait.reason !== 'string' || !Number.isFinite(Date.parse(wait.since))) continue;
       if (wait.reason.startsWith('adopt (pending since ') && !adoptPending) continue;
-      current[id] = { ...wait, ...(n.accepted ? { ahead: view.mergeQueue.indexOf(id) } : {}) };
+      const { ahead: _cachedAhead, ...waiting } = wait, ahead = view.mergeQueue.indexOf(id);
+      current[id] = { ...waiting, ...(ahead >= 0 ? { ahead } : {}) };
       const progress = view.summary?.progress.find(p => p.node === id);
       if (progress && n.candidate) progress.phase = mergeWaitingText(current[id]!, n.accepted ? 'merge' : 'measure');
     }
