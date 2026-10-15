@@ -30,9 +30,12 @@ an `executor:owed` submit with `facts.rebased` as ordinary `Entry #N invalid`,
 not code `version`. Readers in 0.13–0.22 refuse the whole ledger with code
 `version` once an `obs` carries `lease_wait_ms`; on `merge` they ignore that
 field. Upgrade the CLI, driver and every pi session that loads owed (restart
-those sessions) **before a 0.23 driver rebases a slot or takes the first leased
-measurement**. The driver's lease uses `noWait` and retries on the next pass:
-its `lease_wait_ms` excludes cross-pass waiting and is a lower bound.
+those sessions) **before the first 0.23 measurement or executor rebase**.
+Leasing is on by default: any 0.23 measurement that acquires a lease, whether
+started by the driver, manual `attest` or `merge`, records `lease_wait_ms` on
+its observations/merge entries (§7.14a). This upgrade requirement is not limited
+to driver operations. The driver's lease uses `noWait` and retries on the next
+pass: its `lease_wait_ms` excludes cross-pass waiting and is a lower bound.
 
 0.22 ships the previously unreleased 0.20.1 and 0.21 changes together.
 Upgrade every driver, CLI and pi plugin to **0.22 or newer before enabling
@@ -852,7 +855,7 @@ never part of a key.
 | `decoy-reveal` | owner | `{nonce, decoys: {node, defect}[]}` | opens an earlier unrevealed commitment (§6.5) |
 | `launch` | parent (the driver: `parent:drive`) | `{node, attempt, role: "writer"\|"reviewer", rid, spec, labels, rulings?: number}` | driver intent to start a dsa run, recorded before the dsa call (§12); `attempt` = the node's current open slot; `spec` = blob sha of the exact spec JSON bytes; `rid` = `runId(...)` (§12.3; a reviewer rid always carries `:<n>`), unique in the ledger; `labels` = `runLabels(...)`; `rulings` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the task carried, 0 when none: an integer ≤ the entry's seq, 0 or the seq of a recorded ruling covering the node (§12.5.1); strict fields |
 | `send` | parent (the driver) | `{node, attempt, rid, send, sendKind: "follow-up"\|"steer", message, reason}` | driver intent to send a message to run `rid` (a recorded launch of the same node attempt); `send` = `<rid>:<sendKind>:<seq of this entry>`; `message` = blob sha; `reason` ∈ `submit\|repair\|interrupted\|fenced\|rebase\|review-missing\|ruling\|verdict` (`verdict`: 0.11); `rulings`: reason `ruling` (required) = the highest ruling seq the message includes, the seq of a recorded ruling covering the node; reason `repair` (0.5.1, always written; absent on 0.5.0 entries) = the highest in-scope ruling seq the message carried, 0 when none, under the `launch` rule; reasons `submit` and `rebase` (0.7) the same, written only when the message carried a ruling; forbidden for other reasons (§12.5.1); strict fields |
-| `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared (§12.3); strict fields |
+| `halt` | parent (the driver) | `{node, attempt, reason, needs: "human"\|"owner"}` | the driver stops on the node's current open attempt until cleared; decision/prospective-ruling exceptions are in §12.3; strict fields |
 | `resume` | parent/owner (never `parent:drive`) | `{node, attempt, after?, note?, release?: "hold"}` | 0.8: clears the node's driver halt without an obligation and starts a new repair epoch (§12.3); `attempt` = the node's open slot; `after` = another plan node: the node waits until it merges; strict fields. owed 0.7.x cannot replay a ledger with a `resume` entry |
 | `evidence` | owner/parent/reviewer | `{node, attempt?, key?, merge?, id, files: {path, sha256, bytes}[], note}` | manual evidence (D23): on a node with an open candidate (`attempt` = current, `key` = its `evidence:<id>` key, no `merge`) it discharges `evidence:<id>` (§6.2 item 9); on a merged node (`merge` = seq of its latest merge, no `attempt`/`key`, files may be empty) an informational receipt; note non-empty, files hashed when recorded (`sha256` 64 hex, `bytes`); strict fields |
 
@@ -2479,9 +2482,17 @@ error. A stale result is rolled back and refused. Rebase execution is bounded
 at 60 seconds, abort/reset at 15 seconds. Crash leftovers offer the writer
 abort or inspect/keep/submit versus reset/rebase recovery (§7.17).
 
+Explicit apply may resend an owed-recorded writer follow-up with its original
+request id and bytes to verify the durable delivery generation. This retry is
+idempotent; if it newly delivers the follow-up and advances the generation,
+the earlier sealed inspection no longer proves the writer idle, so apply
+refuses to take over the slot.
+
 Owed serializes rebase with writer launch/send intents using a per-node lock
-before the ledger lock. Git mutation runs outside the ledger lock; candidate,
-base, plan, slot and trunk are rechecked before adjacent receipts append.
+before the ledger lock. Driver launch, send and rebase operations that return
+Busy retry on the next pass without recording a halt. Git mutation runs outside
+the ledger lock; candidate, base, plan, slot and trunk are rechecked before
+adjacent receipts append.
 Replay checks carry provenance and independent review eligibility; executor
 rebase submit must immediately follow the same open attempt's rebase, use its
 base and carry the executor's ancestor fact. Writer rebased markers and merge
@@ -2896,7 +2907,9 @@ recorded and the error identifies the saved plan and recovery action.
   addressed answer commands. Answer targets receive the answer only; other
   running roles receive the ruling. Delivery failure preserves the decision;
   retry the exact supplied `owed answer ... --rev N` command to reuse its rule
-  and request. There is no automatic retry or implicit acknowledgment.
+  and request. Multiline retry arguments use Bash ANSI-C quoting (`$'…'`) to
+  keep the printed command on one line while preserving the delivered bytes.
+  There is no automatic retry or implicit acknowledgment.
 
 Default output is one line, `decision #S for A,B: ruling #R`, with clauses only
 for performed writes, deferral, answers and resume, plus at most one delivery
@@ -3302,10 +3315,12 @@ adopt priority; old readers ignore these runtime fields.
   lists (and the empty `Needs you: none` line). Pi `dispatch` retains its
   packet and subagents arguments, then appends this brief; `plan`, `edit`
   and `amend` retain their act/carry/not-carried/downgrade lines and append
-  it. Plan warnings and ready hints retain their text before the brief. `rule` and `defer`
-  show the recorded entry as `renderEntry`, then the brief, replacing the
-  report. `abandon` and `resume` show the recorded entry, resume's waits-for
-  tail when present, and the first line of the node receipt (its phase), then
+  it. Plan warnings and ready hints retain their text before the brief. `defer`
+  shows the recorded entry as `renderEntry`, then the brief, replacing the
+  report. In 0.23, `rule` instead returns the concise delivery receipt and
+  warning lines in §9.3, without an entry rendering or brief. `abandon` and
+  `resume` show the recorded entry, resume's waits-for tail when present, and
+  the first line of the node receipt (its phase), then
   the brief, replacing the full receipt. Edit dry-run output is unchanged.
   Structured tool results, explicit status/why/report, `/owed` and CLI
   `status` remain unchanged. CLI `dispatch`, `plan`, `edit`, `amend`, `rule`,
@@ -3894,10 +3909,14 @@ must name the node's current open slot (node and attempt), and so must a halt.
   `halted(state, node) → HaltEntry | undefined` give the active halt.
 - A halt blocks the driver on that attempt until a later entry on the same node
   by a principal other than `parent:drive` — submit, review, rebase, abandon,
-  waive, defer, escape, resume, a ruling whose node list names it (not `*`) — or a new
-  attempt (any dispatch of the node). Driver entries (`launch`, `send`, `halt`)
-  and executor entries (`obs`, `merge`, which the driver causes) never clear a
-  halt. A halt of an attempt that is no longer open is not active.
+  waive, defer, escape, resume, a non-prospective ruling whose node list names
+  it (not `*`) — or a new attempt (any dispatch of the node). Prospective
+  rulings never clear a halt. For entries carrying `decision`, only a `resume`
+  can clear it: the group's rule, plan, carry submits and defers do not, so
+  `owed decide --no-resume` preserves the halt (§8.3.1). Driver entries
+  (`launch`, `send`, `halt`) and executor entries (`obs`, `merge`, which the
+  driver causes) never clear a halt. A halt of an attempt that is no longer
+  open is not active.
   **Halt row (0.16.1, HA1–HA2):** while halted, the driver still describes and
   reports asking runs that matter: the writer and reviewers of the current
   candidate, with the same question text, answer/ruling hint, rid/qid/rev and
