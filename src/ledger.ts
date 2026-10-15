@@ -91,9 +91,13 @@ function dropTornTail(text: string): string {
 const lockActivities = new AsyncLocalStorage<Map<string,string>>();
 export class Ledger {
   readonly dir: string;
+  /** MT (ruling #2110): the repository this ledger was opened from (git commands of the batch tail completion). */
+  repo?: string;
+  /** MT (ruling #2110): runs first under every outermost ledger lock (ops completes a torn batch merge tail). */
+  static onLock?: (ledger: Ledger) => Promise<void>;
   private held = new AsyncLocalStorage<Set<string>>();
   private constructor(dir: string) { this.dir = dir; }
-  static async open(cwd: string): Promise<Ledger> { return new Ledger(await ledgerDir(cwd)); }
+  static async open(cwd: string): Promise<Ledger> { const l = new Ledger(await ledgerDir(cwd)); l.repo = cwd; return l; }
   async read(): Promise<Entry[]> {
     let text: string;
     try { text = await readFile(join(this.dir, 'ledger.jsonl'), 'utf8'); } catch (e) { if (isCode(e, 'ENOENT')) return []; throw e; }
@@ -169,7 +173,7 @@ export class Ledger {
     const activities = new Map(lockActivities.getStore());
     if (opts.activity) activities.set(join(path,'owner.json'),opts.activity);
     try {
-      return await lockActivities.run(activities,() => this.held.run(owned, fn));
+      return await lockActivities.run(activities,() => this.held.run(owned, async () => { if (lockName === 'lock' && Ledger.onLock) await Ledger.onLock(this); return fn(); }));
     } finally { owned.delete(lockName); await discard(path); }
   }
   private activityUpdate: Promise<void> = Promise.resolve();
