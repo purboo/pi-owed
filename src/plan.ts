@@ -1,4 +1,5 @@
-import { writeCovers, writesSyntax, writesAllowChanged } from './writes.ts';
+import { riskDowngrades } from './risk.ts';
+import { writeCovers, writesSyntax, writesAllowChanged, writesEntryError } from './writes.ts';
 import { parse } from 'yaml';
 import { wrapErrors } from './exec-wrap.ts';
 import { matchesGlob } from 'node:path';
@@ -487,6 +488,30 @@ export function parsePlan(text: string): Plan {
   if (r.drive !== undefined) plan.drive = parseDriveBatch(r.drive, errors);
   if (r.worktrees !== undefined) plan.worktrees = parseWorktrees(r.worktrees, errors);
   if (r.exec !== undefined) { const exec = parseExec(r.exec, errors); if (exec) plan.exec = exec; }
+  if (r.risk !== undefined) plan.risk = arr(r.risk, 'risk').map((value, i) => {
+    const label = `risk[${i}]`, rule = obj(value, label), review = obj(rule.review, `${label}.review`);
+    for (const key of Object.keys(rule)) if (!['paths', 'review'].includes(key)) errors.push(`${label}.${key}: unknown key`);
+    for (const key of Object.keys(review)) if (!['count', 'min_rank'].includes(key)) errors.push(`${label}.review.${key}: unknown key`);
+    const paths = strings(rule.paths, `${label}.paths`);
+    if (!paths.length) errors.push(`${label}.paths: expected at least one scope`);
+    for (const path of paths) { const error = writesEntryError(path); if (error || path.includes('\0')) errors.push(`${label}.paths: ${error ?? 'NUL is not allowed'}`); }
+    const count = num(review.count, `${label}.review.count`, 0), min_rank = num(review.min_rank, `${label}.review.min_rank`, 1);
+    if (min_rank > 3) errors.push(`${label}.review.min_rank must be <= 3`);
+    return { paths, review: { count, min_rank } };
+  });
+  if (r.closure_neutral !== undefined) {
+    const seen = new Set<string>();
+    plan.closure_neutral = arr(r.closure_neutral, 'closure_neutral').map((value, i) => {
+      const label = `closure_neutral[${i}]`, rule = obj(value, label);
+      for (const key of Object.keys(rule)) if (!['path', 'json_ignore'].includes(key)) errors.push(`${label}.${key}: unknown key`);
+      const path = str(rule.path, `${label}.path`), json_ignore = strings(rule.json_ignore, `${label}.json_ignore`);
+      if (writesEntryError(path) || /[?*\0]/.test(path) || path.endsWith('/')) errors.push(`${label}.path: expected an exact relative file path`);
+      if (seen.has(path)) errors.push(`${label}.path: duplicate path ${path}`);
+      seen.add(path);
+      if (json_ignore.some(p => p.includes('\0'))) errors.push(`${label}.json_ignore: NUL is not allowed`);
+      return { path, json_ignore };
+    });
+  }
   if (r.allow !== undefined) plan.allow = parseAllow(r.allow, errors);
   errors.push(...mutantErrors(plan));
   if (errors.length) throw new OwedError(errors.join('\n'), 'usage');
@@ -576,7 +601,7 @@ export function quarantineDowngrades(prev: Plan, next: Plan): Downgrade[] {
     ...next.nodes.flatMap(n => n.checks.flatMap(c => one(n.id, `check ${c.id}`, prev.nodes.find(x => x.id === n.id)?.checks.find(x => x.id === c.id), c)))];
 }
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
-  const out: Downgrade[] = [...knownRedDowngrades(prev, next), ...quarantineDowngrades(prev, next)];
+  const out: Downgrade[] = [...knownRedDowngrades(prev, next), ...quarantineDowngrades(prev, next), ...riskDowngrades(prev, next)];
   function compare(node: string, before: CheckSpec[], after: CheckSpec[]): void {
     for (const c of before) {
       const n = after.find(x => x.id === c.id);

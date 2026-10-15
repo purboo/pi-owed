@@ -129,7 +129,7 @@ test('parentacts: legacy fields retain exact 0.16 values and input is immutable'
   const f = fixture(); f.merged();
   const originals = JSON.stringify(f.entries), laws = JSON.stringify([...f.plans]);
   // MX1 (0.23) adds decisions, actsPerDecision, latency and interruptions.byClass; the 0.16 fields keep their values.
-  const {parentActs,grants,decisions:_decisions,actsPerDecision:_perDecision,latency:_latency,...legacy} = computeMetrics(f.entries,f.plans);
+  const {parentActs,grants,reviews,decisions:_decisions,actsPerDecision:_perDecision,latency:_latency,...legacy} = computeMetrics(f.entries,f.plans);
   legacy.interruptions = {...legacy.interruptions,byClass:undefined!};
   assert.deepEqual(legacy,{
     since:-1,until:null,mergedNodes:1,
@@ -138,7 +138,7 @@ test('parentacts: legacy fields retain exact 0.16 values and input is immutable'
     submitToMergeMs:{samples:1,median:1000,p90:1000,max:1000},dispatchToMergeMs:{samples:1,median:2000,p90:2000,max:2000},
     firstPassAcceptance:{nodes:1,rate:1},repairs:{total:0,perMergedNode:0}
   });
-  assert.equal(parentActs.total,1); assert.deepEqual(grants,{total:0,perMergedNode:0});
+  assert.equal(parentActs.total,1); assert.deepEqual(grants,{total:0,perMergedNode:0}); assert.deepEqual(reviews,{sameModel:0});
   assert.equal(JSON.stringify(f.entries),originals); assert.equal(JSON.stringify([...f.plans]),laws);
   const text = renderMetrics(computeMetrics(f.entries,f.plans));
   assert.match(text,/Parent acts per merged node: 1 .*top classes: other 1/);
