@@ -5,57 +5,67 @@
 No new ledger entry kind and no gate weakened. New optional fields:
 `submit.facts.carry`, `submit.facts.rebased`, `defer.allowance`, `decision`,
 rule `answers` and `lease_wait_ms` on `obs`/`merge`. New plan permission:
-`allow[].defer`. **Upgrade order:** upgrade the CLI, every driver and every
-pi session that loads owed (restart them) before the first 0.23 `attest`,
-`merge` or executor rebase. Leasing is on by default, so the first 0.23
-measurement records `lease_wait_ms`, and owed 0.13–0.22 then refuses the
-ledger with code `version`. owed <= 0.22 also ignores review carry, which is
-conservative and means a new review, and refuses executor rebase submits
-(SPEC Compatibility).
+`allow[].defer`. **Upgrade order:** upgrade the CLI, every driver and every pi
+session that loads owed (restart them) before the first 0.23 `attest`, `merge`
+or executor rebase. Leasing is on by default, so the first 0.23 measurement
+that takes the machine lease records `lease_wait_ms`, and owed 0.13–0.22 then
+refuses the ledger with code `version`. owed <= 0.22 also ignores review
+carry, which is conservative and means a new review, and refuses executor
+rebase submits (SPEC Compatibility).
 
 - **Shared failures wait instead of halting (FS).** A test-only failure whose
-  every failed name also failed, with the same signature, on a trunk
-  measurement without the candidate is *shared*: evidence that the failure is
-  not the node's, never a pass. A merge refused only for shared failures, or
-  only because trunk is red, no longer halts the node or messages its writer.
-  The node shows `waiting: shared failure …` or `waiting: trunk red …` and
-  merges again by itself when trunk, the plan or the candidate changes. Shared
-  failures are remeasured once on the same key. One repository notice per
-  condition replaces per-node halts. An accepted node whose title, brief or
-  checks name the failing test merges first, and parked nodes show
-  `waiting: fix <node>`. A third park on a third merge key halts as before.
-  New plan permission `allow[].defer` lets owed defer a shared, intermittent
-  invariant failure as visible debt, only when the same merge key also has a
-  pass (SPEC §3.4, §7.24).
-- **Clean rebases need no writer turn and no new review (ER).** When a
-  rebased candidate's tree equals the merge of the reviewed candidate onto
-  the new base, its reviews carry over and every check is measured again.
-  When the writer run is sealed and the worktree is clean, the driver runs
-  the rebase itself and submits as `executor:owed`. A conflict aborts the
-  rebase and falls back to the writer. `owed rebase <node> --apply` does the
-  same on demand (SPEC §7.25).
+  every failed name also failed on a measurement without the candidate (trunk,
+  or another node's merge tree) is *shared*: evidence that the failure is not
+  the node's, never a pass. Names must match with the same signature, or by
+  name alone when neither side recorded one. The driver parks an accepted
+  candidate, without halting it or messaging its writer, when every merge
+  refusal is shared invariant debt on its actual merge key, or an automatic
+  trunk-key owner conflict whose key provably equals its merge key; any other
+  refusal halts as before. The node shows `waiting: shared failure …` or
+  `waiting: trunk red …` and is reconsidered without a resume when trunk, the
+  plan, the candidate or its defers change. Eligible shared invariant failures
+  get one automatic same-key remeasure within the existing retry budget;
+  `repeat` invariants and failures already red on the latest earlier trunk key
+  are not remeasured. One repository notice per condition replaces per-node
+  halts. An accepted, non-halted node whose title, brief, check or test list
+  names a failing test merges first, and parked nodes show `waiting: fix
+  <node>`. Shared failures with the same names on three merge keys of one
+  attempt halt as before. New plan permission `allow[].defer` lets owed defer
+  a shared, intermittent invariant failure as visible debt during a
+  single-node merge, only when the same merge key also has a pass and every
+  shared match has a recorded matching signature (SPEC §3.4, §7.24).
+- **Clean rebases need no writer turn and no new review (ER).** When a rebased
+  candidate's tree equals the clean merge of the reviewed candidate onto the
+  new base, its reviews carry over. Checks, red evidence, approvals and
+  invariants are not copied; they keep their exact keys, so they are measured
+  again only where the key changed. When the writer run is recorded and
+  sealed, the worktree is clean and HEAD is the candidate, the driver runs the
+  rebase itself and submits as `executor:owed`. A conflict aborts the rebase
+  and falls back to the writer. `owed rebase <node> --apply` does the same on
+  demand (SPEC §7.25).
 - **One decision, one act (DC, DF).** `owed decide <nodes> --text …` and
   `owed_decide` record a ruling (or a writes amend), answer open questions,
   defer an obligation and resume halted nodes under one ledger lock. Nothing
   is recorded unless every part is valid. The reply is one line. Halt and
-  Needs-you hints suggest `decide`; the old commands keep working.
-  Unlocked readers never see a half-written decision. The hint names
+  Needs-you hints suggest `decide`; the old commands keep working. Unlocked
+  readers hide a decision until its ruling is written; its trailing resumes
+  may land a moment later, so a node can briefly still show halted. Locked
+  loads and `verify` refuse a decision missing its ruling. The hint names
   `owed answer --rid --qid` per question when a node has several open
   questions. Metrics count each answer of a decision (SPEC §8.3.1, §9.4, §10,
   §11).
-- **Measure what changed (MX).** `owed report --metrics` adds decisions,
-  acts per decision, interruptions by class, per-phase latency medians and
-  p90 (measure, review, merge wait) and the median machine-lease wait.
-  `owed report --counterfactual` replays recorded halts through the 0.23
-  policies and counts the parent acts they would have saved. It is read-only
-  and unlocked (SPEC §7.14a, §9.4).
+- **Measure what changed (MX).** `owed report --metrics` adds decisions, acts
+  per decision, interruptions by class, per-phase latency medians and p90
+  (measure, review, merge wait) and the median machine-lease wait. `owed
+  report --counterfactual` replays recorded halts through the 0.23 policies
+  and estimates the parent acts they would have saved. It is read-only and
+  unlocked (SPEC §7.14a, §9.4).
 - **0.22.1 leftovers (LO).** Merge-wait reasons store structured times and
   show local time when displayed. A node whose attest or merge is running
   shows `measuring` or `merging (since HH:MM)` instead of a stale wait label.
-  A wait on a driver job that has finished is hidden. `owed rule` replies
-  with one line `Recorded #S ruling (<nodes>); delivered k/n`, plus one line
-  per delivery failure. Its JSON message is no longer double-escaped
-  (SPEC §9.3).
+  A wait on a driver job that has finished is hidden. `owed rule` replies with
+  one line `Recorded #S ruling (<nodes>); delivered k/n`, plus one line per
+  delivery failure. Its JSON message is no longer double-escaped (SPEC §9.3).
 
 ## 0.22.1
 
