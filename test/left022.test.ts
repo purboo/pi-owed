@@ -10,7 +10,7 @@ import * as ops from '../src/ops.ts';
 import { Dsa } from '../src/dsa.ts';
 import { Driver, procStart } from '../src/drive-run.ts';
 import { driveStatus, driverLine, driveStart } from '../src/drive-bg.ts';
-import { writerLaunch } from '../src/drive.ts';
+import { rulingMessage, writerLaunch } from '../src/drive.ts';
 import { projectId } from '../src/reducer.ts';
 import { Ledger, lockTimeoutText, lockWait } from '../src/ledger.ts';
 import { clockTime } from '../src/clock.ts';
@@ -241,10 +241,14 @@ else process.exit(1);\n`);
   return { messages, restore() { if (prior === undefined) delete process.env.OWED_DSA; else process.env.OWED_DSA = prior; } };
 }
 const ruling = 'Use this exact text\nwith literal \\0 and "quotes"';
-test('LO3: CLI rule text is one receipt plus unknown-writer notices; JSON follow-up is a plain string', async () => {
+test('LO3/LO-W4: unknown-writer receipts lead to pending rulings in why until the writer submits again', async () => {
   const f = await fixture();
   try {
-    await ops.dispatch({ cwd: f.cwd, as: parent, node: 'a' });
+    const prior = 'Already in the dispatch packet';
+    await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: prior });
+    const slot = await ops.dispatch({ cwd: f.cwd, as: parent, node: 'a' });
+    await commitAt(slot.worktree, { 'a.txt': 'first candidate' });
+    await ops.submit({ cwd: slot.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a' });
     const text = await cli(f.cwd, ['rule', ruling, '--nodes', 'a']); assert.equal(text.code, 0, text.stderr);
     assert.match(text.stdout, /^Recorded #\d+ ruling \(a\); delivered 0\/1\na: writer call unknown; owed why a shows the ruling to forward\n$/);
     assert.doesNotMatch(text.stdout, /Use this exact text|follow-up|Active blocks/);
@@ -254,18 +258,48 @@ test('LO3: CLI rule text is one receipt plus unknown-writer notices; JSON follow
     assert.equal(typeof followUp, 'string'); assert.ok(followUp.includes(ruling), followUp);
     assert.ok(!followUp.includes('text\\nwith literal \\\\0'), followUp);
     const why = await cli(f.cwd, ['why', 'a']); assert.equal(why.code, 0, why.stderr);
-    assert.doesNotMatch(why.stdout, /Ruling to forward:|Use this exact text/);
+    assert.match(why.stdout, /Ruling to forward:/); assert.ok(why.stdout.includes(ruling));
+    assert.ok(!why.stdout.includes(prior), why.stdout);
+
+    await commitAt(slot.worktree, { 'a.txt': 'resubmitted after manual forwarding' });
+    await ops.submit({ cwd: slot.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a' });
+    assert.equal((await ops.why({ cwd: f.cwd, node: 'a' })).rulingFollowUp, undefined);
+    for (const args of [['why', 'a'], ['why', 'a', '--full']]) {
+      const after = await cli(f.cwd, args); assert.equal(after.code, 0, after.stderr);
+      assert.doesNotMatch(after.stdout, /Ruling to forward:|Use this exact text|New parent rulings/);
+    }
+    const latest = await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'Only this newer ruling remains' });
+    assert.equal((await ops.why({ cwd: f.cwd, node: 'a' })).rulingFollowUp, rulingMessage('a', 'writer', (await ops.readState(f)).state.rules.filter(r => r.seq === latest.seq)));
   } finally { await f.cleanup(); }
 });
 
-test('LO-W1: why shows only an undelivered writer follow-up and removes it after delivery', async () => {
+test('LO-W4: a failed delivery of only a global ruling remains available in why', async () => {
+  const f = await fixture(), dsa = await fakeDsa(f, 'running');
+  try {
+    const prior = 'Already carried by the writer launch', pending = 'Global ruling not delivered\nwith literal \\0';
+    await ops.rule({ cwd: f.cwd, as: parent, nodes: ['b'], text: prior });
+    await candidate(f, 'b');
+    const result = await tool(f.cwd)({ nodes: '*', text: pending });
+    const text = result.content.map(c => c.type === 'text' ? c.text : '').join('\n');
+    assert.match(text, /^Recorded #\d+ ruling \(all nodes\); delivered 0\/2\nb: .*transport unavailable; owed why b shows the ruling to forward$/);
+    const details = result.details as Awaited<ReturnType<typeof ops.rule>>;
+    assert.equal((await ops.why({ cwd: f.cwd, node: 'b' })).rulingFollowUp, rulingMessage('b', 'writer', (await ops.readState(f)).state.rules.filter(r => r.seq === details.seq)));
+    for (const args of [['why', 'b'], ['why', 'b', '--full']]) {
+      const why = await cli(f.cwd, args); assert.equal(why.code, 0, why.stderr);
+      assert.match(why.stdout, /Ruling to forward:/); assert.ok(why.stdout.includes(pending));
+      assert.ok(!why.stdout.includes(prior), why.stdout);
+    }
+  } finally { dsa.restore(); await f.cleanup(); }
+});
+
+test('LO-W4: why shows only undelivered rulings for a launched writer and removes them after delivery', async () => {
   const f = await fixture();
   const dsa = { async describe(rid: string) { return { rid, state: 'sealed' as const }; }, async send() { throw new Error('sealed writer'); } };
   try {
     await candidate(f, 'a', false);
     const rule = await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: ruling, writer: true, dsa });
     const before = await ops.why({ cwd: f.cwd, node: 'a' });
-    assert.ok(before.rulingFollowUp?.includes(ruling));
+    assert.equal(before.rulingFollowUp, rulingMessage('a', 'writer', (await ops.readState(f)).state.rules.filter(r => r.seq === rule.seq)));
     const text = await cli(f.cwd, ['why', 'a']); assert.equal(text.code, 0, text.stderr);
     assert.ok(text.stdout.includes('Ruling to forward:\n')); assert.ok(text.stdout.includes(ruling));
     const state = (await ops.readState(f)).state, rid = state.nodes.a!.runs[0]!.launches.find(l => l.role === 'writer')!.rid;
@@ -275,6 +309,8 @@ test('LO-W1: why shows only an undelivered writer follow-up and removes it after
       const after = await cli(f.cwd, args); assert.equal(after.code, 0, after.stderr);
       assert.doesNotMatch(after.stdout, /Ruling to forward:|Use this exact text|New parent rulings/);
     }
+    const latest = await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'Only the new undelivered ruling', writer: true, dsa });
+    assert.equal((await ops.why({ cwd: f.cwd, node: 'a' })).rulingFollowUp, rulingMessage('a', 'writer', (await ops.readState(f)).state.rules.filter(r => r.seq === latest.seq)));
   } finally { await f.cleanup(); }
 });
 
