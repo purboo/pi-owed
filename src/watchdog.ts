@@ -4,10 +4,9 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { Dsa, dsaAvailable } from './dsa.ts';
 import { driveDir, readLock } from './drive-bg.ts';
-import { readState } from './ops.ts';
+import { readState, summaryStatusView } from './ops.ts';
 import { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
-import { statusView } from './views.ts';
 import type { StatusView } from './views.ts';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 
@@ -68,14 +67,18 @@ export async function watchdogLockHeld(dir: string): Promise<boolean> {
 export async function idle(cwd: string): Promise<IdleAssessment> {
   const dir = await driveDir(cwd);
   // An ordinary git repository is not automatically initialized by watching it.
-  await stat(join(dir, 'ledger.jsonl'));
+  try { await stat(join(dir, 'ledger.jsonl')); }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new OwedError('Missing ledger; run owed init <plan.yaml>', 'usage');
+    throw e;
+  }
   const { entries, state } = await readState({ cwd });
   if (!entries.length) throw new OwedError('Missing plan; run owed init <plan.yaml>', 'usage');
   const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
   let facts: Awaited<ReturnType<Dsa['watchdogFacts']>> | undefined;
   const dsa = new Dsa({ timeoutMs: 10_000, cwd });
   if (dsaAvailable(dsa.bin)) { try { facts = await dsa.watchdogFacts(); } catch { /* WD1(d): unknown, age decides. */ } }
-  const now = Date.now(), v = statusView(state, entries, [], now, driverRunning);
+  const now = Date.now(), v = await summaryStatusView(cwd, dir, state, entries, now);
   return assessIdle({ now, last: entries.at(-1), idleMin: state.plan.drive?.watch_idle_min,
     nodes: idleNodes(v), driverRunning, lockHeld: await watchdogLockHeld(dir), machineHeld: facts?.machineHeld ?? false, calls: facts?.calls });
 }

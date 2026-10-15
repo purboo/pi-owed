@@ -1,6 +1,6 @@
 # Idle watchdog
 
-`owed idle [--json]` checks one repository without starting a driver or changing its ledger. Exit 0 means idle; exit 3 means not idle; usage and internal errors retain their normal error codes. The text gives the age of the last progress, up to five node states with the status view's exact next command, and the last progress timestamp. JSON also includes the reason, last progress, and whether subagent activity is known.
+`owed idle [--json]` checks one repository without starting a driver or changing its ledger. Exit 0 means idle; exit 3 means a successful not-idle assessment; usage errors (including a missing ledger) exit 2, and internal errors exit 70. Other error categories retain their normal error codes. The text gives the age of the last progress, up to five node states with the status view's exact next command, and the last progress timestamp. JSON also includes the reason, last progress, and whether subagent activity is known.
 
 ## Conditions and configuration
 

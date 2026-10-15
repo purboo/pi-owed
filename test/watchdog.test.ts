@@ -136,6 +136,29 @@ test('WD gathered dsa call labels and machine holders; unavailable status still 
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('WD1 active status Needs-you counts as open work when only external trunk drift remains', async () => {
+  const r = await repo(), priorDsa = process.env.OWED_DSA, cwd = process.cwd(), realNow = Date.now;
+  try {
+    process.env.OWED_DSA = join(r.root, 'missing-dsa');
+    await r.commit();
+    await ops.init({ cwd: r.cwd, as: { role: 'owner', id: 'test' }, channel: 'flag', plan: JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], nodes: [], drive: { watch_idle_min: 1 } }) });
+    await r.put('external.txt', 'outside owed\n'); await r.commit();
+    Date.now = () => realNow() + 2 * 60_000;
+    const status = await ops.status({ cwd: r.cwd });
+    assert.deepEqual(status.ready, []); assert.equal(Object.keys(status.nodes).length, 0);
+    const next = status.summary!.needs.find(n => n.node === 'trunk')!.command;
+    assert.equal(next, 'owed adopt --note "<why>"');
+    const assessment = await idle(r.cwd);
+    assert.equal(assessment.idle, true);
+    assert.match(idleText(assessment), /trunk: needs attention; next: owed adopt --note "<why>"/);
+    assert.equal(assessment.nodes.find(n => n.id === 'trunk')!.next, next);
+    process.chdir(r.cwd);
+    const output: string[] = [];
+    assert.equal(await main(['idle'], { log: s => { output.push(s); }, error: () => {} }), 0);
+    assert.match(output.at(-1)!, /next: owed adopt --note "<why>"/);
+  } finally { Date.now = realNow; process.chdir(cwd); if (priorDsa === undefined) delete process.env.OWED_DSA; else process.env.OWED_DSA = priorDsa; await r.cleanup(); }
+});
+
 test('WD CLI idle/JSON returns 0 for old open work, 3 for fresh work, errors otherwise', async () => {
   const r = await repo(), priorDsa = process.env.OWED_DSA, cwd = process.cwd(), realNow = Date.now;
   try {
@@ -150,6 +173,14 @@ test('WD CLI idle/JSON returns 0 for old open work, 3 for fresh work, errors oth
     assert.equal(await main(['idle', '--json'], io), 0); assert.equal(JSON.parse(output.at(-1)!).idle, true);
     assert.equal(await main(['idle'], io), 0); assert.match(output.at(-1)!, /work: ready; next: owed dispatch work/);
     assert.equal(await main(['idle', 'unexpected'], io), 2);
-    await rm(join(process.env.OWED_DIR!, 'ledger.jsonl')); assert.notEqual(await main(['idle'], io), 0);
+    const ledger = join(process.env.OWED_DIR!, 'ledger.jsonl');
+    await writeFile(ledger, 'invalid complete entry\n');
+    assert.equal(await main(['idle', '--json'], io), 70);
+    assert.equal(JSON.parse(output.at(-1)!).code, 'internal');
+    assert.equal(await main(['status'], io), 3, 'other commands retain internal-error exit 3');
+    await rm(ledger);
+    const missing = await main(['idle', '--json'], io);
+    assert.notEqual(missing, 0); assert.notEqual(missing, 3);
+    assert.equal(missing, 2); assert.equal(JSON.parse(output.at(-1)!).code, 'usage');
   } finally { Date.now = realNow; process.chdir(cwd); if (priorDsa === undefined) delete process.env.OWED_DSA; else process.env.OWED_DSA = priorDsa; await r.cleanup(); }
 });

@@ -1614,7 +1614,7 @@ function unverifiedDefers(state: State, id: string, defers: State['deferred'], u
   return defers.filter(d => d.seq > dispatch && state.plan.nodes.some(n => n.id === id) && state.plan.invariants.some(i => i.id === d.id)).map(d => ({...d,unverified}));
 }
 /** SQ: both status and brief use the same current merge diagnostics and defer scope. */
-async function summaryStatusView(cwd: string, dir: string, state: State, entries: Entry[], now: number): Promise<StatusView> {
+export async function summaryStatusView(cwd: string, dir: string, state: State, entries: Entry[], now: number): Promise<StatusView> {
   const drift = await git.trunkDrift(cwd,state.trunk.name,state.trunk.commit);
   const mergeChecks: ItemView[] = [];
   if (!drift) {
