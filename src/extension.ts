@@ -1,3 +1,4 @@
+import { alreadyRecordedText } from './identical-acts.ts';
 import { idleWake } from './watchdog.ts';
 import { withWritesSyntax } from './writes.ts';
 import { readFile, stat } from 'node:fs/promises';
@@ -127,7 +128,7 @@ async function slotWriter(dir: string, id: string): Promise<string | undefined> 
 const ADOPT_SHOWN = 50;
 /** Candidate lines of an owner confirmation dialog (approve, and under the gate waive and owner review; G1.2). */
 const candidateLines = (v: { seq: number; commit: string; base: string; changed: number }): string => `Candidate: ${v.commit} (submit #${v.seq})\nBase: ${v.base}\nChanged files: ${v.changed}`;
-function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text }], details }; }
+function result(details: unknown, text: string) { return { content: [{ type: 'text' as const, text: alreadyRecordedText((details ?? {}) as { alreadyRecorded?: number }) ?? text }], details }; }
 
 export default function owed(pi: ExtensionAPI): void {
   if (isMainThread) pi = remoteAPI(pi);
