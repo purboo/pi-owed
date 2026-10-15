@@ -1,4 +1,6 @@
 import { actRuns, collapsedActLines, alreadyRecordedText, type RecordedAct } from './identical-acts.ts';
+import { reviewRequirementText, type ReviewRequirement } from './risk.ts';
+import { nodeReview } from './reducer.ts';
 import type { AdoptionView, AttemptRuns, Block, CheckSpec, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, SlotRebase, State } from './types.ts';
 import { mergeWaitSuffix } from './adopt-wait.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
@@ -24,6 +26,7 @@ import { clockTime } from './clock.ts';
 export const measurementText = (m: InFlight): string => `${m.do === 'merge' ? 'merging' : 'measuring'} (since ${clockTime(m.since)})`;
 
 export interface ReceiptCard {
+  reviewRequirement?: ReviewRequirement;
   conflicts?: Record<string, string[] | null>;
   rebasePending?: RebasePending;
   measuring?: InFlight;
@@ -99,6 +102,7 @@ export const liftsText = (node: string, ds: QuarantineDebt[]): string => `mergin
 /** NT3: presentation-only defer scope; unverified debt has not had its merge key rechecked. */
 export type DeferredView = State['deferred'][number] & { unverified?: 'drift' | 'conflict' };
 export interface StatusView {
+  reviewRequirements?: Record<string, ReviewRequirement>;
   conflicts?: Record<string, Record<string, string[] | null>>;
   rebasePending?: Record<string, RebasePending>;
   knownRed?: KnownRedDebt[]; lapsedKnownRed?: KnownRedDebt[];
@@ -172,6 +176,7 @@ export function driftText(d: TrunkDrift): string {
 /** D19.5: the status line for a trunk branch checked out in a worktree other than the main worktree. */
 export function trunkWorktreeText(name: string, path: string): string { return `Trunk ${name} is checked out at ${path}; merges fast-forward it there (keep it clean).`; }
 export interface Report {
+  reviews?: { sameModel: number };
   knownRed?: KnownRedDebt[];
   /** MS5: active quarantine entries (`quarantine <inv>/<test> until <fix> merges`). */
   quarantine?: string[];
@@ -285,6 +290,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   const outOfWrites = outsideWrites(s, node), superseded = supersededOf(s, [n]);
   return withActHistory({ node, phase: n.phase, accepted: n.accepted,
+    ...(s.plan.risk !== undefined && n.candidate ? { reviewRequirement: nodeReview(s, node) } : {}),
     items: n.items.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })),
     ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })) } : {}),
     blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: mergeBlockClearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
@@ -361,6 +367,7 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   const held = Object.values(s.nodes).filter(n => n.phase === 'held').map(n => ({ node:n.id, abandon:n.held! }));
   const trunkRed = trunkInvariantReds(s);
   const view: StatusView = { ...knownRedDebt(s), ...(trunkRed.length ? { trunkRed } : {}), ...(held.length ? { held } : {}), ...(reported.length ? { reported } : {}), ...(later.length ? { later } : {}), ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, mergeQueue: mergeQueue(s), groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
+  if (s.plan.risk !== undefined) view.reviewRequirements = Object.fromEntries(Object.values(s.nodes).filter(n => n.candidate && n.slot?.open).map(n => [n.id, nodeReview(s, n.id)]));
   if (currentDefers.length) view.deferred = currentDefers;
   { const batch = mergeBatchPlan(s, mergeBatchSize(s.plan)); if (batch.length) view.mergeBatch = batch; }
   view.summary = summaryView(s, entries, view, now, driverRunning, currentDefers);
@@ -383,10 +390,10 @@ function repairNeedsOwner(s: State, node: string): boolean {
     if (b.state !== 'active' || b.kind !== 'judgment' || (b.rank ?? 0) < 2) return false;
     const by = entriesOf(s).find(e => e.seq === b.seq)?.by ?? '';
     const k = n.slot?.open && spec ? driveReviewerSlot(by, node, n.slot.attempt) : undefined;
-    return !((b.rank ?? 0) <= 2 && k !== undefined && k <= Math.max(spec!.review.count, 1));
+    return !((b.rank ?? 0) <= 2 && k !== undefined && k <= Math.max(nodeReview(s, node).count, 1));
   });
   if (!n.slot?.open || !n.candidate) return ownerBlocks.length > 0;
-  return n.items.some(i => i.status === 'D' && (i.mark === '⊤' || ownerBlocks.some(b => b.obligation === i.obligation) || i.obligation === 'review' && (spec?.review.min_rank ?? 1) > 2));
+  return n.items.some(i => i.status === 'D' && (i.mark === '⊤' || ownerBlocks.some(b => b.obligation === i.obligation) || i.obligation === 'review' && nodeReview(s, node).min_rank > 2));
 }
 /** NY5: derive the receipt from the exact recorded prior/next plans, not the current board. */
 export function planReceipt(e: Entry, prior: Plan, next: Plan): string {
@@ -630,14 +637,14 @@ export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}):
   const runs = actRuns(history,history.filter(e => e.kind === 'rule'));
   const textItem = (i: ReceiptCard['items'][number]) => itemText(textReceiptItem(i,runs));
   const waitingNodes = [...new Set([...(v.waiting?.deps ?? []), ...(v.waiting?.after ? v.waiting.after.split(', ') : [])])];
-  return [`${v.node}: ${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}`, ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed decide ${v.node} --text "<decision>"`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(textItem), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(textItem)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}`, ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed decide ${v.node} --text "<decision>"`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.reviewRequirement ? [oneLine(reviewRequirementText(v.reviewRequirement))] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(textItem), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(textItem)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
   if (options.full) return renderStatusFull(v);
   const summary = v.summary ?? { merged: v.groups.merged?.length ?? 0, needs: [], progress: [], debt: [] };
   return [...summaryHead(v.trunk, v.invariants, summary), ...sweepRedLine(v),
     ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts).map(line => `${id}: ${line}`)),
-    ...(summary.progress.length ? [`In progress (${summary.progress.length}):`, ...summary.progress.map(p => `  ${p.node}: ${p.phase} (${age(p.ageMs)})`)] : []),
+    ...(summary.progress.length ? [`In progress (${summary.progress.length}):`, ...summary.progress.map(p => `  ${p.node}: ${p.phase} (${age(p.ageMs)})${v.reviewRequirements?.[p.node] ? `; ${oneLine(reviewRequirementText(v.reviewRequirements[p.node]!))}` : ''}`)] : []),
     ...(summary.debt.length ? ['Debt:', ...summary.debt.map(d => `  ${d}`)] : []),
     'Details: owed status --full · owed why <node>'].join('\n');
 }
@@ -656,7 +663,7 @@ function summaryHead(trunk: StatusView['trunk'], invariants: ItemView[], summary
 const sweepRedLine = (v: StatusView): string[] => v.sweepRed ? [`trunk: sweep red since #${v.sweepRed.seq} (${v.sweepRed.names.slice(0,5).map(oneLine).join(', ') || 'unknown'})`] : [];
 /** SQ2: preserve the 0.14 renderer plus trunk invariant-red diagnostics. */
 export function renderStatusFull(v: StatusView): string {
-  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...sweepRedLine(v), ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts).map(line => `${id}: ${line}`)), ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, `Merge queue: ${v.mergeQueue.join(', ') || 'none'}${batchPlanText(v.mergeBatch)}`, ...Object.entries(v.measuring ?? {}).map(([id, m]) => `${id}: ${measurementText(m)}`), ...Object.entries(v.rebasePending ?? {}).map(([id,r]) => `${id}: ${rebasePendingText(r)}`), ...Object.entries(v.mergeWaiting ?? {}).map(([id, w]) => `${id}: ${mergeWaitingText(w)}`), ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.held?.length ? v.held.map(h => `${h.node}: held by abandon #${h.abandon}; release with owed resume ${h.node}`) : []), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(i => itemText({ ...i, detail:v.trunkRed?.find(r => r.obligation === i.obligation)?.text ?? i.detail })), ...(v.knownRed?.length ? ['Known-red debt:', ...v.knownRed.map(knownRedText)] : []), ...(v.lapsedKnownRed?.length ? ['Lapsed known-red entries:', ...v.lapsedKnownRed.map(lapsedKnownRedText)] : []), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...sweepRedLine(v), ...Object.entries(v.reviewRequirements ?? {}).map(([id, r]) => `${id}: ${oneLine(reviewRequirementText(r))}`), ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts).map(line => `${id}: ${line}`)), ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, `Merge queue: ${v.mergeQueue.join(', ') || 'none'}${batchPlanText(v.mergeBatch)}`, ...Object.entries(v.measuring ?? {}).map(([id, m]) => `${id}: ${measurementText(m)}`), ...Object.entries(v.rebasePending ?? {}).map(([id,r]) => `${id}: ${rebasePendingText(r)}`), ...Object.entries(v.mergeWaiting ?? {}).map(([id, w]) => `${id}: ${mergeWaitingText(w)}`), ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.held?.length ? v.held.map(h => `${h.node}: held by abandon #${h.abandon}; release with owed resume ${h.node}`) : []), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(i => itemText({ ...i, detail:v.trunkRed?.find(r => r.obligation === i.obligation)?.text ?? i.detail })), ...(v.knownRed?.length ? ['Known-red debt:', ...v.knownRed.map(knownRedText)] : []), ...(v.lapsedKnownRed?.length ? ['Lapsed known-red entries:', ...v.lapsedKnownRed.map(lapsedKnownRedText)] : []), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -706,6 +713,7 @@ export function renderReport(v: Report): string {
   const runs = actRuns(actHistories.get(v) ?? v.ownerActions, actHistories.get(v)?.filter(e => e.kind === 'rule') ?? v.rulings);
   const lines = (es: Entry[]) => collapsedActLines(es,entryLine,runs);
   return [`Report (since ${v.since === -1 ? 'start' : typeof v.since === 'string' ? clockTime(v.since) : v.since})`,
+    `Reviews by the writer's model: ${v.reviews?.sameModel ?? 0}`,
     ...list('Merges', v.merges.map(entryLine)),
     ...list('Status changes', v.changes.map(c => `${c.subject}/${c.obligation}: ${c.before ? statusNames[c.before] ?? c.before : 'new'} → ${statusNames[c.after] ?? c.after}`)),
     ...list('Active blocks', v.blocks.map(b => `#${b.seq} ${b.node}/${b.obligation} (${b.kind === 'exec' ? 'execution' : 'review'}, rank ${b.rank}): ${b.clear}`)),
@@ -1041,6 +1049,7 @@ export function renderBrief(v: Brief): string {
 export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], driver = true, state?: State, dispatchSeq?: number): string {
   const lines = dispatchLines(spec, attempt, worktree, rules);
   if (state) {
+    if (state.plan.risk !== undefined) lines.push('Owner risk classes (first matching rule per changed path; unmatched paths use the node review):', ...state.plan.risk.map((r, i) => `- risk rule ${i + 1}: ${r.paths.map(oneLine).join(', ')}; review ${r.review.count}, rank >= ${r.review.min_rank}`));
     const permission = preauthorizedWritesLines(state,spec.id,dispatchSeq);
     lines.splice(lines.findIndex(x => x.startsWith('Allowed writes:')) + 1, 0, ...permission);
     if (permission.length) lines[lines.indexOf('commit your work; do not edit files outside writes; owed will run the checks itself')] = 'commit your work; stay within plan writes or task-needed owner pre-authorized paths; owed will run the checks itself';
@@ -1088,7 +1097,7 @@ export function reviewRuns(s: State, node: string): number {
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
   if (!n?.candidate || !spec) return 0;
   const closure = n.items.some(i => i.obligation === 'closure-review');
-  return Math.max(spec.review.count, closure ? 1 : 0);
+  return Math.max(nodeReview(s, node).count, closure ? 1 : 0);
 }
 /**
  * Review obligations recorded by the attempt-global reviewer run `n` on the current candidate, through the local
@@ -1100,7 +1109,7 @@ export function reviewObligations(s: State, node: string, n: number): ('review' 
   if (!st?.candidate || !spec || !Number.isInteger(n)) return [];
   const k = n - reviewerBase(s, node);
   if (k < 1) return [];
-  return [...(k <= spec.review.count ? ['review' as const] : []), ...(k === 1 && st.items.some(i => i.obligation === 'closure-review') ? ['closure-review' as const] : [])];
+  return [...(k <= nodeReview(s, node).count ? ['review' as const] : []), ...(k === 1 && st.items.some(i => i.obligation === 'closure-review') ? ['closure-review' as const] : [])];
 }
 /**
  * Task text of the driver's reviewer run `n` (attempt-global, SPEC §12.3) on the node's current candidate (pure;
@@ -1129,13 +1138,13 @@ export function reviewPacket(s: State, node: string, n = 1): string {
   const rulings = applicableRules(s, node);
   const rulingsItem = st.items.find(i => i.obligation === 'rulings');
   const ack = rulingsItem && rulingsItem.status === 'D' && rulings.length ? ` --ack-rulings ${Math.max(...rulings.map(r => r.seq))}` : '';
-  const rank = (o: 'review' | 'closure-review'): number => o === 'closure-review' ? 2 : Math.max(1, spec.review.min_rank);
+  const rank = (o: 'review' | 'closure-review'): number => o === 'closure-review' ? 2 : Math.max(1, nodeReview(s, node).min_rank);
   // Active review blocks recorded by this slot's principal (on any earlier candidate of the attempt).
   const entries = entriesOf(s), author = (seq: number) => entries.find(e => e.seq === seq);
   const judged = st.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
   const blocks = judged.filter(b => author(b.seq)?.by === who), others = judged.filter(b => author(b.seq)?.by !== who && b.rank === 1);
   const slotRank = (o: 'review' | 'closure-review'): number => Math.max(rank(o), ...blocks.filter(b => b.obligation === o).map(b => b.rank ?? 0), ...others.filter(b => b.obligation === o).map(b => (b.rank ?? 0) + 1));
-  const required = (o: string): string => o === 'review' ? `${spec.review.count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : isManual(o) ? manualRequired(spec, o, who, c12) : 'measured by owed';
+  const required = (o: string): string => o === 'review' ? `${nodeReview(s, node).count} non-writer review(s) by distinct reviewers, rank >= ${rank('review')}` : o === 'closure-review' ? `1 non-writer review, rank >= 2 (the diff touches the plan closure)` : o === 'rulings' ? `acknowledge applicable rulings${ack ? ` (${ack.trim()})` : ''}` : isManual(o) ? manualRequired(spec, o, who, c12) : 'measured by owed';
   const mine = reviewObligations(s, node, n);
   const commands = mine.flatMap(o => slotRank(o) > 2 ? [`(${o} requires rank ${slotRank(o)}: only the owner can record it; this run cannot discharge it)`] : [`owed review ${node} --as ${who} --ok|--block --rank ${slotRank(o)}${o === 'closure-review' ? ' --obligation closure-review' : ''}${ack} --candidate ${c12} --note "..."`]);
   const quote = (b: Block): string => { const e = author(b.seq); return `- #${b.seq} ${b.obligation} rank ${b.rank}${author(b.seq)?.by === who ? '' : ` by ${e?.by ?? '?'}`}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; };
@@ -1147,6 +1156,7 @@ export function reviewPacket(s: State, node: string, n = 1): string {
     ...(spec.brief ? ['Brief:', spec.brief.trimEnd()] : []),
     `Allowed writes: ${spec.writes.join(', ') || 'none'}`,
     ...reviewGrantLines(s,node),
+    ...(s.plan.risk !== undefined ? [oneLine(reviewRequirementText(nodeReview(s, node)))] : []),
     'Obligations of the candidate:',
     ...st.items.map(i => `- ${i.obligation}: ${required(i.obligation)} [${i.mark} ${i.detail}]${mine.includes(i.obligation as 'review') ? ' — recorded by this run' : ''}`),
     `Rulings in scope:${rulings.length ? '' : ' none'}`,

@@ -82,6 +82,8 @@ export interface AllowRule {
   defer?: string[];
 }
 export interface SweepSpec { run: string; timeout_s: number; reads?: string[]; /** Advisory schedule; excluded from the sweep definition key. */ every?: { merges?: number; minutes?: number } }
+export interface RiskRule { paths: string[]; review: NodeSpec['review'] }
+export interface ClosureNeutral { path: string; json_ignore: string[] }
 export interface Plan {
   version: 1;
   trunk: string;
@@ -100,6 +102,10 @@ export interface Plan {
   drive?: DriveConfig;        // present only when the plan has a `drive:` block (filled with defaults)
   worktrees?: WorktreesConfig; // D19: present only when the plan has a `worktrees:` block (filled with defaults)
   allow?: AllowRule[];        // present only when the plan has an `allow:` block (D21)
+  /** RK: ordered diff review policy; never part of an evidence key. */
+  risk?: RiskRule[];
+  /** RK: exact JSON closure paths with ignored dot paths; checks still hash full files. */
+  closure_neutral?: ClosureNeutral[];
 }
 export interface Downgrade { node: string; what: string }   // e.g. {node:'a', what:'check auth-tests removed'}
 

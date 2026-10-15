@@ -27,6 +27,7 @@ export interface Metrics {
   /** MX1: parent acts sharing a `decision` id, a resume batch or a legacy amend pair count once. */
   decisions: number; actsPerDecision: number | null;
   latency: { phases: { measure: DurationMetrics; review: DurationMetrics; mergeWait: DurationMetrics }; /** MX3 */ leaseWaitMs: DurationMetrics };
+  reviews: { sameModel: number };
   grants: { total: number; perMergedNode: number | null };
   since: number | string; until: number | string | null; mergedNodes: number; merged: MergedMetric[];
   interruptions: { total: number; halts: number; answers: number; perMergedNode: number | null; /** MX1: driver halts by class */ byClass: Record<InterruptionClass, number> };
@@ -257,11 +258,31 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     parentActs:{total:parentActsTotal,perMergedNode:ratio(parentActsTotal,n),byClass,byNode,perMergedNodeAttributed:ratio(attributed,n),pending,unattributed,mergedOnly:{total:mergedOnly,perMergedNode:ratio(mergedOnly,n)}},
     decisions:decisionKeys.size,actsPerDecision:ratio(parentActsTotal,decisionKeys.size),
     latency:{phases:{measure:durations(phaseSamples.measure),review:durations(phaseSamples.review),mergeWait:durations(phaseSamples.mergeWait)},leaseWaitMs:durations(leaseWaits)},
+    reviews:{sameModel:sameModelReviews(history,included)},
     grants:{total:grantsTotal,perMergedNode:ratio(grantsTotal,n)},
     interruptions:{total:halts.length+answers,halts:halts.length,answers,perMergedNode:ratio(halts.length+answers,n),byClass:interruptionsByClass},halts,
     haltReasons:{decision:top('decision'),'no-decision':top('no-decision')},
     submitToMergeMs:durations(merged.map(m => m.submitToMergeMs)),dispatchToMergeMs:durations(merged.map(m => m.dispatchToMergeMs)),
     firstPassAcceptance:{nodes:firstPass,rate:ratio(firstPass,n)},repairs:{total:repairs,perMergedNode:ratio(repairs,n)} };
+}
+
+/** RK4: count recorded reviews (ok and block), including acknowledged same-model use. Never infer an unknown model. */
+export function sameModelReviews(entries: readonly Entry[], included: (e: Entry) => boolean = () => true): number {
+  const writers = new Map<string, string>();
+  const identity = (model: string): string => model.replace(/:[^/:]+$/, '');
+  const key = (node: string, attempt: number, review: string): string => `${node}\0${attempt}\0${review}`;
+  let count = 0;
+  for (const e of entries) {
+    if (e.kind === 'submit') for (const obligation of ['review', 'closure-review']) {
+      const review = e.facts.keys[obligation];
+      if (!review) continue;
+      const id = key(e.node, e.attempt, review);
+      if (e.model) writers.set(id, identity(e.model));
+      else if (e.carry === undefined) writers.delete(id);
+    }
+    else if (e.kind === 'review' && e.obligation !== 'approve' && included(e) && e.model && writers.get(key(e.node, e.attempt, e.key)) === identity(e.model)) count++;
+  }
+  return count;
 }
 
 /** A single short block; JSON keeps full timestamps, counts and halt classifications. */
@@ -276,6 +297,7 @@ export function renderMetrics(m: Metrics): string {
     `Parent acts per merged node: ${number(m.parentActs.perMergedNode)} (${m.parentActs.total} total); top classes: ${classes || 'none'}`,
     `Attributed parent acts per merged node: ${number(m.parentActs.perMergedNodeAttributed)}; pending ${number(m.parentActs.pending)}; unattributed ${number(m.parentActs.unattributed)}`,
     `Parent acts by node: ${Object.entries(m.parentActs.byNode).sort(([a],[b]) => a.localeCompare(b)).map(([id,v]) => `${id} ${number(v)}`).join(', ') || 'none'}`,
+    `Reviews by the writer's model: ${m.reviews.sameModel}`,
     `Grants: ${m.grants.total}; per merged node ${number(m.grants.perMergedNode)}`,
     `Driver halts + answers per merged node (partial): ${number(m.interruptions.perMergedNode)} (${m.interruptions.total} total: ${m.interruptions.halts} halts, ${m.interruptions.answers} answers)`,
     `Halts: decision ${m.halts.filter(h => h.class === 'decision').length}, no-decision ${m.halts.filter(h => h.class === 'no-decision').length}`,
