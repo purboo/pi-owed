@@ -81,7 +81,7 @@ export interface AllowRule {
   /** FS6 (0.23): invariant id globs owed itself may defer on a shared intermittent failure with a same-key pass. */
   defer?: string[];
 }
-export interface SweepSpec { run: string; timeout_s: number; reads?: string[] }
+export interface SweepSpec { run: string; timeout_s: number; reads?: string[]; /** Advisory schedule; excluded from the sweep definition key. */ every?: { merges?: number; minutes?: number } }
 export interface Plan {
   version: 1;
   trunk: string;
@@ -218,7 +218,7 @@ export interface EvidenceEntry extends Base { kind: 'evidence'; node: string; at
 export interface AdoptEntry extends Base { kind: 'adopt'; trunk: string; prior: string; commit: string; state: StateFacts; changed: string[]; commits: number; note: string }
 /** Escape classes: missing ② missing obligation; false-pass ①a false affirmative obs; reuse ①b unsound evidence reuse; weak ①c weak oracle; waiver ③ owner waiver. */
 export type EscapeClass = 'missing' | 'false-pass' | 'reuse' | 'weak' | 'waiver';
-export interface EscapeEntry extends Base { kind: 'escape'; node: string; merge: number; class: EscapeClass; note: string; evidence?: string }
+export interface EscapeEntry extends Base { kind: 'escape'; node: string; merge: number; class: EscapeClass; note: string; evidence?: string; /** Confirmed sweep boundary authorizing an executor escape. */ sweep?: number }
 export interface Decoy { node: string; defect: string }
 /** Reveal payload; its digest is sha256 of canonical JSON of exactly {nonce, decoys:[{node, defect}]}. */
 export interface DecoyPayload { nonce: string; decoys: Decoy[] }
@@ -239,7 +239,7 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  * `after`: the node waits until that node merges. Strict fields.
  */
 export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold'; /** PO2: first resume seq of an atomic batch. */ batch?: number; /** MS2 (0.20): the driver remeasures failed merge-tree invariants before its next merge. */ remeasure?: boolean }
-export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean }
+export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean; /** Last passing predecessor sample; prior samples prove the head and culprit failed. */ boundary?: { head: number; merge: number } }
 export type Entry = GrantEntry | RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;

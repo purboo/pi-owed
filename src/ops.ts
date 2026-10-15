@@ -21,7 +21,7 @@ import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
-import { unguardedPaths, mergeCoverage } from './sweep.ts';
+import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
 import { driveStatus, readLock } from './drive-bg.ts';
@@ -1984,6 +1984,8 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   }
   const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
   const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers);
+  const red=await sweepRed(cwd,entries,state.trunk.commit);
+  if (red) view.sweepRed=red;
   await applyMergeWaiting(cwd, dir, state, view);
   const pendingBases: NonNullable<StatusView['rebasePending']> = {};
   for (const id of Object.keys(state.nodes)) {
