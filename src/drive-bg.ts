@@ -91,7 +91,7 @@ function lastExit(lines: string[]): ExitRecord | undefined {
   }
   return undefined;
 }
-const describeOwner = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since ${o.at}`;
+const describeOwner = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since ${clockTime(o.at)}`;
 
 // ---------- --detach ----------
 export interface DriveStart {
@@ -122,7 +122,7 @@ export async function driveStart(o: { cwd: string; max?: number; stay?: boolean;
   return ledger.withLock(async () => {
     const log = logPath(dir), held = readLock(dir);
     if (held.state === 'live') throw new OwedError(`a driver is running for this repository: ${describeOwner(held.owner)}; log ${log} (owed drive --status, owed drive --stop)`);
-    if (held.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${held.owner.pid} on host ${held.owner.host} (since ${held.owner.at}); a lock of another host is never taken over: check that host, and if no driver runs there remove the lock by hand; log ${log}`);
+    if (held.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${held.owner.pid} on host ${held.owner.host} (since ${clockTime(held.owner.at)}); a lock of another host is never taken over: check that host, and if no driver runs there remove the lock by hand; log ${log}`);
     mkdirSync(join(dir, 'drive'), { recursive: true });
     try { renameSync(log, `${log}.1`); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     // H1.2: `--stay` is passed to the driver; the lock does not record it (status reads the log).
@@ -209,7 +209,7 @@ export function measuringOf(lines: string[]): InFlight[] {
   return [...open.values()];
 }
 /** The text of in-flight measurements: `<node> <attest|merge> since <at>`. */
-export const inFlightText = (m: InFlight): string => `${m.node} ${m.do} since ${m.since}`;
+export const inFlightText = (m: InFlight): string => `${m.node} ${m.do} since ${clockTime(m.since)}`;
 /**
  * H1.2: `at` of the last `idle-wait` line of the current driver's output (after the last exit record) when no action
  * other than a notify follows it (an idle pass prints notifies only); else undefined.
@@ -247,11 +247,11 @@ export async function driveStatus(o: { cwd: string }): Promise<DriveStatus> {
   if (lines && !lines.length) r.noOutput = true;
   return r;
 }
-const exitText = (e: ExitRecord): string => `${e.reason} (exit ${e.code}) at ${e.at}${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
+const exitText = (e: ExitRecord): string => `${e.reason} (exit ${e.code}) at ${clockTime(e.at)}${e.error !== undefined ? `: ${oneLine(e.error)}` : ''}`;
 export function renderDriveStatus(r: DriveStatus): string {
   const out: string[] = [];
-  if (r.foreign) out.push(`driver lock held by pid ${r.pid} on host ${r.host} since ${r.since} (another host: not checked from here)`);
-  else if (r.running) out.push(`driver running: pid ${r.pid} on ${r.host} since ${r.since}`, ...(r.idleSince !== undefined ? [idleText(r.idleSince)] : []), ...(r.measuring ?? []).map(m => `measuring: ${inFlightText(m)}`));
+  if (r.foreign) out.push(`driver lock held by pid ${r.pid} on host ${r.host} since ${clockTime(r.since ?? '?')} (another host: not checked from here)`);
+  else if (r.running) out.push(`driver running: pid ${r.pid} on ${r.host} since ${clockTime(r.since ?? '?')}`, ...(r.idleSince !== undefined ? [idleText(r.idleSince)] : []), ...(r.measuring ?? []).map(m => `measuring: ${inFlightText(m)}`));
   else out.push(r.noExitRecord ? 'driver not running; it ended without an exit record (killed or crashed)' : 'driver not running');
   if (r.running || r.foreign) out.push(sessionText(r.session));
   if (r.exit) out.push(`last exit: ${exitText(r.exit)}`);
@@ -263,9 +263,9 @@ export function renderDriveStatus(r: DriveStatus): string {
 /** The `/owed` status line (D17.8). */
 export async function driverLine(cwd: string): Promise<string> {
   const r = await driveStatus({ cwd });
-  if (r.foreign) return `Driver: lock held by pid ${r.pid} on host ${r.host} since ${r.since}; ${sessionText(r.session)}`;
-  if (r.running) return `Driver: running pid ${r.pid} since ${r.since}; ${r.idleSince !== undefined ? `${idleText(r.idleSince)}; ` : ''}${r.measuring ? `measuring ${r.measuring.map(inFlightText).join(', ')}; ` : ''}${sessionText(r.session)}`;
-  if (r.exit) return `Driver: not running (last exit ${r.exit.reason} at ${r.exit.at})`;
+  if (r.foreign) return `Driver: lock held by pid ${r.pid} on host ${r.host} since ${clockTime(r.since ?? '?')}; ${sessionText(r.session)}`;
+  if (r.running) return `Driver: running pid ${r.pid} since ${clockTime(r.since ?? '?')}; ${r.idleSince !== undefined ? `${idleText(r.idleSince)}; ` : ''}${r.measuring ? `measuring ${r.measuring.map(inFlightText).join(', ')}; ` : ''}${sessionText(r.session)}`;
+  if (r.exit) return `Driver: not running (last exit ${r.exit.reason} at ${clockTime(r.exit.at)})`;
   return r.noExitRecord ? 'Driver: not running (ended without an exit record)' : r.noOutput ? 'Driver: not running (no driver output yet)' : 'Driver: not running';
 }
 
@@ -288,7 +288,7 @@ async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number }): Pro
   const lock = readLock(dir);
   if (lock.state === 'none' || lock.state === 'stale') return { state: 'none' };
   const owner = lock.owner;
-  if (lock.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${owner.pid} on host ${owner.host} (since ${owner.at}); stop it on that host`);
+  if (lock.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${owner.pid} on host ${owner.host} (since ${clockTime(owner.at)}); stop it on that host`);
   if (owner.start === undefined) throw new OwedError(`cannot verify that pid ${owner.pid} is the driver (its lock records no process start time); not signaled`);
   const same = (): boolean => procStart(owner.pid) === owner.start && !released(dir, owner);
   if (!same()) return { state: 'none' };
@@ -570,7 +570,7 @@ export class Follower {
       if (!old || (old.pid === owner.pid && (old.start === undefined || owner.start === undefined || old.start === owner.start))) continue;
       if (old.at && Date.parse(owner.at) <= Date.parse(old.at)) continue;
       p.wake = false; p.earlier = true;
-      p.text = `earlier driver (pid ${old.pid}, started ${old.at ?? old.start ?? 'unknown'}) ${p.terminal!.event}; driver pid ${owner.pid} (started ${owner.at}) is running`;
+      p.text = `earlier driver (pid ${old.pid}, started ${old.at ? clockTime(old.at) : old.start ?? 'unknown'}) ${p.terminal!.event}; driver pid ${owner.pid} (started ${clockTime(owner.at)}) is running`;
     }
     this.ended = this.pending.some(p => p.wake && p.terminal);
     if (this.pending.some(p => p.earlier)) Object.assign(this.o, { pid: owner.pid, start: owner.start, since: owner.at });

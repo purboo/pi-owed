@@ -1,3 +1,4 @@
+import { clockTime } from '../src/clock.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, rm, readFile, stat } from 'node:fs/promises';
@@ -37,7 +38,7 @@ test('WD1 output is bounded, plain, and keeps exact status next commands', () =>
   assert.equal(idleExit(r), 0); assert.equal(idleExit(assessIdle({ ...f, lockHeld: true })), 3);
   assert.equal(text.split('\n').length, 7);
   assert.match(text, /^Nothing has moved for 30 min and nobody is working on it\./);
-  assert.match(text, /Last progress: 2026-10-15T11:30:00Z$/);
+  assert.ok(text.endsWith(`Last progress: ${clockTime('2026-10-15T11:30:00Z')}`));
   assert.doesNotMatch(text, /\b(seq|obligation|lease|candidate)\b/);
   const v = { nodes: { work: { id: 'work', phase: 'submitted', slot: { open: true }, candidate: {} } }, ready: [], overlaps: {}, summary: { needs: [{ node: 'work', command: 'owed resume work --note "exact text"' }] } } as unknown as StatusView;
   assert.equal(idleNodes(v)[0]!.next, v.summary!.needs[0]!.command);

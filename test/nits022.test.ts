@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
+import { appendFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import * as R from '../src/reducer.ts';
@@ -244,13 +246,16 @@ test('NT mtrain status: planned batches exclude waiting/later nodes and explicit
 
 test('NT mtrain driver: a running batch member says in batch with the leader', {timeout:120_000}, async () => {
   const r=await fixture({drive:{merge_batch:2}}), marker=join(r.root,'batch-started'), gate=join(r.root,'batch-go');
-  const {Driver}=await import('../src/drive-run.ts'),{Dsa}=await import('../src/dsa.ts');
+  const {Driver,procStart}=await import('../src/drive-run.ts'),{Dsa}=await import('../src/dsa.ts');
   class Client extends Dsa {
     constructor(){super({bin:'/bin/true'});}
     override async describe(rid:string){return {rid,state:'sealed' as const,status:'ok' as const};}
     override async inspect(rid:string){return {view:await this.describe(rid)};}
   }
-  const driver=new Driver({...r,dsa:new Client(),log:()=>{},handleSignals:false});
+  const ledger=await Ledger.open(r.cwd),logDir=join(ledger.dir,'drive');
+  await mkdir(logDir,{recursive:true});
+  await writeFile(join(ledger.dir,'drive.lock'),JSON.stringify({pid:process.pid,host:hostname(),start:procStart(process.pid),at:new Date().toISOString(),token:'fixture'}));
+  const driver=new Driver({...r,dsa:new Client(),json:true,log:l=>appendFileSync(join(logDir,'log.jsonl'),l+'\n'),handleSignals:false});
   try {
     const s=(await ops.readState(r)).state;
     await ops.planSet({...r,as:parent,plan:JSON.stringify({...s.plan,invariants:[{id:'gate',reads:['*.txt'],timeout_s:20,run:`if test -f a.txt && test -f b.txt; then touch '${marker}'; while [ ! -f '${gate}' ]; do sleep .02; done; fi`}]})});

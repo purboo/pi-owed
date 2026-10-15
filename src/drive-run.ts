@@ -329,8 +329,8 @@ export async function acquireDriveLock(dir: string, session?: string): Promise<D
       try { held = await readFile(path, 'utf8'); } catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; throw err; }
       let owner: LockOwner | undefined;
       try { owner = JSON.parse(held) as LockOwner; } catch { owner = undefined; }
-      if (owner && Number.isInteger(owner.pid) && owner.host !== hostname()) throw new OwedError(`another owed drive may be running for this repository: ${path} is held by pid ${owner.pid} on host ${owner.host} (since ${owner.at}); a lock of another host is never taken over: check that host, and if no driver runs there remove ${path} by hand`);
-      if (owner && Number.isInteger(owner.pid) && lockAlive(owner)) throw new OwedError(`another owed drive is running for this repository (pid ${owner.pid} on ${owner.host}, since ${owner.at}); lock ${path}`);
+      if (owner && Number.isInteger(owner.pid) && owner.host !== hostname()) throw new OwedError(`another owed drive may be running for this repository: ${path} is held by pid ${owner.pid} on host ${owner.host} (since ${clockTime(owner.at)}); a lock of another host is never taken over: check that host, and if no driver runs there remove ${path} by hand`);
+      if (owner && Number.isInteger(owner.pid) && lockAlive(owner)) throw new OwedError(`another owed drive is running for this repository (pid ${owner.pid} on ${owner.host}, since ${clockTime(owner.at)}); lock ${path}`);
       // Stale: move it aside, and put it back if what was moved is not what was judged stale (a racing takeover).
       const aside = `${path}.stale-${me.token}`;
       try { await rename(path, aside); } catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') continue; throw err; }
@@ -451,15 +451,15 @@ export class Driver {
     return b.length && !this.batchRefused.has(`${s.trunk.commit}\0${b.join('\0')}`) ? b : [];
   }
   /** DR2: private runtime state; never a ledger act or acceptance evidence. */
-  private readonly mergeWaiting = new Map<string, { reason: string; since: string; attempt: number; candidate?: number; job?: string }>();
-  private recordMergeWaiting(node: string, reason?: string, s?: State, job?: string): void {
+  private readonly mergeWaiting = new Map<string, { reason: string; since: string; attempt: number; candidate?: number; job?: string; jobSince?: string }>();
+  private recordMergeWaiting(node: string, reason?: string, s?: State, job?: string, jobSince?: string, since?: string): void {
     if (!this.ledger) return;
     const n = s?.nodes[node], prior = this.mergeWaiting.get(node);
     if (reason !== undefined) {
       const attempt = n?.slot?.attempt ?? prior?.attempt;
       if (attempt === undefined) return;
       const candidate = n?.candidate?.seq ?? prior?.candidate;
-      this.mergeWaiting.set(node, { reason, ...(job ? { job } : {}), since: prior && prior.attempt === attempt && prior.candidate === candidate ? prior.since : new Date().toISOString(), attempt, ...(candidate !== undefined ? { candidate } : {}) });
+      this.mergeWaiting.set(node, { reason, ...(job ? { job, ...(jobSince ? { jobSince } : {}) } : {}), since: since ?? (prior && prior.attempt === attempt && prior.candidate === candidate ? prior.since : new Date().toISOString()), attempt, ...(candidate !== undefined ? { candidate } : {}) });
     } else this.mergeWaiting.delete(node);
     const dir = join(this.ledger.dir, 'drive'), path = join(dir, 'waiting.json');
     mkdirSync(dir, { recursive: true });
@@ -614,7 +614,7 @@ export class Driver {
     const mergeReady = mergeQueue(s).length > 0;
     for (const [id, wait] of this.mergeWaiting) {
       const n = s.nodes[id];
-      if (!n?.slot?.open || n.merged || n.slot.attempt !== wait.attempt || n.candidate?.seq !== wait.candidate) this.recordMergeWaiting(id);
+      if (this.measuring.has(id) || !n?.slot?.open || n.merged || n.slot.attempt !== wait.attempt || n.candidate?.seq !== wait.candidate) this.recordMergeWaiting(id);
     }
     if (mergeReady) this.measuring.get('\u0000trunk-refresh')?.abort?.abort('preempted');
     this.project = projectId(s);
@@ -635,13 +635,13 @@ export class Driver {
       for (const id of mergeQueue(s)) {
         if (this.measuring.get(id)?.do === 'merge') continue;
         const reason = adoptPendingReason(adoptPending);
-        this.recordMergeWaiting(id,reason,s);
+        this.recordMergeWaiting(id,'adopt',s,undefined,undefined,adoptPending.since);
         const report: ActionReport = {do:'merge',node:id,outcome:'waiting',detail:`merge waiting for ${reason}`};
         reports.push(report); this.emit(report,s);
       }
       actions = actions.filter(a => a.do !== 'merge');
     } else {
-      for (const [id,wait] of this.mergeWaiting) if (wait.reason.startsWith('adopt (pending since ')) this.recordMergeWaiting(id);
+      for (const [id,wait] of this.mergeWaiting) if (wait.reason === 'adopt' || wait.reason.startsWith('adopt (pending since ')) this.recordMergeWaiting(id);
     }
     const drift = merging ? (checked = false, undefined) : await git.trunkDrift(this.root!, s.trunk.name, s.trunk.commit).catch(() => { checked = false; return undefined; });
     if (drift) {
@@ -676,8 +676,8 @@ export class Driver {
           // DQ2: the merge blocks a second merge even when an attest also occupies capacity.
           const blocker = inFlight.find(m => m.do === 'merge') ?? inFlight[0]!;
           const job = `${blocker.attempt === 0 ? 'trunk' : blocker.node} ${blocker.do}`;
-          const reason = blocker.batch?.includes(a.node) ? `in batch with ${blocker.node}` : `driver-internal job (${job}, since ${clockTime(blocker.at)})`;
-          this.recordMergeWaiting(a.node, reason, s, job);
+          const reason = blocker.batch?.includes(a.node) ? `in batch with ${blocker.node}` : 'driver-internal job';
+          this.recordMergeWaiting(a.node, reason, s, job, blocker.at);
           continue;
         }
         // Busy back-off: a measurement that ended busy waits for the next timed or event pass.
@@ -687,7 +687,7 @@ export class Driver {
         if (low) continue;
         if (a.do === 'merge') {
           const pending = await pendingAdopt(ledger.dir);
-          if (pending) { this.recordMergeWaiting(a.node,adoptPendingReason(pending),s); continue; }
+          if (pending) { this.recordMergeWaiting(a.node,'adopt',s,undefined,undefined,pending.since); continue; }
         }
         const r = this.start(s, a.do, a.node, a.do === 'merge' && batch[0] === a.node ? batch : undefined);
         reports.push(r); this.emit(r, s);
@@ -796,6 +796,7 @@ export class Driver {
   }
   /** Starts the attest or merge of `node` without awaiting it; returns its `started` report. */
   private start(s: State, what: 'attest' | 'merge', node: string, batch?: string[]): ActionReport {
+    this.recordMergeWaiting(node);
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
     const m: Measurement = { do: what, node, attempt, at, ...(batch ? {batch} : {}), done: false, ended: Promise.resolve() };
     const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && { members: batch, trunk: s.trunk.commit });

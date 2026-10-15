@@ -1,11 +1,12 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, appendFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as ops from '../src/ops.ts';
-import { Driver, wakeReport } from '../src/drive-run.ts';
+import { Driver, wakeReport, procStart } from '../src/drive-run.ts';
 import { Dsa } from '../src/dsa.ts';
 import { writerLaunch } from '../src/drive.ts';
 import { validateDraft, projectId } from '../src/reducer.ts';
@@ -169,10 +170,15 @@ test('DQ2 review: a waiting node outside mergeQueue has no ahead field or queue-
 test('DQ2: CLI status names the running merge and queue positions in critical-path order', { timeout: 120_000 }, async () => {
   const f = await fixture([node('old'), node('high'), node('child', ['high']), node('tie')]);
   const mark = join(f.root, 'started'), gate = join(f.root, 'gate');
+  let driver: Driver | undefined;
   try {
     await accepted(f, 'old'); await accepted(f, 'high'); await accepted(f, 'tie');
     await ops.planSet({ cwd: f.cwd, as: parent, plan: JSON.stringify({ ...f.plan, invariants: [{ id: 'slow', reads: ['seed'], run: `echo started > '${mark}'; while [ ! -f '${gate}' ]; do sleep 0.05; done` }] }) });
-    await f.driver.pass();
+    const ledger = await Ledger.open(f.cwd), logDir = join(ledger.dir, 'drive');
+    await (await import('node:fs/promises')).mkdir(logDir, { recursive: true });
+    await writeFile(join(ledger.dir, 'drive.lock'), JSON.stringify({ pid: process.pid, host: hostname(), start: procStart(process.pid), at: new Date().toISOString(), token: 'fixture' }));
+    driver = new Driver({ cwd: f.cwd, dsa: new Client(), json: true, log: l => appendFileSync(join(logDir, 'log.jsonl'), l + '\n'), handleSignals: false });
+    await driver.pass();
     const end = Date.now() + 10_000;
     while (!existsSync(mark) && Date.now() < end) await new Promise(r => setTimeout(r, 20));
     assert.ok(existsSync(mark), f.lines.join('\n'));
@@ -187,9 +193,9 @@ test('DQ2: CLI status names the running merge and queue positions in critical-pa
       assert.match(text.stdout, /old.*merge waiting for driver-internal job \(high merge, since \d\d:\d\d\); 1 merge ahead/);
       assert.match(text.stdout, /tie.*merge waiting for driver-internal job \(high merge, since \d\d:\d\d\); 2 merges ahead/);
     }
-    await writeFile(gate, ''); await f.driver.settle();
+    await writeFile(gate, ''); await driver.settle();
     assert.equal((await ops.readState(f)).state.nodes.high!.merged !== undefined, true);
-    // Position is derived from the current queue, even before the next driver pass updates its cache.
-    assert.equal((await ops.status(f)).mergeWaiting?.old?.ahead, 0);
-  } finally { await writeFile(gate, ''); await f.done(); }
+    // Finished jobs disappear at read time, before the next driver pass updates its cache.
+    assert.equal((await ops.status(f)).mergeWaiting?.old, undefined);
+  } finally { await writeFile(gate, ''); driver?.abort.abort(); await driver?.settle(); await f.done(); }
 });

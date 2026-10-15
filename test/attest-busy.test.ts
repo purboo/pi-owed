@@ -1,6 +1,7 @@
 // K1 (0.7): per-node attest locks; a held attest lock is `busy` (exit 75), not an internal error; lock timeouts are
 // `busy`; CLI --json errors on stdout; no attest advice to a writer while a driver runs.
 // Module members new in 0.7 are read through namespaces, so on 0.6.1 these tests fail by assertion, not at import.
+import { clockTime } from '../src/clock.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -59,7 +60,7 @@ async function settled<T>(p: Promise<T>, ms = 20_000): Promise<T | unknown> {
   try { return await Promise.race([p.catch((e: unknown) => e), new Promise(r => { t = setTimeout(() => r('pending'), ms); })]); } finally { clearTimeout(t); }
 }
 const entries = async (cwd: string): Promise<Entry[]> => (await Ledger.open(cwd)).read();
-const busyText = (node: string, o: Owner) => `attest of ${node} is already running (pid ${o.pid} on ${o.host} since ${o.ts}); its observations will appear in owed why ${node}`;
+const busyText = (node: string, o: Owner) => `attest of ${node} is already running (pid ${o.pid} on ${o.host} since ${clockTime(o.ts)}); its observations will appear in owed why ${node}`;
 const isBusy = (out: unknown, message: string) => out instanceof OwedError && out.code === 'busy' && out.message === message;
 
 /** Initializes `nodes` (id → check command), dispatches each (as `as`) and submits one commit per node. */
@@ -172,7 +173,7 @@ test('K1.2: attest --genesis while a live process holds the genesis lock is busy
     const l = await Ledger.open(r.cwd), h = await hold(l, 'genesis');
     try {
       const out = await settled(ops.attestGenesis({ cwd: r.cwd }), 10_000);
-      assert.ok(isBusy(out, `attest --genesis is already running (pid ${h.owner.pid} on ${h.owner.host} since ${h.owner.ts}); its observations will appear in owed status`), String(out));
+      assert.ok(isBusy(out, `attest --genesis is already running (pid ${h.owner.pid} on ${h.owner.host} since ${clockTime(h.owner.ts)}); its observations will appear in owed status`), String(out));
     } finally { await h.release(); }
   } finally { await r.cleanup(); }
 });
@@ -207,7 +208,7 @@ test('K1.2: a timeout on the ledger lock or another lock is busy: "timed out wai
   try {
     await commitAt(r.cwd, { README: 'x\n' });
     await ops.init({ cwd: r.cwd, plan: JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], nodes: [{ id: 'a', writes: ['a/'], checks: [] }] }), as: owner, channel: 'flag' });
-    const l = await Ledger.open(r.cwd), held = `pid ${FOREIGN.pid} on ${FOREIGN.host} since ${FOREIGN.ts}`;
+    const l = await Ledger.open(r.cwd), held = `pid ${FOREIGN.pid} on ${FOREIGN.host} since ${clockTime(FOREIGN.ts)}`;
     let p = await plant(l, 'lock', FOREIGN);
     try {
       const out = await settled(ops.rule({ cwd: r.cwd, as: parent, text: 'x', nodes: '*' }));
