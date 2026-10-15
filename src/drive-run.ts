@@ -450,6 +450,15 @@ export class Driver {
     const b = mergeBatchPlan(s, mergeBatchSize(s.plan), actions.flatMap(a => a.do === 'merge' ? [a.node] : []));
     return b.length && !this.batchRefused.has(`${s.trunk.commit}\0${b.join('\0')}`) ? b : [];
   }
+  /** LO-W2: keep the first busy end across the visible wait's removal at each retry start. */
+  private readonly busyWaiting = new Map<string, { attempt: number; candidate?: number; since: string }>();
+  private busyWaitSince(node: string, s: State): string {
+    const n = s.nodes[node]!, prior = this.busyWaiting.get(node);
+    if (prior && prior.attempt === n.slot!.attempt && prior.candidate === n.candidate?.seq) return prior.since;
+    const wait = { attempt: n.slot!.attempt, candidate: n.candidate?.seq, since: new Date().toISOString() };
+    this.busyWaiting.set(node, wait);
+    return wait.since;
+  }
   /** DR2: private runtime state; never a ledger act or acceptance evidence. */
   private readonly mergeWaiting = new Map<string, { reason: string; since: string; attempt: number; candidate?: number; job?: string; jobSince?: string }>();
   private recordMergeWaiting(node: string, reason?: string, s?: State, job?: string, jobSince?: string, since?: string): void {
@@ -615,6 +624,10 @@ export class Driver {
     for (const [id, wait] of this.mergeWaiting) {
       const n = s.nodes[id];
       if (this.measuring.has(id) || !n?.slot?.open || n.merged || n.slot.attempt !== wait.attempt || n.candidate?.seq !== wait.candidate) this.recordMergeWaiting(id);
+    }
+    for (const [id, wait] of this.busyWaiting) {
+      const n = s.nodes[id];
+      if (!n?.slot?.open || n.merged || n.slot.attempt !== wait.attempt || n.candidate?.seq !== wait.candidate) this.busyWaiting.delete(id);
     }
     if (mergeReady) this.measuring.get('\u0000trunk-refresh')?.abort?.abort('preempted');
     this.project = projectId(s);
@@ -806,7 +819,8 @@ export class Driver {
         m.done = true;
         // A busy measurement (LE2, review #785) is not progress and does not wake the loop: its line is printed now (so status no
         // longer lists it) and the node waits for the next timed or event pass.
-        if (busy) { this.recordMergeWaiting(node, busy.detail ?? 'machine lease busy', s); this.measuring.delete(node); this.busyAt.set(node, this.cycle); if (!this.hard) this.emit(busy); return; }
+        if (busy) { this.recordMergeWaiting(node, busy.detail ?? 'machine lease busy', s, undefined, undefined, this.busyWaitSince(node, s)); this.measuring.delete(node); this.busyAt.set(node, this.cycle); if (!this.hard) this.emit(busy); return; }
+        this.busyWaiting.delete(node);
         this.recordMergeWaiting(node);
         this.ended.push(m); this.waker?.();
       });

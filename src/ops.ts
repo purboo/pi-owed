@@ -2070,11 +2070,8 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   await applyMergeWaiting(o.cwd, ledger.dir, view, runtime);
   if (runtime.measuring?.[o.node]) card.measuring = runtime.measuring[o.node];
   if (runtime.mergeWaiting?.[o.node]) card.mergeWaiting = runtime.mergeWaiting[o.node];
-  const rules = applicableRules(view, o.node);
-  if (view.nodes[o.node]?.slot?.open && rules.length) {
-    const { rulingFollowUp, rulingMessage } = await import('./drive.ts');
-    card.rulingFollowUp = rulingFollowUp(view, o.node)?.message ?? rulingMessage(o.node, 'writer', rules);
-  }
+  const { rulingFollowUp } = await import('./drive.ts');
+  card.rulingFollowUp = rulingFollowUp(view, o.node)?.message;
   await applyModels(ledger,view,entries,o.node,card);
   return card;
 }
