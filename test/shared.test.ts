@@ -9,7 +9,8 @@ import { decide } from '../src/drive.ts';
 import { Dsa } from '../src/dsa.ts';
 import { parsePlan } from '../src/plan.ts';
 import { entriesOf, reduce, runId, runLabels, sharedParked, sharedParkKey, sharedFailure, mergeBatchPlan, validateDraft } from '../src/reducer.ts';
-import { wakeReport } from '../src/drive-run.ts';
+import { wakeReport, type ActionReport } from '../src/drive-run.ts';
+import { Follower } from '../src/drive-bg.ts';
 import { sharedWaiting } from '../src/drive.ts';
 import { errorGroups } from '../src/exec.ts';
 import { renderStatus, renderReport } from '../src/views.ts';
@@ -206,13 +207,19 @@ test('FS3(b): a trunk-key conflict from the merge guard\'s trunk refresh parks t
       assert.ok(notices[0]!.do === 'notify');
       assert.equal(notices[0]!.once, `trunk\0inv:x\0${NAME}\0${s.trunk.commit}`);
       assert.equal(notices[0]!.text, `trunk red: inv:x ${NAME} fails on trunk ${s.trunk.commit.slice(0, 12)} (#${fail.seq}, pass #${pass.seq}: owner conflict); waiting: a, c. owed retries after trunk moves. To merge now: owed decide a,c --defer inv:x (or an allow defer rule); to fix: a node whose brief names the test.`);
-      assert.equal(wakeReport({ do: 'notify', outcome: 'done' }), true);
       const needs = (await ops.status({ cwd: r.cwd })).summary!.needs.filter(x => x.node === 'trunk' && x.reason.startsWith('trunk red: inv:x'));
       assert.equal(needs.length, 1); assert.equal(needs[0]!.command, '');
       const drv = await r.driver(['a', 'c']);
+      // Ruling #2485 (2): the notify the driver actually emits for the trunk-red park wakes the next session.
+      const emitted: ActionReport[] = [], emit = drv.d.emit.bind(drv.d);
+      drv.d.emit = (x: ActionReport, st?: Parameters<typeof emit>[1]) => { emitted.push(x); emit(x, st); };
       await drv.passes(2);
       assert.deepEqual(await r.halts(), [], drv.lines.join('\n'));
       assert.equal(drv.lines.filter(l => l.startsWith('trunk red: inv:x')).length, 1, drv.lines.join('\n'));
+      const sent = emitted.filter(x => x.do === 'notify' && x.scope === 'repo' && x.once === `trunk\0inv:x\0${NAME}\0${s.trunk.commit}`);
+      assert.equal(sent.length, 1, JSON.stringify(emitted));
+      assert.equal(sent[0]!.text, notices[0]!.text);
+      assert.equal(wakeReport(sent[0]!), true);
       // The trunk item of that key changes for a (owner defer): a merges; c stays parked, still without a halt.
       await ops.defer({ cwd: r.cwd, as: owner, channel: 'delegated', node: 'a', items: [{ id: 'x', key: s.trunk.invKeys.x! }], reason: 'accept the flaky trunk test for a' });
       await drv.passes(3);
@@ -223,6 +230,35 @@ test('FS3(b): a trunk-key conflict from the merge guard\'s trunk refresh parks t
       assert.equal(sharedParked(now, 'c')[0]?.kind, 'trunk-red');
     } finally { await r.cleanup(); }
   }
+});
+
+test('FS3(b) ruling #2485 (1): a queued trunk-red notice is refreshed at delivery and dropped once resolved', { timeout: 300_000 }, async () => {
+  const r = await fixture({ schedule: ['pass', 'fail', 'pass'], needles: ['renew failed under load'], nodes: [{ id: 'a', file: 'doc/a' }, { id: 'c', file: 'doc/c' }] });
+  try {
+    for (const id of ['a', 'c']) await r.accept(id);
+    const plan = JSON.parse(JSON.stringify(parsePlanText(r.plan))); plan.invariants[0].reads = ['src/**', 'README'];
+    await ops.planSet({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated', note: 'widen reads' });
+    assert.ok(await refusal(ops.merge({ cwd: r.cwd, node: 'a', as: parent })) instanceof ops.SharedRefusal);
+    const s = await r.state(), key = s.trunk.invKeys.x!;
+    const queued = decide(s, s.plan, new Map(), { max: 4, repairs: 2, project: 'p', root: r.cwd, applied: new Set(), rejected: new Map(), noticed: new Set(['a', 'c'].map(id => sharedParkKey(s, id))) }).find(x => x.do === 'notify' && x.scope === 'repo');
+    assert.ok(queued?.do === 'notify' && queued.once?.startsWith('trunk\0'), JSON.stringify(queued));
+    assert.match(queued.text!, /waiting: a, c\./);
+    const line = JSON.stringify({ do: 'notify', node: queued.node, scope: 'repo', outcome: 'notify', text: queued.text, once: queued.once }) + '\n';
+    const deliver = async (log: string, act: () => Promise<unknown>) => {
+      await writeFile(log, line);
+      let busy = true; const delivered: string[] = [];
+      const follower = new Follower({ repo: r.cwd, log, pid: process.pid, from: 0, busy: () => busy, deliver: text => { delivered.push(text); } });
+      try { assert.equal(await follower.step(), undefined); await act(); busy = false; await follower.step(); } finally { follower.stop(); }
+      return delivered;
+    };
+    // Still parked (c): delivered with the recomputed waiting list.
+    const refreshed = await deliver(join(r.root, 'd1.jsonl'), () => ops.defer({ cwd: r.cwd, as: owner, channel: 'delegated', node: 'a', items: [{ id: 'x', key }], reason: 'release a' }));
+    assert.equal(refreshed.length, 1);
+    assert.match(refreshed[0]!, /trunk red: inv:x .*waiting: c\./); assert.doesNotMatch(refreshed[0]!, /waiting: a, c/);
+    // Resolved (no node parked on it any more): dropped, nothing delivered.
+    const dropped = await deliver(join(r.root, 'd2.jsonl'), () => ops.defer({ cwd: r.cwd, as: owner, channel: 'delegated', node: 'c', items: [{ id: 'x', key }], reason: 'release c' }));
+    assert.deepEqual(dropped, []);
+  } finally { await r.cleanup(); }
 });
 
 test('FS3(b) ruling #2458 (ii): an own failure on a reused merge-key observation with a trunk-key conflict halts, not parked', { timeout: 300_000 }, async () => {
