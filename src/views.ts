@@ -807,13 +807,24 @@ export function mergeFailureHints(s: State, node: string, failures: readonly Obs
   }
   return [...new Set(lines)];
 }
+/** Ruling #2118: probe history belongs to one subject/check and its recorded run definition. */
+function trunkRunDefinition(plan: Plan, observation: ObsEntry): string | undefined {
+  const id = observation.obligation.slice(observation.obligation.indexOf(':') + 1);
+  const spec = observation.obligation.startsWith('inv:')
+    ? plan.invariants.find(c => c.id === id)
+    : plan.nodes.find(n => n.id === observation.subject)?.checks.find(c => c.id === id);
+  return spec ? canonical({ run: spec.run }) : undefined;
+}
 /** SG3: current trunk evidence takes precedence over intermittent history. */
 function signatureTrunkRed(s: State, failures: readonly ObsEntry[], name: string): string | undefined {
   for (const failure of failures) {
     const signature = failure.signatures?.[name];
     if (!signature) continue;
+    const definition = trunkRunDefinition(planAt(s, failure.seq), failure);
+    if (definition === undefined || definition !== trunkRunDefinition(s.plan, failure)) continue;
     const trunk = entriesOf(s).slice().reverse().filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.obligation === failure.obligation
-      && (e.probe === 'trunk' || (e.subject === 'trunk' && e.merging === undefined)));
+      && e.subject === failure.subject && (e.probe === 'trunk' || (e.subject === 'trunk' && e.merging === undefined))
+      && trunkRunDefinition(planAt(s, e.seq), e) === definition);
     const key = failure.obligation.startsWith('inv:') ? s.trunk.invKeys[failure.obligation.slice(4)] : trunk.find(e => e.commit === s.trunk.commit)?.key;
     const current = trunk.find(e => e.key === key);
     if (!current || current.verdict !== 'fail' || !current.failed?.includes(name) || current.signatures?.[name] !== signature) continue;
