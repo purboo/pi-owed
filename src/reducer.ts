@@ -102,7 +102,7 @@ const counted = (s: State, subject: string, obligation: string, key: string): Ob
  * its own tree with `merging`); else the `\0`-joined members of the batch merge being judged (only that batch's obs).
  */
 let batchScope: string | undefined;
-function inBatchScope<T>(scope: string, fn: () => T): T { const prior = batchScope; batchScope = scope; try { return fn(); } finally { batchScope = prior; } }
+function inBatchScope<T>(scope: string | undefined, fn: () => T): T { const prior = batchScope; batchScope = scope; try { return fn(); } finally { batchScope = prior; } }
 function batchCounts(s: State, e: ObsEntry): boolean {
   if (e.batch === undefined) return true;
   return batchScope === undefined ? s.nodes[e.batch.at(-1)!]?.merged?.commit === e.commit : batchScope === e.batch.join('\0');
@@ -425,7 +425,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure', 'remeasure_match', 'batch'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'grant_refused', 'waits_on', 'auto_remeasure', 'remeasure_match', 'batch'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -884,7 +884,7 @@ export function batchFailed(s: State, members: string[]): boolean {
  * `size` batchable members whose writes pairwise do not overlap. Empty when `size` < 2, the head is not batchable, fewer
  * than 2 qualify, or this set already failed on the current trunk (its members then merge one at a time).
  */
-export function mergeBatchPlan(s: State, size: number, queue: string[] = mergeQueue(s)): string[] {
+export function mergeBatchPlan(s: State, size: number, queue: string[] = mergeQueue(s).filter(id => !waitingFor(s,id) && !halted(s,id) && !trunkParked(s,id).length && reportedOf(s,id) === undefined && !nodeSpec(s,id)?.later)): string[] {
   if (size < 2 || queue.length < 2 || !batchable(s, queue[0]!)) return [];
   const out: string[] = [];
   for (const id of queue) {
@@ -1308,6 +1308,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (d.obligation !== 'writes' || d.verdict !== 'fail' || d.attribution !== undefined || d.merging !== undefined || d.probe !== undefined || !target?.slot?.open || !c || d.commit !== c.commit || d.base !== c.base || d.key !== c.keys.writes || !Array.isArray(d.waits_on) || !d.waits_on.length || canonical(d.waits_on) !== canonical(expected) || !refused.length || refused.some(r => r.reasons.some(reason => !reason.startsWith('overlaps open node ')))) errors.push('obs waits_on requires only current candidate writes overlaps with the named open nodes');
       }
       if (d.auto_remeasure !== undefined && (d.auto_remeasure !== true || d.subject !== 'trunk' || !d.obligation.startsWith('inv:') || d.probe !== undefined || d.attribution)) errors.push('obs auto_remeasure must be true on a non-attribution invariant observation');
+      if (d.grant_refused !== undefined && (d.grant_refused !== true || d.obligation !== 'writes' || d.verdict !== 'fail' || d.by !== 'executor:owed' || d.batch !== undefined)) errors.push('obs grant_refused requires an executor writes failure');
       if (d.remeasure_match !== undefined) {
         const needles = s.plan.invariants.find(i => `inv:${i.id}` === d.obligation)?.remeasure_on ?? [];
         if (d.subject !== 'trunk' || d.verdict !== 'fail' || !Array.isArray(d.remeasure_match) || !d.remeasure_match.length || d.remeasure_match.length > needles.length || d.remeasure_match.some(x => typeof x !== 'string' || !needles.includes(x)) || new Set(d.remeasure_match).size !== d.remeasure_match.length) errors.push('obs remeasure_match must be non-empty unique entries from the invariant remeasure_on, bounded by that list');
@@ -1825,13 +1826,18 @@ function decidingInvariantFail(s: State, obligation: string, key: string, commit
 }
 /** IR2/KR3: fix-owned names are not inheritable trunk debt when their fixing node merges. */
 export function invariantTrunkComparison(s: State, merging: string, inv: CheckSpec, key: string, commit: string): { inherited: boolean; trunk?: ObsEntry; merge?: ObsEntry; trunkNames: string[]; newNames: string[]; truncated: boolean } {
-  const o = `inv:${inv.id}`, oldKey = s.trunk.invKeys[inv.id] ?? '';
-  const trunk = decidingInvariantFail(s, o, oldKey, s.trunk.commit), merge = decidingInvariantFail(s, o, key);
+  const open = batchScope ? openBatch(s) : undefined;
+  const first = open && context(s).entries.find(e => e.kind === 'merge' && e.batch?.final === open.batch!.final && e.node === open.batch!.members[0]) as Extract<Entry,{kind:'merge'}> | undefined;
+  const origin = first && context(s).entries.findLast(e => 'state' in e && e.state.commit === first.prior && e.seq < first.seq);
+  // Every member compares inherited debt with the trunk before the train, never an unmeasured Mi.
+  const trunkState = origin && 'state' in origin ? origin.state : s.trunk;
+  const o = `inv:${inv.id}`, oldKey = trunkState.invKeys[inv.id] ?? '';
+  const trunk = inBatchScope(undefined, () => decidingInvariantFail(s, o, oldKey, trunkState.commit)), merge = decidingInvariantFail(s, o, key);
   const owned = fixOwnedKnownRed(s, inv.id, merging);
   const trunkNames = (trunk?.failed ?? []).filter(name => !owned.includes(name)), names = merge?.failed ?? [];
   const newNames = names.filter(name => !trunkNames.includes(name));
   const truncated = !!trunk?.failed?.length && !failedNamesComplete(trunk) || !!merge?.failed?.length && !failedNamesComplete(merge);
-  return { trunk, merge, trunkNames, newNames, truncated, inherited: key !== oldKey && item(s, 'trunk', o, oldKey).mark === '✘' && !!trunk && !!merge && failedNamesComplete(trunk) && failedNamesComplete(merge) && testOnlyFailure(merge) && !newNames.length };
+  return { trunk, merge, trunkNames, newNames, truncated, inherited: key !== oldKey && inBatchScope(undefined, () => item(s, 'trunk', o, oldKey)).mark === '✘' && !!trunk && !!merge && failedNamesComplete(trunk) && failedNamesComplete(merge) && testOnlyFailure(merge) && !newNames.length };
 }
 function invariantDebtReason(id: string, r: ReturnType<typeof invariantTrunkComparison>): string {
   return r.truncated ? `invariant ${id} new debt: failed names truncated; cannot prove the failure is old`

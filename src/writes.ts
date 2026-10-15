@@ -1,16 +1,17 @@
 import type { Plan } from './types.ts';
 export type WritesSyntax = 1 | 2;
+const syntaxTag = Symbol('owed.writesSyntax');
 const syntaxes = new WeakMap<Plan, WritesSyntax>();
 const syntaxPlans = new WeakMap<Plan, Map<WritesSyntax, Plan>>();
 /** Runtime metadata comes only from the recording entry, never the plan JSON or its content hash. */
-export const writesSyntax = (plan: Plan): WritesSyntax => syntaxes.get(plan) ?? 1;
+export const writesSyntax = (plan: Plan): WritesSyntax => syntaxes.get(plan) ?? (plan as Plan & { [syntaxTag]?: WritesSyntax })[syntaxTag] ?? 1;
 export function withWritesSyntax(plan: Plan, syntax: WritesSyntax): Plan {
   if (writesSyntax(plan) === syntax) return plan;
   let versions = syntaxPlans.get(plan);
   if (!versions) syntaxPlans.set(plan, versions = new Map());
   let version = versions.get(syntax);
   if (!version) {
-    version = { ...plan }; syntaxes.set(version, syntax); versions.set(syntax, version);
+    version = { ...plan }; Object.defineProperty(version, syntaxTag, { value: syntax, enumerable: true }); syntaxes.set(version, syntax); versions.set(syntax, version);
     if (Object.isFrozen(plan)) Object.freeze(version);
   }
   return version;
@@ -20,11 +21,11 @@ export const writesKeySyntax = (plan: Plan, writes: readonly string[]): { writes
 /** Changing the dialect of wildcard-bearing allowances changes permission even when the blob is identical. */
 export const writesAllowChanged = (prev: Plan, next: Plan): boolean => writesSyntax(prev) !== writesSyntax(next) && [...(prev.allow ?? []), ...(next.allow ?? [])].some(r => [...(r.writes ?? []), ...(r.adopt ?? [])].some(w => /[?*]/.test(w)));
 /** Validate new plan input only; historical plan parsing must remain 0.20-compatible. */
-export function writesSyntaxErrors(plan: Plan): string[] {
+export function writesSyntaxErrors(plan: Plan, prior?: Plan): string[] {
   const errors: string[] = [];
-  const check = (entries: readonly string[], label: string) => { for (const entry of entries) { const error = writesEntryError(entry); if (error) errors.push(`${label}: ${error}`); } };
-  for (const n of plan.nodes) check(n.writes, `node ${n.id}.writes`);
-  for (const [i, rule] of (plan.allow ?? []).entries()) { check(rule.writes ?? [], `allow[${i}].writes`); check(rule.adopt ?? [], `allow[${i}].adopt`); }
+  const check = (entries: readonly string[], label: string, old: readonly string[] = []) => { for (const entry of entries) { const error = writesEntryError(entry); if (error && !old.includes(entry)) errors.push(`${label}: ${error}`); } };
+  for (const n of plan.nodes) check(n.writes, `node ${n.id}.writes`, prior?.nodes.find(p => p.id === n.id)?.writes);
+  for (const [i, rule] of (plan.allow ?? []).entries()) { check(rule.writes ?? [], `allow[${i}].writes`, prior?.allow?.[i]?.writes); check(rule.adopt ?? [], `allow[${i}].adopt`, prior?.allow?.[i]?.adopt); }
   return errors;
 }
 /** WG: writes uses a deliberately small grammar, independent of platform glob dialects. */
