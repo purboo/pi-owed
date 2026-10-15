@@ -153,7 +153,7 @@ test('H1.1a-c pi: a question read while the agent runs is held; answered before 
       await until(() => h.messages.length >= 1, 8000, 'the later wake');
       const m = h.messages[0]!;
       assert.deepEqual(m.options, { triggerTurn: true, deliverAs: 'followUp' });
-      assertWakeLines(m.message.content, ['halt zz attempt 1, needs the parent (the main agent acts; owed lists the command): halted — later', bg.haltHintText, 'Next: owed status / owed why <node>']);
+      assertWakeLines(m.message.content, ['zz — later → owed why zz', bg.haltHintText, 'Next: owed status / owed why <node>']);
       // ctx.isIdle() false (no agent_start seen): held too; delivered at the next tick once idle.
       h.state.idle = false;
       line({ do: 'halt', node: 'zz', outcome: 'halted', attempt: 1, needs: 'human', detail: 'while streaming' });
@@ -161,7 +161,7 @@ test('H1.1a-c pi: a question read while the agent runs is held; answered before 
       assert.equal(h.messages.length, 1, 'held while ctx.isIdle() is false');
       h.state.idle = true;
       await until(() => h.messages.length >= 2, 8000, 'delivered once idle');
-      assert.match(h.messages[1]!.message.content, /halted — while streaming\n/);
+      assert.match(h.messages[1]!.message.content, /^Needs you: zz — while streaming → owed why zz$/m);
     });
   } finally { await h.emit('session_shutdown'); rmSync(f.lock, { force: true }); await f.done(); }
 });
@@ -188,8 +188,8 @@ test('H1.1b/c revalidation: a fact-advanced halt and resolved drift are dropped;
     assert.ok(run.factMark(await run.stateOf(f.cwd), 'h') > mark);
     state.busy = false;
     const m = await fo.step();
-    assertWakeLines(m, ['owed drive (/r):', 'merge m: merged — trunk 1', 'q: writer run rid-q asks (qid q1-1, rev 1): which port?',
-      'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — older driver, no mark', LEGACY_IDLE_WAIT, bg.haltHintText, '(2 wake(s) resolved before delivery)', 'Next: owed status / owed why <node>']);
+    assertWakeLines(m, ['owed drive (/r):', 'q — decide which port? → owed answer q "<text>"',
+      'h — older driver, no mark → owed why h', LEGACY_IDLE_WAIT, bg.haltHintText, '(2 wake(s) resolved before delivery)', 'Next: owed status / owed why <node>']);
     assert.equal(got.length, 1);
     // Only dropped lines left: nothing is delivered; a merge read with them rides along with the next message.
     line({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail: 'stale again', facts: mark });
@@ -197,7 +197,8 @@ test('H1.1b/c revalidation: a fact-advanced halt and resolved drift are dropped;
     assert.equal(await fo.step(), undefined, 'no wake line left: not delivered');
     line({ event: 'stopped' });
     const end = await fo.step();
-    assertWakeLines(end, ['owed drive (/r):', 'merge n: merged — trunk 2', 'stopped', 'Next: owed status / owed why <node>'], 'the merge rides along; the count is not carried over');
+    assert.match(end ?? '', /^Done: n$/m);
+    assertWakeLines(end, ['owed drive (/r):', 'stopped', 'Next: owed status / owed why <node>'], 'the merge rides along; the count is not carried over');
     assert.equal(fo.stopped, true);
     // A failed describe keeps the line.
     const broken = NEW.revalidator({ cwd: f.cwd, dsa: new Dsa({ bin: join(f.root, 'no-such-dsa') }) });
@@ -231,7 +232,7 @@ test('H1.1b two open questions: the first answered drops the held line; the next
     const m = await fo.step();
     assert.ok(m);
     assert.doesNotMatch(m, /: one /, 'the line of the answered first question is dropped');
-    assert.match(m, new RegExp(`asks \\(qid ${String(second.qid)}, rev 1\\): two`));
+    assert.ok(second.qid); assert.match(m, /^Needs you: \S+ — decide two → owed decide \S+ --text "<text>"$/m);
     assert.match(m, /\n\(1 wake\(s\) resolved before delivery\)\nNext: owed status \/ owed why <node>$/);
     fo.stop();
   } finally { await f.done(); }
@@ -248,7 +249,7 @@ test('H1.1b a dropped wake also drops its repeat ride-along and later repeats of
     const got: string[] = [], state = { busy: false };
     const fo = new NEW.Follower({ log, repo: '/r', pid: process.pid, start: run.procStart(process.pid), deliver: (c: string) => got.push(c), busy: () => state.busy, revalidate: NEW.revalidator({ cwd: f.cwd, dsa: f.dsa }) });
     line(halt(mark));
-    assert.match(await fo.step() ?? '', /halted — stuck\n/, 'delivered while current');
+    assert.match(await fo.step() ?? '', /^Needs you: h — stuck → owed why h$/m, 'delivered while current');
     state.busy = true;
     line(halt(mark, 'other'));        // a new wake of h (other text), held
     assert.equal(await fo.step(), undefined);
@@ -258,16 +259,16 @@ test('H1.1b a dropped wake also drops its repeat ride-along and later repeats of
     line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'unrelated' });
     state.busy = false;
     const m = await fo.step();
-    assertWakeLines(m, ['owed drive (/r):', 'halt k attempt 1, needs the parent (the main agent acts; owed lists the command): halted — unrelated', bg.haltHintText, '(1 wake(s) resolved before delivery)', 'Next: owed status / owed why <node>'],
+    assertWakeLines(m, ['owed drive (/r):', 'k — unrelated → owed why k', bg.haltHintText, '(1 wake(s) resolved before delivery)', 'Next: owed status / owed why <node>'],
       'the resolved wake of h and its repeat ride-along are gone');
     line(halt(mark, 'other'));        // a later repeat of the resolved wake: does not ride along
     line({ do: 'halt', node: 'k', outcome: 'halted', attempt: 1, needs: 'human', detail: 'next' });
     const n = await fo.step();
-    assertWakeLines(n, ['owed drive (/r):', 'halt k attempt 1, needs the parent (the main agent acts; owed lists the command): halted — next', bg.haltHintText, 'Next: owed status / owed why <node>']);
+    assertWakeLines(n, ['owed drive (/r):', 'k — next → owed why k', bg.haltHintText, 'Next: owed status / owed why <node>']);
     // The driver's next pass reports h with the new mark: a new fact, delivered.
     const now = run.factMark(await run.stateOf(f.cwd), 'h');
     line(halt(now));
-    assertWakeLines(await fo.step(), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — stuck', bg.haltHintText, 'Next: owed status / owed why <node>'], 'a new fact of h wakes');
+    assertWakeLines(await fo.step(), ['owed drive (/r):', 'h — stuck → owed why h', bg.haltHintText, 'Next: owed status / owed why <node>'], 'a new fact of h wakes');
     fo.stop();
   } finally { await f.done(); }
 });
@@ -279,7 +280,7 @@ test('H1.1d CLI-era follower (no pi hooks): no hold, no revalidation; tick deliv
     const got: string[] = [];
     const fo = new bg.Follower({ log, repo: '/r', pid: process.pid, start: run.procStart(process.pid), deliver: c => got.push(c) });
     appendFileSync(log, `${JSON.stringify(askLine('a', 'rid-x', { qid: 'gone', rev: 1 }, 'a asks', 0))}\n`);
-    assertWakeLines(fo.tick(), ['owed drive (/r):', 'a asks', 'Next: owed status / owed why <node>']);
+    assertWakeLines(fo.tick(), ['owed drive (/r):', 'a — decide the run’s open question → owed answer a "<text>"', 'Next: owed status / owed why <node>']);
     assert.equal(bg.classifyLine(JSON.stringify({ event: 'idle-wait', at: 'x' })).kind, 'wake', 'idle-wait wakes, not terminal');
     assert.equal(run.reportText({ event: 'idle-wait', at: 'x' }), LEGACY_IDLE_WAIT);
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -309,7 +310,7 @@ test('H1.2 pi start stay:true: idle-wait wakes and the driver stays; a plan upda
     assert.ok(f.logJson().some(x => x.do === 'dispatch' && x.node === 'b'));
     await until(() => f.logJson().filter(x => x.event === 'idle-wait').length === 2, 30_000, 'the second idle period');
     await until(() => h.messages.length >= 2, 10_000, 'the second idle-wait wake');
-    assert.match(h.messages[1]!.message.content, /merge b: merged/);
+    assert.match(h.messages[1]!.message.content, /^Done: b$/m);
     assert.equal((await h.call('drive', { action: 'stop' })).text, 'stopped');
     await until(() => f.logJson().at(-1)?.event === 'exit', 15_000, 'the exit record');
     const last = f.logJson().at(-1)!;

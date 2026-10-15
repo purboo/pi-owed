@@ -128,7 +128,7 @@ test('CR2 rule shows only its receipt and delivery notices while report keeps th
     assert.match(text(await r.h.call('report')), /Escapes \(all time\)/);
     assert.match(text(await r.h.call('status')), /In progress \(1\):/);
     assert.match(text(await r.h.call('status', { full: true })), /Pending reviewer:/);
-    assert.match(text(await r.h.call('why', { node: 'a' })), /Untested changes:/);
+    assert.match(text(await r.h.call('why', { node: 'a', full: true })), /Untested changes:/);
   } finally { await r.cleanup(); }
 });
 

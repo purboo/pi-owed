@@ -53,7 +53,7 @@ test('QN1: a durable answer suppresses the driver question although dsa still as
     const e = await f.answer();
     for (const rev of [1, 2]) {
       f.view.questions![0]!.rev = rev;
-      const a = await f.act(Date.parse(e.ts) + 899_000);
+      const a = await f.act(Date.parse(e.ts) + 599_000);
       assert.ok(a?.do === 'notify' && a.quiet);
       assert.equal(a.text, `a: answered #${e.seq}, waiting for the run to resume`);
       const s = (await ops.readState(f)).state;
@@ -73,8 +73,8 @@ test('QN1: quiet answer reports never wake and overdue answers wake once per rid
     const driver = new Driver({ cwd: f.cwd, dsa: f.dsa, json: true, log: l => lines.push(JSON.parse(l)), session: null });
     const a = await f.act(Date.parse(e.ts));
     assert.ok(a?.do === 'notify' && a.answerRetry);
-    assert.match(a.text, new RegExp(`answer #${e.seq} recorded 0s ago`));
-    assert.ok(a.text.endsWith(`retry delivery: ${answerRetry('a', e)}`));
+    assert.match(a.text, new RegExp(`^a: answered at #${e.seq} \\(\\d\\d:\\d\\d\\), still asking after 0m: `));
+    assert.ok(a.text.endsWith(`retry with ${answerRetry('a', e)}`));
     await driver.pass(); await driver.pass();
     assert.equal(lines.filter(x => wakeReport(x)).length, 1);
     assert.equal(lines[0]!.answerRetry, true);
@@ -83,7 +83,7 @@ test('QN1: quiet answer reports never wake and overdue answers wake once per rid
   } finally { await f.cleanup(); }
 });
 
-test('QN1: the default 900-second grace logs a quiet line without writing the ledger', async () => {
+test('QN1: the default 600-second grace logs a quiet line without writing the ledger', async () => {
   const f = await fixture();
   try {
     const e = await f.answer(), lines: Record<string, unknown>[] = [];
@@ -93,11 +93,11 @@ test('QN1: the default 900-second grace logs a quiet line without writing the le
     assert.equal(lines.length, 1); assert.equal(lines[0]!.outcome, 'answered');
     assert.equal(lines[0]!.text, `a: answered #${e.seq}, waiting for the run to resume`);
     assert.equal((await ops.readState(f)).entries.length, before);
-    assert.equal((await f.act(Date.parse(e.ts) + 900_000))?.do, 'notify');
+    assert.equal((await f.act(Date.parse(e.ts) + 600_000))?.do, 'notify');
   } finally { await f.cleanup(); }
 });
 
-test('QN1 live queue: answer-bound hibernated call stays asking with identical qid/rev until the 900s grace, then one retry wake', async () => {
+test('QN1 live queue: answer-bound hibernated call stays asking with identical qid/rev until the 600s grace, then one retry wake', async () => {
   const f = await fixture(), realNow = Date.now;
   try {
     const e = await f.answer(); // durable rule exists while answer-bound resume waits for a provider slot
@@ -105,20 +105,20 @@ test('QN1 live queue: answer-bound hibernated call stays asking with identical q
     const lines: Record<string, unknown>[] = [];
     const driver = new Driver({ cwd: f.cwd, dsa: f.dsa, json: true, log: l => lines.push(JSON.parse(l)), session: null });
     const recorded = Date.parse(e.ts);
-    for (const age of [0, 60_000, 899_999]) {
+    for (const age of [0, 60_000, 599_999]) {
       Date.now = () => recorded + age;
       await driver.pass();
       assert.equal(lines.filter(x => wakeReport(x)).length, 0, 'the answer rule resolves the question while resume is queued');
     }
     assert.equal(lines.length, 1);
     assert.equal(lines[0]!.text, `a: answered #${e.seq}, waiting for the run to resume`);
-    for (const age of [900_000, 901_000, 1_800_000]) {
+    for (const age of [600_000, 601_000, 1_800_000]) {
       Date.now = () => recorded + age;
       await driver.pass();
     }
     const wakes = lines.filter(x => wakeReport(x));
     assert.equal(wakes.length, 1); assert.equal(wakes[0]!.answerRetry, true);
-    assert.match(String(wakes[0]!.text), /recorded 900s ago but run .* still shows question q1; retry delivery:/);
+    assert.match(String(wakes[0]!.text), /^a: answered at #\d+ \(\d\d:\d\d\), still asking after 10m: retry with owed answer 'a' --rid '[^']+' --qid 'q1' /);
     assert.equal(f.view.state, 'asking'); assert.deepEqual(f.view.questions, originalQuestion);
     assert.deepEqual(wakes[0]!.qid, e.answer!.qid); assert.equal(wakes[0]!.rev, e.answer!.rev);
   } finally { Date.now = realNow; await f.cleanup(); }
@@ -145,7 +145,7 @@ test('QN1 repair #1514: grace retry held while pi is busy survives owed resume a
     await driver.pass(); // the driver has consumed its once mark; it cannot replace a dropped retry
     assert.equal(lines.filter(x => x.answerRetry).length, 1);
     busy = false;
-    assert.match(await follower.step() ?? '', /still shows question q1; retry delivery:/);
+    assert.match(await follower.step() ?? '', /still asking after 15m: retry with owed answer 'a' /);
     assert.equal(delivered.length, 1); assert.ok(delivered[0]!.includes(answerRetry('a', e)));
     await driver.pass(); await driver.pass();
     assert.equal(await follower.step(), undefined); assert.equal(await follower.step(), undefined);
@@ -320,11 +320,10 @@ test('NY4/QN3: the single notice keeps owner alternatives and quoted answer retr
     const follower = new Follower({ log: l.log, repo: f.cwd, pid: process.pid, start: procStart(process.pid), deliver() {} });
     l.line({ do: 'notify', node: 'a', outcome: 'notify', text: 'a: needs the owner (the main agent decides; owed lists the command): flaky block #42 on check:unit; the driver leaves it alone; the main agent resolves it with: owed waive a check:unit --reason "<why>" | owed abandon a --note "<why>"' });
     const owner = follower.tick()!.split('\n');
-    assert.match(owner[0]!, /^Needs you: a: needs the owner .*flaky block #42/);
-    assert.ok(owner[0]!.includes('owed waive a check:unit --reason "<why>" | owed abandon'));
+    assert.equal(owner[0], 'Needs you: a — decide whether to accept the conflicting measurement → owed waive a check:unit --reason "<why>"');
     const retry = "owed answer 'b' --rid 'r' --qid 'q' -- 'Use API v2; then check'";
-    l.line({ do: 'notify', node: 'b', outcome: 'notify', answerRetry: true, text: `b: answer #7 recorded 900s ago but run r still shows question q; retry delivery: ${retry}` });
-    assert.equal(follower.tick()!.split('\n')[0], `Needs you: b: answer #7 recorded 900s ago but run r still shows question q; retry delivery: ${retry}`);
+    l.line({ do: 'notify', node: 'b', outcome: 'notify', answerRetry: true, text: `b: answered at #7 (10:05), still asking after 15m: retry with ${retry}` });
+    assert.equal(follower.tick()!.split('\n')[0], `Needs you: b: answered at #7 (10:05), still asking after 15m: retry with ${retry}`);
   } finally { await f.cleanup(); }
 });
 
@@ -336,13 +335,12 @@ test('NY4/QN3: Needs you, Done, driver status and Next order; every original not
     const ask = { do: 'notify', node: 'a', outcome: 'notify', rid: 'rid-a', qid: 'q1', rev: 1, text: 'a: writer run rid-a asks (qid q1, rev 1): which db? — the driver never answers; answer: owed answer a --rid rid-a --qid q1 "<text>"; in pi: owed_answer {node:"a"}' };
     l.line({ do: 'merge', node: 'm', outcome: 'merged', detail: 'trunk 1' }); l.line(ask); l.line(halt);
     const text = follower.tick()!, lines = text.split('\n');
-    assert.equal(lines[0], `Needs you: ${ask.text}`);
-    assert.match(lines[1]!, /^Needs you: halt b attempt 1, needs the parent .*halted — choose the API$/);
+    assert.equal(lines[0], 'Needs you: a — decide which db? → owed answer a --rid rid-a --qid q1 "<text>"');
+    assert.equal(lines[1], 'Needs you: b — choose the API → owed why b');
     assert.deepEqual(lines.slice(2, 5), ['Done: m', 'Driver continues (3 in progress)', `owed drive (${f.cwd}):`]);
-    assert.equal(text.split(ask.text).length - 1,1);
+    assert.equal(text.split('owed answer a --rid rid-a --qid q1').length - 1,1);
     assert.equal(text.split('choose the API').length - 1,1);
     assert.doesNotMatch(text,/\nDetails:/);
-    assert.ok(text.includes(ask.text)); assert.match(text, /halt b attempt 1, needs the parent/);
     assert.ok(text.includes(haltHintText)); assert.equal(lines.at(-1), 'Next: owed status / owed why <node>');
   } finally { await f.cleanup(); }
 });
