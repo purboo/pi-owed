@@ -10,6 +10,7 @@ export interface CheckSpec {
   id: string;
   run: string;
   timeout_s: number;          // default 600
+  on_timeout?: string;        // SG5: diagnostic only, once before kill, limited to 30s
   reads: string[];            // default ["**"]
   min_tests?: number;
   red?: boolean;
@@ -164,7 +165,7 @@ export interface ObsEntry extends Base {
   noisy?: boolean;
   /** RC3: at most 50 failing names (union across repeat runs). */
   failed?: string[];
-  /** AT4 (0.20): failed name -> normalized first error line, for names whose output had one (first run that failed it). */
+  /** SG1: failed name -> v2 error/innermost repository test frame/assertion values (first failing run). Untagged legacy signatures remain readable. */
   signatures?: Record<string, string>;
   /** MS4 (0.20): failing test names excused by active quarantine entries (they neither passed nor failed). */
   quarantined?: string[];
