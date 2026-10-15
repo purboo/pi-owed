@@ -91,11 +91,11 @@ function standardCounts(log: string): Counts | undefined {
   return undefined;
 }
 /** FG: display-only errors; failed names and measurement verdicts remain unchanged. */
-export interface ErrorGroup { message: string; location?: string; names: string[] }
+export interface ErrorGroup { message: string; location?: string; names: string[]; expected?: string; actual?: string; signatureLocation?: string }
 const stripAnsi = (text: string): string => text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
-function errorMessage(text: string): string {
+function errorMessage(text: string, bounded = true): string {
   const line = stripAnsi(text).replace(/\s+/g, ' ').replace(/;/g, ',').trim();
-  return line.length > 160 ? `${line.slice(0, 159)}…` : line;
+  return bounded && line.length > 160 ? `${line.slice(0, 159)}…` : line;
 }
 function errorLocation(text: string, cwd?: string): string | undefined {
   let location = text.trim().replace(/^file:\/\//, '').replace(/:(\d+):\d+$/, ':$1');
@@ -105,9 +105,29 @@ function errorLocation(text: string, cwd?: string): string | undefined {
   }
   return stripAnsi(location).replace(/\s+/g, ' ').replace(/;/g, ',').trim() || undefined;
 }
+/** SG1: first (innermost) repository test frame, never an external or creation-site frame. */
+function testStackLocation(stack: unknown, cwd?: string): string | undefined {
+  if (typeof stack !== 'string') return undefined;
+  for (const line of stack.split('\n')) {
+    const frame = /(?:\(|\bat\s+)(?:file:\/\/)?([^\s()]+):(\d+):\d+\)?\s*$/.exec(line.trim());
+    if (!frame) continue;
+    let path = frame[1]!;
+    if (path.startsWith('/')) {
+      if (!cwd || !path.startsWith(`${cwd.replace(/\/$/, '')}/`)) continue;
+      path = path.slice(cwd.replace(/\/$/, '').length + 1);
+    }
+    if (path.startsWith('../') || path.includes('/node_modules/') || path.startsWith('node_modules/')) continue;
+    if (/(?:^|\/)(?:tests?\/|[^/]+\.(?:test|spec)\.)|(?:^|\/)[^/]+_tests\.[^/]+$/.test(path)) return `${path}:${frame[2]}`;
+  }
+  return undefined;
+}
+/** SG1: YAML scalars and structured assertion values, masked and bounded independently. */
+function assertionValue(value: unknown): string {
+  return errorSignature(typeof value === 'string' ? value : JSON.stringify(value) ?? String(value)).replace(/\s+/g, ' ').slice(0, 120);
+}
 /** Pure extraction with an explicit run directory for executor-only path shortening. */
-function groupsAt(log: string, failed: readonly string[], cwd?: string): { groups: ErrorGroup[]; hasError: boolean } {
-  const wanted = new Set(failed), points: { name: string; message?: string; location?: string; parent?: boolean; at: number }[] = [];
+function groupsAt(log: string, failed: readonly string[], cwd?: string, signature = false): { groups: ErrorGroup[]; hasError: boolean } {
+  const wanted = new Set(failed), points: { name: string; message?: string; location?: string; signatureLocation?: string; expected?: string; actual?: string; parent?: boolean; at: number }[] = [];
   const clean = stripAnsi(log).replace(/\r\n/g, '\n'), lines = clean.split('\n');
   let offset = 0;
   for (let i = 0; i < lines.length; i++) {
@@ -140,8 +160,19 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string): { group
       }
       const raw = typeof diagnostic.error === 'string' ? diagnostic.error : '';
       // Folded YAML scalars also display their first source line, before YAML joins the lines.
-      const message = raw ? errorMessage(blockMessage ?? raw) : '';
-      points.push({ name: point[1]!, ...(message ? { message } : {}), ...(typeof diagnostic.location === 'string' ? { location: errorLocation(diagnostic.location, cwd) } : {}), parent: diagnostic.failureType === 'subtestsFailed', at: offset });
+      const message = raw ? errorMessage(blockMessage ?? raw.split('\n')[0]!, !signature) : '';
+      // Node omits YAML fields for undefined values; its assertion diff still carries them.
+      if (diagnostic.code === 'ERR_ASSERTION') {
+        const diff = raw.split('\n');
+        const valueAt = (prefix: string): string | undefined => diff.find(l => l.startsWith(prefix))?.slice(prefix.length).trim();
+        if (!Object.hasOwn(diagnostic, 'actual')) { const value = valueAt('+ '); if (value !== undefined) diagnostic.actual = value; }
+        if (!Object.hasOwn(diagnostic, 'expected')) { const value = valueAt('- '); if (value !== undefined) diagnostic.expected = value; }
+      }
+      const signatureLocation = testStackLocation(diagnostic.stack, cwd);
+      const location = signatureLocation ?? (typeof diagnostic.location === 'string' ? errorLocation(diagnostic.location, cwd) : undefined);
+      points.push({ name: point[1]!, ...(message ? { message } : {}), ...(location ? { location } : {}), ...(signatureLocation ? { signatureLocation } : {}),
+        ...(Object.hasOwn(diagnostic, 'expected') ? { expected: assertionValue(diagnostic.expected) } : {}),
+        ...(Object.hasOwn(diagnostic, 'actual') ? { actual: assertionValue(diagnostic.actual) } : {}), parent: diagnostic.failureType === 'subtestsFailed', at: offset });
     }
     offset += line.length + 1;
   }
@@ -155,7 +186,7 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string): { group
     const name = m[1] ?? m[4]!;
     // A quoted legacy header without a closing message is not a new-style location.
     if (!wanted.has(name) || (!m[1] && m[5]!.startsWith("'"))) continue;
-    const message = errorMessage(m[2] ?? m[6]!);
+    const message = errorMessage(signature ? (m[2] ?? m[6]!).split('\n')[0]! : m[2] ?? m[6]!, !signature);
     points.push({ name, ...(message ? { message } : {}), location: errorLocation(m[3] ?? m[5]!, cwd), at: header.index + m.index });
   }
   points.sort((a, b) => a.at - b.at);
@@ -173,7 +204,7 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string): { group
     if (group) {
       group.names.push(point.name);
       if (group.location !== point.location) delete group.location;
-    } else groups.set(message, { message, ...(point.location ? { location: point.location } : {}), names: [point.name] });
+    } else groups.set(message, { message, ...(point.location ? { location: point.location } : {}), ...(point.signatureLocation ? { signatureLocation: point.signatureLocation } : {}), ...(point.expected !== undefined ? { expected: point.expected } : {}), ...(point.actual !== undefined ? { actual: point.actual } : {}), names: [point.name] });
   }
   return { groups: [...groups.values()].sort((a, b) => b.names.length - a.names.length), hasError: [...picked.values()].some(p => !!p.message) };
 }
@@ -182,23 +213,25 @@ export function errorSignature(message: string): string {
   return message.replace(/\b(?:0x)?[0-9a-f]{8,}\b/gi, '<hex>').replace(/\b\d+(?:\.\d+)?\s*(?:ms|s)\b/g, '<t>').replace(/\/tmp\/[^\s'",)]+/g, '<tmp>');
 }
 /** AT4: keep the first signature seen per failed name of `obs` (at most 50), from the run log; names without error text get none. */
-function recordSignatures(obs: { failed?: string[]; signatures?: Record<string, string> }, log: string, names: readonly string[]): void {
+function recordSignatures(obs: { failed?: string[]; signatures?: Record<string, string> }, log: string, names: readonly string[], cwd: string): void {
   if (!names.length) return;
   const out = obs.signatures ?? {};
-  for (const g of groupsAt(log, names).groups) {
-    if (g.message === '(no error text)') continue;
-    for (const name of g.names) if (out[name] === undefined && obs.failed?.includes(name)) out[name] = errorSignature(g.message);
+  for (const name of names) {
+    const parsed = groupsAt(log, [name], cwd, true), g = parsed.groups[0];
+    if (!g || !parsed.hasError) continue;
+    if (out[name] === undefined && obs.failed?.includes(name)) out[name] = `v2|${JSON.stringify([errorSignature(g.message), g.signatureLocation ?? null, g.expected ?? null, g.actual ?? null])}`;
   }
   if (Object.keys(out).length) obs.signatures = out;
 }
 /** FG1: distinct errors, most common first, then first appearance; no ambient cwd or state. */
 export function errorGroups(log: string, failed: readonly string[]): ErrorGroup[] { return groupsAt(log, failed).groups; }
 function failedTests(log: string, failed: readonly string[], cwd: string): string {
-  const { groups, hasError } = groupsAt(log, failed, cwd);
-  if (!hasError) return `failed tests: ${failed.join(', ')}`;
-  const errors = groups.slice(0, 3).map(g => `"${g.message}"${g.location ? ` (${g.location})` : ''} ×${g.names.length}`).join(' | ');
-  const names = failed.slice(0, 3).map(n => stripAnsi(n).replace(/\s+/g, ' ').replace(/;/g, ',')).join(', ');
-  return `failed tests: ${failed.length} failed, ${groups.length} distinct error(s): ${errors}${groups.length > 3 ? ` (+${groups.length - 3} more errors)` : ''} — ${names}${failed.length > 3 ? ` (+${failed.length - 3} more)` : ''}`;
+  const quotes = failed.slice(0, 3).map(name => {
+    const g = groupsAt(log, [name], cwd).groups[0]!;
+    const values = g.expected !== undefined && g.actual !== undefined ? `expected ${g.expected}, actual ${g.actual}` : g.message;
+    return `${stripAnsi(name).replace(/\s+/g, ' ').replace(/;/g, ',')}${g.location ? ` (${g.location})` : ''}: ${values}`;
+  });
+  return `failed tests: ${quotes.join(' | ')}${failed.length > 3 ? ` (+${failed.length - 3} more)` : ''}`;
 }
 const LIMIT = 1024 * 1024;
 /** E2.2: the last `n` non-empty output lines (ANSI colour removed, trailing blanks trimmed), each at most 200 characters. */
@@ -236,9 +269,29 @@ function diskFull(code: number | null, counts: Counts | undefined, log: string, 
   // G3.4 (0.12): the note shows the filtered lines the pattern matched (the last 5, each at most 200 characters).
   if (m) { const t = lines.filter(l => DISK_FULL.test(l)).slice(-5).map(l => l.trim().slice(0, 200)); throw new EnvironmentError(`${m[0]}: ${what}; matched output:${t.map(l => `\n  ${l}`).join('')}`); }
 }
-export interface CommandResult { code: number | null; error?: string; log: string; spawn?: boolean }
+/** SG5: bounded, best-effort process tree before timeout kills the command group. */
+async function timeoutProcessTree(pid: number | undefined): Promise<string> {
+  if (!pid) return 'process tree unavailable (no pid)';
+  return new Promise(resolve => {
+    const ps = spawn('ps', ['-axo', 'pid=,ppid=,stat=,wchan=,etime=,args='], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let bytes = Buffer.alloc(0), error = '';
+    const timer = setTimeout(() => ps.kill('SIGKILL'), 2000);
+    ps.stdout.on('data', (b: Buffer) => { bytes = Buffer.concat([bytes, b]); if (bytes.length > 4 * LIMIT) bytes = bytes.subarray(bytes.length - 4 * LIMIT); });
+    ps.stderr.on('data', (b: Buffer) => { error = b.toString().slice(0, 200); });
+    ps.on('error', e => { error = e.message; });
+    ps.on('close', () => {
+      clearTimeout(timer);
+      const rows = bytes.toString().split('\n').map(line => /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/.exec(line)).filter(m => m !== null);
+      const ids = new Set([pid]);
+      for (let changed = true; changed;) { changed = false; for (const r of rows) if (ids.has(Number(r[2])) && !ids.has(Number(r[1]))) { ids.add(Number(r[1])); changed = true; } }
+      const tree = rows.filter(r => ids.has(Number(r[1]))).slice(0, 1000).map(r => `${r[1]} ${r[2]} ${r[3]} ${r[4]} ${r[5]} ${r[6]!.slice(0, 200)}`).join('\n');
+      resolve(`process tree (pid ppid state wchan elapsed args):\n${tree || `unavailable${error ? ` (${error})` : ''}`}`);
+    });
+  });
+}
+export interface CommandResult { code: number | null; error?: string; log: string; spawn?: boolean; measurementLog?: string }
 /** Shared shell, environment, wrapper and process-group handling for measurements and slot setup. */
-export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abortGraceMs'>, run: string, cwd: string, timeout: number, capture: (data: Buffer) => void = () => {}): Promise<CommandResult> {
+export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abortGraceMs'>, run: string, cwd: string, timeout: number, capture: (data: Buffer) => void = () => {}, onTimeout?: string): Promise<CommandResult> {
   return new Promise(resolve => {
     let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
     const inherited: NodeJS.ProcessEnv = { ...process.env };
@@ -257,12 +310,35 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
       if (ctx.abortGraceMs) { kill('SIGTERM'); escalation = setTimeout(() => kill(), ctx.abortGraceMs); }
       else kill();
     };
-    const timer = setTimeout(() => { error = `timeout after ${timeout}s`; kill(); }, timeout * 1000);
+    let timeoutDetails: Promise<string> | undefined;
+    const timer = setTimeout(() => {
+      error = `timeout after ${timeout}s`;
+      timeoutDetails = (async () => {
+        let diagnostic = '';
+        try {
+          if (onTimeout) {
+            const result = await runCommand(ctx, onTimeout, cwd, 30);
+            diagnostic = `\non_timeout (diagnostic only):\n${Buffer.from(result.log).subarray(-256 * 1024).toString()}${result.error ? `\n${result.error}` : ''}\nexit ${result.code ?? 'none'}`;
+          }
+          return `${diagnostic}\n${await timeoutProcessTree(p.pid)}`;
+        } catch (e) { return `${diagnostic}\nprocess tree unavailable (${String(e).slice(0, 200)})`; }
+        finally { kill(); }
+      })();
+    }, timeout * 1000);
     ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
     p.on('error', e => { error = e.message; spawnError = true; });
-    p.on('close', (code, signal) => {
-      clearTimeout(timer); clearTimeout(escalation); ctx.signal?.removeEventListener('abort', abort); kill();
-      resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(spawnError ? { spawn: true } : {}) });
+    p.on('close', async (code, signal) => {
+      clearTimeout(timer); clearTimeout(escalation); ctx.signal?.removeEventListener('abort', abort);
+      const details = timeoutDetails ? await timeoutDetails : undefined;
+      kill();
+      const measurementLog = details !== undefined ? output.toString() : undefined;
+      if (details !== undefined) {
+        output = output.subarray(Math.max(0, output.length - 256 * 1024));
+        const appendix = `\n${error}\n${details}\n`;
+        capture(Buffer.from(appendix));
+        output = Buffer.concat([output, Buffer.from(appendix)]);
+      }
+      resolve({ code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(measurementLog !== undefined ? { measurementLog } : {}), ...(spawnError ? { spawn: true } : {}) });
     });
   });
 }
@@ -336,7 +412,17 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
   // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
   const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, touch: ctx.plan.exec?.touch, note: (line: string) => capture(`${line}\n`) } : undefined;
-  const command = (run: string, cwd: string, timeout: number): Promise<CommandResult> => runCommand(ctx, run, cwd, timeout, capture);
+  let timeoutNote: string | undefined;
+  const command = async (run: string, cwd: string, timeout: number, onTimeout?: string): Promise<CommandResult> => {
+    const result = await runCommand(ctx, run, cwd, timeout, capture, onTimeout);
+    if (result.error?.startsWith('timeout after')) {
+      const beforeTimeout = result.log.split(`\n${result.error}\n`)[0]!;
+      const tail = lastLines(beforeTimeout, 3);
+      timeoutNote = `${result.error}${tail.length ? `; ${tail.join(' | ')}` : ''}`;
+      bytes = Buffer.from(result.log); truncated = false;
+    }
+    return result;
+  };
   try {
     ctx.onProgress?.(`${job.subject}: ${job.obligation}`);
     if (ctx.signal?.aborted) throw new Error('aborted');
@@ -365,7 +451,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
             const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
             if (setup.error || setup.code !== 0) throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`);
           }
-          const result = await command(spec.run, work.path, spec.timeout_s), counts = parseCounts(result.log, () => { protocolWarnings++; });
+          const result = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout), counts = parseCounts(result.measurementLog ?? result.log, () => { protocolWarnings++; });
           if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
           diskFull(result.code, counts, result.log, `mutant ${path} run exited ${result.code}`);
           if (result.error && !result.error.startsWith('timeout')) throw new Error(result.error);
@@ -400,11 +486,11 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (ctx.signal?.aborted) throw new Error('aborted');
         const runStart = Date.now();
         if (repeat) capture(`\n=== run ${index + 1}/${runs} ===\n`);
-        const raw = await command(spec.run, work.path, spec.timeout_s); obs.exit = raw.code;
+        const raw = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout); obs.exit = raw.code;
         obs.note = undefined; obs.verdict = 'error';
         const warnings: string[] = [];
-        obs.counts = parseCounts(raw.log, note => { warnings.push(note); protocolWarnings++; });
-        const named = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(raw.log);
+        obs.counts = parseCounts(raw.measurementLog ?? raw.log, note => { warnings.push(note); protocolWarnings++; });
+        const named = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(raw.measurementLog ?? raw.log);
         // MS4: a completed run whose only failing tests are active quarantine names counts as if they had not run.
         const verdict = quarantineExcuse(excusable, spec.run, raw, obs.counts, named, spec.min_tests), excused = verdict.excused;
         if (verdict.reason) notApplied.add(verdict.reason);
@@ -413,7 +499,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
         if (runFailed.length) failureLogs.push(result.log);
         if (failed.size) obs.failed = [...failed];
-        recordSignatures(obs, result.log, runFailed);
+        recordSignatures(obs, result.measurementLog ?? result.log, runFailed, tree);
         // IR2: facts about this run remain independent of failure names and display-note separators.
         const execution = { completed:false, countOK:false };
         try {
@@ -447,8 +533,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
             obs.note = `command exited ${result.code}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
           }
           if (obs.verdict === 'fail' && runFailed.length) {
-            const tail = lastLines(result.log, 15);
-            obs.note = `${failedTests(result.log, runFailed, tree)}${obs.note && !obs.note.includes('last output:') ? `; ${obs.note}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
+            obs.note = `${failedTests(result.log, runFailed, tree)}${obs.note && !obs.note.includes('last output:') ? `; ${obs.note}` : ''}`;
           }
         } catch (e) {
           execution.completed = false;
@@ -467,9 +552,8 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (passed >= need || passed + runs - index - 1 < need) {
           obs.verdict = passed >= need ? 'pass' : 'fail';
           if (repeat && obs.verdict === 'fail' && failed.size) {
-            const tail = lastLines(result.log, 15);
             const reason = obs.note?.split('; last output:')[0]?.replace(/^failed tests: [^;]*;?\s*/, '');
-            obs.note = `${failedTests(failureLogs.join('\n'), [...failed], tree)}${reason ? `; ${reason}` : ''}; last output:${tail.map(l => `\n  ${l}`).join('')}`;
+            obs.note = `${failedTests(failureLogs.join('\n'), [...failed], tree)}${reason ? `; ${reason}` : ''}`;
           }
           break;
         }
@@ -482,6 +566,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   finally {
     if (work) { try { await work.dispose(); } catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `worktree cleanup: ${String(e)}`; capture(obs.note); } }
   }
+  if (timeoutNote) obs.note = timeoutNote;
   if (protocolWarnings && !obs.note?.includes('malformed owed-counts')) obs.note = `${obs.note ? `${obs.note}; ` : ''}${protocolWarnings} malformed owed-counts line(s) ignored`;
   obs.log = await ctx.ledger.putBlob(truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes);
   obs.durationMs = Date.now() - start; return obs;
