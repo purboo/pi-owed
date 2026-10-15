@@ -10,6 +10,7 @@ import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices,
 import { priorCandidateBlock, ruleAnswers } from './reducer.ts';
 import { clockTime } from './clock.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
+import { nodeReview } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
@@ -475,7 +476,7 @@ export function driverSlot(s: State, node: string, by: string): number | undefin
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
   if (!n?.slot?.open || !spec) return undefined;
   const k = driveReviewerSlot(by, node, n.slot.attempt);
-  return k !== undefined && k <= Math.max(spec.review.count, 1) ? k : undefined;
+  return k !== undefined && k <= Math.max(nodeReview(s, node).count, 1) ? k : undefined;
 }
 
 // ---------- owner-needed ----------
@@ -499,7 +500,7 @@ export function ownerNeeded(s: State, node: string): string | undefined {
       if (i.mark === '⊤') return `${i.obligation}: ${i.detail}`;
       const b = ownerBlock.find(b => b.obligation === i.obligation);
       if (b) return text(b);
-      if (i.obligation === 'review' && (spec?.review.min_rank ?? 1) > 2) return `review requires rank ${spec!.review.min_rank}: only the owner can record it`;
+      if (i.obligation === 'review' && nodeReview(s, node).min_rank > 2) return `review requires rank ${nodeReview(s, node).min_rank}: only the owner can record it`;
     }
     return undefined;
   }

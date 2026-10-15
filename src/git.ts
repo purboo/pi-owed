@@ -1,3 +1,4 @@
+import { neutralJsonEqual } from './risk.ts';
 import { writesKeySyntax } from './writes.ts';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat, lutimes, rename } from 'node:fs/promises';
@@ -196,6 +197,16 @@ export async function keyCommitsTo(cwd: string, plan: Plan, job: { kind: string;
   const closure = await readsDigest(cwd, job.kind === 'inv' ? job.commit : job.base, plan.closure);
   return await checkKey(cwd, plan, job.spec, job.commit, closure, job.kind, names) === job.key;
 }
+/** RK3: missing/invalid JSON never makes a closure change neutral. Check closure digests are unchanged. */
+async function touchesClosure(cwd: string, plan: Plan, changed: string[], base: string, commit: string): Promise<boolean> {
+  for (const path of changed.filter(p => matchesAny(p, plan.closure))) {
+    const neutral = plan.closure_neutral?.find(n => n.path === path);
+    if (!neutral) return true;
+    const [before, after] = await Promise.all([git(cwd, ['show', `${base}:${path}`], { allowFail: true }), git(cwd, ['show', `${commit}:${path}`], { allowFail: true })]);
+    if (before.code || after.code || !neutralJsonEqual(before.stdout, after.stdout, neutral.json_ignore)) return true;
+  }
+  return false;
+}
 export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, base: string, commit: string, attempt: number, q?: QuarantineNames): Promise<CandidateFacts> {
   base = await revParse(cwd, base); commit = await revParse(cwd, commit);
   const changed = (await git(cwd, ['diff', '--no-renames', '--name-only', '-z', base, commit])).stdout.split('\0').filter(Boolean);
@@ -209,7 +220,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
     if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
   keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes, ...writesKeySyntax(plan,node.writes) });
-  const closureTouched = changed.some(p => matchesAny(p, plan.closure));
+  const closureTouched = await touchesClosure(cwd, plan, changed, base, commit);
   if (closureTouched) keys['closure-review'] = H({ o: 'closure-review', patch });
   keys.review = H({ o: 'review', patch });
   keys.rulings = H({ o: 'rulings', attempt });

@@ -1,3 +1,4 @@
+import { riskDowngrades, reviewRequirement, reviewRequirementText } from './risk.ts';
 import { matchesWrite, writeCovers, writeOverlaps, writesSyntax, withWritesSyntax, writesKeySyntax, writesAllowChanged, type WritesSyntax } from './writes.ts';
 import { matchesGlob } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -118,8 +119,12 @@ function grantPassReusable(s: State, e: ObsEntry): boolean {
 }
 const hasVerdict = (s: State, subject: string, obligation: string, key: string): boolean => counted(s, subject, obligation, key).some(e => e.verdict !== 'error');
 
-function required(spec: NodeSpec, facts: CandidateFacts): string[] {
-  return [...spec.checks.flatMap(c => [`check:${c.id}`, ...(c.red ? [`red:${c.id}`] : []), ...(c.mutants ? [`strength:${c.id}`] : [])]), 'writes', ...(facts.closureTouched ? ['closure-review'] : []), ...(spec.review.count > 0 ? ['review'] : []), ...(spec.approve ? ['approve'] : []), ...(spec.evidence ?? []).map(e => `evidence:${e.id}`), 'rulings'];
+export function nodeReview(s: State, id: string): ReturnType<typeof reviewRequirement> {
+  const spec = nodeSpec(s, id);
+  return spec ? reviewRequirement(s.plan, spec, s.nodes[id]?.candidate?.changed ?? []) : { count: 0, min_rank: 1, cause: 'no node spec' };
+}
+function required(plan: Plan, spec: NodeSpec, facts: CandidateFacts): string[] {
+  return [...spec.checks.flatMap(c => [`check:${c.id}`, ...(c.red ? [`red:${c.id}`] : []), ...(c.mutants ? [`strength:${c.id}`] : [])]), 'writes', ...(facts.closureTouched ? ['closure-review'] : []), ...(reviewRequirement(plan, spec, facts.changed).count > 0 ? ['review'] : []), ...(spec.approve ? ['approve'] : []), ...(spec.evidence ?? []).map(e => `evidence:${e.id}`), 'rulings'];
 }
 /**
  * D23 item keys of a node's manual obligations on a candidate with patch `patch` (as for review):
@@ -221,12 +226,13 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
   let pooled: string | undefined;
   if (!key) return { ...out, detail: subject === 'trunk' && obligation.startsWith('inv:') ? `${obligation} not measured on trunk yet — owed attest --trunk` : `${obligation} missing fact key` };
   if (obligation === 'review' || obligation === 'closure-review') {
-    const rank = obligation === 'closure-review' ? 2 : spec?.review.min_rank ?? 1;
-    const count = obligation === 'closure-review' ? 1 : spec?.review.count ?? 1;
+    const derived = nodeReview(s, subject);
+    const rank = obligation === 'closure-review' ? 2 : derived.min_rank;
+    const count = obligation === 'closure-review' ? 1 : derived.count;
     const reviews = effectiveReviews(s, subject, obligation, key, node?.candidate?.keys[obligation] === key ? node.candidate : undefined).filter(e => e.rank >= rank && !isWriter(node, e.by));
     out.evidence = reviews.map(e => e.seq);
     out.discharger = obligation === 'closure-review' ? 'owner' : 'reviewer';
-    out.detail = `${obligation} requires ${count} non-writer reviews with rank at least ${rank}`;
+    out.detail = `${obligation} requires ${count} non-writer reviews with rank at least ${rank}${obligation === 'review' && s.plan.risk !== undefined ? `; ${reviewRequirementText(derived)}` : ''}`;
     if (new Set(reviews.map(e => e.by)).size >= count) out.status = 'E';
   } else if (obligation === 'rulings') {
     const latest = latestRule(s, subject);
@@ -308,7 +314,7 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
 }
 function nodeItems(s: State, id: string, facts: CandidateFacts): ItemView[] {
   const spec = nodeSpec(s, id);
-  return spec ? required(spec, facts).map(o => item(s, id, o, facts.keys[o] ?? '')) : [];
+  return spec ? required(s.plan, spec, facts).map(o => item(s, id, o, facts.keys[o] ?? '')) : [];
 }
 /**
  * N4: the nodes whose derived fields (items, accepted, acceptedSince, phase, dependents, stale halt) entry `e` can change. Those
@@ -604,7 +610,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       const n = s.nodes[e.node]!, spec = nodeSpec(s, e.node);
       // Ruling #1431: a writer resubmit without review obligations acknowledges its recorded ruling follow-ups,
       // never a later unsent ruling, a prospective notify, or an executor carry.
-      if (e.by === n.slot?.writer && spec?.review.count === 0 && !e.facts.closureTouched) {
+      if (e.by === n.slot?.writer && spec && reviewRequirement(s.plan, spec, e.facts.changed).count === 0 && !e.facts.closureTouched) {
         const ar = n.runs.find(r => r.attempt === e.attempt), writer = ar?.launches.find(l => l.role === 'writer');
         if (writer) n.slot.rulings_seen = Math.max(n.slot.rulings_seen, ...ar!.sends.filter(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up').map(x => x.rulings ?? -1));
       }
@@ -743,7 +749,7 @@ export function sameReplay(a: State, b: State): boolean { return isDeepStrictEqu
  * and `drive`), or the plan's setup, exec or closure changed.
  */
 export function invalidates(prev: Plan, next: Plan, id: string): boolean {
-  return canonical(writesKeySyntax(prev,prev.nodes.find(x => x.id === id)?.writes ?? [])) !== canonical(writesKeySyntax(next,next.nodes.find(x => x.id === id)?.writes ?? [])) || canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure);
+  return canonical(writesKeySyntax(prev,prev.nodes.find(x => x.id === id)?.writes ?? [])) !== canonical(writesKeySyntax(next,next.nodes.find(x => x.id === id)?.writes ?? [])) || canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure) || canonical(prev.closure_neutral) !== canonical(next.closure_neutral);
 }
 /** N1: the node spec fields whose change still lets owed carry a candidate (its facts are recomputed). */
 export const CARRY_FIELDS: readonly string[] = ['checks', 'writes', 'type', 'drive', 'later'];
@@ -763,7 +769,7 @@ export function carryable(prev: Plan, next: Plan, id: string): boolean {
 export function specChanges(prev: Plan, next: Plan, id: string): string[] {
   const a = (prev.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>, b = (next.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>;
   const fields = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => k !== 'type' && k !== 'drive' && k !== 'later' && canonical(a[k]) !== canonical(b[k]));
-  return [...fields, ...(prev.setup !== next.setup ? ['setup'] : []), ...(execChanged(prev, next) ? ['exec'] : []), ...(canonical(prev.closure) !== canonical(next.closure) ? ['closure'] : [])];
+  return [...fields, ...(prev.setup !== next.setup ? ['setup'] : []), ...(execChanged(prev, next) ? ['exec'] : []), ...(canonical(prev.closure) !== canonical(next.closure) ? ['closure'] : []), ...(canonical(prev.closure_neutral) !== canonical(next.closure_neutral) ? ['closure_neutral'] : [])];
 }
 /**
  * L2: the definition of check `id` of node `node` in `plan`: the canonical CheckSpec with all its fields, plus
@@ -1084,12 +1090,12 @@ function submittedFacts(s: State, e: Extract<Entry, { kind: 'submit' }>): Candid
 export function reviewCarrySource(s: State, node: string, next?: CandidateFacts): { previous: Extract<Entry, { kind: 'submit' }>; reviews: number[] } | undefined {
   const previous = previousSubmit(s, node), spec = nodeSpec(s, node);
   if (!previous || !spec) return undefined;
-  const facts = submittedFacts(s, previous), obligations = required(spec, facts).filter(o => o === 'review' || o === 'closure-review');
-  if (!obligations.length || next && required(spec, next).some(o => (o === 'review' || o === 'closure-review') && !obligations.includes(o))) return undefined;
+  const facts = submittedFacts(s, previous), derived = reviewRequirement(s.plan, spec, facts.changed), obligations = required(s.plan, spec, facts).filter(o => o === 'review' || o === 'closure-review');
+  if (!obligations.length || next && required(s.plan, spec, next).some(o => (o === 'review' || o === 'closure-review') && !obligations.includes(o))) return undefined;
   const receipts: number[] = [];
   for (const obligation of obligations) {
     if (s.nodes[node]!.blocks.some(b => b.obligation === obligation && active(b))) return undefined;
-    const rank = obligation === 'closure-review' ? 2 : spec.review.min_rank, count = obligation === 'closure-review' ? 1 : spec.review.count;
+    const rank = obligation === 'closure-review' ? 2 : derived.min_rank, count = obligation === 'closure-review' ? 1 : derived.count;
     const reviews = effectiveReviews(s, node, obligation, facts.keys[obligation] ?? '', facts).filter(e => e.rank >= rank && !isWriter(s.nodes[node], e.by));
     if (new Set(reviews.map(e => e.by)).size < count) return undefined;
     receipts.push(...reviews.map(e => e.seq));
@@ -1103,10 +1109,10 @@ function reviewCarryErrors(s: State, d: Extract<Draft, { kind: 'submit' }>): str
   const source = reviewCarrySource(s, d.node, d.facts);
   if (!source || carry.from !== source.previous.facts.commit) return ['review carry.from must name the previous candidate with all review obligations satisfied'];
   if (carry.reviews.some(seq => !source.reviews.includes(seq))) return ['review carry.reviews must name OK receipts on the previous candidate keys'];
-  const spec = nodeSpec(s, d.node)!;
-  for (const obligation of required(spec, source.previous.facts).filter(o => o === 'review' || o === 'closure-review')) {
+  const spec = nodeSpec(s, d.node)!, derived = reviewRequirement(s.plan, spec, source.previous.facts.changed);
+  for (const obligation of required(s.plan, spec, source.previous.facts).filter(o => o === 'review' || o === 'closure-review')) {
     const reviews = entriesOf(s).filter((e): e is ReviewEntry => e.kind === 'review' && carry.reviews.includes(e.seq) && e.obligation === obligation);
-    if (new Set(reviews.map(e => e.by)).size < (obligation === 'closure-review' ? 1 : spec.review.count)) return ['review carry.reviews must satisfy every previous review count and rank'];
+    if (new Set(reviews.map(e => e.by)).size < (obligation === 'closure-review' ? 1 : derived.count)) return ['review carry.reviews must satisfy every previous review count and rank'];
   }
   return [];
 }
@@ -1321,16 +1327,16 @@ export function nextReviewerN(s: State, node: string): number { return 1 + revie
 export function reviewEpoch(s: State, node: string): number | undefined {
   const n = s.nodes[node], c = n?.candidate;
   if (!n?.slot?.open || !c) return undefined;
-  const keys = (facts: CandidateFacts, spec: NodeSpec | undefined): (string | undefined)[] => [
-    (spec?.review.count ?? 0) > 0 ? facts.keys.review : undefined,
+  const keys = (facts: CandidateFacts, plan: Plan, spec: NodeSpec | undefined): (string | undefined)[] => [
+    spec && reviewRequirement(plan, spec, facts.changed).count > 0 ? facts.keys.review : undefined,
     facts.closureTouched ? facts.keys['closure-review'] : undefined,
   ];
-  const current = keys(c, nodeSpec(s, node)), entries = entriesOf(s);
+  const current = keys(c, s.plan, nodeSpec(s, node)), entries = entriesOf(s);
   let first = c.seq;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
     if (e.seq >= c.seq || e.kind !== 'submit' || e.node !== node || e.attempt !== n.slot.attempt) continue;
-    const prior = keys(e.facts, planAt(s, e.seq).nodes.find(x => x.id === node));
+    const priorPlan = planAt(s, e.seq), prior = keys(e.facts, priorPlan, priorPlan.nodes.find(x => x.id === node));
     const next = entries.find(x => x.seq === first);
     if (prior.some((key, k) => key !== current[k]) && !(next?.kind === 'submit' && next.facts.carry?.from === e.facts.commit)) break;
     current.splice(0, current.length, ...prior);
@@ -1370,7 +1376,7 @@ const blobHash = (v: unknown): boolean => typeof v === 'string' && /^[0-9a-f]{64
  */
 function execChanged(prev: Plan, next: Plan): boolean { return canonical(execKey(prev) ?? {}) !== canonical(execKey(next) ?? {}); }
 function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
-  const result: Downgrade[] = [...knownRedDowngrades(prev, next), ...quarantineDowngrades(prev, next)];
+  const result: Downgrade[] = [...knownRedDowngrades(prev, next), ...quarantineDowngrades(prev, next), ...riskDowngrades(prev, next)];
   const add = (node: string, what: string): void => { result.push({ node, what }); };
   const checks = (node: string, a: Plan['invariants'], b: Plan['invariants']): void => {
     for (const c of a) {
@@ -1570,7 +1576,7 @@ export function validateDraft(s: State, d: Draft): string[] {
   // Ruling #1176 (0.12): abandon may close a removed node's slot; AH hold may follow it atomically.
   if ('node' in d && (!n || (!spec && d.kind !== 'escape' && !((d.kind === 'abandon' || d.kind === 'hold') && n.phase === 'removed')))) errors.push(`Node ${d.node} does not exist`);
   const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
-  const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && underlyingActive(context(s), b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
+  const current = (o: string, key: string, reviewOnly = false): void => { if (!n?.slot?.open || !n.candidate || !spec || (!required(s.plan, spec, n.candidate).includes(o) && !(reviewOnly && o === 'review') && !n.blocks.some(b => b.obligation === o && underlyingActive(context(s), b))) || !key || n.candidate.keys[o] !== key) errors.push(`${o} must reference the current candidate obligation key`); };
   switch (d.kind) {
     case 'refresh':
       if (d.by !== 'executor:owed') errors.push('refresh may only be written by executor:owed');
@@ -1629,7 +1635,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       errors.push(...reviewCarryErrors(s, d));
       if (d.facts.rebased !== undefined && (d.by !== 'executor:owed' || d.facts.rebased !== true)) errors.push('submit rebased must be true and only recorded by executor:owed');
       if (d.facts.base !== n?.slot?.base) errors.push('submit base must match slot base');
-      if (spec && required(spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit is missing required obligation keys');
+      if (spec && required(s.plan, spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit is missing required obligation keys');
       if (spec && Object.entries(manualKeys(spec, d.facts.patch)).some(([o, k]) => d.facts.keys[o] !== k)) errors.push('submit approve/evidence keys must be derived from the candidate patch');
       break;
     case 'grant':
@@ -1991,7 +1997,7 @@ export function attestJobs(s: State, id: string): AttestJob[] {
     const j = job(plan.nodes.find(x => x.id === id), id, b.obligation, b.key, e.commit, e.base ?? e.commit, plan);
     if (j) jobs.push(quarantinedJob(s, { ...j, attribution: true }));
   }
-  if (n.candidate && n.slot?.open) for (const o of required(nodeSpec(s, id)!, n.candidate)) {
+  if (n.candidate && n.slot?.open) for (const o of required(s.plan, nodeSpec(s, id)!, n.candidate)) {
     const key = n.candidate.keys[o];
     const retry = o === 'writes' ? writesWaiting(s,id) : undefined;
     const due = retry && retry.waits_on!.every(owner => !s.nodes[owner]?.slot?.open);
@@ -2256,7 +2262,7 @@ function scopedMergeGuard(s: State, id: string, m: { facts: CandidateFacts; stat
   if (m.facts.base !== s.trunk.commit) reasons.push('writes merge facts base must be the current trunk');
   if (m.facts.commit !== m.state.commit || m.facts.tree !== m.state.tree) reasons.push('Merge facts commit/tree mismatch');
   if (n?.candidate && spec) {
-    for (const o of required(spec, n.candidate)) {
+    for (const o of required(s.plan, spec, n.candidate)) {
       const onMerge = o === 'writes' || o.startsWith('check:');
       const v = item(s, id, o, (o.startsWith('check:') ? checkKeys[o] : onMerge ? m.facts.keys[o] : n.candidate.keys[o]) ?? '');
       // CandidateFacts.changed is trusted git output for PRE..M. Unlike command

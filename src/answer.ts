@@ -5,6 +5,7 @@ import { OwedError } from './errors.ts';
 import { sha256 } from './canon.ts';
 import { answerRule, readState, subagentRefusal } from './ops.ts';
 import type { Channel, LaunchEntry, Principal, RuleEntry, RunQuestion, State } from './types.ts';
+import { nodeReview } from './reducer.ts';
 import { oneLine } from './views.ts';
 import { ruleAnswers } from './reducer.ts';
 
@@ -28,7 +29,7 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
     for (const role of ['writer', 'reviewer'] as const) {
       const calls = launches.filter(l => l.role === role && l.rid !== exclude && !ruleAnswers(entry).some(a => a.rid === l.rid));
       if (!calls.length) {
-        const needsRole = role === 'writer' || (state.plan.nodes.find(x => x.id === id)?.review.count ?? 0) > 0 || n?.candidate?.closureTouched;
+        const needsRole = role === 'writer' || nodeReview(state, id).count > 0 || n?.candidate?.closureTouched;
         if (needsRole && !launches.some(l => l.role === role && (l.rid === exclude || ruleAnswers(entry).some(a => a.rid === l.rid)))) result.pending++;
         continue;
       }
