@@ -117,6 +117,16 @@ export async function answer(o: AnswerOptions): Promise<AnswerResult> {
     throw new OwedError(`Answer rule #${entry.seq} recorded; dsa delivery failed: ${(e as Error).message}; ${rulingDeliveryText(rulingDelivery)}. Retry exactly: ${answerRetry(o.node, entry)}`);
   }
 }
+/**
+ * SB4: one line for a delivered answer (never the answer or follow-up text), plus one line only when the ruling also
+ * reached other running calls or failed to reach one (who, and the exact retry).
+ */
 export function answerText(node: string, r: AnswerResult): string {
-  return `Answer rule #${r.entry.seq} for ${node}: delivered to ${r.entry.answer!.rid} (qid ${r.entry.answer!.qid}, rev ${r.entry.answer!.rev}, request ${r.request})${r.rulingDelivery ? `; ${rulingDeliveryText(r.rulingDelivery)}` : ''}`;
+  const a = r.entry.answer!, role = r.entry.text.startsWith('Answer to writer question ') ? 'writer' : 'reviewer';
+  return [`answered ${role} question ${a.qid} of ${a.rid} (rule #${r.entry.seq}); the call resumes now`, ...answerRulingLine(node, r)].join('\n');
+}
+function answerRulingLine(node: string, r: AnswerResult): string[] {
+  const d = r.rulingDelivery;
+  if (d?.failures.length) return [`the ruling did not reach ${d.failures.join('; ')}${d.delivered.length ? ` (reached ${d.delivered.length} other running ${d.delivered.length === 1 ? 'call' : 'calls'})` : ''}; retry exactly: ${answerRetry(node, r.entry)}`];
+  return d?.delivered.length ? [`the ruling also reached ${d.delivered.length} other running ${d.delivered.length === 1 ? 'call' : 'calls'} (${d.delivered.join(', ')})`] : [];
 }

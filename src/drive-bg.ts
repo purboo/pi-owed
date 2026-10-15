@@ -9,6 +9,7 @@ import { join, resolve, dirname } from 'node:path';
 import * as git from './git.ts';
 import { Ledger } from './ledger.ts';
 import { OwedError } from './errors.ts';
+import { clockTime } from './clock.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
 import { answeredQuestion } from './drive.ts';
@@ -224,7 +225,7 @@ function idleSinceOf(lines: string[]): string | undefined {
   return undefined;
 }
 /** The idle text of status, `/owed` and owed_drive status (H1.2). */
-export const idleText = (at: string): string => `idle, waiting for ledger changes since ${at}`;
+export const idleText = (at: string): string => `idle, waiting for ledger changes since ${clockTime(at)}`;
 /** Where the runs of a running driver are listed (E1.3). */
 export const sessionText = (session: string | undefined): string => session !== undefined ? `runs are listed in pi session ${session}` : 'no pi session: runs show only in pi-durable-subagents status / the CLI';
 /** `owed drive --status` (D17.3). Reads only; creates nothing. */

@@ -1204,6 +1204,14 @@ invalid entry.
 - `submit` requires an open slot whose writer is `by`, and the commit to be a
   descendant of the slot base; a carry submit (§3, 0.10 N1) is by
   `executor:owed` instead and restores the carried submit's commit as candidate.
+  **SB1 (0.22.1):** `submit` (also `--commit`) refuses, recording nothing, a
+  commit that already contains trunk commits the slot base does not (the writer
+  merged trunk or rebased onto it without `owed rebase`): `merge-base(C, ledger
+  trunk)` is not the slot base. The message names the slot base, the latest
+  contained trunk commit and the fix: `owed rebase <node>`, then in the slot
+  worktree the exact `git rebase --onto <trunk> <latest>`, then submit again.
+  Otherwise its writes would be diffed against the old base and claim paths
+  that other nodes merged.
 - `rebase` requires an open slot and a trunk that moved since the slot base;
   the slot base becomes the current trunk and the open candidate is dropped, so
   the node is `dispatched` again in the same worktree and attempt. The writer
@@ -1228,7 +1236,10 @@ invalid entry.
    spawned, is an `error` observation, not a pass, even when `red_expect`
    matches. Verdict `pass` means "the counterfactual was rejected as specified".
 3. `writes`: every path in `diff --name-only B C` matches the node's recorded
-   writes dialect or an exact attempt grant (§3.7, §7.19).
+   writes dialect or an exact attempt grant (§3.7, §7.19). **SB3 (0.22.1):** a
+   candidate (recorded before SB1) that contains trunk commits after B fails
+   `writes` with a one-line note naming that cause, the number of changed paths
+   and the SB1 fix, and nothing is granted.
 4. `closure-review` iff the diff touches closure globs: needs a review `ok` with
    rank ≥ 2 by a non-writer, or an owner waiver.
 5. `review` iff `review.count > 0`: needs `count` distinct reviewers with rank ≥
@@ -2385,7 +2396,7 @@ dispatch entry. Overlap is checked by the operation, not the reducer.
 `rebase` is the way to follow a moved trunk without abandoning: it requires an
 open slot and a trunk different from the slot base, and appends
 `{kind: "rebase", node, attempt, base: trunk, from: slot base}`. The writer then
-runs `git rebase --onto <base> <from>` in the same worktree and submits again;
+runs the packet's `git rebase --onto <base> <upstream>` (§12.5 NY7, SB2) in the same worktree and submits again;
 the old candidate cannot be submitted (it does not descend from the new base).
 A merge whose candidate conflicts with trunk refuses with
 `rebase needed: run owed rebase <node>, …`.
@@ -2684,7 +2695,7 @@ cleanup cannot delete another request or recreate a completed group. Crashes
 rely on liveness/expiry, with PID-reuse limits bounded by expiry.
 
 Lock owners may expose `activity` and ISO UTC `activitySince`; Busy appends the
-operation and UTC start time. Nested trunk refresh updates the operation holder;
+operation and its start time (local, SB5). Nested trunk refresh updates the operation holder;
 parallel measurements show the most recently started job while acquisition
 `ts` remains unchanged. Activity/marker updates use atomic rename and introduce
 no ledger fields, keys or gate changes. Upgrade the active driver to obtain
@@ -2720,7 +2731,10 @@ adopt priority; old readers ignore these runtime fields.
   worktrees give no HEAD evidence; driver behavior is §12.5.2.
 - **DR2:** current driver busy receipts show `merge waiting for <reason> since
   <HH:MM>` for accepted nodes, `measure waiting for <reason> since <HH:MM>` for
-  open not-yet-accepted candidates, also in plain status. Times are UTC. Accepted
+  open not-yet-accepted candidates, also in plain status. **SB5 (0.22.1):** every
+  `HH:MM` shown in text (merge/measure waiting, adopt pending, busy activity,
+  driver idle) is local time from one formatter, prefixed with the local date
+  `YYYY-MM-DD` when not today; ledger, cache and JSON fields stay ISO UTC. Accepted
   progress age is since continuous acceptance, not dispatch.
   **DQ2 (0.20.1):** ordinary/full status identify a driver-internal blocker as
   `merge waiting for driver-internal job (catalog merge, since 09:12);
@@ -2732,7 +2746,7 @@ adopt priority; old readers ignore these runtime fields.
   merging; status recomputes ahead, ignoring cached values. Nodes outside the
   queue omit ahead and queue-count text. Lease waits keep their existing
   reason/since text, adding ahead only for queued nodes. `since` is the continuous
-  candidate/attempt wait start; the internal-job time is that job's UTC start.
+  candidate/attempt wait start; the internal-job time is that job's start.
   Old caches without job remain readable until refreshed; brief keeps its scope.
   Atomic driver-owned writes survive restart,
   but are ignored when candidate/attempt stale or missing/corrupt. Completion,
@@ -4035,7 +4049,12 @@ it gives the reviewer's `owed evidence` command.
   failure reports the recorded seq and an exactly shell-quoted retry command
   including `--rev <recorded rev>`;
   the rule remains. Dsa deduplicates the stable send id and returns its first
-  outcome. Nothing is rolled back and no separate `send` entry is appended.
+  outcome. **SB4 (0.22.1):** on success CLI and `owed_answer` print one line,
+  `answered <role> question <qid> of <rid> (rule #<seq>); the call resumes now`,
+  plus one more line only when the ruling also reached other running calls
+  (`the ruling also reached <n> other running call(s) (<node>/<role>, …)`) or
+  failed to reach one (`the ruling did not reach <who>; retry exactly: <answer
+  retry command>`). The answer and follow-up texts are never echoed. Nothing is rolled back and no separate `send` entry is appended.
   The answer is delivered to its target rid: no ruling steer or ruling
   follow-up includes it for that run. Earlier undelivered ordinary rulings
   are still delivered; an answer never advances the delivery watermark past
@@ -4133,7 +4152,11 @@ slot base, preserving durable retry ids/bytes and existing owner/wait/question/
 report priorities. Rebase packets say `First commit your work, then run:
 git rebase --onto <new base> <upstream>`; never instruct stash. Upstream is the
 newest recorded slot base of this attempt ancestral to HEAD, falling back to
-`git merge-base HEAD <trunk-at-dispatch>`. Follow-ups retain allowed-writes,
+`git merge-base HEAD <trunk-at-dispatch>`. **SB2 (0.22.1):** trunk commits
+already in HEAD (a merge of trunk or a rebase onto it) are never replayed: when
+`git merge-base HEAD <new base>` descends from that upstream, it is the upstream,
+so the command replays only the node's own commits. The same command appears in
+the `owed rebase` packet, the rebase follow-up and the SB1 refusal. Follow-ups retain allowed-writes,
 conflict, rerun/commit and `owed submit <node>` instructions. No new ledger
 field records this Git fact.
 
@@ -4769,8 +4792,8 @@ plugin together. Snapshot/crash/label limits are in §7.17.
   starts no new period (no second line). A stop or signal ends it as before
   (exit record `stopped`). `--detach --stay` passes `--stay` to the detached
   driver; the lock does not record it. `owed drive --status` adds after its
-  first line `idle, waiting for ledger changes since <at>` (`--json`:
-  `idleSince`), `/owed` adds `idle, waiting for ledger changes since <at>; `
+  first line `idle, waiting for ledger changes since <at>` (`<at>` local time, SB5;
+  `--json`: ISO `idleSince`), `/owed` adds `idle, waiting for ledger changes since <at>; `
   before the session text, and `owed_drive` status shows the status text:
   while the driver runs and its log (after the last exit record) has an
   `idle-wait` followed by no action line other than a notify. Without

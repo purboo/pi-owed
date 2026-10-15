@@ -125,6 +125,16 @@ export async function isAncestor(cwd: string, a: string, b: string): Promise<boo
   const r = await git(cwd, ['merge-base', '--is-ancestor', a, b], { allowFail: true });
   if (r.code > 1) throw new OwedError(r.stderr, 'internal'); return r.code === 0;
 }
+/**
+ * SB1: the newest trunk commit that `commit` contains but slot base `base` does not: a merge base of `commit` and the
+ * ledger trunk `trunk` that strictly descends from `base`; undefined when the candidate holds no later trunk work.
+ */
+export async function trunkAfterBase(cwd: string, base: string, commit: string, trunk: string): Promise<string | undefined> {
+  const r = await git(cwd, ['merge-base', '--all', commit, trunk], { allowFail: true });
+  if (r.code) return undefined;
+  for (const m of r.stdout.split('\n').map(x => x.trim()).filter(Boolean)) if (m !== base && await isAncestor(cwd, base, m)) return m;
+  return undefined;
+}
 /** Number of commits in from..to. */
 export async function countCommits(cwd: string, from: string, to: string): Promise<number> { return Number((await git(cwd, ['rev-list', '--count', `${from}..${to}`])).stdout.trim()); }
 /** Paths changed between two commits (`git diff --no-renames --name-only`). */
