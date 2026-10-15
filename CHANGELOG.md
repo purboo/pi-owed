@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.22.1
+
+Patch release. No new ledger entry kind, no new field, no gate weakened;
+upgrade drivers, CLI and pi plugin together as for 0.22.0.
+
+- **Refuse candidates that already contain newer trunk commits (SB1, SB3).**
+  `owed submit` (also `--commit`) refuses, recording nothing, a commit whose
+  history contains trunk commits the slot base does not (a writer merged trunk
+  or rebased onto it without `owed rebase`). The message names the slot base,
+  the latest contained trunk commit and the fix. Such candidates recorded
+  before 0.22.1 fail `writes` with one line naming the cause and grant nothing,
+  instead of listing other nodes' merged paths as outside writes (SPEC §6.1,
+  §6.2).
+- **Rebase commands never replay trunk commits (SB2).** The command in the
+  `owed rebase` packet, driver rebase/drift/repair follow-ups and the SB1
+  refusal uses `git merge-base HEAD <new base>` as upstream when that descends
+  from the recorded upstream, so it replays only the node's own commits
+  (SPEC §12.5.2).
+- **One-line answers (SB4).** A successful `owed answer` / `owed_answer`
+  prints one line, plus one more only when the ruling reached or failed to
+  reach other running calls; answer and follow-up texts are not echoed
+  (SPEC §12.5.1).
+- **Local times (SB5).** Every `HH:MM` shown in text uses one local-time
+  formatter, with the local date when not today; ledger and JSON fields stay
+  ISO UTC (SPEC §9).
+
 ## 0.22.0
 
 Compatibility first: 0.22 adds no new ledger entry kind, only optional fields
