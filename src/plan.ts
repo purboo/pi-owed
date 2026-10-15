@@ -277,7 +277,7 @@ function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
 /** Parses an optional `allow:` block (SPEC §3.4, D21): a list of rules; unknown keys and bad types are errors; a rule needs a permission. */
 function parseAllow(v: unknown, errors: string[]): AllowRule[] {
   if (!Array.isArray(v)) { errors.push('allow: expected array'); return []; }
-  const keys = ['nodes', 'review_count', 'review_rank', 'writes', 'checks', 'adopt'];
+  const keys = ['nodes', 'review_count', 'review_rank', 'writes', 'checks', 'adopt', 'defer'];
   return v.map((x, i) => {
     const p = `allow[${i}]`, out: AllowRule = { nodes: ['*'] };
     if (!x || typeof x !== 'object' || Array.isArray(x)) { errors.push(`${p}: expected object`); return out; }
@@ -297,8 +297,8 @@ function parseAllow(v: unknown, errors: string[]): AllowRule[] {
     const count = int(r.review_count, `${p}.review_count`, 0, Infinity), rank = int(r.review_rank, `${p}.review_rank`, 1, 3);
     if (count !== undefined) out.review_count = count;
     if (rank !== undefined) out.review_rank = rank;
-    for (const k of ['writes', 'checks', 'adopt'] as const) { const l = list(r[k], `${p}.${k}`); if (l) out[k] = l; }
-    if (!['review_count', 'review_rank', 'writes', 'checks', 'adopt'].some(k => r[k] !== undefined)) errors.push(`${p}: a rule needs at least one permission (review_count, review_rank, writes, checks or adopt)`);
+    for (const k of ['writes', 'checks', 'adopt', 'defer'] as const) { const l = list(r[k], `${p}.${k}`); if (l) out[k] = l; }
+    if (!['review_count', 'review_rank', 'writes', 'checks', 'adopt', 'defer'].some(k => r[k] !== undefined)) errors.push(`${p}: a rule needs at least one permission (review_count, review_rank, writes, checks, adopt or defer)`);
     return out;
   });
 }

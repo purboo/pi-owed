@@ -12,7 +12,7 @@ import { OwedError } from './errors.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
 import { answeredQuestion } from './drive.ts';
-import { trunkParkNotices } from './reducer.ts';
+import { trunkParkNotices, sharedParkNotices } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
@@ -618,12 +618,12 @@ export class Follower {
     if (this.o.busy?.() || !this.pending.some(p => p.wake)) return undefined;
     const batch = this.pending.slice();
     // TP2: waiting membership can change while pi is busy. Recompute at delivery, dropping resolved states.
-    const parked = batch.filter(p => p.json?.do === 'notify' && p.json.scope === 'repo' && typeof p.json.once === 'string' && p.json.once.startsWith('trunk-red\u0000'));
+    const parked = batch.filter(p => p.json?.do === 'notify' && p.json.scope === 'repo' && typeof p.json.once === 'string' && (p.json.once.startsWith('trunk-red\u0000') || p.json.once.startsWith('shared\u0000')));
     const resolvedPark = new Set<PendingLine>();
     if (parked.length) {
       const s = await stateOf(this.o.repo).catch(() => undefined);
       if (s) for (const p of parked) {
-        const red = trunkParkNotices(s).find(r => r.once === p.json!.once);
+        const red = [...trunkParkNotices(s), ...sharedParkNotices(s)].find(r => r.once === p.json!.once);
         if (!red) resolvedPark.add(p);
         else { p.json!.text = red.text; p.text = reportText(p.json!); }
       }
