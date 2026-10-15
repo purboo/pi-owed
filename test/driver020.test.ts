@@ -108,7 +108,7 @@ test('DR1/DR2: accepted merge preempts driver trunk attest and shows internal wa
     await f.driver.pass(); await f.driver.pass(); await waitFor(() => existsSync(mark),`trunk refresh running: ${f.lines.join('\n')}`);
     await ops.approve({ cwd:f.cwd,as:owner,channel:'delegated',node:'a',note:'ready',named:commit });
     await f.driver.pass();
-    assert.match(renderStatus(await ops.status(f)),/merge waiting for driver-internal job runs: attest --trunk since/);
+    assert.match(renderStatus(await ops.status(f)),/merge waiting for driver-internal job \(trunk attest, since \d\d:\d\d\); 0 merges ahead/);
     const refresh = f.driver.measuring.get('\u0000trunk-refresh');
     await refresh?.ended; await f.driver.reap([]);
     assert.ok(f.lines.some(l => l.includes('trunk attest aborted: preempted')),f.lines.join('\n'));

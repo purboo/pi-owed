@@ -60,17 +60,18 @@ function interleave(t: TestContext, action: (attempt: number) => Promise<unknown
 }
 const isCas = (e: unknown) => e instanceof OwedError && e.constructor === OwedError && e.code === 'refused' && e.message === 'Plan, candidate or trunk changed; retry';
 
-test('N2 rollback deletes an untouched branch even when main HEAD does not contain dispatch base', async t => {
+test('N2/DQ1 rollback deletes an untouched branch before retry even when main HEAD does not contain dispatch base', async t => {
   const r = await fixture();
   try {
     assert.equal((await git(r.cwd, ['merge-base', '--is-ancestor', r.base, 'main'], { allowFail: true })).code, 1);
     const count = interleave(t, async n => { if (n === 1) await recordPlan(r.cwd); });
-    await assert.rejects(ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' }), isCas);
-    assert.equal(count(), 1, 'a changed plan never retries');
-    assert.equal(await hasBranch(r.cwd), false);
-    assert.equal(await slots(r.cwd), 1);
-    assert.equal(existsSync(join(r.cwd, '.owed/wt')), false);
-    assert.equal((await entries(r.cwd)).filter(e => e.kind === 'dispatch').length, 0);
+    const dispatched = await ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' });
+    assert.equal(count(), 2, 'a changed plan retries after removing the old worktree and branch');
+    assert.equal(await hasBranch(r.cwd), true);
+    assert.equal(await slots(r.cwd), 2);
+    assert.equal(await revParse(dispatched.worktree, 'HEAD'), r.base);
+    assert.match(dispatched.packet, /a concurrent plan/);
+    assert.equal((await entries(r.cwd)).filter(e => e.kind === 'dispatch').length, 1);
   } finally { t.mock.restoreAll(); await r.cleanup(); }
 });
 

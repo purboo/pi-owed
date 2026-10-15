@@ -434,15 +434,15 @@ export class Driver {
   private cycle = 0;
   private readonly busyAt = new Map<string, number>();
   /** DR2: private runtime state; never a ledger act or acceptance evidence. */
-  private readonly mergeWaiting = new Map<string, { reason: string; since: string; attempt: number; candidate?: number }>();
-  private recordMergeWaiting(node: string, reason?: string, s?: State): void {
+  private readonly mergeWaiting = new Map<string, { reason: string; since: string; attempt: number; candidate?: number; job?: string }>();
+  private recordMergeWaiting(node: string, reason?: string, s?: State, job?: string): void {
     if (!this.ledger) return;
     const n = s?.nodes[node], prior = this.mergeWaiting.get(node);
     if (reason !== undefined) {
       const attempt = n?.slot?.attempt ?? prior?.attempt;
       if (attempt === undefined) return;
       const candidate = n?.candidate?.seq ?? prior?.candidate;
-      this.mergeWaiting.set(node, { reason, since: prior && prior.attempt === attempt && prior.candidate === candidate ? prior.since : new Date().toISOString(), attempt, ...(candidate !== undefined ? { candidate } : {}) });
+      this.mergeWaiting.set(node, { reason, ...(job ? { job } : {}), since: prior && prior.attempt === attempt && prior.candidate === candidate ? prior.since : new Date().toISOString(), attempt, ...(candidate !== undefined ? { candidate } : {}) });
     } else this.mergeWaiting.delete(node);
     const dir = join(this.ledger.dir, 'drive'), path = join(dir, 'waiting.json');
     mkdirSync(dir, { recursive: true });
@@ -651,8 +651,10 @@ export class Driver {
         // K6: start it in the background; over `drive.measure`, or a second merge: skipped, decided again later.
         const inFlight = [...this.measuring.values()];
         if (inFlight.length >= cap || (a.do === 'merge' && inFlight.some(m => m.do === 'merge'))) {
-          const jobs = inFlight.map(m => `${m.do === 'attest' && m.attempt === 0 ? 'attest --trunk' : `${m.node} ${m.do}`}`).join(', ');
-          this.recordMergeWaiting(a.node, `driver-internal job runs: ${jobs}`, s);
+          // DQ2: the merge blocks a second merge even when an attest also occupies capacity.
+          const blocker = inFlight.find(m => m.do === 'merge') ?? inFlight[0]!;
+          const job = `${blocker.attempt === 0 ? 'trunk' : blocker.node} ${blocker.do}`;
+          this.recordMergeWaiting(a.node, `driver-internal job (${job}, since ${new Date(blocker.at).toISOString().slice(11,16)})`, s, job);
           continue;
         }
         // Busy back-off: a measurement that ended busy waits for the next timed or event pass.
@@ -955,6 +957,7 @@ export class Driver {
         if (a.do === 'launch' && a.role === 'writer') await ops.closeStaleSlot({ cwd, node:a.node, attempt:a.attempt });
         return done('stale', false, `${e.message}; decided again next pass`, a.do === 'halt' ? { attempt: a.attempt, needs: a.needs } : a.do === 'launch' ? { attempt: a.attempt, role: a.role, rid: a.rid } : extra);
       }
+      if (a.do === 'dispatch' && ops.isCasRefusal(e)) return done('retry', false, `${e.message}; retry next pass`);
       if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message, extra);
       throw e;
     }
