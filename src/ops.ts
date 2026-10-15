@@ -14,7 +14,8 @@ import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
-import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, type SharedPark } from './reducer.ts';
+import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, type SharedPark, ruleAnswers, decisionTailErrors } from './reducer.ts';
+import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
@@ -198,6 +199,7 @@ async function replay(ledger: Ledger, entries: Entry[], lookup: (sha: string) =>
   if (!state) { m = undefined; via = undefined; await need(0); }
   const start = state ? state.seq+1 : 0;
   if (state) extendState(state,entries.slice(start)); else state = reduce(entries,lookup);
+  const decisionErrors = decisionTailErrors(state); if (decisionErrors.length) throw new OwedError(decisionErrors.join('; '));
   replayStats[via ?? 'full']++; replayStats.folded += entries.length-start;
   let disk = m?.disk ?? -1, next = m;
   const write = disk < 0 || state.seq-disk >= SNAPSHOT_EVERY;
@@ -875,16 +877,136 @@ function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): St
 }
 export { answer } from './answer.ts';
 
+// ---------- DC: one decision, one append; effects only after the lock ----------
+export type DecideArgs = Actor & { nodes: string | string[]; text: string; writes?: string[]; defer?: string; resume?: boolean; after?: string | string[]; remeasure?: boolean; writer?: boolean; dsa?: Pick<Dsa,'describe'|'send'> };
+export interface DecideResult { decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; deferred?: string; answered: number; resumed: boolean; deliveryFailures: string[] }
+function decideNodes(nodes: string | string[]): string[] {
+  const ids = [...new Set((Array.isArray(nodes) ? nodes : typeof nodes === 'string' ? nodes.split(',') : []).map(x => typeof x === 'string' ? x.trim() : ''))];
+  if (!ids.length || ids.some(x => !x || x === '*')) throw new OwedError('decide needs a non-empty list of named nodes','usage');
+  return ids;
+}
+async function decideAmend(o: DecideArgs, ids: string[], entries: Entry[], s: State): Promise<AmendEdit> {
+  const edits = await Promise.all(ids.map(node => amendEdit({ cwd:o.cwd, node, writes:o.writes!, note:o.text },entries,s)));
+  const first = edits[0]!, added = first.added;
+  if (edits.some(e => canonical(e.added) !== canonical(added))) throw new OwedError('decide writes must add the same paths to every named node; split nodes with partially present paths','usage');
+  let next = first.text;
+  for (const e of edits) {
+    const doc = parseDocument(next), nodes = doc.get('nodes'), item = isSeq(nodes) ? nodes.items.find(x => isMap(x) && x.get('id') === e.node) : undefined;
+    if (!isMap(item)) throw new OwedError(`cannot edit writes of ${e.node}`);
+    const changed = spliceWrites(next,doc,item,added);
+    if (changed === undefined) throw new OwedError(`cannot edit writes of ${e.node}`);
+    next = changed;
+  }
+  return { ...first, next, plan:planBlob(next,true,s.plan).plan };
+}
+/** Authority preview only: no file or ledger effect. */
+export async function decidePreview(o: Omit<DecideArgs,'as'>): Promise<{ prior:Plan; plan:Plan }> {
+  const { entries, state } = await load(await Ledger.open(o.cwd));
+  const e = await decideAmend({ ...o, as:{role:'parent',id:'preview'} },decideNodes(o.nodes),entries,state);
+  return { prior:state.plan, plan:e.plan };
+}
+export async function decide(o: DecideArgs): Promise<DecideResult> {
+  if (!['parent','owner'].includes(o.as.role) || by(o) === DRIVER) throw new OwedError('decide requires parent or owner, never the driver');
+  const refusal = subagentRefusal(o.as.role); if (refusal) throw new OwedError(refusal);
+  owner(o);
+  if (typeof o.text !== 'string' || !o.text.trim()) throw new OwedError('decide requires nonempty text','usage');
+  for (const k of ['resume','remeasure','writer'] as const) if (o[k] !== undefined && typeof o[k] !== 'boolean') throw new OwedError(`decide ${k} must be a boolean`,'usage');
+  if (o.resume === false && (o.after !== undefined || o.remeasure)) throw new OwedError('--no-resume cannot take --after or --remeasure','usage');
+  const ids = decideNodes(o.nodes), ledger = await Ledger.open(o.cwd), client = o.dsa ?? new Dsa({cwd:o.cwd});
+  const before = await load(ledger), s = before.state;
+  for (const id of ids) { node(s,id); if (s.nodes[id]!.merged) throw new OwedError(`Node ${id} is merged; decide names unfinished nodes`); }
+  const amend = o.writes !== undefined ? await decideAmend(o,ids,before.entries,s) : undefined;
+  const stored = amend ? await storePlan(ledger,amend.next,s.plan) : undefined;
+  const answers: import('./types.ts').DecisionAnswer[] = [];
+  for (const id of ids) {
+    const n = s.nodes[id]!, launches = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
+    const questions = (await Promise.all(launches.map(async launch => { const view = await client.describe(launch.rid); return view.state === 'asking' ? (view.questions ?? []).map(question => ({launch,question})) : []; }))).flat();
+    if (questions.length > 1) throw new OwedError(`Ambiguous question for ${id}; use owed answer --rid and --qid before deciding`);
+    if (questions[0]) { const {launch,question} = questions[0]; answers.push({node:id,rid:launch.rid,qid:question.qid,rev:question.rev}); }
+  }
+  answers.sort((a,b) => a.node.localeCompare(b.node) || a.qid.localeCompare(b.qid));
+  const deferred: Extract<Draft,{kind:'defer'}>[] = [];
+  if (o.defer !== undefined) {
+    if (o.as.role !== 'owner') throw new OwedError('decide defer requires owner');
+    const id = invariantId(s.plan,o.defer);
+    if (!s.plan.invariants.some(i => i.id === id)) throw new OwedError(`Unknown invariant ${o.defer}`);
+    const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`);
+    for (const node of ids) {
+      const n = candidate(s,node), built = await git.buildMerge(o.cwd,s.trunk.commit,n.candidate!.commit,`owed merge ${node}`);
+      if ('conflicts' in built) throw new OwedError(`rebase needed for ${node}; nothing recorded`);
+      const facts = await git.stateFacts(o.cwd,s.plan,built.commit,quarantineNames(s.plan,x => !!s.nodes[x]?.merged,node));
+      deferred.push({kind:'defer',by:by(o),channel:o.channel,node,items:[{id,key:facts.invKeys[id] ?? ''}],reason:o.text});
+    }
+  }
+  const result = await ledger.withLock(async () => {
+    const latest = await load(ledger);
+    stable(s,latest.state);
+    for (const id of ids) stable(s,latest.state,id);
+    if (canonical(latest.state.rules) !== canonical(s.rules) || ids.some(id => canonical(latest.state.nodes[id]?.runs) !== canonical(s.nodes[id]?.runs) || latest.state.nodes[id]?.held !== s.nodes[id]?.held || latest.state.nodes[id]?.halt?.seq !== s.nodes[id]?.halt?.seq)) throw new OwedError('decision state changed; retry; nothing recorded');
+    if (deferred.length) { const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
+    const first = latest.state.seq+1, drafts: Draft[] = [];
+    let prepared = latest;
+    if (amend && stored) {
+      const planned = await planDrafts({...o,path:amend.path,note:o.text},ledger,stored,s);
+      prepared = planned.latest;
+      const carries = planned.drafts;
+      if (carries.some(d => d.kind === 'submit' && !ids.includes(d.node))) throw new OwedError('decision amend would carry an undecided node; nothing recorded');
+      drafts.push(...carries.map(d => ({...d,decision:first})));
+    }
+    const push = (d: Draft) => { const next = {...d,decision:first}; guard(replayed(prepared,drafts),next); drafts.push(next); };
+    for (const d of deferred) push(d);
+    let text = o.text, answer: AnswerRef | undefined, supersedes: number | undefined;
+    if (answers.length === 1) {
+      const a = answers[0]!, launch = s.nodes[a.node]!.runs.flatMap(r => r.launches).find(l => l.rid === a.rid)!;
+      answer = {rid:a.rid,qid:a.qid,rev:a.rev}; text = `Answer to ${launch.role} question ${a.qid}: ${o.text}`;
+      supersedes = latest.entries.findLast(e => e.kind === 'rule' && ruleAnswers(e).some(ref => ref.rid === a.rid && ref.qid === a.qid))?.seq;
+    }
+    push({kind:'rule',by:by(o),channel:o.channel,nodes:ids,text,...(o.writer !== undefined ? {writer:o.writer} : answer ? {writer:false} : {}),...(answer ? {answer} : {}),...(answers.length > 1 ? {answers} : {}),...(supersedes !== undefined ? {supersedes} : {})});
+    let resumed = false;
+    for (const id of ids) {
+      const n = s.nodes[id]!, requested = o.resume === true || o.after !== undefined || !!o.remeasure || o.resume !== false && (!!halted(s,id) || n.held !== undefined);
+      if (requested) { push(resumeDraft({...o,node:id,note:o.text},replayed(prepared,drafts))); resumed = true; }
+    }
+    // Replay every draft before any durable or plan-file write.
+    const final = replayed(prepared,drafts), errors = decisionTailErrors(final); if (errors.length) throw new OwedError(errors.join('; '));
+    let temp: string | undefined;
+    if (amend) {
+      if (await readFile(amend.file,'utf8') !== amend.text) throw new OwedError('plan file has unrecorded edits; nothing recorded');
+      temp = join(dirname(amend.file),`.${basename(amend.file)}.owed-decide-${randomUUID()}.tmp`);
+      try { await writeFile(temp,amend.next); await chmod(temp,(await stat(amend.file)).mode & 0o7777); }
+      catch (e) { await unlink(temp).catch(() => undefined); throw new OwedError(`cannot write ${amend.path}: ${(e as Error).message}; nothing recorded`); }
+    }
+    let entries: Entry[];
+    try { entries = await ledger.append(drafts); } catch (e) { if (temp) await unlink(temp).catch(() => undefined); throw e; }
+    const appendedErrors = decisionTailErrors(replayed(prepared,entries));
+    if (appendedErrors.length) throw new OwedError(appendedErrors.join('; '));
+    if (temp && amend) { try { await rename(temp,amend.file); } catch (e) { throw new OwedError(`decision #${first} recorded; recorded plan in ${temp}: move it over ${amend.file} (${(e as Error).message})`,'internal'); } }
+    return { decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {plan:entries[0]!,added:amend.added} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),answered:answers.length,resumed,deliveryFailures:[] } as DecideResult;
+  });
+  const { deliverRuling, deliverAnswer, answerRetry } = await import('./answer.ts');
+  const delivery = await deliverRuling(o.cwd,result.rule,client);
+  result.deliveryFailures.push(...delivery.failures.map(f => `${oneLine(f)}; next dispatch or follow-up delivers ruling #${result.rule.seq}`));
+  for (const a of answers) {
+    try { await deliverAnswer(client,result.rule,a,o.text); }
+    catch (e) { result.deliveryFailures.push(`${oneLine((e as Error).message)}; Retry exactly: ${answerRetry(a.node,result.rule,a)}`); }
+  }
+  return result;
+}
+export function decideText(r: DecideResult): string {
+  return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; writes ${r.added!.map(p => `+${p}`).join(',')} (plan #${r.plan.seq})` : ''}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
+}
+
 /** AN2: record once under the ledger lock; retries use the original entry and bytes. */
-export async function answerRule(o: Actor & { node: string; text: string; answer: AnswerRef }): Promise<RuleEntry> {
+export async function answerRule(o: Actor & { node: string; text: string; answer: AnswerRef; originalText?: string }): Promise<RuleEntry> {
   const ledger = await Ledger.open(o.cwd); owner(o);
   return ledger.withLock(async () => {
     const { state, entries } = await load(ledger);
     if (!['parent', 'owner'].includes(o.as.role)) throw new OwedError('answer requires parent or owner');
-    const history = entries.filter((e): e is RuleEntry => e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(o.node) && e.answer?.rid === o.answer.rid && e.answer.qid === o.answer.qid);
-    const prior = history.find(e => e.answer!.rev === o.answer.rev);
+    const history = entries.filter((e): e is RuleEntry => e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(o.node) && ruleAnswers(e).some(a => a.rid === o.answer.rid && a.qid === o.answer.qid));
+    const prior = history.find(e => ruleAnswers(e).some(a => a.rid === o.answer.rid && a.qid === o.answer.qid && a.rev === o.answer.rev));
     if (prior) {
-      if (prior.text !== o.text) throw new OwedError(`Answer rule #${prior.seq} already records different text for this rid/qid/rev (rev ${o.answer.rev}); retry with its original answer`);
+      const expected = prior.answers ? o.originalText : o.text;
+      if (prior.text !== expected) throw new OwedError(`Answer rule #${prior.seq} already records different text for this rid/qid/rev (rev ${o.answer.rev}); retry with its original answer`);
       return prior;
     }
     // AR / ruling #1600: mark a re-ask answer so older readers refuse with an upgrade message.
@@ -1984,6 +2106,7 @@ export async function verify(o: Context): Promise<VerifyResult> {
       if (!same) { await invalidateReplay(ledger); snapshotMismatch = snap.seq; }
       extendState(state,entries.slice(snap.seq+1));
     } else state = reduce(entries,lookup);
+    const errors = decisionTailErrors(state); if (errors.length) throw new OwedError(errors.join('; '));
     const incompleteBatch = incompleteBatchText(state);
     return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}), ...(snapshotMismatch !== undefined ? { snapshotMismatch } : {}), ...(incompleteBatch ? { incompleteBatch } : {}) };
   } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e),...(e instanceof OwedError && e.code === 'version' ? { code:'version' as const } : {})}; }

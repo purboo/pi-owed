@@ -260,7 +260,7 @@ test('K5.3: the same count below min_tests twice halts for the parent; a ruling 
   r.submit(); r.obs('check:unit', 'fail', { exit: 0, counts: UNDER, note: NOTE }); r.pass('check:unit');
   const hint = act(r, sealed(), { repairs: 5 });
   assert.deepEqual(hint, { do: 'halt', node: 'a', attempt: 1, needs: 'human',
-    reason: 'check unit: 100 tests ran and passed twice, below min_tests 200; the plan\'s threshold may be wrong: fix the plan (owed plan) or rule (owed rule --nodes a "…")' });
+    reason: 'check unit: 100 tests ran and passed twice, below min_tests 200; the plan\'s threshold may be wrong: fix the plan (owed plan) or decide (owed decide a --text "…")' });
   assert.equal(driveMod.thresholdHint(r.state(), 'a', ['check:unit']), (hint as { reason: string }).reason);
   r.halt(hint);
   // A * ruling neither clears the halt nor changes the hint.

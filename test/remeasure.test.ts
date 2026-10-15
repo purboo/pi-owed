@@ -143,7 +143,7 @@ test('MS2: resume --remeasure makes the driver measure again before the merge; a
     const plainSeq = (await r.ledger.read()).at(-1)!.seq;
     halt = await mergeOnce();
     assert.ok(halt?.kind === 'halt' && halt.seq > plainSeq);
-    assert.match(halt.reason, /reused #\d+ \(same merge key, measured \d+(?:s|m) ago\); measure again: owed resume a --remeasure/);
+    assert.match(halt.reason, /reused #\d+ \(same merge key, measured \d+(?:s|m) ago\); measure again: owed decide a --remeasure --text "<why remeasure>"/);
     assert.equal((await r.merged()).length, 1, 'no observation between the plain resume and the halt');
     // resume --remeasure (CLI): the field is recorded; the driver remeasures under its lease before merging again.
     await r.envOk();

@@ -377,12 +377,12 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     if (/^cannot re-(?:launch|send)/.test(reason)) return 'stored run request is unavailable';
     return plain(reason).replace(/\s+to:"[^"]*"/g, '');
   };
-  for (const b of v.needsRuling ?? []) add(b.node, `needs a parent ruling: ${b.note}`, `owed rule --nodes ${b.node} --writer "<decision>"`);
+  for (const b of v.needsRuling ?? []) add(b.node, `needs a parent ruling: ${b.note}`, `owed decide ${b.node} --writer --text "<decision>"`);
   for (const h of v.halted) {
     if (v.needsRuling?.some(b => b.node === h.node)) continue;
     const command = h.reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim()
       ?? (h.needs === 'owner' ? ownerCommands(s, h.node)[0] : undefined)
-      ?? `owed resume ${h.node} --note "<why>"`;
+      ?? `owed decide ${h.node} --text "<why>"`;
     add(h.node, `driver halted: ${haltReason(h.reason)}`, command);
   }
   for (const red of trunkParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
@@ -563,16 +563,13 @@ function manualText(i: ItemView & { observations?: Entry[] }): string {
   const evidence = obs.map(e => e.kind === 'evidence' ? `#${e.seq} ${e.by}: ${evidenceText(e)}` : e.kind === 'review' ? `#${e.seq} ${e.by} ${e.verdict}${e.channel ? ` (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : ''}${e.note ? `: ${oneLine(e.note)}` : ''}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
-/**
- * 0.8 (L1.5): how to clear a halt without an obligation (`owed resume`), how to wait for a node (`--after`), and that
- * `owed rule` stays the way to give guidance the writer and reviewers must acknowledge.
- */
-export const resumeCommands = (node = '<node>'): string => `owed resume ${node} --note "<why>" (add --after <node> to wait until that node merges); owed rule gives the writer and reviewers guidance they must acknowledge`;
+/** DC4: one decision gives acknowledged guidance and releases the halt; no-resume preserves it. */
+export const resumeCommands = (node = '<node>'): string => `owed decide ${node} --text "<decision>" (add --after <node> to wait until that node merges; --no-resume keeps it halted)`;
 /**
  * 0.8 (L3.2, wais #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
  * check or test itself must change, a ruling sends the writer to fix it.
  */
-export const flakyRuleHint = (node: string): string => `or owed rule "<what the writer must change>" --nodes ${node} when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;
+export const flakyRuleHint = (node: string): string => `or owed decide ${node} --writer --text "<what the writer must change>" when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;
 export const resumeHint = (node = '<node>'): string => `to clear it without an obligation: ${resumeCommands(node)}`;
 /** How a driver halt is cleared (SPEC §12, D3), with the resume hint (0.8, L1.5). */
 const haltClear = (node: string): string => `cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, resume, a ruling naming it), or a new attempt; ${resumeHint(node)}`;
@@ -586,14 +583,14 @@ const launchText = (l: LaunchEntry): string => `#${l.seq} ${l.role} ${l.rid}`;
 /** ` (needs a parent ruling)` / ` (ruled #<seq>)` after a current-candidate needs-parent block (D18.5, D18b.4); empty otherwise. */
 const rulingMark = (b: { ruling?: 'needed' | number }): string => b.ruling === undefined ? '' : b.ruling === 'needed' ? ' (needs a parent ruling)' : ` (ruled #${b.ruling})`;
 /** Status line of an active needs-parent block without a ruling (D18.5). */
-const needsRulingText = (b: Block & { note: string }): string => `⛔ ${b.node}: blocked #${b.seq} ${b.obligation} (needs a parent ruling): ${oneLine(b.note)}; record owed rule --nodes ${b.node} --writer "<decision>"`;
+const needsRulingText = (b: Block & { note: string }): string => `⛔ ${b.node}: blocked #${b.seq} ${b.obligation} (needs a parent ruling): ${oneLine(b.note)}; record owed decide ${b.node} --writer --text "<decision>"`;
 function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
 const conflictLines = (conflicts: Record<string, string[] | null> | undefined): string[] => Object.entries(conflicts ?? {}).map(([target, paths]) => `conflicts with ${target}: ${paths === null ? 'unknown; retry owed status' : paths.map(oneLine).join(', ') || 'none'}`);
 export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}): string {
   const waitingNodes = [...new Set([...(v.waiting?.deps ?? []), ...(v.waiting?.after ? v.waiting.after.split(', ') : [])])];
-  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed resume ${v.node}`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(itemText)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${phaseNames[v.phase]}`, ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed decide ${v.node} --text "<decision>"`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(itemText)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
   if (options.full) return renderStatusFull(v);
@@ -744,7 +741,7 @@ const candidate12 = (s: State, node: string): string | undefined => { const n = 
 const candidateFlag = (s: State, node: string): string => { const c = candidate12(s, node); return c ? ` --candidate ${c}` : ''; };
 const waiveCommand = (node: string, obligation: string, risks: number[], flag = ''): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}${flag}`;
 /** Hint for a node without an open writer slot: nothing can be cleared on an old candidate, only on a new attempt. */
-const dispatchHint = (n: NodeState): string => n.held !== undefined ? `owed resume ${n.id} (held by abandon #${n.held})` : n.merged ? `${n.id} is merged; no attempt can clear this` : n.phase === 'removed' ? `${n.id} is not in the current plan; it is never dispatched (add it to the plan to work on it again)` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
+const dispatchHint = (n: NodeState): string => n.held !== undefined ? `owed decide ${n.id} --text "<decision>" (held by abandon #${n.held})` : n.merged ? `${n.id} is merged; no attempt can clear this` : n.phase === 'removed' ? `${n.id} is not in the current plan; it is never dispatched (add it to the plan to work on it again)` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
 /** D23: the command that records manual evidence `id` of `node` as principal `as`; `candidate` (G1.3): the commit (prefix) it names. */
 export const evidenceCommand = (node: string, id: string, as: string, candidate?: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}${candidate ? ` --candidate ${candidate}` : ''}`;
 /**
@@ -762,7 +759,7 @@ export function ownerCommands(s: State, node: string): string[] {
   if (!live && (n.merged || n.phase === 'removed') && !n.slot?.open) return [];
   const items = live ? n.items.filter(i => i.status === 'D') : [];
   const later = live ? '' : 'after the writer submits a candidate: ';
-  const out = n.slot?.open ? [] : [n.held !== undefined ? `owed resume ${node} (held by abandon #${n.held})` : `owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
+  const out = n.slot?.open ? [] : [n.held !== undefined ? `owed decide ${node} --text "<decision>" (held by abandon #${n.held})` : `owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
   const flag = candidateFlag(s, node);
   out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i, false) : waiveCommand(node, i.obligation, blocks(i.obligation), flag)));
   for (const b of n.blocks.filter(b => countsBlock(b) && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
@@ -787,7 +784,7 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
   const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && countsBlock(b)) ?? [];
   if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) {
     const review = `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}${flag}`;
-    return blocks.length ? `owed rule --nodes ${i.subject} --writer "<guidance>"; writer repairs and submits again; override only: ${review} (overrides a valid block: state the accepted risk)` : review;
+    return blocks.length ? `owed decide ${i.subject} --writer --text "<guidance>"; writer repairs and submits again; override only: ${review} (overrides a valid block: state the accepted risk)` : review;
   }
   // 0.8 (L3.2): a flaky block also offers a ruling (`ownerCommands` adds it once itself).
   return `${waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag)}${flakyHint && blocks.some(b => b.state === 'flaky') ? `; ${flakyRuleHint(i.subject)}` : ''}`;
@@ -799,7 +796,7 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
  */
 export function reusedHint(node: string, reused: readonly ObsEntry[], now: number, driver: boolean): string | undefined {
   if (!reused.length) return undefined;
-  return `${reused.map(e => `reused #${e.seq} (same merge key, measured ${age(Math.max(0, now - Date.parse(e.ts)))} ago)`).join(', ')}; measure again: ${driver ? `owed resume ${node} --remeasure` : `owed attest ${node} --remeasure`}`;
+  return `${reused.map(e => `reused #${e.seq} (same merge key, measured ${age(Math.max(0, now - Date.parse(e.ts)))} ago)`).join(', ')}; measure again: ${driver ? `owed decide ${node} --remeasure --text "<why remeasure>"` : `owed attest ${node} --remeasure`}`;
 }
 export function mergeFailureHints(s: State, node: string, failures: readonly ObsEntry[]): string[] {
   const named = failures.filter(e => e.verdict === 'fail' && /^(check|inv):/.test(e.obligation) && e.failed?.length);
@@ -823,7 +820,7 @@ export function mergeFailureHints(s: State, node: string, failures: readonly Obs
       const n = s.nodes[spec.id];
       if (spec.id === node || !n || n.merged || !(n.slot?.open || n.accepted || n.phase === 'ready')) continue;
       const text = [spec.title, spec.brief, ...spec.checks.flatMap(c => [c.run, ...(c.tests ?? [])])];
-      if (text.some(t => t?.includes(name))) lines.push(`fix candidate: ${spec.id} (${n.phase}) — owed resume ${node} --after ${spec.id}`);
+      if (text.some(t => t?.includes(name))) lines.push(`fix candidate: ${spec.id} (${n.phase}) — owed decide ${node} --after ${spec.id} --text "<wait for fix>"`);
     }
   }
   return [...new Set(lines)];
@@ -903,7 +900,7 @@ function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} ${SKIP_ATTEST} (the attribution rerun on the original content clears the block)`;
   if (b.obligation === 'approve') return `${after}a later owner approval of the current candidate clears it: owed approve ${b.node}${flag}`;
   const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
-  const ruling = !currentNeeds(s, b) ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed rule --nodes ${b.node} --writer "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
+  const ruling = !currentNeeds(s, b) ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed decide ${b.node} --writer --text "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
   return `${after}${ruling}an ok review of ${b.node}/${b.obligation} on the current candidate by the original reviewer ${by} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it; or owner: ${waiveCommand(b.node, b.obligation, risks, flag)}`;
 }
 /** A needs-parent block recorded on the current candidate of its node's open attempt (D18b.4: stale ones keep the stale wording). */

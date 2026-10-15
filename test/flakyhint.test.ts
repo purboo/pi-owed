@@ -78,10 +78,10 @@ test('FH2: ready, open and accepted candidates match title, brief, run and tests
   r.add({ kind: 'obs', by: 'executor:owed', subject: 'titlefix', obligation: 'writes', key: 'writes', verdict: 'pass', exit: 0, durationMs: 1, commit: 'fix-commit' });
   const current = r.fail('current');
   assert.deepEqual(views.mergeFailureHints(r.state(), 'a', [current]), [
-    'fix candidate: titlefix (accepted) — owed resume a --after titlefix',
-    'fix candidate: brieffix (dispatched) — owed resume a --after brieffix',
-    'fix candidate: runfix (ready) — owed resume a --after runfix',
-    'fix candidate: testfix (ready) — owed resume a --after testfix',
+    'fix candidate: titlefix (accepted) — owed decide a --after titlefix --text "<wait for fix>"',
+    'fix candidate: brieffix (dispatched) — owed decide a --after brieffix --text "<wait for fix>"',
+    'fix candidate: runfix (ready) — owed decide a --after runfix --text "<wait for fix>"',
+    'fix candidate: testfix (ready) — owed decide a --after testfix --text "<wait for fix>"',
   ]);
 });
 
@@ -156,7 +156,7 @@ test('FH2: a failing merge invariant names the fix candidate in the refusal and 
   try {
     const result = await cli(r.cwd, ['merge', 'a', '--as', 'parent:test']);
     assert.equal(result.code, 1, result.stderr);
-    const hint = 'fix candidate: fix (ready) — owed resume a --after fix';
+    const hint = 'fix candidate: fix (ready) — owed decide a --after fix --text "<wait for fix>"';
     assert.ok(result.stderr.includes(hint), result.stderr);
     const before = await r.ledger.read();
     assert.ok(views.renderReceipt(await ops.why({ cwd: r.cwd, node: 'a' })).includes(hint));
@@ -181,7 +181,7 @@ test('FH review #1619: retrying an ordinary merge-check block preserves all refu
     const hints = refusalHints(first.stderr);
     // AT4 (0.20): an earlier tree of the same node is no evidence of an intermittent failure.
     assert.equal(hints.length, 1, first.stderr);
-    assert.equal(hints[0], 'fix candidate: fix (ready) — owed resume a --after fix');
+    assert.equal(hints[0], 'fix candidate: fix (ready) — owed decide a --after fix --text "<wait for fix>"');
     const s = await r.state();
     assert.equal(s.nodes.a!.accepted, false);
     assert.ok(s.nodes.a!.blocks.some(b => b.state === 'active' && b.obligation === 'check:runtime'));
@@ -211,7 +211,7 @@ test('FH review #1619: a reused invariant failure names identical hints for the 
     const hints = refusalHints(result.stderr);
     // AT4 (0.20): A's tree failed the same name without a known signature: no intermittent label.
     assert.equal(hints.length, 1, result.stderr);
-    assert.equal(hints[0], 'fix candidate: fix (ready) — owed resume b --after fix');
+    assert.equal(hints[0], 'fix candidate: fix (ready) — owed decide b --after fix --text "<wait for fix>"');
     const before = await r.ledger.read();
     assert.equal(before.filter(e => e.kind === 'obs' && e.merging === 'b').length, 0, 'B reused the invariant verdict without measuring');
     const deciding = before.findLast((e): e is ObsEntry => e.kind === 'obs' && e.merging === 'a' && e.obligation === 'inv:runtime' && e.verdict === 'fail')!;
