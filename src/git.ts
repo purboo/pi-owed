@@ -9,6 +9,7 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } fr
 import { realpath } from 'node:fs/promises';
 import { H, sha256 } from './canon.ts';
 import { OwedError } from './errors.ts';
+import { assertNoLedgerLock } from './lock-context.ts';
 import { matchesAny, type QuarantineNames } from './plan.ts';
 import type { Plan, NodeSpec, CandidateFacts, StateFacts, CheckSpec, ExecConfig } from './types.ts';
 
@@ -20,9 +21,12 @@ interface GitOptions { input?: string; allowFail?: boolean; env?: Record<string,
 export function git(cwd: string, args: string[], opts?: GitOptions): Promise<{ code: number; stdout: string; stderr: string }> {
   return runGit(cwd, args, opts);
 }
-function runGit(cwd: string, args: string[], opts?: GitOptions, stdout?: (chunk: Buffer) => void): Promise<{ code: number; stdout: string; stderr: string }> {
+function runGit(cwd: string, args: string[], opts?: GitOptions, stdout?: (chunk: Buffer) => void, ledgerExemption?: 'advanceTrunk'): Promise<{ code: number; stdout: string; stderr: string }> {
   const limit = Math.min(opts?.maxOutputBytes ?? gitHooks.maxOutputBytes ?? GIT_MAX_OUTPUT_BYTES, GIT_MAX_OUTPUT_BYTES);
   const subcommand = args.find(arg => !arg.startsWith('-')) ?? args[0];
+  // Worktree mutations can run hooks or rewrite many files; ref CAS/read-only facts remain local and short.
+  const allowedFastForward = ledgerExemption === 'advanceTrunk' && args.length === 3 && args[0] === 'merge' && args[1] === '--ff-only';
+  if (!allowedFastForward && (['merge', 'switch', 'checkout', 'reset', 'clean'].includes(subcommand ?? '') || (subcommand === 'worktree' && args.some(a => ['add','remove','prune'].includes(a))))) assertNoLedgerLock();
   if (!Number.isFinite(limit) || limit <= 0) return Promise.reject(new OwedError('git output bound must be positive', 'usage'));
   return new Promise((resolve, reject) => {
     const p = spawn('git', args, { cwd, env: { ...process.env, ...opts?.env }, stdio: ['pipe', 'pipe', 'pipe'] });
@@ -232,7 +236,9 @@ export async function advanceTrunk(cwd: string, trunk: string, from: string, to:
     if (!await isClean(path, false)) throw new OwedError(trunkDirtyText(path));
     if (!await isAncestor(cwd, from, to)) throw new OwedError('trunk advance is not a fast-forward');
     if (await revParse(cwd, ref) !== from) throw new OwedError('trunk changed (CAS)');
-    const r = await git(path, ['merge', '--ff-only', to], { allowFail: true });
+    // LKR #2310: the single ledger-lock exemption is this fast-forward of an already measured commit.
+    // Keep the user's trunk attached; post-merge/reference-transaction hooks consequently run under lock.
+    const r = await runGit(path, ['merge', '--ff-only', to], { allowFail: true }, undefined, 'advanceTrunk');
     if (r.code) throw new OwedError(r.stderr); return;
   }
   const r = await git(cwd, ['update-ref', ref, to, from], { allowFail: true });
