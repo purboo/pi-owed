@@ -660,6 +660,7 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
   };
   const command = (reason: string): string | undefined => reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim();
   const lines = [
+    ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []),
     ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []),
     ...(v.held !== undefined ? [`held by abandon; release with owed decide ${v.node} --text "<decision>"`] : []),
     ...(v.halt ? [`⏸ halted (attempt ${v.halt.attempt}), ${v.halt.needs === 'owner' ? NEEDS_OWNER_TEXT : NEEDS_PARENT_TEXT}: ${oneLine(v.halt.reason)}${command(v.halt.reason) ? '' : ` → ${resumeCommands(v.node)}`}`] : []),
@@ -671,17 +672,21 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
     ...(v.outOfWrites ? outOfWritesText(v.outOfWrites).split('\n') : []),
     ...(v.modelWarnings ?? []).filter((w): w is string => typeof w === 'string').map(w => `Warning: ${w}`),
     ...conflictLines(Object.fromEntries(Object.entries(v.conflicts ?? {}).filter(([, paths]) => paths === null || paths.length > 0))),
+    // left022: the ruling the parent must forward is the content of that act: kept whole.
+    ...(v.rulingFollowUp ? [`Ruling to forward:\n${v.rulingFollowUp}`] : []),
   ];
+  // risk (0.24): the derived review requirement says what review would satisfy the node; context, not outstanding.
+  const context = [...(v.reviewRequirement && v.phase !== 'merged' ? [oneLine(reviewRequirementText(v.reviewRequirement))] : [])];
   const open = lines.filter(l => !l.startsWith('Warning: ')).length;
-  const outcome = v.phase === 'merged' ? 'merged' : `${phaseNames[v.phase]}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
-  return [`${v.node}: ${outcome}`, ...lines, `Details: owed why ${v.node} --full`].join('\n');
+  const outcome = v.phase === 'merged' ? 'merged' : `${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
+  return [`${v.node}: ${outcome}`, ...lines, ...context, `Details: owed why ${v.node} --full`].join('\n');
 }
 /** QT4: the obligations owed measures (checks, strength, red, writes, invariants). */
 const MEASURED = /^(?:(?:check|strength|red|inv):|writes$)/;
 /** QT4: `<node> merged (<commit12>); measured <n>, waived <n>, debt <n>` from the merged node's card and its deferred debt. */
-export function mergedLine(v: ReceiptCard, commit: string, debt: number): string {
+export function mergedLine(v: ReceiptCard, commit: string, debt?: number): string {
   const measured = v.items.filter(i => i.status === 'E' && MEASURED.test(i.obligation)).length, waived = v.items.filter(i => i.status === 'W').length;
-  return `${v.node} merged (${commit.slice(0, 12)}); measured ${measured}, waived ${waived}, debt ${debt}`;
+  return `${v.node} merged (${commit.slice(0, 12)}); measured ${measured}, waived ${waived}${debt === undefined ? '' : `, debt ${debt}`}`;
 }
 /**
  * QT3: the failures of a repair follow-up recorded after entry `since` (the last message to the writer): failing

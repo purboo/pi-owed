@@ -14,6 +14,8 @@ import { answerRetry } from '../src/answer.ts';
 import { clockTime } from '../src/clock.ts';
 import { renderStatus } from '../src/views.ts';
 import { Ledger } from '../src/ledger.ts';
+import { buildMerge, stateFacts } from '../src/git.ts';
+import { quarantineNames } from '../src/plan.ts';
 import { projectId } from '../src/reducer.ts';
 import type { Dsa } from '../src/dsa.ts';
 import type { LaunchEntry, RunView } from '../src/types.ts';
@@ -264,5 +266,52 @@ test('QT-R1 (6): the merged line read is best-effort: an unreadable card never f
   try {
     assert.deepEqual(await ops.mergedLines(r.cwd, [{ node: 'x', commit: 'abcdef0123456789abcdef0123456789abcdef01' }]), ['x merged (abcdef012345)']);
     assert.deepEqual(await ops.mergedLines(r.cwd, [{ node: 'y', commit: '0123456789ab0123456789ab0123456789ab0123' }], { y: 2 }), ['y merged (0123456789ab)']);
+  } finally { await r.cleanup(); }
+});
+
+test('QT4 (#2691): a batch member with a defer on an older merge key shows only the debt left on this merge (0, not 1)', { timeout: 180_000 }, async () => {
+  const r = await repo();
+  try {
+    const own = { role: 'owner', id: 'human' } as const;
+    const node = (id: string) => ({ id, writes: [`${id}.txt`], checks: [{ id, run: `test -f ${id}.txt`, reads: ['*.txt'] }] });
+    const plan = { version: 1, trunk: 'main', invariants: [{ id: 'inv', timeout_s: 60, run: "echo '# tests 1'; echo '# pass 1'" }], nodes: [node('a'), node('b')], drive: { merge_batch: 2 } };
+    await commitAt(r.cwd, { README: 'x' });
+    await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: own, channel: 'flag' });
+    const wt: Record<string, string> = {};
+    for (const id of ['a', 'b']) {
+      const d = await ops.dispatch({ cwd: r.cwd, node: id, as: parent, allowOverlap: true }); await commitAt(d.worktree, { [`${id}.txt`]: id }); wt[id] = d.worktree;
+      await ops.submit({ cwd: d.worktree, node: id, as: { role: 'writer', id: `${id}#1` } });
+      assert.equal((await ops.attest({ cwd: r.cwd, node: id })).accepted, true);
+    }
+    // A defer of a on its single-merge key (trunk + a); the batch merges a onto a different tree, so it is not this merge's debt.
+    const st = (await ops.readState(r)).state, built = await buildMerge(r.cwd, st.trunk.commit, st.nodes.a!.candidate!.commit, 'owed merge a');
+    assert.ok(!('conflicts' in built));
+    const facts = await stateFacts(r.cwd, st.plan, built.commit, quarantineNames(st.plan, () => false, 'a'));
+    await ops.defer({ cwd: r.cwd, as: own, channel: 'flag', node: 'a', items: [{ id: 'inv', key: facts.invKeys.inv! }], reason: 'older key' });
+    assert.equal((await ops.readState(r)).state.deferred.filter(x => x.node === 'a').length, 1);
+    const res = await cli(r.cwd, ['merge', 'a,b', '--as', 'parent:test']);
+    assert.equal(res.code, 0, res.stderr);
+    assert.equal((await ops.readState(r)).state.deferred.filter(x => x.node === 'a').length, 1, 'the ledger still holds the older-key defer (what the previous fallback counted)');
+    assert.match(res.stdout, /^a merged \([0-9a-f]{12}\); measured \d+, waived 0, debt 0$/m, res.stdout);
+    assert.match(res.stdout, /^b merged \([0-9a-f]{12}\); measured \d+, waived 0, debt 0$/m, res.stdout);
+    // Without a count the line omits debt rather than counting older keys' defers.
+    const merge = (await Ledger.open(r.cwd)).read().then(es => es.findLast(e => e.kind === 'merge' && e.node === 'a') as { commit: string });
+    assert.match((await ops.mergedLines(r.cwd, [{ node: 'a', commit: (await merge).commit }]))[0]!, /^a merged \([0-9a-f]{12}\); measured \d+, waived 0$/);
+  } finally { await r.cleanup(); }
+});
+
+test('QT-R1 with 0.24: sweep escape and failing-sweep notices wake as Needs you with the merge, the broken tests and the coverage hint', async () => {
+  const r = await repo();
+  try {
+    const { f, put } = follow(r.root);
+    const escape = 'escape: a (merge #41) broke test/x.test.ts, test/y.test.ts on trunk 0123456789ab; no check covered it. Fix: a node whose brief names the test; coverage: src/x.ts, src/y.ts';
+    const failed = 'sweep #55 on trunk 0123456789ab: fail (2 failed: test/x.test.ts, test/y.test.ts)\nbisect: first bad merge a (#41)';
+    put({ do: 'notify', node: 'sweep', scope: 'repo', outcome: 'notify', text: escape, facts: 56 }, { do: 'notify', node: 'sweep', scope: 'repo', outcome: 'notify', text: failed, facts: 55 },
+      { do: 'sweep', node: 'sweep', scope: 'repo', outcome: 'error', detail: 'sweep: git worktree add failed' });
+    const m = f.tick()!, needs = m.slice(0, m.indexOf('\nDriver continues'));
+    assert.ok(needs.includes(`Needs you: ${escape}`), m);
+    assert.ok(needs.includes(`Needs you: ${failed}`), m);
+    assert.match(needs, /^Needs you: .*sweep: git worktree add failed/m, m);
+    for (const s of ['merge #41', 'test/x.test.ts', 'coverage: src/x.ts, src/y.ts', 'bisect: first bad merge a']) assert.ok(needs.includes(s), s);
   } finally { await r.cleanup(); }
 });
