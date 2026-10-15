@@ -53,6 +53,8 @@ export interface MergeRefusal {
  */
 export interface DriveOpts {
   rebasePending?: ReadonlyMap<string, RebasePending>;
+  /** SB2: per rebased slot, the actual rebase command from HEAD (also when HEAD is aligned); text only, never a trigger. */
+  rebaseWork?: ReadonlyMap<string, RebasePending>;
   /** Concurrent open attempts below which the driver dispatches ready nodes. */
   max: number;
   /** Repair follow-ups (failed check, measured or review block) per attempt before halting. */
@@ -252,7 +254,7 @@ export function wantsRebaseConflicts(s: State, node: string, runs: ReadonlyMap<s
  * notes, why a new candidate is needed (plan changed, or trunk moved with the rebase instructions), then commit and
  * submit. `rulings` (E4): the highest seq it carries, 0 when none.
  */
-export function resubmitFollowUp(s: State, node: string, conflicts?: readonly string[]): { message: string; rulings: number } {
+export function resubmitFollowUp(s: State, node: string, conflicts?: readonly string[], work?: RebasePending): { message: string; rulings: number } {
   const n = s.nodes[node]!, slot = n.slot!, last = lastSubmit(s, node)!, entries = entriesOf(s), quoted: Rule[] = [];
   const notes = resubmitBlocks(s, node).map(b => {
     const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
@@ -265,7 +267,7 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
   return { rulings: carried(rules), message: [
     ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`)] : []),
     `Review blocks on your candidate ${last.facts.commit} (submit #${last.seq}) of ${node}, attempt ${slot.attempt} (the reviewer's note):`, ...notes,
-    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): first commit your work, then in ${slot.worktree} run \`git rebase --onto ${rb.base} ${rb.from}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
+    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${rb.base} ${rb.from}`}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
       : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
     `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
 }
@@ -560,7 +562,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (line && resumeOf(s, id)?.expect === 'report') {
       const rules = undelivered(s, id, ar, l, opts.rejected);
       const rebase = slot.rebase && !ar.sends.some(x => x.seq > slot.rebase!.seq && x.sendKind === 'follow-up')
-        ? rebaseMessage(s,id,opts.conflicts?.get(id),opts.rebasePending?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
+        ? rebaseMessage(s,id,opts.conflicts?.get(id),opts.rebasePending?.get(id) ?? opts.rebaseWork?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
       return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${oneLine(r.text)}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
     }
     return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
@@ -789,13 +791,13 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const outstanding = ar.sends.findLast(x => x.reason === 'repair' && x.seq > after), budget = repairsSince(s, id, ar);
       if (outstanding) return writerHalt(`writer run ${at(writer)} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq);
       if (budget.count >= opts.repairs) { const ex = `repairs exhausted (${budget.count} of ${opts.repairs} since ${budget.label}): ${cause}`; return writerHalt(ex, ex, after); }
-      const r = resubmitFollowUp(s, id, opts.conflicts?.get(id));
+      const r = resubmitFollowUp(s, id, opts.conflicts?.get(id), opts.rebaseWork?.get(id));
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     }
     // N1.4: a rebase follow-up only while no submit of this attempt came after the rebase; otherwise a submit that a
     // later plan entry invalidated gets a submit follow-up naming that plan entry (app #1375).
     const last = lastSubmit(s, id), rebased = !!rb && (!last || last.seq < rb.seq);
-    if (rebased && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb!.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
+    if (rebased && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb!.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id), opts.rebaseWork?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
     const changed = !rebased && last ? planInvalidated(s, id, last.seq) : undefined;
     const since = Math.max(rb?.seq ?? slot.dispatchSeq, resumed, changed?.plan ?? -1), nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     if (nudge) return writerHalt(`writer run ${at(writer)} finished without submitting a candidate after follow-up ${nudge.send}`, `no candidate after follow-up ${nudge.send}`, nudge.seq);

@@ -14,6 +14,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import { rebasePending, type RebasePending } from './rebase-view.ts';
+/**
+ * SB2: the rebase command of a rebased slot whose HEAD may already be aligned with the new base (the drift map omits
+ * those): the same upstream as `owed rebase` prints, so no follow-up replays trunk commits HEAD already holds.
+ */
+const rebaseWorkOf = async (s: State, node: string, pending?: RebasePending): Promise<RebasePending | undefined> =>
+  s.nodes[node]?.slot?.rebase ? pending ?? await rebasePending(s, node, true) : undefined;
 import * as git from './git.ts';
 import { clockTime } from './clock.ts';
 import { pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
@@ -496,15 +502,17 @@ export class Driver {
    * stored bytes `decide` may need for retries. `rejected`: the attempt's sends dsa decided rejected (every pass; cached
    * once terminal) and the runs and sends rejected in this process.
    */
-  private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]>; rebasePending: Map<string, RebasePending> }> {
+  private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]>; rebasePending: Map<string, RebasePending>; rebaseWork: Map<string, RebasePending> }> {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
-    const pendingBases = new Map<string, RebasePending>();
+    const pendingBases = new Map<string, RebasePending>(), rebaseWork = new Map<string, RebasePending>();
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
       // K6: while measuring, describe only the runs PR2 needs for prospective notices.
       if (!n.slot?.open || n.phase === 'removed') continue;
       const pendingBase = await rebasePending(s, n.id);
       if (pendingBase) pendingBases.set(n.id, pendingBase);
+      const work = await rebaseWorkOf(s, n.id, pendingBase);
+      if (work) rebaseWork.set(n.id, work);
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), epoch = reviewEpoch(s, n.id);
       if (!ar) continue;
       const policy = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
@@ -548,7 +556,7 @@ export class Driver {
       const rb = n.slot.rebase;
       if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
     }
-    return { runs, blobs, rejected, conflicts, rebasePending:pendingBases };
+    return { runs, blobs, rejected, conflicts, rebasePending:pendingBases, rebaseWork };
   }
 
   /**
@@ -608,8 +616,8 @@ export class Driver {
     if (mergeReady) this.measuring.get('\u0000trunk-refresh')?.abort?.abort('preempted');
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
-    const { runs, blobs, rejected, conflicts, rebasePending } = await this.observe(s, measuring);
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, measuring, now: Date.now(), noticed: this.facts.once });
+    const { runs, blobs, rejected, conflicts, rebasePending, rebaseWork } = await this.observe(s, measuring);
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, measuring, now: Date.now(), noticed: this.facts.once });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
