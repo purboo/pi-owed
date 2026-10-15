@@ -180,7 +180,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string): Rece
 /** One line naming the plan's wrapper argv and env names (D20.5); argv words with blanks or quotes are JSON-quoted. */
 export function execText(plan: Plan): string {
   const word = (w: string): string => /^[^\s"'\\]+$/.test(w) ? w : JSON.stringify(w);
-  const parts = [...(plan.exec?.wrap?.length ? [`wrap ${plan.exec.wrap.map(w => oneLine(word(w))).join(' ')}`] : []), ...(plan.exec?.env && Object.keys(plan.exec.env).length ? [`env ${Object.keys(plan.exec.env).sort().join(', ')}`] : []), ...(plan.exec?.parallel !== undefined ? [`parallel ${plan.exec.parallel}`] : []), ...(plan.exec?.trees !== undefined ? [`trees ${plan.exec.trees}`] : [])];
+  const parts = [...(plan.exec?.wrap?.length ? [`wrap ${typeof plan.exec.wrap === 'string' ? oneLine(word(plan.exec.wrap)) : plan.exec.wrap.map(w => oneLine(word(w))).join(' ')}`] : []), ...(plan.exec?.env && Object.keys(plan.exec.env).length ? [`env ${Object.keys(plan.exec.env).sort().join(', ')}`] : []), ...(plan.exec?.parallel !== undefined ? [`parallel ${plan.exec.parallel}`] : []), ...(plan.exec?.trees !== undefined ? [`trees ${plan.exec.trees}`] : [])];
   return `Exec: ${parts.join(' · ')}`;
 }
 /** K3: the effective writer and reviewer of a node's later driver launches; `(<model>)` only when a model is set. */

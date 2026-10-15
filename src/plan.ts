@@ -1,5 +1,6 @@
 import { writeCovers, writesSyntax, writesAllowChanged } from './writes.ts';
 import { parse } from 'yaml';
+import { wrapErrors } from './exec-wrap.ts';
 import { matchesGlob } from 'node:path';
 import { OwedError } from './errors.ts';
 import { canonical } from './canon.ts';
@@ -222,7 +223,7 @@ export function execEnvErrors(plan: Pick<Plan, 'exec'>): string[] {
 function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('exec: expected object'); return undefined; }
   const r = v as Record<string, unknown>, out: ExecConfig = {};
-  for (const k of Object.keys(r)) if (!['env', 'wrap', 'parallel', 'trees', 'touch'].includes(k)) errors.push(`exec.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (!['env', 'wrap', 'wrap_grace_s', 'parallel', 'trees', 'touch'].includes(k)) errors.push(`exec.${k}: unknown key`);
   if (r.env !== undefined) {
     if (!r.env || typeof r.env !== 'object' || Array.isArray(r.env)) errors.push('exec.env: expected object');
     else {
@@ -237,9 +238,15 @@ function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
     }
   }
   if (r.wrap !== undefined) {
-    if (!Array.isArray(r.wrap) || !r.wrap.length) errors.push('exec.wrap: expected non-empty array of strings');
+    if (typeof r.wrap === 'string') {
+      errors.push(...wrapErrors(r.wrap)); out.wrap = r.wrap;
+    } else if (!Array.isArray(r.wrap) || !r.wrap.length) errors.push('exec.wrap: expected non-empty array of strings or a template string; include {cmd}');
     else if (r.wrap.some(x => typeof x !== 'string' || !x)) errors.push('exec.wrap: expected non-empty strings');
     else out.wrap = [...r.wrap] as string[];
+  }
+  if (r.wrap_grace_s !== undefined) {
+    if (typeof r.wrap_grace_s !== 'number' || !Number.isSafeInteger(r.wrap_grace_s) || r.wrap_grace_s < 0) errors.push('exec.wrap_grace_s: expected an integer >= 0; set the wrapper shutdown grace in seconds');
+    else out.wrap_grace_s = r.wrap_grace_s;
   }
   if (r.parallel !== undefined) {
     if (typeof r.parallel !== 'number' || !Number.isInteger(r.parallel) || r.parallel < 1) errors.push('exec.parallel: expected an integer >= 1');
@@ -253,7 +260,7 @@ function parseExec(v: unknown, errors: string[]): ExecConfig | undefined {
     if (r.touch !== 'reset' && r.touch !== 'always' && r.touch !== 'never') errors.push('exec.touch: expected reset, always or never');
     else out.touch = r.touch;
   }
-  return out.env || out.wrap || out.parallel !== undefined || out.trees !== undefined || out.touch !== undefined ? out : undefined;
+  return out.env || out.wrap || out.wrap_grace_s !== undefined || out.parallel !== undefined || out.trees !== undefined || out.touch !== undefined ? out : undefined;
 }
 
 /** Parses an optional `allow:` block (SPEC §3.4, D21): a list of rules; unknown keys and bad types are errors; a rule needs a permission. */
