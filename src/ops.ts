@@ -1192,16 +1192,21 @@ export async function abandon(o: Actor & { node:string; reason:string; hold?: bo
 /** AH2: close only the driver's own never-launched attempt after a stale launch; dispatch lock precedes ledger lock. */
 export async function closeStaleSlot(o: Context & { node:string; attempt:number }): Promise<string | undefined> {
   const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
-  return ledger.withLock(async () => ledger.withLock(async () => {
-    const { state:s, entries } = await load(ledger), n = s.nodes[o.node], slot = n?.slot;
-    const d = entries.find(e => e.kind === 'dispatch' && e.node === o.node && e.attempt === o.attempt);
-    if (!slot || slot.attempt !== o.attempt || d?.by !== DRIVER || n!.runs.find(r => r.attempt === o.attempt)?.launches.some(l => l.role === 'writer')) return undefined;
-    const cause = !s.plan.nodes.some(x => x.id === o.node) ? 'node left the plan' : n!.held !== undefined ? `held by abandon #${n!.held}` : !slot.open ? 'attempt was abandoned' : undefined;
-    if (!cause) return undefined;
-    if (slot.open) {
-      const a: Draft = { kind:'abandon', by:DRIVER, node:o.node, attempt:o.attempt, reason:`stale writer launch: ${cause}` };
-      guard(s,a); await ledger.append([a]);
-    }
+  return ledger.withLock(async () => {
+    const prepared = await ledger.withLock(async () => {
+      const { state:s, entries } = await load(ledger), n = s.nodes[o.node], slot = n?.slot;
+      const d = entries.find(e => e.kind === 'dispatch' && e.node === o.node && e.attempt === o.attempt);
+      if (!slot || slot.attempt !== o.attempt || d?.by !== DRIVER || n!.runs.find(r => r.attempt === o.attempt)?.launches.some(l => l.role === 'writer')) return undefined;
+      const cause = !s.plan.nodes.some(x => x.id === o.node) ? 'node left the plan' : n!.held !== undefined ? `held by abandon #${n!.held}` : !slot.open ? 'attempt was abandoned' : undefined;
+      if (!cause) return undefined;
+      if (slot.open) {
+        const a: Draft = { kind:'abandon', by:DRIVER, node:o.node, attempt:o.attempt, reason:`stale writer launch: ${cause}` };
+        guard(s,a); await ledger.append([a]);
+      }
+      return { slot, entries, cause };
+    });
+    if (!prepared) return undefined;
+    const { slot, entries, cause } = prepared;
     // No launch intent means no writer could have run through the driver. Keep commits, dirty/locked trees and
     // ambiguous branch registrations; never force removal. The ref deletion compares against the recorded base.
     const trees = await git.listWorktrees(root), tree = trees.find(w => resolve(w.path) === resolve(slot.worktree));
@@ -1211,7 +1216,7 @@ export async function closeStaleSlot(o: Context & { node:string; attempt:number 
       if (!r.code && !entries.some(e => e.kind === 'dispatch' && e.branch === slot.branch && (e.node !== o.node || e.attempt !== o.attempt)) && !(await git.listWorktrees(root)).some(w => w.branch === `refs/heads/${slot.branch}`)) await git.git(root,['update-ref','-d',`refs/heads/${slot.branch}`,slot.base],{ allowFail:true });
     }
     return cause;
-  }), 'dispatch');
+  }, 'dispatch');
 }
 export async function recordedPlanReceipt(o: Context & { entry: Entry }): Promise<string> {
   const ledger = await Ledger.open(o.cwd), e = o.entry;

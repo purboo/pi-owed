@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { H, ZERO, sha256 } from './canon.ts';
 import { git } from './git.ts';
 import { currentLockDeadline } from './lock-deadline.ts';
+import { ledgerLocks } from './lock-context.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import type { Entry, Draft } from './types.ts';
 
@@ -172,9 +173,11 @@ export class Ledger {
     const owned = new Set(this.held.getStore()); owned.add(lockName);
     const activities = new Map(lockActivities.getStore());
     if (opts.activity) activities.set(join(path,'owner.json'),opts.activity);
+    const ledgerOwned = new Set(ledgerLocks.getStore()), ledgerToken = { active: lockName === 'lock' };
+    if (ledgerToken.active) ledgerOwned.add(ledgerToken);
     try {
-      return await lockActivities.run(activities,() => this.held.run(owned, async () => { if (lockName === 'lock' && Ledger.onLock) await Ledger.onLock(this); return fn(); }));
-    } finally { owned.delete(lockName); await discard(path); }
+      return await ledgerLocks.run(ledgerOwned, () => lockActivities.run(activities,() => this.held.run(owned, async () => { if (lockName === 'lock' && Ledger.onLock) await Ledger.onLock(this); return fn(); })));
+    } finally { ledgerToken.active = false; owned.delete(lockName); await discard(path); }
   }
   private activityUpdate: Promise<void> = Promise.resolve();
   /** AW2: serialize atomic owner-file updates for parallel measurements under this holder. */
