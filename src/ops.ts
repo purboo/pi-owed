@@ -1910,6 +1910,7 @@ async function adoptable(cwd: string, s: State, commit?: string): Promise<AdoptP
   if ((await git.git(cwd,['cat-file','-e',`${prior}^{commit}`],{allowFail:true})).code) throw new OwedError(`ledger trunk ${prior} is missing from the repository; owed adopt cannot check that ${ref} is a fast-forward of it`);
   const ff = (await git.git(cwd,['merge-base','--is-ancestor',prior,target],{allowFail:true})).code === 0;
   if (!ff) {
+    if (target !== current && (await git.git(cwd,['merge-base','--is-ancestor',target,prior],{allowFail:true})).code === 0) throw new OwedError(`nothing to adopt: ${target.slice(0,12)} is already contained in the ledger trunk ${prior.slice(0,12)}`,'usage');
     if (target !== current) throw new OwedError(`adopt commit ${target.slice(0,12)} is not a fast-forward of the new ledger trunk ${prior.slice(0,12)}; rebase ${target.slice(0,12)} onto ${prior.slice(0,12)}, then run owed adopt --commit <new> --note "<why>" again`);
     throw new OwedError(`trunk was rewritten: the ledger trunk ${prior.slice(0,12)} is not an ancestor of ${ref} (${target.slice(0,12)}); owed adopt records only fast-forwards: restore ${ref} to a descendant of ${prior.slice(0,12)}`);
   }
