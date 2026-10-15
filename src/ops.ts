@@ -1,5 +1,6 @@
 import { readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod, truncate } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { serialize, deserialize } from 'node:v8';
 import { performance } from 'node:perf_hooks';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -1501,6 +1502,29 @@ async function applyMergeWaiting(dir: string, state: State, view: StatusView): P
     if (Object.keys(current).length) view.mergeWaiting = current;
   } catch { /* cache miss */ }
 }
+/** MD1: strip only the thinking suffix; model ids may contain more than one slash. */
+function modelIdentity(model: string): string { return model.replace(/:[^/:]+$/, ''); }
+/** MD1: unresolved/cyclic/malformed pools cannot establish a mismatch. */
+function modelPoolMembers(name: string, pools: Record<string, unknown>, active = new Set<string>()): { members: Set<string>; known: boolean } {
+  if (name.includes('/')) return { members: new Set([modelIdentity(name)]), known: true };
+  if (active.has(name) || !Object.hasOwn(pools, name) || !Array.isArray(pools[name]) || !pools[name].length) return { members: new Set(), known: false };
+  const next = new Set(active).add(name), members = new Set<string>();
+  let known = true;
+  for (const entry of pools[name]) {
+    const model = typeof entry === 'string' ? entry : entry && typeof entry === 'object' && !Array.isArray(entry) ? entry.model : undefined;
+    if (typeof model !== 'string' || !model.trim()) { known = false; continue; }
+    const child = modelPoolMembers(model, pools, next);
+    for (const member of child.members) members.add(member);
+    known &&= child.known;
+  }
+  return { members, known };
+}
+async function modelPools(): Promise<Record<string, unknown>> {
+  try {
+    const config = JSON.parse(await readFile(join(process.env.DSA_HOME ?? join(homedir(), '.pi', 'durable-subagents'), 'config.json'), 'utf8'));
+    return config?.pools && typeof config.pools === 'object' && !Array.isArray(config.pools) ? config.pools : {};
+  } catch { return {}; }
+}
 /** DR3: compare used models only; a pool label/selected model never counts as observed evidence. */
 async function applyModels(ledger: Ledger, state: State, entries: Entry[], id: string, card: ReceiptCard): Promise<void> {
   const n = state.nodes[id]!, attempt = n.slot?.attempt;
@@ -1510,8 +1534,13 @@ async function applyModels(ledger: Ledger, state: State, entries: Entry[], id: s
   if (!launches.length && !submit?.model && !reviews.some(e => e.model)) return;
   const writer = submit?.model, reviewer = reviews.at(-1)?.model;
   card.models = `writer ${writer ?? 'model unknown'} · reviewer ${reviewer ?? 'model unknown'}`;
-  const warnings: string[] = [];
-  if (writer && reviewer && writer === reviewer) warnings.push("reviewer used the writer's model");
+  const warnings: NonNullable<ReceiptCard['modelWarnings']> = [];
+  if (writer && reviewer && modelIdentity(writer) === modelIdentity(reviewer)) {
+    const message = "reviewer used the writer's model; use an independent model or set drive.same_model: accepted";
+    const acknowledged = state.plan.nodes.find(n => n.id === id)?.drive?.same_model ?? state.plan.drive?.same_model;
+    warnings.push(acknowledged === 'accepted' ? { message, acknowledged: true } : message);
+  }
+  const pools = await modelPools();
   const { driveReviewerSlot, reviewerBase } = await import('./reducer.ts');
   for (const [role, used, principal] of [['writer', writer, n.slot?.writer], ['reviewer', reviewer, reviews.at(-1)?.by]] as const) {
     if (!used) continue;
@@ -1521,7 +1550,13 @@ async function applyModels(ledger: Ledger, state: State, entries: Entry[], id: s
     try {
       const spec = JSON.parse((await ledger.getBlob(l.spec)).toString()) as { model?: unknown };
       const selected = typeof spec.model === 'string' ? spec.model : Array.isArray(spec.model) && typeof spec.model[0] === 'string' ? spec.model[0] : undefined;
-      if (selected && selected !== used) warnings.push(`model used ${used} differs from the one selected ${selected}`);
+      if (selected) {
+        const pool = modelPoolMembers(selected, pools);
+        if (!pool.members.has(modelIdentity(used))) {
+          if (pool.known) warnings.push(`model used ${used} differs from the one selected ${selected}; check the launch model configuration`);
+          else card.models += ` · ${role} selected ${selected} (pool membership unknown)`;
+        }
+      }
     } catch { /* missing launch selection is unknown, not a guessed mismatch */ }
   }
   if (warnings.length) card.modelWarnings = [...new Set(warnings)];
