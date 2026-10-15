@@ -8,6 +8,7 @@ import { leaseEnvironment } from './lease.ts';
 import { remeasureMatches } from './remeasure-on.ts';
 import { resolve as absolutePath } from 'node:path';
 import { expandWrap } from './exec-wrap.ts';
+import { assertNoLedgerLock } from './lock-context.ts';
 
 /**
  * K2.1: the note of a non-red check that fails on its count: `zero tests; exit <code>`, or `min_tests unmet: counted
@@ -275,6 +276,7 @@ function diskFull(code: number | null, counts: Counts | undefined, log: string, 
 }
 /** SG5: bounded, best-effort process tree before timeout kills the command group. */
 async function timeoutProcessTree(pid: number | undefined): Promise<string> {
+  assertNoLedgerLock();
   if (!pid) return 'process tree unavailable (no pid)';
   return new Promise(resolve => {
     const ps = spawn('ps', ['-axo', 'pid=,ppid=,stat=,wchan=,etime=,args='], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -296,6 +298,7 @@ async function timeoutProcessTree(pid: number | undefined): Promise<string> {
 export interface CommandResult { code: number | null; error?: string; log: string; spawn?: boolean; measurementLog?: string }
 /** Shared shell, environment, wrapper and process-group handling for measurements and slot setup. */
 export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abortGraceMs'>, run: string, cwd: string, timeout: number, capture: (data: Buffer) => void = () => {}, onTimeout?: string): Promise<CommandResult> {
+  assertNoLedgerLock();
   return new Promise(resolve => {
     let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
     const inherited: NodeJS.ProcessEnv = { ...process.env };
@@ -428,6 +431,7 @@ function withoutQuarantined(c: Counts, excused: QuarantineEntry[]): Counts {
 /** MS4: `quarantined: <name> (fix: <node>)`, comma-separated. */
 export const quarantineNote = (q: Map<string, string>): string => `quarantined: ${[...q].map(([test, fix]) => `${test} (fix: ${fix})`).join(', ')}`;
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
+  assertNoLedgerLock();
   const start = Date.now();
   const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
   let bytes = Buffer.alloc(0), measurementBytes = Buffer.alloc(0), truncated = false, protocolWarnings = 0;
