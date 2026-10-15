@@ -4,16 +4,16 @@ import { parse } from 'yaml';
 import { OwedError } from './errors.ts';
 import type { Plan } from './types.ts';
 
-type Word = { value: string; literal: boolean; reserved: boolean };
+type Word = { value: string; literal: boolean; reserved: boolean; assignment: boolean };
 /** PL1: read shell words, not shell expansions. Quoted data is never treated as a command. */
 function shellCommands(script: string): Word[][] {
-  const commands: Word[][] = []; let words: Word[] = [], value = '', literal = true, started = false, reserved = true;
+  const commands: Word[][] = []; let words: Word[] = [], value = '', literal = true, started = false, reserved = true, assignment = false;
   let quote = '', here: string[] = [], wantHere = false, stripTabs = false, subshells = 0;
   const word = () => {
     if (!started) return;
-    words.push({ value, literal, reserved });
+    words.push({ value, literal, reserved, assignment });
     if (wantHere) { here.push((stripTabs ? '\t' : '') + value); wantHere = false; }
-    value = ''; literal = true; started = false; reserved = true;
+    value = ''; literal = true; started = false; reserved = true; assignment = false;
   };
   const command = () => { word(); if (words.length) commands.push(words); words = []; };
   for (let i = 0; i < script.length; i++) {
@@ -50,6 +50,9 @@ function shellCommands(script: string): Word[][] {
     if (c === '<' && script[i + 1] === '<' && script[i + 2] !== '<') {
       word(); wantHere = true; stripTabs = script[i + 2] === '-'; i += stripTabs ? 2 : 1; continue;
     }
+    // Recognize the unquoted NAME= prefix before decoding its value. Quotes or
+    // expansions in the value do not turn an assignment into a command word.
+    if (c === '=' && reserved && /^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) assignment = true;
     started = true; value += c; if (c === '$' || c === '`') literal = false;
   }
   command(); return commands;
@@ -59,7 +62,7 @@ function nestedBash(script: string): string[] {
   const out: string[] = [];
   for (const words of shellCommands(script)) {
     let i = 0;
-    while (words[i] && ((words[i]!.reserved && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!.value)) ||
+    while (words[i] && (words[i]!.assignment ||
       (words[i]!.reserved && ['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{', 'time'].includes(words[i]!.value)) ||
       (words[i]!.literal && ['env', 'command', 'exec'].includes(words[i]!.value)))) i++;
     if (!words[i]?.literal || !['bash', 'sh'].includes(basename(words[i]!.value))) continue;

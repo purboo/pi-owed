@@ -70,6 +70,24 @@ test('PL1: edit and dry-run refuse statically quoted nested bash scripts atomica
   } finally { await r.cleanup(); }
 });
 
+test('PL1: single/double quoted assignment values preserve nested Bash command position', async () => {
+  const { r, file } = await fixture();
+  try {
+    const before = await entries(r.cwd), text = await readFile(file,'utf8');
+    for (const prefix of ["X='value'", 'X="value"', 'X=a Y="b c"']) {
+      const run = `${prefix} bash -c 'echo "'`;
+      for (const dry of [false,true]) {
+        const out = await cli(r.cwd,['edit','a','--set',`checks.unit.run=${JSON.stringify(run)}`,'--note','quoted assignment regression','--as','owner:pi',...(dry ? ['--dry-run'] : [])]);
+        assert.notEqual(out.code,0,run); assert.match(out.stderr,/a\/unit: bash -n:/);
+        assert.deepEqual(await entries(r.cwd),before); assert.equal(await readFile(file,'utf8'),text);
+      }
+    }
+    // Quoting the command word itself is different from quoting an assignment value.
+    const data = base(); data.nodes[0]!.checks[0]!.run = "'X=value' bash -c 'echo \"'";
+    await ops.planSet({ cwd:r.cwd, as:owner, channel:'delegated', note:'quoted command data', plan:JSON.stringify(data) });
+  } finally { await r.cleanup(); }
+});
+
 test('PL1: dynamic arguments and quoted data are not executed; template-expanded runs are linted', async () => {
   const { r, file } = await fixture(), path = process.env.PATH;
   try {
