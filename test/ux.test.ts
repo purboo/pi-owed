@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import * as git from '../src/git.ts';
-import { rulingDeliveryText } from '../src/answer.ts';
+import { ruleText } from '../src/answer.ts';
 import { writerLaunch } from '../src/drive.ts';
 import { projectId } from '../src/reducer.ts';
 import { renderReceipt, renderStatus } from '../src/views.ts';
@@ -50,7 +50,7 @@ test('UX1: needs-parent block also gives a writer ruling as the next action', as
   } finally { await f.cleanup(); }
 });
 
-test('UX2: no running calls lists each open slot, writer call and verbatim follow-up', async () => {
+test('UX2: no running calls keeps verbatim follow-ups in details and only unknown-writer notices in text', async () => {
   const f = await fixture(true);
   try {
     const state = (await ops.readState(f)).state;
@@ -59,12 +59,11 @@ test('UX2: no running calls lists each open slot, writer call and verbatim follo
     const b = await ops.dispatch({ cwd: f.cwd, ...parent, node: 'b', allowOverlap: true });
     const r = await ops.rule({ cwd: f.cwd, ...parent, nodes: ['a', 'b'], text: 'Use API v2', writer: true, dsa: sealed });
     assert.equal(r.delivery!.delivered.length, 0);
-    const text = rulingDeliveryText(r.delivery!);
-    assert.ok(text.includes(`a: writer call ${launch.rid}; send follow-up to ${launch.rid}:`), text);
-    assert.match(text, /b: writer call unknown; send follow-up to the slot writer:/);
+    const text = ruleText(r);
+    assert.equal(text, `Recorded #${r.seq} ruling (a, b); delivered 0/4\nb: writer call unknown; owed why b shows the ruling to forward`);
     assert.deepEqual(r.delivery!.slots!.map(s => s.node), ['a', 'b']);
     for (const slot of r.delivery!.slots!) {
-      assert.ok(text.includes(JSON.stringify(slot.followUp)));
+      assert.ok(!text.includes(slot.followUp));
       assert.ok(slot.followUp.includes(`#${r.seq}`));
       assert.ok(slot.followUp.includes('Use API v2'));
     }
@@ -78,7 +77,7 @@ test('UX2: a rule does not list undispatched or abandoned slots', async () => {
     await ops.abandon({ cwd: f.cwd, ...parent, node: 'a', reason: 'finished attempt' });
     const r = await ops.rule({ cwd: f.cwd, ...parent, nodes: '*', text: 'Use v2', dsa: sealed });
     assert.equal(r.delivery!.slots?.length ?? 0, 0);
-    assert.doesNotMatch(rulingDeliveryText(r.delivery!), /writer call/);
+    assert.doesNotMatch(ruleText(r), /writer call/);
   } finally { await f.cleanup(); }
 });
 

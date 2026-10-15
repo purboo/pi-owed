@@ -24,7 +24,8 @@ import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from 
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
-import { readLock } from './drive-bg.ts';
+import { driveStatus, readLock } from './drive-bg.ts';
+import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { lintPlanShell } from './planlint.ts';
@@ -32,7 +33,7 @@ import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from '
 import { counterfactual, type Counterfactual } from './counterfactual.ts';
 import { OwedError } from './errors.ts';
 import { assertNoLedgerLock } from './lock-context.ts';
-import { mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
+import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -1297,7 +1298,7 @@ export function remeasureText(node: string | undefined, remeasured: string[], re
  * parallel (each observation is appended under the ledger lock only if its item is still current, D24).
  */
 export const attestLock = (node: string): string => `attest-${sha256(node).slice(0,16)}`;
-const heldBy = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since ${o.ts}${lockActivityText(o)}`;
+const heldBy = (o: LockOwner): string => `pid ${o.pid} on ${o.host} since ${clockTime(o.ts)}${lockActivityText(o)}`;
 /** K1: the `busy` message of an attest of `node` while another attest of it holds its lock. */
 export const attestBusyText = (node: string, owner: LockOwner): string => `attest of ${node} is already running (${heldBy(owner)}); its observations will appear in owed why ${node}`;
 /** `needs: 'parent'` marks a block that needs a parent ruling (D18); the ledger refuses it on an ok verdict. */
@@ -1983,14 +1984,14 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   }
   const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
   const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers);
-  await applyMergeWaiting(dir, state, view);
+  await applyMergeWaiting(cwd, dir, state, view);
   const pendingBases: NonNullable<StatusView['rebasePending']> = {};
   for (const id of Object.keys(state.nodes)) {
     const r = await rebasePending(state, id);
     if (!r) continue;
     pendingBases[id] = r;
     const progress = view.summary?.progress.find(p => p.node === id);
-    if (progress) progress.phase = rebasePendingText(r);
+    if (progress && !view.measuring?.[id]) progress.phase = rebasePendingText(r);
   }
   if (Object.keys(pendingBases).length) view.rebasePending = pendingBases;
   if (drift && view.summary) view.summary.needs.unshift({ node:'trunk', reason:driftText(drift), command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : 'owed why trunk' });
@@ -2065,11 +2066,29 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   card.conflicts = (await candidateConflicts(o.cwd,view,o.node))[o.node];
   const pending = await rebasePending(view, o.node);
   if (pending) card.rebasePending = pending;
+  const runtime = statusView(view);
+  await applyMergeWaiting(o.cwd, ledger.dir, view, runtime);
+  if (runtime.measuring?.[o.node]) card.measuring = runtime.measuring[o.node];
+  if (runtime.mergeWaiting?.[o.node]) card.mergeWaiting = runtime.mergeWaiting[o.node];
+  const rules = applicableRules(view, o.node);
+  if (view.nodes[o.node]?.slot?.open && rules.length) {
+    const { rulingFollowUp, rulingMessage } = await import('./drive.ts');
+    card.rulingFollowUp = rulingFollowUp(view, o.node)?.message ?? rulingMessage(o.node, 'writer', rules);
+  }
   await applyModels(ledger,view,entries,o.node,card);
   return card;
 }
 /** DR2: a missing/corrupt busy file cannot create acceptance evidence or hide a gate. */
-async function applyMergeWaiting(dir: string, state: State, view: StatusView): Promise<void> {
+async function applyMergeWaiting(cwd: string, dir: string, state: State, view: StatusView): Promise<void> {
+  const driver = await driveStatus({ cwd });
+  const measuring = driver.running ? driver.measuring ?? [] : [];
+  for (const m of measuring) {
+    const n = state.nodes[m.node];
+    if (!n?.slot?.open || !n.candidate || n.merged) continue;
+    (view.measuring ??= {})[m.node] = m;
+    const progress = view.summary?.progress.find(p => p.node === m.node);
+    if (progress) progress.phase = measurementText(m);
+  }
   try {
     const busy = JSON.parse(await readFile(join(dir,'drive','waiting.json'),'utf8')) as NonNullable<StatusView['mergeWaiting']>;
     const adoptPending = await pendingAdopt(dir);
@@ -2077,7 +2096,9 @@ async function applyMergeWaiting(dir: string, state: State, view: StatusView): P
     for (const [id, wait] of Object.entries(busy)) {
       const n = state.nodes[id];
       if (!n?.slot?.open || n.merged || wait.attempt !== n.slot.attempt || wait.candidate !== n.candidate?.seq || typeof wait.reason !== 'string' || !Number.isFinite(Date.parse(wait.since))) continue;
-      if (wait.reason.startsWith('adopt (pending since ') && !adoptPending) continue;
+      if (view.measuring?.[id]) continue;
+      if (wait.job && !measuring.some(m => `${m.node} ${m.do}` === wait.job && (!wait.jobSince || m.since === wait.jobSince))) continue;
+      if ((wait.reason === 'adopt' || wait.reason.startsWith('adopt (pending since ')) && !adoptPending) continue;
       const { ahead: _cachedAhead, ...waiting } = wait, ahead = view.mergeQueue.indexOf(id);
       current[id] = { ...waiting, ...(ahead >= 0 ? { ahead } : {}) };
       const progress = view.summary?.progress.find(p => p.node === id);

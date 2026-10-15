@@ -1,4 +1,5 @@
 // QN1–QN3: ledger answers, delivery races and plain notices (no real dsa).
+import { clockTime } from '../src/clock.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -240,7 +241,7 @@ test('QN2: stale terminal events ride along, name the current owner and keep the
     l.line({ do: 'halt', node: 'a', outcome: 'halted', detail: 'choose the API', inProgress: 2 });
     const text = follower.tick()!;
     assert.match(text, /Driver continues \(2 in progress\)/);
-    assert.match(text, /earlier driver \(pid 987654, started 2026-10-12T01:00:00Z\) stopped; driver pid \d+ \(started 2026-10-12T02:00:00Z\) is running/);
+    assert.ok(text.includes(`earlier driver (pid 987654, started ${clockTime('2026-10-12T01:00:00Z')}) stopped; driver pid ${process.pid} (started ${clockTime('2026-10-12T02:00:00Z')}) is running`));
     assert.equal(follower.stopped, false);
   } finally { await f.cleanup(); }
 });
