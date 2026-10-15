@@ -166,7 +166,7 @@ function historyRig() {
   return { obs, hints: (f: ObsEntry) => views.mergeFailureHints(reducer.reduce(entries, () => p), 'a', [f]).filter(l => /intermittent|older trees/.test(l)) };
 }
 
-test('AT4: known intermittent needs a same-key flip or the same error on trunk; trees of the same node are no evidence', () => {
+test('AT4/SG2: known intermittent needs matching same-key pass/fail, never trunk failure alone', () => {
   const r = historyRig();
   r.obs({ commit: 'tree-old-1', key: 'k-old-1' });
   r.obs({ commit: 'tree-old-2', key: 'k-old-2', signatures: { [name]: 'other' } });
@@ -176,10 +176,10 @@ test('AT4: known intermittent needs a same-key flip or the same error on trunk; 
   assert.deepEqual(r.hints(current), [`same test failed on older trees (different error): ${name} (#${other.seq})`]);
   r.obs({ subject: 'trunk', obligation: 'inv:suite', key: 'inv-base', commit: 'trunk-1', signatures: { [name]: 'another trunk error' } });
   assert.deepEqual(r.hints(current), [`same test failed on older trees (different error): ${name} (#${other.seq + 1}, #${other.seq})`]);
-  const trunk = r.obs({ subject: 'trunk', obligation: 'inv:suite', key: 'inv-base', commit: 'trunk-2' });
-  assert.deepEqual(r.hints(current), [`known intermittent: ${name} failed with the same error on trunk (#${trunk.seq})`]);
-  const pass = r.obs({ verdict: 'pass', exit: 0, failed: undefined, signatures: undefined });
-  assert.deepEqual(r.hints(current), [`known intermittent: ${name} failed and passed on the same key (#${pass.seq})`]);
+  r.obs({ subject: 'trunk', obligation: 'inv:suite', key: 'inv-base', commit: 'trunk-2' });
+  assert.deepEqual(r.hints(current), [], 'trunk failure alone is not intermittent');
+  r.obs({ verdict: 'pass', exit: 0, failed: undefined, signatures: undefined });
+  assert.deepEqual(r.hints(current), [`known intermittent: ${name} failed and passed on the same key (#${current.seq}); inspect the matching failures before retrying`]);
 });
 
 /**
@@ -203,7 +203,7 @@ async function deferFixture() {
     await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated' });
     const genesis = (await observations(r.cwd)).find(e => e.obligation === 'inv:suite')!;
     assert.equal(genesis.verdict, 'fail');
-    assert.deepEqual(genesis.signatures, { 'old bug': 'boom A' }, 'exec records the normalized first error line per failed name');
+    assert.deepEqual(genesis.signatures, { 'old bug': 'v2|["boom A",null,null,null]' }, 'SG1 records versioned failure signatures');
     const a = await ops.dispatch({ cwd: r.cwd, node: 'a', as: parent });
     await commitAt(a.worktree, { impl: 'candidate' });
     await ops.submit({ cwd: a.worktree, node: 'a', as: writer });

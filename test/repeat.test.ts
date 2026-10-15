@@ -51,21 +51,21 @@ test('RC2 #1274: only column-0 owed-counts is protocol, never a real TAP diagnos
   } finally { await f.cleanup(); }
 });
 
-test('RC3 #1274: a red_expect mismatch has failing names before its bounded tail', async () => {
+test('RC3/SG4 #1274: a red_expect mismatch quotes failing names without a summary tail', async () => {
   const f = await fixture();
   try {
     const run = "for n in $(seq 1 30); do echo \"line $n\"; done; echo 'not ok 1 - unrelated failing test'; echo '# tests 1'; echo '# pass 0'; echo '# fail 1'; exit 1";
     const obs = await f.run(run, { red_expect: 'expected failure only' }, 'red');
     assert.equal(obs.verdict, 'fail'); assert.deepEqual(obs.failed, ['unrelated failing test']);
-    assert.ok(obs.note?.startsWith('failed tests: unrelated failing test;'), obs.note);
-    assert.match(obs.note!, /last output:/); assert.ok(obs.note!.split('\n').length <= 16);
+    assert.equal(obs.note, 'failed tests: unrelated failing test: (no error text)');
+    assert.doesNotMatch(obs.note!, /last output:/); assert.equal(obs.note!.split('\n').length, 1);
     assert.doesNotMatch(obs.note!, /\n  line 1\n/);
     const pass = await f.run(run, { red_expect: 'unrelated failing test' }, 'red');
     assert.equal(pass.verdict, 'pass'); assert.equal(pass.note, undefined, 'successful red semantics stay unchanged');
   } finally { await f.cleanup(); }
 });
 
-test('RC3 #1274: reused failed invariant keeps names and tail on second merge and driver halt', { timeout: 60_000 }, async () => {
+test('RC3/SG4 #1274: reused failed invariant keeps failure quotes on second merge and driver halt', { timeout: 60_000 }, async () => {
   const r = await repo();
   try {
     const run = `if [ ! -f src/value ]; then ${owedCount(1, 0)}; else echo 'stored diagnostic tail'; ${owedCount(0, 1, ['reused merge gate'])}; exit 1; fi`;
@@ -80,7 +80,7 @@ test('RC3 #1274: reused failed invariant keeps names and tail on second merge an
     await ops.launch({ cwd: r.cwd, as: DRIVE_PRINCIPAL, node: 'a', attempt: 1, role: 'writer', rid, spec: '{}', labels: runLabels(project, 'a', 1, 'writer') });
     for (let attempt = 0; attempt < 2; attempt++) {
       await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), e => {
-        assert.ok(e instanceof Error); assert.match(e.message, /failed tests: reused merge gate; last output:/); assert.match(e.message, /stored diagnostic tail/); return true;
+        assert.ok(e instanceof Error); assert.match(e.message, /failed tests: reused merge gate: \(no error text\)/); assert.doesNotMatch(e.message, /last output:|stored diagnostic tail/); return true;
       });
     }
     const countFailed = async () => (await ledger.read()).filter(e => e.kind === 'obs' && e.merging === 'a' && e.obligation === 'inv:x').length;
@@ -90,9 +90,9 @@ test('RC3 #1274: reused failed invariant keeps names and tail on second merge an
     const start = await driver.pass(); assert.ok(start.actions.some(a => a.do === 'merge' && a.outcome === 'started'), JSON.stringify(start.actions));
     assert.equal(await driver.drain(30_000), true);
     const report = (await driver.pass()).actions.find(a => a.do === 'merge');
-    assert.equal(report?.outcome, 'refused'); assert.match(report?.detail ?? '', /failed tests: reused merge gate/); assert.match(report?.detail ?? '', /stored diagnostic tail/);
+    assert.equal(report?.outcome, 'refused'); assert.match(report?.detail ?? '', /failed tests: reused merge gate/); assert.doesNotMatch(report?.detail ?? '', /last output:|stored diagnostic tail/);
     const halt = (await ledger.read()).findLast(e => e.kind === 'halt');
-    assert.ok(halt?.kind === 'halt'); assert.match(halt.reason, /failed tests: reused merge gate; last output:/); assert.match(halt.reason, /stored diagnostic tail/);
+    assert.ok(halt?.kind === 'halt'); assert.match(halt.reason, /failed tests: reused merge gate: \(no error text\)/); assert.doesNotMatch(halt.reason, /last output:|stored diagnostic tail/);
     assert.equal(await countFailed(), 1); assert.equal((await ops.status({ cwd: r.cwd })).trunk.commit, base);
   } finally { await r.cleanup(); }
 });
@@ -205,7 +205,7 @@ test('RC3: TAP and cargo keep at most 50 failing names, without counting diagnos
   assert.equal(parseCounts(`${names.join('\n')}\n1..60`)?.failed?.length, 50);
 });
 
-test('RC3: failed notes, why, repair and halt show names before a tail of at most 15 lines', async () => {
+test('RC3/SG4: failed notes, why, repair and halt retain names with at most three quotes and no tail', async () => {
   const f = await fixture();
   try {
     const names = Array.from({ length: 50 }, (_, n) => `latency gate ${n}`), obs = await f.run(`for n in $(seq 1 30); do echo "line $n"; done; ${owedCount(0, 50, names)}; exit 1`, { min_tests: 1 });
@@ -220,11 +220,13 @@ test('RC3: failed notes, why, repair and halt show names before a tail of at mos
     add({ ...obs, key: facts.keys['check:x'] });
     add({ ...obs, obligation: 'writes', key: facts.keys.writes, verdict: 'pass', note: undefined, failed: undefined });
     const s = reduce(es, () => f.plan), why = renderReceipt(receipt(s, entriesOf(s), 'a')), repair = repairMessage(s, 'a');
-    for (const text of [why, repair]) { assert.ok(text.includes('latency gate 49')); assert.ok(text.indexOf('failed tests:') < text.indexOf('last output:')); }
+    assert.match(obs.note!, /latency gate 2: \(no error text\) \(\+47 more\)$/);
+    assert.doesNotMatch(obs.note!, /latency gate 3:|last output:/);
+    for (const text of [why, repair]) { assert.ok(text.includes('latency gate 49')); assert.ok(text.includes('failed tests:')); assert.doesNotMatch(text, /last output:/); }
     const opts: DriveOpts = { max: 1, repairs: 0, project: 'project', root: f.cwd, applied: new Set(), rejected: new Map(), blobs: new Map() };
     const actions = decide(s, f.plan, new Map([[rid, { rid, state: 'sealed', status: 'ok' }]]), opts);
     const halt = actions.find(a => a.do === 'halt'); assert.equal(halt?.do, 'halt');
-    if (halt?.do === 'halt') { assert.ok(halt.reason.includes('latency gate 49')); assert.ok(halt.reason.indexOf('failed tests:') < halt.reason.indexOf('last output:')); }
+    if (halt?.do === 'halt') { assert.ok(halt.reason.includes('latency gate 2')); assert.ok(halt.reason.includes('(+47 more)')); assert.ok(halt.reason.includes('failed tests:')); assert.doesNotMatch(halt.reason, /last output:/); }
   } finally { await f.cleanup(); }
 });
 
@@ -304,7 +306,7 @@ test('RC1/RC3: failed merge invariant retains all run receipts and leads the ref
     await commitAt(d.worktree, { 'src/value': 'new' });
     await ops.submit({ cwd: d.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
     await ops.attest({ cwd: r.cwd, node: 'a' });
-    await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), /inv:x: failed tests: merge timing gate; last output:/);
+    await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), /inv:x: failed tests: merge timing gate: \(no error text\)/);
     const entries = await (await Ledger.open(r.cwd)).read(), obs = entries.findLast((e): e is ObsEntry => e.kind === 'obs' && e.obligation === 'inv:x' && e.merging === 'a');
     assert.equal(obs?.verdict, 'fail'); assert.deepEqual(obs?.runs?.map(r => r.verdict), ['fail', 'fail']);
     assert.equal((await ops.status({ cwd: r.cwd })).trunk.commit, base); assert.equal(entries.filter(e => e.kind === 'merge').length, 0);
