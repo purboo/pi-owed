@@ -112,6 +112,10 @@ export interface CandidateFacts {
   patch: string;       // patch-id (or sha256("") for empty diff)
   changed: string[];   // git diff --name-only B C
   closureTouched: boolean;
+  /** ER1: OK review receipts inherited from the previous candidate across an exact clean merge tree. */
+  carry?: { from: string; reviews: number[] };
+  /** ER3: executor measured that this commit descends from the immediately preceding rebase base. */
+  rebased?: true;
   keys: Record<string, string>;   // 'check:<id>', 'red:<id>', 'strength:<id>', 'writes', 'closure-review', 'review', 'rulings'
 }
 /** Facts about a trunk state S. invKeys: invariant id -> item key. */
