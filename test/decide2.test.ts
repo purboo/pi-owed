@@ -18,8 +18,8 @@ class FakeDsa {
   async send(_id:string,rid:string,kind:string) { this.sends.push({rid,kind}); return {outcome:'applied' as const,spec_digest:'test'}; }
   ask(rid:string,qid='q1',rev=1) { this.views.set(rid,{rid,state:'asking',questions:[{qid,rev,question:'Which interface?'}]}); }
 }
-async function fixture() {
-  const r = await repo(), plan = JSON.stringify({version:1,trunk:'main',lease:false,closure:[],invariants:[{id:'unit',run:'true',reads:['a.txt','b.txt']}],nodes:[{id:'a',writes:['a.txt'],checks:[]},{id:'b',writes:['b.txt'],checks:[]}]});
+async function fixture(extra: Record<string,unknown> = {}) {
+  const r = await repo(), plan = JSON.stringify({version:1,trunk:'main',lease:false,closure:[],...extra,invariants:[{id:'unit',run:'true',reads:['a.txt','b.txt']}],nodes:[{id:'a',writes:['a.txt'],checks:[]},{id:'b',writes:['b.txt'],checks:[]}]});
   await r.put('plan.json',plan); await r.commit();
   await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan,measure:false});
   await ops.planSet({cwd:r.cwd,as:parent,...await ops.readPlan({cwd:r.cwd,path:'plan.json'})});
@@ -83,6 +83,12 @@ test('DF2: questions are counted per node across writer and reviewer runs',async
     assert.ok(texts.some(t=>t.includes(r.rid)));
     for (const t of texts) { assert.match(t,/owed decide a --text/); assert.doesNotMatch(t,/owed answer a/); }
     const done=await ops.decide({cwd:f.cwd,as:parent,nodes:['a'],text:'Keep it',dsa:f.dsa}); assert.equal(done.answered,1);
+    // DF5 (3): the reviewer's question, shown while the writer also asks, gets the answer hint too.
+    await f.slot('b'); await ops.halt({cwd:f.cwd,as:{role:'parent',id:'drive'},node:'b',attempt:1,reason:'check failed',needs:'human'});
+    const rb=await f.launch('b','reviewer'), wb=await f.launch('b','writer'); f.dsa.ask(rb.rid); f.dsa.ask(wb.rid);
+    s=(await ops.readState(f)).state; texts=notices(driveDecide(s,s.plan,f.dsa.views,opts(s,f.cwd))).filter(t=>t.startsWith('b:'));
+    const reviewerText=texts.find(t=>t.includes(`reviewer run ${rb.rid}`)); assert.ok(reviewerText,texts.join('\n'));
+    assert.ok(reviewerText.includes(`owed answer b --rid ${rb.rid} --qid q1`),reviewerText); assert.doesNotMatch(reviewerText,/owed decide b|owed_decide/);
   } finally {await f.cleanup();}
 });
 
@@ -112,5 +118,38 @@ test('DF4: a recorded answer rev that is an integer beyond the safe range valida
     ops.forgetReplays();
     const verified=await ops.verify(f); assert.equal(verified.ok,true,verified.error);
     assert.equal((await ops.readState(f)).state.seq,e!.seq);
+  } finally {await f.cleanup();}
+});
+
+const tail1=(d:{decision:number})=>d.decision+1;
+async function halfGroup() {
+  const f=await fixture({sweep:{run:"printf 'TAP version 13\\nok 1 - swept\\n1..1\\n# tests 1\\n# pass 1\\n# fail 0\\n'",timeout_s:10}});
+  await f.slot();
+  const base=await ops.readState(f), d=await ops.decide({cwd:f.cwd,as:owner,channel:'delegated',nodes:['a'],text:'Accept the debt',defer:'unit',dsa:f.dsa});
+  const ledger=await Ledger.open(f.cwd), file=join(ledger.dir,'ledger.jsonl'), lines=(await readFile(file,'utf8')).split('\n').filter(Boolean);
+  const half=lines.slice(0,tail1(d)).map(l=>l+'\n').join(''); await writeFile(file,half);
+  await rm(join(ledger.dir,'snapshot'),{recursive:true,force:true}); ops.forgetReplays();
+  return {f,base,d,ledger,file,half};
+}
+
+test('DF5: a load through another Ledger instance inside the lock refuses a half group; torn lines are not dropped',async()=>{
+  const {f,base,d,ledger,file,half}=await halfGroup();
+  try {
+    assert.equal((await ops.readState(f)).state.seq,base.state.seq);
+    await assert.rejects(ledger.withLock(async()=>{ await ops.readState(f); }),new RegExp(`decision #${d.decision}.*interrupted atomic write`));
+    await assert.rejects(ledger.withLock(()=>ops.readState(f)),/interrupted atomic write/);
+    assert.equal(await readFile(file,'utf8'),half);
+    // DF5 (2): a torn final fragment is dropped only for unlocked readers, whichever instance holds the lock.
+    await writeFile(file,half+'{"kind":"no');
+    assert.equal((await (await Ledger.open(f.cwd)).read()).length,tail1(d));
+    await assert.rejects(ledger.withLock(async()=>(await Ledger.open(f.cwd)).read()),/invalid JSON|incomplete line/);
+  } finally {await f.cleanup();}
+});
+
+test('DF5: a sweep at a half decision group appends nothing',async()=>{
+  const {f,d,file,half}=await halfGroup();
+  try {
+    await assert.rejects(ops.sweep({cwd:f.cwd}),new RegExp(`decision #${d.decision}.*interrupted atomic write`));
+    assert.equal(await readFile(file,'utf8'),half);
   } finally {await f.cleanup();}
 });
