@@ -8,6 +8,37 @@ The main agent is the owner (0.5, delegated owner): a human states the task in n
 
 It provides a CLI, a pi extension, and an agent skill. It is not an agent scheduler, a sandbox, or a replacement for code review. Your agent runner does the work; owed keeps acceptance evidence and guards the merge.
 
+## What's new in 0.20.1
+
+Upgrade executors, drivers, CLI and pi plugins together before using the new
+keys: older readers ignore `on_timeout`, reject `drive.same_model`, or retain
+old diagnostics. No ledger entry kind or field is added, and no acceptance
+gate is weakened. Historical untagged signatures still replay, but do not
+match newly measured `v2|` signatures (including for defer carry). JSON consumers
+must accept acknowledged `modelWarnings` objects as well as warning strings.
+
+- **Failure evidence:** versioned signatures include the masked first error,
+  innermost repository test frame and independently masked expected/actual
+  values (120 characters each). Same-signature trunk failure alone is not
+  intermittent; current trunk failures report when the uninterrupted run began
+  and its merge/adopt provenance. Refusals quote up to three failed tests rather
+  than error-frequency groups or unrelated passing summary tails.
+- **Timeout evidence:** last 256 KiB of measurement output, timeout marker,
+  optional diagnostics and a best-effort pre-kill process tree stay in the log.
+  Check/invariant `on_timeout: "<command>"` runs once with a separate 30-second
+  limit. Diagnostic output cannot change counts, signatures or the error verdict.
+- **Model warnings:** compare direct models and dsa pool members by
+  `provider/id`, ignoring thinking suffixes. Unknown membership is explicit,
+  not a guessed mismatch. Global/node `drive.same_model: accepted` hides only
+  the advisory same-model warning in compact why; full/JSON receipts retain it.
+- **Quiet dispatch retries:** retry CAS changes, including changed plans, with
+  fresh readiness/ownership checks and completed rollback, at most three total
+  attempts. Exhaustion reports `retry next pass`, not Needs you or a halt.
+- **Merge waiting:** ordinary/full status name the internal blocking job and
+  its UTC start plus the current number of accepted merges ahead. JSON adds
+  optional runtime-only `mergeWaiting[id].job` and `.ahead`; queue positions
+  are derived on each read, not taken from stale cache.
+
 ## What's new in 0.20
 
 Upgrade every driver, CLI and pi plugin together: only optional entry fields
@@ -223,13 +254,13 @@ When a node check fails on the merge tree, `owed merge` first measures that same
 
 Merge refusals (0.16.2) also show the latest pass of a failing invariant on the current trunk: `inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`. This appears once per obligation, including anonymous failures, before intermittent and fix-candidate hints; if no such pass exists it is omitted. The node's current candidate adds `; node diff touches <p1>, <p2>, <p3> (+<N> more)` when it has changed paths. Merge refusals, driver halts, `why` merge-block hints and `Merge checks:` share the delta. This changes only text; 0.16.0, 0.16.1 and 0.16.2 share ledger fields, replay and keys.
 
-Merge refusals (0.20) say `known intermittent` only with failed-and-passed evidence on the same key or a matching error signature on trunk; different known errors say `same test failed on older trees (different error)`. The node's own other trees are not independent evidence. Only the last 5000 ledger entries are scanned, with at most three sequences shown newest first. For names of at least six characters, an unmerged node with an open slot, accepted candidate or ready phase whose title, brief, check command or tests list contains the name verbatim adds `fix candidate: <node> (<phase>) — owed resume <refused> --after <node>`. CLI merge refusals, driver merge-refused halts and `why` block lines carry these hints; `why` also shows hinted current merge-key failures, including invariants, under `Merge checks:`. Anonymous failures add neither named-test hint; missing signatures do not justify a different-error claim. These hints are advisory and change no gate or key; 0.20 signature fields require upgrading readers together.
+Merge refusals (0.20.1) say `known intermittent` only when one key has both pass and failure evidence for that test; if the current failure has a signature, the failing observation must match it. A same-signature trunk failure alone is not intermittent. Matching latest current-key trunk failures take precedence as `<name>: trunk red since #S (after merge #M NODE); fix trunk before retrying` (or `after adopt #A`): S begins the uninterrupted same-signature run, broken by a pass, missing name or changed signature. Provenance is the latest merge/adopt at or before S, omitted if absent. This lookup scans complete matching subject/obligation/run-definition trunk history; generic history hints keep the last-5000-entry bound. Different known errors say `same test failed on older trees (different error)`. The node's own other trees are not independent evidence. Generic history hints show at most three sequences newest first. For names of at least six characters, an unmerged node with an open slot, accepted candidate or ready phase whose title, brief, check command or tests list contains the name verbatim adds `fix candidate: <node> (<phase>) — owed resume <refused> --after <node>`. CLI merge refusals, driver merge-refused halts and `why` block lines carry these hints; `why` also shows hinted current merge-key failures, including invariants, under `Merge checks:`. Anonymous failures add neither named-test hint; missing signatures do not justify a different-error claim. These hints are advisory and change no gate or key; 0.20 signature fields require upgrading readers together.
 
 `owed status` now starts with `owed: <M> merged · <R> in progress · <A> need you · trunk <name> <short> <✔|✘> invariants (<ok>/<n>)`. `Needs you (<A>):` lists current parent/owner actions as `<node>: <plain reason> → <command>` (or `Needs you: none`); a trunk-red invariant from status `trunkRed` instead has one `trunk: <curated red-on-trunk text>` line with its options, and its Debt line is unchanged; ready nodes need manual dispatch only when no driver runs. `In progress (<R>):` lists open work as writing, measuring, reviewing, waiting for dependencies, held, or accepted (merge pending), with its age. `Debt:` appears for trunk-red invariants, active known-red/quarantine tests, owner defers that still bind the current merge invariant key and waivers of open nodes. The last line is `Details: owed status --full · owed why <node>`. Empty progress/debt sections are omitted. `owed status --full` (pi `owed_status {full:true}`) keeps the 0.14 evidence and pending queues, plus new invariant debt lines; historical confirmation, superseded-block and carried-candidate audit lines live there. JSON retains every existing field; `summary` adds merged totals, current actions, phases/ages and debt. `report --since <sequence-or-ISO-time>` summarizes merges, E/W/D changes, rulings, downgrades, and owner decisions.
 
 Pi act replies for `dispatch`, `plan`, `edit`, `amend`, `rule`, `defer`, `abandon` and `resume` use a brief status (0.16.2): the same outcome line, current `Needs you (<A>):` items and commands when non-empty, then `Details: owed status · owed why <node>`. They omit the progress and debt lists. Dispatch keeps its packet and subagents arguments; plan/edit/amend keep their act lines and warnings; rule/defer show the recorded entry; abandon/resume show the entry and node phase, with resume's waits-for text retained. Structured tool results are unchanged. Use `owed status` for the full progress/debt lists, `owed why <node>` for a receipt and `owed report` for the report. The CLI versions of these acts currently append no full status, so their existing outputs stay unchanged; CLI `init` and pi `adopt` retain their existing status output. Explicit status, why, report and `/owed` views keep their existing content.
 
-`owed status --full` (pi `owed_status {full:true}`) also shows `Merge queue: a, b, c` (`none` when empty), and status JSON adds `mergeQueue: string[]`. In 0.20, accepted open attempts merge by unique unfinished transitive dependent count descending, continuous `nodes.<id>.acceptedSince` ascending, then id. This sequence records when the current candidate became continuously accepted; losing acceptance or replacing the candidate with a new submit resets it. `owed resume X --after Y` (also list waits and `owed_resume`) is a dependency wait, not a priority override. The driver's single merge slot takes the first eligible merge action; other actions retain their existing order and every gate still applies. Higher-weight accepted nodes can overtake lower-weight ones; background trunk attest and sweeps yield to merge-ready work. This ordering is derived, with no new ledger kind or key; 0.20 receipt fields still require upgrading readers together.
+`owed status --full` (pi `owed_status {full:true}`) also shows `Merge queue: a, b, c` (`none` when empty), and status JSON adds `mergeQueue: string[]`. In 0.20, accepted open attempts merge by unique unfinished transitive dependent count descending, continuous `nodes.<id>.acceptedSince` ascending, then id. This sequence records when the current candidate became continuously accepted; losing acceptance or replacing the candidate with a new submit resets it. In 0.20.1, ordinary/full status show `merge waiting for driver-internal job (catalog merge, since 09:12); 2 merges ahead`, selecting a running merge before other measurements. `mergeWaiting[id].job` names that internal job; `.ahead` is the current zero-based merge queue position, counting accepted predecessors even while merging. Reads recompute positions and omit ahead/count text for nodes outside the queue, even with stale cached values. Lease waits retain their existing reason/since with ahead added only for queued nodes. The internal time is the job's UTC start; `since` remains the continuous candidate/attempt wait start. Old waiting caches without job remain readable; brief keeps its existing scope. These fields are runtime cache, never ledger evidence. `owed resume X --after Y` (also list waits and `owed_resume`) is a dependency wait, not a priority override. The driver's single merge slot takes the first eligible merge action; other actions retain their existing order and every gate still applies. Higher-weight accepted nodes can overtake lower-weight ones; background trunk attest and sweeps yield to merge-ready work. This ordering is derived, with no new ledger kind or key; 0.20 receipt fields still require upgrading readers together.
 
 `owed report --metrics [--since <seq|ISO>] [--until <seq|ISO>] [--json]` (0.15) measures merged nodes, interruptions (driver halts plus parent/owner answer rulings) and interruptions per merged node; submit-to-merge median/p90/max and first-dispatch-to-merge median/p90; first-pass acceptance (attempt 1, no block on any candidate); and repairs per merged node. Repairs sum writer submits after the first separately for each attempt, including abandoned attempts, excluding executor carry submits. `since` is exclusive and `until` inclusive; merges and interruptions count by their own entries, while earlier history supplies timing and classification. An ending entry can decide a halt: between the halt and the next resume/submit/merge/abandon/halt, a parent/owner rule naming the node or `*`, answer, waive, defer, abandon, hold, approval, evidence, owner review, or plan change to that node's spec/deps makes it `decision`; otherwise it is `no-decision`. Entries after `until` cannot decide a halt. The short text block lists the top five reasons per class, with digits and ids normalized. JSON returns all numeric summaries (durations in milliseconds, ratios as fractions, unavailable values `null`), per-merge attempts/repairs and per-halt classes, ending sequences and decision sequences; SPEC §9 defines each field. It reads only the ledger and recorded plan blobs, preserves old ledger states and keys, and records nothing. `--until` requires `--metrics`; ordinary `report` output is unchanged.
 
@@ -394,6 +425,26 @@ exec:
   wrap: ["/abs/tmp/qa/heavy.sh"]                   # argv prefix: owed runs [...wrap, "bash", "-lc", <command>]
 ```
 
+### Timeout diagnostics (0.20.1)
+
+Optional `on_timeout: "<shell command>"` on a check or invariant runs once
+before the timed-out measurement group is killed, with a separate 30-second
+limit and the same tree, environment and wrapper. Use the existing edit API,
+e.g. `owed edit A --set 'checks.C.on_timeout=ps -ef'` or
+`owed edit --invariant I --set 'on_timeout=ps -ef'`. No new CLI flag is added;
+diagnostic-only edits change no check/invariant key.
+
+The process group is stopped at the timeout boundary. Its last 256 KiB of
+stdout/stderr, `timeout after Ns`, diagnostic output (last 256 KiB) and a
+best-effort pre-kill process tree are kept in the blob. The note keeps the
+timeout plus the last three measurement output lines. Counts, names and
+signatures use frozen measurement output, excluding hook output even when it
+looks like a counts protocol; hook failure or its exit code cannot change the
+error verdict or prevent cleanup. The snapshot includes pid, ppid, state,
+wchan, elapsed and args (200 characters), bounded to 4 MiB ps input, 1000 rows
+and two seconds. Unavailable ps is recorded; macOS is best effort, not validated
+by the Linux behavioral coverage.
+
 The environment is owed's own (without `NODE_TEST_CONTEXT` and any `DSA_*` variable but `DSA_HOME`, so owed commands inside a check are not refused as subagent acts) plus `exec.env`, then `CI=1 OWED=1 OWED_TREE=<absolute tree path>`. The wrapper runs in the materialized tree with that environment, in the same process group, under the same timeout and abort handling: owed kills the whole group, wrapper included. **Wrapper contract:** run the trailing argv to completion in the given directory and environment, pass stdout and stderr through, and exit with the command's exit code. When the wrapper cannot run the command (transport, mirror or lease failure) it must exit **126 or 127**: owed reads those as "could not run" (a red run is then `error`), while every other non-zero code counts as a test failure — a red pass unless the check sets `red_expect`. Use `red_expect` on red checks run through a wrapper. A relative `wrap[0]` containing a slash resolves against the materialized tree, not the main worktree; use absolute paths (a bare name is looked up in `PATH`). `exec.env`, `exec.wrap` and an explicitly set `exec.touch` are part of every check, red, strength and invariant key, so changing them means fresh evidence (`parallel` and `trees` are not, see below); `exec: {}` is the same as no block. Because a wrapper can weaken every check (`wrap: ["true"]` passes everything), changing `env`, `wrap` or `touch` is owner-only and shows as a downgrade in ΔO⁻, like `setup`: set it once. `owed why` prints `Exec: wrap <argv> · env <NAMES>` (names, never values).
 
 ### Faster merges: `exec.parallel` and `exec.trees` (0.9)
@@ -438,24 +489,29 @@ are silently ignored: `    owed-counts {"pass":0,"fail":0}` in a TAP diagnostic,
 or `# owed-counts {"pass":0,"fail":0}`, never overrides real test counts.
 Only this explicit format makes fail > 0 reject
 an exit-0 run; other formats are unchanged. TAP `not ok N - name` and cargo
-`test name ... FAILED` also supply names. Since 0.16.2, failed notes group TAP
-YAML errors and cargo panic messages (both panic formats) by cause, for example
-`failed tests: 11 failed, 1 distinct error(s): "exact-source host required" (test/runtime.ts:31) ×11 — first, second, third (+8 more)`.
-Groups sort by frequency then first appearance; at most three errors and three
-names appear, with remainder counts. Messages strip ANSI, collapse whitespace,
-replace semicolons with commas and stop at 160 characters. TAP block scalars
-show their first non-empty line; `subtestsFailed` parents are omitted from the
-groups when another failing point has an error. Shared locations retain the
-file and line, drop the column, and shorten absolute paths relative to the
-run cwd (otherwise to their last three segments). Unparsed failures form a
-`(no error text)` group; when none has error text the old names-only segment
-stays unchanged. `obs.failed` retains up to 50 names, including repeat unions,
-and the full evidence stays in `owed why` and log blobs. Failed notes, `why`,
-halts and repair messages quote the grouped prefix then a tail of at most
-15 lines. Failed red checks
-(including `red_expect` mismatches) get the same note; successful red runs stay
-unchanged. Merge refusals and halts retain names and the short tail when reusing
-a stored failing measurement, not only when measuring it for the first time.
+`test name ... FAILED` also supply names. In 0.20.1, failed notes, `why`, halts
+and repair messages quote up to three tests in name order, for example
+`failed tests: assertion (test/runtime.ts:31): expected 1, actual 2 | ...`.
+Use both assertion values when present; otherwise the first error line or
+`(no error text)`. Remainder counts appear for additional names; unrelated
+passing summary/last-output tails are not appended to named failures. TAP YAML
+errors (including quoted/plain/block scalars) and both cargo panic formats
+remain recognized. Error messages strip ANSI, collapse whitespace, replace
+semicolons with commas and stop at 160 characters. Locations prefer the
+innermost repository test stack frame, otherwise the parsed location; omit
+columns and shorten absolute paths relative to the run cwd (otherwise to their
+last three segments). Assertion values are independently masked and cut to
+120 characters. `obs.signatures` use `v2|` plus the masked first error line,
+tree-relative test stack frame and expected/actual values; creation-site TAP
+locations are not signature frames. Repository test paths are `test/`, `tests/`,
+`.test.` / `.spec.` basenames or `_tests.<ext>`; external and node_modules
+frames are excluded. Masks normalize long hex ids, durations and `/tmp/` paths.
+`obs.failed` retains up to 50 names, including repeat unions, and log blobs
+retain the evidence. Failed red checks (including `red_expect` mismatches)
+get the same quote; successful red runs are unchanged. Reused measurements
+keep the stored note. Anonymous failures still use the bounded tail (up to
+15 lines, or five for no-count command failures); separate count-failure
+reasons remain. Timeout notes follow the timeout rules above.
 
 Use owed >= 0.13 for these fields: published 0.12 silently drops repeat while
 parsing a plan and replays observations by aggregate verdict only (it ignores
@@ -525,7 +581,7 @@ This is a local, same-user trust boundary. It guards against mistakes and lazy c
 
 ## Parallel slots and a moving trunk
 
-`owed dispatch` and `owed plan` retry a failed compare-and-swap (CAS) up to three attempts in total when the ledger plan sha is unchanged. Each attempt reads fresh state; dispatch finishes its rollback before trying again. A changed plan, a failed rollback, or the third CAS failure returns the refusal with its original error class and exit code. Dispatch rollback uses `git update-ref -d refs/heads/<branch> <base>` to compare the tip and delete atomically, regardless of the main worktree's HEAD. A ref that moved is kept and the CAS failure is reported under the existing `git branch -d` rollback label. A branch still checked out in a worktree is kept too.
+In 0.20.1, `owed dispatch` retries compare-and-swap (CAS) refusals with fresh state, including a changed plan, up to three total attempts (initial plus two retries). Before creating paths/worktrees each attempt rechecks node membership, hold, readiness/dependencies and writes overlap; removed, held, unready or overlapping nodes refuse normally. Worktree, branch, directory and setup-exclude rollback finish before retry; rollback errors and non-CAS failures (including setup) are not retried. The driver reports exhausted CAS retries as `retry next pass`, never Needs you or a halt; standalone dispatch returns the original refusal class/code. `owed plan`/amend/edit retain the three-attempt policy only while the ledger plan sha is unchanged. Dispatch rollback uses `git update-ref -d refs/heads/<branch> <base>` to compare the tip and delete atomically, regardless of the main worktree's HEAD. A ref that moved is kept and the CAS failure is reported under the existing `git branch -d` rollback label. A branch still checked out in a worktree is kept too.
 
 `owed dispatch <node>` refuses when the node's `writes` overlap (path prefix) those of another node with an open slot and names that node; `--allow-overlap` dispatches anyway and records the overlap in the dispatch entry. `owed status` marks ready nodes that overlap an open slot.
 
@@ -694,6 +750,27 @@ the submitted candidate and affects only later launches (a re-launch resends
 the recorded bytes). `owed why <node>` shows
 `Drive: writer <agent> (<model>) · reviewer <agent> (<model>)` for a node that
 sets it. owed 0.6.x ignores a node's `drive` and launches with the plan's drive.
+
+In 0.20.1, `owed why` compares selected and used models by `provider/id`,
+ignoring the trailing `:thinking` even for same-writer/reviewer warnings; ids
+with several slashes stay intact. Selected names resolve through dsa `pools`
+in `$DSA_HOME/config.json` (default `~/.pi/durable-subagents/config.json`),
+including nested pools and `{model, afterMs}` fallbacks. Any discovered member
+matches. Unknown/empty/cyclic/malformed or partially unresolved pools cannot
+prove a mismatch; why instead shows `selected <name> (pool membership unknown)`
+for unmatched used models. A valid branch can still prove membership. Config
+is read locally when rendering, not snapshotted; missing launch blobs are
+unknown and owed does not alter dsa routing.
+
+Set `drive.same_model: accepted` globally or in a node's `drive` to acknowledge
+only the informational same-model warning. Other values refuse; a node may
+acknowledge without role overrides, otherwise inheriting the global key.
+Compact why omits acknowledged warnings; `why --full` restores `(acknowledged)`
+and JSON keeps `{message: string, acknowledged: true}` alongside ordinary
+warning strings in `modelWarnings`. Selection mismatch warnings stay visible.
+Adding/removing this key changes no obligation key, downgrade, review block
+or acceptance rule; removing it restores the warning without invalidating
+evidence. Upgrade every reader before using it: older parsers reject the key.
 
 Environment failures wait instead of halting (0.11). A measurement that exits
 non-zero with no failing test counted and `ENOSPC`, `No space left on device` or
