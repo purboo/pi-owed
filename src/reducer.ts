@@ -458,6 +458,16 @@ function decisionMembers(s: State): Entry[] {
   const es = entriesOf(s), last = es.at(-1);
   return last?.decision === undefined ? [] : es.slice(last.decision);
 }
+/**
+ * DF1: the first seq of a final decision group still missing its ruling (an append in flight for an unlocked reader),
+ * when the tail is exactly that group's well-formed prefix; else undefined (replay judges anything else).
+ */
+export function decisionInFlight(entries: readonly Entry[]): number | undefined {
+  const first = entries.at(-1)?.decision;
+  if (first === undefined || !Number.isSafeInteger(first) || first < 0 || first >= entries.length) return undefined;
+  const members = entries.slice(first);
+  return members.every(e => e.decision === first && e.kind !== 'rule') ? first : undefined;
+}
 /** A final group needs its one ruling; private drafting may temporarily have a plan/defer prefix. */
 export function decisionTailErrors(s: State): string[] {
   const members = decisionMembers(s);
@@ -1529,7 +1539,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.answers !== undefined) errors.push(...decisionAnswersErrors(s,d));
       if (d.answer !== undefined) {
         const a = d.answer;
-        if (!a || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).some(k => !['rid', 'qid', 'rev'].includes(k)) || typeof a.rid !== 'string' || !a.rid.trim() || typeof a.qid !== 'string' || !a.qid.trim() || !Number.isSafeInteger(a.rev) || a.rev < 1) errors.push('rule answer must be {rid, qid, rev} with nonempty ids and a positive integer rev');
+        if (!a || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).some(k => !['rid', 'qid', 'rev'].includes(k)) || typeof a.rid !== 'string' || !a.rid.trim() || typeof a.qid !== 'string' || !a.qid.trim() || !Number.isInteger(a.rev) || a.rev < 1) errors.push('rule answer must be {rid, qid, rev} with nonempty ids and a positive integer rev');
         if (!Array.isArray(d.nodes) || (d.decision === undefined && (d.nodes.length !== 1 || d.writer !== false))) errors.push('answer rule requires one node and writer: false');
         else {
           const launch = d.nodes.flatMap(id => { const target = s.nodes[id]; return target?.slot?.open ? target.runs.find(x => x.attempt === target.slot!.attempt)?.launches ?? [] : []; }).find(x => x.rid === a?.rid);
