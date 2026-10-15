@@ -223,7 +223,9 @@ test('DC2: legal decision prefixes replay; foreign continuation and actual trunc
         const report=await ops.report({cwd:f.cwd,since:e.seq});assert.ok(report);
         await writeFile(join(ledger.dir,'ledger.jsonl'),prefix.map(x=>JSON.stringify(x)+'\n').join(''));
         await rm(join(ledger.dir,'snapshot'),{recursive:true,force:true});ops.forgetReplays();
-        await assert.rejects(ops.readState(f),new RegExp(`decision #${r.decision}.*interrupted atomic write`));
+        // DF1: unlocked readers see the state before the group (a write in flight); locked acts still refuse.
+        assert.equal((await ops.readState(f)).state.seq,base.state.seq);
+        await assert.rejects(ops.rule({cwd:f.cwd,as:parent,nodes:['a'],text:'after tail'}),new RegExp(`decision #${r.decision}.*interrupted atomic write`));
         const verified=await ops.verify(f);assert.equal(verified.ok,false);assert.match(verified.error!,new RegExp(`decision #${r.decision}.*interrupted atomic write`));
         await writeFile(join(ledger.dir,'ledger.jsonl'),[...base.entries,...r.entries].map(x=>JSON.stringify(x)+'\n').join(''));ops.forgetReplays();
       }

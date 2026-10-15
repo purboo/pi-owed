@@ -595,7 +595,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       return { do: 'notify', node: id, quiet: true, once: `answered\u0000${l.rid}\u0000${e.answer!.qid}`, text: `${id}: answered #${e.seq}, waiting for the run to resume` };
     }
     const filtered = { ...v, questions: open }, q = open[0];
-    return { do: 'notify', node: id, text: `${askingText(id, l, filtered)} ${askingRule(id)}`, rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) };
+    // DF2: count questions as ops.decide does: every asking run of the attempt (writer and reviewers).
+    const nodeQuestions = ar.launches.reduce((sum, x) => { const w = runs.get(x.rid); return sum + (w?.state === 'asking' ? w.questions?.length ?? 0 : 0); }, 0);
+    return { do: 'notify', node: id, text: `${askingText(id, l, filtered, nodeQuestions)} ${askingRule(id)}`, rid: l.rid, ...(q ? { qid: q.qid, rev: q.rev } : {}) };
   };
   const ar: AttemptRuns = n.runs.find(r => r.attempt === attempt) ?? { attempt, launches: [], sends: [] };
   // RR1: same-key resubmits carry reviewer runs across the contiguous review epoch; writers are unchanged.
@@ -1079,13 +1081,14 @@ export const askingRule = (_node: string): string => 'This records one answer ru
 /**
  * The asking line (D22.6, AN1): one line per open question with the owed CLI/tool selectors and the dsa call address.
  */
-export function askingText(node: string, l: LaunchEntry, v: RunView): string {
-  const qs = v.questions ?? [];
+export function askingText(node: string, l: LaunchEntry, v: RunView, nodeQuestions?: number): string {
+  // DF2: `owed decide` answers only a node's sole question across all its runs; otherwise each question is addressed.
+  const qs = v.questions ?? [], single = (nodeQuestions ?? qs.length) === 1 && qs.length === 1;
   if (!qs.length) return `${node}: ${l.role} run ${l.rid}${callAt(v)} is asking (no question reported; see pi-durable-subagents describe --key ${l.rid}); the driver never answers`;
   return qs.map(q => {
     const to = q.to ?? v.to ?? l.rid;
-    const command = qs.length > 1 ? `owed answer ${node} --rid ${l.rid} --qid ${q.qid} "<text>"` : `owed decide ${node} --text "<text>"`;
-    const tool = qs.length > 1 ? `owed_answer {node:${JSON.stringify(node)}, rid:${JSON.stringify(l.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}` : `owed_decide {nodes:[${JSON.stringify(node)}], text:"…"}`;
+    const command = !single ? `owed answer ${node} --rid ${l.rid} --qid ${q.qid} "<text>"` : `owed decide ${node} --text "<text>"`;
+    const tool = !single ? `owed_answer {node:${JSON.stringify(node)}, rid:${JSON.stringify(l.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}` : `owed_decide {nodes:[${JSON.stringify(node)}], text:"…"}`;
     return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer: ${command}; in pi: ${tool}${callAt({ ...v, to })}`;
   }).join('\n');
 }
