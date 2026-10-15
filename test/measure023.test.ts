@@ -8,7 +8,6 @@ import * as ops from '../src/ops.ts';
 import { Ledger, entryHash } from '../src/ledger.ts';
 import { DRIVE_PRINCIPAL } from '../src/drive-run.ts';
 import { computeMetrics, renderMetrics, type Metrics } from '../src/metrics.ts';
-import { classifyRebases, counterfactualStats, renderCounterfactual, type Counterfactual, type CounterRow } from '../src/counterfactual.ts';
 import { newerEntry, validateDraft } from '../src/reducer.ts';
 import { parsePlan } from '../src/plan.ts';
 import { H, ZERO } from '../src/canon.ts';
@@ -115,6 +114,8 @@ const refused = async (p: Promise<unknown>): Promise<Error> => { try { await p; 
 const AT1 = (node: string) => `merge tree does not pass inv:x (trunk passes); trunk moved 1 commits since the slot base: rebase → owed rebase ${node}`;
 
 test('MX2 counterfactual: shared, fix-wait, clean rebase, conflicting rebase and unchanged halts; acts until the next driver action; read-only CLI', { timeout: 300_000 }, async () => {
+  const { counterfactualStats, renderCounterfactual } = await import('../src/counterfactual.ts');
+  type Counterfactual = Awaited<ReturnType<typeof ops.reportCounterfactual>>;
   const r = await sharedRepo(['pass', 'fail', 'fail', 'fail'], [
     { id: 'a', file: 'src/a' }, { id: 'b', file: 'src/b' }, { id: 'c', file: 'src/c' }, { id: 'd', file: 'src/d' }, { id: 'e', file: 'src/other' },
     { id: 'f', file: 'src/f', brief: `fix ${NAME}` }]);
@@ -195,6 +196,8 @@ test('MX2 counterfactual: shared, fix-wait, clean rebase, conflicting rebase and
 });
 
 test('MX2 ER: a missing commit or a row without a candidate is unknown, never clean', { timeout: 60_000 }, async () => {
+  const { classifyRebases } = await import('../src/counterfactual.ts');
+  type CounterRow = Parameters<typeof classifyRebases>[1][number];
   const r = await repo();
   try {
     await r.put('README', 'x'); const head = await r.commit();

@@ -74,3 +74,9 @@ observation and merge entry of one leased command carries the same value. Absent
 - Changed existing tests: `test/metrics.test.ts` (three `interruptions` deep-equals now ignore the new `byClass`)
   and `test/parentacts.test.ts` (the 0.16 legacy-field deep-equal excludes the new fields); both still assert every
   previous value.
+
+## Baseline regression evidence
+- Against `aeccfdc`, the MX1 metrics test fails its assertion because `decisions` is absent (expected the grouped decision total).
+- The MX2 counterfactual replay test fails when its internal dynamic import loads the counterfactual module, which the baseline lacks.
+- The MX2 missing-commit test independently fails at its internal dynamic import for the same missing module.
+- The MX3 lease test reaches the leased observations and fails its assertion because those entries lack `lease_wait_ms`.
