@@ -58,7 +58,7 @@ export interface EvidenceSpec { id: string; what: string; by: 'reviewer' | 'pare
 /** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
 export interface DriveAgent { agent: string; model?: string }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
-export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number; /** 0.11 (F2.3): free MB below which the driver starts no measurement; present only when the plan sets it (default `MIN_FREE_DEFAULT`, 0 disables). */ min_free_mb?: number; /** FL4: idle reminder interval in minutes, default 60; 0 disables. */ idle_rewake_min?: number; /** QN1: seconds before reminding about an answered question still open in dsa (default 900). */ answer_grace_s?: number; /** MD2: quiet same-model warning; no gate changes. */ same_model?: 'accepted' }
+export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number; /** 0.11 (F2.3): free MB below which the driver starts no measurement; present only when the plan sets it (default `MIN_FREE_DEFAULT`, 0 disables). */ min_free_mb?: number; /** FL4: idle reminder interval in minutes, default 60; 0 disables. */ idle_rewake_min?: number; /** QN1: seconds before reminding about an answered question still open in dsa (default 900). */ answer_grace_s?: number; /** MD2: quiet same-model warning; no gate changes. */ same_model?: 'accepted'; /** MT1 (0.21): members of one batch merge, 1..8; present only when the plan sets it (default 1 = off). */ merge_batch?: number }
 /**
  * Optional `exec:` block of the plan (SPEC §3, §7, D20): extra environment and an argv prefix for every process owed
  * starts in a materialized tree. Parsed plans keep only non-empty fields; `exec: {}` is the same as no block.
@@ -175,6 +175,8 @@ export interface ObsEntry extends Base {
   auto_remeasure?: true;
   /** RO: unique configured literals matching every failure, for bounded replay provenance. */
   remeasure_match?: string[];
+  /** MT4 (0.21): measured on a batch merge tree (members in order); never `merging`, never a block. */
+  batch?: string[];
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }
@@ -185,7 +187,9 @@ export interface AbandonEntry extends Base { kind: 'abandon'; node: string; atte
 export interface HoldEntry extends Base { kind: 'hold'; node: string; abandon: number; reason?: string }
 /** Moves the open slot of `node` from base `from` to the current trunk `base`; the open candidate is invalidated. */
 export interface RebaseEntry extends Base { kind: 'rebase'; node: string; attempt: number; base: string; from: string }
-export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts }
+export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts; /** MT3 (0.21): batch merge member; older owed misjudges it. */ batch?: MergeBatch }
+/** MT3 (0.21): the batch a merge entry belongs to: the final merge commit Mn, its state facts, this member's check keys on Mn, all members in order. */
+export interface MergeBatch { final: string; state: StateFacts; keys: Record<string, string>; members: string[] }
 export interface NoteEntry extends Base { kind: 'note'; text: string }
 /** A file recorded as manual evidence: `path` repository-relative when inside the repository, else absolute; hashed when recorded. */
 export interface EvidenceFile { path: string; sha256: string; bytes: number }

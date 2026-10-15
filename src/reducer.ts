@@ -5,7 +5,7 @@ import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades, quarantineDowngrades, activeQuarantine, quarantineNames, type QuarantineNames, matchesAny } from './plan.ts';
 import { execKey } from './git.ts';
-import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
+import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeBatch, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
 
 export type PlanLookup = (sha: string) => Plan;
 const history = Symbol('owed.reducer.history');
@@ -414,7 +414,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure', 'remeasure_match'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure', 'remeasure_match', 'batch'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -542,7 +542,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
           const prior = listed(h.bySeq,b.seq)[0];
           if (prior?.kind === 'obs' && prior.waits_on) { b.state = 'cleared'; b.clearedBy = e.seq; }
         }
-        if (e.verdict === 'fail' && !e.attribution) n.blocks.push({ seq: e.seq, node: e.subject, obligation: e.obligation, kind: 'exec', key: e.key, state: 'active' });
+        if (e.verdict === 'fail' && !e.attribution && e.batch === undefined) n.blocks.push({ seq: e.seq, node: e.subject, obligation: e.obligation, kind: 'exec', key: e.key, state: 'active' });
       }
     } else if (e.kind === 'review') {
       const n = s.nodes[e.node]!;
@@ -559,7 +559,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       for (const i of e.items) s.deferred.push({ seq: e.seq, node: e.node, id: i.id, key: i.key });
     } else if (e.kind === 'merge') {
       const n = s.nodes[e.node]!;
-      const inherited = mergeGuard(s, e.node, { facts: e.facts, state: e.state }).invItems.filter(i => i.key !== s.trunk.invKeys[i.obligation.slice(4)] && i.detail.startsWith('trunk-red:'));
+      const inherited = mergeGuard(s, e.node, { facts: e.facts, state: e.state, batch: e.batch }).invItems.filter(i => i.key !== s.trunk.invKeys[i.obligation.slice(4)] && i.detail.startsWith('trunk-red:'));
       if (h.invRed) for (const [o, red] of h.invRed) if (e.state.invKeys[o.slice(4)] !== red.key) h.invRed.delete(o);
       if (inherited.length) for (const i of inherited) (h.invRed ??= new Map()).set(i.obligation, { key: i.key, seq: e.seq, kind: 'merge', node: e.node });
       n.merged = { seq: e.seq, commit: e.commit }; n.slot!.open = false;
@@ -850,6 +850,59 @@ export function mergeQueue(s: State): string[] {
     (weight.get(b.id) ?? 0) - (weight.get(a.id) ?? 0)
     || (a.acceptedSince ?? Number.MAX_SAFE_INTEGER) - (b.acceptedSince ?? Number.MAX_SAFE_INTEGER)
     || a.id.localeCompare(b.id)).map(n => n.id);
+}
+/**
+ * MT1: a member a batch merge may take: an accepted open candidate (so an `approve: owner` is no longer pending), not
+ * closure-touched, no owed remeasure.
+ */
+export function batchable(s: State, id: string): boolean {
+  const n = s.nodes[id], spec = nodeSpec(s, id);
+  return !!n?.slot?.open && !!n.candidate && n.accepted && !n.merged && !!spec && !n.candidate.closureTouched && !remeasureDue(s, id);
+}
+/** MT4: a batch of exactly these members failed on the current trunk (a fail observation tagged with them since trunk moved). */
+export function batchFailed(s: State, members: string[]): boolean {
+  const want = members.join('\0'), entries = context(s).entries;
+  for (let i = entries.length - 1; i >= 0 && entries[i]!.seq > s.trunk.seq; i--) {
+    const e = entries[i]!;
+    if (e.kind === 'obs' && e.verdict === 'fail' && e.batch?.join('\0') === want) return true;
+  }
+  return false;
+}
+/**
+ * MT1/MT6: the batch the merge queue plans with `drive.merge_batch` = `size`: from the queue head, in queue order, up to
+ * `size` batchable members whose writes pairwise do not overlap. Empty when `size` < 2, the head is not batchable, fewer
+ * than 2 qualify, or this set already failed on the current trunk (its members then merge one at a time).
+ */
+export function mergeBatchPlan(s: State, size: number, queue: string[] = mergeQueue(s)): string[] {
+  if (size < 2 || queue.length < 2 || !batchable(s, queue[0]!)) return [];
+  const out: string[] = [];
+  for (const id of queue) {
+    if (out.length >= size) break;
+    if (batchable(s, id) && !out.some(x => effectiveWritesOverlap(s, x, id))) out.push(id);
+  }
+  return out.length >= 2 && !batchFailed(s, out) ? out : [];
+}
+const isFacts = (x: unknown): x is StateFacts => !!x && typeof x === 'object' && typeof (x as StateFacts).commit === 'string' && typeof (x as StateFacts).tree === 'string' && !!(x as StateFacts).invKeys && typeof (x as StateFacts).invKeys === 'object';
+/** MT3: shape of a batch merge entry; the last member's commit and state are the batch's final ones. */
+function batchMergeErrors(d: Extract<Draft, { kind: 'merge' }>): string[] {
+  const b = d.batch;
+  if (b === undefined) return [];
+  if (!b || typeof b !== 'object' || typeof b.final !== 'string' || !isFacts(b.state) || b.state.commit !== b.final || !b.keys || typeof b.keys !== 'object' || !Array.isArray(b.members) || b.members.length < 2 || b.members.some(m => typeof m !== 'string') || new Set(b.members).size !== b.members.length || !b.members.includes(d.node)) return ['merge batch must be {final, state, keys, members} with the final state and at least 2 distinct members including the node'];
+  const last = b.members.at(-1) === d.node;
+  if (last && (d.commit !== b.final || canonical(d.state) !== canonical(b.state))) return ['the last batch member must merge the final batch commit and state'];
+  if (!last && d.commit === b.final) return ['only the last batch member merges the final batch commit'];
+  return [];
+}
+/** MT4: a batch observation names at least 2 distinct members (its node subject among them) and is never merging, a probe or an attribution rerun. */
+function batchObsErrors(d: Extract<Draft, { kind: 'obs' }>): string[] {
+  const b = d.batch;
+  if (b === undefined) return [];
+  if (!Array.isArray(b) || b.length < 2 || b.some(x => typeof x !== 'string') || new Set(b).size !== b.length) return ['obs batch must list at least 2 distinct members'];
+  if (d.merging !== undefined || d.probe !== undefined || d.attribution) return ['a batch obs is never merging, a probe or an attribution rerun'];
+  // remeason: a batch obs is never an automatic-remeasure trigger or receipt; single merges measure their own tree.
+  if (d.remeasure_match !== undefined || d.auto_remeasure !== undefined) return ['a batch obs never carries remeasure_match or auto_remeasure'];
+  if (d.subject !== 'trunk' && !b.includes(d.subject)) return ['a batch obs node subject must be a batch member'];
+  return [];
 }
 
 /** FL3: report follow-up of the latest resume; a later submit or parent act ends the parked receipt. */
@@ -1237,6 +1290,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (prior.some(e => e.auto_remeasure)) errors.push('obs auto_remeasure already consumed on this key');
         if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || !first.remeasure_match?.length || !needles.length || !first.remeasure_match.every(text => needles.includes(text))) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on');
       }
+      errors.push(...batchObsErrors(d));
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
       break;
     case 'review':
@@ -1292,7 +1346,8 @@ export function validateDraft(s: State, d: Draft): string[] {
       slot();
       if (d.prior !== s.trunk.commit) errors.push('merge prior must reference the current trunk');
       if (d.commit !== d.facts.commit || d.commit !== d.state.commit) errors.push('merge commit does not match facts');
-      if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state }).reasons);
+      errors.push(...batchMergeErrors(d));
+      if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state, batch: d.batch }).reasons);
       break;
     case 'sweep':
       if (d.by !== 'executor:owed') errors.push('sweep may only be written by executor:owed');
@@ -1520,7 +1575,7 @@ export function decoyPayloadErrors(p: unknown): string[] {
  */
 function settleDecoy(v: DecoyView, e: Entry, mergeCatches: Set<number>): void {
   if (v.outcome !== 'pending') return;
-  if ((e.kind === 'obs' && e.probe === undefined && e.by === 'executor:owed' && e.verdict === 'fail' && (e.subject === v.node || (e.merging === v.node && mergeCatches.has(e.seq)))) || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
+  if ((e.kind === 'obs' && e.probe === undefined && e.by === 'executor:owed' && e.verdict === 'fail' && ((e.subject === v.node && e.batch === undefined) || (e.merging === v.node && mergeCatches.has(e.seq)))) || (e.kind === 'review' && e.node === v.node && e.verdict === 'block')) Object.assign(v, { outcome: 'caught', decidedBy: e.seq });
   else if (e.kind === 'merge' && e.node === v.node) Object.assign(v, { outcome: 'escaped', decidedBy: e.seq });
 }
 
@@ -1617,6 +1672,29 @@ export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; stat
   for (const i of s.plan.invariants) {
     const key = m.state.invKeys[i.id];
     if (key && !hasVerdict(s, 'trunk', `inv:${i.id}`, key)) jobs.push(quarantinedJob(s, job(undefined, 'trunk', `inv:${i.id}`, key, m.state.commit, m.state.commit, s.plan)!, id));
+  }
+  return jobs;
+}
+/** MS4 for a batch: quarantine names on the batch tree count every member as merged. */
+export function batchQuarantine(s: State, members: string[]): QuarantineNames { return quarantineNames(s.plan, id => !!s.nodes[id]?.merged || members.includes(id)); }
+/**
+ * MT2: jobs of a batch merge on its final tree `final` (state facts `st`): every member's node checks on its keys there
+ * (`keys[member]`) and every invariant on `st`, skipping keys that already have a verdict.
+ */
+export function batchJobs(s: State, members: string[], keys: Record<string, Record<string, string>>, st: StateFacts): AttestJob[] {
+  const merged = (id: string): boolean => !!s.nodes[id]?.merged || members.includes(id), jobs: AttestJob[] = [];
+  const q = (j: AttestJob): AttestJob => { const e = j.spec ? activeQuarantine(s.plan, j.spec, merged) : []; return e.length ? { ...j, quarantined: e } : j; };
+  for (const id of members) {
+    const spec = nodeSpec(s, id);
+    if (!spec || !s.nodes[id]?.candidate) throw new OwedError(`Node ${id} has no current candidate`);
+    for (const c of spec.checks) {
+      const o = `check:${c.id}`, key = keys[id]?.[o];
+      if (key && !hasVerdict(s, id, o, key)) jobs.push(q(job(spec, id, o, key, st.commit, st.commit, s.plan)!));
+    }
+  }
+  for (const i of s.plan.invariants) {
+    const key = st.invKeys[i.id];
+    if (key && !hasVerdict(s, 'trunk', `inv:${i.id}`, key)) jobs.push(q(job(undefined, 'trunk', `inv:${i.id}`, key, st.commit, st.commit, s.plan)!));
   }
   return jobs;
 }
@@ -1754,7 +1832,7 @@ export function carriedDefer(s: State, node: string, inv: string, key: string): 
   const defer = s.deferred.findLast(d => d.node === node && d.id === inv && d.key !== key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
   if (!defer) return undefined;
   const deferred = decidingInvariantFail(s, o, defer.key), now = decidingInvariantFail(s, o, key);
-  const before = context(s).entries.findLast((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === 'trunk' && e.merging === undefined && e.probe === undefined && e.obligation === o && e.verdict === 'fail' && e.seq < defer.seq);
+  const before = context(s).entries.findLast((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === 'trunk' && e.merging === undefined && e.batch === undefined && e.probe === undefined && e.obligation === o && e.verdict === 'fail' && e.seq < defer.seq);
   const trunkKey = s.trunk.invKeys[inv], trunk = trunkKey ? decidingInvariantFail(s, o, trunkKey) : undefined;
   const minTests = s.plan.invariants.find(i => i.id === inv)?.min_tests;
   // Fail-closed (AT ruling #1924): only complete, named, test-only failures with recorded equal signatures carry.
@@ -1768,8 +1846,10 @@ export function carriedDefer(s: State, node: string, inv: string, key: string): 
     });
   return { defer, carried };
 }
-export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): MergeGuard {
+export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts; batch?: MergeBatch }): MergeGuard {
   const reasons: string[] = [];
+  // MT3: a batch member's invariants and merge-tree checks are judged on the final batch tree Mn.
+  const inv = m.batch?.state ?? m.state, checkKeys = m.batch?.keys ?? m.facts.keys;
   const n = s.nodes[id], spec = nodeSpec(s, id);
   const nodeItemsOnMerge: ItemView[] = [];
   if (!n?.accepted) reasons.push(`Node ${id} current candidate is not yet accepted`);
@@ -1778,7 +1858,7 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
   if (n?.candidate && spec) {
     for (const o of required(spec, n.candidate)) {
       const onMerge = o === 'writes' || o.startsWith('check:');
-      const v = item(s, id, o, (onMerge ? m.facts.keys[o] : n.candidate.keys[o]) ?? '');
+      const v = item(s, id, o, (o.startsWith('check:') ? checkKeys[o] : onMerge ? m.facts.keys[o] : n.candidate.keys[o]) ?? '');
       // CandidateFacts.changed is trusted git output for PRE..M. Unlike command
       // checks, writes can be re-evaluated synchronously without an executor job.
       if (o === 'writes' && m.facts.keys.writes) {
@@ -1791,7 +1871,7 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
     if (n.blocks.some(b => binding(b, spec))) reasons.push(`${id} still has active blocks: ${n.blocks.filter(b => binding(b, spec)).map(b => `${b.obligation} #${b.seq}`).join(', ')}`);
   }
   const invItems = s.plan.invariants.map(i => {
-    const key = m.state.invKeys[i.id] ?? '';
+    const key = inv.invKeys[i.id] ?? '';
     const v = item(s, 'trunk', `inv:${i.id}`, key, id);
     const owned = fixOwnedKnownRed(s, i.id, id), stillFail = [...new Set(counted(s, 'trunk', `inv:${i.id}`, key).filter(e => e.verdict === 'fail').flatMap(e => (e.failed ?? []).filter(name => owned.includes(name))))];
     if (stillFail.length) reasons.push(`${id} is the fix node of known-red ${stillFail.join(', ')} on inv:${i.id}, which still fail on the merge result`);
@@ -1800,7 +1880,7 @@ export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; sta
       const d = s.deferred.findLast(d => d.node === id && d.id === i.id && d.key === key && d.seq > (n?.slot?.dispatchSeq ?? Infinity));
       if (d) Object.assign(v, { status: 'D', mark: '⏸', discharger: 'owner', evidence: [...new Set([...v.evidence, d.seq])], detail: `inv:${i.id} owner deferred, still debt` });
       else {
-        const red = invariantTrunkComparison(s, id, i, key, m.state.commit);
+        const red = invariantTrunkComparison(s, id, i, key, inv.commit);
         if (automaticInvariantConflict(s,`inv:${i.id}`,key)) { reasons.push(`invariant ${i.id} owner conflict: ${v.detail}; fix the invariant or defer it for ${id}`); return v; }
         const carry = red.inherited ? undefined : carriedDefer(s, id, i.id, key);
         if (red.inherited) Object.assign(v, { discharger: 'parent', detail: `trunk-red: inv:${i.id} already failed on trunk before ${id} (${red.merge!.failed!.join(', ')}); merge #${s.seq + 1}` });

@@ -17,7 +17,7 @@ import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurr
 import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
-import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals } from './reducer.ts';
+import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
@@ -1326,6 +1326,96 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D'),unguarded:unguardedPaths(current.plan,lm.facts.changed)};
     },undefined,o.signal);
   },'merge',o.signal,{activity:`merge ${o.node}`});
+}
+// ---------- batch merge (merge train, MT) ----------
+export interface BatchMergeResult { nodes: string[]; commit: string; entries: Entry[]; dropped: string[]; lease?: string }
+/** MT: refusal prefix of a batch merge that measured or decided nothing for single members; they merge one at a time. */
+export const BATCH_REFUSED = 'batch merge ';
+/** MT1: the requested members in merge-queue order; refuses a member that cannot be batched, naming why. */
+function batchMembers(s: State, ids: string[]): string[] {
+  if (new Set(ids).size !== ids.length || ids.length < 2) throw new OwedError('batch merge needs at least 2 distinct nodes: owed merge A,B[,...]', 'usage');
+  for (const id of ids) {
+    const n = candidate(s, id), spec = s.plan.nodes.find(x => x.id === id);
+    if (!batchable(s, id)) throw new OwedError(`${BATCH_REFUSED}refused: ${id} ${n.candidate!.closureTouched ? 'touches the closure' : !n.accepted ? spec?.approve && n.items.some(i => i.obligation === 'approve' && i.status === 'D') ? 'needs owner approval' : 'is not accepted' : 'has a remeasure due'}; merge it alone: owed merge ${id}`);
+  }
+  const queue = mergeQueue(s), order = ids.slice().sort((a, b) => queue.indexOf(a) - queue.indexOf(b));
+  for (const [i, a] of order.entries()) for (const b of order.slice(i + 1)) if (effectiveWritesOverlap(s, a, b)) throw new OwedError(`${BATCH_REFUSED}refused: writes of ${a} and ${b} overlap; merge them one at a time`);
+  return order;
+}
+/** MT2/MT3: per member, its merge facts against the previous batch commit and its check keys on the final tree. */
+async function batchFacts(cwd: string, s: State, chain: { id: string; prior: string; commit: string }[]): Promise<{ facts: CandidateFacts; state: StateFacts; keys: Record<string, string> }[]> {
+  const members = chain.map(c => c.id), final = chain.at(-1)!.commit, qn = batchQuarantine(s, members), out = [];
+  for (const [i, c] of chain.entries()) {
+    const spec = s.plan.nodes.find(x => x.id === c.id)!, q = quarantineNames(s.plan, id => !!s.nodes[id]?.merged || members.slice(0, i).includes(id), c.id);
+    const facts = await git.candidateFacts(cwd, s.plan, spec, c.prior, c.commit, s.nodes[c.id]!.slot!.attempt, q), keys: Record<string, string> = {};
+    for (const k of spec.checks) keys[`check:${k.id}`] = await git.trunkCheckKey(cwd, s.plan, k, final, qn);
+    out.push({ facts, state: i === chain.length - 1 ? await git.stateFacts(cwd, s.plan, c.commit, qn) : await git.stateFacts(cwd, s.plan, c.commit, q), keys });
+  }
+  return out;
+}
+/** MT3: errors of appending the member merge `drafts` in order after `current` (each judged on the state after the previous). */
+function batchGuard(latest: Awaited<ReturnType<typeof load>>, current: State, drafts: Draft[]): string[] {
+  let s = current, own = false;
+  for (const d of drafts) {
+    const errors = validateDraft(s, d);
+    if (errors.length) return errors.map(e => `${'node' in d ? d.node : '?'}: ${e}`);
+    const entry = { ...d, seq: s.seq + 1, ts: new Date().toISOString(), prev: s.head } as Entry;
+    entry.hash = entryHash(entry); s = own ? extendState(s, [entry]) : reduceFrom(s, [entry], latest.lookup); own = true;
+  }
+  return [];
+}
+/**
+ * MT: `owed merge A,B,...`: merge accepted, pairwise non-overlapping members as one merge train. M1 = merge(T, c1),
+ * Mi = merge(M(i-1), ci); a conflicting member drops out (it merges alone later). Every invariant and every member's
+ * node checks are measured once on Mn; on a pass one merge entry per member is appended and trunk advances once from T
+ * to Mn (one CAS). On a fail the observations (tagged `batch`, never `merging`) are recorded and the merge is refused;
+ * the members then merge one at a time and the same set is not batched again until trunk moves.
+ */
+export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSignal; lease?: boolean }): Promise<BatchMergeResult> {
+  owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
+  checkAbort(o.signal);
+  if (!measurementScope()) return leased(o, signal => mergeBatch({ ...o, signal }));
+  const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => {
+    let state = (await load(ledger)).state;
+    const ids = batchMembers(state, o.nodes);
+    { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
+    await attestTrunk({ cwd:o.cwd, signal:o.signal });
+    const refreshed = await load(ledger); for (const id of ids) nodeStable(state,refreshed,id);
+    state = refreshed.state;
+    if (batchFailed(state, ids)) throw new OwedError(`${BATCH_REFUSED}of ${ids.join(', ')} already failed on trunk ${state.trunk.commit.slice(0,12)}; merge them one at a time: owed merge ${ids[0]}`);
+    const chain: { id: string; prior: string; commit: string }[] = [], dropped: string[] = [];
+    for (const id of ids) {
+      const prior = chain.at(-1)?.commit ?? state.trunk.commit, built = await git.buildMerge(o.cwd,prior,state.nodes[id]!.candidate!.commit,`owed merge ${id} (batch)`);
+      if ('conflicts' in built) dropped.push(id); else chain.push({ id, prior, commit: built.commit });
+    }
+    if (chain.length < 2) throw new OwedError(`${BATCH_REFUSED}of ${ids.join(', ')}: ${chain.length ? `only ${chain[0]!.id} merges` : 'no member merges'} cleanly onto the batch (conflicts: ${dropped.join(', ')}); merge them one at a time: owed merge ${ids[0]}`);
+    const members = chain.map(c => c.id), final = chain.at(-1)!.commit, facts = await batchFacts(o.cwd,state,chain), batchState = facts.at(-1)!.state;
+    const keys = Object.fromEntries(members.map((id, i) => [id, facts[i]!.keys]));
+    const jobs = [...genesisJobs(state).map(job => ({ job, tag: false })), ...batchJobs(state,members,keys,batchState).map(job => ({ job, tag: true }))];
+    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, tag }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); if (!tag) return obs; const { remeasure_match: _match, ...tagged } = obs; return {...tagged,batch:members} as Draft; });
+    const observations = run.observations.filter((x): x is Draft => x !== undefined);
+    if (run.aborted) return abortWith(ledger,state,observations);
+    return ledger.withLock(async () => {
+      // MT3: CAS on the plan, the ledger trunk, every member's slot and candidate, and the trunk ref.
+      const latest = await load(ledger);
+      if (latest.state.planSha !== state.planSha) throw new OwedError('Plan, candidate or trunk changed; retry');
+      for (const id of members) nodeStable(state,latest,id);
+      { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
+      const current = prospective(latest,observations);
+      if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
+      const drafts: Draft[] = chain.map((c, i) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[i]!.facts, state:facts[i]!.state, batch:{ final, state:batchState, keys:facts[i]!.keys, members } }));
+      const reasons = batchGuard(latest,current,drafts);
+      if (reasons.length) {
+        if (observations.length) await ledger.append(observations);
+        const failed = observations.flatMap(d => d.kind === 'obs' && d.verdict === 'fail' ? [`${d.subject}/${d.obligation}: ${d.note ?? (d.failed?.length ? `failed tests: ${d.failed.join(', ')}` : 'failed')}`] : []);
+        throw new OwedError(`${BATCH_REFUSED}of ${members.join(', ')} refused on batch tree ${final.slice(0,12)}: ${[...failed, ...reasons].join('; ')}; the members merge one at a time next (owed merge ${members[0]})`);
+      }
+      await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,final);
+      const appended = await ledger.append([...observations,...drafts]);
+      return { nodes:members, commit:final, entries:appended.slice(observations.length), dropped };
+    },undefined,o.signal);
+  },'merge',o.signal);
 }
 /**
  * AT1: refusal lead when merge trees `commits` of `node` break an invariant trunk passes and trunk moved since the

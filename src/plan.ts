@@ -86,6 +86,16 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   return out;
 }
 
+/** MT1 (0.21): `drive.merge_batch` (integer 1..8) next to the other drive keys; kept out of the parsed plan unless set. */
+function parseDriveBatch(v: unknown, errors: string[]): DriveConfig {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || !('merge_batch' in v)) return parseDrive(v, errors);
+  const { merge_batch: n, ...rest } = v as Record<string, unknown>, out = parseDrive(rest, errors);
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 8) errors.push('drive.merge_batch: expected integer 1..8');
+  else out.merge_batch = n;
+  return out;
+}
+/** MT1: members of one batch merge (1 = batch merge off). */
+export const mergeBatchSize = (plan: Plan): number => plan.drive?.merge_batch ?? 1;
 /** FL4: staying driver reminder interval (minutes); no obligation key. */
 export const idleRewakeMin = (plan: Plan): number => plan.drive?.idle_rewake_min ?? 60;
 /** FL5: command/tool invariant spelling, canonicalized before a ledger write. */
@@ -457,7 +467,7 @@ export function parsePlan(text: string): Plan {
       else plan.limits[k] = value;
     }
   }
-  if (r.drive !== undefined) plan.drive = parseDrive(r.drive, errors);
+  if (r.drive !== undefined) plan.drive = parseDriveBatch(r.drive, errors);
   if (r.worktrees !== undefined) plan.worktrees = parseWorktrees(r.worktrees, errors);
   if (r.exec !== undefined) { const exec = parseExec(r.exec, errors); if (exec) plan.exec = exec; }
   if (r.allow !== undefined) plan.allow = parseAllow(r.allow, errors);
