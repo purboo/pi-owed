@@ -1,6 +1,7 @@
 // LE1–LE3: one machine lease around a measurement, never part of a check or invariant key.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { Dsa, dsaAvailable } from './dsa.ts';
+import { currentLockDeadline } from './lock-deadline.ts';
 import { OwedError } from './errors.ts';
 
 const scope = new AsyncLocalStorage<{ leased: boolean }>();
@@ -12,6 +13,29 @@ export function measurementScope(): boolean { return scope.getStore() !== undefi
 export function leaseEnvironment(): NodeJS.ProcessEnv { return machineLeased() ? { OWED_LEASED: '1' } : {}; }
 export function leaseText(r: { lease?: string }): string { return r.lease ? `\nlease: ${r.lease}` : ''; }
 
+/** AW #2090: bound only lease acquisition; checks retain their own execution timeout. */
+async function leaseBeforeDeadline<T>(signal: AbortSignal | undefined, run: (signal: AbortSignal | undefined, acquired: () => void) => Promise<T>): Promise<T> {
+  const deadline = currentLockDeadline();
+  if (deadline === undefined) return run(signal,() => {});
+  const ac = new AbortController();
+  let expired = false, timer: ReturnType<typeof setTimeout> | undefined;
+  const busy = () => new OwedError('timed out waiting for the machine lease within adopt wait budget; retry','busy');
+  const abort = () => ac.abort();
+  signal?.addEventListener('abort',abort,{once:true});
+  if (signal?.aborted) ac.abort();
+  const arm = () => {
+    const remaining = deadline-Date.now();
+    if (remaining <= 0) { expired=true;ac.abort();return; }
+    timer=setTimeout(arm,Math.min(remaining,2_147_483_647));
+  };
+  arm();
+  try {
+    const result = await run(ac.signal,() => {clearTimeout(timer);if (expired) throw busy();});
+    if (expired && !signal?.aborted) throw busy();
+    return result;
+  } catch (e) { if (expired && !signal?.aborted) throw busy();throw e; }
+  finally {clearTimeout(timer);signal?.removeEventListener('abort',abort);}
+}
 /** Waiting by default; the driver uses noWait and handles OwedError('busy') as a later-pass retry. */
 export async function withMachineLease<T>(o: LeaseOptions, measure: (signal?: AbortSignal) => Promise<T>): Promise<T> {
   if (o.signal?.aborted) throw new OwedError('aborted', 'aborted');
@@ -20,7 +44,10 @@ export async function withMachineLease<T>(o: LeaseOptions, measure: (signal?: Ab
     return scope.run({ leased: machineLeased() }, () => measure(o.signal));
   }
   try {
-    const r = await dsa.holdWhile('machine', signal => scope.run({ leased: true }, () => measure(signal)), { shared: true, cwd: o.cwd, noWait: o.noWait, signal: o.signal });
+    const r = await leaseBeforeDeadline(o.signal,(signal,acquired) => dsa.holdWhile('machine', signal => {
+      acquired();
+      return scope.run({ leased: true }, () => measure(signal));
+    }, { shared: true, cwd: o.cwd, noWait: o.noWait, signal }));
     if (r.outcome === 'busy') throw new OwedError(r.reason, 'busy');
     if (r.outcome === 'refused') throw new OwedError(`pi-durable-subagents hold refused: ${r.reason}`);
     return r.value;
