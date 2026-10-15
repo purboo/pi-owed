@@ -37,7 +37,7 @@ test('plan: exec block is parsed, empty fields are dropped, bad keys/types/names
     [{ env: { OWED: '0' } }, /exec\.env\.OWED: reserved/],
     [{ env: { N: 1 } }, /exec\.env\.N: expected string/],
     [{ wrap: [] }, /exec\.wrap: expected non-empty array/],
-    [{ wrap: 'heavy.sh' }, /exec\.wrap: expected non-empty array/],
+    [{ wrap: 'heavy.sh' }, /exec\.wrap: \{cmd\} is required/],
     [{ wrap: ['ok', 3] }, /exec\.wrap: expected non-empty strings/],
     [{ wrap: [''] }, /exec\.wrap: expected non-empty strings/],
   ] as const) assert.throws(() => withExec(exec), message, JSON.stringify(exec));

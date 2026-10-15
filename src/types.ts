@@ -66,7 +66,7 @@ export interface DriveConfig { max: number; repairs: number; writer: DriveAgent;
  * default, or `reuse`: stable measurement worktrees) are present only when set; they are not part of any key.
  * 0.11: `touch` (default reset) refreshes tracked mtimes in reused trees and is part of the exec key.
  */
-export interface ExecConfig { env?: Record<string, string>; wrap?: string[]; parallel?: number; trees?: 'fresh' | 'reuse'; touch?: 'reset' | 'always' | 'never' }
+export interface ExecConfig { env?: Record<string, string>; wrap?: string | string[]; wrap_grace_s?: number; parallel?: number; trees?: 'fresh' | 'reuse'; touch?: 'reset' | 'always' | 'never' }
 /**
  * One rule of the optional `allow:` block (SPEC §3.4, D21): owner pre-authorized parent downgrades and adoptions.
  * `nodes` = node id globs (default ["*"]); at least one permission is present.
