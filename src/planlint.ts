@@ -4,29 +4,30 @@ import { parse } from 'yaml';
 import { OwedError } from './errors.ts';
 import type { Plan } from './types.ts';
 
-type Word = { value: string; literal: boolean };
+type Word = { value: string; literal: boolean; reserved: boolean };
 /** PL1: read shell words, not shell expansions. Quoted data is never treated as a command. */
 function shellCommands(script: string): Word[][] {
-  const commands: Word[][] = []; let words: Word[] = [], value = '', literal = true, started = false;
-  let quote = '', here: string[] = [], wantHere = false, stripTabs = false;
+  const commands: Word[][] = []; let words: Word[] = [], value = '', literal = true, started = false, reserved = true;
+  let quote = '', here: string[] = [], wantHere = false, stripTabs = false, subshells = 0;
   const word = () => {
     if (!started) return;
-    words.push({ value, literal });
+    words.push({ value, literal, reserved });
     if (wantHere) { here.push((stripTabs ? '\t' : '') + value); wantHere = false; }
-    value = ''; literal = true; started = false;
+    value = ''; literal = true; started = false; reserved = true;
   };
   const command = () => { word(); if (words.length) commands.push(words); words = []; };
   for (let i = 0; i < script.length; i++) {
     const c = script[i]!;
     if (quote === "'") { if (c === "'") quote = ''; else value += c; continue; }
     if (c === '\\') {
+      reserved = false;
       const next = script[i + 1];
       if (next === '\n') { i++; continue; }
       if (next !== undefined && (!quote || /[$`"\\]/.test(next))) { value += next; started = true; i++; continue; }
       value += c; started = true; continue;
     }
     if (quote === '"') { if (c === '"') quote = ''; else { value += c; if (c === '$' || c === '`') literal = false; } continue; }
-    if (c === "'" || c === '"') { quote = c; started = true; continue; }
+    if (c === "'" || c === '"') { quote = c; started = true; reserved = false; continue; }
     if (c === '#' && !started) { while (i + 1 < script.length && script[i + 1] !== '\n') i++; continue; }
     if (c === '\n') {
       command();
@@ -41,7 +42,11 @@ function shellCommands(script: string): Word[][] {
       here = []; continue;
     }
     if (/\s/.test(c)) { word(); continue; }
-    if (';|&(){}'.includes(c)) { command(); continue; }
+    if (';|&'.includes(c)) { command(); continue; }
+    // Only an unambiguous leading parenthesis introduces a subshell here.
+    // Argument/expansion parentheses and brace characters never split commands.
+    if (c === '(' && !started && !words.length) { subshells++; continue; }
+    if (c === ')' && subshells > 0) { command(); subshells--; continue; }
     if (c === '<' && script[i + 1] === '<' && script[i + 2] !== '<') {
       word(); wantHere = true; stripTabs = script[i + 2] === '-'; i += stripTabs ? 2 : 1; continue;
     }
@@ -54,8 +59,10 @@ function nestedBash(script: string): string[] {
   const out: string[] = [];
   for (const words of shellCommands(script)) {
     let i = 0;
-    while (words[i] && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!.value) || ['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', 'env', 'command', 'exec', 'sudo'].includes(words[i]!.value))) i++;
-    if (!words[i]?.literal || basename(words[i]!.value) !== 'bash') continue;
+    while (words[i] && ((words[i]!.reserved && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]!.value)) ||
+      (words[i]!.reserved && ['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{', 'time'].includes(words[i]!.value)) ||
+      (words[i]!.literal && ['env', 'command', 'exec'].includes(words[i]!.value)))) i++;
+    if (!words[i]?.literal || !['bash', 'sh'].includes(basename(words[i]!.value))) continue;
     for (i++; i < words.length; i++) {
       const option = words[i]!;
       if (!option.literal || !option.value.startsWith('-')) break;
