@@ -8,7 +8,9 @@ import { Driver, DRIVE_PRINCIPAL } from '../src/drive-run.ts';
 import { decide } from '../src/drive.ts';
 import { Dsa } from '../src/dsa.ts';
 import { parsePlan } from '../src/plan.ts';
-import { entriesOf, reduce, runId, runLabels, sharedParked, sharedParkKey, validateDraft } from '../src/reducer.ts';
+import { entriesOf, reduce, runId, runLabels, sharedParked, sharedParkKey, sharedFailure, mergeBatchPlan, validateDraft } from '../src/reducer.ts';
+import { wakeReport } from '../src/drive-run.ts';
+import { sharedWaiting } from '../src/drive.ts';
 import { errorGroups } from '../src/exec.ts';
 import { renderStatus, renderReport } from '../src/views.ts';
 import type { Entry, ObsEntry, Draft } from '../src/types.ts';
@@ -25,14 +27,15 @@ class SealedDsa extends Dsa { override async inspect(rid: string) { return { vie
  * A repository whose invariant `x` replays a verdict schedule (one line per measurement, `pass` after the end) and
  * prints one TAP test `flaky lease renew`; `signature: false` omits the error text (no recorded signature).
  */
-async function fixture(o: { schedule: string[]; nodes: { id: string; file: string; brief?: string }[]; signature?: boolean; allow?: object[]; reads?: string[]; extra?: object[]; needles?: string[] }) {
+async function fixture(o: { schedule: string[]; nodes: { id: string; file: string; brief?: string; writes?: string[] }[]; broken?: string; repeat?: object; signature?: boolean; allow?: object[]; reads?: string[]; extra?: object[]; needles?: string[] }) {
   const r = await repo();
   await r.put('README', 'base'); await r.commit();
   const schedule = join(r.root, 'schedule'), counter = join(r.root, 'counter');
   await writeFile(join(r.root, 'pass.tap'), PASS); await writeFile(join(r.root, 'fail.tap'), FAIL(o.signature ?? true));
   await writeFile(schedule, o.schedule.join('\n') + '\n');
-  const run = `n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > '${counter}'; if [ "$(sed -n "\${n}p" '${schedule}')" = fail ]; then cat '${join(r.root, 'fail.tap')}'; exit 1; fi; cat '${join(r.root, 'pass.tap')}'`;
-  const plan = { version: 1, trunk: 'main', lease: false, closure: [], drive: { min_free_mb: 0 }, invariants: [{ id: 'x', run, min_tests: 1, reads: o.reads ?? ['src/**'], ...(o.needles ? { remeasure_on: o.needles } : {}) }, ...(o.extra ?? [])], nodes: o.nodes.map(n => ({ id: n.id, writes: [n.file], ...(n.brief ? { brief: n.brief } : {}) })), ...(o.allow ? { allow: o.allow } : {}) };
+  await writeFile(join(r.root, 'own.tap'), `not ok 1 - own regression\n  ---\n  error: 'broken by the candidate'\n  ...\n1..1\n# tests 1\n# pass 0\n# fail 1\n`);
+  const run = `${o.broken ? `if [ -f ${o.broken} ]; then cat '${join(r.root, 'own.tap')}'; exit 1; fi; ` : ''}n=$(cat '${counter}' 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > '${counter}'; if [ "$(sed -n "\${n}p" '${schedule}')" = fail ]; then cat '${join(r.root, 'fail.tap')}'; exit 1; fi; cat '${join(r.root, 'pass.tap')}'`;
+  const plan = { version: 1, trunk: 'main', lease: false, closure: [], drive: { min_free_mb: 0 }, invariants: [{ id: 'x', run, min_tests: 1, reads: o.reads ?? ['src/**'], ...(o.needles ? { remeasure_on: o.needles } : {}), ...(o.repeat ? { repeat: o.repeat } : {}) }, ...(o.extra ?? [])], nodes: o.nodes.map(n => ({ id: n.id, writes: n.writes ?? [n.file], ...(n.brief ? { brief: n.brief } : {}) })), ...(o.allow ? { allow: o.allow } : {}) };
   await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated' });
   const ledger = await Ledger.open(r.cwd);
   const state = async () => (await ops.readState({ cwd: r.cwd })).state;
@@ -41,6 +44,7 @@ async function fixture(o: { schedule: string[]; nodes: { id: string; file: strin
     await commitAt(d.worktree, { [n.file]: id });
     await ops.submit({ cwd: d.worktree, node: id, as: { role: 'writer', id: `${id}#1` } });
     assert.equal((await ops.attest({ cwd: r.cwd, node: id })).accepted, true);
+    return d;
   };
   const obs = async () => entriesOf(await state()).filter((e): e is ObsEntry => e.kind === 'obs' && e.obligation === 'inv:x');
   const driver = async (ids: string[]) => {
@@ -194,9 +198,21 @@ test('FS3(b): a trunk-key conflict from the merge guard\'s trunk refresh parks t
       const s = await r.state();
       for (const id of ['a', 'c']) assert.equal(sharedParked(s, id)[0]?.kind, 'trunk-red');
       assert.match(renderStatus(await ops.status({ cwd: r.cwd })), new RegExp(`waiting: trunk red \\(inv:x on trunk ${s.trunk.commit.slice(0, 12)}\\)`));
+      // Ruling #2458 (F1): one repository notice that wakes the next session, and one summary.needs trunk item.
+      const fail = trunk.find(e => e.verdict === 'fail')!, pass = trunk.findLast(e => e.verdict === 'pass')!;
+      const actions = decide(s, s.plan, new Map(), { max: 4, repairs: 2, project: 'p', root: r.cwd, applied: new Set(), rejected: new Map(), noticed: new Set(['a', 'c'].map(id => sharedParkKey(s, id))) });
+      const notices = actions.filter(x => x.do === 'notify' && x.scope === 'repo');
+      assert.equal(notices.length, 1, JSON.stringify(actions));
+      assert.ok(notices[0]!.do === 'notify');
+      assert.equal(notices[0]!.once, `trunk\0inv:x\0${NAME}\0${s.trunk.commit}`);
+      assert.equal(notices[0]!.text, `trunk red: inv:x ${NAME} fails on trunk ${s.trunk.commit.slice(0, 12)} (#${fail.seq}, pass #${pass.seq}: owner conflict); waiting: a, c. owed retries after trunk moves. To merge now: owed decide a,c --defer inv:x (or an allow defer rule); to fix: a node whose brief names the test.`);
+      assert.equal(wakeReport({ do: 'notify', outcome: 'done' }), true);
+      const needs = (await ops.status({ cwd: r.cwd })).summary!.needs.filter(x => x.node === 'trunk' && x.reason.startsWith('trunk red: inv:x'));
+      assert.equal(needs.length, 1); assert.equal(needs[0]!.command, '');
       const drv = await r.driver(['a', 'c']);
       await drv.passes(2);
       assert.deepEqual(await r.halts(), [], drv.lines.join('\n'));
+      assert.equal(drv.lines.filter(l => l.startsWith('trunk red: inv:x')).length, 1, drv.lines.join('\n'));
       // The trunk item of that key changes for a (owner defer): a merges; c stays parked, still without a halt.
       await ops.defer({ cwd: r.cwd, as: owner, channel: 'delegated', node: 'a', items: [{ id: 'x', key: s.trunk.invKeys.x! }], reason: 'accept the flaky trunk test for a' });
       await drv.passes(3);
@@ -207,6 +223,73 @@ test('FS3(b): a trunk-key conflict from the merge guard\'s trunk refresh parks t
       assert.equal(sharedParked(now, 'c')[0]?.kind, 'trunk-red');
     } finally { await r.cleanup(); }
   }
+});
+
+test('FS3(b) ruling #2458 (ii): an own failure on a reused merge-key observation with a trunk-key conflict halts, not parked', { timeout: 300_000 }, async () => {
+  const r = await fixture({ schedule: ['pass', 'fail', 'pass'], needles: ['renew failed under load'], broken: 'src/a', nodes: [{ id: 'a', file: 'src/a', writes: ['src/a', 'doc/a2'] }] });
+  try {
+    const plan = JSON.parse(r.plan); plan.invariants[0].reads = ['src/**', 'README'];
+    await ops.planSet({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated', note: 'widen reads' });
+    await ops.attestTrunk({ cwd: r.cwd });
+    const d = await r.accept('a');
+    const first = await refusal(ops.merge({ cwd: r.cwd, node: 'a', as: parent }));
+    assert.ok(!(first instanceof ops.SharedRefusal), first.message);
+    // A new candidate outside the invariant reads: the merge key (and its failing observation) is reused.
+    await commitAt(d.worktree, { 'doc/a2': 'resubmit' });
+    await ops.submit({ cwd: d.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    const s = await r.state();
+    assert.deepEqual(sharedParked(s, 'a'), []);
+    const drv = await r.driver(['a']);
+    await drv.passes(2);
+    const halts = await r.halts();
+    assert.equal(halts.length, 1, drv.lines.join('\n'));
+    assert.ok(halts[0]!.kind === 'halt'); assert.match(halts[0]!.reason, /invariant x new debt/);
+    assert.equal((await r.obs()).filter(e => e.merging === 'a').length, 1);
+  } finally { await r.cleanup(); }
+});
+
+test('FS3(b) ruling #2458 (iii): a never-attempted node changing the invariant reads is not trunk-red parked, batched normally and does not wait for a fix', { timeout: 300_000 }, async () => {
+  const r = await fixture({ schedule: ['pass', 'fail', 'pass'], needles: ['renew failed under load'], nodes: [{ id: 'c', file: 'src/c' }, { id: 'd', file: 'src/d' }, { id: 'f', file: 'doc/f', brief: `make ${NAME} load tolerant` }] });
+  try {
+    const plan = JSON.parse(r.plan); plan.invariants[0].reads = ['src/**', 'README'];
+    await ops.planSet({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated', note: 'widen reads' });
+    await ops.attestTrunk({ cwd: r.cwd });
+    for (const id of ['c', 'd', 'f']) await r.accept(id);
+    const s = await r.state();
+    assert.equal(sharedParked(s, 'f')[0]?.kind, 'trunk-red');
+    for (const id of ['c', 'd']) {
+      assert.deepEqual(sharedParked(s, id), []);
+      assert.equal(sharedWaiting(s, id, {}), false);
+    }
+    assert.doesNotMatch(renderStatus(await ops.status({ cwd: r.cwd })), /c: .*waiting: (trunk red|fix f)/);
+    const progress = (await ops.status({ cwd: r.cwd })).summary!.progress as { node?: string; id?: string; phase?: string }[];
+    assert.ok(!JSON.stringify(progress.filter(p => (p.node ?? p.id) === 'c')).includes('waiting'), JSON.stringify(progress));
+    assert.deepEqual(mergeBatchPlan(s, 3, ['c', 'd']), ['c', 'd']);
+    // The driver merges c and d without waiting for f; f (parked on the trunk key) merges only after they moved trunk.
+    const drv = await r.driver(['c', 'd', 'f']);
+    await drv.passes(4);
+    const merges = (await r.ledger.read()).flatMap(e => e.kind === 'merge' ? [e.node] : []);
+    assert.deepEqual(merges.slice(0, 2).sort(), ['c', 'd'], drv.lines.join('\n'));
+    assert.deepEqual(await r.halts(), [], drv.lines.join('\n'));
+  } finally { await r.cleanup(); }
+});
+
+test('FS2 ruling #2458 (iv): a repeat invariant gets no shared-only automatic remeasure', { timeout: 300_000 }, async () => {
+  const r = await fixture({ schedule: ['pass', 'pass', 'fail', 'fail', 'pass', 'pass'], repeat: { runs: 2, need: 2 }, nodes: [{ id: 'a', file: 'src/a' }, { id: 'b', file: 'src/b' }] });
+  try {
+    for (const id of ['a', 'b']) await r.accept(id);
+    await refusal(ops.merge({ cwd: r.cwd, node: 'b', as: parent }));
+    await ops.abandon({ cwd: r.cwd, node: 'b', reason: 'fixture', hold: true, as: owner, channel: 'delegated' } as Parameters<typeof ops.abandon>[0]);
+    await refusal(ops.merge({ cwd: r.cwd, node: 'a', as: parent }));
+    const mine = (await r.obs()).filter(e => e.merging === 'a');
+    assert.deepEqual(mine.map(e => [e.verdict, e.auto_remeasure]), [['fail', undefined]]);
+    assert.ok(sharedFailure(await r.state(), mine[0]!, 'a'), 'the failure itself is shared');
+    // Replay refuses a forged shared-only retry on a repeat invariant.
+    const forged = { ...mine[0]!, verdict: 'pass', failed: undefined, auto_remeasure: true } as Record<string, unknown>;
+    for (const k of ['seq', 'ts', 'prev', 'hash', 'signatures', 'note']) delete forged[k];
+    assert.ok(validateDraft(await r.state(), forged as unknown as Draft).some(e => /auto_remeasure requires/.test(e)));
+  } finally { await r.cleanup(); }
 });
 
 test('FS6: an allow defer rule lets owed defer a shared intermittent failure with a same-key pass; replay refuses forged executor defers', { timeout: 300_000 }, async () => {
@@ -232,7 +315,7 @@ test('FS6: an allow defer rule lets owed defer a shared intermittent failure wit
     const look = await lookup(), prefix = entries.filter(e => e.seq < defer.seq);
     const before = reduce(prefix, look);
     assert.deepEqual(validateDraft(before, { ...defer } as unknown as Draft), []);
-    for (const forged of [{ reason: 'trust me' }, { allowance: 7 }, { items: [{ id: 'x', key: 'f'.repeat(64) }] }, { channel: 'delegated' }]) {
+    for (const forged of [{ reason: 'trust me' }, { allowance: 7 }, { items: [{ id: 'x', key: 'f'.repeat(64) }] }, { channel: 'delegated' }, { node: 'b' }]) {
       assert.ok(validateDraft(before, { ...defer, ...forged } as unknown as Draft).some(e => /executor defer requires/.test(e)), JSON.stringify(forged));
       assert.throws(() => reduce([...prefix, { ...defer, ...forged } as Entry], look));
     }

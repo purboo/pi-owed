@@ -17,6 +17,19 @@ of those cargo observations carried `signatures`.
    names) counts as shared for FS1–FS5 only, and texts add `(same name; no error signature recorded)`. FS6 always
    requires matching signatures; a signature on one side only never matches.
 
+## Parent ruling 2 (#2458, on review block #2449)
+- F2: a trunk-red park (FS3(b)) requires `trunkKeyUnchanged(s, node, X)` (no changed path of the candidate matches
+  X's reads or the plan closure), never the absence of a merge-tree observation. `ops.parkedRefusal` additionally
+  requires, per refused invariant: trunk-red → reason `owner conflict` and the guard's merge key = trunk key = park
+  key; shared → the measured key = the guard's merge key. Everything else is a mixed refusal and halts as before.
+- F1: trunk-red parks get an FS4 notice (once-key `trunk\0<obligation>\0<sorted names>\0<trunk commit>`, text
+  `trunk red: <obligation> <names> fails on trunk <trunk12> (#F[, pass #P: owner conflict]); waiting: …`), which is
+  a driver notify (wakes the next session once per key) and one `summary.needs` trunk item.
+- FS2: no shared-only automatic remeasure for invariants with `repeat` (ops and replay); `remeasure_on` unchanged.
+- Tests added: (i) notice/wake/needs in the FS3(b) test, (ii) reused merge-key own failure + trunk-key ⊤ halts,
+  (iii) a node changing X's reads is neither trunk-red parked, excluded from batches nor kept waiting for a fix,
+  (iv) repeat gets no shared-only retry (and replay refuses a forged one), (v) FS6 forged `node` outside the rule.
+
 ## What changed
 - `src/reducer.ts` (FS block after `trunkRedText`): `sharedFailure` (definition + ruling), `sharedParked`,
   `sharedPersisted`/`sharedBoundText` (3-key bound), `sharedPhase`, `sharedParkKey` (level trigger),
@@ -51,8 +64,9 @@ of those cargo observations carried `signatures`.
 - FS2 is skipped when the trunk is already red with the same names (the latest earlier pure trunk observation on a
   different key failed with them): an IR2-inherited merge failure or a persistently red trunk gains nothing from a
   retry, and a pass would turn the inherited ✘ into a ⊤ that refuses the merge. Without this, IR1/IR2 tests broke.
-- FS3(b) covers the trunk-key automatic conflict (⊤) found by the merge guard's refresh; a trunk ✘ whose key equals
-  the merge key never refuses a merge today, so it needs no park.
+- FS3(b) covers the trunk-key automatic conflict (⊤) found by the merge guard's refresh, only when the node's merge
+  key provably equals the trunk key (ruling #2458); a trunk ✘ whose key equals the merge key never refuses a merge
+  today, so it needs no park.
 - Level trigger also includes this node's defers (an owner defer of the trunk key releases the node).
 - FS5 "accepted" fix = open slot, accepted, not halted; a parked node waits while that holds.
 - FS6 is applied by `owed merge` itself (driver and CLI), not only the driver.
