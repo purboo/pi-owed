@@ -404,7 +404,8 @@ async function automaticInvariantRemeasure(cwd: string, ledger: Ledger, snapshot
   if (entriesOf(latest).some(e => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === job.obligation && e.key === job.key && e.auto_remeasure)) return;
   const ro2 = needles.length > 0 && !!first.remeasure_match?.length && first.remeasure_match.every(n => needles.includes(n));
   // FS2: a shared failure gets the same single same-key retry by default, even without remeasure_on.
-  if (!ro2 && !sharedDraft(latest,first)) return;
+  // Ruling #2458: never for `repeat` invariants (pooling extra runs would loosen the K-of-N gate).
+  if (!ro2 && (job.spec?.repeat || !sharedDraft(latest,first))) return;
   checkAbort(signal);
   const retry = await runJob({cwd,ledger,plan:snapshot.plan,signal},job);
   const { remeasure_match: _match, ...plain } = retry as Extract<Draft,{kind:'obs'}>;
@@ -1355,7 +1356,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
         // FS1: the shared remedy is the first sentence; FS3: the bound names itself.
         const first = lead[0]?.startsWith(SHARED_LEAD) ? [...lead, ...automatic.lines] : [...automatic.lines, ...lead], bound = sharedBoundText(current,o.node);
         const text = [...first, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs), ...(reused ? [reused] : []), ...(bound ? [bound] : [])].join('; ');
-        const parks = !missed.length && g ? parkedRefusal(current,o.node,reasons) : [];
+        const parks = !missed.length && g ? parkedRefusal(current,o.node,reasons,g) : [];
         throw parks.length ? new SharedRefusal(text,parks) : new OwedError(text);
       }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(guarded,d);
@@ -1530,9 +1531,18 @@ export class SharedRefusal extends OwedError {
   constructor(message: string, parks: SharedPark[]) { super(message); this.parks = parks; }
 }
 /** FS3: the parks covering every refusal reason, or [] for a mixed refusal. */
-function parkedRefusal(s: State, node: string, reasons: readonly string[]): SharedPark[] {
-  const parks = sharedParked(s,node), ids = new Set(parks.map(p => p.obligation.slice(4)));
-  return reasons.length && reasons.every(r => { const m = /^invariant (\S+) (?:new debt|owner conflict)/.exec(r); return !!m && ids.has(m[1]!); }) ? parks : [];
+function parkedRefusal(s: State, node: string, reasons: readonly string[], g: MergeGuard): SharedPark[] {
+  const parks = sharedParked(s,node);
+  // Ruling #2458 (F2): trunk-red needs the guard's own merge key = trunk key and an owner conflict ('new debt' never);
+  // shared needs the measured key = the guard's merge key. Anything else is a mixed refusal and halts.
+  const covered = (r: string): boolean => {
+    const m = /^invariant (\S+) (new debt|owner conflict)/.exec(r);
+    if (!m) return false;
+    const id = m[1]!, key = g.invItems.find(i => i.obligation === `inv:${id}`)?.key, p = parks.find(x => x.obligation === `inv:${id}`);
+    if (!p || key === undefined) return false;
+    return p.kind === 'trunk-red' ? m[2] === 'owner conflict' && key === s.trunk.invKeys[id] && p.key === key : p.key === key;
+  };
+  return reasons.length && reasons.every(covered) ? parks : [];
 }
 /** FS6: executor defer drafts for every refused merge-key invariant an allow defer rule pre-authorizes. */
 function allowanceDefers(s: State, node: string, g: MergeGuard): Draft[] {
