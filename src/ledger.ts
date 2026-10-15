@@ -100,6 +100,8 @@ export class Ledger {
   private held = new AsyncLocalStorage<Set<string>>();
   private constructor(dir: string) { this.dir = dir; }
   static async open(cwd: string): Promise<Ledger> { const l = new Ledger(await ledgerDir(cwd)); l.repo = cwd; return l; }
+  /** DF1: whether the caller runs under this ledger's `lock` (locked reads see torn or in-flight tails). */
+  holdsLock(): boolean { return !!this.held.getStore()?.has('lock'); }
   async read(): Promise<Entry[]> {
     let text: string;
     try { text = await readFile(join(this.dir, 'ledger.jsonl'), 'utf8'); } catch (e) { if (isCode(e, 'ENOENT')) return []; throw e; }

@@ -14,7 +14,7 @@ import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
-import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, type SharedPark, ruleAnswers, decisionTailErrors } from './reducer.ts';
+import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
@@ -126,7 +126,11 @@ const planShas = (entries: Entry[]): string[] => [...new Set(entries.flatMap(e =
 async function load(ledger: Ledger, extra: string[] = []) {
   // Capture before the first await: verification may invalidate this load while the ledger is being read.
   const control = replayControl(ledger.dir), epoch = control.epoch;
-  const entries = await ledger.read(), known = new Set([...planShas(entries), ...extra]), plans = new Map<string, Plan>();
+  const read = await ledger.read();
+  // DF1: an unlocked reader treats an incomplete final decision group as a write in flight (like a torn final line):
+  // none of its members are visible. Locked loads, verify and the post-append check still refuse it.
+  const inFlight = ledger.holdsLock() ? undefined : decisionInFlight(read);
+  const entries = inFlight === undefined ? read : read.slice(0,inFlight), known = new Set([...planShas(entries), ...extra]), plans = new Map<string, Plan>();
   const lookup = (sha: string): Plan => {
     let p = plans.get(sha);
     if (p) return p;
