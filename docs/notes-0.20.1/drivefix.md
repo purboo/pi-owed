@@ -2,9 +2,9 @@
 
 ## Behavior
 
-Dispatch retries compare-and-swap refusals with fresh state in the same pass, including a changed plan. It retains the existing bound of three total attempts (the initial attempt plus two retries). Each failed attempt completes the existing worktree, branch, directory and setup-exclude rollback before retrying. A failed rollback remains an error; non-CAS refusals remain errors. An exhausted CAS refusal produces a quiet `retry next pass` report, never a Needs-you notification or halt. No acceptance gate changes.
+Dispatch retries compare-and-swap refusals with fresh state in the same pass, including a changed plan. Every attempt first checks current plan membership, hold and ready state (including unmerged dependencies), then writes overlap before computing slot paths or creating a worktree. A removed node is refused normally instead of dereferencing a missing spec. It retains the existing bound of three total attempts (the initial attempt plus two retries). Each failed attempt completes the existing worktree, branch, directory and setup-exclude rollback before retrying. A failed rollback remains an error; non-CAS refusals remain errors. An exhausted CAS refusal produces a quiet `retry next pass` report, never a Needs-you notification or halt. No acceptance gate changes.
 
-When driver measurements block a merge, ordinary and full status identify the blocking job and its start time, for example `merge waiting for driver-internal job (catalog merge, since 09:12); 2 merges ahead`. A running merge is selected as the blocker before other measurements. The count uses the existing 0.20 merge queue: unfinished transitive dependents descending, acceptance age, then id. It includes accepted predecessors even when one is currently merging and is recomputed on status reads rather than cached. Lease waits retain their existing reason and waiting-since text, with queue position added for accepted nodes.
+When driver measurements block a merge, ordinary and full status identify the blocking job and its start time, for example `merge waiting for driver-internal job (catalog merge, since 09:12); 2 merges ahead`. A running merge is selected as the blocker before other measurements. The count uses the existing 0.20 merge queue: unfinished transitive dependents descending, acceptance age, then id. It includes accepted predecessors even when one is currently merging and is recomputed on status reads rather than cached. Lease waits retain their existing reason and waiting-since text, with queue position added only for nodes currently in the merge queue. Nodes outside the queue omit `ahead` in JSON and omit queue-count text, even if the private waiting cache contains an obsolete value.
 
 ## Public fields, plan keys and CLI flags
 
@@ -16,7 +16,7 @@ Old ledgers replay unchanged. Old waiting caches remain readable without `job` a
 
 ## Checks
 
-New `test/drivefix.test.ts` covers a real plan change from a checkout hook, bounded exhausted CAS retries and rollback, non-CAS setup failure, and a gated running merge with critical-path ordering, current queue positions and CLI status output.
+New `test/drivefix.test.ts` covers a real plan change from a checkout hook, bounded exhausted CAS retries and rollback, non-CAS setup failure, and a gated running merge with critical-path ordering, current queue positions and CLI status output. Review regressions additionally exercise node removal, a valid abandon→hold sequence, a new unmerged dependency, and changed writes overlapping an open slot between the first dispatch read and commit. Each verifies a normal non-CAS refusal, no new dispatch entry, and rollback of the failed attempt's worktree and branch. A cache/status regression verifies that a node outside the queue has no `ahead` field or queue-count text.
 
 Changed existing tests:
 
@@ -26,12 +26,11 @@ Changed existing tests:
 
 Remote validation commands:
 
-- `node --test --test-reporter=tap test/drivefix.test.ts`: 4 passed (log `/tmp/owed-bench/logs/drivefix-1-091843.log`).
-- `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`: exit 0 on the final test tree (log `/tmp/owed-bench/logs/drivefix-1-093104.log`).
-- `node --test --test-reporter=tap test/drivefix.test.ts test/cas-retry.test.ts test/slotsetup.test.ts test/driver020.test.ts`: 45 passed (log `/tmp/owed-bench/logs/drivefix-1-093019.log`).
-- Base red check on `31a764d5a4d0`: 3 failed, 1 passed, assertion failures (log `/tmp/owed-bench/logs/drivefix-1-red-091915.log`).
-- Initial full suite: 1108 passed, 2 failed due to the superseded plan-change refusal expectations in `cas-retry.test.ts` and `slotsetup.test.ts` (log `/tmp/owed-bench/logs/drivefix-1-091931.log`). Those expectations were updated as described above and passed in the 45-test regression run.
-- Final full suite, `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`: exit 0, 1110 passed, 0 failed/cancelled/skipped (log `/tmp/owed-bench/logs/drivefix-1-093126.log`, 598496 ms).
+- `node --test --test-reporter=tap test/drivefix.test.ts`: 9 passed (log `/tmp/owed-bench/logs/drivefix-1-100030.log`).
+- `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`: exit 0 (log `/tmp/owed-bench/logs/drivefix-1-100051.log`).
+- Base red check on `31a764d5a4d0`: 8 failed, 1 passed (log `/tmp/owed-bench/logs/drivefix-1-red-100121.log`).
+- Additional red check on the previously submitted `3436dfd5ea38`: 2 failed, 7 passed, reproducing the removed-node TypeError and obsolete `ahead` field (log `/tmp/owed-bench/logs/drivefix-1-red-100139.log`).
+- Full suite, `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`: exit 0, 1115 passed, 0 failed/cancelled/skipped (log `/tmp/owed-bench/logs/drivefix-1-100159.log`, 608260 ms).
 
 ## Deviations and known limits
 

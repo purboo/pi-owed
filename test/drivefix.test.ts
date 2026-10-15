@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -8,7 +8,8 @@ import * as ops from '../src/ops.ts';
 import { Driver, wakeReport } from '../src/drive-run.ts';
 import { Dsa } from '../src/dsa.ts';
 import { writerLaunch } from '../src/drive.ts';
-import { projectId } from '../src/reducer.ts';
+import { validateDraft, projectId } from '../src/reducer.ts';
+import { Ledger } from '../src/ledger.ts';
 import { git } from '../src/git.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
@@ -33,10 +34,14 @@ async function hook(f: Awaited<ReturnType<typeof fixture>>, body: string) {
   await writeFile(path, `#!/bin/sh\nunset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX\ncd '${f.cwd}'\n${body.replaceAll('@OWED@', `'${process.execPath}' '${bin}'`)}\nexit 0\n`);
   await chmod(path, 0o755);
 }
-async function accepted(f: Awaited<ReturnType<typeof fixture>>, id: string) {
+async function runningSlot(f: Awaited<ReturnType<typeof fixture>>, id: string) {
   const slot = await ops.dispatch({ cwd: f.cwd, as: parent, node: id });
   const state = (await ops.readState(f)).state, launch = writerLaunch(state, id, projectId(state));
   await ops.launch({ cwd: f.cwd, as: parent, node: id, attempt: 1, role: 'writer', rid: launch.rid, spec: launch.spec, labels: launch.labels, rulings: 0 });
+  return slot;
+}
+async function accepted(f: Awaited<ReturnType<typeof fixture>>, id: string) {
+  const slot = await runningSlot(f, id);
   await commitAt(slot.worktree, { [`${id}.txt`]: id });
   await ops.submit({ cwd: slot.worktree, node: id, as: { role: 'writer', id: `${id}#1` } });
   await ops.attest({ cwd: f.cwd, node: id });
@@ -87,6 +92,77 @@ test('DQ1: non-CAS setup failures remain errors and are never retried', { timeou
     assert.equal(wakeReport(dispatch!), true);
     assert.equal((await readFile(mark, 'utf8')).trim(), 'attempt');
     assert.ok(!(await ops.readState(f)).entries.some(e => e.kind === 'dispatch'));
+  } finally { await f.done(); }
+});
+
+// Interleave real owner/parent acts at the commit lock after checkout, never bypassing the real lock.
+function onDispatchCommit(t: TestContext, worktree: string, action: () => Promise<void>) {
+  const lock = Ledger.prototype.withLock;
+  let inside = false, fired = false;
+  t.mock.method(Ledger.prototype, 'withLock', async function(this: Ledger, ...args: Parameters<Ledger['withLock']>) {
+    if (!inside && !fired && args[1] === undefined && existsSync(worktree)) {
+      inside = fired = true;
+      try { await action(); } finally { inside = false; }
+    }
+    return lock.apply(this, args);
+  });
+}
+for (const cause of ['removed', 'held', 'dependency', 'overlap'] as const) {
+  test(`DQ1 review: fresh ${cause} state refuses the retried dispatch cleanly`, { timeout: 120_000 }, async t => {
+    const f = await fixture([node('a'), node('b')]);
+    try {
+      await runningSlot(f, 'b');
+      let abandon: Awaited<ReturnType<typeof ops.abandon>> | undefined;
+      if (cause === 'held') {
+        await ops.dispatch({ cwd: f.cwd, as: parent, node: 'a' });
+        abandon = await ops.abandon({ cwd: f.cwd, as: parent, node: 'a', reason: 'pause before retry race' });
+      }
+      const before = await ops.readState(f), attempt = (before.state.nodes.a!.slot?.attempt ?? 0) + 1;
+      onDispatchCommit(t, join(f.cwd, '.owed/wt', `a-${attempt}`), async () => {
+        if (abandon) {
+          const ledger = await Ledger.open(f.cwd);
+          await ledger.withLock(async () => {
+            const draft = { kind: 'hold', by: 'parent:test', node: 'a', abandon: abandon!.seq } as const;
+            assert.deepEqual(validateDraft((await ops.readState(f)).state, draft), []);
+            await ledger.append([draft]);
+          });
+        }
+        const a = { ...node('a'), title: 'concurrent plan', ...(cause === 'dependency' ? { deps: ['b'] } : {}), ...(cause === 'overlap' ? { writes: ['b.txt'] } : {}) };
+        await ops.planSet({ cwd: f.cwd, as: owner, channel: 'delegated', note: `exercise ${cause} dispatch race`, plan: JSON.stringify({ ...f.plan, nodes: cause === 'removed' ? [node('b')] : [a, node('b')] }) });
+      });
+      const pass = await f.driver.pass(), dispatch = pass.actions.find(a => a.do === 'dispatch' && a.node === 'a');
+      assert.equal(dispatch?.outcome, 'error', JSON.stringify(pass.actions));
+      const reasons = { removed: /does not exist in the current plan/, held: /held by abandon/, dependency: /requires a ready node/, overlap: /writes of a overlap the open slot of b/ };
+      assert.match(dispatch!.detail!, reasons[cause]);
+      assert.doesNotMatch(dispatch!.detail!, /retry next pass|TypeError/);
+      const after = await ops.readState(f);
+      assert.deepEqual(after.entries.filter(e => e.kind === 'dispatch'), before.entries.filter(e => e.kind === 'dispatch'), 'the failed attempt writes no dispatch entry');
+      assert.ok(!after.entries.some(e => e.kind === 'halt' && e.node === 'a'));
+      assert.equal(existsSync(join(f.cwd, '.owed/wt', `a-${attempt}`)), false);
+      assert.equal((await git(f.cwd, ['show-ref', '--verify', '--quiet', `refs/heads/owed/a/${attempt}`], { allowFail: true })).code, 1);
+      assert.equal((await ops.verify(f)).ok, true, 'all interleaved acts obey ledger guards');
+    } finally { t.mock.restoreAll(); await f.done(); }
+  });
+}
+
+test('DQ2 review: a waiting node outside mergeQueue has no ahead field or queue-count text', { timeout: 120_000 }, async () => {
+  const f = await fixture();
+  try {
+    await accepted(f, 'a');
+    const ledger = await Ledger.open(f.cwd), dir = join(ledger.dir, 'drive');
+    await (await import('node:fs/promises')).mkdir(dir, { recursive: true });
+    await ops.planSet({ cwd: f.cwd, as: owner, channel: 'delegated', note: 'remove accepted candidate from the queue', plan: JSON.stringify({ ...f.plan, nodes: [] }) });
+    const n = (await ops.readState(f)).state.nodes.a!;
+    await writeFile(join(dir, 'waiting.json'), JSON.stringify({ a: { attempt: n.slot!.attempt, candidate: n.candidate?.seq, reason: 'machine lease busy', since: new Date().toISOString(), ahead: -1 } }));
+    const out = await cli(f.cwd, ['status', '--json']); assert.equal(out.code, 0, out.stderr);
+    const view = JSON.parse(out.stdout);
+    assert.ok(!view.mergeQueue.includes('a'));
+    assert.ok(view.mergeWaiting.a, 'the current attempt-scoped wait remains available');
+    assert.equal(Object.hasOwn(view.mergeWaiting.a, 'ahead'), false);
+    for (const args of [['status'], ['status', '--full']]) {
+      const text = await cli(f.cwd, args); assert.equal(text.code, 0, text.stderr);
+      assert.doesNotMatch(text.stdout, /; -?\d+ merges? ahead/);
+    }
   } finally { await f.done(); }
 });
 
