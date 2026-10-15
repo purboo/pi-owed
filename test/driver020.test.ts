@@ -130,7 +130,7 @@ test('DR1: accepted node preempts advisory sweep, and no new sweep starts while 
   } finally { await writeFile(gate,''); await f.done(); }
 });
 
-test('DR3: CLI stores actual model, why warns on same model and launch selection mismatch; unknown is explicit', { timeout:120_000 }, async () => {
+test('DR3: CLI stores actual model, why warns on same model and unknown pool membership is explicit', { timeout:120_000 }, async () => {
   const f=await fixture([node('a',[],{review:{count:1,min_rank:1}})]);
   try {
     const {slot,commit}=await f.candidate('a'); await f.launch('a','reviewer','review-selected');
@@ -139,8 +139,9 @@ test('DR3: CLI stores actual model, why warns on same model and launch selection
     const why=await cli(f.cwd,['why','a']); assert.equal(why.code,0,why.stderr);
     assert.match(why.stdout,/writer actual · reviewer actual/);
     assert.match(why.stdout,/reviewer used the writer's model/);
-    assert.match(why.stdout,/model used actual differs from the one selected selected/);
-    assert.match(why.stdout,/model used actual differs from the one selected review-selected/);
+    assert.match(why.stdout,/selected selected \(pool membership unknown\)/);
+    assert.match(why.stdout,/selected review-selected \(pool membership unknown\)/);
+    assert.doesNotMatch(why.stdout,/differs from/);
     await cli(slot.worktree,['submit','a']);
     assert.match((await cli(f.cwd,['why','a'])).stdout,/writer model unknown/);
     const bad=await cli(slot.worktree,['submit','a','--model','']); assert.notEqual(bad.code,0);
