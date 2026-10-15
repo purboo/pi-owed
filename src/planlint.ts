@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import { parse } from 'yaml';
 import { OwedError } from './errors.ts';
 import type { Plan } from './types.ts';
+import { expandWrap } from './exec-wrap.ts';
 
 type Word = { value: string; literal: boolean; reserved: boolean; assignment: boolean };
 /** PL1: read shell words, not shell expansions. Quoted data is never treated as a command. */
@@ -79,8 +80,10 @@ function nestedBash(script: string): string[] {
 /** Collect expanded runs by stable node/check identity. Diagnostics also work before SG's parser lands. */
 function planRuns(plan: Plan, text?: string): Map<string, string> {
   const runs = new Map<string, string>();
+  if (typeof plan.exec?.wrap === 'string') runs.set('plan/exec.wrap', expandWrap(plan.exec.wrap, '/owed tree', 30, 'true'));
   for (const node of plan.nodes) for (const check of node.checks) runs.set(`${node.id}/${check.id}`, check.run);
   for (const inv of plan.invariants) runs.set(`inv:${inv.id}/run`, inv.run);
+  if (plan.sweep) runs.set('plan/sweep', plan.sweep.run);
   if (plan.setup !== undefined) runs.set('plan/setup', plan.setup);
   if (typeof plan.slot_setup === 'string') runs.set('plan/slot_setup', plan.slot_setup);
   // on_timeout belongs to SG; use the source mapping as well as parsed specs so lint does not drop it.
