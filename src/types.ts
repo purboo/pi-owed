@@ -27,7 +27,7 @@ export interface CheckSpec {
 export interface QuarantineEntry { test: string; fix: string; note?: string }
 /** KR: exact failed-test names, owned by a fix node until it merges; never part of an item key. */
 export interface KnownRed { test: string; fix: string }
-export interface InvariantSpec extends CheckSpec { known_red?: KnownRed[] }
+export interface InvariantSpec extends CheckSpec { known_red?: KnownRed[]; /** RO1: one same-key retry when every failure matches an error substring. */ remeasure_on?: string[] }
 export interface NodeSpec {
   id: string;
   title?: string;
@@ -171,6 +171,10 @@ export interface ObsEntry extends Base {
   waits_on?: string[];
   /** MS4 (0.20): failing test names excused by active quarantine entries (they neither passed nor failed). */
   quarantined?: string[];
+  /** RO3: this observation consumed the one automatic invariant remeasure on its key. */
+  auto_remeasure?: true;
+  /** RO: unique configured literals matching every failure, for bounded replay provenance. */
+  remeasure_match?: string[];
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }

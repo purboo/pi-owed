@@ -384,6 +384,10 @@ export function parsePlan(text: string): Plan {
         if (out.red || out.mutants !== undefined) errors.push(`${p}.repeat: not allowed on red or mutants checks`);
         out.repeat = { runs, need };
       }
+      if (c.remeasure_on !== undefined) {
+        if (label !== 'invariants') errors.push(`${p}.remeasure_on: only supported on invariants; move it to an invariant`);
+        out.remeasure_on = strings(c.remeasure_on, `${p}.remeasure_on`);
+      }
       if (c.known_red !== undefined) {
         if (label !== 'invariants') errors.push(`${p}.known_red: only supported on invariants`);
         const entries = arr(c.known_red, `${p}.known_red`), names = new Set<string>();
