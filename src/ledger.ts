@@ -100,12 +100,12 @@ export class Ledger {
   private held = new AsyncLocalStorage<Set<string>>();
   private constructor(dir: string) { this.dir = dir; }
   static async open(cwd: string): Promise<Ledger> { const l = new Ledger(await ledgerDir(cwd)); l.repo = cwd; return l; }
-  /** DF1: whether the caller runs under this ledger's `lock` (locked reads see torn or in-flight tails). */
-  holdsLock(): boolean { return !!this.held.getStore()?.has('lock'); }
+  /** DF1/DF5: whether this async context holds this ledger directory's `lock` through any instance (locked reads see torn or in-flight tails). */
+  holdsLock(): boolean { return [...(ledgerLocks.getStore() ?? [])].some(t => t.active && t.dir === this.dir); }
   async read(): Promise<Entry[]> {
     let text: string;
     try { text = await readFile(join(this.dir, 'ledger.jsonl'), 'utf8'); } catch (e) { if (isCode(e, 'ENOENT')) return []; throw e; }
-    if (!this.held.getStore()?.has('lock')) text = dropTornTail(text);
+    if (!this.holdsLock()) text = dropTornTail(text);
     const lines = text.split('\n'); if (lines.at(-1) === '') lines.pop();
     const entries = lines.map((line, seq) => { try { return JSON.parse(line) as Entry; } catch { throw new OwedError(`ledger seq ${seq}: invalid JSON`, 'internal'); } });
     const result = verifyChain(entries);
@@ -176,7 +176,7 @@ export class Ledger {
     const owned = new Set(this.held.getStore()); owned.add(lockName);
     const activities = new Map(lockActivities.getStore());
     if (opts.activity) activities.set(join(path,'owner.json'),opts.activity);
-    const ledgerOwned = new Set(ledgerLocks.getStore()), ledgerToken = { active: lockName === 'lock' };
+    const ledgerOwned = new Set(ledgerLocks.getStore()), ledgerToken = { active: lockName === 'lock', dir: this.dir };
     if (ledgerToken.active) ledgerOwned.add(ledgerToken);
     try {
       return await ledgerLocks.run(ledgerOwned, () => lockActivities.run(activities,() => this.held.run(owned, async () => { if (lockName === 'lock' && Ledger.onLock) await Ledger.onLock(this); return fn(); })));
