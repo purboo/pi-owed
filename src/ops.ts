@@ -13,7 +13,7 @@ import { rebasePending, rebasePendingText } from './rebase-view.ts';
 import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
-import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
+import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
@@ -1105,7 +1105,7 @@ async function remeasureMerge(o: MeasurementContext & { node: string; all?: bool
   const { state } = await load(ledger), n = candidate(state,o.node);
   { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
   const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
-  if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
+  if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again; conflicts with trunk: ${built.conflicts.map(oneLine).join(', ')}`);
   const m = await mergeFacts(o.cwd,state,o.node,built.commit), jobs = remeasureJobs(state,o.node,m,o.all);
   const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async job => ({ ...await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job), merging:o.node }) as Draft);
   const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs,run.observations.filter((x): x is Draft => x !== undefined),o.signal);
@@ -1138,11 +1138,20 @@ export const attestBusyText = (node: string, owner: LockOwner): string => `attes
  * either refuses at append time when the open candidate differs. `from`: further working directories of the calling
  * process for the writer-worktree rail (G2.1; o.cwd and process.cwd() are always checked).
  */
-export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<Entry> {
+export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<Entry & { warnings?: string[] }> {
   const given = candidateArg(o.named), ledger = await Ledger.open(o.cwd);
   const modelState = (await readState(o)).state;
   const measuredModel = await recordedModel(o.cwd,modelState,o.node,by(o),o.model);
-  return mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString()),...(model !== undefined ? { model } : {}),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
+  let warning: string | undefined;
+  const entry = await mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); const ack = o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString());
+    const missing = applicableRules(s,o.node).filter(r => r.seq > (ack ?? -1));
+    if (missing.length) {
+      const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+      const top = Math.max(...applicableRules(s,o.node).map(r => r.seq));
+      warning = `Warning: review recorded without acknowledging applicable rulings ${missing.map(r => `#${r.seq}`).join(', ')}; re-record: owed review ${o.node} --${o.verdict} --rank ${o.rank} --as ${quote(by(o))} --candidate ${n.candidate!.commit} --obligation ${obligation} --note ${quote(o.note)}${o.needs ? ' --needs-parent' : ''}${model ? ` --model ${quote(model)}` : ''} --ack-rulings ${top}`;
+    }
+    return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:ack,...(model !== undefined ? { model } : {}),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
+  return { ...entry, ...(warning ? { warnings: [warning] } : {}) };
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<Entry> {
@@ -1256,7 +1265,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     const refreshed = await load(ledger); nodeStable(state,refreshed,o.node);
     snapshot = refreshed; state = refreshed.state;
     const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
-    if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
+    if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again; conflicts with trunk: ${built.conflicts.map(oneLine).join(', ')}`);
     const m = await mergeFacts(o.cwd,state,o.node,built.commit);
     // Genesis jobs are not about this merge; merge-result jobs record the node being merged (decoy attribution).
     // M1: up to exec.parallel jobs at once, observations in job order. An aborted run (D16) is not measured, no further
@@ -1626,6 +1635,7 @@ export async function status(o: Context): Promise<StatusView> {
   const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = inited(reduceFrom(loaded.state,[],loaded.lookup)), entries = loaded.entries;
   await applyReports(ledger,state);
   const view = await summaryStatusView(o.cwd,ledger.dir,state,entries,Date.now());
+  view.conflicts = await candidateConflicts(o.cwd,state);
   const trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
   if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
   return {...view,...(trunkWorktree ? {trunkWorktree} : {})};
@@ -1705,6 +1715,17 @@ async function hintedMergeChecks(cwd: string, s: State, id: string, existing: It
   }
   return out;
 }
+/** UX3: only open candidates participate; diagnostics never discharge an obligation. */
+async function candidateConflicts(cwd: string, state: State): Promise<NonNullable<StatusView['conflicts']>> {
+  const candidates = Object.entries(state.nodes).filter(([, n]) => n.slot?.open && n.candidate && !n.merged);
+  const conflicts: NonNullable<StatusView['conflicts']> = {};
+  for (const [id, n] of candidates) {
+    const row: Record<string, string[] | null> = { trunk: await git.conflictPaths(cwd,state.trunk.commit,n.candidate!.commit) ?? null };
+    for (const [other, peer] of candidates) if (other !== id) row[other] = await git.conflictPaths(cwd,n.candidate!.commit,peer.candidate!.commit) ?? null;
+    conflicts[id] = row;
+  }
+  return conflicts;
+}
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
   if (o.node === 'trunk' && !state.nodes.trunk) {
@@ -1719,6 +1740,7 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   node(view,o.node);
   const mergeChecks = await currentTrunkRedChecks(o.cwd,view,o.node);
   const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks));
+  card.conflicts = (await candidateConflicts(o.cwd,view))[o.node];
   const pending = await rebasePending(view, o.node);
   if (pending) card.rebasePending = pending;
   await applyModels(ledger,view,entries,o.node,card);

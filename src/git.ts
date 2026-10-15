@@ -1,6 +1,6 @@
 import { writesKeySyntax } from './writes.ts';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat, lutimes } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, readFile, link, readdir, stat, lstat, lutimes, rename } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { constants as bufferConstants } from 'node:buffer';
 import { StringDecoder } from 'node:string_decoder';
@@ -210,11 +210,32 @@ export async function stateFacts(cwd: string, plan: Plan, commit: string, q?: Qu
   for (const c of plan.invariants) invKeys[c.id] = await checkKey(cwd, plan, c, commit, closure, 'inv', q?.(c));
   return { commit, tree: await tree(cwd, commit), invKeys };
 }
+/** UX3: immutable commit-pair diagnostics; never acceptance evidence. */
+export async function conflictPaths(cwd: string, left: string, right: string): Promise<string[] | undefined> {
+  try {
+    const pair = [await revParse(cwd, left), await revParse(cwd, right)].sort();
+    const dir = join(await commonDir(cwd), 'owed', 'cache');
+    const file = join(dir, `conflicts-${pair.join('-')}.json`);
+    try {
+      const cached = JSON.parse(await readFile(file, 'utf8'));
+      if (cached.version === 1 && cached.pair?.join(':') === pair.join(':') && Array.isArray(cached.paths) && cached.paths.every((p: unknown) => typeof p === 'string')) return cached.paths;
+    } catch { /* missing or corrupt cache: probe again */ }
+    const r = await git(cwd, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', ...pair], { allowFail: true });
+    const fields = r.stdout.split('\0').filter(Boolean);
+    if (![0, 1].includes(r.code) || !/^[0-9a-f]{40,64}$/.test(fields[0] ?? '')) return undefined;
+    const paths = r.code === 0 ? [] : [...new Set(fields.slice(1))].sort();
+    const temp = `${file}.${randomBytes(8).toString('hex')}.tmp`;
+    try { await mkdir(dir, { recursive: true }); await writeFile(temp, JSON.stringify({ version: 1, pair, paths })); await rename(temp, file); }
+    catch { /* read-only cache does not suppress diagnostics */ }
+    finally { await rm(temp, { force: true }).catch(() => undefined); }
+    return paths;
+  } catch { return undefined; }
+}
 export async function buildMerge(cwd: string, prior: string, cand: string, message: string): Promise<{ commit: string; tree: string } | { conflicts: string[] }> {
-  const r = await git(cwd, ['merge-tree', '--write-tree', prior, cand], { allowFail: true });
-  if (r.code === 1) return { conflicts: r.stdout.trim().split('\n').slice(1).filter(Boolean) };
+  const r = await git(cwd, ['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', prior, cand], { allowFail: true });
+  if (r.code === 1) return { conflicts: [...new Set(r.stdout.split('\0').slice(1).filter(Boolean))].sort() };
   if (r.code) throw new OwedError(r.stderr, 'internal');
-  const tree = r.stdout.trim().split('\n')[0]!;
+  const tree = r.stdout.split('\0')[0]!;
   const env: Record<string,string> = {};
   for (const role of ['AUTHOR', 'COMMITTER']) { env[`GIT_${role}_NAME`] = process.env[`GIT_${role}_NAME`] ?? 'owed'; env[`GIT_${role}_EMAIL`] = process.env[`GIT_${role}_EMAIL`] ?? 'owed@localhost'; }
   const commit = (await git(cwd, ['commit-tree', tree, '-p', prior, '-p', cand], { input: message, env })).stdout.trim();
