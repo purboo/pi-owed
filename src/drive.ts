@@ -322,6 +322,20 @@ const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntr
   const d = deliveredRulings(s, node, ar, writer, refused);
   return rulingsInScope(s, node).filter(r => r.seq > d && deliversRule(r,writer.rid));
 };
+/** LO-W4: the rulings the slot writer may still need, for why's manual forwarding section. */
+export function rulingToForward(s: State, node: string): string | undefined {
+  const n = s.nodes[node], slot = n?.slot;
+  if (!n || !slot) return undefined;
+  const ar = n.runs.find(r => r.attempt === slot.attempt), writer = ar?.launches.find(l => l.role === 'writer');
+  let rules: Rule[];
+  if (ar && writer) rules = undelivered(s, node, ar, writer);
+  else {
+    const submitted = entriesOf(s).findLast(e => e.kind === 'submit' && e.node === node && e.attempt === slot.attempt && e.by === slot.writer);
+    const since = Math.max(slot.rulings_seen, submitted?.seq ?? -1);
+    rules = rulingsInScope(s, node).filter(r => r.seq > since);
+  }
+  return rules.length ? rulingMessage(node, 'writer', rules) : undefined;
+}
 /**
  * K5.2: a writer follow-up (`submit`, `rebase`) with the undelivered in-scope rulings first; `rulings` (their highest
  * seq) only when it carries at least one, so a follow-up without rulings stays readable by 0.6.x.
