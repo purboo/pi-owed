@@ -137,7 +137,7 @@ export interface ExecutionResult { completed: boolean; countOK: boolean }
 export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[]; execution?: ExecutionResult }
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel; /** DC2: first entry seq of one atomic decision. */ decision?: number }
-export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; writes_syntax?: 2; state: StateFacts }
+export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; writes_syntax?: 2; state: StateFacts; /** SF2: source file of the initial plan, for start without --plan. */ path?: string }
 /** IR1: current-plan facts on the ledger trunk; refresh changes invariant keys, never the trunk commit/seq. */
 export interface RefreshEntry extends Base { kind: 'refresh'; commit: string; state: StateFacts }
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */

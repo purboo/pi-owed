@@ -132,6 +132,27 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
   const idle = (): boolean => { try { return !stopped && !running && (typeof context?.isIdle !== 'function' || context.isIdle()); } catch { return !stopped && !running; } };
   const session = rpc.register(pi, idle);
   const notices = new Set<string>();
+  const registered = new Map<string, ToolDefinition>();
+  /**
+   * SF6: deferred owed tools are reachable only through a host tool_search that declares reachesTools; activate it as
+   * the host's MCP extension does (ensureDiscoveryActive). Without exposure support or such an active tool_search, the
+   * deferred tools are registered again as direct (which activates them). Nothing is ever removed from the active set.
+   */
+  const ensureReachable = (): void => {
+    const deferred = [...registered.values()].filter(t => t.exposure === 'deferred');
+    if (!deferred.length) return;
+    let reachable = false;
+    try {
+      const tools = pi.getAllTools();
+      if (tools.some(t => typeof t.exposure === 'string') && tools.some(t => t.name === 'tool_search' && (t as { reachesTools?: unknown }).reachesTools)) {
+        const active = pi.getActiveTools();
+        if (!active.includes('tool_search')) pi.setActiveTools([...active, 'tool_search']);
+        reachable = pi.getActiveTools().includes('tool_search');
+      }
+    } catch { reachable = false; }
+    if (reachable) return;
+    for (const t of deferred) { const direct: ToolDefinition = { ...t, exposure: 'direct' }; registered.set(t.name, direct); pi.registerTool(direct); }
+  };
   const plain = (ctx: ExtensionContext): Context => ({ cwd: ctx.cwd, hasUI: ctx.hasUI, idle: idle() });
   const event = async (name: string, ctx: ExtensionContext) => rpc.call('event', [session, name, plain(ctx)], ctx);
   const timer = setInterval(() => {
@@ -141,7 +162,7 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
   return {
     ...pi,
     registerTool(t: ToolDefinition) {
-      pi.registerTool({ ...t, async execute(id, p, signal, _update, ctx) {
+      const local: ToolDefinition = { ...t, async execute(id, p, signal, _update, ctx) {
         context = ctx;
         try {
           const r = await rpc.call('tool', [session, t.name, id, p, plain(ctx)], ctx, signal);
@@ -154,7 +175,8 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
           const error = e as OwedError;
           return versionNotice({ content: [{ type: 'text' as const, text: `Refused: ${error.message}` }], details: { code: error.code, reason: error.message }, isError: true }, {seen:notices});
         }
-      } });
+      } };
+      registered.set(t.name, local); pi.registerTool(local);
     },
     registerCommand(name, command) {
       pi.registerCommand(name, { ...command, async handler(args, ctx) {
@@ -167,7 +189,10 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
       if ((name as string) === 'owed_tick' || typeof pi.on !== 'function') return () => undefined;
       return (pi.on as (name: string, handler: (_e: unknown, ctx: ExtensionContext) => Promise<void>) => () => void)(name, async (_e: unknown, ctx: ExtensionContext) => {
         context = ctx;
-        if (name === 'session_start') notices.clear();
+        if (name === 'session_start') {
+          notices.clear();
+          ensureReachable();
+        }
         if (name === 'agent_start') running = true;
         if (name === 'agent_settled') running = false;
         if (name === 'session_shutdown') { stopped = true; clearInterval(timer); }

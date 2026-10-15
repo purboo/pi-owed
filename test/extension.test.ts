@@ -31,7 +31,9 @@ test('registers direct typed tools and command; status uses ctx.cwd; guards beco
   try {
     const h = harness(r.cwd);
     for (const name of ['status', 'why', 'report', 'dispatch', 'submit', 'attest', 'review', 'merge', 'rule', 'plan', 'waive', 'defer']) assert.ok(h.tools.has(`owed_${name}`), `includes owed_${name}`);
-    for (const t of h.tools.values()) { assert.equal(t.exposure, 'direct'); assert.equal((t.parameters as { type?: string }).type, 'object'); }
+    // SF6 (ruling #2589): the core profile registers non-core tools deferred at load; OWED_TOOLS=all keeps them direct.
+    const core = ['owed_status', 'owed_why', 'owed_decide', 'owed_drive', 'owed_start', 'owed_submit', 'owed_review'];
+    for (const t of h.tools.values()) { assert.equal(t.exposure, process.env.OWED_TOOLS === 'all' || core.includes(t.name) ? 'direct' : 'deferred', t.name); assert.equal((t.parameters as { type?: string }).type, 'object'); }
     const status = await h.call('status'); assert.match(JSON.stringify(status.content), /owed:.*trunk main/); assert.ok(status.details);
     const missing = await h.call('why', { node: 'missing' }); assert.equal(missing.isError, true); assert.match(JSON.stringify(missing.content), /does not exist/);
     const command = h.commands.get('owed')!;

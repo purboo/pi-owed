@@ -12,19 +12,19 @@ import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from 
 import { rebasePending, rebasePendingText, slotGitInProgress, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
 import { planReceipt, renderEntry, withActHistory } from './views.ts';
 import * as git from './git.ts';
-import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
+import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, reviewCarrySource, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
-import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
+import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
-import { driveStatus, readLock } from './drive-bg.ts';
+import { driveStatus, readLock, driveStart, type DriveStart } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
@@ -565,12 +565,12 @@ export async function initPreview(o: Context & { plan: string }): Promise<InitPr
  * what is missing. An abort after genesis rejects with OwedError('aborted') whose message is the genesis-incomplete
  * text (an abort before genesis keeps the message 'aborted'). `commit` pins the trunk commit the owner confirmed.
  */
-export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; lease?: boolean; measure?: boolean; commit?: string }): Promise<InitResult> {
+export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; lease?: boolean; measure?: boolean; commit?: string; path?: string }): Promise<InitResult> {
   owner(o); checkAbort(o.signal); const warnings = lintPlanShell(planBlob(o.plan).plan,undefined,o.plan);
   const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit,quarantineNames(p.plan,() => false));
   if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
-  const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, writes_syntax:2, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
+  const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, writes_syntax:2, state:facts, ...(o.path !== undefined ? { path:o.path } : {}) }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
   const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
   let error: string | undefined, lease: string | undefined;
   if (o.measure !== false) {
@@ -663,6 +663,55 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
   let path = file;
   try { const top = await realpath(await git.repoRoot(o.cwd)), rel = relative(top,await realpath(file)); if (rel && !rel.startsWith('..') && !isAbsolute(rel)) path = rel.split(sep).join('/'); } catch { /* outside a repository: keep the absolute path */ }
   return { plan:text, path };
+}
+/** SF2: start never invents a plan or silently approves a downgrade (ruling #2550). */
+export interface StartResult { initialized: boolean; updated: boolean; plan: string; warnings: string[]; driver: DriveStart }
+function startRefusal(check: string, why: string, fix: string): never { throw new OwedError(`start preflight ${check} failed: ${oneLine(why)}; ${fix}`, 'usage'); }
+export async function start(o: Context & { plan?: string; max?: number; stay?: boolean; signal?: AbortSignal }): Promise<StartResult> {
+  if (o.max !== undefined && (!Number.isSafeInteger(o.max) || o.max < 1)) startRefusal('max', 'expected a positive integer', 'use owed start --max <N>');
+  const refusal = subagentRefusal('parent');
+  if (refusal) startRefusal('identity', refusal, 'run owed start from the main agent');
+  try { await git.repoRoot(o.cwd); } catch { startRefusal('repository', 'not a git worktree', 'run owed start inside a git repository'); }
+  for (const ident of ['GIT_AUTHOR_IDENT', 'GIT_COMMITTER_IDENT']) {
+    const r = await git.git(o.cwd, ['var', ident], { allowFail:true });
+    if (r.code || !r.stdout.trim()) startRefusal('git identity', r.stderr.trim() || `${ident} is missing`, 'configure git user.name and user.email, then run owed start');
+  }
+  const { entries, state } = await readState(o), fresh = state.seq < 0;
+  let source = o.plan;
+  if (source === undefined && !fresh) {
+    const law = entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis');
+    if (law?.kind === 'plan' || law?.kind === 'genesis') source = law.path;
+    if (source !== undefined && !isAbsolute(source)) source = join(await git.repoRoot(o.cwd), source);
+  }
+  if (source === undefined) startRefusal('plan', fresh ? 'no ledger and no plan supplied' : 'the latest recorded plan has no file path', 'use owed start --plan <file>');
+  let read: Awaited<ReturnType<typeof readPlan>>, b: ReturnType<typeof planBlob>, warnings: string[];
+  try {
+    read = await readPlan({ cwd:o.cwd, path:source });
+    b = planBlob(read.plan, true, fresh ? undefined : state.plan);
+    warnings = [...lintPlanShell(b.plan, fresh ? undefined : state.plan, read.plan, fresh ? undefined : (await (await Ledger.open(o.cwd)).getBlob(state.planSha)).toString()), ...planWarnings(b.plan, new Set(Object.values(state.nodes).filter(n => n.merged).map(n => n.id))), ...(fresh ? [] : parentOverlapWarnings(b.plan, state))];
+  } catch (e) { startRefusal('plan validation', e instanceof Error ? e.message : String(e), `fix ${oneLine(source)}, then run owed start --plan ${JSON.stringify(source)}`); }
+  const trunk = await git.git(o.cwd, ['rev-parse', '--verify', `refs/heads/${b.plan.trunk}^{commit}`], { allowFail:true });
+  if (trunk.code) startRefusal('trunk ref', `refs/heads/${b.plan.trunk} does not name a commit`, `create the ${oneLine(b.plan.trunk)} branch with an initial commit, then run owed start`);
+  const changed = !fresh && b.sha !== state.planSha;
+  if (changed) {
+    const gaps = uncoveredDowngrades(state.plan, b.plan, planDowngrades(state.plan, b.plan));
+    if (gaps.length) startRefusal('plan downgrade', gaps.map(g => `${g.node}: ${g.what}`).join('; '), `record an explicit owner decision with owed plan ${JSON.stringify(source)} --note "<why>", then run owed start`);
+  }
+  if (fresh && confirmGate()) startRefusal('owner confirmation', 'OWED_CONFIRM=owner requires an explicit init', `run owed init ${JSON.stringify(source)}, then run owed start --plan ${JSON.stringify(source)}`);
+  const status = await driveStatus(o);
+  if (status.foreign) startRefusal('driver lock', `held on host ${status.host}; not checked from here`, 'check the driver on that host with owed drive --status before starting here');
+  checkAbort(o.signal);
+  if (fresh) await init({ cwd:o.cwd, as:{role:'owner', id:'pi'}, channel:'delegated', plan:read.plan, path:read.path, commit:trunk.stdout.trim(), measure:false, signal:o.signal });
+  else if (changed) await planSet({ cwd:o.cwd, as:{role:'parent', id:'pi'}, ...read });
+  checkAbort(o.signal);
+  const driver = await driveStart({ cwd:o.cwd, max:o.max, stay:o.stay, reuse:true });
+  return { initialized:fresh, updated:changed, plan:read.path, warnings, driver };
+}
+/** SF2: one action line, one driver line and one next step; each lint warning on its own line after the action (SF6). */
+export function startText(r: StartResult): string {
+  const action = r.initialized ? 'initialized ledger' : r.updated ? 'updated plan' : 'plan unchanged';
+  const driver = r.driver.alreadyRunning ? 'already running' : r.driver.exited ? `ended (${r.driver.exited.reason}, exit ${r.driver.exited.code})` : 'started';
+  return [`start: ${action}`, ...r.warnings.map(oneLine), `driver: ${driver}`, r.driver.exited ? 'Next: owed status shows what remains; use owed start --stay to wait for new work.' : 'Next: wait for driver wake-ups; use owed status for progress and owed decide for decisions.'].join('\n');
 }
 /** N1 (23:4x): a carry `owed plan` skipped (facts not computable or validation refused it); the candidate stays invalidated. */
 export interface NotCarried { node: string; reason: string }
