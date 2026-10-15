@@ -319,7 +319,17 @@ async function writerTree(s: State, id: string, dirs: string[], env: NodeJS.Proc
 function planBlob(text: string) {
   const plan = parsePlan(text), hygiene = [...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan), ...execEnvErrors(plan)];
   if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
-  const data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
+  const source = JSON.parse(canonical(plan));
+  // PL1: retain diagnostic source even before SG's parsed check field is integrated.
+  const raw = parseDocument(text).toJS();
+  for (const [checks, originals] of [
+    [source.invariants, raw.invariants],
+    ...source.nodes.map((n: NodeSpec) => [n.checks, raw.nodes?.find((x: NodeSpec) => x.id === n.id)?.checks]),
+  ]) for (const check of checks ?? []) {
+    const diagnostic = originals?.find((x: { id: string; on_timeout?: unknown }) => x.id === check.id)?.on_timeout;
+    if (typeof diagnostic === 'string') check.on_timeout = diagnostic;
+  }
+  const data = stringify(source, { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
 }
 async function storePlan(ledger: Ledger, text: string) { const b = planBlob(text); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
 /** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
@@ -554,10 +564,12 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
 export interface NotCarried { node: string; reason: string }
 /** `notCarried` (N1, optional): receives one item per open candidate the plan entry invalidated and could not carry. */
 export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[]; shellWarnings?: string[] }): Promise<Entry> {
-  owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
+  owner(o); const ledger = await Ledger.open(o.cwd), b = planBlob(o.plan);
   // N2: each attempt recomputes carries from its own fresh locked read; only the successful attempt reports skips.
-  return retryCas(ledger, before => {
-    const warnings = lintPlanShell(p.plan,before.plan,o.plan);
+  return retryCas(ledger, async before => {
+    const priorText = (await ledger.getBlob(before.planSha)).toString();
+    const warnings = lintPlanShell(b.plan,before.plan,o.plan,priorText);
+    const p = { plan:b.plan, sha:await ledger.putBlob(b.data) };
     return ledger.withLock(async () => { const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); return entry; });
   });
 }
@@ -743,7 +755,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next).plan;
-  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next)] };
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString())] };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
 export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
