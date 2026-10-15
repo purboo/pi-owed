@@ -4,7 +4,7 @@ import { parse as parseYaml } from 'yaml';
 import type { Plan, AttestJob, ObsEntry, Counts, QuarantineEntry } from './types.ts';
 import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths, keyCommitsTo } from './git.ts';
-import { leaseEnvironment } from './lease.ts';
+import { leaseEnvironment, leaseWaitField } from './lease.ts';
 import { remeasureMatches } from './remeasure-on.ts';
 import { resolve as absolutePath } from 'node:path';
 import { expandWrap } from './exec-wrap.ts';
@@ -436,7 +436,7 @@ export const quarantineNote = (q: Map<string, string>): string => `quarantined: 
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   assertNoLedgerLock();
   const start = Date.now();
-  const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
+  const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution, ...leaseWaitField() };
   let bytes = Buffer.alloc(0), measurementBytes = Buffer.alloc(0), truncated = false, protocolWarnings = 0;
   function capture(data: Buffer | string): void {
     bytes = Buffer.concat([bytes, Buffer.isBuffer(data) ? data : Buffer.from(data)]);
