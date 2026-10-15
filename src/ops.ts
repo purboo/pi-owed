@@ -1893,8 +1893,8 @@ function prospective(latest: Awaited<ReturnType<typeof load>>, observations: Dra
 export interface AdoptPreview { trunk: string; prior: string; commit: string; commits: number; changed: string[] }
 /** `allowance` (D21.4): for a parent adoption, S of `under allowance (plan #S)`. */
 export interface AdoptResult extends AdoptPreview { entry: Entry; observations: Entry[]; allowance?: number; lease?: string }
-/** Preconditions of an adoption, checked before any ledger effect: commit = refs/heads/<trunk> ≠ ledger trunk, a fast-forward of it. */
-async function adoptable(cwd: string, s: State, commit?: string): Promise<AdoptPreview> {
+/** AD: pin the ref read under the merge lock; off-ref hotfixes require an unchanged ledger trunk. */
+async function adoptable(cwd: string, s: State, commit?: string): Promise<AdoptPreview & { refCommit: string }> {
   const ref = `refs/heads/${s.trunk.name}`, prior = s.trunk.commit;
   const head = await git.git(cwd,['rev-parse','--verify','--quiet','--end-of-options',`${ref}^{commit}`],{allowFail:true});
   if (head.code) throw new OwedError(`${ref} does not exist; nothing to adopt`);
@@ -1904,18 +1904,25 @@ async function adoptable(cwd: string, s: State, commit?: string): Promise<AdoptP
     const r = await git.git(cwd,['rev-parse','--verify','--quiet','--end-of-options',`${commit}^{commit}`],{allowFail:true});
     if (r.code) throw new OwedError(`${commit} is not a commit`,'usage');
     target = r.stdout.trim();
-    if (target !== current) throw new OwedError(`adopt records only what is on trunk: ${commit} (${target.slice(0,12)}) is not ${ref} (${current.slice(0,12)})`);
+    if (target !== current && current !== prior) throw new OwedError(`adopt records only what is on trunk: ${commit} (${target.slice(0,12)}) is not ${ref} (${current.slice(0,12)})`);
   }
   if (target === prior) throw new OwedError(`nothing to adopt: ${ref} equals the ledger trunk ${prior.slice(0,12)}`);
   if ((await git.git(cwd,['cat-file','-e',`${prior}^{commit}`],{allowFail:true})).code) throw new OwedError(`ledger trunk ${prior} is missing from the repository; owed adopt cannot check that ${ref} is a fast-forward of it`);
   const ff = (await git.git(cwd,['merge-base','--is-ancestor',prior,target],{allowFail:true})).code === 0;
-  if (!ff) throw new OwedError(`trunk was rewritten: the ledger trunk ${prior.slice(0,12)} is not an ancestor of ${ref} (${target.slice(0,12)}); owed adopt records only fast-forwards: restore ${ref} to a descendant of ${prior.slice(0,12)}`);
-  return { trunk:s.trunk.name, prior, commit:target, commits:await git.countCommits(cwd,prior,target), changed:await git.changedPaths(cwd,prior,target) };
+  if (!ff) {
+    if (target !== current && (await git.git(cwd,['merge-base','--is-ancestor',target,prior],{allowFail:true})).code === 0) throw new OwedError(`nothing to adopt: ${target.slice(0,12)} is already contained in the ledger trunk ${prior.slice(0,12)}`,'usage');
+    if (target !== current) throw new OwedError(`adopt commit ${target.slice(0,12)} is not a fast-forward of the new ledger trunk ${prior.slice(0,12)}; rebase ${target.slice(0,12)} onto ${prior.slice(0,12)}, then run owed adopt --commit <new> --note "<why>" again`);
+    throw new OwedError(`trunk was rewritten: the ledger trunk ${prior.slice(0,12)} is not an ancestor of ${ref} (${target.slice(0,12)}); owed adopt records only fast-forwards: restore ${ref} to a descendant of ${prior.slice(0,12)}`);
+  }
+  return { trunk:s.trunk.name, prior, commit:target, refCommit:current, commits:await git.countCommits(cwd,prior,target), changed:await git.changedPaths(cwd,prior,target) };
 }
 /** What `adopt` would record (no effect): for owner confirmation dialogs. */
-export async function adoptPreview(o: Context & { commit?: string }): Promise<AdoptPreview> { const { state } = await load(await Ledger.open(o.cwd)); return adoptable(o.cwd,inited(state),o.commit); }
+export async function adoptPreview(o: Context & { commit?: string }): Promise<AdoptPreview> {
+  const { state } = await load(await Ledger.open(o.cwd)), { refCommit: _ref, ...preview } = await adoptable(o.cwd,inited(state),o.commit);
+  return preview;
+}
 /**
- * Owner adoption of trunk commits made outside owed. Measures every invariant whose key changed on the adopted
+ * Owner adoption of external commits, including off-ref hotfixes landed under the merge lock (AD). Measures every invariant whose key changed on the adopted
  * commit; an invariant satisfied on the prior trunk but not on the adopted commit refuses the adoption (its
  * observations are recorded). Same lock/CAS discipline as merge: a moved ref or ledger records nothing, except after an
  * abort (D16a, SPEC §7.8): observations measured before it are recorded when the ledger is stable and they pass the
@@ -1941,7 +1948,8 @@ async function adoptRequested(o: Parameters<typeof adopt>[0], start: number, dea
 async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger): Promise<AdoptResult> {
   return ledger.withLock(async () => {
     const { state } = await load(ledger); inited(state);
-    const p = await adoptable(o.cwd,state,o.commit);
+    const { refCommit, ...p } = await adoptable(o.cwd,state,o.commit);
+    const retry = refCommit === p.commit ? 'fix trunk, then run owed adopt again' : 'fix the hotfix, then run owed adopt --commit <new> --note "<why>" again';
     if (o.as.role === 'parent') { const outside = unadoptable(state.plan,p.changed); if (outside !== undefined) throw new OwedError(`parent adoption refused: changed path ${outside} is not under an allow adopt prefix (${adoptPrefixes(state.plan).join(', ') || 'none'}); the owner must adopt it`); }
     const sf = await git.stateFacts(o.cwd,state.plan,p.commit,stateQuarantine(state));
     // M1: up to exec.parallel jobs at once, observations in job order; an abort keeps the completed ones (abortWith).
@@ -1952,7 +1960,7 @@ async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger): Promis
     return ledger.withLock(async () => {
       const latest = await load(ledger); stable(state,latest.state);
       const now = await git.git(o.cwd,['rev-parse','--verify','--quiet','--end-of-options',`refs/heads/${p.trunk}^{commit}`],{allowFail:true});
-      if (now.code || now.stdout.trim() !== p.commit) throw new OwedError(`refs/heads/${p.trunk} moved during adopt (was ${p.commit.slice(0,12)}); nothing was recorded, run owed adopt again`);
+      if (now.code || now.stdout.trim() !== refCommit) throw new OwedError(`refs/heads/${p.trunk} moved during adopt (was ${refCommit.slice(0,12)}); nothing was recorded, run owed adopt again`);
       const current = prospective(latest,observations), g = adoptGuard(current,sf);
       if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
       if (!g.ok) {
@@ -1964,9 +1972,11 @@ async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger): Promis
           const fresh = appended.filter(at), old = latest.entries.findLast(at);
           return (fresh.length ? fresh : old ? [old] : []).map(e => `#${e.seq}`);
         };
-        throw new OwedError(`adoption refused: ${g.failed.length ? `invariant${g.failed.length > 1 ? 's' : ''} ${g.failed.map(id => `${id}${seqs(id).length ? ` (obs ${seqs(id).join(', ')})` : ''}`).join(', ')} satisfied on the ledger trunk but not on ${p.commit.slice(0,12)}; fix trunk, then run owed adopt again. ` : ''}${g.reasons.filter(x => !g.failed.some(id => x.startsWith(`invariant ${id} new debt`))).join('; ')}`.replace(/[ ;.]+$/,''));
+        throw new OwedError(`adoption refused: ${g.failed.length ? `invariant${g.failed.length > 1 ? 's' : ''} ${g.failed.map(id => `${id}${seqs(id).length ? ` (obs ${seqs(id).join(', ')})` : ''}`).join(', ')} satisfied on the ledger trunk but not on ${p.commit.slice(0,12)}; ${retry}. ` : ''}${g.reasons.filter(x => !g.failed.some(id => x.startsWith(`invariant ${id} new debt`))).join('; ')}`.replace(/[ ;.]+$/,''));
       }
       const d: Draft = {kind:'adopt',by:by(o),channel:o.channel,trunk:p.trunk,prior:p.prior,commit:p.commit,state:sf,changed:p.changed,commits:p.commits,note:o.note}; guard(current,d);
+      // AD1: exactly merge's advance-before-append path; a failed append leaves recoverable trunk drift.
+      if (refCommit !== p.commit) await git.advanceTrunk(o.cwd,p.trunk,p.prior,p.commit);
       const appended = await ledger.append([...observations,d]), allowance = o.as.role === 'parent' ? allowanceSeq(latest.state) : undefined;
       return {...p,entry:appended.at(-1)!,observations:appended.slice(0,-1),...(allowance !== undefined ? { allowance } : {})};
     },undefined,o.signal);
