@@ -5,9 +5,9 @@ import { resolve } from 'node:path';
 import { git, isAncestor } from './git.ts';
 
 export interface RebasePending { head: string; base: string; upstream: string; command: string; recovery?: string }
-/** Porcelain can be clean while an interrupted rebase/merge still owns the worktree. */
+/** Porcelain can be clean while an interrupted Git operation still owns the worktree. */
 export async function slotGitInProgress(worktree: string): Promise<boolean> {
-  for (const name of ['rebase-merge','rebase-apply','MERGE_HEAD']) {
+  for (const name of ['rebase-merge','rebase-apply','MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD']) {
     const path = (await git(worktree,['rev-parse','--git-path',name])).stdout.trim();
     try { await lstat(resolve(worktree,path)); return true; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   }

@@ -579,13 +579,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // 0.8 (L1.3): the first writer follow-up after a resume starts with the resume line (`resumeLine`).
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => {
     const line = l.role === 'writer' && sendKind === 'follow-up' ? resumeLine(s, id, l.rid) : undefined;
+    const firstRebaseFollowUp = slot.rebase && !ar.sends.some(x => x.seq > slot.rebase!.seq && x.sendKind === 'follow-up' && ar.launches.some(run => run.role === 'writer' && run.rid === x.rid));
     if (line && resumeOf(s, id)?.expect === 'report') {
       const rules = undelivered(s, id, ar, l, opts.rejected);
-      const rebase = slot.rebase && !ar.sends.some(x => x.seq > slot.rebase!.seq && x.sendKind === 'follow-up')
+      const rebase = firstRebaseFollowUp
         ? rebaseMessage(s,id,opts.conflicts?.get(id),opts.rebasePending?.get(id) ?? opts.rebaseWork?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
       return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${oneLine(r.text)}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
     }
-    const rebased = l.role === 'writer' && sendKind === 'follow-up' && reason !== 'rebase' && executorRebased(s,id) ? rebaseMessage(s,id) : undefined;
+    const rebased = l.role === 'writer' && sendKind === 'follow-up' && reason !== 'rebase' && firstRebaseFollowUp && executorRebased(s,id) ? rebaseMessage(s,id) : undefined;
     message = rebased ? `${rebased}\n${message}` : message;
     return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
   };
