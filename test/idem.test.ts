@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-w
 import owed from '../src/extension.ts';
 import * as ops from '../src/ops.ts';
 import { main } from '../src/cli.ts';
+import * as git from '../src/git.ts';
 import { Ledger, lockWait } from '../src/ledger.ts';
 import { renderReceipt, renderReport } from '../src/views.ts';
 import type { Draft, Entry } from '../src/types.ts';
@@ -111,6 +112,44 @@ test('ID1: approval and waiver changed content and A,B,A append; consumed accept
     assert.ok((await f.waive({ accept_risk:[second.seq] })).seq > risk.seq);
     await assert.rejects(f.waive({ accept_risk:[block.seq], reason:'new judgment' }),/active blocks/);
   } finally { await f.cleanup(); }
+});
+
+test('ID-W1: a changed current merge key cannot reuse the previous waiver', async () => {
+  const r = await repo();
+  try {
+    await commitAt(r.cwd,{ README:'fixture\n' });
+    const pass = `echo 'owed-counts {"pass":1,"fail":0}'`, fail = `echo 'owed-counts {"pass":0,"fail":1,"failed":["merge failure"]}'; exit 1`;
+    await ops.init({ cwd:r.cwd, as:owner, channel:'delegated', plan:JSON.stringify({ version:1, trunk:'main', closure:[], invariants:[], nodes:[
+      { id:'a', writes:['src/a'], checks:[{ id:'unit', run:`if [ -e src/b ]; then ${fail}; else ${pass}; fi`, reads:['src/'] }], review:{count:0,min_rank:1} },
+      ...['b','c'].map(id => ({id,writes:[`src/${id}`],checks:[],review:{count:0,min_rank:1}})),
+    ] }) });
+    for (const id of ['a','b','c']) {
+      const slot = await ops.dispatch({cwd:r.cwd,node:id,as:parent});
+      await commitAt(slot.worktree,{[`src/${id}`]:`${id}\n`});
+      await ops.submit({cwd:slot.worktree,node:id,as:{role:'writer',id:`${id}#1`}});
+      await ops.attest({cwd:r.cwd,node:id});
+    }
+    await ops.merge({cwd:r.cwd,node:'b',as:parent});
+    await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}));
+    const ledger = await Ledger.open(r.cwd), failure = (await ledger.read()).find(e => e.kind === 'obs' && e.merging === 'a' && e.verdict === 'fail');
+    assert.ok(failure?.kind === 'obs');
+    // A confirming attribution rerun clears the block, so the waiver binds the merge key.
+    await ops.attest({cwd:r.cwd,node:'a'});
+    const args = {cwd:r.cwd,node:'a',as:owner,channel:'delegated' as const,obligation:'check:unit',reason:'accepted',accept_risk:[failure.seq]};
+    const waived = await ops.waive(args);
+    assert.ok(waived.kind === 'waive'); assert.equal(waived.key,failure.key);
+    assert.equal((await ops.waive(args)).alreadyRecorded,waived.seq,'unchanged merge keys still deduplicate');
+    await ops.merge({cwd:r.cwd,node:'c',as:parent});
+    const {state} = await ops.readState({cwd:r.cwd}), n = state.nodes.a!;
+    const merged = await git.buildMerge(r.cwd,state.trunk.commit,n.candidate!.commit,'ID-W1 regression');
+    assert.ok(!('conflicts' in merged));
+    const current = await git.candidateFacts(r.cwd,state.plan,state.plan.nodes.find(n => n.id === 'a')!,state.trunk.commit,merged.commit,n.slot!.attempt);
+    assert.notEqual(current.keys['check:unit'],waived.key,'trunk movement changed the normal waiver key');
+    const before = await ledger.read();
+    const retry = await cli(r.cwd,['waive','a','check:unit','--reason','accepted','--accept-risk',String(failure.seq)]);
+    assert.equal(retry.code,1,retry.stderr); assert.match(retry.stderr,/^Refused: accept_risk must reference active blocks/);
+    assert.doesNotMatch(retry.stdout,/already recorded/); assert.deepEqual(await ledger.read(),before);
+  } finally { await r.cleanup(); }
 });
 
 test('ID1: closure-review has its own retry stream, and accept-risk ordering is a set', async () => {
