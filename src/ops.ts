@@ -1,4 +1,4 @@
-import { readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod, truncate } from 'node:fs/promises';
+import { open as openFile, readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod, truncate } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { serialize, deserialize } from 'node:v8';
@@ -1360,10 +1360,32 @@ async function batchFacts(cwd: string, s: State, chain: { id: string; prior: str
  * are rebuilt from the batch metadata (Mi = the first-parent chain of Mn) and recorded as executor. Runs on every
  * ledger-lock acquisition; reads only the last ledger line unless a batch is open.
  */
+/** @internal Test hook: bytes read by the batch-tail probe, before any full ledger load. */
+export const batchTailProbe: { onRead?: (bytes: number) => void } = {};
 async function completeBatchTail(ledger: Ledger): Promise<void> {
   const cwd = ledger.repo; if (!cwd) return;
-  let text: string; try { text = await readFile(join(ledger.dir, 'ledger.jsonl'), 'utf8'); } catch { return; }
-  const line = text.trimEnd().split('\n').at(-1); if (!line) return;
+  let line: string | undefined;
+  try {
+    const file = await openFile(join(ledger.dir, 'ledger.jsonl'), 'r');
+    try {
+      let position = (await file.stat()).size, tail = Buffer.alloc(0);
+      while (position > 0) {
+        const chunk = Buffer.alloc(Math.min(position, 64 * 1024));
+        position -= chunk.length;
+        let read = 0;
+        while (read < chunk.length) {
+          const { bytesRead } = await file.read(chunk, read, chunk.length - read, position + read);
+          batchTailProbe.onRead?.(bytesRead);
+          if (!bytesRead) return;
+          read += bytesRead;
+        }
+        tail = Buffer.concat([chunk, tail]);
+        const text = tail.toString('utf8').trimEnd(), start = text.lastIndexOf('\n');
+        if (start >= 0 || position === 0) { line = text.slice(start + 1); break; }
+      }
+    } finally { await file.close(); }
+  } catch { return; }
+  if (!line) return;
   let last: Entry; try { last = JSON.parse(line) as Entry; } catch { return; }
   if (last.kind !== 'merge' || !last.batch || last.batch.members.at(-1) === last.node) return;
   const { state } = await load(ledger), open = openBatch(state); if (!open) return;
@@ -1371,7 +1393,7 @@ async function completeBatchTail(ledger: Ledger): Promise<void> {
   if (await git.revParse(cwd, `refs/heads/${state.trunk.name}`).catch(() => undefined) !== b.final) return;
   const chain: { id: string; prior: string; commit: string }[] = [];
   for (const [i, id] of b.members.entries()) chain.push({ id, prior: i ? chain[i - 1]!.commit : '', commit: await git.revParse(cwd, `${b.final}~${b.members.length - 1 - i}`) });
-  if (chain[at]!.commit !== open.commit) throw new OwedError(`batch merge of ${b.members.join(', ')} is incomplete and its commits do not match the trunk history; adopt the trunk (owed adopt) after checking it`);
+  if (chain[at]!.commit !== open.commit) throw new OwedError(`batch merge of ${b.members.join(', ')} is incomplete and its commits do not match the trunk history; the ledger tail and trunk disagree and need manual repair if trunk history no longer contains the batch commits; otherwise restore refs/heads/${state.trunk.name} to ${b.final} (e.g. from the reflog: git update-ref refs/heads/${state.trunk.name} ${b.final}), then any owed write completes the batch`);
   const facts = await batchFacts(cwd, state, chain, at + 1), drafts: Draft[] = chain.slice(at + 1).map((c, j) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[j]!.facts, state:facts[j]!.state, batch:b }));
   const loaded = await load(ledger), reasons = batchGuard(loaded, loaded.state, drafts);
   if (reasons.length) throw new OwedError(`batch merge of ${b.members.join(', ')} is incomplete and cannot be completed: ${reasons.join('; ')}`);
@@ -1383,7 +1405,7 @@ function incompleteBatchText(s: State): string | undefined {
   const open = openBatch(s), b = open?.batch;
   if (!open || !b) return undefined;
   const missing = b.members.slice(b.members.indexOf(open.node) + 1);
-  return `batch merge of ${b.members.join(', ')} is incomplete after #${open.seq} (${open.node}); missing: ${missing.join(', ')}; the next owed write completes it when trunk ${s.trunk.name} is at ${b.final.slice(0, 12)}, else adopt the trunk`;
+  return `batch merge of ${b.members.join(', ')} is incomplete after #${open.seq} (${open.node}); missing: ${missing.join(', ')}; restore refs/heads/${s.trunk.name} to ${b.final} (e.g. from the reflog: git update-ref refs/heads/${s.trunk.name} ${b.final}), then any owed write completes the batch; if trunk history no longer contains the batch commits, the ledger tail and trunk disagree and need manual repair`;
 }
 /** MT3: errors of appending the member merge `drafts` in order after `current` (each judged on the state after the previous). */
 function batchGuard(latest: Awaited<ReturnType<typeof load>>, current: State, drafts: Draft[]): string[] {

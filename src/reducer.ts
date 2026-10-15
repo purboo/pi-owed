@@ -904,7 +904,7 @@ function batchOrderErrors(s: State, d: Draft): string[] {
   const open = openBatch(s), b = d.kind === 'merge' ? d.batch : undefined;
   if (open) {
     const next = open.batch!.members[open.batch!.members.indexOf(open.node) + 1]!;
-    if (d.kind !== 'merge' || d.node !== next || canonical(b ?? null) !== canonical(open.batch)) return [`batch merge of ${open.batch!.members.join(', ')} is incomplete (#${open.seq} merged ${open.node}): only the merge of ${next} in the same batch may follow; the next owed write completes it when trunk is at ${open.batch!.final.slice(0, 12)}`];
+    if (d.kind !== 'merge' || d.node !== next || canonical(b ?? null) !== canonical(open.batch)) return [`batch merge of ${open.batch!.members.join(', ')} is incomplete (#${open.seq} merged ${open.node}): only the merge of ${next} in the same batch may follow; restore refs/heads/${s.trunk.name} to ${open.batch!.final} (e.g. from the reflog: git update-ref refs/heads/${s.trunk.name} ${open.batch!.final}), then any owed write completes the batch; if trunk history no longer contains the batch commits, the ledger tail and trunk disagree and need manual repair`];
     return [];
   }
   if (d.kind === 'merge' && b && Array.isArray(b.members) && b.members[0] !== d.node) return [`batch merge entries must start with the first member ${String(b.members[0])}`];
