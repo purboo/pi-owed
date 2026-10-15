@@ -1452,6 +1452,7 @@ async function applyRebase(o: Actor & { node:string; since?: number; writerIdle?
         // A prior follow-up can have a newer generation than describe: compare its durable applied receipt.
         const followup = n.runs.find(r => r.attempt === slot.attempt)?.sends.findLast(e => e.rid === writer.rid && e.sendKind === 'follow-up');
         if (idle && followup) {
+          // This request id is an owed-recorded intent the driver would deliver anyway; a new delivery advances generation and makes idle false.
           const bytes = await ledger.getBlob(followup.message), delivered = await dsa.send(followup.send,writer.rid,'follow-up',bytes);
           idle = delivered.outcome === 'applied' && (delivered.generation === undefined || inspected.gen !== undefined && inspected.gen >= delivered.generation);
         }

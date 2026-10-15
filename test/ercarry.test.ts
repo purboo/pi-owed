@@ -190,14 +190,52 @@ test('ER2: conflicts abort to the exact HEAD/tree and retain the writer fallback
   } finally {await r.cleanup();}
 });
 
+for (const mode of ['conflict','error'] as const) test(`ER2/ER6: --apply text fallback names the ${mode} on one line`, {timeout:120_000}, async () => {
+  const r = await fixture();
+  let hook: string | undefined;
+  try {
+    await r.reviewAll(); await r.move(mode==='conflict');
+    if (mode==='error') {
+      hook=(await git(r.slot.worktree,['rev-parse','--git-path','hooks/pre-rebase'])).stdout.trim();
+      await writeFile(hook,'#!/bin/sh\necho bounded-hook-error >&2\nexit 1\n'); await chmod(hook,0o755);
+    }
+    const reply = await cli(r.cwd,['rebase','a','--apply']);
+    assert.equal(reply.code,0,reply.stderr);
+    const diagnostic = reply.stdout.split('\n').find(line=>line.startsWith('rebase --apply fallback:'));
+    assert.ok(diagnostic,reply.stdout);
+    if (mode==='conflict') assert.equal(diagnostic,'rebase --apply fallback: conflicts: a.txt');
+    else assert.match(diagnostic,/^rebase --apply fallback: error: .*bounded-hook-error/);
+    assert.equal(await revParse(r.slot.worktree,'HEAD'),r.oldCommit); assert.equal(await isClean(r.slot.worktree),true);
+    assert.equal((await r.ledger.read()).filter(e=>e.kind==='submit'&&e.by==='executor:owed').length,0);
+  } finally {if (hook) await rm(hook,{force:true}); await r.cleanup();}
+});
+
 test('ER2: a live/unknown writer never permits --apply; the automatic route remains writer-owned', {timeout:120_000}, async () => {
   const r = await fixture({launch:true});
   try {await r.reviewAll(); await r.move(); const length = (await r.ledger.read()).length; await assert.rejects(ops.rebase({cwd:r.cwd,as:driverActor,node:'a',apply:true,writerIdle:async()=>false}),/live, unknown/); assert.equal((await r.ledger.read()).length,length); const rb = await ops.rebase({cwd:r.cwd,as:driverActor,node:'a',apply:true,automatic:true,writerIdle:async()=>false}); assert.equal(rb.applied,undefined); assert.equal(await revParse(r.slot.worktree,'HEAD'),r.oldCommit);} finally {await r.cleanup();}
 });
 
-test('ER2: later repair tells the writer to continue from executor-rebased HEAD', {timeout:120_000}, async () => {
+test('ER2/ER6: only the first writer follow-up after executor rebase carries the HEAD reminder', {timeout:120_000}, async () => {
   const r = await fixture({launch:true});
-  try {await r.reviewAll(); await r.move(); await ops.rebase({cwd:r.cwd,as:driverActor,node:'a',apply:true,writerIdle:async()=>true}); const s = await r.state(); const a = decide(s,s.plan,new Map([[r.writerRid!,{rid:r.writerRid!,state:'sealed',status:'ok'}]]),{max:1,repairs:2,project:projectId(s),root:r.cwd,applied:new Set(),rejected:new Map()}); assert.ok(a.some(x=>x.do==='attest')); await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'blocker'},node:'a',verdict:'block',rank:1,note:'repair this'}); await ops.attest({cwd:r.cwd,node:'a'}); const failed = await r.state(); const follow = decide(failed,failed.plan,new Map([[r.writerRid!,{rid:r.writerRid!,state:'sealed',status:'ok'}]]),{max:1,repairs:2,project:projectId(failed),root:r.cwd,applied:new Set(),rejected:new Map()}); assert.ok(follow[0]?.do==='send',JSON.stringify(follow)); assert.match(follow[0].message,/owed rebased your worktree onto .*\(clean\); continue from HEAD/);} finally {await r.cleanup();}
+  try {
+    await r.reviewAll(); await r.move();
+    await ops.rebase({cwd:r.cwd,as:driverActor,node:'a',apply:true,writerIdle:async()=>true});
+    const applied = new Set<string>();
+    const next = (s:State) => decide(s,s.plan,new Map([[r.writerRid!,{rid:r.writerRid!,state:'sealed',status:'ok'}]]),{max:1,repairs:2,project:projectId(s),root:r.cwd,applied,rejected:new Map()})[0];
+    assert.equal(next(await r.state())?.do,'attest');
+    await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'blocker'},node:'a',verdict:'block',rank:1,note:'repair this'});
+    await ops.attest({cwd:r.cwd,node:'a'});
+    const first = next(await r.state()); assert.ok(first?.do==='send',JSON.stringify(first));
+    assert.match(first.message,/owed rebased your worktree onto .*\(clean\); continue from HEAD/);
+    applied.add((await ops.send({cwd:r.cwd,as:driverActor,...first})).send);
+    await ops.resume({cwd:r.cwd,as:parent,node:'a',note:'retry repair'});
+    const second = next(await r.state()); assert.ok(second?.do==='send'&&second.reason==='repair',JSON.stringify(second));
+    assert.doesNotMatch(second.message,/owed rebased your worktree/);
+    applied.add((await ops.send({cwd:r.cwd,as:driverActor,...second})).send);
+    await ops.resume({cwd:r.cwd,as:parent,node:'a',expect:'report',note:'report current findings'});
+    const report = next(await r.state()); assert.ok(report?.do==='send'&&report.reason==='report',JSON.stringify(report));
+    assert.doesNotMatch(report.message,/owed rebased your worktree/);
+  } finally {await r.cleanup();}
 });
 
 test('ER2: explicit apply with recorded running/sealed writer refuses/succeeds through CLI', {timeout:120_000}, async () => {
@@ -235,7 +273,7 @@ test('ER2: writer intents serialize behind the rebase op lock and stop another a
 });
 
 test('ER2: dirty/noncandidate/in-progress slots use the writer route without touching work', {timeout:120_000}, async () => {
-  for (const mode of ['dirty','head','in-progress']) {
+  for (const mode of ['dirty','head','in-progress','CHERRY_PICK_HEAD','REVERT_HEAD']) {
     const r = await fixture({launch:true});
     try {
       await r.reviewAll(); await r.move();
@@ -243,6 +281,14 @@ test('ER2: dirty/noncandidate/in-progress slots use the writer route without tou
       if (mode==='head') await commitAt(r.slot.worktree,{});
       let leftover: string | undefined;
       if (mode==='in-progress') {leftover=(await git(r.slot.worktree,['rev-parse','--git-path','rebase-merge'])).stdout.trim(); await mkdir(leftover,{recursive:true});}
+      if (mode==='CHERRY_PICK_HEAD'||mode==='REVERT_HEAD') {
+        leftover=(await git(r.slot.worktree,['rev-parse','--git-path',mode])).stdout.trim(); await writeFile(leftover,`${r.oldCommit}\n`);
+        const {slotGitInProgress} = await import('../src/rebase-view.ts'); assert.equal(await slotGitInProgress(r.slot.worktree),true,mode);
+        assert.equal(await isClean(r.slot.worktree),true,'clean porcelain must not hide sequencer operation');
+        const count = (await r.ledger.read()).length;
+        await assert.rejects(ops.rebase({cwd:r.cwd,as:driverActor,node:'a',apply:true,writerIdle:async()=>true}),/in progress/);
+        assert.equal((await r.ledger.read()).length,count,'explicit refusal records nothing');
+      }
       const before = await revParse(r.slot.worktree,'HEAD');
       const result = await ops.rebase({cwd:r.cwd,as:driverActor,node:'a',apply:true,automatic:true,writerIdle:async()=>true});
       assert.equal(result.applied,undefined,mode); assert.equal(await revParse(r.slot.worktree,'HEAD'),before);
