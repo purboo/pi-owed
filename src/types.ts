@@ -78,6 +78,8 @@ export interface AllowRule {
   writes?: string[];          // parent may widen writes with prefixes inside these prefixes
   checks?: string[];          // parent may remove/weaken node checks whose id matches these globs
   adopt?: string[];           // parent may adopt trunk commits whose changed paths all lie under these prefixes
+  /** FS6 (0.23): invariant id globs owed itself may defer on a shared intermittent failure with a same-key pass. */
+  defer?: string[];
 }
 export interface SweepSpec { run: string; timeout_s: number; reads?: string[] }
 export interface Plan {
@@ -182,7 +184,7 @@ export interface ObsEntry extends Base {
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }
 export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[] }
-export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string }
+export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string; /** FS6 (0.23): only on an `executor:owed` defer: seq of the plan whose `allow` defer rule covers it; older owed refuses it. */ allowance?: number }
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
 /** AH: appended atomically after the abandon it names; older owed refuses this new kind. */
 export interface HoldEntry extends Base { kind: 'hold'; node: string; abandon: number; reason?: string }
@@ -304,7 +306,7 @@ export interface State {
   rules: Rule[];
   /** `allowance` (D21): set when a parent's plan update was accepted under an allowance; S = seq of the genesis/plan entry that last changed `allow`. */
   downgrades: { seq: number; by: string; items: Downgrade[]; allowance?: number; /** D25: present only for a delegated owner plan update */ channel?: 'delegated' }[];
-  deferred: { seq: number; node: string; id: string; key: string }[];
+  deferred: { seq: number; node: string; id: string; key: string; /** FS6: present only on an executor defer under allowance. */ allowance?: number }[];
   escapes: EscapeView[];
   decoys: DecoyView[];             // revealed decoys with outcomes
   decoyCommits: { seq: number; digest: string; by: string; revealed?: number }[];

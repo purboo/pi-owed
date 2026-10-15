@@ -182,17 +182,20 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string, signatur
     offset += line.length + 1;
   }
   // Parse each panic independently so an unfinished message cannot consume the next header.
-  const panicHeaders = [...clean.matchAll(/^thread '[^']+' panicked at /gm)];
+  // FS (ruling): Rust >= 1.86 prints the thread id: `thread 'name' (1234) panicked at path:line:col:`.
+  const panicHeaders = [...clean.matchAll(/^thread '[^']+'(?: \(\d+\))? panicked at /gm)];
   for (const [i, header] of panicHeaders.entries()) {
     const record = clean.slice(header.index, panicHeaders[i + 1]?.index ?? clean.length);
     // Legacy messages may span lines, but not failed-test or stdout record boundaries.
-    const m = /^thread '([^']+)' panicked at '((?:(?!^test [^\r\n]* \.\.\. FAILED\b|^---- [^\r\n]* stdout ----[ \t]*$)[\s\S])+?)', ([^\r\n]+:\d+:\d+)\r?$|^thread '([^']+)' panicked at (.+):\r?\n([^\r\n]*)/m.exec(record);
+    const m = /^thread '([^']+)'(?: \(\d+\))? panicked at '((?:(?!^test [^\r\n]* \.\.\. FAILED\b|^---- [^\r\n]* stdout ----[ \t]*$)[\s\S])+?)', ([^\r\n]+:\d+:\d+)\r?$|^thread '([^']+)'(?: \(\d+\))? panicked at (.+):\r?\n([^\r\n]*)/m.exec(record);
     if (!m) continue;
     const name = m[1] ?? m[4]!;
     // A quoted legacy header without a closing message is not a new-style location.
     if (!wanted.has(name) || (!m[1] && m[5]!.startsWith("'"))) continue;
     const message = full ? m[2] ?? m[6]! : errorMessage(signature ? (m[2] ?? m[6]!).split('\n')[0]! : m[2] ?? m[6]!, !signature);
-    points.push({ name, ...(message ? { message } : {}), location: errorLocation(m[3] ?? m[5]!, cwd), at: header.index + m.index });
+    const location = errorLocation(m[3] ?? m[5]!, cwd);
+    // FS (ruling): a cargo signature is the panic message and its location (signature mode only; display unchanged).
+    points.push({ name, ...(message ? { message } : {}), location, ...(signature && location ? { signatureLocation: location } : {}), at: header.index + m.index });
   }
   points.sort((a, b) => a.at - b.at);
   const hasChildError = points.some(p => !p.parent && p.message);

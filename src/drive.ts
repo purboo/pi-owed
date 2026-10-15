@@ -5,6 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { rebaseFollowupSent, rebaseWorkText, type RebasePending } from './rebase-view.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
+import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
@@ -517,7 +518,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   const open = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').sort(byStatusOrder);
   for (const n of open) {
     const ar = n.runs.find(r => r.attempt === n.slot!.attempt) ?? { attempt: n.slot!.attempt, launches: [], sends: [] };
-    const notice = trunkParked(s, n.id).length ? undefined : prospectiveNotice(s, n, ar, runs, opts);
+    const notice = trunkParked(s, n.id).length || sharedWaiting(s, n.id, opts) ? undefined : prospectiveNotice(s, n, ar, runs, opts);
     const a = opts.measuring?.has(n.id) ? undefined : slotAction(s, runs, opts, n);
     if (notice) {
       // #1743/#1746: PR2 cannot preempt a concrete question's first non-quiet report (or overdue answer retry).
@@ -542,10 +543,20 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
     taken.push(n.id);
   }
   for (const red of trunkParkNotices(s)) if (!opts.noticed?.has(red.once)) out.push({ do: 'notify', node: red.obligation, scope: 'repo', text: red.text, once: red.once });
+  for (const red of sharedParkNotices(s)) if (!opts.noticed?.has(red.once)) out.push({ do: 'notify', node: red.obligation, scope: 'repo', text: red.text, once: red.once });
   for (const red of trunkInvariantReds(s)) out.push({ do:'notify', node:red.obligation, scope:'repo', invariantRed:{obligation:red.obligation,key:red.key}, text:red.text, once:`inv-red\u0000${red.obligation}\u0000${red.key}` });
   return orderMergeActions(s, out);
 }
 
+/**
+ * FS3/FS5 (level-triggered): `id` is parked on a shared failure and either waits for an accepted fix node or this
+ * driver already saw its merge refused on the same trunk commit, trunk invariant items, plan and candidate.
+ */
+export function sharedWaiting(s: State, id: string, opts: Pick<DriveOpts, 'noticed'>): boolean {
+  if (halted(s, id)) return false;
+  const parks = sharedParked(s, id);
+  return parks.length > 0 && (parks.some(p => p.fix !== undefined) || !!opts.noticed?.has(sharedParkKey(s, id)));
+}
 /** QN1: a durable answer covers that question at its recorded revision and older revisions. */
 export function answeredQuestion(s: State, rid: string, qid: string, rev?: number) {
   return entriesOf(s).findLast(e => e.kind === 'rule' && e.answer?.rid === rid && e.answer.qid === qid && (rev === undefined || rev <= e.answer.rev)) as import('./types.ts').RuleEntry | undefined;
@@ -595,6 +606,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   if (halted(s, id)) return askingNotice();
   // TP1: parking forbids all follow-ups, including dependency and prospective notices; questions remain live.
   if (trunkParked(s, id).length) return askingNotice();
+  // FS3/FS5: a shared-failure park (seen refused on this state, or waiting for an accepted fix) forbids the merge retry and follow-ups.
+  if (sharedWaiting(s, id, opts)) return askingNotice();
   // 0.8 (L1.3): a waiting node is skipped like a halted one; only its asking runs are still reported (row 5).
   const waiting = waitingFor(s, id);
   if (waiting || reportedOf(s, id) !== undefined || s.plan.nodes.find(x => x.id === id)?.later) {

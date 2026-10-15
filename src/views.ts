@@ -5,6 +5,7 @@ import type { TrunkDrift } from './git.ts';
 import { matchesGlob } from 'node:path';
 import { matchesAny, driveConfig, isCheckTemplateRun } from './plan.ts';
 import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, driveReviewerSlot, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
+import { sharedParked, sharedParkNotices, sharedPhase } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq, activeQuarantineOf } from './reducer.ts';
 import { canonical } from './canon.ts';
 import { mergeBatchPlan } from './reducer.ts';
@@ -302,7 +303,7 @@ function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
   return `Out-of-writes paths: ${shown}${more}${o.allowance !== undefined ? `; pre-authorized by allowance plan #${o.allowance}${o.grantRefused ? ', but grant refused' : ''}` : ''}${o.hint ? `\n${o.hint}` : ''}`;
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
-export const allowanceLabel = (d: { by: string; allowance?: number }): string => d.allowance === undefined ? '' : d.by === 'executor:owed' ? `granted by owed under allowance (plan #${d.allowance})` : `by ${d.by} under allowance (plan #${d.allowance})`;
+export const allowanceLabel = (d: { by: string; allowance?: number; items?: { what: string }[] }): string => d.allowance === undefined ? '' : d.by === 'executor:owed' ? `${d.items?.some(i => /^inv:\S+ deferred: /.test(i.what)) ? 'deferred' : 'granted'} by owed under allowance (plan #${d.allowance})` : `by ${d.by} under allowance (plan #${d.allowance})`;
 export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key)): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
@@ -385,6 +386,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     add(h.node, `driver halted: ${haltReason(h.reason)}`, command);
   }
   for (const red of trunkParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
+  for (const red of sharedParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
   for (const i of Object.values(v.pending).flat()) {
     if (trunkParked(s, i.subject).length) continue;
     if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
@@ -417,7 +419,8 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     const w = v.waiting?.find(w => w.node === n.id);
     const deps = [...new Set([...(w?.deps ?? []), ...(w?.after?.split(', ') ?? [])])].filter(Boolean);
     const parked = trunkParked(s, n.id);
-    let phase = parked.length ? `waiting: trunk-red (${[...new Set(parked.map(r => r.merge.obligation))].join(', ')} on trunk ${s.trunk.commit.slice(0, 12)})` : deps.length ? `waiting for ${deps.join(', ')}`
+    const shared = parked.length || v.halted.some(h => h.node === n.id) ? [] : sharedParked(s, n.id);
+    let phase = parked.length ? `waiting: trunk-red (${[...new Set(parked.map(r => r.merge.obligation))].join(', ')} on trunk ${s.trunk.commit.slice(0, 12)})` : shared.length ? sharedPhase(s, shared) : deps.length ? `waiting for ${deps.join(', ')}`
       : n.phase === 'held' || v.halted.some(h => h.node === n.id) || v.needsRuling?.some(b => b.node === n.id) || v.reported?.some(r => r.node === n.id) ? 'held'
       : n.accepted ? 'accepted (merge pending)'
       : !n.candidate || n.phase === 'dispatched' || n.items.some(i => i.status === 'D' && i.discharger === 'writer') ? 'writing'
@@ -442,7 +445,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
 }
 function deferredText(d: DeferredView): string {
   const suffix = d.unverified === 'drift' ? ' (not rechecked: trunk moved)' : d.unverified === 'conflict' ? ' (not rechecked: merge conflicts)' : '';
-  return `${d.node}/inv:${d.id}: owner defer${suffix}`;
+  return `${d.node}/inv:${d.id}: ${d.allowance !== undefined ? `deferred by owed under allowance (plan #${d.allowance})` : 'owner defer'}${suffix}`;
 }
 function genesisStatus(s: State): { genesis?: GenesisStatus } {
   const g = genesisProgress(s);
@@ -626,7 +629,7 @@ function entryLine(e: Entry): string {
     case 'sweep': return `${head} sweep ${e.commit.slice(0, 12)}: ${e.verdict}${e.bisect ? ' (bisect)' : ''}; log ${e.log}${e.failed.length ? `; failed: ${e.failed.join(', ')}` : ''}`;
     case 'merge': return `${head} merged ${e.node} → ${e.commit.slice(0, 12)}${e.batch ? ` (batch of ${e.batch.members.length} → ${e.batch.final.slice(0, 12)})` : ''}`;
     case 'waive': return `${head} waived ${e.node}/${e.obligation}: ${e.reason}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(x => `#${x}`).join(', ')})` : ''}`;
-    case 'defer': return `${head} deferred ${e.node} post-merge invariants ${e.items.map(i => i.id).join(', ')}: ${e.reason}`;
+    case 'defer': return `${head} deferred ${e.node} post-merge invariants ${e.items.map(i => i.id).join(', ')}${e.allowance !== undefined ? ` (deferred by owed under allowance (plan #${e.allowance}))` : ''}: ${e.reason}`;
     case 'refresh': return `${head} refreshed trunk invariant keys on ${e.commit.slice(0, 12)}`;
     case 'genesis': return `${head} initialized ledger, trunk ${e.trunk} ${e.commit.slice(0, 12)}`;
     case 'dispatch': return `${head} dispatched ${e.node} attempt ${e.attempt}${e.overlaps?.length ? ` (allowed writes overlap with ${e.overlaps.join(', ')})` : ''}`;
