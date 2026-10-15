@@ -20,7 +20,7 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, ty
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
-import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
+import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
@@ -29,6 +29,7 @@ import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { lintPlanShell } from './planlint.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
+import { counterfactual, type Counterfactual } from './counterfactual.ts';
 import { OwedError } from './errors.ts';
 import { assertNoLedgerLock } from './lock-context.ts';
 import { mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
@@ -1609,7 +1610,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
         const parks = !missed.length && g ? parkedRefusal(current,o.node,reasons,g) : [];
         throw parks.length ? new SharedRefusal(text,parks) : new OwedError(text);
       }
-      const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(guarded,d);
+      const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state,...leaseWaitField()}; guard(guarded,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
       const entry = (await ledger.append([...kept,...defers,d])).at(-1)!;
       return {node:o.node,...built,entry,deferred:g.invItems.filter(i => i.status === 'D'),unguarded:unguardedPaths(current.plan,lm.facts.changed)};
@@ -1747,7 +1748,7 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
       { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
       const current = prospective(latest,observations);
       if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
-      const drafts: Draft[] = chain.map((c, i) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[i]!.facts, state:facts[i]!.state, batch:{ final, state:batchState, keys, members } }));
+      const drafts: Draft[] = chain.map((c, i) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[i]!.facts, state:facts[i]!.state, batch:{ final, state:batchState, keys, members }, ...leaseWaitField() }));
       const reasons = batchGuard(latest,current,drafts);
       if (reasons.length) {
         if (observations.length) await ledger.append(observations);
@@ -2168,6 +2169,18 @@ export async function reportMetrics(o: Context & MetricsWindow): Promise<Metrics
   const since = metricsBound(o.since,'since'), until = metricsBound(o.until,'until');
   const {state,entries,lookup} = await load(await Ledger.open(o.cwd)); inited(state);
   return computeMetrics(entries,new Map(planShas(entries).map(sha => [sha,lookup(sha)])),{since,until});
+}
+/**
+ * MX2 (ruling #2572): one cold, validating fold over the verified entries plus bounded `git merge-tree` calls. No lock,
+ * no measurement and no write: not the replay snapshot/memo of `load`, not the plan cache (a missing cache entry is parsed).
+ */
+export async function reportCounterfactual(o: Context & { since?: number | string; progress?: (line: string) => void }): Promise<Counterfactual> {
+  const since = metricsBound(o.since,'since'), ledger = await Ledger.open(o.cwd), entries = await ledger.read();
+  if (!entries.length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
+  const plans = new Map<string, Plan>();
+  for (const sha of planShas(entries)) plans.set(sha, planCache.get(`${ledger.dir}\0${sha}`) ?? deepFreeze((await ledger.readPlanCache(sha) as Plan | undefined) ?? parsePlan((await ledger.getBlob(sha)).toString())));
+  const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
+  return counterfactual(o.cwd,entries,lookup,since,o.progress);
 }
 
 export async function report(o: Context & {since?:number|string}): Promise<Report> {

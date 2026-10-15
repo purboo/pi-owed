@@ -65,7 +65,7 @@ function scenario() {
 test('metrics: exact counts, durations, repairs across attempts, carries and halt classes', () => {
   const {entries,plans} = scenario(), m = computeMetrics(entries,plans);
   assert.equal(m.mergedNodes,3);
-  assert.deepEqual(m.interruptions,{total:5,halts:4,answers:1,perMergedNode:5/3});
+  assert.deepEqual({...m.interruptions,byClass:undefined},{total:5,halts:4,answers:1,perMergedNode:5/3,byClass:undefined});
   assert.deepEqual(m.halts.map(h => [h.seq,h.class,h.endedBy,h.decisionSeqs]),[[3,'no-decision',4,[]],[5,'decision',7,[6]],[8,'decision',10,[9]],[11,'decision',13,[12]]]);
   assert.deepEqual(m.submitToMergeMs,{samples:3,median:2000,p90:13000,max:13000});
   assert.deepEqual(m.dispatchToMergeMs,{samples:3,median:7000,p90:14000,max:14000});
@@ -90,7 +90,7 @@ test('metrics: cutoff and exclusive since apply to halts, answers and merges ind
   const {entries,plans} = scenario();
   const cutoff = computeMetrics(entries,plans,{since:4,until:5});
   assert.deepEqual(cutoff.halts.map(h => [h.seq,h.class,h.endedBy]),[[5,'no-decision',null]]);
-  assert.deepEqual(cutoff.interruptions,{total:1,halts:1,answers:0,perMergedNode:null});
+  assert.deepEqual({...cutoff.interruptions,byClass:undefined},{total:1,halts:1,answers:0,perMergedNode:null,byClass:undefined});
   const later = computeMetrics(entries,plans,{since:5,until:9});
   assert.deepEqual(later.halts.map(h => h.seq),[8]); assert.equal(later.interruptions.total,2);
   assert.equal(computeMetrics(entries,plans,{since:19,until:19}).mergedNodes,0);
@@ -131,7 +131,7 @@ test('metrics: a non-driver halt ends the previous driver halt without adding an
 test('metrics: no halts, empty denominators, top-five normalization and short rendering', () => {
   const f = fixture();
   const empty = computeMetrics(f.entries,f.plans);
-  assert.deepEqual(empty.interruptions,{total:0,halts:0,answers:0,perMergedNode:null});
+  assert.deepEqual({...empty.interruptions,byClass:undefined},{total:0,halts:0,answers:0,perMergedNode:null,byClass:undefined});
   assert.deepEqual(empty.submitToMergeMs,{samples:0,median:null,p90:null,max:null});
   assert.deepEqual(empty.firstPassAcceptance,{nodes:0,rate:null});
   f.dispatch('a'); f.submit('a'); f.merge('a');
