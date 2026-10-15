@@ -210,7 +210,14 @@ const conflictText = (conflicts?: readonly string[]): string => conflicts ? ` (f
  */
 export function rebaseMessage(s: State, node: string, conflicts?: readonly string[], work?: RebasePending): string {
   const slot = s.nodes[node]!.slot!, r = slot.rebase!;
-  return `trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${r.base} ${r.from}`}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
+  if (executorRebased(s,node)) return `owed rebased your worktree onto ${r.base.slice(0,12)} (clean); continue from HEAD`;
+  return `${work?.recovery ? `${work.recovery}\n` : ''}trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${r.base} $(git merge-base HEAD ${r.base})`}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
+}
+/** ER2: latest successful automatic rebase, unless a subsequent rebase changed the slot again. */
+function executorRebased(s: State, node: string): boolean {
+  const rb = s.nodes[node]?.slot?.rebase;
+  const submitted = rb && entriesOf(s).find(e => e.seq === rb.seq + 1);
+  return submitted?.kind === 'submit' && submitted.node === node && submitted.by === 'executor:owed' && submitted.facts.rebased === true;
 }
 /** The latest submit of the node's open attempt (also one a plan change or rebase no longer counts as the candidate). */
 const lastSubmit = (s: State, node: string): SubmitEntry | undefined => {
@@ -268,7 +275,8 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
   return { rulings: carried(rules), message: [
     ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`)] : []),
     `Review blocks on your candidate ${last.facts.commit} (submit #${last.seq}) of ${node}, attempt ${slot.attempt} (the reviewer's note):`, ...notes,
-    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${rb.base} ${rb.from}`}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
+    ...(rb && work?.recovery ? [work.recovery] : []),
+    rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${rb.base} $(git merge-base HEAD ${rb.base})`}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
       : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
     `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
 }
@@ -364,7 +372,7 @@ function reviewerRuling(s: State, n: NodeState, ar: AttemptRuns, reviewers: read
   const c = n.candidate!, inScope = rulingsInScope(s, n.id);
   if (!n.items.some(i => i.obligation === 'review' || i.obligation === 'closure-review')) return undefined;
   const l = reviewers.at(-1);
-  const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
+  const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && (e.key === c.keys[e.obligation] || c.carry?.reviews.includes(e.seq)) ? [e.ack_rulings ?? -1] : []));
   if (!l) return inScope.some(r => r.seq > acked) ? reviewerLaunch(s, n.id, nextReviewerN(s, n.id), opts.project, opts.root) : undefined;
   const delivered = deliveredRulings(s, n.id, ar, l, opts.rejected);
   if (!inScope.some(r => r.seq > delivered) && !answerAckDue(s, n, ar, l, opts.rejected)) return undefined;
@@ -577,6 +585,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
         ? rebaseMessage(s,id,opts.conflicts?.get(id),opts.rebasePending?.get(id) ?? opts.rebaseWork?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
       return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${oneLine(r.text)}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
     }
+    const rebased = l.role === 'writer' && sendKind === 'follow-up' && reason !== 'rebase' && executorRebased(s,id) ? rebaseMessage(s,id) : undefined;
+    message = rebased ? `${rebased}\n${message}` : message;
     return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
   };
   // Row 5: a run asking: notify (question, answer address); the driver never answers.
@@ -784,7 +794,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 7: writer sealed non-ok (0.8, L3.1: a due ruling follow-up first).
   if (wSealed && wStatus !== 'ok') return rulingFirst() ?? halt(`writer run ${at(writer)} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
   const drift = opts.rebasePending?.get(id);
-  if (drift && !reportPending) {
+  if (drift && !reportPending && !(drift.recovery && resubmitBlocks(s,id).length)) {
     const unruled = submitBlocks(s, id).filter(b => awaitingRuling(s, b));
     if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
     if (rebaseFollowupSent(s, id)) return undefined;
@@ -1031,7 +1041,7 @@ type Refused = { has(id: string): boolean };
 function answerAckDue(s: State, n: NodeState, ar: AttemptRuns, l: LaunchEntry, refused?: Refused): boolean {
   const c = n.candidate;
   if (!c) return false;
-  const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
+  const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && (e.key === c.keys[e.obligation] || c.carry?.reviews.includes(e.seq)) ? [e.ack_rulings ?? -1] : []));
   const requested = Math.max(-1, ...ar.sends.filter(x => x.rid === l.rid && x.reason === 'ruling' && x.sendKind !== 'notify' && !refused?.has(x.send)).map(x => x.rulings ?? -1));
   return rulingsInScope(s, n.id).some(r => !deliversRule(r,l.rid) && r.seq > Math.max(acked, requested));
 }

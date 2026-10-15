@@ -331,7 +331,7 @@ test('row 17: merge refused because trunk moved → rebase, then the rebase foll
   r.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, base: 's1', from: 's0' });
   const f = act(r, runs);
   assert.deepEqual(f, { do: 'send', node: 'a', attempt: 1, rid: W(), sendKind: 'follow-up', reason: 'rebase', message: rebaseMessage(r.state(), 'a') });
-  assert.match(f.message, /^trunk moved; rebase your worktree onto main \(s1\): first commit your work, then in \/repo\/\.owed\/wt\/a-1 run `git rebase --onto s1 s0`.*`owed submit a`$/);
+  assert.match(f.message, /^trunk moved; rebase your worktree onto main \(s1\): first commit your work, then in \/repo\/\.owed\/wt\/a-1 run `git rebase --onto s1 \$\(git merge-base HEAD s1\)`.*`owed submit a`$/);
   r.send(W(), 'rebase', 'follow-up', f.message);
   assert.equal((act(r, runs, { applied: applied(r) }) as { reason?: string }).reason, 'submit', 'then the usual submit nudge');
 });
