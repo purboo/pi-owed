@@ -1,3 +1,4 @@
+import { actRuns, collapsedActLines, alreadyRecordedText, type RecordedAct } from './identical-acts.ts';
 import type { AdoptionView, AttemptRuns, Block, CheckSpec, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, SlotRebase, State } from './types.ts';
 import { mergeWaitSuffix } from './adopt-wait.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
@@ -244,6 +245,23 @@ export function supersededText(s: State, b: Block): string {
 export function supersededOf(s: State, nodes: readonly NodeState[]): SupersededBlock[] {
   return nodes.flatMap(n => n.blocks.filter(b => b.state === 'superseded').map(b => ({ ...b, supersededBy: b.supersededBy ?? -1, text: supersededText(s, b) })));
 }
+/** Full history stays out of JSON; text folding never changes evidence or replay. */
+const actHistories = new WeakMap<object, readonly Entry[]>();
+export function withActHistory<T extends object>(view: T, entries: readonly Entry[]): T { actHistories.set(view,entries); return view; }
+const repetitions = new WeakMap<Entry, number>();
+const repetition = (e: Entry): string => (repetitions.get(e) ?? 1) > 1 ? ` ×${repetitions.get(e)}` : '';
+function textReceiptItem(i: ReceiptCard['items'][number], runs: ReturnType<typeof actRuns>): ReceiptCard['items'][number] {
+  if (!['review','closure-review','rulings'].includes(i.obligation)) return i;
+  const shown = new Set<object>();
+  const observations = i.observations.flatMap(e => {
+    const run = runs.get(e.seq);
+    if (!run) return [e];
+    if (shown.has(run)) return [];
+    shown.add(run);
+    const copy = { ...e }; repetitions.set(copy,run.count); return [copy];
+  });
+  return { ...i, observations };
+}
 /** RR3: receipt-only deduplication; keep reducer evidence/replay and distinct-principal satisfaction unchanged. */
 function receiptItem(i: ItemView, entries: readonly Entry[]): ItemView & { observations: Entry[] } {
   let observations = entries.filter(e => i.evidence.includes(e.seq));
@@ -264,7 +282,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   const outOfWrites = outsideWrites(s, node), superseded = supersededOf(s, [n]);
-  return { node, phase: n.phase, accepted: n.accepted,
+  return withActHistory({ node, phase: n.phase, accepted: n.accepted,
     items: n.items.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })),
     ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })) } : {}),
     blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: mergeBlockClearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
@@ -286,7 +304,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
     ...(n.slot?.open && n.runs.some(r => r.attempt === n.slot!.attempt) ? { runs: n.runs.find(r => r.attempt === n.slot!.attempt) } : {}),
     ...(carriedOf(n) ? { carried: carriedOf(n) } : {}),
     ...(n.candidate?.carry ? {reviewCarried:reviewCarryText(n.candidate)} : {}),
-    ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) };
+    ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) }, entries);
 }
 /** One line naming the plan's wrapper argv and env names (D20.5); argv words with blanks or quotes are JSON-quoted. */
 export function execText(plan: Plan): string {
@@ -485,7 +503,7 @@ function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote
   if (i.status === 'W') return waivedText(i);
   if (isManual(i.obligation)) return manualText(i);
   const label = i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
-  const evidence = (i.observations ?? []).map(e => e.kind === 'obs' ? `#${e.seq}${strength(e)}${noise(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
+  const evidence = (i.observations ?? []).map(e => (e.kind === 'obs' ? `#${e.seq}${strength(e)}${noise(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`) + repetition(e)).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${(i.blockNotes ?? []).map(b => ` — note #${b.seq}: ${b.note}`).join('')}${i.hint ? ` — ${i.hint}` : ''}${failNotes(i.observations ?? [])}`;
 }
 /** K2.2: the note of an exec block's failing observation on one line, at most 200 characters. */
@@ -606,8 +624,11 @@ function runsText(r: AttemptRuns): string[] {
 }
 const conflictLines = (conflicts: Record<string, string[] | null> | undefined): string[] => Object.entries(conflicts ?? {}).map(([target, paths]) => `conflicts with ${target}: ${paths === null ? 'unknown; retry owed status' : paths.map(oneLine).join(', ') || 'none'}`);
 export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}): string {
+  const history = actHistories.get(v) ?? v.items.flatMap(i => i.observations);
+  const runs = actRuns(history,history.filter(e => e.kind === 'rule'));
+  const textItem = (i: ReceiptCard['items'][number]) => itemText(textReceiptItem(i,runs));
   const waitingNodes = [...new Set([...(v.waiting?.deps ?? []), ...(v.waiting?.after ? v.waiting.after.split(', ') : [])])];
-  return [`${v.node}: ${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}`, ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed decide ${v.node} --text "<decision>"`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(itemText), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(itemText)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}`, ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed decide ${v.node} --text "<decision>"`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(textItem), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(textItem)] : []), ...v.blocks.map(b => `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, `Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`, ...v.downgrades.filter(d => d.allowance !== undefined).map(d => `ΔO⁻ #${d.seq} ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
   if (options.full) return renderStatusFull(v);
@@ -666,7 +687,7 @@ function entryLine(e: Entry): string {
     default: return `${head} ${e.kind}`;
   }
 }
-export function renderEntry(e: Entry): string { return `Recorded ${entryLine(e)}`; }
+export function renderEntry(e: RecordedAct): string { return alreadyRecordedText(e) ?? `Recorded ${entryLine(e)}`; }
 /** Text of an `owed gc` result (CLI and pi tool). */
 export function renderGc(r: GcResult): string {
   const removed = r.removed.map(i => `  ${i.node}#${i.attempt}: ${[i.worktree && `worktree ${i.worktree}`, i.branch && `branch ${i.branch}`, ...i.pinned.map(ref => `${r.dryRun ? 'would pin' : 'pinned'} ${ref}`)].filter(Boolean).join(', ')}`);
@@ -679,6 +700,8 @@ export function renderGc(r: GcResult): string {
 }
 export function renderReport(v: Report): string {
   const list = (title: string, lines: string[]) => [`${title}${lines.length ? '' : ': none'}`, ...lines.map(l => `  ${l}`)];
+  const runs = actRuns(actHistories.get(v) ?? v.ownerActions, actHistories.get(v)?.filter(e => e.kind === 'rule') ?? v.rulings);
+  const lines = (es: Entry[]) => collapsedActLines(es,entryLine,runs);
   return [`Report (since ${v.since === -1 ? 'start' : typeof v.since === 'string' ? clockTime(v.since) : v.since})`,
     ...list('Merges', v.merges.map(entryLine)),
     ...list('Status changes', v.changes.map(c => `${c.subject}/${c.obligation}: ${c.before ? statusNames[c.before] ?? c.before : 'new'} → ${statusNames[c.after] ?? c.after}`)),
@@ -686,11 +709,11 @@ export function renderReport(v: Report): string {
     ...(v.superseded?.length ? list('Superseded blocks (not active; the plan changed their check)', v.superseded.map(b => `${b.node}/${b.obligation} ${b.text}`)) : []),
     ...(v.knownRed?.length ? list('Known-red debt', v.knownRed.map(knownRedText)) : []),
     ...(v.quarantine?.length ? list('Debt (quarantine)', v.quarantine) : []),
-    ...list('Waivers', v.waivers.map(entryLine)),
+    ...list('Waivers', lines(v.waivers)),
     ...list('Downgrades ΔO⁻', v.downgrades.flatMap(d => d.items.map(i => `#${d.seq} ${d.allowance !== undefined ? allowanceLabel(d) : `${d.by}${d.channel === 'delegated' ? ' (delegated)' : ''}`} ${i.node}: ${i.what}`))),
     ...list('Rulings', v.rulings.map(r => `#${r.seq} ${r.by}${r.prospective ? ' (prospective)' : ''}${r.channel === 'delegated' ? ' (delegated)' : ''} (${r.nodes === '*' ? 'all nodes' : r.nodes.join(', ')}): ${r.text}`)),
     ...list('Owner decisions needed', v.decisions.map(itemText)),
-    ...list('Owner actions', v.ownerActions.map(entryLine)),
+    ...list('Owner actions', lines(v.ownerActions)),
     ...adoptionSections(v.adoptions, list, 'Trunk adoptions (owner decisions: commits made outside owed)', 'Trunk adoptions under allowance (parent adoptions: commits made outside owed)'),
     ...(v.halts?.length ? list('Driver halts', v.halts.map(h => `${h.node}: ${haltText(h)}${h.active ? ' (active)' : ' (cleared)'}`)) : []),
     ...(v.receipts?.length ? list('Receipts (manual, informational)', v.receipts.map(receiptText)) : []),

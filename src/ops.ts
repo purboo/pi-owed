@@ -10,7 +10,7 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText, slotGitInProgress, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
-import { planReceipt, renderEntry } from './views.ts';
+import { planReceipt, renderEntry, withActHistory } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
@@ -31,6 +31,7 @@ import { editText, editDiff, type EditFields } from './edit.ts';
 import { lintPlanShell } from './planlint.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { counterfactual, type Counterfactual } from './counterfactual.ts';
+import { actScope, actContent, type RecordedAct } from './identical-acts.ts';
 import { OwedError } from './errors.ts';
 import { assertNoLedgerLock } from './lock-context.ts';
 import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
@@ -266,6 +267,25 @@ function nodeStable(before: State, latest: Awaited<ReturnType<typeof load>>, id:
     for (const e of since) { sim = sim ? extendState(sim,[e]) : reduceFrom(before,[e],latest.lookup); if (e.kind === 'plan' && !sim.nodes[id]?.candidate) throw new OwedError(`candidate #${a.candidate.seq} ${a.candidate.commit.slice(0,12)} of ${id} was invalidated by plan #${e.seq} (its spec changed); the writer submits again, then merge`); }
   }
   throw new OwedError('Plan, candidate or trunk changed; retry');
+}
+/** ID: latest act on this exact open candidate, checked while holding the append lock. */
+function identicalAct(s: State, d: Draft): RecordedAct | undefined {
+  if (!('node' in d)) return undefined;
+  const c = s.nodes[d.node]?.candidate, scope = actScope(d);
+  if (!c || !s.nodes[d.node]?.slot?.open || scope === undefined) return undefined;
+  const prior = entriesOf(s).findLast(e => e.seq > c.seq && actScope(e) === scope);
+  const rules = applicableRules(s,d.node);
+  return prior && actContent(prior,rules) === actContent(d,rules) ? { ...prior, alreadyRecorded:prior.seq } : undefined;
+}
+/** Normal validation still runs before deduplication; waiver retries check before consumed-risk validation. */
+async function mutateAct(o: Actor, make: (s: State) => Draft | RecordedAct | Promise<Draft | RecordedAct>): Promise<RecordedAct> {
+  owner(o); const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => {
+    const { state } = await load(ledger), d = await make(state);
+    if ('alreadyRecorded' in d) return d as RecordedAct;
+    guard(state,d);
+    return identicalAct(state,d) ?? (await ledger.append([d]))[0]!;
+  });
 }
 async function mutate(o: Actor, make: (s: State) => Draft | Promise<Draft>, fresh?: { node: string; since?: number }): Promise<Entry> {
   owner(o); const ledger = await Ledger.open(o.cwd);
@@ -1307,12 +1327,12 @@ export const attestBusyText = (node: string, owner: LockOwner): string => `attes
  * either refuses at append time when the open candidate differs. `from`: further working directories of the calling
  * process for the writer-worktree rail (G2.1; o.cwd and process.cwd() are always checked).
  */
-export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<Entry & { warnings?: string[] }> {
+export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<RecordedAct & { warnings?: string[] }> {
   const given = candidateArg(o.named), ledger = await Ledger.open(o.cwd);
   const modelState = (await readState(o)).state;
   const measuredModel = await recordedModel(o.cwd,modelState,o.node,by(o),o.model);
   let warning: string | undefined;
-  const entry = await mutate(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); const ack = o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString());
+  const entry = await mutateAct(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); const ack = o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString());
     const missing = applicableRules(s,o.node).filter(r => r.seq > (ack ?? -1));
     if (missing.length) {
       const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
@@ -1320,14 +1340,21 @@ export async function review(o: Actor & { node: string; verdict:'ok'|'block'; ra
       warning = `Warning: review recorded without acknowledging applicable rulings ${missing.map(r => `#${r.seq}`).join(', ')}; re-record: owed review ${o.node} --${o.verdict} --rank ${o.rank} --as ${quote(by(o))} --candidate ${n.candidate!.commit} --obligation ${obligation} --note ${quote(o.note)}${o.needs ? ' --needs-parent' : ''}${model ? ` --model ${quote(model)}` : ''} --ack-rulings ${top}`;
     }
     return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:ack,...(model !== undefined ? { model } : {}),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
-  return { ...entry, ...(warning ? { warnings: [warning] } : {}) };
+  return { ...entry, ...(warning && entry.alreadyRecorded === undefined ? { warnings: [warning] } : {}) };
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
-export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<Entry> {
+export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<RecordedAct> {
   const given = candidateArg(o.named);
-  return mutate(o,async s => {
+  return mutateAct(o,async s => {
     node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin);
-    const n = candidate(s,o.node), inactive = (o.accept_risk ?? []).filter(seq => !activeRisk(s,o.node,o.obligation,seq));
+    const n = candidate(s,o.node);
+    // A successful waiver consumed its risks; an exact retry must not re-accept them.
+    const prior = entriesOf(s).findLast(e => e.seq > n.candidate!.seq && e.kind === 'waive' && e.by === by(o) && e.node === o.node && e.obligation === o.obligation);
+    if (prior?.kind === 'waive') {
+      const repeated = identicalAct(s,{ kind:'waive', by:by(o), channel:o.channel, node:o.node, obligation:o.obligation, key:prior.key, reason:o.reason, accept_risk:o.accept_risk });
+      if (repeated) return repeated;
+    }
+    const inactive = (o.accept_risk ?? []).filter(seq => !activeRisk(s,o.node,o.obligation,seq));
     let key = n.candidate!.keys[o.obligation] ?? '';
     if (inactive.length && o.as.role === 'owner') {
       const refused = (): never => { throw new OwedError('accept_risk must reference active blocks for this obligation'); };
@@ -2209,7 +2236,7 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
   const receipts = entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.merge !== undefined && included(e));
   const superseded = supersededOf(state,Object.values(state.nodes)).filter(b => included({seq:b.supersededBy}));
-  return {...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(quarantineDebt(state).length ? {quarantine:quarantineDebt(state).map(quarantineText)} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })};
+  return withActHistory({...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(quarantineDebt(state).length ? {quarantine:quarantineDebt(state).map(quarantineText)} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })},entries);
 }
 /**
  * Verifies the hash chain and replays the ledger. N4: never reads the plan caches; every plan is parsed from its YAML
@@ -2362,10 +2389,10 @@ export async function approvePreview(o: Context & { node: string }): Promise<{ n
  * `candidate` (the one the owner confirmed) and `named` (G1: the commit the caller names) refuse at append time when
  * the current candidate differs.
  */
-export async function approve(o: Actor & { node: string; note?: string; block?: boolean; candidate?: CandidatePin; named?: string }): Promise<Entry> {
+export async function approve(o: Actor & { node: string; note?: string; block?: boolean; candidate?: CandidatePin; named?: string }): Promise<RecordedAct> {
   if (o.as.role !== 'owner') throw new OwedError('approve requires owner');
   const given = candidateArg(o.named);
-  return mutate(o,s => {
+  return mutateAct(o,s => {
     node(s,o.node); named(s,o.node,given);
     const n = candidate(s,o.node);
     pinned(s,o.node,o.candidate);
@@ -2399,12 +2426,12 @@ export async function evidencePreview(o: Context & { node: string }): Promise<{ 
  * current open candidate differs. `named` (G1) records only on an open candidate whose commit starts with it. `from`:
  * further working directories of the calling process for the writer-worktree rail (G2.1, as for review).
  */
-export async function evidence(o: Actor & { node: string; id: string; files: string[]; note: string; expect?: EvidenceFile[]; candidate?: CandidatePin; named?: string; from?: string[] }): Promise<EvidenceEntry> {
+export async function evidence(o: Actor & { node: string; id: string; files: string[]; note: string; expect?: EvidenceFile[]; candidate?: CandidatePin; named?: string; from?: string[] }): Promise<RecordedAct<EvidenceEntry>> {
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('evidence requires a note','usage');
   const given = candidateArg(o.named);
   const files = await evidenceFiles({ cwd:o.cwd, files:o.files });
   if (o.expect && canonical(o.expect) !== canonical(files)) throw new OwedError('evidence files changed since they were confirmed; nothing was recorded');
-  return await mutate(o,async s => {
+  return await mutateAct(o,async s => {
     const n = node(s,o.node);
     named(s,o.node,given);
     pinned(s,o.node,o.candidate);
@@ -2412,7 +2439,7 @@ export async function evidence(o: Actor & { node: string; id: string; files: str
     if (n.merged && !n.slot?.open) return { kind:'evidence',by:by(o),channel:o.channel,node:o.node,merge:n.merged.seq,id:o.id,files,note:o.note };
     const c = candidate(s,o.node);
     return { kind:'evidence',by:by(o),channel:o.channel,node:o.node,attempt:c.slot!.attempt,key:c.candidate!.keys[`evidence:${o.id}`] ?? '',id:o.id,files,note:o.note };
-  }) as EvidenceEntry;
+  }) as RecordedAct<EvidenceEntry>;
 }
 
 // ---------- escapes and decoys ----------

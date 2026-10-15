@@ -1,3 +1,4 @@
+import { alreadyRecordedText } from './identical-acts.ts';
 import { idle, idleExit, idleText } from './watchdog.ts';
 import { adoptWaitMs } from './adopt-wait.ts';
 import { withWritesSyntax } from './writes.ts';
@@ -190,6 +191,8 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     if(text === undefined) { const e=result as Entry; text=renderEntry(e); if(['submit','review','waive','abandon','approve','evidence'].includes(cmd)) text+=`\n${renderReceipt(await ops.why({cwd,node}))}`; }
     const warnings = (result as { warnings?: string[] } | undefined)?.warnings;
     if (cmd === 'review' && warnings?.length) text += `\n${warnings.join('\n')}`;
+    const repeated = alreadyRecordedText((result ?? {}) as { alreadyRecorded?: number });
+    if (repeated) text = repeated;
     io.log(opts.has('json') ? JSON.stringify(result) : text!);
     // A signal after the last abort point: the operation completed and is recorded. The exit code describes the ledger
     // outcome (`owed drive` reads it, D14.3), so it stays the normal one; only an aborted operation exits 130/143.
