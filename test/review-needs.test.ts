@@ -149,7 +149,7 @@ test('a * ruling after the block leaves the halt and the block unresolved', () =
   assert.equal(halted(s, 'a')?.seq, h.seq, 'a * ruling does not clear the halt (D3)');
   assert.equal(parentRuling(s, s.nodes.a!.blocks[0]!), undefined);
   assert.equal(act(r), undefined);
-  assert.match(why(s), new RegExp(`⛔ blocked #${block.seq} review \\(needs a parent ruling\\): a parent records owed rule --nodes a "<decision>"`));
+  assert.match(why(s), new RegExp(`⛔ blocked #${block.seq} review \\(needs a parent ruling\\): a parent records owed rule --nodes a --writer "<decision>"`));
   // A ruling naming only another node does not clear it either.
   r.rule('for c only', ['c']);
   assert.equal(halted(r.state(), 'a')?.seq, h.seq);
@@ -160,7 +160,7 @@ test('views: why and status show "needs a parent ruling" until a node ruling, th
   const s = r.state();
   assert.ok(why(s).split('\n').some(l => l.startsWith(`⛔ blocked #${block.seq} review (needs a parent ruling): `)), why(s));
   const status = renderStatus(statusView(s, [...r.entries]));
-  assert.ok(status.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${block.seq} review (needs a parent ruling): brief says X, plan says Y: which one?; record owed rule --nodes a "<decision>"`), status);
+  assert.ok(status.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${block.seq} review (needs a parent ruling): brief says X, plan says Y: which one?; record owed rule --nodes a --writer "<decision>"`), status);
   // A driver halt with the same words is listed under Halted (driver).
   r.halt(act(r) as Extract<Action, { do: 'halt' }>);
   const halt = renderStatus(statusView(r.state(), [...r.entries]));
@@ -264,7 +264,7 @@ test('CLI: review --block --needs-parent records needs; --ok --needs-parent is r
     assert.equal(plain.code, 0, plain.stderr);
     assert.equal('needs' in (await last(r.cwd)), false);
     const st = await cli(r.cwd, ['status', '--full']);
-    assert.ok(st.stdout.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${e.seq} review (needs a parent ruling): which API?; record owed rule --nodes a "<decision>"`), st.stdout);
+    assert.ok(st.stdout.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${e.seq} review (needs a parent ruling): which API?; record owed rule --nodes a --writer "<decision>"`), st.stdout);
     assert.equal((await cli(r.cwd, ['rule', 'general', '--nodes', '*'])).code, 0);
     assert.match((await cli(r.cwd, ['why', 'a'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(needs a parent ruling\\)`));
     assert.equal((await cli(r.cwd, ['rule', 'use the v2 API', '--nodes', 'a'])).code, 0);

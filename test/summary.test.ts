@@ -58,7 +58,7 @@ test('SQ1 default status shows outcome, each phase and only current parent/owner
   const v=statusView(f.s,f.entries,[],now), text=renderStatus(v);
   assert.match(text,/^owed: 1 merged · 10 in progress · 5 need you · trunk main abcdef012345 ✘ invariants \(0\/1\)\nNeeds you \(5\):/);
   for (const [id,phase] of [['writer','writing'],['measure','measuring'],['review','reviewing'],['waiting','waiting for writer'],['held','held'],['accepted','accepted (merge pending)']]) assert.ok(text.includes(`${id}: ${phase} (5m)`),text);
-  assert.match(text,/ruling: needs a parent ruling: choose the public response → owed rule --nodes ruling "<decision>"/);
+  assert.match(text,/ruling: needs a parent ruling: choose the public response → owed rule --nodes ruling --writer "<decision>"/);
   assert.match(text,/halt: driver halted: repair budget exhausted → owed resume halt/);
   assert.match(text,/owner: awaiting owner approval → owed approve owner --candidate candidate/);
   assert.match(text,/ready: ready to dispatch → owed dispatch ready/);
