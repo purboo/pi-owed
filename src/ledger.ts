@@ -7,6 +7,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { H, ZERO, sha256 } from './canon.ts';
 import { git } from './git.ts';
+import { currentLockDeadline } from './lock-deadline.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import type { Entry, Draft } from './types.ts';
 
@@ -115,7 +116,9 @@ export class Ledger {
     if (!/^[a-zA-Z0-9_-]+$/.test(lockName)) throw new OwedError('invalid lock name', 'usage');
     if (this.held.getStore()?.has(lockName)) throw new OwedError(`nested lock ${lockName}`, 'internal');
     const aborted = () => new OwedError('aborted', 'aborted');
-    const path = join(this.dir, lockName), deadline = Date.now() + (opts.waitMs ?? lockWait.ms);
+    const inheritedDeadline = currentLockDeadline();
+    const deadline = Math.min(inheritedDeadline ?? Infinity,opts.waitMs !== undefined ? Date.now()+opts.waitMs : inheritedDeadline ?? Date.now()+lockWait.ms);
+    const path = join(this.dir, lockName);
     let owner: LockOwner | undefined;
     let delay = 10;
     const token = randomUUID();
@@ -157,7 +160,7 @@ export class Ledger {
       if (signal?.aborted) throw aborted();
       await new Promise<void>((resolve, reject) => {
         const stop = () => { clearTimeout(timer); reject(aborted()); };
-        const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, delay);
+        const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); resolve(); }, Math.min(delay,Math.max(0,deadline-Date.now())));
         signal?.addEventListener('abort', stop, { once: true });
       });
       delay = Math.min(250, delay * 2);

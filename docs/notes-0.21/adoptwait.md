@@ -1,34 +1,36 @@
-# Adopt waits (0.21, adoptwait)
+# Adopt waits (0.21, adoptwait; ruling #2090)
 
-`owed adopt --wait <seconds>` and `owed_adopt {wait: seconds}` override the default 60-second merge-lock wait. Seconds may be fractional and must be finite and non-negative; zero tries once. Busy retains exit 75 and tells the caller to retry. The option does not change the machine lease's own wait policy, permissions, invariant gates or trunk CAS.
+`owed adopt --wait <seconds>` and `owed_adopt {wait: seconds}` set one total acquisition budget (default 60 seconds). Seconds may be fractional and must be finite, non-negative and within the supported timestamp range. Zero makes a non-waiting acquisition attempt. Busy retains exit 75 and tells the caller to retry. Permissions, invariant gates and trunk CAS are preserved.
 
-Lock owner files optionally contain `activity` and `activitySince` (ISO UTC). Merge, attest, adopt and sweep holders name their operation; each measurement updates the activity, for example `merge X: measuring inv:next-tests`. Busy diagnostics append `(activity since HH:MM)` in UTC. Parallel measurements show the most recently started measurement, not an exhaustive list of running checks. The original lock acquisition `ts` stays intact.
+The budget starts at entry to adopt. An async deadline context covers nested Ledger instances: merge and final ledger acquisition each use only the remaining budget, including the default path. Machine lease acquisition uses the same deadline; timeout cancels the queued holder and returns Busy. Once a lease is granted, measurements retain their own configured execution timeouts; elapsed measurement time still consumes the budget available for subsequent lock acquisition. A free lock can be acquired with zero remaining wait. There is no `adopt-queue` lock.
 
-An adopt publishes `<owed dir>/adopt-pending.json` containing `{pid, host, commit, since}` before waiting for the machine lease or merge lock. The driver starts no new merge while this request is live, leaves an already running merge to finish, and reports `merge waiting for adopt (pending since HH:MM)` in its output and status. Success, refusal, timeout and cancellation remove the marker. A dead local PID is ignored, including in status; a malformed marker is also ignored. A foreign-host request is treated conservatively as live because its PID cannot be checked locally.
+Lock owner files optionally contain `activity` and `activitySince` (ISO UTC). Merge, attest, adopt and sweep holders name their operation; measurements update the activity, including nested trunk refresh across Ledger instances, for example `merge X: measuring inv:next-tests`. Busy diagnostics append `(activity since HH:MM)` in UTC. Parallel measurements show the most recently started measurement. The original acquisition `ts` stays intact.
 
-A short named helper module owns marker publication and liveness checks. Concurrent adopters serialize through the `adopt-queue` lock, so one request's cleanup cannot delete another request's marker. Lock order is adopt-queue -> machine lease -> merge -> short ledger locks; no merge or driver acquires adopt-queue. Activity updates serialize per Ledger and publish owner files by atomic rename. Stale measurement results still face the existing plan/trunk/ref CAS and invariant guard.
+Before waiting for the machine lease or merge lock, each adopter publishes `<owed dir>/adopt-pending/<host>-<pid>.json` with `{pid, host, commit, since, until}`. `since` is the adopt's start and `until` is start + total wait budget + 60 seconds. A missing, malformed or elapsed `until` makes a marker stale on every host. Before expiry, local PIDs must also be alive; foreign PIDs are not probed. Old singleton markers without `until` are ignored. Directory entries are read independently, so a removed or malformed marker does not hide another live one.
+
+The driver yields new merges while any marker is live and names the oldest live marker in `merge waiting for adopt (pending since HH:MM)`. It lets an in-flight merge finish. Success, refusal, timeout and cancellation remove the adopter's marker. Distinct processes publish independent files and compete for the merge lock normally. Tool calls sharing a PID retain the oldest request in that PID's file; brief in-process publication serialization and request ownership prevent one call from deleting another's marker. On expiry/completion the next live same-PID request is revealed; a bounded timer cannot recreate a completed publication group.
+
+Lock order remains machine lease -> merge -> short ledger locks. Marker publication acquires no operation lock. Activity and marker updates use atomic rename. Existing stale-state/CAS checks continue to guard ledger writes.
 
 ## Plan keys and ledger fields
 
-None. CLI flag: `adopt --wait SECONDS`. Tool parameter: `owed_adopt.wait` (number).
+None. CLI flag: `adopt --wait SECONDS`. Tool parameter: `owed_adopt.wait` (number). Runtime metadata adds `activity`/`activitySince` to lock owners and `until` to per-process pending markers.
 
 ## Compatibility
 
-No ledger entries, acceptance keys or replay semantics change. Older readers ignore the optional runtime lock fields and pending marker; older drivers do not yield to pending adopts. Upgrade the active driver to obtain adopt priority. Owner-file additions are runtime metadata, not ledger fields.
+No ledger entries, acceptance keys or replay semantics change. Older readers ignore the optional runtime fields; older drivers do not yield to these per-process markers. Upgrade the active driver for adopt priority. Crashed adopters cannot execute cleanup, but local dead-PID detection or the cross-host expiry makes their files inert.
 
-## Tests
+## Tests and ruling acknowledgment
 
-New `test/adoptwait.test.ts` covers AW1 explicit/default timeout behavior, CLI/tool forwarding, invalid waits, AW2 Busy text and actual measurement updates (including a merge's nested trunk refresh across Ledger instances), and AW3 live/dead PID scheduling, status, cleanup, malformed metadata, and completion of an in-flight merge. Existing tests changed: none.
+Writer applied ruling #2090 in full; review must acknowledge #2090 through the normal rulings gate. `test/adoptwait.test.ts` has 13 behavioral cases through CLI, tool, ops, driver and status. The original eight cases were updated for the ruled marker layout and expiry; no other existing tests changed. Five added cases cover expired foreign/missing-deadline markers and oldest selection, two concurrent CLI adopters with 600 ms budgets, a shared default deadline across merge/ledger locks, bounded machine lease acquisition with holder cleanup, and abort ownership for overlapping same-PID tool requests. Success/refusal/abort cleanup remains covered.
 
-All checks ran remotely via `/tmp/owed-ipc/run.sh` (red via `/tmp/owed-ipc/red.sh`), never local node/npm/tsc:
+All execution checks ran remotely through `/tmp/owed-ipc/run.sh` and `/tmp/owed-ipc/red.sh`; no node/npm/tsc/tests ran locally. Receipts against the final repair source:
 
-- Focused: `node --test --test-reporter=tap test/adoptwait.test.ts` — 8/8 pass, exit 0; `/tmp/owed-ipc/logs/adoptwait-1-092650.log`.
-- Typecheck: `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit` — exit 0; `/tmp/owed-ipc/logs/adoptwait-1-092755.log`.
-- Full: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'` — 1114/1114 pass, exit 0; `/tmp/owed-ipc/logs/adoptwait-1-092822.log`.
-- Red on `31a764d5a4d0`, candidate test overlaid — 8/8 fail, exit 1, `red=shown`; `/tmp/owed-ipc/logs/adoptwait-1-red-092650.log`. Failures include missing pending publication, unknown `--wait`, absent tool parameter and absent measurement activity; no timeout/cancellation.
-
-Focused/red preceded a TypeScript-only schema cast correction, with identical runtime behavior; typecheck and full used that final source. An earlier full run (`adoptwait-1-092509.log`) was intentionally stopped after the nested-refresh activity fix made its tree obsolete; it is not acceptance evidence.
+- Focused `node --test --test-reporter=tap test/adoptwait.test.ts`: 13/13 pass, exit 0; `/tmp/owed-ipc/logs/adoptwait-1-095824.log`.
+- Typecheck `node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit`: exit 0; `/tmp/owed-ipc/logs/adoptwait-1-095723.log`.
+- Full `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`: 1119/1119 pass, exit 0; `/tmp/owed-ipc/logs/adoptwait-1-095916.log`.
+- Red on slot base `31a764d5a4d0`, candidate test overlaid: 13/13 fail, exit 1, `red=shown`, no cancelled/timed-out tests; `/tmp/owed-ipc/logs/adoptwait-1-red-095816.log`.
 
 ## Deviations and limits
 
-Small interpretation choices: fractional seconds are allowed; foreign hosts are considered live conservatively; concurrent adopts serialize marker ownership with an additional runtime lock. `--wait` applies separately to acquiring that queue lock and the merge lock, and does not impose a total end-to-end deadline on invariant measurements. A SIGKILL cannot execute cleanup; the dead-PID rule makes its marker inert. PID reuse is subject to the same PID/hostname liveness limitation as existing owed locks.
+No product deviation from #2090. Small implementation choices: fractional seconds are accepted; same-PID callers share their specified PID pathname with request-aware publication; a measurement's own timeout is unchanged. PID reuse remains subject to the existing local PID/hostname liveness limitation, now bounded by marker expiry on every host.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, access, rm } from 'node:fs/promises';
+import { readFile, writeFile, access, rm, mkdir, readdir, chmod } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
@@ -29,14 +29,19 @@ async function fixture(extra = {}) {
   await commitAt(r.cwd,{seed:'base'});
   const plan = {version:1,trunk:'main',lease:false,closure:[],invariants:[],nodes:[{id:'a',writes:['a.txt'],checks:[],review:{count:0,min_rank:1}}],...extra};
   await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify(plan)});
-  const ledger = await Ledger.open(r.cwd), pending = join(ledger.dir,'adopt-pending.json');
-  return {...r,ledger,pending};
+  const ledger = await Ledger.open(r.cwd), pendingDir = join(ledger.dir,'adopt-pending');
+  await mkdir(pendingDir,{recursive:true});
+  const pending = join(pendingDir,`${hostname()}-${process.pid}.json`);
+  return {...r,ledger,pending,pendingDir};
 }
-async function hold(ledger: Ledger, activity = 'merge X'): Promise<() => Promise<void>> {
+async function pendingFiles(dir: string): Promise<string[]> {
+  return (await readdir(dir)).filter(f=>f.endsWith('.json'));
+}
+async function hold(ledger: Ledger, activity = 'merge X', name = 'merge'): Promise<() => Promise<void>> {
   let release!: () => void, acquired!: () => void;
   const gate = new Promise<void>(r=>{release=r;}), got = new Promise<void>(r=>{acquired=r;});
   // Activity options are optional on the old base; the red run exercises its old behavior too.
-  const done = ledger.withLock(async()=>{acquired();await gate;},'merge',undefined,{activity});
+  const done = ledger.withLock(async()=>{acquired();await gate;},name,undefined,{activity});
   await Promise.race([got,done]);
   return async()=>{release();await done;};
 }
@@ -65,6 +70,7 @@ test('AW1: explicit wait overrides the default lock timeout and retains the adop
     const marker = JSON.parse(await readFile(f.pending,'utf8'));
     assert.deepEqual({pid:marker.pid,host:marker.host,commit:marker.commit},{pid:process.pid,host:hostname(),commit});
     assert.ok(Number.isFinite(Date.parse(marker.since)));
+    assert.equal(Date.parse(marker.until)-Date.parse(marker.since),62_000);
     await sleep(100); // exceeds only the shortened default, not the explicit two-second budget
     await release();
     const result = await outcome;
@@ -82,15 +88,15 @@ test('AW1/AW2: CLI wait times out with lock activity, then succeeds after releas
     const busy = await cli(f.cwd,['adopt','--note','hotfix','--wait','0.01','--no-lease']);
     assert.equal(busy.code,75,busy.stderr);
     assert.match(busy.stderr,/merge lock held by pid .*\(merge X: measuring inv:next-tests since \d\d:\d\d\); retry/);
-    assert.equal(existsSync(f.pending),false); assert.deepEqual(await f.ledger.read(),before);
+    assert.deepEqual(await pendingFiles(f.pendingDir),[]); assert.deepEqual(await f.ledger.read(),before);
     for (const wait of ['-1','NaN','Infinity','']) {
       const bad = await cli(f.cwd,['adopt','--note','hotfix','--wait',wait]);
       assert.equal(bad.code,2,`invalid wait ${wait}: ${bad.stderr}`);
     }
     const done = cli(f.cwd,['adopt','--note','hotfix','--wait','2','--no-lease']);
-    await until(()=>existsSync(f.pending),'CLI waits with a pending marker');
+    await until(async()=>(await pendingFiles(f.pendingDir)).length === 1,'CLI waits with a pending marker');
     await release(); const out = await done; assert.equal(out.code,0,out.stderr);
-    assert.equal(existsSync(f.pending),false);
+    assert.deepEqual(await pendingFiles(f.pendingDir),[]);
   } finally {await release();await f.cleanup();}
 });
 
@@ -130,7 +136,7 @@ test('AW3: driver yields new merges to live pending adopt, reports it, and ignor
   const f = await fixture(), lines: string[] = [], driver = new Driver({...f,dsa:new Client(),log:l=>lines.push(l),handleSignals:false});
   try {
     await candidate(f);
-    const marker = {pid:process.pid,host:hostname(),commit:(await ops.readState(f)).state.trunk.commit,since:'2026-10-15T09:23:00.000Z'};
+    const marker = {pid:process.pid,host:hostname(),commit:(await ops.readState(f)).state.trunk.commit,since:'2026-10-15T09:23:00.000Z',until:new Date(Date.now()+60_000).toISOString()};
     await writeFile(f.pending,JSON.stringify(marker));
     const before = await f.ledger.read();
     const pass = await driver.pass(); await driver.settle();
@@ -151,6 +157,119 @@ test('AW3: driver yields new merges to live pending adopt, reports it, and ignor
     assert.ok((await ops.readState(f)).state.nodes.a!.merged,'dead marker never blocks a merge');
     assert.equal((await ops.verify(f)).ok,true);
   } finally {driver.abort.abort();await driver.settle();await f.cleanup();}
+});
+
+test('AW #2090: expired foreign and undated markers never block; live markers name the oldest', {timeout:90_000}, async()=>{
+  const f = await fixture(), lines: string[] = [], driver = new Driver({...f,dsa:new Client(),log:l=>lines.push(l),handleSignals:false});
+  try {
+    await candidate(f);
+    const now = Date.now(), commit = (await ops.readState(f)).state.trunk.commit;
+    const oldest = {pid:1234,host:'foreign.invalid',commit,since:new Date(now-120_000).toISOString(),until:new Date(now+60_000).toISOString()};
+    const newest = {...oldest,pid:process.pid,host:hostname(),since:new Date(now-30_000).toISOString()};
+    const foreign = join(f.pendingDir,'foreign.invalid-1234.json');
+    await writeFile(foreign,JSON.stringify(oldest));await writeFile(f.pending,JSON.stringify(newest));
+    await driver.pass();await driver.settle();
+    assert.equal((await ops.readState(f)).state.nodes.a!.merged,undefined);
+    assert.match(renderStatus(await ops.status(f)),new RegExp(`pending since ${oldest.since.slice(11,16)}`));
+    await writeFile(foreign,JSON.stringify({...oldest,until:new Date(now-1).toISOString()}));
+    await driver.pass();await driver.settle();
+    assert.equal((await ops.readState(f)).state.nodes.a!.merged,undefined,'another live request still blocks');
+    assert.ok(lines.some(l=>l.includes(`pending since ${newest.since.slice(11,16)}`)));
+    // Missing until is stale even for a live local PID. Expired foreign remains on disk.
+    const {until:_,...oldFormat} = newest;
+    await writeFile(f.pending,JSON.stringify(oldFormat));
+    await writeFile(join(f.ledger.dir,'adopt-pending.json'),JSON.stringify(oldFormat));
+    await driver.pass();await driver.settle();driver.tick();await driver.pass();await driver.settle();
+    assert.ok((await ops.readState(f)).state.nodes.a!.merged);
+    assert.equal((await ops.status(f)).mergeWaiting,undefined);
+  } finally {driver.abort.abort();await driver.settle();await f.cleanup();}
+});
+
+test('AW #2090: two concurrent CLI adopts share each request\'s 600ms total budget', {timeout:60_000}, async()=>{
+  const f = await fixture(), releaseMerge = await hold(f.ledger), releaseLedger = await hold(f.ledger,'test commit blocker','lock');
+  let outcomes: Promise<Awaited<ReturnType<typeof cli>>[]> | undefined;
+  try {
+    await commitAt(f.cwd,{hotfix:'ok'});
+    const before = await f.ledger.read(), started = Date.now();
+    outcomes = Promise.all([1,2].map(()=>cli(f.cwd,['adopt','--note','hotfix','--wait','0.6','--no-lease'])));
+    await until(async()=>(await pendingFiles(f.pendingDir)).length === 2,'both adopters publish independent PID markers');
+    const files = await pendingFiles(f.pendingDir);
+    assert.notEqual(files[0],files[1]);
+    for (const file of files) {
+      const marker=JSON.parse(await readFile(join(f.pendingDir,file),'utf8'));
+      assert.equal(Date.parse(marker.until)-Date.parse(marker.since),60_600);
+    }
+    assert.equal(existsSync(join(f.ledger.dir,'adopt-queue')),false);
+    await sleep(200);await releaseMerge();
+    const results = await outcomes;
+    assert.ok(Date.now()-started <= 1600,'600ms budget + 1s allowance, including both lock waits');
+    for (const result of results) assert.equal(result.code,75,result.stderr);
+    assert.ok(results.some(result=>result.stderr.includes('ledger lock')),results.map(r=>r.stderr).join('\n'));
+    assert.deepEqual(await pendingFiles(f.pendingDir),[]);
+    assert.deepEqual(await f.ledger.read(),before);
+  } finally {await releaseMerge();await releaseLedger();await outcomes;await f.cleanup();}
+});
+
+test('AW #2090: omitted wait uses one default deadline for merge and ledger acquisition', {timeout:60_000}, async()=>{
+  const f = await fixture(), releaseMerge = await hold(f.ledger), releaseLedger = await hold(f.ledger,'test commit blocker','lock'), prior = lockWait.ms;
+  let outcome: Promise<unknown> | undefined;
+  try {
+    await commitAt(f.cwd,{hotfix:'ok'});lockWait.ms=600;
+    const start = Date.now();
+    outcome=adopt(f.cwd).catch(error=>error);
+    await until(()=>existsSync(f.pending),'default-budget marker is published');
+    const marker=JSON.parse(await readFile(f.pending,'utf8'));
+    assert.equal(Date.parse(marker.until)-Date.parse(marker.since),60_600);
+    await sleep(400);await releaseMerge();
+    const error = await outcome as {code:string;message:string};
+    assert.equal(error.code,'busy');assert.match(error.message,/ledger lock/);
+    assert.ok(Date.now()-start < 1000,'ledger lock receives the remaining default budget');
+    assert.equal(existsSync(f.pending),false);
+  } finally {lockWait.ms=prior;await releaseMerge();await releaseLedger();await outcome;await f.cleanup();}
+});
+
+test('AW #2090: machine lease acquisition is bounded by the same adopt budget', {timeout:60_000}, async()=>{
+  const f = await fixture(), bin = join(f.root,'waiting-dsa.sh'), pidFile = join(f.root,'waiting-pid');
+  const previous = {OWED_DSA:process.env.OWED_DSA,OWED_LEASED:process.env.OWED_LEASED};
+  let outcome: Promise<unknown> | undefined;
+  try {
+    const {state}=await ops.readState(f);
+    await ops.planSet({cwd:f.cwd,as:parent,plan:JSON.stringify({...state.plan,lease:true})});
+    await writeFile(bin,`#!/bin/sh\nprintf '%s' "$$" > '${pidFile}'\nexec sleep 30\n`);await chmod(bin,0o755);
+    process.env.OWED_DSA=bin;delete process.env.OWED_LEASED;
+    await commitAt(f.cwd,{hotfix:'ok'});
+    const before=await f.ledger.read(), started=Date.now();
+    outcome=adopt(f.cwd,{lease:true,wait:0.6}).catch(error=>error);
+    await until(()=>existsSync(pidFile),'lease request is waiting');
+    assert.equal(existsSync(f.pending),true);
+    const error=await outcome as {code:string;message:string};
+    assert.equal(error.code,'busy');assert.match(error.message,/machine lease.*adopt wait budget/);
+    assert.ok(Date.now()-started<=1600,'lease wait obeys 600ms budget + 1s allowance');
+    assert.deepEqual(await pendingFiles(f.pendingDir),[]);assert.deepEqual(await f.ledger.read(),before);
+    const pid=Number(await readFile(pidFile,'utf8'));
+    await until(()=>{try {process.kill(pid,0);return false;} catch {return true;}},'queued lease child is reaped');
+  } finally {
+    await outcome;
+    for (const [key,value] of Object.entries(previous)) {if (value===undefined) delete process.env[key];else process.env[key]=value;}
+    await f.cleanup();
+  }
+});
+
+test('AW #2090: overlapping tool-process requests cannot remove each other\'s PID marker on abort', {timeout:60_000}, async()=>{
+  const f = await fixture(), release = await hold(f.ledger), first = new AbortController(), second = new AbortController();
+  let a: Promise<unknown> | undefined, b: Promise<unknown> | undefined;
+  try {
+    await commitAt(f.cwd,{hotfix:'ok'});
+    a=adopt(f.cwd,{wait:2,signal:first.signal}).catch(error=>error);
+    await until(()=>existsSync(f.pending),'first process-local request published');
+    b=adopt(f.cwd,{wait:3,signal:second.signal}).catch(error=>error);
+    await sleep(30);first.abort();assert.equal((await a as {code:string}).code,'aborted');
+    assert.equal(existsSync(f.pending),true,'second request still owns a marker');
+    const marker=JSON.parse(await readFile(f.pending,'utf8'));
+    assert.equal(Date.parse(marker.until)-Date.parse(marker.since),63_000);
+    second.abort();assert.equal((await b as {code:string}).code,'aborted');
+    assert.deepEqual(await pendingFiles(f.pendingDir),[]);
+  } finally {first.abort();second.abort();await release();await a;await b;await f.cleanup();}
 });
 
 test('AW2: merge lock names the invariant during its nested trunk refresh', {timeout:60_000}, async()=>{
@@ -196,7 +315,7 @@ test('AW3: a pending request does not abort a running merge', {timeout:90_000}, 
     await driver.pass();await until(()=>existsSync(marker),'merge starts its invariant');
     const holder = JSON.parse(await readFile(join(f.ledger.dir,'merge','owner.json'),'utf8'));
     assert.equal(holder.activity,'merge a: measuring inv:gate');
-    await writeFile(f.pending,JSON.stringify({pid:process.pid,host:hostname(),commit:state.trunk.commit,since:new Date().toISOString()}));
+    await writeFile(f.pending,JSON.stringify({pid:process.pid,host:hostname(),commit:state.trunk.commit,since:new Date().toISOString(),until:new Date(Date.now()+60_000).toISOString()}));
     await driver.pass();
     assert.ok(driver.measuring.get('a'),'in-flight merge remains owned by driver');
     await writeFile(gate,''); await driver.settle();

@@ -5,7 +5,8 @@ import { performance } from 'node:perf_hooks';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from 'yaml';
 import { canonical, sha256 } from './canon.ts';
-import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, type LockOwner } from './ledger.ts';
+import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type LockOwner } from './ledger.ts';
+import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason, mergeWaitSuffix } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText } from './rebase-view.ts';
 import { planReceipt, renderEntry } from './views.ts';
@@ -1350,20 +1351,23 @@ export async function adoptPreview(o: Context & { commit?: string }): Promise<Ad
  * guard, without a ref check (abortWith).
  */
 export async function adopt(o: Actor & { commit?: string; note: string; channel?: Channel; signal?: AbortSignal; lease?: boolean; wait?: number }): Promise<AdoptResult> {
+  const start = Date.now(), deadline = start+(adoptWaitMs(o.wait) ?? lockWait.ms);
+  return withLockDeadline(deadline,() => adoptRequested(o,start,deadline));
+}
+async function adoptRequested(o: Parameters<typeof adopt>[0], start: number, deadline: number): Promise<AdoptResult> {
   owner(o);
   // D21.4: a parent may adopt only under an `adopt` allowance of the current plan (paths checked below, before any effect).
   if (o.as.role !== 'owner' && !(o.as.role === 'parent' && adoptPrefixes((await load(await Ledger.open(o.cwd))).state.plan).length)) throw new OwedError('adopt requires owner: it records trunk changes that owed did not review');
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('adopt requires a note','usage');
   checkAbort(o.signal);
-  const waitMs = adoptWaitMs(o.wait);
   const ledger = await Ledger.open(o.cwd), { state } = await load(ledger);
   const commit = await git.revParse(o.cwd,o.commit ?? (state.seq >= 0 ? `refs/heads/${state.trunk.name}` : 'HEAD'));
-  return withAdoptPending(ledger,commit,waitMs,o.signal,() => measurementScope()
-    ? adoptHeld(o,ledger,waitMs)
-    : leased(o,signal => adoptHeld({...o,signal},ledger,waitMs)));
+  return withAdoptPending(ledger,commit,start,deadline,() => measurementScope()
+    ? adoptHeld(o,ledger)
+    : leased(o,signal => adoptHeld({...o,signal},ledger)));
 }
-/** AW: pending spans lease acquisition and all merge-lock outcomes; never nests the marker publisher. */
-async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger, waitMs?: number): Promise<AdoptResult> {
+/** AW: pending spans lease acquisition and all merge-lock outcomes. */
+async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger): Promise<AdoptResult> {
   return ledger.withLock(async () => {
     const { state } = await load(ledger); inited(state);
     const p = await adoptable(o.cwd,state,o.commit);
@@ -1394,7 +1398,7 @@ async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger, waitMs?
       const appended = await ledger.append([...observations,d]), allowance = o.as.role === 'parent' ? allowanceSeq(latest.state) : undefined;
       return {...p,entry:appended.at(-1)!,observations:appended.slice(0,-1),...(allowance !== undefined ? { allowance } : {})};
     },undefined,o.signal);
-  },'merge',o.signal,{waitMs,activity:'adopt'});
+  },'merge',o.signal,{activity:'adopt'});
 }
 export async function status(o: Context): Promise<StatusView> {
   const ledger = await Ledger.open(o.cwd), loaded = await load(ledger), state = inited(reduceFrom(loaded.state,[],loaded.lookup)), entries = loaded.entries;
