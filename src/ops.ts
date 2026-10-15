@@ -1348,12 +1348,6 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
   return mutateAct(o,async s => {
     node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin);
     const n = candidate(s,o.node);
-    // A successful waiver consumed its risks; an exact retry must not re-accept them.
-    const prior = entriesOf(s).findLast(e => e.seq > n.candidate!.seq && e.kind === 'waive' && e.by === by(o) && e.node === o.node && e.obligation === o.obligation);
-    if (prior?.kind === 'waive') {
-      const repeated = identicalAct(s,{ kind:'waive', by:by(o), channel:o.channel, node:o.node, obligation:o.obligation, key:prior.key, reason:o.reason, accept_risk:o.accept_risk });
-      if (repeated) return repeated;
-    }
     const inactive = (o.accept_risk ?? []).filter(seq => !activeRisk(s,o.node,o.obligation,seq));
     let key = n.candidate!.keys[o.obligation] ?? '';
     if (inactive.length && o.as.role === 'owner') {
@@ -1361,7 +1355,11 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
       if (inactive.some(seq => {
         const e = entriesOf(s).find(e => e.seq === seq);
         return e?.kind !== 'obs' || !mergeRisk(s,o.node,o.obligation,seq,e.key);
-      })) return refused();
+      })) {
+        // A candidate-key retry may cite risks it already consumed. Merge risks below must first recompute their key.
+        const repeated = identicalAct(s,{ kind:'waive', by:by(o), channel:o.channel, node:o.node, obligation:o.obligation, key, reason:o.reason, accept_risk:o.accept_risk });
+        return repeated ?? refused();
+      }
       const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
       if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`);
       const built = await git.buildMerge(o.cwd,s.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
