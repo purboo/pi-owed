@@ -9,8 +9,9 @@ once.
   error `drive.merge_batch: expected integer 1..8`.
 
 ## CLI
-- `owed merge A,B[,C...]` (parent/owner; `--no-lease` as for `owed merge`) merges the listed nodes as one batch. It
-  works whatever `drive.merge_batch` says; the driver batches only when it is >= 2.
+- `owed merge A,B[,C...]` (parent/owner; `--no-lease` as for `owed merge`) merges the listed nodes as one batch. An
+  explicit batch merge by the parent/owner is allowed whatever `drive.merge_batch` says (ruling #2110); the driver
+  batches only when `drive.merge_batch` >= 2.
 - Members are taken in merge-queue order. Every member must be accepted (an `approve: owner` is then no longer pending),
   must not touch the closure and must not have an owed `--remeasure`; the members' writes must not overlap pairwise (the
   same overlap rule as dispatch). Otherwise the command refuses and names the member and the next command
@@ -26,16 +27,26 @@ once.
 - Pass: under the ledger lock with CAS on the plan, the ledger trunk, every member's slot and candidate and the trunk
   ref, the observations and one `merge` entry per member are appended in order (member i: prior M(i-1), commit Mi,
   facts against M(i-1) as now), and the trunk ref moves once from T to Mn. Intermediate Mi are never a trunk head.
-- Each batch merge entry carries `batch: { final: <Mn>, state: <StateFacts of Mn>, keys: <member's check keys on Mn>,
-  members: [ids] }`. Its merge guard evaluates invariant items on `batch.state` and merge-tree check items on
-  `batch.keys`; base, accepted, blocks, writes and rulings are judged as for a single merge. The last member's `commit`
+- Each batch merge entry carries the identical object `batch: { final: <Mn>, state: <StateFacts of Mn>, keys: { <member>:
+  <its check keys on Mn> }, members: [ids] }`. Its merge guard evaluates invariant items on `batch.state` and merge-tree
+  check items on `batch.keys[node]`; base, accepted, blocks, writes and rulings are judged as for a single merge. The last member's `commit`
   and `state` equal `batch.final`/`batch.state`; a non-last member never merges `batch.final`.
 - Fail: the observations are appended with `batch: [ids]` and without `merging` (attributed to no member; they never
   add a block and never count as a decoy catch or as a trunk observation for failure signatures). The merge is refused:
   `batch merge of a, b refused on batch tree <Mn>: <subject/obligation: failure>; ...; the members merge one at a time
   next (owed merge a)`. The same member set is not batched again until trunk moves (`owed merge a,b` refuses with
-  `already failed on trunk`, status plans no batch). A failure that also fails on a single-member merge tree is
-  attributed as now (when the single tree has the same content the batch observation is reused on that key).
+  `already failed on trunk`, status plans no batch). Observations tagged `batch` are evidence only for that batch's own
+  merge (ruling #2110): a later single-member merge never uses them as a verdict (pass or fail) and never counts them in
+  the pass+fail conflict rules; it measures its own tree with `merging`, even when its key equals the batch key, so a
+  failure there blocks/attributes exactly as in 0.20. In status views a batch observation counts only once its batch
+  merged (its final tree is then trunk).
+- Ledger consistency (ruling #2110): the merge entries of one batch are consecutive, in members order, and carry an
+  identical `batch` object; replay refuses any other shape. A ledger whose tail holds an incomplete batch (a crash
+  between member entries) is completed by the next owed write under the ledger lock when the trunk ref is at
+  `batch.final`: the missing member merges are rebuilt from the batch metadata and Mn's first-parent chain and recorded
+  by `executor:owed`. Until then (trunk ref elsewhere) every other write is refused naming the batch. `owed verify`
+  reports it: `incompleteBatch: batch merge of a, b, c is incomplete after #N (b); missing: c; the next owed write
+  completes it when trunk main is at <Mn>, else adopt the trunk` (JSON field `incompleteBatch`).
 - Driver: when `drive.merge_batch` >= 2 and the head of the merge queue is batchable, the merge action of the head runs
   the batch (its `started` line ends `— batch of N: a, b, c`); all members report `merged`. A refused batch is a
   `retry` line (`batch merge refused (...); a, b merge one at a time from the next pass`), never a halt; the driver
@@ -46,14 +57,14 @@ once.
 - `owed status --json`: `mergeBatch: [ids]` (absent when no batch is planned).
 
 ## Ledger fields (no new entry kind)
-- `merge.batch?: { final, state, keys, members }`.
+- `merge.batch?: { final, state, keys: { member: { obligation: key } }, members }` (identical on every member entry).
 - `obs.batch?: string[]` (members; never with `merging`, `probe` or `attribution`; a node subject must be a member).
 
 ## Compatibility
 - An owed older than 0.21 refuses to replay a ledger with an `obs.batch` field (`needs a newer owed`). A batch `merge`
   entry it would replay without `batch` is misjudged: its guard looks at the intermediate tree Mi, which was never
-  measured. Batch merges happen only through `owed merge A,B` or `drive.merge_batch >= 2` (opt-in): upgrade every
-  driver, CLI and pi plugin to 0.21 before enabling it.
+  measured. Batch merges happen only through an explicit `owed merge A,B` or `drive.merge_batch >= 2` (opt-in):
+  upgrade every driver, CLI and pi plugin to 0.21 before enabling it or merging a batch by hand.
 
 ## Known limits
 - "Not batched again until trunk moves" is derived from a recorded batch failure observation. A batch refused without a
@@ -64,8 +75,10 @@ once.
 - Batch members are never bisected; after a batch failure each member is measured on its own merge tree.
 
 ## Tests
-- `test/mtrain.test.ts` (8 tests): plan key; CLI batch of 3 (one invariant run on Mn, 3 merge entries, one trunk move,
+- `test/mtrain.test.ts` (10 tests): plan key; CLI batch of 3 (one invariant run on Mn, 3 merge entries, one trunk move,
   status line, replay/verify, guard of a merge entry without `batch` refuses); conflict drop; invariant fail fallback
   (unattributed, no blocks, not batched again, single merges as now); exclusion of overlap/closure/pending approval;
-  CAS when trunk moves during the measurement; driver batch of 3; driver fallback after a failed batch.
+  CAS when trunk moves during the measurement; driver batch of 3; driver fallback after a failed batch; ruling #2110:
+  a single merge measures its own tree and a batch check failure is not reused (the member gets the block), batch
+  entry order/identity on replay, torn batch tail reported by verify and completed by the next write.
 - Existing tests changed: none.

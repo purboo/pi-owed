@@ -1,7 +1,7 @@
 // MT (0.21): batch merge (merge train): `drive.merge_batch`, `owed merge A,B,...` and the driver.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as ops from '../src/ops.ts';
@@ -73,7 +73,8 @@ test('MT2/MT3/MT6: a batch of 3 measures every invariant once on Mn, appends one
     assert.equal(merges[0]!.prior, trunk); assert.equal(merges[1]!.prior, merges[0]!.commit); assert.equal(merges[2]!.prior, merges[1]!.commit);
     for (const m of merges) { assert.equal(m.batch?.final, final); assert.deepEqual(m.batch?.members, ['a', 'b', 'c']); assert.deepEqual(m.batch?.state, merges[2]!.state); }
     assert.deepEqual(merges[0]!.facts.changed, ['a.txt']); assert.deepEqual(merges[1]!.facts.changed, ['b.txt']);
-    assert.equal(merges[1]!.batch!.keys['check:b'], (added[1] as Obs).key, 'member keys on Mn are the measured keys');
+    assert.equal(merges[1]!.batch!.keys.b!['check:b'], (added[1] as Obs).key, 'member keys on Mn are the measured keys');
+    for (const m of merges) assert.deepEqual(m.batch, merges[0]!.batch, 'one identical batch object on every member entry');
     assert.equal(await revParse(r.cwd, 'refs/heads/main'), final);
     const now = await reflog(r);
     assert.equal(now.length, log.length + 1, 'one trunk move'); assert.equal(now[0], final);
@@ -93,6 +94,12 @@ test('MT2/MT3/MT6: a batch of 3 measures every invariant once on Mn, appends one
     assert.deepEqual(reducer.validateDraft(pre, { ...draft, batch } as never), []);
     assert.ok(reducer.validateDraft(pre, draft as never).some(x => /check:b|inv/.test(x)), 'without batch the guard judges the unmeasured intermediate tree');
     assert.ok(reducer.validateDraft(pre, { ...draft, batch: { ...batch, keys: {} } } as never).length > 0, 'batch keys must name measured keys');
+    // Ruling #2110: consecutive entries in members order with an identical batch object.
+    assert.ok(reducer.validateDraft(pre, { ...draft, batch: { ...batch, members: ['b', 'a', 'c'] } } as never).some(x => /incomplete/.test(x)), 'members order');
+    assert.ok(reducer.validateDraft(pre, { ...draft, batch: { ...batch, keys: { ...batch.keys, c: {} } } } as never).some(x => /incomplete/.test(x)), 'identical batch object');
+    assert.ok(reducer.validateDraft(pre, { kind: 'note', by: 'parent:test', text: 'between' } as never).some(x => /batch merge of a, b, c is incomplete \(#\d+ merged a\): only the merge of b/.test(x)), 'nothing else between members');
+    const first = all.findIndex(e => e.kind === 'merge' && e.node === 'a'), { seq: _s, ts: _t, prev: _p, hash: _h, ...draftC } = all[at + 1] as Merge;
+    assert.ok(reducer.validateDraft(reducer.reduce(all.slice(0, first), lookup), draftC as never).some(x => /must start with the first member a/.test(x)), 'a batch starts with its first member');
   } finally { await r.cleanup(); }
 });
 
@@ -112,7 +119,7 @@ test('MT2: a member that conflicts drops out; the rest merge as a batch; the dro
   } finally { await r.cleanup(); }
 });
 
-test('MT4: a batch invariant fail is recorded unattributed, refused, not batched again on this trunk; single merges attribute as now', { timeout: 180_000 }, async () => {
+test('MT4: a batch invariant fail is recorded unattributed, refused, not batched again on this trunk; a single merge measures its own tree', { timeout: 180_000 }, async () => {
   const r = await repo();
   try {
     await setup(r, planOf([inv(r, true)], [node('a'), node('b')], 2), ['a', 'b']);
@@ -132,10 +139,12 @@ test('MT4: a batch invariant fail is recorded unattributed, refused, not batched
     assert.equal(s.mergeBatch, undefined, 'the failed set is not planned again until trunk moves');
     await assert.rejects(ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['a', 'b'] }), /batch merge of a, b already failed on trunk/);
     await ops.merge({ cwd: r.cwd, as: parent, node: 'a' });
-    // T+a+b has the batch tree's content: the same key, so the batch failure decides b's single merge (refused as now).
-    const mid = (await entries(r)).length;
+    // Ruling #2110: T+a+b has the batch tree's content (same key), yet b's single merge measures its own tree with merging.
+    const mid = (await entries(r)).length, invRuns = await runs(r);
     await assert.rejects(ops.merge({ cwd: r.cwd, as: parent, node: 'b' }), /invariant inv new debt/);
-    assert.deepEqual((await entries(r)).slice(mid).filter(e => e.kind === 'obs' && e.obligation === 'inv:inv'), [], 'reused, not measured again');
+    const own = (await entries(r)).slice(mid).filter((e): e is Obs => e.kind === 'obs' && e.obligation === 'inv:inv');
+    assert.equal(await runs(r), invRuns + 1, 'measured again on the single-member tree');
+    assert.deepEqual(own.map(e => [e.merging, e.batch, e.verdict, e.key]), [['b', undefined, 'fail', added.find(e => e.obligation === 'inv:inv')!.key]]);
     s = await ops.status({ cwd: r.cwd });
     assert.equal(s.nodes.a!.phase, 'merged');
     assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
@@ -180,6 +189,53 @@ test('MT3: trunk moved during the batch measurement: refused (CAS), nothing reco
     assert.deepEqual(await entries(r), before, 'nothing recorded');
     const s = await ops.status({ cwd: r.cwd });
     assert.ok(s.nodes.a!.accepted && s.nodes.b!.accepted);
+  } finally { await r.cleanup(); }
+});
+
+test('MT4 ruling #2110: a batch check failure is never reused by a single merge: the member gets the block as in 0.20', { timeout: 180_000 }, async () => {
+  const r = await repo();
+  try {
+    const b = node('b', { checks: [{ id: 'b', run: 'test -f b.txt && ! test -e a.txt', reads: ['*.txt'] }] });
+    await setup(r, planOf([inv(r)], [node('a'), b], 2), ['a', 'b']);
+    await assert.rejects(ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['a', 'b'] }), /refused on batch tree [0-9a-f]{12}: b\/check:b/);
+    const batchFail = (await entries(r)).findLast((e): e is Obs => e.kind === 'obs' && e.obligation === 'check:b')!;
+    assert.deepEqual(batchFail.batch, ['a', 'b']); assert.deepEqual((await ops.status({ cwd: r.cwd })).nodes.b!.blocks, []);
+    await ops.merge({ cwd: r.cwd, as: parent, node: 'a' });
+    await assert.rejects(ops.merge({ cwd: r.cwd, as: parent, node: 'b' }));
+    const single = (await entries(r)).findLast((e): e is Obs => e.kind === 'obs' && e.obligation === 'check:b' && e.merging === 'b')!;
+    assert.ok(single.seq > batchFail.seq && single.key === batchFail.key && single.merging === 'b' && single.batch === undefined && single.verdict === 'fail', JSON.stringify([single, batchFail]));
+    const s = await ops.status({ cwd: r.cwd });
+    assert.deepEqual(s.nodes.b!.blocks.map(x => [x.seq, x.kind, x.state]), [[single.seq, 'exec', 'active']], 'the single-member failure blocks b');
+    assert.equal(s.nodes.b!.accepted, false);
+    assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
+  } finally { await r.cleanup(); }
+});
+
+test('MT3 ruling #2110: a torn batch tail is reported by verify and completed by the next owed write when trunk is at batch.final', { timeout: 180_000 }, async () => {
+  const r = await repo();
+  try {
+    await setup(r, planOf([inv(r)], [node('a'), node('b'), node('c')], 3), ['a', 'b', 'c']);
+    await ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['a', 'b', 'c'] });
+    const ledger = await Ledger.open(r.cwd), file = join(ledger.dir, 'ledger.jsonl'), text = await readFile(file, 'utf8');
+    const lines = text.split('\n').filter(Boolean), last = JSON.parse(lines.at(-1)!) as Merge;
+    assert.equal(last.node, 'c');
+    // Crash after member b's entry: drop c's entry (and any replay snapshot of the full ledger).
+    await writeFile(file, lines.slice(0, -1).join('\n') + '\n'); await rm(join(ledger.dir, 'snapshot'), { recursive: true, force: true });
+    const v = await ops.verify({ cwd: r.cwd });
+    assert.equal(v.ok, true);
+    assert.equal(v.incompleteBatch, `batch merge of a, b, c is incomplete after #${last.seq - 1} (b); missing: c; the next owed write completes it when trunk main is at ${last.commit.slice(0, 12)}, else adopt the trunk`);
+    const out = await cli(r.cwd, ['verify']); assert.equal(out.code, 0, out.stderr); assert.match(out.stdout, /^incompleteBatch: batch merge of a, b, c is incomplete/m);
+    // Trunk not at batch.final: nothing else may be written.
+    await git(r.cwd, ['update-ref', 'refs/heads/main', last.prior]);
+    await assert.rejects(ops.rule({ cwd: r.cwd, as: parent, text: 'note', nodes: '*' }), /batch merge of a, b, c is incomplete \(#\d+ merged b\): only the merge of c/);
+    await git(r.cwd, ['update-ref', 'refs/heads/main', last.commit]);
+    const ruled = await ops.rule({ cwd: r.cwd, as: parent, text: 'note', nodes: '*' });
+    const now = await entries(r), c = now[last.seq] as Merge;
+    assert.equal(c.kind, 'merge'); assert.equal(c.node, 'c'); assert.equal(c.by, 'executor:owed');
+    assert.equal(c.commit, last.commit); assert.equal(c.prior, last.prior); assert.deepEqual(c.batch, last.batch); assert.deepEqual(c.facts, last.facts); assert.deepEqual(c.state, last.state);
+    assert.equal(ruled.seq, last.seq + 1);
+    const after = await ops.verify({ cwd: r.cwd }); assert.equal(after.ok, true); assert.equal(after.incompleteBatch, undefined);
+    assert.equal((await ops.status({ cwd: r.cwd })).nodes.c!.phase, 'merged');
   } finally { await r.cleanup(); }
 });
 
@@ -228,8 +284,7 @@ test('MT4 driver: a failed batch is reported as a retry, then members merge one 
     assert.match(text, new RegExp(`merge ${first}: retry — batch merge refused \\(batch merge of ${first}, ${second} refused on batch tree [0-9a-f]{12}: trunk/inv:inv`));
     const merges = es.filter((e): e is Merge => e.kind === 'merge');
     assert.deepEqual(merges.map(m => [m.node, m.batch]), [[first, undefined]], 'the queue head merges alone first');
-    assert.ok(!es.some(e => e.kind === 'obs' && e.obligation === 'inv:inv' && e.verdict === 'fail' && e.merging !== undefined), 'the same tree content: the batch failure is reused');
-    assert.match(es.find(e => e.kind === 'halt')!.kind === 'halt' ? (es.find(e => e.kind === 'halt') as Extract<Entry, { kind: 'halt' }>).reason : '', /invariant inv new debt/);
+    assert.ok(es.some(e => e.kind === 'obs' && e.obligation === 'inv:inv' && e.verdict === 'fail' && e.merging === second && e.batch === undefined && e.key === failed.key), 'the single merge measures its own tree (ruling #2110)');
     assert.equal(es.filter(e => e.kind === 'halt').map(e => 'node' in e ? e.node : '').join(), second);
   } finally { await f.cleanup(); }
 });

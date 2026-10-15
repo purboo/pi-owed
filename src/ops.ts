@@ -17,7 +17,7 @@ import { genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurr
 import { mergeTreeBreaks, carriedDefer } from './reducer.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
-import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
+import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
@@ -61,7 +61,7 @@ export interface MergeResult { node: string; commit: string; tree: string; entry
  * `snapshotMismatch` (G1.4): seq of a disk snapshot that matched the chain but differed from the full replay at that seq;
  * verify deleted it. `code` (G1.5): `version` when the ledger needs a newer owed (the CLI exits 1, not 3).
  */
-export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string; code?: 'version'; cacheMismatch?: string[]; snapshotMismatch?: number }
+export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string; code?: 'version'; cacheMismatch?: string[]; snapshotMismatch?: number; /** Ruling #2110: the ledger tail holds an incomplete batch merge. */ incompleteBatch?: string }
 type Context = { cwd: string };
 type MeasurementContext = Context & { lease?: boolean; signal?: AbortSignal };
 /** LE3: lease before operation/tree locks; never mutate process.env or persisted observations. */
@@ -1343,15 +1343,47 @@ function batchMembers(s: State, ids: string[]): string[] {
   return order;
 }
 /** MT2/MT3: per member, its merge facts against the previous batch commit and its check keys on the final tree. */
-async function batchFacts(cwd: string, s: State, chain: { id: string; prior: string; commit: string }[]): Promise<{ facts: CandidateFacts; state: StateFacts; keys: Record<string, string> }[]> {
+async function batchFacts(cwd: string, s: State, chain: { id: string; prior: string; commit: string }[], from = 0): Promise<{ facts: CandidateFacts; state: StateFacts; keys: Record<string, string> }[]> {
   const members = chain.map(c => c.id), final = chain.at(-1)!.commit, qn = batchQuarantine(s, members), out = [];
   for (const [i, c] of chain.entries()) {
+    if (i < from) continue;
     const spec = s.plan.nodes.find(x => x.id === c.id)!, q = quarantineNames(s.plan, id => !!s.nodes[id]?.merged || members.slice(0, i).includes(id), c.id);
     const facts = await git.candidateFacts(cwd, s.plan, spec, c.prior, c.commit, s.nodes[c.id]!.slot!.attempt, q), keys: Record<string, string> = {};
     for (const k of spec.checks) keys[`check:${k.id}`] = await git.trunkCheckKey(cwd, s.plan, k, final, qn);
     out.push({ facts, state: i === chain.length - 1 ? await git.stateFacts(cwd, s.plan, c.commit, qn) : await git.stateFacts(cwd, s.plan, c.commit, q), keys });
   }
   return out;
+}
+/**
+ * Ruling #2110: a ledger tail that holds an incomplete batch merge (a crash between appended member entries) while the
+ * trunk ref is at `batch.final` is completed under the ledger lock before any other write: the missing member merges
+ * are rebuilt from the batch metadata (Mi = the first-parent chain of Mn) and recorded as executor. Runs on every
+ * ledger-lock acquisition; reads only the last ledger line unless a batch is open.
+ */
+async function completeBatchTail(ledger: Ledger): Promise<void> {
+  const cwd = ledger.repo; if (!cwd) return;
+  let text: string; try { text = await readFile(join(ledger.dir, 'ledger.jsonl'), 'utf8'); } catch { return; }
+  const line = text.trimEnd().split('\n').at(-1); if (!line) return;
+  let last: Entry; try { last = JSON.parse(line) as Entry; } catch { return; }
+  if (last.kind !== 'merge' || !last.batch || last.batch.members.at(-1) === last.node) return;
+  const { state } = await load(ledger), open = openBatch(state); if (!open) return;
+  const b = open.batch!, at = b.members.indexOf(open.node);
+  if (await git.revParse(cwd, `refs/heads/${state.trunk.name}`).catch(() => undefined) !== b.final) return;
+  const chain: { id: string; prior: string; commit: string }[] = [];
+  for (const [i, id] of b.members.entries()) chain.push({ id, prior: i ? chain[i - 1]!.commit : '', commit: await git.revParse(cwd, `${b.final}~${b.members.length - 1 - i}`) });
+  if (chain[at]!.commit !== open.commit) throw new OwedError(`batch merge of ${b.members.join(', ')} is incomplete and its commits do not match the trunk history; adopt the trunk (owed adopt) after checking it`);
+  const facts = await batchFacts(cwd, state, chain, at + 1), drafts: Draft[] = chain.slice(at + 1).map((c, j) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[j]!.facts, state:facts[j]!.state, batch:b }));
+  const loaded = await load(ledger), reasons = batchGuard(loaded, loaded.state, drafts);
+  if (reasons.length) throw new OwedError(`batch merge of ${b.members.join(', ')} is incomplete and cannot be completed: ${reasons.join('; ')}`);
+  await ledger.append(drafts);
+}
+Ledger.onLock = completeBatchTail;
+/** Ruling #2110: what `owed verify` says about an incomplete batch merge at the ledger tail. */
+function incompleteBatchText(s: State): string | undefined {
+  const open = openBatch(s), b = open?.batch;
+  if (!open || !b) return undefined;
+  const missing = b.members.slice(b.members.indexOf(open.node) + 1);
+  return `batch merge of ${b.members.join(', ')} is incomplete after #${open.seq} (${open.node}); missing: ${missing.join(', ')}; the next owed write completes it when trunk ${s.trunk.name} is at ${b.final.slice(0, 12)}, else adopt the trunk`;
 }
 /** MT3: errors of appending the member merge `drafts` in order after `current` (each judged on the state after the previous). */
 function batchGuard(latest: Awaited<ReturnType<typeof load>>, current: State, drafts: Draft[]): string[] {
@@ -1404,7 +1436,7 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
       { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
       const current = prospective(latest,observations);
       if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
-      const drafts: Draft[] = chain.map((c, i) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[i]!.facts, state:facts[i]!.state, batch:{ final, state:batchState, keys:facts[i]!.keys, members } }));
+      const drafts: Draft[] = chain.map((c, i) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[i]!.facts, state:facts[i]!.state, batch:{ final, state:batchState, keys, members } }));
       const reasons = batchGuard(latest,current,drafts);
       if (reasons.length) {
         if (observations.length) await ledger.append(observations);
@@ -1813,7 +1845,8 @@ export async function verify(o: Context): Promise<VerifyResult> {
       if (!same) { await invalidateReplay(ledger); snapshotMismatch = snap.seq; }
       extendState(state,entries.slice(snap.seq+1));
     } else state = reduce(entries,lookup);
-    return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}), ...(snapshotMismatch !== undefined ? { snapshotMismatch } : {}) };
+    const incompleteBatch = incompleteBatchText(state);
+    return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}), ...(snapshotMismatch !== undefined ? { snapshotMismatch } : {}), ...(incompleteBatch ? { incompleteBatch } : {}) };
   } catch (e) { return {ok:false,entries:0,error:e instanceof Error ? e.message : String(e),...(e instanceof OwedError && e.code === 'version' ? { code:'version' as const } : {})}; }
 }
 /** Morning brief: owner decisions, merges since `since` (seq or ISO time), active blocks, work in progress and totals. */
