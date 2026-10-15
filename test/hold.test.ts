@@ -65,7 +65,7 @@ test('AH1: abandon --hold appends an adjacent hold, blocks dispatch and dependen
     assert.deepEqual(statusView(s,entries).ready,[]);
     assert.deepEqual(decisions(s),[]);
     assert.match(renderStatus(statusView(s,entries)),new RegExp(`a: held by abandon #${a.seq}`));
-    assert.match(renderReceipt(receipt(s,entries,'a')),new RegExp(`held by abandon #${a.seq}; release with owed resume a`));
+    assert.match(renderReceipt(receipt(s,entries,'a')),new RegExp(`held by abandon #${a.seq}; release with owed decide a --text "<decision>"`));
     await assert.rejects(ops.dispatch({ cwd:r.cwd, as:parent, node:'a' }),/held by abandon #\d+.*owed resume a/);
     assert.equal((await r.entries()).length,entries.length,'dispatch refusal records nothing');
     const driver = new Driver({ cwd:r.cwd, dsa:new StubDsa(), log:() => {}, session:null, handleSignals:false });

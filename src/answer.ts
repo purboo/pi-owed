@@ -6,6 +6,7 @@ import { sha256 } from './canon.ts';
 import { answerRule, readState, subagentRefusal } from './ops.ts';
 import type { Channel, LaunchEntry, Principal, RuleEntry, RunQuestion, State } from './types.ts';
 import { oneLine } from './views.ts';
+import { ruleAnswers } from './reducer.ts';
 
 export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; dsa?: Pick<Dsa, 'describe' | 'send'> }
 export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; rulingDelivery?: RulingDelivery }
@@ -25,10 +26,10 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
     const followUp = rulingFollowUp(state, id)?.message ?? rulingMessage(id, 'writer', state.rules.filter(r => r.seq === entry.seq));
     if (n?.slot?.open) (result.slots ??= []).push({ node: id, ...(writer ? { writer: writer.rid } : {}), followUp });
     for (const role of ['writer', 'reviewer'] as const) {
-      const calls = launches.filter(l => l.role === role && l.rid !== exclude);
+      const calls = launches.filter(l => l.role === role && l.rid !== exclude && !ruleAnswers(entry).some(a => a.rid === l.rid));
       if (!calls.length) {
         const needsRole = role === 'writer' || (state.plan.nodes.find(x => x.id === id)?.review.count ?? 0) > 0 || n?.candidate?.closureTouched;
-        if (needsRole && !launches.some(l => l.role === role && l.rid === exclude)) result.pending++;
+        if (needsRole && !launches.some(l => l.role === role && (l.rid === exclude || ruleAnswers(entry).some(a => a.rid === l.rid)))) result.pending++;
         continue;
       }
       for (const launch of calls) {
@@ -51,20 +52,20 @@ export function rulingDeliveryText(r: RulingDelivery): string {
   return `delivered to ${r.delivered.length} running calls (${r.delivered.join(', ')}); ${r.pending} will get it at their next dispatch or follow-up${r.failures.length ? `; delivery failures: ${r.failures.join('; ')}` : ''}${!r.delivered.length ? (r.slots ?? []).map(s => `\n${s.node}: writer call ${s.writer ?? 'unknown'}; send follow-up${s.writer ? ` to ${s.writer}` : ' to the slot writer'}: ${JSON.stringify(s.followUp)}`).join('') : ''}`;
 }
 type Question = { launch: LaunchEntry; question: RunQuestion };
-const shell = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
-export const answerRetry = (node: string, entry: RuleEntry): string => {
-  const a = entry.answer!;
+const shell = (s: string): string => /[\r\n]/.test(s) ? `$'${s.replaceAll('\\','\\\\').replaceAll("'","\\'").replaceAll('\n','\\n').replaceAll('\r','\\r')}'` : `'${s.replaceAll("'", "'\\''")}'`;
+export const answerRetry = (node: string, entry: RuleEntry, ref?: import('./types.ts').AnswerRef): string => {
+  const a = ref ?? entry.answers?.find(a => a.node === node) ?? entry.answer!;
   // The prefix's exact length avoids treating punctuation in a qid as answer text.
   const role = entry.text.startsWith('Answer to writer question ') ? 'writer' : 'reviewer';
-  const text = entry.text.slice(`Answer to ${role} question ${a.qid}: `.length);
+  const text = entry.answers ? entry.text : entry.text.slice(`Answer to ${role} question ${a.qid}: `.length);
   return `owed answer ${shell(node)} --rid ${shell(a.rid)} --qid ${shell(a.qid)} --rev ${a.rev} -- ${shell(text)}`;
 };
 /** AR2: only use history after inspecting the current attempt for an open question. */
 function recorded(entries: RuleEntry[], o: AnswerOptions, current: LaunchEntry[]): RuleEntry | undefined {
   if (o.qid === undefined) return undefined;
-  const matches = entries.filter(e => e.nodes !== '*' && e.nodes.includes(o.node) && e.answer && e.answer.qid === o.qid
-    && (o.rid !== undefined ? e.answer.rid === o.rid : current.some(l => l.rid === e.answer!.rid))
-    && (o.rev === undefined || e.answer.rev === o.rev));
+  const matches = entries.flatMap(e => e.nodes !== '*' && e.nodes.includes(o.node) ? ruleAnswers(e).filter(a => a.qid === o.qid
+    && (o.rid !== undefined ? a.rid === o.rid : current.some(l => l.rid === a.rid))
+    && (o.rev === undefined || a.rev === o.rev)).map(a => ({...e,answer:a})) : []);
   // Without a rid, history must identify exactly one current-attempt run.
   if (new Set(matches.map(e => e.answer!.rid)).size !== 1) return undefined;
   return matches.at(-1);
@@ -105,17 +106,23 @@ export async function answer(o: AnswerOptions): Promise<AnswerResult> {
   } else {
     throw new OwedError(`${selected.length ? 'Ambiguous question' : 'No matching open question'} for ${o.node}; open questions: ${questions.length ? questions.map(x => `${x.launch.role} rid ${x.launch.rid}, qid ${x.question.qid}, rev ${x.question.rev}: ${oneLine(x.question.question)}`).join('; ') : 'none'}. Specify --rid and --qid`);
   }
-  const entry = await answerRule({ ...o, text, answer: ref }), a = entry.answer!, request = `owed-answer-${entry.seq}`;
+  const ruled = await answerRule({ ...o, text, answer: ref, originalText:o.text }), entry = { ...ruled, answer:ref }, a = ref, request = answerRequest(ruled,a);
   const role = entry.text.startsWith('Answer to writer question ') ? 'writer' : 'reviewer';
-  const message = entry.text.slice(`Answer to ${role} question ${a.qid}: `.length);
+  const message = entry.answers ? entry.text : entry.text.slice(`Answer to ${role} question ${a.qid}: `.length);
   const rulingDelivery = await deliverRuling(o.cwd, entry, dsa, a.rid);
   try {
-    const delivery = await dsa.send(request, a.rid, 'answer', message, { qid: a.qid, rev: a.rev });
-    if (delivery.outcome !== 'applied') throw new Error(`${delivery.outcome}${'reason' in delivery && delivery.reason ? `: ${delivery.reason}` : ''}`);
+    const delivery = await deliverAnswer(dsa,ruled,a,message);
     return { entry, request, delivery, rulingDelivery };
   } catch (e) {
     throw new OwedError(`Answer rule #${entry.seq} recorded; dsa delivery failed: ${(e as Error).message}; ${rulingDeliveryText(rulingDelivery)}. Retry exactly: ${answerRetry(o.node, entry)}`);
   }
+}
+/** Shared AN/DC delivery identity: multi-answer calls cannot share one dsa request id. */
+export function answerRequest(entry: RuleEntry, a: import('./types.ts').AnswerRef): string { return `owed-answer-${entry.seq}${entry.answers ? `-${sha256(`${a.rid}\u0000${a.qid}\u0000${a.rev}`).slice(0,12)}` : ''}`; }
+export async function deliverAnswer(dsa: Pick<Dsa,'send'>, entry: RuleEntry, a: import('./types.ts').AnswerRef, text: string): Promise<SendResult> {
+  const delivery = await dsa.send(answerRequest(entry,a),a.rid,'answer',text,{qid:a.qid,rev:a.rev});
+  if (delivery.outcome !== 'applied') throw new Error(`${delivery.outcome}${'reason' in delivery && delivery.reason ? `: ${delivery.reason}` : ''}`);
+  return delivery;
 }
 /**
  * SB4: one line for a delivered answer (never the answer or follow-up text), plus one line only when the ruling also

@@ -256,6 +256,16 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.gc({ ...await actor(ctx, dir, who, `${p.dry_run ? 'Report' : 'Remove'} worktrees and branches of finished attempts`, {}, signal), dryRun: !!p.dry_run });
     return result(r, renderGc(r));
   });
+  tool('decide', 'Record one atomic decision for named nodes: optional writes amendment, defer of their current merge invariant keys, one ruling answering each open question, and resume (default on for halted or held nodes). Every part is validated before one append; dsa delivery follows the lock. defer needs owner; writes uses owed_amend authority. resume: false preserves the halt; after/remeasure use owed_resume semantics; writer invalidates candidates.', Type.Object({ nodes:Type.Array(node,{minItems:1}), text:reason, writes:Type.Optional(Type.Array(Type.String({minLength:1}),{minItems:1})), defer:Type.Optional(Type.String({minLength:1})), resume:Type.Optional(Type.Boolean()), after:Type.Optional(Type.Union([Type.String(),Type.Array(Type.String())])), remeasure:Type.Optional(Type.Boolean()), writer:Type.Optional(Type.Boolean()), as, cwd }), async (p,ctx,dir,signal) => {
+    let who = p.as ?? (p.defer !== undefined ? ownerDefault() : 'parent:pi');
+    if (p.writes !== undefined) {
+      const preview = await ops.decidePreview({...p,cwd:dir}), downgrades = planDowngrades(preview.prior,preview.plan), gaps = uncoveredDowngrades(preview.prior,preview.plan,downgrades);
+      if (p.as === undefined && gaps.length) who = ownerDefault();
+    }
+    requireRole(who,'parent:pi',['parent','owner'],'decide');
+    const r = await ops.decide({...p,...await actor(ctx,dir,who,`Decide ${p.nodes.map(oneLine).join(',')}`,{Decision:p.text},signal)});
+    return result(r,ops.decideText(r));
+  });
   tool('answer', 'Answer one open writer or reviewer question (AN1–AN2): record one ruling and send the answer through dsa. Omit qid only when one question matches; rid disambiguates runs. An open question uses its current rev. With no matching open question, rev (positive integer) selects a prior answer retry; omit it to retry the latest rid/qid rule. Retry the same rid/qid/rev and text without a new rule. Parent or owner only; reviewers still acknowledge the ruling.', Type.Object({ node, text: reason, qid: Type.Optional(Type.String({ minLength: 1 })), rid: Type.Optional(Type.String({ minLength: 1 })), rev: Type.Optional(Type.Integer({ minimum: 1 })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'answer a question');
     const r = await ops.answer({ ...await actor(ctx, dir, who, `Answer question for ${oneLine(p.node)}`, { Answer: p.text }, signal), node: p.node, text: p.text, ...(p.qid !== undefined ? { qid: p.qid } : {}), ...(p.rid !== undefined ? { rid: p.rid } : {}), ...(p.rev !== undefined ? { rev: p.rev } : {}) });

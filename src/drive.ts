@@ -7,7 +7,7 @@ import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
 import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting, writesWaitCycle } from './reducer.ts';
-import { priorCandidateBlock } from './reducer.ts';
+import { priorCandidateBlock, ruleAnswers } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -116,7 +116,7 @@ export const runName = (node: string, attempt: number, role: RunRole, n?: number
 const rulingsInScope = applicableRules;
 /** AN3: writer delivery excludes answers to that run, not answers to other runs or acknowledgment scope. */
 const writerRid = (s: State, node: string): string | undefined => s.nodes[node]?.runs.find(a => a.attempt === s.nodes[node]?.slot?.attempt)?.launches.find(l => l.role === 'writer')?.rid;
-const deliversRule = (r: Rule, rid: string | undefined): boolean => r.answer === undefined || r.answer.rid !== rid;
+const deliversRule = (r: Rule, rid: string | undefined): boolean => !ruleAnswers(r).some(a => a.rid === rid);
 /** E4: the `rulings` field of a message carrying `rules`: their highest seq, 0 when none (seq 0 is the genesis, never a ruling). */
 const carried = (rules: readonly { seq: number }[]): number => Math.max(0, ...rules.map(r => r.seq));
 /** The rulings a writer's dispatch packet carries: those covering the node recorded before its dispatch. */
@@ -174,7 +174,7 @@ export const reviewerInterrupted = (node: string): string => `You were interrupt
  */
 export const rejectedFixed = (node: string): string => `this attempt's request is fixed; fix the cause (plan, agent, model), then \`owed abandon ${node}\` to start a new attempt`;
 /** SR4: a rejected send can be superseded without losing the attempt; rejected runs keep D15.1. */
-export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${what === 'run' ? rejectedFixed(node) : `the attempt is not lost: continue the run (e.g. a dsa follow-up), then \`owed resume ${node}\`; a later resume, submit or send to this run supersedes this send; or \`owed abandon ${node}\``}`;
+export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${what === 'run' ? rejectedFixed(node) : `the attempt is not lost: continue the run (e.g. a dsa follow-up), then \`owed decide ${node} --text "<retry run>"\`; a later resume, submit or send to this run supersedes this send; or \`owed abandon ${node}\``}`;
 export const fencedMessage = (reason: string): string => `Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`;
 /**
  * Repair follow-up: what to do, the notes of active review blocks (a needs-parent block quotes the ruling that resolved
@@ -311,7 +311,7 @@ const repairsSince = (s: State, node: string, ar: AttemptRuns): { count: number;
  */
 const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntry, refused?: Refused): Rule[] => {
   const d = deliveredRulings(s, node, ar, writer, refused);
-  return rulingsInScope(s, node).filter(r => r.seq > d && r.answer?.rid !== writer.rid);
+  return rulingsInScope(s, node).filter(r => r.seq > d && deliversRule(r,writer.rid));
 };
 /**
  * K5.2: a writer follow-up (`submit`, `rebase`) with the undelivered in-scope rulings first; `rulings` (their highest
@@ -407,7 +407,7 @@ export function thresholdHint(s: State, node: string, obligations: readonly stri
     const [a, b] = fails as [ObsEntry, ObsEntry];
     const tests = a.counts?.tests;
     if (a.exit !== 0 || b.exit !== 0 || a.counts?.fail !== 0 || b.counts?.fail !== 0 || tests === undefined || b.counts.tests !== tests || tests >= m) continue;
-    return `check ${x}: ${tests} tests ran and passed twice, below min_tests ${m}; the plan's threshold may be wrong: fix the plan (owed plan) or rule (owed rule --nodes ${node} "…")`;
+    return `check ${x}: ${tests} tests ran and passed twice, below min_tests ${m}; the plan's threshold may be wrong: fix the plan (owed plan) or decide (owed decide ${node} --text "…")`;
   }
   return undefined;
 }
@@ -440,7 +440,7 @@ export function environmentWait(s: State, jobs: readonly { subject: string; obli
 }
 /** F2.2: the notify of a node whose attest waits after an environment error: the note and the retry time. */
 export const environmentText = (node: string, w: EnvironmentWait): string =>
-  `${node}: environment failure #${w.latest.seq} ${w.latest.obligation}: ${clip(w.latest.note ?? '')}; attest waits (${w.step} in a row), retry at ${new Date(w.until).toISOString()}; the driver does not halt for it (free the disk or fix the setup; owed resume ${node} retries at once)`;
+  `${node}: environment failure #${w.latest.seq} ${w.latest.obligation}: ${clip(w.latest.note ?? '')}; attest waits (${w.step} in a row), retry at ${new Date(w.until).toISOString()}; the driver does not halt for it (free the disk or fix the setup; owed decide ${node} --resume --text "<retry setup>" retries at once)`;
 
 // ---------- driver reviewers ----------
 /**
@@ -561,7 +561,8 @@ export function sharedWaiting(s: State, id: string, opts: Pick<DriveOpts, 'notic
 }
 /** QN1: a durable answer covers that question at its recorded revision and older revisions. */
 export function answeredQuestion(s: State, rid: string, qid: string, rev?: number) {
-  return entriesOf(s).findLast(e => e.kind === 'rule' && e.answer?.rid === rid && e.answer.qid === qid && (rev === undefined || rev <= e.answer.rev)) as import('./types.ts').RuleEntry | undefined;
+  const e = entriesOf(s).findLast(e => e.kind === 'rule' && ruleAnswers(e).some(a => a.rid === rid && a.qid === qid && (rev === undefined || rev <= a.rev))) as import('./types.ts').RuleEntry | undefined;
+  return e ? { ...e, answer:ruleAnswers(e).find(a => a.rid === rid && a.qid === qid)! } : undefined;
 }
 
 function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpts, n: NodeState): Action | undefined {
@@ -906,7 +907,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     }
     if (waitingWrites) {
       const cycle = writesWaitCycle(s,id);
-      if (cycle) return halt(`writes ownership wait cycle: ${cycle.join(' -> ')}; resolve the ownership overlap with owed plan or abandon one slot, then run owed resume ${id}`, 'human');
+      if (cycle) return halt(`writes ownership wait cycle: ${cycle.join(' -> ')}; resolve the ownership overlap with owed plan or abandon one slot, then run owed decide ${id} --text "<ownership resolved>"`, 'human');
       return fenced() ?? steerRulings();
     }
     // Liveness (D12): a candidate that is not accepted while no driver run of the attempt is unsealed never yields
@@ -954,7 +955,7 @@ export function manualHalt(s: State, node: string): { reason: string; needs: 'hu
 export function needsRulingHalt(s: State, node: string, blocks: readonly Block[]): string {
   const entries = entriesOf(s);
   const each = blocks.map(b => { const e = entries.find(x => x.seq === b.seq); return `review block #${b.seq} ${b.obligation} needs a parent ruling: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; });
-  return `${each.join('; ')}; record \`owed rule --nodes ${node} "<decision>"\`; the writer gets the ruling with the next repair`;
+  return `${each.join('; ')}; record \`owed decide ${node} --text "<decision>"\`; the writer gets the ruling with the next repair`;
 }
 
 /**
@@ -997,7 +998,7 @@ export function deliveredRulings(s: State, node: string, ar: AttemptRuns, l: Lau
   // AN3: advance only across delivered rules; a later answer must not hide an earlier ordinary ruling.
   let delivered = Math.max(base, ...sends.filter(x => x.reason === 'ruling').map(x => x.rulings ?? -1));
   for (const r of inScope.filter(r => r.seq > delivered)) {
-    if (r.answer?.rid !== l.rid) break;
+    if (deliversRule(r,l.rid)) break;
     delivered = r.seq;
   }
   return delivered;
@@ -1030,7 +1031,7 @@ function answerAckDue(s: State, n: NodeState, ar: AttemptRuns, l: LaunchEntry, r
   if (!c) return false;
   const acked = Math.max(n.slot!.rulings_seen, ...entriesOf(s).flatMap(e => e.kind === 'review' && e.node === n.id && e.verdict === 'ok' && e.key === c.keys[e.obligation] ? [e.ack_rulings ?? -1] : []));
   const requested = Math.max(-1, ...ar.sends.filter(x => x.rid === l.rid && x.reason === 'ruling' && x.sendKind !== 'notify' && !refused?.has(x.send)).map(x => x.rulings ?? -1));
-  return rulingsInScope(s, n.id).some(r => r.answer?.rid === l.rid && r.seq > Math.max(acked, requested));
+  return rulingsInScope(s, n.id).some(r => !deliversRule(r,l.rid) && r.seq > Math.max(acked, requested));
 }
 /** Steer message of undelivered rulings (D22.2): one line per ruling `#<seq> (<nodes>): <text>`, then what to do. */
 export function rulingMessage(node: string, role: RunRole, rules: readonly Rule[]): string {
@@ -1083,6 +1084,8 @@ export function askingText(node: string, l: LaunchEntry, v: RunView): string {
   if (!qs.length) return `${node}: ${l.role} run ${l.rid}${callAt(v)} is asking (no question reported; see pi-durable-subagents describe --key ${l.rid}); the driver never answers`;
   return qs.map(q => {
     const to = q.to ?? v.to ?? l.rid;
-    return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer: owed answer ${node} --rid ${l.rid} --qid ${q.qid} "<text>"; in pi: owed_answer {node:${JSON.stringify(node)}, rid:${JSON.stringify(l.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}${callAt({ ...v, to })}`;
+    const command = qs.length > 1 ? `owed answer ${node} --rid ${l.rid} --qid ${q.qid} "<text>"` : `owed decide ${node} --text "<text>"`;
+    const tool = qs.length > 1 ? `owed_answer {node:${JSON.stringify(node)}, rid:${JSON.stringify(l.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}` : `owed_decide {nodes:[${JSON.stringify(node)}], text:"…"}`;
+    return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer: ${command}; in pi: ${tool}${callAt({ ...v, to })}`;
   }).join('\n');
 }

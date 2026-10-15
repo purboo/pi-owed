@@ -335,8 +335,8 @@ test('AN1 asking notices show the one-act CLI and tool selectors', async () => {
   const f = await fixture();
   try {
     const line = askingText('a', f.writer, await f.dsa.describe(f.writer.rid));
-    assert.ok(line.includes(`owed answer a --rid ${f.writer.rid} --qid q1 "<text>"`));
-    assert.ok(line.includes('owed_answer {node:"a"'));
+    assert.ok(line.includes('owed decide a --text "<text>"'));
+    assert.ok(line.includes('owed_decide {nodes:["a"]'));
     // Exercise the production client with the same fake used by CLI/tool.
     const fake = await external(f), dsa = new Dsa({ bin: fake.bin, env: { ANSWER_STATE: fake.file } });
     assert.equal((await dsa.describe(f.writer.rid)).state, 'asking');

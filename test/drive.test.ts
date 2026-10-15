@@ -169,7 +169,7 @@ test('row 5: writer asking → notify with the question and answer address; the 
   const r = submitted();
   const a = act(r, runsOf(view(W(), 'asking', { questions: [{ qid: 'q1', rev: 3, question: 'Which API?\nline two' }], lastFence: { reason: 'x', at: T0 } })));
   assert.ok(a?.do === 'notify', 'outranks attest and fenced');
-  assert.ok(a.text.startsWith('a: writer run owed:hash0:a:1:writer asks (qid q1, rev 3): Which API?\\nline two — the driver never answers; answer: owed answer a --rid owed:hash0:a:1:writer --qid q1 "<text>"'), a.text);
+  assert.ok(a.text.startsWith('a: writer run owed:hash0:a:1:writer asks (qid q1, rev 3): Which API?\\nline two — the driver never answers; answer: owed decide a --text "<text>"'), a.text);
   // A reviewer run of the current candidate asking is notified too.
   const q = submitted(); q.pass(); q.launchReviewer(1);
   const b = act(q, runsOf(okWriter(), view(R(1), 'asking', { questions: [{ qid: 'r', rev: 1, question: 'scope?' }] })));
@@ -397,7 +397,7 @@ test('owner-needed nodes are never touched: open slot with ⊤ items, ready node
   // waiver once a candidate exists (owed waive needs one), as the brief's dispatchHint/clearHint say; "needs the owner" once.
   const blk = f.state().nodes.a!.blocks.find(x => x.state === 'flaky')!;
   // 0.8 (L3.2): a flaky block also offers a ruling, once, after the waivers.
-  const ruleHint = 'or owed rule "<what the writer must change>" --nodes a when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check\'s definition supersedes it, or the owner waives it once the fixed candidate passes)';
+  const ruleHint = 'or owed decide a --writer --text "<what the writer must change>" when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check\'s definition supersedes it, or the owner waives it once the fixed candidate passes)';
   assert.deepEqual(ownerCommands(f.state(), 'a'), ['owed dispatch a', `after the writer submits a candidate: owed waive a check:unit --reason "<why the risk is acceptable>" --accept-risk ${blk.seq}`, ruleHint]);
   const fn = go(f).find(x => x.node === 'a');
   assert.ok(fn?.do === 'notify', JSON.stringify(fn));
@@ -692,7 +692,7 @@ test('D15.1/SR4: a rejected run keeps abandon recovery; a rejected send can reco
   const x = r.send(W(), 'submit');
   const send = act(r, runsOf(okWriter()), { rejected: new Map([[x.send, 'unknown run']]) });
   assert.ok(send?.do === 'halt' && send.reason === rejectedHalt('a', 'send', x.send, 'unknown run'), JSON.stringify(send));
-  assert.match(send.reason, /owed resume a/);
+  assert.match(send.reason, /owed decide a --text/);
   assert.doesNotMatch(send.reason, /start a new attempt/);
   // describe reporting the run rejected (dsa recorded the rejection): row 7 names the same recovery.
   const sealed = act(r, runsOf(view(W(), 'sealed', { status: 'rejected', error: 'unknown agent' })), { applied: applied(r) });

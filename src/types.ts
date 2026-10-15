@@ -126,14 +126,16 @@ export interface ExecutionResult { completed: boolean; countOK: boolean }
 /** RC1: one command run, before repeat decides the observation's verdict. Errors stop measurement, never count as votes. */
 export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[]; execution?: ExecutionResult }
 
-interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel }
+interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel; /** DC2: first entry seq of one atomic decision. */ decision?: number }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; writes_syntax?: 2; state: StateFacts }
 /** IR1: current-plan facts on the ledger trunk; refresh changes invariant keys, never the trunk commit/seq. */
 export interface RefreshEntry extends Base { kind: 'refresh'; commit: string; state: StateFacts }
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
 export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; writes_syntax?: 2; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface AnswerRef { rid: string; qid: string; rev: number }
-export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; answer?: AnswerRef; /** AR: latest prior answer rule for this rid/qid; re-ask ledgers require 0.16. */ supersedes?: number }
+/** DC: multiple answers share one decision ruling. */
+export interface DecisionAnswer extends AnswerRef { node: string }
+export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; answer?: AnswerRef; answers?: DecisionAnswer[]; /** AR: latest prior answer rule for this rid/qid; re-ask ledgers require 0.16. */ supersedes?: number }
 export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
 /**
  * N1 (0.10): `carry` = the seq of the submit this entry carries across a plan entry that changed only the node's checks,
@@ -293,7 +295,7 @@ export interface NodeState {
   reported?: number;
 }
 export interface AttemptRuns { attempt: number; launches: LaunchEntry[]; sends: SendEntry[] }
-export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string; writer?: boolean; prospective?: boolean; answer?: AnswerRef; /** D25: present only for a delegated owner ruling */ channel?: 'delegated' }
+export interface Rule { seq: number; text: string; nodes: string[] | '*'; by: string; writer?: boolean; prospective?: boolean; answer?: AnswerRef; answers?: DecisionAnswer[]; /** DC: distinguishes raw multi-answer TEXT from legacy prefixes. */ decision?: number; /** D25: present only for a delegated owner ruling */ channel?: 'delegated' }
 export interface State {
   seq: number;                 // last seq, -1 when empty
   head: string;                // hash of last entry

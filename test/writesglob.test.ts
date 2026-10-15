@@ -301,7 +301,7 @@ test('WG2098 driver halts with Needs-you for a writes ownership cycle and names 
     await commitAt(b.worktree,{'a/x':'b owns a path'});await ops.submit({cwd:b.worktree,node:'b',as:{role:'writer',id:'b#1'}});await ops.attest({cwd:r.cwd,node:'b'});
     assert.deepEqual(R.writesWaitCycle((await r.state()).s,'a'),['a','b','a']);
     const {actions}=await driverState(r), halt=actions().find(a=>a.do==='halt'&&a.node==='a');assert.ok(halt&&halt.do==='halt');
-    assert.match(halt.reason,/writes ownership wait cycle: a -> b -> a/);assert.match(halt.reason,/owed resume a/);
+    assert.match(halt.reason,/writes ownership wait cycle: a -> b -> a/);assert.match(halt.reason,/owed decide a --text/);
     await ops.halt({cwd:r.cwd,node:'a',attempt:1,reason:halt.reason,needs:halt.needs,as:{role:'parent',id:'drive'}});
     assert.match(renderStatusBrief(await ops.status({cwd:r.cwd})),/Needs you[\s\S]*writes ownership wait cycle: a -> b -> a/);
     await ops.abandon({cwd:r.cwd,node:'b',as:parent,reason:'break cycle'});assert.equal(R.writesWaitCycle((await r.state()).s,'a'),undefined);
