@@ -165,7 +165,7 @@ test('G3.2: rebase with a repairable block: one repair carrying the rebase instr
   const a = act(r, runsOf(sealed(W())));
   assert.ok(a?.do === 'send' && a.reason === 'repair', JSON.stringify(a));
   assert.equal(a.rulings, 0);
-  assert.match(a.message, /rename it[\s\S]*Trunk moved[\s\S]*git rebase --onto s1 s0[\s\S]*owed submit a`\.$/);
+  assert.match(a.message, /rename it[\s\S]*Trunk moved[\s\S]*git rebase --onto s1 \$\(git merge-base HEAD s1\)[\s\S]*owed submit a`\.$/);
   assert.ok(!a.message.includes('plan changed'));
   // Repairs exhausted: halt instead.
   const e = act(r, runsOf(sealed(W())), { repairs: 0 });
@@ -180,7 +180,7 @@ test('G3.2: rebase with a repairable block: one repair carrying the rebase instr
   assert.ok(qh?.do === 'halt' && qh.reason === `review block #${np.seq} review needs a parent ruling: which contract?; record \`owed decide a --text "<decision>"\`; the writer gets the ruling with the next repair`, JSON.stringify(qh));
   q.recordHalt(qh); const ru = q.rule('contract X');
   const qr = act(q, runsOf(sealed(W())));
-  assert.ok(qr?.do === 'send' && qr.reason === 'repair' && qr.rulings === ru.seq && /git rebase --onto s1 s0/.test(qr.message), JSON.stringify(qr));
+  assert.ok(qr?.do === 'send' && qr.reason === 'repair' && qr.rulings === ru.seq && /git rebase --onto s1 \$\(git merge-base HEAD s1\)/.test(qr.message), JSON.stringify(qr));
 });
 
 // ---------- G3.3: the wais timeline ----------
@@ -359,13 +359,13 @@ test('G3.7: the rebase follow-up and the rebasing repair list the conflicting fi
   };
   const r = rebased(false), runs = runsOf(sealed(W()));
   const msg = (o: Partial<DriveOpts>) => { const a = act(r, runs, o); assert.ok(a?.do === 'send' && a.reason === 'rebase', JSON.stringify(a)); return a.message; };
-  assert.equal(msg({ conflicts: new Map([['a', ['a/x', 'a/y']]]) }), 'trunk moved; rebase your worktree onto main (s1): first commit your work, then in /repo/.owed/wt/a-1 run `git rebase --onto s1 s0` (files that conflict with your previous candidate: a/x, a/y), resolve conflicts within the allowed writes, rerun checks, commit, then `owed submit a`');
-  assert.match(msg({ conflicts: new Map([['a', []]]) }), /`git rebase --onto s1 s0` \(files that conflict with your previous candidate: none\), resolve/);
+  assert.equal(msg({ conflicts: new Map([['a', ['a/x', 'a/y']]]) }), 'trunk moved; rebase your worktree onto main (s1): first commit your work, then in /repo/.owed/wt/a-1 run `git rebase --onto s1 $(git merge-base HEAD s1)` (files that conflict with your previous candidate: a/x, a/y), resolve conflicts within the allowed writes, rerun checks, commit, then `owed submit a`');
+  assert.match(msg({ conflicts: new Map([['a', []]]) }), /`git rebase --onto s1 \$\(git merge-base HEAD s1\)` \(files that conflict with your previous candidate: none\), resolve/);
   assert.equal(msg({}), drv.rebaseMessage(r.state(), 'a'));
   assert.doesNotMatch(msg({ conflicts: new Map([['b', ['b/x']]]) }), /conflict with your previous candidate/, 'another node\'s list');
   const q = rebased(true), b = act(q, runs, { conflicts: new Map([['a', ['a/x']]]) });
   assert.ok(b?.do === 'send' && b.reason === 'repair', JSON.stringify(b));
-  assert.match(b.message, /git rebase --onto s1 s0` \(files that conflict with your previous candidate: a\/x\) and resolve/);
+  assert.match(b.message, /git rebase --onto s1 \$\(git merge-base HEAD s1\)` \(files that conflict with your previous candidate: a\/x\) and resolve/);
 });
 
 test('G3.7: rebaseConflicts runs git merge-tree: conflicted paths only, [] when clean, undefined when git fails', async () => {
@@ -501,7 +501,7 @@ test('#680 (a) probe: halt recorded, then owner `owed rebase` (clears the halt) 
   r.add({ kind: 'rule', by: 'parent:main', text: 'general', nodes: '*' });
   r.rule('contract X');
   const f = act(r, runsOf(sealed(W())), { conflicts: new Map([['a', ['a/x']]]) });
-  assert.ok(f?.do === 'send' && f.reason === 'repair' && /git rebase --onto s1 s0` \(files that conflict with your previous candidate: a\/x\)/.test(f.message), JSON.stringify(f));
+  assert.ok(f?.do === 'send' && f.reason === 'repair' && /git rebase --onto s1 \$\(git merge-base HEAD s1\)` \(files that conflict with your previous candidate: a\/x\)/.test(f.message), JSON.stringify(f));
 });
 
 // ---------- review #680 (b): the conflict list only when row 8 can use it; -z ----------

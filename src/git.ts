@@ -17,7 +17,7 @@ import type { Plan, NodeSpec, CandidateFacts, StateFacts, CheckSpec, ExecConfig 
 export const GIT_MAX_OUTPUT_BYTES = Math.min(256 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH);
 /** Test seams: lower the buffering bound or split hash input into small chunks. Neither enters a key. */
 export const gitHooks: { maxOutputBytes?: number; hashChunkBytes?: number } = {};
-interface GitOptions { input?: string; allowFail?: boolean; env?: Record<string, string>; maxOutputBytes?: number }
+interface GitOptions { input?: string; allowFail?: boolean; env?: Record<string, string>; maxOutputBytes?: number; timeoutMs?: number }
 export function git(cwd: string, args: string[], opts?: GitOptions): Promise<{ code: number; stdout: string; stderr: string }> {
   return runGit(cwd, args, opts);
 }
@@ -26,10 +26,14 @@ function runGit(cwd: string, args: string[], opts?: GitOptions, stdout?: (chunk:
   const subcommand = args.find(arg => !arg.startsWith('-')) ?? args[0];
   // Worktree mutations can run hooks or rewrite many files; ref CAS/read-only facts remain local and short.
   const allowedFastForward = ledgerExemption === 'advanceTrunk' && args.length === 3 && args[0] === 'merge' && args[1] === '--ff-only';
-  if (!allowedFastForward && (['merge', 'switch', 'checkout', 'reset', 'clean'].includes(subcommand ?? '') || (subcommand === 'worktree' && args.some(a => ['add','remove','prune'].includes(a))))) assertNoLedgerLock();
+  if (!allowedFastForward && (['merge', 'switch', 'checkout', 'reset', 'clean', 'rebase'].includes(subcommand ?? '') || (subcommand === 'worktree' && args.some(a => ['add','remove','prune'].includes(a))))) assertNoLedgerLock();
   if (!Number.isFinite(limit) || limit <= 0) return Promise.reject(new OwedError('git output bound must be positive', 'usage'));
   return new Promise((resolve, reject) => {
-    const p = spawn('git', args, { cwd, env: { ...process.env, ...opts?.env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const p = spawn('git', args, { cwd, env: { ...process.env, ...opts?.env }, stdio: ['pipe', 'pipe', 'pipe'], detached: opts?.timeoutMs !== undefined });
+    const timer = opts?.timeoutMs === undefined ? undefined : setTimeout(() => {
+      failure = new OwedError(`git ${subcommand} timed out after ${opts.timeoutMs}ms; abort the operation before continuing`, 'internal');
+      try { if (p.pid) process.kill(-p.pid,'SIGKILL'); } catch { p.kill('SIGKILL'); }
+    },opts.timeoutMs);
     const out: Buffer[] = [], err: Buffer[] = [];
     let bytes = 0, failure: OwedError | undefined;
     const collect = (chunk: Buffer, target: Buffer[]): void => {
@@ -43,8 +47,9 @@ function runGit(cwd: string, args: string[], opts?: GitOptions, stdout?: (chunk:
     };
     p.stdout.on('data', (b: Buffer) => { if (!failure) { if (stdout) stdout(b); else collect(b, out); } });
     p.stderr.on('data', (b: Buffer) => collect(b, err));
-    p.on('error', e => reject(new OwedError(`git: ${e.message}`, 'internal')));
+    p.on('error', e => { if (timer) clearTimeout(timer); reject(new OwedError(`git: ${e.message}`, 'internal')); });
     p.on('close', code => {
+      if (timer) clearTimeout(timer);
       if (failure) { reject(failure); return; }
       const result = { code: code ?? 1, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString() };
       if (result.code && !opts?.allowFail) reject(new OwedError(`git ${args[0]}: ${result.stderr}`, 'internal')); else resolve(result);

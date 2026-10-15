@@ -222,14 +222,14 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
   if (obligation === 'review' || obligation === 'closure-review') {
     const rank = obligation === 'closure-review' ? 2 : spec?.review.min_rank ?? 1;
     const count = obligation === 'closure-review' ? 1 : spec?.review.count ?? 1;
-    const reviews = listed(context(s).reviews, subject).filter(e => e.kind === 'review' && e.node === subject && e.obligation === obligation && e.key === key && e.verdict === 'ok' && e.rank >= rank && !isWriter(node, e.by));
+    const reviews = effectiveReviews(s, subject, obligation, key, node?.candidate?.keys[obligation] === key ? node.candidate : undefined).filter(e => e.rank >= rank && !isWriter(node, e.by));
     out.evidence = reviews.map(e => e.seq);
     out.discharger = obligation === 'closure-review' ? 'owner' : 'reviewer';
     out.detail = `${obligation} requires ${count} non-writer reviews with rank at least ${rank}`;
     if (new Set(reviews.map(e => e.by)).size >= count) out.status = 'E';
   } else if (obligation === 'rulings') {
     const latest = latestRule(s, subject);
-    const acknowledgments = listed(context(s).reviews, subject).filter(e => e.kind === 'review' && e.node === subject && e.attempt === node?.slot?.attempt && e.seq > (node?.slot?.dispatchSeq ?? -1) && e.verdict === 'ok' && e.rank >= 1 && (e.ack_rulings ?? -1) >= latest && !isWriter(node, e.by) && e.key === node?.candidate?.keys[e.obligation]);
+    const acknowledgments = listed(context(s).reviews, subject).filter(e => e.kind === 'review' && e.node === subject && e.attempt === node?.slot?.attempt && e.seq > (node?.slot?.dispatchSeq ?? -1) && e.verdict === 'ok' && e.rank >= 1 && (e.ack_rulings ?? -1) >= latest && !isWriter(node, e.by) && (e.key === node?.candidate?.keys[e.obligation] || node?.candidate?.carry?.reviews.includes(e.seq)));
     if ((node?.slot?.rulings_seen ?? -1) >= latest || acknowledgments.length) {
       out.status = 'E';
       out.evidence = acknowledgments.length ? acknowledgments.map(e => e.seq) : [node!.slot!.dispatchSeq];
@@ -609,7 +609,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       }
       // MO1: a submit replaces the current candidate, even when its evidence can be reused immediately.
       delete n.acceptedSince;
-      n.candidate = { ...e.facts, seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
+      n.candidate = { ...submittedFacts(s, e), seq: e.seq, ...(e.carry !== undefined && plan !== undefined ? { carried: { plan, submit: e.carry } } : {}) };
     }
     else if (e.kind === 'abandon') { s.nodes[e.node]!.slot!.open = false; s.nodes[e.node]!.candidate = undefined; }
     else if (e.kind === 'hold') { if (nodeSpec(s, e.node)) s.nodes[e.node]!.held = e.abandon; }
@@ -1063,6 +1063,59 @@ export function sharedParkNotices(s: State): { once: string; obligation: string;
   }).sort((a, b) => a.once.localeCompare(b.once));
 }
 
+/** ER1: the latest submitted candidate of the same open attempt, even after its rebase invalidated it. */
+export function previousSubmit(s: State, node: string): Extract<Entry, { kind: 'submit' }> | undefined {
+  const slot = s.nodes[node]?.slot;
+  return slot?.open ? entriesOf(s).findLast((e): e is Extract<Entry, { kind: 'submit' }> => e.kind === 'submit' && e.node === node && e.attempt === slot.attempt) : undefined;
+}
+/** Original OK receipts plus the current candidate's explicitly inherited receipts; never copy checks or approvals. */
+function effectiveReviews(s: State, node: string, obligation: string, key: string, facts?: CandidateFacts): ReviewEntry[] {
+  return listed(context(s).reviews, node).filter((e): e is ReviewEntry => e.kind === 'review' && e.obligation === obligation && e.verdict === 'ok' && (e.key === key || !!facts?.carry?.reviews.includes(e.seq)));
+}
+/** A plan carry keeps ER receipts at the same commit without inventing a second clean-rebase assertion. */
+function submittedFacts(s: State, e: Extract<Entry, { kind: 'submit' }>): CandidateFacts {
+  if (e.facts.carry || e.carry === undefined) return e.facts;
+  const prior = entriesOf(s).find(x => x.seq === e.carry);
+  const inherited = prior?.kind === 'submit' ? submittedFacts(s, prior).carry : undefined;
+  return inherited ? { ...e.facts, carry: inherited } : e.facts;
+}
+/** Eligible review receipts on C: all required judgments must be OK (not waived), at today's count and rank. */
+export function reviewCarrySource(s: State, node: string, next?: CandidateFacts): { previous: Extract<Entry, { kind: 'submit' }>; reviews: number[] } | undefined {
+  const previous = previousSubmit(s, node), spec = nodeSpec(s, node);
+  if (!previous || !spec) return undefined;
+  const facts = submittedFacts(s, previous), obligations = required(spec, facts).filter(o => o === 'review' || o === 'closure-review');
+  if (!obligations.length || next && required(spec, next).some(o => (o === 'review' || o === 'closure-review') && !obligations.includes(o))) return undefined;
+  const receipts: number[] = [];
+  for (const obligation of obligations) {
+    if (s.nodes[node]!.blocks.some(b => b.obligation === obligation && active(b))) return undefined;
+    const rank = obligation === 'closure-review' ? 2 : spec.review.min_rank, count = obligation === 'closure-review' ? 1 : spec.review.count;
+    const reviews = effectiveReviews(s, node, obligation, facts.keys[obligation] ?? '', facts).filter(e => e.rank >= rank && !isWriter(s.nodes[node], e.by));
+    if (new Set(reviews.map(e => e.by)).size < count) return undefined;
+    receipts.push(...reviews.map(e => e.seq));
+  }
+  return { previous: { ...previous, facts }, reviews: [...new Set(receipts)].sort((a,b) => a-b) };
+}
+function reviewCarryErrors(s: State, d: Extract<Draft, { kind: 'submit' }>): string[] {
+  const carry = d.facts.carry;
+  if (carry === undefined) return [];
+  if (!carry || typeof carry !== 'object' || Array.isArray(carry) || Object.keys(carry).some(k => !['from','reviews'].includes(k)) || typeof carry.from !== 'string' || !/^[0-9a-f]{40,64}$/.test(carry.from) || !Array.isArray(carry.reviews) || !carry.reviews.length || carry.reviews.some(seq => !Number.isSafeInteger(seq) || seq < 0) || new Set(carry.reviews).size !== carry.reviews.length) return ['submit facts.carry must be {from: commit, reviews: distinct OK review seqs}'];
+  const source = reviewCarrySource(s, d.node, d.facts);
+  if (!source || carry.from !== source.previous.facts.commit) return ['review carry.from must name the previous candidate with all review obligations satisfied'];
+  if (carry.reviews.some(seq => !source.reviews.includes(seq))) return ['review carry.reviews must name OK receipts on the previous candidate keys'];
+  const spec = nodeSpec(s, d.node)!;
+  for (const obligation of required(spec, source.previous.facts).filter(o => o === 'review' || o === 'closure-review')) {
+    const reviews = entriesOf(s).filter((e): e is ReviewEntry => e.kind === 'review' && carry.reviews.includes(e.seq) && e.obligation === obligation);
+    if (new Set(reviews.map(e => e.by)).size < (obligation === 'closure-review' ? 1 : spec.review.count)) return ['review carry.reviews must satisfy every previous review count and rank'];
+  }
+  return [];
+}
+function executorRebaseErrors(s: State, d: Extract<Draft, { kind: 'submit' }>): string[] {
+  const rebase = entriesOf(s).at(-1);
+  if (d.carry !== undefined) return ['executor rebase submit never has plan carry'];
+  if (rebase?.kind !== 'rebase' || rebase.node !== d.node || rebase.attempt !== d.attempt || rebase.base !== d.facts.base || d.facts.rebased !== true) return ['executor rebase submit must immediately follow a rebase of the same open attempt and descend from its base (rebased: true)'];
+  return [];
+}
+
 // ---------- driver (SPEC §12) ----------
 const DRIVE_KINDS: readonly string[] = ['launch', 'send', 'halt'];
 export const DRIVER = 'parent:drive';
@@ -1272,7 +1325,9 @@ export function reviewEpoch(s: State, node: string): number | undefined {
     const e = entries[i]!;
     if (e.seq >= c.seq || e.kind !== 'submit' || e.node !== node || e.attempt !== n.slot.attempt) continue;
     const prior = keys(e.facts, planAt(s, e.seq).nodes.find(x => x.id === node));
-    if (prior.some((key, k) => key !== current[k])) break;
+    const next = entries.find(x => x.seq === first);
+    if (prior.some((key, k) => key !== current[k]) && !(next?.kind === 'submit' && next.facts.carry?.from === e.facts.commit)) break;
+    current.splice(0, current.length, ...prior);
     first = e.seq;
   }
   return first;
@@ -1505,6 +1560,7 @@ export function validateDraft(s: State, d: Draft): string[] {
   if (s.seq === -1) return [...errors, 'genesis must be established first'];
   const n = 'node' in d ? s.nodes[d.node] : undefined;
   const spec = 'node' in d ? nodeSpec(s, d.node) : undefined;
+  if (d.kind === 'merge' && (d.facts.carry !== undefined || d.facts.rebased !== undefined)) errors.push('merge facts never carry submit review inheritance or rebased markers');
   // Ruling #1176 (0.12): abandon may close a removed node's slot; AH hold may follow it atomically.
   if ('node' in d && (!n || (!spec && d.kind !== 'escape' && !((d.kind === 'abandon' || d.kind === 'hold') && n.phase === 'removed')))) errors.push(`Node ${d.node} does not exist`);
   const slot = (): void => { if (!n?.slot?.open || !('attempt' in d) || n.slot.attempt !== d.attempt) errors.push('attempt must match the current open writer slot'); };
@@ -1559,11 +1615,13 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     case 'submit':
       slot();
-      if (d.by === 'executor:owed') errors.push(...carryErrors(s, d, n));
+      if (d.by === 'executor:owed') errors.push(...(d.facts.rebased !== undefined ? executorRebaseErrors(s, d) : carryErrors(s, d, n)));
       else {
         if (d.by !== n?.slot?.writer) errors.push('submit must be performed by the slot writer');
         if (d.carry !== undefined) errors.push('a writer submit never has carry');
       }
+      errors.push(...reviewCarryErrors(s, d));
+      if (d.facts.rebased !== undefined && (d.by !== 'executor:owed' || d.facts.rebased !== true)) errors.push('submit rebased must be true and only recorded by executor:owed');
       if (d.facts.base !== n?.slot?.base) errors.push('submit base must match slot base');
       if (spec && required(spec, d.facts).some(o => !d.facts.keys[o])) errors.push('submit is missing required obligation keys');
       if (spec && Object.entries(manualKeys(spec, d.facts.patch)).some(([o, k]) => d.facts.keys[o] !== k)) errors.push('submit approve/evidence keys must be derived from the candidate patch');

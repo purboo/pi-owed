@@ -1,8 +1,23 @@
 import type { State } from './types.ts';
-import { entriesOf } from './reducer.ts';
+import { entriesOf, previousSubmit } from './reducer.ts';
+import { lstat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { git, isAncestor } from './git.ts';
 
-export interface RebasePending { head: string; base: string; upstream: string; command: string }
+export interface RebasePending { head: string; base: string; upstream: string; command: string; recovery?: string }
+/** Porcelain can be clean while an interrupted Git operation still owns the worktree. */
+export async function slotGitInProgress(worktree: string): Promise<boolean> {
+  for (const name of ['rebase-merge','rebase-apply','MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD']) {
+    const path = (await git(worktree,['rev-parse','--git-path',name])).stdout.trim();
+    try { await lstat(resolve(worktree,path)); return true; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  }
+  return false;
+}
+export function rebaseRecovery(head: string, original: string | undefined, inProgress: boolean, base?: string, node?: string): string | undefined {
+  if (inProgress) return 'Git operation in progress; run `git rebase --abort` (or `git merge --abort` for a merge), then follow the rebase instruction.';
+  if (original && head !== original) return `HEAD differs from last submitted candidate ${original.slice(0,12)}; keep: check \`git log ${base ?? '<slot base>'}..HEAD\` holds only this node's commits, run the focused tests, then \`owed submit ${node ?? '<node>'}\`; reset: \`git reset --hard ${original}\`, then \`git rebase --onto ${base ?? '<slot base>'} $(git merge-base HEAD ${base ?? '<slot base>'})\`.`;
+  return undefined;
+}
 /** Read actual HEAD; never infer that a recorded rebase was applied. Missing worktrees are not drift evidence. */
 export async function rebasePending(s: State, node: string, includeAligned = false): Promise<RebasePending | undefined> {
   const slot = s.nodes[node]?.slot;
@@ -10,7 +25,10 @@ export async function rebasePending(s: State, node: string, includeAligned = fal
   const headResult = await git(slot.worktree, ['rev-parse', 'HEAD'], { allowFail: true }).catch(() => undefined);
   if (!headResult || headResult.code) return undefined;
   const head = headResult.stdout.trim();
-  if (!includeAligned && await isAncestor(slot.worktree, slot.base, head)) return undefined;
+  const previous = previousSubmit(s,node), inProgress = await slotGitInProgress(slot.worktree);
+  const recovery = rebaseRecovery(head, slot.rebase && previous && slot.rebase.seq > previous.seq ? previous.facts.commit : undefined,inProgress,slot.base,node);
+  // NY7: an aligned, clean HEAD is not status drift; the driver separately reads recovery for an unsubmitted rebase.
+  if (!includeAligned && !inProgress && await isAncestor(slot.worktree, slot.base, head)) return undefined;
   const history = entriesOf(s).filter(e => (e.kind === 'dispatch' || e.kind === 'rebase') && e.node === node && e.attempt === slot.attempt).reverse();
   let upstream: string | undefined;
   for (const e of history) if ((e.kind === 'dispatch' || e.kind === 'rebase') && await isAncestor(slot.worktree, e.base, head)) { upstream = e.base; break; }
@@ -20,13 +38,13 @@ export async function rebasePending(s: State, node: string, includeAligned = fal
     upstream = (await git(slot.worktree, ['merge-base', head, dispatch.base])).stdout.trim();
   }
   upstream = await trunkUpstream(slot.worktree, head, slot.base, upstream);
-  return { head, base: slot.base, upstream, command: `git rebase --onto ${slot.base} ${upstream}` };
+  return { head, base: slot.base, upstream, command: `git rebase --onto ${slot.base} ${upstream}`, ...(recovery ? {recovery} : {}) };
 }
 /**
  * SB2: trunk commits HEAD already contains (a merge of trunk or a rebase onto it) are never replayed: the upstream
  * advances to merge-base(HEAD, new base) when that descends from the recorded upstream.
  */
-async function trunkUpstream(cwd: string, head: string, base: string, upstream: string): Promise<string> {
+export async function trunkUpstream(cwd: string, head: string, base: string, upstream: string): Promise<string> {
   const r = await git(cwd, ['merge-base', head, base], { allowFail: true });
   const shared = r.code ? '' : r.stdout.trim();
   return shared && shared !== upstream && await isAncestor(cwd, upstream, shared) ? shared : upstream;
@@ -41,4 +59,4 @@ export function rebaseFollowupSent(s: State, node: string): boolean {
   }) ?? false;
 }
 export const rebasePendingText = (r: RebasePending): string => `rebase pending (HEAD ${r.head.slice(0, 12)} not on slot base ${r.base.slice(0, 12)})`;
-export const rebaseWorkText = (r: RebasePending): string => `First commit your work, then run \`${r.command}\`; resolve conflicts within the allowed writes, rerun checks, commit, then submit.`;
+export const rebaseWorkText = (r: RebasePending): string => `${r.recovery ? `${r.recovery} ` : ''}First commit your work, then run \`${r.command}\`; resolve conflicts within the allowed writes, rerun checks, commit, then submit.`;
