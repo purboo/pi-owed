@@ -8,6 +8,45 @@ The main agent is the owner (0.5, delegated owner): a human states the task in n
 
 It provides a CLI, a pi extension, and an agent skill. It is not an agent scheduler, a sandbox, or a replacement for code review. Your agent runner does the work; owed keeps acceptance evidence and guards the merge.
 
+## What's new in 0.24
+
+Upgrade every reader — CLI, driver and every pi session loading owed, restarted
+— before a sweep records a confirmed boundary/automatic escape or the plan
+enables `risk` or `closure_neutral`. Older readers refuse the new sweep/escape
+fields; ignoring the new review policies produces a conservative mismatch,
+not a false pass. No new ledger entry kind is added.
+See [SPEC compatibility](docs/SPEC.md#compatibility-020024).
+
+- **Scheduled sweeps and automatic escapes:** `sweep.every: {merges: N,
+  minutes: M}` makes either threshold due. Running drivers sweep in the
+  background alongside node work; `owed sweep --due` supports cron.
+  Two failed head samples, two failed culprit samples and a passing predecessor
+  confirm a `missing` escape recorded by owed, deduplicated with a coverage
+  notice. Flaky/inconclusive results report only; sweeps never gate a merge.
+  Without a schedule, staying drivers keep idle-only sweep preemption.
+- **Diff-derived reviews:** owner-declared ordered `risk` classes use the first
+  matching rule per changed path, then maximize count and rank across the diff.
+  `closure_neutral` exempts declared JSON-only neutral closure changes from
+  closure-review, while full-file measurement hashes remain. Lowering either
+  policy requires the owner. Views explain the derived requirement;
+  report/metrics `reviews.sameModel` keeps model correlation visible even
+  when its warning is acknowledged.
+- **Driver-safe hotfix adoption:** `owed adopt --commit <c> --note "<why>"`
+  lands an off-ref fast-forward under the merge lock without stopping the
+  driver. A running merge finishes first; if the hotfix then needs rebase,
+  adoption refuses before measuring. Already-contained commits refuse as
+  `nothing to adopt`. The normal invariant guard still applies. A crash
+  between ref advance and ledger append requires adoption without `--commit`.
+- **Idempotent identical acts:** retrying the same latest `review`, candidate
+  `evidence`, `approve` (including block) or `waive` on the same open candidate
+  appends nothing and succeeds with `already recorded as #<seq>` and runtime
+  `alreadyRecorded` metadata. A changed judgment or new submit is a new act.
+  Historical duplicate runs fold in text as `×<k>`; JSON and counts stay intact.
+  Scripts identify Busy by exit 75, not output text.
+
+Details and limits: SPEC §3.8–3.9, §6.2a, §7.15b, §7.21, §8.3.2–8.3.3
+and §9.4–9.5.
+
 ## What's new in 0.23
 
 Upgrade the CLI, driver and every pi session that loads owed (restart it)
@@ -16,7 +55,7 @@ or applying executor rebases. Leasing is on by default; these measurements
 need no manual opt-in. Older readers ignore writer review carry conservatively,
 reject executor rebase submits, and refuse ledgers with the new observation
 lease-wait field.
-See [SPEC compatibility](docs/SPEC.md#compatibility-020023) for the upgrade order.
+See [SPEC compatibility](docs/SPEC.md#compatibility-020024) for the upgrade order.
 
 - **One parent decision:** `owed decide A,B --text "<decision>"` combines one
   ruling, unambiguous question answers and default recovery of halted/held
@@ -60,8 +99,8 @@ retain their recorded writes dialect; no automatic migration rewrites them.
 - **Batch merges:** `drive.merge_batch: N` (integer 1..8, default 1/off)
   lets the driver measure up to N accepted, non-overlapping nodes on one final
   tree and advance trunk once. Parent/owner `owed merge A,B,C` explicitly
-  requests a batch regardless of the setting. Members must not touch closure
-  or owe remeasurement; approval gates still apply. Conflicting members drop
+  requests a batch regardless of the setting. Members must have no non-neutral closure changes
+  (0.24 `closure_neutral`, SPEC §6.2a) or owe remeasurement; approval gates still apply. Conflicting members drop
   out for rebase/individual merge. Status shows the planned batch. Failed batch
   votes belong only to that batch: the driver retries members singly, each on
   its own tree, with its own eligible automatic remeasure. Batch observations
@@ -404,7 +443,7 @@ Compatibility: owed 0.14 refuses the new `refresh` entry and unknown obs
 together and restart pi. Historical ledgers without the new fields retain their
 0.14 replay (apart from the actionable missing-key text).
 
-When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. If the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. In 0.17, a candidate whose active binding blocks are all trunk-red waits instead: no driver halt, writer follow-up, reviewer launch or attest (questions still notify). Mixed blocks retain the existing behavior. One repository notice per current trunk/check/sorted-failed-name state lists the waiting nodes and trunk fix/adopt, optional sweep, or owner-waiver options; status and brief share one `Needs you` line and show `waiting: trunk-red (check:X on trunk <trunk12>)` in the node's progress phase. Queued pi notices recompute their waiting list at delivery. Moving trunk automatically resumes the existing measurement/rebase route without a resume entry. Deduplication uses the existing per-process once set: restart may print one repository notice again, never a parked-node halt (parent ruling #1814). This adds no ledger fields and weakens no merge gate. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for its bisect/escape proposal, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq>` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. `why` shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
+When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. If the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. In 0.17, a candidate whose active binding blocks are all trunk-red waits instead: no driver halt, writer follow-up, reviewer launch or attest (questions still notify). Mixed blocks retain the existing behavior. One repository notice per current trunk/check/sorted-failed-name state lists the waiting nodes and trunk fix/adopt, optional sweep, or owner-waiver options; status and brief share one `Needs you` line and show `waiting: trunk-red (check:X on trunk <trunk12>)` in the node's progress phase. Queued pi notices recompute their waiting list at delivery. Moving trunk automatically resumes the existing measurement/rebase route without a resume entry. Deduplication uses the existing per-process once set: restart may print one repository notice again, never a parked-node halt (parent ruling #1814). This adds no ledger fields and weakens no merge gate. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for localization and a confirmed automatic escape, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq>` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. `why` shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
 
 Merge refusals (0.16.2) also show the latest pass of a failing invariant on the current trunk: `inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`. This appears once per obligation, including anonymous failures, before intermittent and fix-candidate hints; if no such pass exists it is omitted. The node's current candidate adds `; node diff touches <p1>, <p2>, <p3> (+<N> more)` when it has changed paths. Merge refusals, driver halts, `why` merge-block hints and `Merge checks:` share the delta. This changes only text; 0.16.0, 0.16.1 and 0.16.2 share ledger fields, replay and keys.
 
@@ -552,22 +591,27 @@ owed decoy reveal decoys.json            # owner; later, when the outcome should
 
 A decoy is **caught** if its node received an execution failure or a review block before any merge, or if a merge of it observed a failure (every observation appended by `owed merge <node>` records `merging: <node>`) on an invariant or check that was not already failing on trunk — pre-existing trunk debt, deferred or not, never counts — whether the merge was refused or later went through after an owner deferral. It is **escaped** if it merged without any of these, and **pending** otherwise. `owed report` ends with an Escapes section: counts by class, decoy outcomes and the escape rate, escaped / (caught + escaped).
 
-## Advisory escape sweeps (0.13)
+## Advisory escape sweeps (0.13; scheduled and automatic escapes in 0.24)
 
-A plan can run a broader suite after work settles:
+A plan can run a broader suite after work settles, or on a schedule:
 
 ```yaml
 sweep:
   run: node --test --test-reporter=tap 'test/**/*.test.ts'
   timeout_s: 900                 # default 600
   reads: ["app/**", "test/**"]   # optional description; no acceptance key
+  every: {merges: 10, minutes: 30} # optional 0.24; either threshold makes it due
 ```
 
-`owed sweep [--commit C]` (pi: `owed_sweep {commit?, lease?, cwd?}`) measures a fresh detached tree of trunk by default, or the named commit. It uses the shared machine lease, setup and execution wrapper/environment; `--no-lease`, tool `lease: false`, or plan `lease: false` skips acquisition. It buffers the head and probes, recording their informational `sweep` entries atomically at completion, with the full commit, sweep definition key (command/timeout, setup and exec), `verdict: pass|fail|error`, parsed counts when available, log blob digest and up to 50 failed test names (`failed`). It exits 0 for pass, 1 for fail/error; acquisition busy exits 75. Sweeps never change acceptance keys or merge obligations.
+`owed sweep [--commit C] [--due]` (pi: `owed_sweep {commit?, due?, lease?, cwd?}`) measures a fresh detached tree of trunk by default, or the named commit. It uses the shared machine lease, setup and execution wrapper/environment; `--no-lease`, tool `lease: false`, or plan `lease: false` skips acquisition. It buffers the head and probes, recording their informational `sweep` entries atomically at completion, with the full commit, sweep definition key (command/timeout, setup and exec), `verdict: pass|fail|error`, parsed counts when available, log blob digest and up to 50 failed test names (`failed`). It exits 0 for pass, 1 for fail/error; acquisition busy exits 75. Sweeps never change acceptance keys or merge obligations.
 
-A staying driver schedules the sweep in the background when there is no ready action and no node measurement in flight; its pass never waits for the sweep/bisect. Ready work preempts the sweep with SIGTERM (SIGKILL after 2 seconds), proceeds in the same pass, and cleanup records `sweep aborted: preempted`, releases the machine lease and leaves no verdict for the interrupted run. That head can retry next idle period; completed heads run at most once automatically, including across restarts. A busy machine retries on a later timed pass. Head failures are rerun once: a pass reports `flaky at head` with no bisect/proposal. Owed uses a green ancestor only under the same sweep definition key, rechecking it when the key differs or is absent; failure reports `no green boundary under current sweep definition` and a definition/environment change. Bisect probes the first-parent recorded owed merges, then confirms X fails and X^ passes before proposing the exact `owed escape <node> --merge <seq> --class missing --note ...` command plus “promote <failing names> to an invariant”. Disagreements report `inconsistent (flaky)` with verdicts and no culprit. Each commit runs at most twice per invocation and total runs stay within `ceil(log2(n))+4` for n merges; exhausted confirmation budget yields an inconclusive report without a proposal. It records no escape and never blocks a merge. Without a green ancestor it reports the failure alone; measurement errors stop the bisect without naming an unproven merge. If an adopted tip fails but the last owed merge passes, no owed merge is blamed.
+With `sweep.every`, continuously running drivers, staying or not, start due sweeps under the shared lease with no waiting. Sweeps serialize on their own operation lock, consume no node measurement slot and continue alongside node work; only driver stop cancels them. Without `every`, only staying idle drivers schedule sweeps: ready work preempts them in the same pass, cleanup leaves no verdict for the interrupted run, and completed heads are skipped across restarts. Busy acquisition retries later. `drive --once` and the pi pass never start a sweep; when due they print `sweep due; --once does not start it (run owed sweep --due or a background driver)` or emit runtime JSON `sweep-due`.
 
-Each merge also reports **Unguarded paths**: changed paths matched by no invariant `reads`. Reports collapse their parent directories to globs such as `app/bundles/**`, dropping globs subsumed by shorter reported directories; root files remain literal. For `app/bundles/foo/a.ts` and `app/bundles/bar/b.ts`, it reports `app/bundles/foo/**` and `app/bundles/bar/**`, without widening to the common ancestor `app/bundles/**`. The CLI/tool merge output and driver merge report include this list, and `owed brief` lists the last 10 merges using the plan in force at each merge. This is advisory coverage information. Compatibility: owed before 0.13 refuses the new `sweep` entry kind with code `version`; existing entry kinds acquire no new fields.
+`--due` requires `sweep.every`; a not-due call records nothing and exits 0 with `sweep not due: next after N merges or at HH:MM` (absent threshold clauses omitted, local time). Regular sweeps force measurement. Completed head entries, not bisect samples, reset the schedule. Merge counting uses the first-parent range since an ancestor head sweep, so merges during measurement remain eligible; minutes use its timestamp. Before the first sweep, merges start at initialization and minutes at driver start (initialization for standalone cron). Scheduling changes no sweep definition key.
+
+Head failures are rerun once; `flaky at head`, a measurement error or no green ancestor reports only. Bisect searches first-parent owed merges under the current definition, requiring two failed head samples, two failed culprit samples and a passing predecessor. Each commit runs at most twice, with a total budget of `ceil(log2(n))+4`; disagreement or exhausted confirmation budget reports `inconsistent (flaky)` without blaming a merge. A confirmed boundary and an automatic `missing` escape by `executor:owed` append atomically unless a prior escape cites the same merge and sorted recorded sweep names (including canonical manual evidence). A changed definition during measurement authorizes no stale escape. Each new escape gives one notice naming the fix and uncovered test files, or `add the test to an invariant`; hints are diagnostic, not proof of coverage. Dedupe uses all recorded names, limited by the protocol to fifty, though the notice shows five. Sweeps never block a merge or blame an adoption; an adopted failing tip whose last owed merge passes names no culprit. Status keeps `trunk: sweep red since #S (NAMES)` until a passing head sweep of that trunk or a descendant, not a bisect sample or older ancestor.
+
+Each merge also reports **Unguarded paths**: changed paths matched by no invariant `reads`. Reports collapse their parent directories to globs such as `app/bundles/**`, dropping globs subsumed by shorter reported directories; root files remain literal. For `app/bundles/foo/a.ts` and `app/bundles/bar/b.ts`, it reports `app/bundles/foo/**` and `app/bundles/bar/**`, without widening to the common ancestor `app/bundles/**`. The CLI/tool merge output and driver merge report include this list, and `owed brief` lists the last 10 merges using the plan in force at each merge. This is advisory coverage information. Compatibility: owed before 0.13 refuses the `sweep` entry kind with code `version`. In 0.24 the optional `sweep.boundary` and `escape.sweep` fields require upgraded readers; no new entry kind is added.
 
 ## Execution environment: env and wrapper
 
@@ -829,7 +873,15 @@ Trunk can move without owed: a release commit (version bump, changelog) or a hum
 owed adopt --note "release 0.2.0"    # owner, delegated (under OWED_CONFIRM=owner: confirm on the terminal; pi owed_adopt asks in the UI)
 ```
 
-Before adopting (and before asking for confirmation under `OWED_CONFIRM=owner`) the CLI prints the full prior..commit range, the commit count, every changed path and the note, then adopts exactly that commit: if the ref moves after you confirm, the adoption is refused. `adopt` takes exactly what `refs/heads/<trunk>` points to (`--commit X` must equal it) and only when it is a fast-forward of the ledger trunk. As for a merge there is no new debt: owed measures every invariant whose key changed on the adopted commit; if one that held on the ledger trunk fails there, the adoption is refused, the failing observation is recorded, the refusal names the observation that decides each failing invariant (`h1 (obs #3)`; a repeated adopt of the same commit measures nothing new and names the existing observation) and trunk stays unadopted — fix trunk, then adopt again. Invariant debt that already existed does not block. The `adopt` entry records the prior and adopted commits, the commit count, the changed paths and the note; `owed report` and `owed brief` list it once: an owner adoption as an owner decision (the report's trunk adoptions section, not its owner actions), a parent adoption under allowance in its own adoptions section. Under `OWED_CONFIRM=owner` the pi tool `owed_adopt` asks for confirmation with a dialog that lists up to 50 changed paths, one per line; beyond 50 it lists the first 50 and then `… +N more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>`. Open slots are untouched and merge onto the adopted trunk (rebase only on conflicts). Limits: a rewritten or reset trunk cannot be adopted (restore the ref to a descendant of the ledger trunk), and `owed escape` names merges, not adoptions.
+Before adopting (and before asking for confirmation under `OWED_CONFIRM=owner`) the CLI prints the full prior..commit range, the commit count, every changed path and the note, then adopts exactly that commit: if the ref moves after you confirm, the adoption is refused. Without `--commit`, `adopt` takes what `refs/heads/<trunk>` points to, only when it fast-forwards ledger trunk. In 0.24 `--commit X` also accepts an off-ref fast-forward when that ref still equals ledger trunk (hotfix recipe below). As for a merge there is no new debt: owed measures every invariant whose key changed on the adopted commit; if one that held on the ledger trunk fails there, the adoption is refused, the failing observation is recorded, the refusal names the observation that decides each failing invariant (`h1 (obs #3)`; a repeated adopt of the same commit measures nothing new and names the existing observation) and trunk stays unadopted — fix trunk, then adopt again. Invariant debt that already existed does not block. The `adopt` entry records the prior and adopted commits, the commit count, the changed paths and the note; `owed report` and `owed brief` list it once: an owner adoption as an owner decision (the report's trunk adoptions section, not its owner actions), a parent adoption under allowance in its own adoptions section. Under `OWED_CONFIRM=owner` the pi tool `owed_adopt` asks for confirmation with a dialog that lists up to 50 changed paths, one per line; beyond 50 it lists the first 50 and then `… +N more paths; full list: git diff --no-renames --name-only <prior12>..<commit12>`. Open slots are untouched and merge onto the adopted trunk (rebase only on conflicts). Limits: a rewritten or reset trunk cannot be adopted (restore the ref to a descendant of the ledger trunk), and `owed escape` names merges, not adoptions.
+
+For a hotfix while the driver runs, keep the commit off the trunk ref and let owed land it under the merge lock:
+
+```sh
+owed adopt --commit <c> --note "<what changed and why it is acceptable>"
+```
+
+An in-flight merge finishes first; adopt-pending makes the driver yield new merges. The owner, or a parent with an allowance covering every changed path, retains the same invariant guard. If c is no longer a fast-forward, adopt refuses before measuring and names the new trunk to rebase onto. An off-ref c already contained in ledger trunk instead refuses with `nothing to adopt: <c12> is already contained in the ledger trunk <prior12>` (no rebase needed). Guard failure records observations without landing the hotfix; an external ref move discards stale observations without overwriting it. The checked-out trunk stays attached; dirty or obstructing files refuse safely. CAS advances the ref before the ledger append, as merge does; a crash or append failure in between leaves trunk ahead. Recover with `owed adopt --note "<why>"` **without `--commit`**, under the usual guard. No adoption field or key changes (SPEC §8.3.2).
 
 ## Owner allowances: easing the owner pre-authorized
 
