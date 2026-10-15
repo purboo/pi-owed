@@ -338,6 +338,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, touch: ctx.plan.exec?.touch, note: (line: string) => capture(`${line}\n`) } : undefined;
   const command = (run: string, cwd: string, timeout: number): Promise<CommandResult> => runCommand(ctx, run, cwd, timeout, capture);
   try {
+    await ctx.ledger.measuringActivity(job.obligation);
     ctx.onProgress?.(`${job.subject}: ${job.obligation}`);
     if (ctx.signal?.aborted) throw new Error('aborted');
     if (job.kind === 'writes') {

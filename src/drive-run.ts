@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import { rebasePending, type RebasePending } from './rebase-view.ts';
 import * as git from './git.ts';
+import { pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { Ledger } from './ledger.ts';
 import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
@@ -605,7 +606,21 @@ export class Driver {
     // K6 (review #785): while a merge of this driver is in flight or ended but not yet handled, the trunk ref may be ahead
     // of the state loaded above because of that merge: no drift check and no notify this pass (its CAS reports drift).
     let checked = true;
+    // AW3: pending adopts yield only new merges; an in-flight merge keeps its CAS/measurement lifecycle.
+    const adoptPending = await pendingAdopt(ledger.dir);
     const merging = [...this.measuring.values()].some(m => m.do === 'merge');
+    if (adoptPending) {
+      for (const id of mergeQueue(s)) {
+        if (this.measuring.get(id)?.do === 'merge') continue;
+        const reason = adoptPendingReason(adoptPending);
+        this.recordMergeWaiting(id,reason,s);
+        const report: ActionReport = {do:'merge',node:id,outcome:'waiting',detail:`merge waiting for ${reason}`};
+        reports.push(report); this.emit(report,s);
+      }
+      actions = actions.filter(a => a.do !== 'merge');
+    } else {
+      for (const [id,wait] of this.mergeWaiting) if (wait.reason.startsWith('adopt (pending since ')) this.recordMergeWaiting(id);
+    }
     const drift = merging ? (checked = false, undefined) : await git.trunkDrift(this.root!, s.trunk.name, s.trunk.commit).catch(() => { checked = false; return undefined; });
     if (drift) {
       const r = driftReport(s, drift);
@@ -645,6 +660,10 @@ export class Driver {
         // F2.3: below `drive.min_free_mb` in the git common dir or the temp dir: no measurement starts this pass.
         low ??= await this.diskLow(s, reports);
         if (low) continue;
+        if (a.do === 'merge') {
+          const pending = await pendingAdopt(ledger.dir);
+          if (pending) { this.recordMergeWaiting(a.node,adoptPendingReason(pending),s); continue; }
+        }
         const r = this.start(s, a.do, a.node);
         reports.push(r); this.emit(r, s);
         continue;
