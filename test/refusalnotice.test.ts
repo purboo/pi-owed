@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runJob, lastLines } from '../src/exec.ts';
+import { runJob } from '../src/exec.ts';
 import * as exec from '../src/exec.ts';
 const { errorGroups } = exec;
 import { mergeFailureHints, renderReceipt } from '../src/views.ts';
@@ -82,7 +82,7 @@ test('FG2: old cargo multiline panic appears with error text and location in the
   await measure([log], obs => {
     assert.equal(obs.verdict, 'fail');
     assert.deepEqual(obs.failed, ['module::old']);
-    assert.equal(obs.note!.split('; last output:')[0], 'failed tests: 1 failed, 1 distinct error(s): "assertion failed: left == right left: 1 right: 2" (src/lib.rs:9) ×1 — module::old');
+    assert.equal(obs.note!.split('; last output:')[0], 'failed tests: module::old (src/lib.rs:9): assertion failed: left == right left: 1 right: 2');
   });
 });
 
@@ -130,29 +130,29 @@ async function measure(logs: string[], check: (obs: Awaited<ReturnType<typeof ru
   } finally { await r.cleanup(); }
 }
 
-test('FG2: 11 identical precondition failures render one cause and three names, retaining all failed names', async () => {
+test('FG2/SG4: 11 identical precondition failures quote three names, retaining all failed names', async () => {
   await measure([shared11], obs => {
     assert.equal(obs.verdict, 'fail', obs.note);
     assert.deepEqual(obs.failed, names11);
     const prefix = obs.note!.split('; last output:')[0]!;
-    assert.equal(prefix, `failed tests: 11 failed, 1 distinct error(s): "exact-source host required" (test/runtime.test.ts:31) ×11 — ${names11.slice(0, 3).join(', ')} (+8 more)`);
+    assert.equal(prefix, `failed tests: ${names11.slice(0, 3).map(n => `${n} (test/runtime.test.ts:31): exact-source host required`).join(' | ')} (+8 more)`);
     assert.ok(!prefix.includes(';'));
-    assert.match(obs.note!, /; last output:/);
+    assert.doesNotMatch(obs.note!, /last output:/);
   });
 });
 
-test('FG2: no parsed error preserves the entire 0.16.0 note byte-for-byte', async () => {
+test('FG2/SG4: parsed failed names without error text do not display passing tails', async () => {
   const log = tap('first') + 'test module::second ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored;\n' + summary(1);
   await measure([log], obs => {
     assert.equal(obs.verdict, 'fail');
-    assert.equal(obs.note, `failed tests: first, module::second; last output:${lastLines(log, 15).map(l => `\n  ${l}`).join('')}`);
+    assert.equal(obs.note, 'failed tests: first: (no error text) | module::second: (no error text)');
     assert.deepEqual(obs.failed, ['first', 'module::second']);
   });
 });
 
 test('FG2: a parsed error equal to the fallback label still renders as an error group', async () => {
   await measure([tap('explicit', "'(no error text)'") + summary(1)], obs => {
-    assert.match(obs.note!, /^failed tests: 1 failed, 1 distinct error\(s\): "\(no error text\)" ×1 — explicit; last output:/);
+    assert.match(obs.note!, /^failed tests: explicit: \(no error text\)$/);
   });
 });
 
@@ -161,8 +161,8 @@ test('FG2: grouped notes cap errors and names, and preserve the semicolon parser
   const log = names.map((name, i) => tap(name, `'cause ${i}; detail'`)).join('') + summary(1);
   await measure([log], obs => {
     const prefix = obs.note!.split(';')[0]!;
-    assert.equal(prefix, 'failed tests: 5 failed, 5 distinct error(s): "cause 0, detail" ×1 | "cause 1, detail" ×1 | "cause 2, detail" ×1 (+2 more errors) — one, host, two, three (+2 more)');
-    assert.match(obs.note!, /; min_tests unmet: counted 1 \(0 pass, 1 fail\) < min_tests 2; exit 1; last output:/);
+    assert.equal(prefix, 'failed tests: one, host: cause 0, detail | two: cause 1, detail | three: cause 2, detail (+2 more)');
+    assert.match(obs.note!, /; min_tests unmet: counted 1 \(0 pass, 1 fail\) < min_tests 2; exit 1$/);
     assert.deepEqual(obs.failed, names);
   }, false, 2);
 });
@@ -172,9 +172,9 @@ test('FG2: repeat union groups errors from every failed run and keeps per-run no
     assert.equal(obs.verdict, 'fail');
     assert.deepEqual(obs.failed, ['early', 'late']);
     assert.equal(obs.runs?.length, 2);
-    assert.match(obs.note!, /^failed tests: 2 failed, 2 distinct error\(s\): "early cause" ×1 \| "late cause" ×1 — early, late; last output:/);
-    assert.match(obs.runs![0]!.note!, /^failed tests: 1 failed, 1 distinct error\(s\): "early cause"/);
-    assert.match(obs.runs![1]!.note!, /^failed tests: 1 failed, 1 distinct error\(s\): "late cause"/);
+    assert.match(obs.note!, /^failed tests: early: early cause \| late: late cause$/);
+    assert.match(obs.runs![0]!.note!, /^failed tests: early: early cause$/);
+    assert.match(obs.runs![1]!.note!, /^failed tests: late: late cause$/);
     assert.doesNotMatch(obs.note!, /; failed tests:/);
   }, true);
 });
@@ -253,7 +253,8 @@ test('FG3/TD3: merge refusal, why merge checks and driver halt share grouped err
     assert.ok(action?.do === 'halt');
     for (const text of [refusal, why, action.reason]) {
       assert.ok(text.includes(delta), text);
-      assert.ok(text.includes('11 failed, 1 distinct error(s): "exact-source host required"'), text);
+      assert.ok(text.includes('st_data precondition 1 (test/runtime.test.ts:31): exact-source host required'), text);
+      assert.doesNotMatch(text, /last output:/);
     }
     assert.deepEqual(await ledger.read(), entries, 'why and views do not change the ledger');
   } finally { await r.cleanup(); }

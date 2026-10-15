@@ -363,6 +363,7 @@ export function parsePlan(text: string): Plan {
       if (ids.has(id)) errors.push(`${p}: duplicate id ${id}`); ids.add(id);
       const template = expandCheckTemplate(c, p, errors);
       const out: InvariantSpec = { id, run: template?.run ?? str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`), ...(template?.min_tests !== undefined ? { min_tests: template.min_tests } : {}) };
+      if (c.on_timeout !== undefined) out.on_timeout = str(c.on_timeout, `${p}.on_timeout`);
       if (c.min_tests !== undefined) out.min_tests = num(c.min_tests, `${p}.min_tests`, 0);
       if (c.red !== undefined) { if (typeof c.red !== 'boolean') errors.push(`${p}.red: expected boolean`); else out.red = c.red; }
       if (c.tests !== undefined) out.tests = strings(c.tests, `${p}.tests`);

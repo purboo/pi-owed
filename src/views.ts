@@ -796,7 +796,7 @@ export function mergeFailureHints(s: State, node: string, failures: readonly Obs
   const history = entries.slice(-5000).reverse();
   const names = [...new Set(named.flatMap(e => e.failed!))];
   for (const name of names) {
-    const intermittent = intermittentLine(history, node, named.filter(f => f.failed!.includes(name)), name);
+    const intermittent = intermittentLine(s, history, node, named.filter(f => f.failed!.includes(name)), name);
     if (intermittent) lines.push(intermittent);
     if (name.length < 6) continue;
     for (const spec of s.plan.nodes) {
@@ -808,19 +808,48 @@ export function mergeFailureHints(s: State, node: string, failures: readonly Obs
   }
   return [...new Set(lines)];
 }
-/**
- * AT4: `known intermittent` only when the same test failed and passed on the same key, or failed with the same error
- * signature on a trunk key; trees of the refused node are never independent evidence. Otherwise, when other trees
- * failed the same name with a known, different signature, `same test failed on older trees (different error)`; else nothing.
- */
-function intermittentLine(history: readonly Entry[], node: string, failures: readonly ObsEntry[], name: string): string | undefined {
+/** Ruling #2118: probe history belongs to one subject/check and its recorded run definition. */
+function trunkRunDefinition(plan: Plan, observation: ObsEntry): string | undefined {
+  const id = observation.obligation.slice(observation.obligation.indexOf(':') + 1);
+  const spec = observation.obligation.startsWith('inv:')
+    ? plan.invariants.find(c => c.id === id)
+    : plan.nodes.find(n => n.id === observation.subject)?.checks.find(c => c.id === id);
+  return spec ? canonical({ run: spec.run }) : undefined;
+}
+/** SG3: current trunk evidence takes precedence over intermittent history. */
+function signatureTrunkRed(s: State, failures: readonly ObsEntry[], name: string): string | undefined {
+  for (const failure of failures) {
+    const signature = failure.signatures?.[name];
+    if (!signature) continue;
+    const definition = trunkRunDefinition(planAt(s, failure.seq), failure);
+    if (definition === undefined || definition !== trunkRunDefinition(s.plan, failure)) continue;
+    const trunk = entriesOf(s).slice().reverse().filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.obligation === failure.obligation
+      && e.subject === failure.subject && (e.probe === 'trunk' || (e.subject === 'trunk' && e.merging === undefined))
+      && trunkRunDefinition(planAt(s, e.seq), e) === definition);
+    const key = failure.obligation.startsWith('inv:') ? s.trunk.invKeys[failure.obligation.slice(4)] : trunk.find(e => e.commit === s.trunk.commit)?.key;
+    const current = trunk.find(e => e.key === key);
+    if (!current || current.verdict !== 'fail' || !current.failed?.includes(name) || current.signatures?.[name] !== signature) continue;
+    let first = current;
+    for (const e of trunk.filter(e => e.seq < current.seq)) {
+      if (e.verdict !== 'fail' || !e.failed?.includes(name) || e.signatures?.[name] !== signature) break;
+      first = e;
+    }
+    const change = entriesOf(s).findLast(e => (e.kind === 'merge' || e.kind === 'adopt') && e.seq <= first.seq);
+    const after = change?.kind === 'merge' ? ` (after merge #${change.seq} ${change.node})` : change?.kind === 'adopt' ? ` (after adopt #${change.seq})` : '';
+    return `${oneLine(name)}: trunk red since #${first.seq}${after}; fix trunk before retrying`;
+  }
+  return undefined;
+}
+/** SG2: one key must contain pass and matching-signature failure evidence for this test. */
+function intermittentLine(s: State, history: readonly Entry[], node: string, failures: readonly ObsEntry[], name: string): string | undefined {
+  const red = signatureTrunkRed(s, failures, name);
+  if (red) return red;
   const obs = history.filter((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed');
-  const flip = obs.filter(e => failures.some(f => e.subject === f.subject && e.obligation === f.obligation && e.key === f.key && (e.verdict === 'pass' || (e.failed?.includes(name) === true && !!e.runs?.some(r => r.verdict === 'pass'))))).slice(0, 3);
-  if (flip.length) return `known intermittent: ${oneLine(name)} failed and passed on the same key (${flip.map(e => `#${e.seq}`).join(', ')})`;
   const sig = (e: ObsEntry): string | undefined => e.signatures?.[name];
+  const flips = obs.filter(e => (e.verdict === 'fail' || e.runs?.some(r => r.verdict === 'fail' && r.failed?.includes(name))) && e.failed?.includes(name) && failures.some(f => e.obligation === f.obligation && (sig(f) === undefined || sig(e) === sig(f))));
+  const flip = flips.filter(e => e.runs?.some(r => r.verdict === 'pass') || obs.some(p => p.subject === e.subject && p.obligation === e.obligation && p.key === e.key && p.verdict === 'pass')).slice(0, 3);
+  if (flip.length) return `known intermittent: ${oneLine(name)} failed and passed on the same key (${flip.map(e => `#${e.seq}`).join(', ')}); inspect the matching failures before retrying`;
   const other = obs.filter(e => e.verdict === 'fail' && e.failed?.includes(name) === true && (e.probe === 'trunk' || (e.subject !== node && e.merging !== node)) && failures.every(f => f.seq !== e.seq && f.commit !== e.commit));
-  const trunk = other.filter(e => (e.probe === 'trunk' || (e.subject === 'trunk' && e.merging === undefined)) && sig(e) !== undefined && failures.some(f => sig(f) === sig(e))).slice(0, 3);
-  if (trunk.length) return `known intermittent: ${oneLine(name)} failed with the same error on trunk (${trunk.map(e => `#${e.seq}`).join(', ')})`;
   // Only known signatures can show a different error; unknown ones print nothing.
   const older = other.filter(e => e.probe === undefined && sig(e) !== undefined);
   if (!older.length || !failures.some(f => sig(f) !== undefined) || older.some(e => failures.some(f => sig(f) === sig(e)))) return undefined;
