@@ -82,7 +82,7 @@ test('4 SR1/SR4: unsuperseded rejected send to running/asking/queued run still h
     const a = act(r, new Map([view(W(), state)]), { rejected: refused(x) });
     assert.ok(a?.do === 'halt' && a.needs === 'human');
     assert.equal(a.reason, rejectedHalt('a', 'send', x.send, refused(x).get(x.send)!));
-    assert.match(a.reason, /the attempt is not lost: continue the run \(e\.g\. a dsa follow-up\), then `owed resume a`/);
+    assert.match(a.reason, /the attempt is not lost: continue the run \(e\.g\. a dsa follow-up\), then `owed decide a --text "<retry run>"`/);
     assert.match(a.reason, /a later resume, submit or send to this run supersedes this send; or `owed abandon a`$/);
     assert.doesNotMatch(a.reason, /start a new attempt|this attempt's request is fixed/);
   }
@@ -95,7 +95,7 @@ test('5 HA1: halted node reports an asking writer exactly like row 5, preserving
   const a = act(r, runs);
   assert.deepEqual(a, expected);
   assert.ok(a?.do === 'notify' && a.rid === W() && a.qid === 'q1' && a.rev === 3);
-  assert.match(a.text, /owed answer a --rid .* --qid q1/);
+  assert.match(a.text, /owed decide a --text "<text>"/);
   assert.match(a.text, /reviewers still acknowledge it/);
   assert.deepEqual(halted(r.state(), 'a'), h); assert.equal(JSON.stringify(r.entries), before);
 });
@@ -245,7 +245,7 @@ test('HA1 executor: observe describes halted writer and notifies without any sen
     const pass = await f.driver().pass();
     assert.ok(f.dsa.inspected.includes(rid));
     const a = pass.actions.find(a => a.do === 'notify' && a.rid === rid);
-    assert.ok(a?.qid === 'q1' && a.rev === 3); assert.match(a.text!, /owed answer a/);
+    assert.ok(a?.qid === 'q1' && a.rev === 3); assert.match(a.text!, /owed decide a --text/);
     assert.deepEqual(await f.entries(), before); assert.equal(f.dsa.sends.length, 0);
     assert.ok(halted(await stateOf(f.cwd), 'a'));
   } finally { await f.cleanup(); }
@@ -297,7 +297,7 @@ test('#1743: asking report precedes prospective notice once per question revisio
       const before = JSON.stringify(r.entries), h = halted(r.state(), 'a');
       const first = act(r, runs);
       assert.ok(first?.do === 'notify' && !first.quiet && first.rid === W() && first.qid === 'q1' && first.once);
-      assert.match(first.text, /owed answer a/);
+      assert.match(first.text, /owed decide a --text/);
       const noticed = new Set([first.once]);
       const second = act(r, runs, { noticed });
       assert.ok(second?.do === 'send' && second.sendKind === 'notify' && second.reason === 'ruling');
@@ -355,6 +355,6 @@ test('SR3 executor: refused follow-up still records an action-time halt', { time
     const pass = await f.d.pass();
     assert.equal(pass.actions[0]?.outcome, 'rejected');
     const halts = (await f.entries()).filter(e => e.kind === 'halt');
-    assert.equal(halts.length, 1); assert.match(halts[0]!.reason, /owed resume a/);
+    assert.equal(halts.length, 1); assert.match(halts[0]!.reason, /owed decide a --text/);
   } finally { await f.cleanup(); }
 });

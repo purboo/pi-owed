@@ -33,7 +33,7 @@ test('UX1: active review block suggests writer ruling and labels any owner overr
   try {
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 2, note: 'repair collision' });
     const s = await ops.status(f), command = s.summary!.needs.find(n => n.node === 'a')!.command!;
-    assert.match(command, /^owed rule --nodes a --writer/);
+    assert.match(command, /^owed decide a --writer --text/);
     assert.match(command, /writer repairs and submits again/);
     assert.match(command, /override only: owed review/);
     assert.equal(s.nodes.a!.accepted, false);
@@ -45,8 +45,8 @@ test('UX1: needs-parent block also gives a writer ruling as the next action', as
   try {
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 2, note: 'choose API', needs: 'parent' });
     const s = await ops.status(f);
-    assert.match(s.summary!.needs.find(n => n.node === 'a')!.command!, /^owed rule --nodes a --writer/);
-    assert.match(renderReceipt(await ops.why({ ...f, node: 'a' })), /owed rule --nodes a --writer/);
+    assert.match(s.summary!.needs.find(n => n.node === 'a')!.command!, /^owed decide a --writer --text/);
+    assert.match(renderReceipt(await ops.why({ ...f, node: 'a' })), /owed decide a --writer --text/);
   } finally { await f.cleanup(); }
 });
 

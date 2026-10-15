@@ -45,8 +45,8 @@ test('NY1/NY3: driver-authored rank-2 repair hides review debt only when the dri
     assert.equal(status.nodes.a!.accepted,false);
     const need = status.summary!.needs.find(n => n.node === 'a')!;
     assert.doesNotMatch(need.reason,/review needs an owner decision/);
-    assert.match(need.command,/^owed rule --nodes a/);
-    assert.ok(need.command.indexOf('owed review') > need.command.indexOf('owed rule'));
+    assert.match(need.command,/^owed decide a --writer --text/);
+    assert.ok(need.command.indexOf('owed review') > need.command.indexOf('owed decide'));
     assert.match(need.command,/overrides a valid block: state the accepted risk/);
     await ops.send({cwd:r.cwd,...driver,node:'a',attempt:1,rid,sendKind:'follow-up',reason:'repair',message:'repair the collision',rulings:0});
     status = await ops.status({cwd:r.cwd});

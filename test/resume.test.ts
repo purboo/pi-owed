@@ -242,7 +242,7 @@ test('L1.4 (#16): describe reports the call address <wid>/<key>; halts naming a 
   assert.ok(fin?.do === 'halt' && fin.reason.startsWith(`writer run ${W} (to:"w7/tasks:0") finished without submitting a candidate`), JSON.stringify(fin));
   // An asking notice without a question address falls back to the run's call address.
   const ask = act(r, new Map([view(W, 'asking', { to: 'w7/tasks:0', questions: [{ qid: 'q', rev: 1, question: '?' }] })]));
-  assert.ok(ask?.do === 'notify' && ask.text.includes('to:"w7/tasks:0"') && ask.text.includes(`owed answer a --rid ${W} --qid q`), JSON.stringify(ask));
+  assert.ok(ask?.do === 'notify' && ask.text.includes('to:"w7/tasks:0"') && ask.text.includes('owed decide a --text "<text>"'), JSON.stringify(ask));
   // Review #886 F2: an asking run without a reported question also gives the call address (and only when known).
   const l = r.entries.find(e => e.kind === 'launch')! as Extract<Entry, { kind: 'launch' }>;
   assert.equal(askingText('a', l, { rid: W, state: 'asking', to: 'w7/tasks:0' }), `a: writer run ${W} (to:"w7/tasks:0") is asking (no question reported; see pi-durable-subagents describe --key ${W}); the driver never answers`);
@@ -257,8 +257,8 @@ test('L1.5: why and status suggest owed resume for a halt; the wake message with
   r.record(act(r)); r.halt(act(r));
   const s = r.state();
   const why = renderReceipt(receipt(s, r.entries, 'a'));
-  assert.match(why, /\n⏸ halted by driver #\d+ .*; cleared by any later action .*; to clear it without an obligation: owed resume a --note "<why>" \(add --after <node> to wait until that node merges\); owed rule gives the writer and reviewers guidance they must acknowledge/);
-  assert.match(renderStatus(statusView(s, r.entries)), /\nHalted \(driver\):\n⏸ a: halted by driver #\d+ [^\n]*\n {2}to clear it without an obligation: owed resume <node> --note "<why>"/);
+  assert.match(why, /\n⏸ halted by driver #\d+ .*; cleared by any later action .*; to clear it without an obligation: owed decide a --text "<decision>" \(add --after <node> to wait until that node merges; --no-resume keeps it halted\)/);
+  assert.match(renderStatus(statusView(s, r.entries)), /\nHalted \(driver\):\n⏸ a: halted by driver #\d+ [^\n]*\n {2}to clear it without an obligation: owed decide <node> --text "<decision>"/);
   assert.equal(renderEntry(r.resume({ after: 'b', note: 'n' })), `Recorded #${r.entries.length - 1} parent:main resumed a after b`);
   assert.equal(renderEntry(r.resume({ by: 'owner:pi' })).replace(/#\d+/, '#N'), 'Recorded #N owner:pi resumed a');
   assert.equal(reportText({ event: 'waiting', node: 'a', after: 'b', resume: 7 }), 'waiting: a waits for b (resume #7)');
@@ -273,7 +273,7 @@ test('L1.5: why and status suggest owed resume for a halt; the wake message with
     assertWakeLines(f.tick(), ['owed drive (/r):', 'x asks', 'Next: owed status / owed why <node>'], 'no halt: no hint');
     await writeFile(log, `${JSON.stringify({ do: 'halt', node: 'h', outcome: 'halted', attempt: 1, needs: 'human', detail: 'stuck' })}\n`, { flag: 'a' });
     assertWakeLines(f.tick(), ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — stuck', haltHintText, 'Next: owed status / owed why <node>']);
-    assert.equal(haltHintText, 'To clear a halt without an obligation: owed resume <node> --note "<why>" (add --after <node> to wait until that node merges); owed rule gives the writer and reviewers guidance they must acknowledge');
+    assert.equal(haltHintText, 'To clear a halt without an obligation: owed decide <node> --text "<decision>" (add --after <node> to wait until that node merges; --no-resume keeps it halted)');
     f.stop();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

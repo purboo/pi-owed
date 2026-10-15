@@ -61,6 +61,12 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   // QT1 intentionally changes only the rendered human halt wording, never the ledger value or acceptance state.
   const rendered = (text: string): string => (m === BASE ? text.replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
     'halted by driver #$1 (attempt $2), needs the parent (the main agent acts; owed lists the command):') : text)
+    // DC4 changes recovery command suggestions only; never normalize ledger/state/keys.
+    .replace(/owed decide (\S+) --writer --text "<guidance>"/g, 'owed rule --nodes $1 --writer "<guidance>"')
+    .replace(/owed decide (\S+) --writer --text "<decision>"/g, 'owed rule --nodes $1 --writer "<decision>"')
+    .replace(/owed decide (\S+) --text "<decision>" \(add --after <node> to wait until that node merges; --no-resume keeps it halted\)/g, 'owed resume $1 --note "<why>" (add --after <node> to wait until that node merges); owed rule gives the writer and reviewers guidance they must acknowledge')
+    .replace(/owed decide (\S+) --writer --text "<what the writer must change>"/g, 'owed rule "<what the writer must change>" --nodes $1')
+    .replace(/owed decide (\S+) --text "<decision>"/g, 'owed rule --nodes $1 "<decision>"')
     // NY1 / UX1 change guidance/override labels only; retain the exact resolving review command in this differential.
     .replace(/owed rule --nodes \S+ (?:--writer )?"<guidance>"; (?:writer repairs and submits again; override only: )?/g, '')
     .replace(/(owed rule --nodes \S+) --writer ("<decision>")/g, '$1 $2')
