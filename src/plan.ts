@@ -67,13 +67,14 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   const out = structuredClone(DRIVE_DEFAULTS);
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('drive: expected object'); return out; }
   const r = v as Record<string, unknown>;
-  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'idle_rewake_min', 'answer_grace_s', 'writer', 'reviewer', 'same_model'].includes(k)) errors.push(`drive.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'idle_rewake_min', 'watch_idle_min', 'answer_grace_s', 'writer', 'reviewer', 'same_model'].includes(k)) errors.push(`drive.${k}: unknown key`);
   const int = (x: unknown, label: string, min: number, dflt: number): number => { if (x === undefined) return dflt; if (typeof x !== 'number' || !Number.isInteger(x) || x < min) { errors.push(`${label}: expected integer >= ${min}`); return dflt; } return x; };
   out.max = int(r.max, 'drive.max', 1, out.max);
   out.repairs = int(r.repairs, 'drive.repairs', 0, out.repairs);
   if (r.measure !== undefined) out.measure = int(r.measure, 'drive.measure', 1, MEASURE_DEFAULT);
   if (r.min_free_mb !== undefined) out.min_free_mb = int(r.min_free_mb, 'drive.min_free_mb', 0, MIN_FREE_DEFAULT);
   if (r.idle_rewake_min !== undefined) out.idle_rewake_min = int(r.idle_rewake_min, 'drive.idle_rewake_min', 0, 60);
+  if (r.watch_idle_min !== undefined) out.watch_idle_min = int(r.watch_idle_min, 'drive.watch_idle_min', 0, 15);
   if (r.answer_grace_s !== undefined) out.answer_grace_s = int(r.answer_grace_s, 'drive.answer_grace_s', 0, 900);
   const agent = (x: unknown, label: string, dflt: DriveAgent): DriveAgent => {
     if (x === undefined) return dflt;
