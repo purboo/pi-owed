@@ -452,15 +452,34 @@ export const resolvedText = (n: number): string => `(${n} wake(s) resolved befor
 type Rec = { base: string; facts: number; n: number; resolved?: boolean };
 /** QN3: the plain decision and one command; complete original text stays in Details. */
 function plainNeed(j: Record<string, unknown>, text: string): string | undefined {
+  // QT-R1 (1): repo-level notices (trunk red, shared failures, drift; scoped repo or the legacy unscoped drift
+  // notify) list several nodes and choices: the whole text is the need, every line kept.
+  if (j.scope === 'repo' || (j.node === DRIFT_NODE && j.do === 'notify' && j.qid === undefined && !/\basks \(qid /.test(String(j.text ?? '')))) return `Needs you: ${text}`;
   if (typeof j.node !== 'string') return undefined;
   const node = oneLine(j.node), source = String(j.text ?? j.detail ?? text);
+  // QT5: an answered-but-still-asking line already reads `<node>: answered at #<seq> (HH:MM), still asking after <m>m: retry with <command>`.
+  if (j.answerRetry && source.includes(': retry with owed answer ')) return `Needs you: ${oneLine(source)}`;
+  // QT-R1 (2): the reported findings are the payload: the plain line, then the report tail the notice carries.
+  if (!j.answerRetry && /^[^\n]*: reported \(resume #\d+\)/.test(source)) {
+    const tail = source.split('\n').slice(1).join('\n');
+    return [`Needs you: ${node} — review the reported findings → owed decide ${node} --text "<decision>"`, ...(tail.trim() ? [tail] : [])].join('\n');
+  }
+  // QT-R1 (3): every open question of a run is its own need, with its text and its own answer command (askingText).
+  const asking = j.answerRetry ? [] : source.split('\n').filter(l => /\basks \(qid [^)]*\): /.test(l));
+  if (asking.length) return asking.map(l => {
+    const question = oneLine(l.match(/asks \(qid [^)]*\): (.*?)(?= — the driver never answers|$)/)?.[1] ?? 'the run’s open question');
+    const rid = l.match(/\brun (\S+) asks \(qid /)?.[1], qid = l.match(/asks \(qid ([^,)]+)/)?.[1];
+    const command = l.match(/answer: (owed [^;\n`]+?)(?=;|$)/)?.[1]?.trim()
+      ?? (asking.length > 1 && rid && qid ? `owed answer ${node} --rid ${rid} --qid ${qid} "<text>"` : `owed answer ${node} "<text>"`);
+    return `Needs you: ${node} — decide ${question} → ${command}`;
+  }).join('\n');
   const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
   const chosen = retry ?? source.match(/(?:answer: |(?:with|or):? )(owed [^;\n`]+?)(?= \| |;|\n|`|$)/)?.[1]?.trim();
-  const command = chosen && !chosen.includes('\n') ? chosen : `owed why ${node}`;
+  const asks = !j.answerRetry && j.qid !== undefined;
+  const command = chosen && !chosen.includes('\n') ? chosen : asks ? `owed answer ${node} "<text>"` : `owed why ${node}`;
   let reason: string;
   if (j.answerRetry) reason = 'recorded answer still needs delivery';
-  else if (j.qid) reason = `decide ${source.match(/asks \(qid [^)]*\): (.*?) —/)?.[1] ?? 'the run’s open question'}`;
-  else if (source.includes(': reported (')) reason = 'review the reported findings';
+  else if (asks) reason = 'decide the run’s open question';
   else if (source.includes('needs the owner')) reason = source.includes('flaky') ? 'decide whether to accept the conflicting measurement'
     : source.includes('review') ? 'resolve the rejected or required owner review' : 'decide the outstanding owner obligation';
   else if (/\b(?:writer|reviewer) run\b|cannot re-(?:send|launch)|\bdsa rejected\b/.test(source)) reason = 'resolve the run failure';
@@ -579,16 +598,18 @@ export class Follower {
     if (this.pending.some(p => p.earlier)) Object.assign(this.o, { pid: owner.pid, start: owner.start, since: owner.at });
   }
   private message(lines: readonly PendingLine[], resolved = 0): string {
-    const needs = new Map<string, string>(), done: string[] = [];
+    // QT1: each Needs-you is its plain line (the raw driver line stays in the driver log and `owed why`); merged lines
+    // collapse into `Done: <nodes>`.
+    const needs = new Map<string, string>(), done: string[] = [], merged = new Set<PendingLine>();
     for (const p of lines) {
-      if (p.json?.do === 'merge' && p.json.outcome === 'merged' && typeof p.json.node === 'string') done.push(p.json.node);
-      if (p.wake && p.json) { const need = plainNeed(p.json, p.text); if (need) needs.set(p.text, `Needs you: ${p.text}`); }
+      if (p.json?.do === 'merge' && p.json.outcome === 'merged' && typeof p.json.node === 'string') { done.push(p.json.node); merged.add(p); }
+      if (p.wake && p.json) { const need = plainNeed(p.json, p.text); if (need) needs.set(p.text, need); }
     }
     const terminal = lines.findLast(p => p.wake && p.terminal);
     const reason = terminal?.json?.event === 'exit' ? String(terminal.json.error ?? terminal.json.reason ?? 'exited') : terminal?.json ? terminal.terminal?.event : terminal?.text;
     const status = terminal ? `Driver stopped: ${oneLine(reason!)}` : `Driver continues (${this.inProgress} in progress)`;
     return [...needs.values(), ...(done.length ? [`Done: ${[...new Set(done)].join(', ')}`] : []), status,
-      `owed drive (${this.o.repo}):`, ...lines.filter(p => !needs.has(p.text) && !(p.wake && p.terminal)).map(p => p.text),
+      `owed drive (${this.o.repo}):`, ...lines.filter(p => !needs.has(p.text) && !merged.has(p) && !(p.wake && p.terminal)).map(p => p.text),
       ...(lines.some(p => p.wake && p.halt) ? [haltHintText] : []), ...(resolved ? [resolvedText(resolved)] : []),
       'Next: owed status / owed why <node>'].join('\n');
   }

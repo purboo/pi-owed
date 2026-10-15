@@ -140,14 +140,14 @@ test('DR3: CLI stores actual model, why warns on same model and unknown pool mem
     const {slot,commit}=await f.candidate('a'); await f.launch('a','reviewer','review-selected');
     const submit=await cli(slot.worktree,['submit','a','--model','actual','--json']); assert.equal(submit.code,0,submit.stderr); assert.equal(JSON.parse(submit.stdout).model,'actual');
     const review=await cli(f.cwd,['review','a','--ok','--rank','1','--as','reviewer:drive-a-1-1','--candidate',commit,'--model','actual','--json']); assert.equal(review.code,0,review.stderr); assert.equal(JSON.parse(review.stdout).model,'actual');
-    const why=await cli(f.cwd,['why','a']); assert.equal(why.code,0,why.stderr);
+    const why=await cli(f.cwd,['why','a','--full']); assert.equal(why.code,0,why.stderr);
     assert.match(why.stdout,/writer actual · reviewer actual/);
     assert.match(why.stdout,/reviewer used the writer's model/);
     assert.match(why.stdout,/selected selected \(pool membership unknown\)/);
     assert.match(why.stdout,/selected review-selected \(pool membership unknown\)/);
     assert.doesNotMatch(why.stdout,/differs from/);
     await cli(slot.worktree,['submit','a']);
-    assert.match((await cli(f.cwd,['why','a'])).stdout,/writer model unknown/);
+    assert.match((await cli(f.cwd,['why','a','--full'])).stdout,/writer model unknown/);
     const bad=await cli(slot.worktree,['submit','a','--model','']); assert.notEqual(bad.code,0);
   } finally { if(priorDsaHome===undefined) delete process.env.DSA_HOME; else process.env.DSA_HOME=priorDsaHome; await f.done(); }
 });

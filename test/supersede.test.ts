@@ -202,7 +202,7 @@ test('L2 end to end: the env-fix plan supersedes #852-like block; attest reruns 
     const entries = await (await Ledger.open(x.cwd)).read();
     assert.ok(!entries.some(e => e.kind === 'waive'), 'no waiver');
     const line = `#${fail.seq} superseded by plan #${plan.seq} (check unit definition changed)`;
-    const why = await cli(x.cwd, ['why', 'a']);
+    const why = await cli(x.cwd, ['why', 'a', '--full']);
     assert.ok(why.stdout.split('\n').includes(`⊘ ${line}`), why.stdout);
     assert.ok(!why.stdout.includes('⛔ blocked'), why.stdout);
     const status = await cli(x.cwd, ['status', '--full']);

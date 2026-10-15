@@ -242,7 +242,7 @@ test('QT2 unscoped plan node trunk open question is delivered when trunk ref equ
     assert.equal(await follow.f.step(), undefined, 'held while busy');
     follow.busy.value = false;
     const message = await follow.f.step();
-    assert.ok(message?.includes(wake.text), 'a current question on plan node trunk must be delivered');
+    assert.ok(message?.includes('Needs you: trunk — decide which port? → owed decide trunk --text "<text>"'), message); assert.ok(message, 'a current question on plan node trunk must be delivered');
     assert.equal(follow.got.length, 1);
     const check = classifyLine(JSON.stringify(wake)).check!;
     assert.equal(check.drift, undefined);

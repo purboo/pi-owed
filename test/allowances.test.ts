@@ -129,7 +129,7 @@ test('parent plan updates: covered downgrades need no owner, stay in ΔO⁻ labe
     const report = (await cli(r.cwd, ['report'])).stdout;
     assert.match(report, new RegExp(`Downgrades ΔO⁻\\n  #${e.seq} by parent:main under allowance \\(plan #${genesis.seq}\\) p: check ui-p removed\\n`));
     assert.equal((JSON.parse((await cli(r.cwd, ['report', '--json'])).stdout) as ops.Report).downgrades[0]!.allowance, genesis.seq);
-    assert.match((await cli(r.cwd, ['why', 'p'])).stdout, new RegExp(`\\nΔO⁻ #${e.seq} by parent:main under allowance \\(plan #${genesis.seq}\\): p: check ui-p removed; `));
+    assert.match((await cli(r.cwd, ['why', 'p', '--full'])).stdout, new RegExp(`\\nΔO⁻ #${e.seq} by parent:main under allowance \\(plan #${genesis.seq}\\): p: check ui-p removed; `));
     // Uncovered parent updates are refused, listing what no rule covers; nothing is recorded.
     const before = await entries(r.cwd);
     const refuse = async (plan: Spec, re: RegExp) => { await assert.rejects(setPlan(r.cwd, plan), (err: Error) => /Only owner may approve a plan that reduces obligations; not covered by an allowance of the current plan: /.test(err.message) && re.test(err.message)); };
@@ -269,7 +269,7 @@ test('why shows granted writes for covered paths, caps uncovered paths and prese
     assert.equal(card.outOfWrites, undefined);
     assert.deepEqual(card.grantedWrites?.[0]?.paths, ['docs/api/w.md', 'docs/w.md']);
     assert.equal(card.grantedWrites?.[0]?.allowance, genesis.seq);
-    assert.match((await cli(r.cwd, ['why', 'w'])).stdout, /\nGranted writes: docs\/api\/w.md, docs\/w.md \(#\d+, allowance plan #0\)\n/);
+    assert.match((await cli(r.cwd, ['why', 'w', '--full'])).stdout, /\nGranted writes: docs\/api\/w.md, docs\/w.md \(#\d+, allowance plan #0\)\n/);
     // Node x matches no rule; many paths are capped at 20 in the text, all kept in the JSON.
     const many: Record<string, string> = { 'x.txt': 'x\n' };
     for (let i = 0; i < 25; i++) many[`o/f${String(i).padStart(2, '0')}`] = `${i}\n`;
@@ -345,7 +345,7 @@ test('parent plan updates: a covered evidence removal is recorded under allowanc
     const d = (await state(r.cwd)).downgrades.find(x => x.seq === e.seq)!;
     assert.equal(d.allowance, genesis.seq);
     assert.deepEqual(d.items, [{ node: 'p', what: 'evidence ui-shot removed' }]);
-    assert.match((await cli(r.cwd, ['why', 'p'])).stdout, new RegExp(`\\nΔO⁻ #${e.seq} by parent:main under allowance \\(plan #${genesis.seq}\\): p: evidence ui-shot removed\\n`));
+    assert.match((await cli(r.cwd, ['why', 'p', '--full'])).stdout, new RegExp(`\\nΔO⁻ #${e.seq} by parent:main under allowance \\(plan #${genesis.seq}\\): p: evidence ui-shot removed\\n`));
     const current = edit(manual(), 'p', n => { n.evidence = (n.evidence as Spec[]).filter(x => x.id !== 'ui-shot'); });
     const before = await entries(r.cwd);
     const refuse = async (plan: Spec, re: RegExp) => { await assert.rejects(setPlan(r.cwd, plan), (err: Error) => /Only owner may approve a plan that reduces obligations; not covered by an allowance of the current plan: /.test(err.message) && re.test(err.message)); };

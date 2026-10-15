@@ -24,7 +24,7 @@ import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
 import { parentOverlapWarnings } from './parentops.ts';
-import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderReport, renderStatus, renderStatusBrief } from './views.ts';
+import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -180,7 +180,7 @@ export default function owed(pi: ExtensionAPI): void {
   }
   const card = async (dir: string, id: string, data: unknown) => result(data, renderReceipt(await ops.why({ cwd: dir, node: id })));
   tool('status', 'View outcome, next actions and progress; full keeps all evidence and audit lines.', Type.Object({ as, cwd, full: Type.Optional(Type.Boolean()) }), async (p, _ctx, dir) => { const r = await ops.status({ cwd: dir }); return result(r, renderStatus(r, { full:p.full })); });
-  tool('why', 'View a node receipt card, evidence and rejection reasons; full shows weak-confirmation history.', Type.Object({ node, full: Type.Optional(Type.Boolean()), as, cwd }), async (p, _ctx, dir) => { const r = await ops.why({ cwd: dir, node: p.node }); return result(r, renderReceipt(r, { full:p.full })); });
+  tool('why', 'View a node receipt card, evidence and rejection reasons; full shows weak-confirmation history.', Type.Object({ node, full: Type.Optional(Type.Boolean()), as, cwd }), async (p, _ctx, dir) => { const r = await ops.why({ cwd: dir, node: p.node }); return result(r, renderWhy(r, { full:p.full })); });
   tool('report', 'View merges, debt, waivers, owner decisions, escapes and decoys.', Type.Object({ since, as, cwd }), async (p, _ctx, dir) => { const r = await ops.report({ cwd: dir, since: p.since }); return result(r, renderReport(r)); });
   tool('brief', 'Morning brief: owner decisions with the exact command, merges since `since`, rejected or blocked nodes, work in progress and totals.', Type.Object({ since, cwd }), async (p, _ctx, dir) => { const r = await ops.brief({ cwd: dir, since: p.since }); return result(r, renderBrief(r)); });
   tool('verify', 'Verify the ledger hash chain and replay it; a failure is a tool error.', Type.Object({ cwd }), async (_p, _ctx, dir) => {
@@ -239,7 +239,7 @@ export default function owed(pi: ExtensionAPI): void {
     return result(r, `${renderEntry(r)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
   tool('sweep', 'Run the configured advisory sweep on detached trunk under the shared machine lease; due checks sweep.every. A confirmed bisect records one missing escape; it never gates merges.', Type.Object({ commit: Type.Optional(Type.String()), due: Type.Optional(Type.Boolean()), lease: Type.Optional(Type.Boolean()), cwd }), async (p, _ctx, dir, signal) => { const options={cwd:dir,commit:p.commit,lease:p.lease,signal}; const r=await (p.due ? ops.sweep({...options,due:true}) : ops.sweep(options)); return result(r, renderSweep(r)); });
-  tool('merge', 'Run the merge guard, measure the merge tree under the shared machine lease and advance trunk with CAS. lease: false skips the lease.', Type.Object({ node, lease: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`, {}, signal), node: p.node, signal, lease: p.lease }); return result(r, `${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}${leaseText(r)}\n${unguardedText(r.unguarded)}`); });
+  tool('merge', 'Run the merge guard, measure the merge tree under the shared machine lease and advance trunk with CAS. lease: false skips the lease.', Type.Object({ node, lease: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => { const r = await ops.merge({ ...await actor(ctx, dir, p.as, `Merge node ${oneLine(p.node)}`, {}, signal), node: p.node, signal, lease: p.lease }); return result(r, `${(await ops.mergedLines(dir, [{ node: p.node, commit: r.commit }], { [p.node]: r.deferred.length }))[0]}${leaseText(r)}\n${unguardedText(r.unguarded)}${r.deferred.length ? `\nDeferred debt remains: ${r.deferred.map(i => `${i.subject}/${i.obligation}`).join(', ')}` : ''}`); });
   tool('abandon', 'Close the open writer slot of a node (parent or owner); hold prevents re-dispatch until owed resume releases it. note (or its older name reason) is recorded.', Type.Object({ node, hold: Type.Optional(Type.Boolean()), note: Type.Optional(Type.String()), reason: Type.Optional(Type.String()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'abandon');
     if (p.note !== undefined && p.reason !== undefined) throw new OwedError('abandon takes note (or its older name reason), not both', 'usage');
@@ -418,7 +418,7 @@ export default function owed(pi: ExtensionAPI): void {
       const parts = args.trim().split(/\s+/);
       let text: string;
       if (!args.trim() || args.trim() === 'status') { text = renderStatus(await ops.status(ctx)); const live = await liveRunLines(ctx.cwd).catch(() => []); if (live.length) text += `\nDriver runs in dsa:\n${live.join('\n')}`; const bg = await driverLine(ctx.cwd).catch(() => undefined); if (bg) text += `\n${bg}`; }
-      else if (parts.length === 2 && parts[0] === 'why') text = renderReceipt(await ops.why({ cwd: ctx.cwd, node: parts[1]! }));
+      else if (parts.length === 2 && parts[0] === 'why') text = renderWhy(await ops.why({ cwd: ctx.cwd, node: parts[1]! }));
       else throw new OwedError('Usage: /owed or /owed why <node>', 'usage');
       ctx.ui.notify(text, 'info');
     } catch (e) { if (!(e instanceof OwedError)) throw e; ctx.ui.notify(`Refused: ${e.message}`, 'error'); }

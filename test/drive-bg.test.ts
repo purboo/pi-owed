@@ -299,15 +299,16 @@ test('D17.7: Follower: no replay, quiet lines do not wake, merges ride along, an
     assert.equal(f.tick(), undefined, 'a merge alone does not wake');
     put({ do: 'notify', node: 'b', outcome: 'notify', text: 'b: writer run r2 asks (qid q1-1, rev 1): which db?' });
     const m1 = f.tick()!;
-    assertWakeLines(m1, ['owed drive (/r):', 'merge a: merged — trunk abc', 'b: writer run r2 asks (qid q1-1, rev 1): which db?', 'Next: owed status / owed why <node>']);
+    assertWakeLines(m1, ['owed drive (/r):', 'b — decide which db? → owed answer b "<text>"', 'Next: owed status / owed why <node>']);
+    assert.match(m1, /^Done: a$/m);
     put({ do: 'notify', node: 'b', outcome: 'notify', text: 'b: writer run r2 asks (qid q1-1, rev 1): which db?' });
-    assert.match(f.tick() ?? '', /^Needs you: b: writer run r2 asks \(qid q1-1, rev 1\): which db\?\n/, 'no dedupe across reads (D17a.5): the same line in a later read wakes again');
+    assert.match(f.tick() ?? '', /^Needs you: b — decide which db\? → owed answer b "<text>"\n/, 'no dedupe across reads (D17a.5): the same line in a later read wakes again');
     appendFileSync(log, '{"do":"halt","node":"c","outcome":"halted","attempt":1,"needs":"hu');
     assert.equal(f.tick(), undefined, 'an incomplete line waits');
     appendFileSync(log, 'man","detail":"stalled: x"}\n');
-    assert.match(f.tick()!, /^Needs you: halt c attempt 1, needs the parent \(the main agent acts; owed lists the command\): halted — stalled: x\n/);
+    assert.match(f.tick()!, /^Needs you: c — x → owed why c\n/);
     put({ do: 'launch', node: 'd', outcome: 'rejected', role: 'writer', rid: 'r3', detail: 'fault; halted' });
-    assert.match(f.tick()!, /launch d writer r3: rejected — fault; halted/);
+    assert.match(f.tick()!, /^Needs you: d — fault → owed why d\n/);
     put('Refused: something odd');
     assert.match(f.tick()!, /\nRefused: something odd\n/);
     put({ event: 'events-error', error: 'dsa: not found' });
@@ -315,7 +316,7 @@ test('D17.7: Follower: no replay, quiet lines do not wake, merges ride along, an
     put({ do: 'merge', node: 'e', outcome: 'merged', detail: 'trunk def' }, { event: 'stopped' }, { event: 'exit', code: 0, reason: 'stopped', at: '2026-10-09T00:00:00.000Z' });
     const last = f.tick()!;
     assert.match(last, /^Driver stopped: stopped$/m);
-    assert.match(last, /merge e: merged — trunk def/);
+    assert.match(last, /^Done: e$/m);
     assert.doesNotMatch(last,/\nstopped\n|driver exited/);
     assert.equal(f.stopped, true, 'a terminal line stops the follower');
     put({ do: 'halt', node: 'f', outcome: 'halted', attempt: 1, needs: 'human' });
@@ -354,8 +355,7 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
     const first = h.messages[0]!;
     assert.equal(first.message.customType, 'owed-drive'); assert.equal(first.message.display, true);
     assert.deepEqual(first.options, { triggerTurn: true, deliverAs: 'followUp' });
-    assert.match(first.message.content, /^Needs you: (?:halt|launch) k .+\nDriver continues \(\d+ in progress\)\nowed drive \(.+\):\n/);
-    assert.match(first.message.content, /launch k writer \S+: rejected — fault; halted/);
+    assert.match(first.message.content, /^(?:Needs you: k — .+\n)+Driver continues \(\d+ in progress\)\nowed drive \(.+\):\n/);
     assert.doesNotMatch(first.message.content, /launch m |dispatch |attest |merge /);
     assert.match(first.message.content, /\nNext: owed status \/ owed why <node>$/);
     assert.ok(!f.logLines().some(l => /"do":"merge"/.test(l)), 'the gate holds m back');
@@ -372,7 +372,7 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
     assert.equal(stop.text, 'stopped');
     await until(() => h.messages.length >= 2, 15_000, 'the exit wake');
     const second = h.messages[1]!.message.content;
-    assert.match(second, /merge m: merged/);
+    assert.match(second, /^Done: m$/m);
     assert.doesNotMatch(second, /\nstopped\n/);
     assert.match(second, /Driver stopped: stopped/);
     assert.doesNotMatch(second, /launch m |attest m|launch k /);
@@ -394,7 +394,7 @@ test('D17.7/8: session_start follows a live driver without replaying old lines; 
     line({ do: 'halt', node: 's', outcome: 'halted', attempt: 1, needs: 'owner', detail: 'new reason' });
     await until(() => h.messages.length >= 1, 8000, 'the wake for the new line');
     const c = h.messages[0]!.message.content;
-    assert.match(c, /halt s attempt 1, needs the owner \(the main agent decides; owed lists the command\): halted — new reason/);
+    assert.match(c, /^Needs you: s — new reason → owed why s$/m);
     assert.doesNotMatch(c, /old question/, 'lines before the attach are not replayed');
     // A second session_start for the same driver keeps the one follower (no duplicate message).
     await topLevelStart(h);
@@ -596,12 +596,12 @@ test('D17a.5: the same halt text in two reads wakes twice; identical lines withi
     const got: string[] = [];
     const f = new Follower({ log, repo: '/r', pid: process.pid, start: procStart(process.pid), deliver: c => got.push(c) });
     appendFileSync(log, `${halt}\n`);
-    assert.match(f.tick()!, /halt h attempt 1/);
+    assert.match(f.tick()!, /Needs you: h — /);
     appendFileSync(log, `${halt}\n`);
-    assert.match(f.tick() ?? '', /halt h attempt 1/, 'a re-halt with the same text wakes again');
+    assert.match(f.tick() ?? '', /Needs you: h — /, 'a re-halt with the same text wakes again');
     appendFileSync(log, `${halt}\n${halt}\n`);
     const m = f.tick()!;
-    assert.equal(m.split('\n').filter(l => /^Needs you: halt h attempt 1/.test(l)).length, 1, m);
+    assert.equal(m.split('\n').filter(l => /^Needs you: h — /.test(l)).length, 1, m);
     assert.equal(got.length, 3);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -619,7 +619,7 @@ test('D17a.4: a log replaced by rotation (new dev/ino, not shorter) is read from
     const fresh = [JSON.stringify({ do: 'halt', node: 'rot', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'after rotation' }), ...[4, 5, 6, 7, 8, 9].map(quiet)].join('\n') + '\n';
     writeFileSync(log, fresh);
     assert.ok(fresh.length > readFileSync(`${log}.1`, 'utf8').length);
-    assert.match(f.tick() ?? '', /halt rot attempt 2, needs the owner \(the main agent decides; owed lists the command\): halted — after rotation/);
+    assert.match(f.tick() ?? '', /^Needs you: rot — after rotation → owed why rot$/m);
     assert.equal(got.length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -637,7 +637,7 @@ test('D17a.8: a failing sendMessage keeps the batch for the next tick; the follo
     assert.equal(f.tick(), undefined, 'delivery failed');
     put({ do: 'notify', node: 'c', outcome: 'notify', text: 'c asks' });
     fail = false;
-    assertWakeLines(f.tick(), ['owed drive (/r):', 'merge a: merged — trunk 1', 'halt b attempt 1, needs the parent (the main agent acts; owed lists the command): halted — first', 'c asks', haltHintText, 'Next: owed status / owed why <node>']);
+    assertWakeLines(f.tick(), ['owed drive (/r):', 'b — first → owed why b', 'c — c asks → owed why c', haltHintText, 'Next: owed status / owed why <node>']);
     put({ event: 'stopped' }); put({ event: 'exit', code: 0, reason: 'stopped', at: 'T' });
     fail = true;
     assert.equal(f.tick(), undefined);

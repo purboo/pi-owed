@@ -59,20 +59,20 @@ test('E3.1 Follower: a node wake with the same text and fact mark does not wake 
     const got: string[] = [];
     const f = new Follower({ log, repo: '/r', pid: process.pid, start: procStart(process.pid), deliver: c => got.push(c) });
     line(halt(5));
-    assert.match(f.tick() ?? '', /^Needs you: halt h attempt 1, needs the parent \(the main agent acts; owed lists the command\): halted — attest recorded no verdict twice\n/);
+    assert.match(f.tick() ?? '', /^Needs you: h — attest recorded no verdict twice → owed why h\n/);
     line(halt(5));
     assert.equal(f.tick(), undefined, 'the same halt text with no new ledger entries for h does not wake');
     line({ ...halt(5), repeat: 1 });   // the loop driver's own repeat mark changes nothing
     assert.equal(f.tick(), undefined);
     line({ do: 'notify', node: 'x', outcome: 'notify', text: 'x asks', facts: 1 });
     const m = f.tick() ?? '';
-    assertWakeLines(m, ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — attest recorded no verdict twice (repeat 2, no new ledger entries)', 'x asks', 'Next: owed status / owed why <node>'], 'only the latest repeat of h rides along with the next wake');
+    assertWakeLines(m, ['owed drive (/r):', 'halt h attempt 1, needs the parent (the main agent acts; owed lists the command): halted — attest recorded no verdict twice (repeat 2, no new ledger entries)', 'x — x asks → owed why x', 'Next: owed status / owed why <node>'], 'only the latest repeat of h rides along with the next wake');
     line(halt(7));
     assert.doesNotMatch(f.tick() ?? 'no wake', /repeat/, 'a higher fact mark (new ledger entries for h) wakes as a new fact');
     line(halt(7, 'repairs exhausted'));
-    assert.match(f.tick() ?? '', /halted — repairs exhausted\n/, 'a changed text wakes');
+    assert.match(f.tick() ?? '', /^Needs you: h — repairs exhausted → /m, 'a changed text wakes');
     line(halt(7));
-    assert.match(f.tick() ?? '', /halted — attest recorded no verdict twice\n/, 'the text differs from the last one delivered for h: wakes');
+    assert.match(f.tick() ?? '', /^Needs you: h — attest recorded no verdict twice → /m, 'the text differs from the last one delivered for h: wakes');
     // Lines without a fact mark (an older driver) wake every time, as before.
     const old = { do: 'halt', node: 'o', outcome: 'halted', attempt: 1, needs: 'human', detail: 'old' };
     line(old); assert.ok(f.tick());
