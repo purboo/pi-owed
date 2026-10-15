@@ -509,7 +509,7 @@ function decisionErrors(s: State, d: Draft): string[] {
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision', 'text', 'nodes', 'writer', 'prospective', 'answer', 'answers', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'grant_refused', 'waits_on', 'auto_remeasure', 'remeasure_match', 'batch'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'grant_refused', 'waits_on', 'auto_remeasure', 'remeasure_match', 'batch', 'lease_wait_ms'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -1262,6 +1262,11 @@ function batchMergeErrors(d: Extract<Draft, { kind: 'merge' }>): string[] {
   return [];
 }
 /** MT4: a batch observation names at least 2 distinct members (its node subject among them) and is never merging, a probe or an attribution rerun. */
+/** MX3: optional measurement metadata, never part of a key or verdict. */
+function leaseWaitErrors(d: { kind: string; lease_wait_ms?: unknown }): string[] {
+  const v = d.lease_wait_ms;
+  return v === undefined || (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) ? [] : [`${d.kind} lease_wait_ms must be a non-negative integer of milliseconds`];
+}
 function batchObsErrors(d: Extract<Draft, { kind: 'obs' }>): string[] {
   const b = d.batch;
   if (b === undefined) return [];
@@ -1670,6 +1675,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || (!ro2 && !shared)) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on or be shared');
       }
       errors.push(...batchObsErrors(d));
+      errors.push(...leaseWaitErrors(d));
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
       break;
     case 'review':
@@ -1727,6 +1733,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       if (d.prior !== s.trunk.commit) errors.push('merge prior must reference the current trunk');
       if (d.commit !== d.facts.commit || d.commit !== d.state.commit) errors.push('merge commit does not match facts');
       errors.push(...batchMergeErrors(d));
+      errors.push(...leaseWaitErrors(d));
       if (n && spec) errors.push(...mergeGuard(s, d.node, { facts: d.facts, state: d.state, batch: d.batch }).reasons);
       break;
     case 'sweep':
