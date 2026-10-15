@@ -144,6 +144,32 @@ test('AD2: divergent off-ref commit refuses before measurement with the current 
   } finally { await f.cleanup(); }
 });
 
+test('AD4: an off-ref commit already contained in ledger trunk refuses as usage before measurement, without a rebase hint', { timeout: 60_000 }, async () => {
+  const f = await fixture();
+  try {
+    const hotfix = await f.hotfix({ hotfix: 'landed' });
+    await adopt(f.cwd, hotfix.commit);
+    const prior = await commitAt(f.cwd, { trunk: 'later commit' }); await adopt(f.cwd);
+    const measured = join(f.root, 'unexpected-measurement');
+    await ops.planSet({ cwd: f.cwd, as: owner, channel: 'delegated', note: 'add unmeasured invariant', plan: JSON.stringify({ ...(await ops.readState(f)).state.plan, invariants: [{ id: 'unmeasured', reads: ['hotfix', 'trunk'], timeout_s: 10, run: `touch '${measured}'` }] }) });
+    const before = await f.ledger.read();
+    const message = `nothing to adopt: ${hotfix.commit.slice(0, 12)} is already contained in the ledger trunk ${prior.slice(0, 12)}`;
+    await assert.rejects(adopt(f.cwd, hotfix.commit), (error: unknown) => {
+      assert.equal((error as { code: string }).code, 'usage');
+      assert.equal((error as Error).message, message);
+      return true;
+    });
+    const out = await cli(f.cwd, ['adopt', '--commit', hotfix.commit, '--note', 'already landed', '--no-lease']);
+    assert.equal(out.code, 2); assert.equal(out.stdout, '');
+    assert.equal(out.stderr, `Usage error: ${message}\n`);
+    assert.doesNotMatch(out.stderr, /rebase|new ledger trunk/);
+    assert.equal(existsSync(measured), false, 'no invariant was measured');
+    assert.deepEqual(await f.ledger.read(), before);
+    assert.equal(await revParse(f.cwd, 'refs/heads/main'), prior);
+    assert.equal((await ops.readState(f)).state.trunk.commit, prior);
+  } finally { await f.cleanup(); }
+});
+
 test('AD1/AD2: real in-flight merge finishes first; waiting adopt sees new trunk and refuses without invalidating merge', { timeout: 90_000 }, async () => {
   const f = await fixture({ nodes: [{ id: 'a', deps: [], writes: ['a.txt'], checks: [], review: { count: 0, min_rank: 1 } }] });
   const g = gate(f.root, 'a.txt');
