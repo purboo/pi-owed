@@ -1,5 +1,129 @@
 # Changelog
 
+## 0.22.0
+
+Compatibility first: 0.22 adds no new ledger entry kind, only optional fields
+on existing entries and optional plan keys. Upgrade every driver, CLI and pi
+plugin together; enable `drive.merge_batch`, request explicit batch merges,
+and rely on writes `waits_on` only after every driver, CLI and plugin runs
+>= 0.22. The same upgrade requirement applies to writes globs and
+`remeasure_on`: older readers can misjudge batch guards, interpret globs
+literally or refuse new fields. String-template `exec.wrap` changes measurement
+keys only when set; absent wrappers and legacy argv wrappers keep their keys.
+Versions 0.20.1 and 0.21.0 were never released separately; their work is folded
+into 0.22.0. No acceptance gate is weakened (SPEC Compatibility, §7.22).
+
+- **Quote and attribute failure evidence (SG).** Versioned `v2|` signatures
+  include the masked first error, innermost repository test frame and masked
+  expected/actual values. Historical untagged signatures replay but never
+  equal new signatures, including for defer carry. `known intermittent`
+  requires same-key pass/fail proof and a matching signature when known;
+  a same-signature trunk failure alone is not intermittent. Current trunk
+  failures show the start of their uninterrupted run and merge/adopt provenance.
+  Refusals quote up to three failed tests (SPEC §5, Attribution, §7 RC3).
+- **Retain timeout diagnostics (SG5).** Timeout logs retain the last 256 KiB
+  of measurement output, a timeout marker and a best-effort pre-kill process
+  tree. Check/invariant `on_timeout` runs once with a separate 30-second limit.
+  Evidence freezes at timeout; diagnostic output cannot change counts,
+  signatures or verdicts, and diagnostic-only edits change no measurement key
+  (SPEC §7.18).
+- **Resolve model warnings without changing gates (MD).** Direct selections
+  and nested dsa pool members compare by `provider/id`, ignoring thinking
+  suffixes; unresolved membership remains unknown. Global/node
+  `drive.same_model: accepted` hides only the advisory same-model warning in
+  compact why; full/JSON retain it. JSON `modelWarnings` admits acknowledged
+  objects as well as strings. Acknowledgment preserves candidate commits and
+  keys, and independent review blocks remain binding (SPEC §12.2, §12.5.2).
+- **Retry dispatch quietly and explain merge waits (DQ).** Dispatch CAS
+  refusals retry with fresh state and completed rollback, at most three total
+  attempts; exhaustion says `retry next pass` without a halt. Status names the
+  blocking merge job, its UTC start and accepted merges ahead; JSON adds
+  runtime-only `mergeWaiting` job/ahead fields (SPEC §8.1, §9).
+- **Match writes patterns and preserve their dialect (WG, NT).** Node/allow
+  writes and adopt scopes accept `*`, `?` and whole-segment `**`; `dir/**`
+  equals `dir/`. Prefix behavior remains, containment and overlap are
+  conservative, and unproven widenings still need owner authority. New plans
+  record `writes_syntax: 2`; historical entries retain their literal dialect.
+  Plan edits may preserve invalid legacy entries at their original positions,
+  but new invalid entries refuse. Runtime copies preserve the dialect without
+  changing plan JSON or its hash (SPEC §3.7).
+- **Grant eligible files and wait for owners (WG4–WG5, NT).** Independently
+  eligible paths receive exact grants even when other paths refuse. Structured
+  `grant_refused` drives hints without parsing old failure text. Overlap-only
+  `obs.waits_on` failures wait for named slots to merge or abandon, then the
+  driver remeasures writes once on the same key; the later observation
+  supersedes that overlap-only failure. Mixed refusals retain normal rules;
+  waiting cycles halt with a repair action. Without a driver, attest after
+  slots close (SPEC §3.4, §7.19).
+- **Yield merges to waiting adoption (AW).** `owed adopt --wait SECONDS`
+  supplies one total lease/lock acquisition budget, default 60 seconds;
+  finite nonnegative fractional values are allowed. Pending adopters let the
+  running merge finish and defer new merges to the oldest adopter. Busy text
+  identifies holder activity and its UTC start; measurement timeouts remain
+  separate (SPEC §8.4).
+- **Lint shell commands before admission (PL).** New/changed commands in
+  init/plan/edit/amend, including dry runs, expanded templates, setup/slot
+  setup and timeout diagnostics, receive `bash -n` checks. Statically quoted
+  nested Bash scripts are checked without executing expansions. Unchanged
+  legacy commands remain loadable; missing Bash warns, syntax errors refuse,
+  and computed scripts remain a known limit (SPEC §3.7).
+- **Remeasure eligible invariant failures once (RO).** Invariant
+  `remeasure_on` matches literal case-sensitive raw failure diagnostics;
+  every failure must match. Missing/incomplete diagnostics, errors and
+  timeouts do not authorize retry. Eligible measurements get one durable
+  same-key automatic retry. Both votes remain: repeat pools them, otherwise
+  pass plus fail requires the owner. Policy edits change no key or exhausted
+  budget, and a node-specific defer cannot resolve trunk conflict or authorize
+  unrelated merges/adoption (SPEC §7.20).
+- **Merge accepted nodes on one measured final tree (MT, NT).**
+  `drive.merge_batch: N` accepts 1..8, default 1/off; explicit
+  `owed merge A,B,C` requests a batch independently. Accepted members follow
+  merge-queue order, have non-overlapping writes, touch no closure and owe no
+  remeasurement; approval gates still apply. Invariants and member checks run
+  on the final tree, trunk advances once, and every member compares inherited
+  debt with pre-train trunk. Conflicting members drop out for individual
+  rebase/merge. Per #2270, failed batch votes never block a member or carry
+  `remeasure_match`/`auto_remeasure`; fallback merges measure each member's own
+  tree with its own eligible automatic retry. The failed set is not batched
+  again until trunk moves. Replay rejects batch retry metadata. Planned batches
+  exclude waiting, later, halted, parked and reported nodes; running members
+  identify their leader. Torn-tail recovery includes oversized non-final
+  member lines and requires the final trunk ref/history; adopt cannot close
+  an incomplete batch (SPEC §7.20–§7.21).
+- **Wrap measurement commands with explicit timeout semantics (RX).**
+  String-template `exec.wrap` substitutes shell-safe `{cwd}`, `{timeout}` and
+  required `{cmd}` for setup, checks/red/mutants/invariants/probes/sweeps and
+  timeout diagnostics. Git, worktrees, ledger and leases remain local.
+  `exec.wrap_grace_s` defaults to 30; evidence freezes at timeout while the
+  wrapper gets shutdown grace. Wrappers must propagate output/exit status,
+  avoid test-protocol noise, bound remote work and propagate termination;
+  local cleanup does not prove remote termination (SPEC §7.22).
+- **Enforce the ledger lock boundary (LK).** Command/job runners refuse to
+  spawn while their async context holds the ledger lock; destructive/worktree
+  Git operations are guarded too. Short recording locks retain CAS and stale
+  result checks. The sole Git exemption is `advanceTrunk`'s ff-only advance of
+  an already measured commit; owed never detaches trunk. Known limit: merge
+  hooks still run under the ledger lock and can delay writers, and the guard
+  cannot detect an external process's lock (SPEC §7.17, §7.23).
+- **Give actionable review and conflict guidance (UX).** Active blocks suggest
+  writer-action rulings and repair; owner review is labelled an override.
+  Zero-call ruling deliveries list affected slots and exact follow-ups.
+  Status/why show conflict files against trunk and other candidates; cached
+  probes are diagnostics, not acceptance evidence. Missing ruling
+  acknowledgments warn with a candidate-pinned re-record command while still
+  recording the verdict; `--ack-rulings` remains a numeric watermark
+  (SPEC §9.2).
+- **Wake stalled repositories without starting a driver (WD).**
+  `owed idle [--json]` exits 0 for idle, 3 for not idle, 2 for usage/missing
+  ledger and 70 for internal errors. Open work, no live driver/held lock or
+  machine holder/matching labelled active agent, and sufficiently old progress
+  are required. `drive.watch_idle_min` defaults to 15 minutes; 0 disables it.
+  Pi checks every 120 seconds, wakes only a settled agent and atomically claims
+  one notification per host/repository/idle period across sessions. Detection
+  is advisory: unknown subagent activity uses age and other conditions, failed
+  installed machine inspection stays quiet, and unlabelled calls or a crash
+  between claim and delivery can hide activity or a wake (SPEC §12.8.2).
+
 ## 0.20.0
 
 Compatibility first: 0.20 adds no new ledger entry kind, only optional fields
