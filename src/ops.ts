@@ -25,6 +25,7 @@ import { unruledBlocks } from './drive.ts';
 import { readLock } from './drive-bg.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
+import { lintPlanShell } from './planlint.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
 import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
@@ -44,7 +45,7 @@ export interface JobRef { subject: string; obligation: string; key: string }
  * was no longer current; `error` why the run stopped early (init only; attestGenesis rejects instead).
  */
 export interface GenesisAttest { complete: boolean; recorded: string[]; failed: string[]; missing: string[]; superseded: JobRef[]; error?: string }
-export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView; genesis: GenesisAttest; lease?: string }
+export interface InitResult { entry: Entry; observations: Entry[]; status: StatusView; genesis: GenesisAttest; lease?: string; warnings?: string[] }
 export interface InitPreview { trunk: string; commit: string; planSha: string; nodes: number; invariants: string[] }
 export interface AttestGenesisResult extends GenesisAttest { observations: Entry[]; lease?: string }
 export interface AttestTrunkResult { refresh?: Entry; changed: string[]; observations: Entry[]; superseded: JobRef[]; failed: string[]; missing: string[]; lease?: string; /** MS1: `--remeasure` jobs and their observations. */ remeasured?: string[]; remeasuredObs?: Entry[] }
@@ -321,7 +322,17 @@ async function writerTree(s: State, id: string, dirs: string[], env: NodeJS.Proc
 function planBlob(text: string) {
   const plan = parsePlan(text), hygiene = [...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan), ...execEnvErrors(plan)];
   if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
-  const data = stringify(JSON.parse(canonical(plan)), { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
+  const source = JSON.parse(canonical(plan));
+  // PL1: retain diagnostic source even before SG's parsed check field is integrated.
+  const raw = parseDocument(text).toJS();
+  for (const [checks, originals] of [
+    [source.invariants, raw.invariants],
+    ...source.nodes.map((n: NodeSpec) => [n.checks, raw.nodes?.find((x: NodeSpec) => x.id === n.id)?.checks]),
+  ]) for (const check of checks ?? []) {
+    const diagnostic = originals?.find((x: { id: string; on_timeout?: unknown }) => x.id === check.id)?.on_timeout;
+    if (typeof diagnostic === 'string') check.on_timeout = diagnostic;
+  }
+  const data = stringify(source, { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
 }
 async function storePlan(ledger: Ledger, text: string) { const b = planBlob(text); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
 /** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
@@ -444,6 +455,7 @@ async function abortWith(ledger: Ledger, snapshot: State, observations: Draft[],
 export async function initPreview(o: Context & { plan: string }): Promise<InitPreview> {
   const b = planBlob(o.plan), { state } = await load(await Ledger.open(o.cwd));
   if (state.seq >= 0) throw new OwedError(`Already initialized (genesis #0, trunk ${state.trunk.name}); owed init records genesis only once`);
+  lintPlanShell(b.plan,undefined,o.plan);
   return { trunk:b.plan.trunk, commit:await git.revParse(o.cwd,`refs/heads/${b.plan.trunk}`), planSha:b.sha, nodes:b.plan.nodes.length, invariants:b.plan.invariants.map(i => i.id) };
 }
 /**
@@ -453,7 +465,8 @@ export async function initPreview(o: Context & { plan: string }): Promise<InitPr
  * text (an abort before genesis keeps the message 'aborted'). `commit` pins the trunk commit the owner confirmed.
  */
 export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; lease?: boolean; measure?: boolean; commit?: string }): Promise<InitResult> {
-  owner(o); checkAbort(o.signal); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
+  owner(o); checkAbort(o.signal); const warnings = lintPlanShell(planBlob(o.plan).plan,undefined,o.plan);
+  const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit,quarantineNames(p.plan,() => false));
   if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
   const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, state:facts }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
@@ -467,7 +480,7 @@ export async function init(o: Actor & { plan: string; channel: Channel; signal?:
     }
   }
   const genesis = { ...await genesisOutcome(ledger,done.superseded), ...(error !== undefined ? { error } : {}) };
-  return { entry, observations:done.recorded, status:await status(o), genesis, ...(lease ? { lease } : {}) };
+  return { entry, observations:done.recorded, status:await status(o), genesis, ...(lease ? { lease } : {}), ...(warnings.length ? { warnings } : {}) };
 }
 async function genesisOutcome(ledger: Ledger, superseded: JobRef[]): Promise<GenesisAttest> {
   const g = genesisProgress((await load(ledger)).state);
@@ -553,10 +566,15 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
 /** N1 (23:4x): a carry `owed plan` skipped (facts not computable or validation refused it); the candidate stays invalidated. */
 export interface NotCarried { node: string; reason: string }
 /** `notCarried` (N1, optional): receives one item per open candidate the plan entry invalidated and could not carry. */
-export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[] }): Promise<Entry> {
-  owner(o); const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
+export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[]; shellWarnings?: string[] }): Promise<Entry> {
+  owner(o); const ledger = await Ledger.open(o.cwd), b = planBlob(o.plan);
   // N2: each attempt recomputes carries from its own fresh locked read; only the successful attempt reports skips.
-  return retryCas(ledger, before => ledger.withLock(async () => { const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); return entry; }));
+  return retryCas(ledger, async before => {
+    const priorText = (await ledger.getBlob(before.planSha)).toString();
+    const warnings = lintPlanShell(b.plan,before.plan,o.plan,priorText);
+    const p = { plan:b.plan, sha:await ledger.putBlob(b.data) };
+    return ledger.withLock(async () => { const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); return entry; });
+  });
 }
 type PlanArgs = Actor & { rev?: string; path?: string; note?: string; notCarried?: NotCarried[] };
 /**
@@ -729,7 +747,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
 // ---------- ED: atomic node/check/invariant plan edits ----------
 export type EditArgs = Context & EditFields & { note: string; plan?: string; rule?: string; writer?: boolean; resume?: boolean; after?: string | string[]; expect?: 'report'; dry_run?: boolean };
 export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades>; warnings: string[] }
-export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string }
+export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string; warnings?: string[] }
 async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<EditPreview> {
   inited(s);
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('edit needs a non-empty note (--note TEXT)','usage');
@@ -740,7 +758,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next).plan;
-  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:parentOverlapWarnings(plan,s) };
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString())] };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
 export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
@@ -769,7 +787,7 @@ export async function edit(o: Actor & EditArgs): Promise<EditResult | EditPrevie
       const plan = appended[0]!;
       try { await rename(temp,e.file); }
       catch (x) { throw new OwedError(`edit entries #${plan.seq}-#${appended.at(-1)!.seq} were recorded, but ${e.path} could not be replaced (${(x as NodeJS.ErrnoException).code ?? String(x)}): the recorded plan is in ${temp}: move it over ${e.file}`,'internal'); }
-      return { file:e.file, path:e.path, plan, ...(o.rule !== undefined ? { rule:appended.find(x => x.kind === 'rule')! } : {}), ...(o.resume ? { resume:appended.at(-1)! } : {}), carried:appended.filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, diff:e.diff };
+      return { file:e.file, path:e.path, plan, ...(o.rule !== undefined ? { rule:appended.find(x => x.kind === 'rule')! } : {}), ...(o.resume ? { resume:appended.at(-1)! } : {}), carried:appended.filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, diff:e.diff, ...(e.warnings.length ? { warnings:e.warnings } : {}) };
     });
   });
 }
