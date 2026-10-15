@@ -9,7 +9,7 @@ import { oneLine } from './views.ts';
 
 export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; dsa?: Pick<Dsa, 'describe' | 'send'> }
 export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; rulingDelivery?: RulingDelivery }
-export interface RulingDelivery { delivered: string[]; pending: number; failures: string[] }
+export interface RulingDelivery { delivered: string[]; pending: number; failures: string[]; slots?: { node: string; writer?: string; followUp: string }[] }
 /** DR4: runtime receipt only. Notify once after committing the rule, with no ledger writes or retry loop. */
 export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick<Dsa, 'describe' | 'send'>, exclude?: string): Promise<RulingDelivery> {
   const { state } = await readState({ cwd }), dsa = client ?? new Dsa({ cwd, timeoutMs: 5000 });
@@ -21,6 +21,9 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
     const n = state.nodes[id];
     if (n?.merged) continue;
     const launches = n?.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
+    const writer = launches.findLast(l => l.role === 'writer');
+    const followUp = rulingFollowUp(state, id)?.message ?? rulingMessage(id, 'writer', state.rules.filter(r => r.seq === entry.seq));
+    if (n?.slot?.open) (result.slots ??= []).push({ node: id, ...(writer ? { writer: writer.rid } : {}), followUp });
     for (const role of ['writer', 'reviewer'] as const) {
       const calls = launches.filter(l => l.role === role && l.rid !== exclude);
       if (!calls.length) {
@@ -45,7 +48,7 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
   return result;
 }
 export function rulingDeliveryText(r: RulingDelivery): string {
-  return `delivered to ${r.delivered.length} running calls (${r.delivered.join(', ')}); ${r.pending} will get it at their next dispatch or follow-up${r.failures.length ? `; delivery failures: ${r.failures.join('; ')}` : ''}`;
+  return `delivered to ${r.delivered.length} running calls (${r.delivered.join(', ')}); ${r.pending} will get it at their next dispatch or follow-up${r.failures.length ? `; delivery failures: ${r.failures.join('; ')}` : ''}${!r.delivered.length ? (r.slots ?? []).map(s => `\n${s.node}: writer call ${s.writer ?? 'unknown'}; send follow-up${s.writer ? ` to ${s.writer}` : ' to the slot writer'}: ${JSON.stringify(s.followUp)}`).join('') : ''}`;
 }
 type Question = { launch: LaunchEntry; question: RunQuestion };
 const shell = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;

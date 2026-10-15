@@ -61,8 +61,10 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   // QT1 intentionally changes only the rendered human halt wording, never the ledger value or acceptance state.
   const rendered = (text: string): string => (m === BASE ? text.replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
     'halted by driver #$1 (attempt $2), needs the parent (the main agent acts; owed lists the command):') : text)
-    // NY1 changes guidance/override labels only; retain the exact resolving review command in this differential.
-    .replace(/owed rule --nodes \S+ "<guidance>"; /g, '').replace(/ \(overrides a valid block: state the accepted risk\)/g, '');
+    // NY1 / UX1 change guidance/override labels only; retain the exact resolving review command in this differential.
+    .replace(/owed rule --nodes \S+ (?:--writer )?"<guidance>"; (?:writer repairs and submits again; override only: )?/g, '')
+    .replace(/(owed rule --nodes \S+) --writer ("<decision>")/g, '$1 $2')
+    .replace(/ \(overrides a valid block: state the accepted risk\)/g, '');
   // FL1/FL4 intentionally change waiting presentation, not historical acceptance state/keys.
   // Adapt only the frozen view's waiting fields and QT1 halt text; everything else compares exactly.
   const wait = (id: string): cur.Waiting | undefined => {
