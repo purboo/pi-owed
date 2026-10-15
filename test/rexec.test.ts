@@ -161,6 +161,35 @@ test('RX2: wrapper deadline, local process-tree kill, abort and frozen timeout d
   } finally { await r.cleanup(); }
 });
 
+test('RX2 #2265: wrapper close cannot postpone child cleanup while on_timeout is running', { timeout: 12_000 }, async () => {
+  const r = await repo(), controller = new AbortController();
+  let pending: ReturnType<typeof runCommand> | undefined;
+  try {
+    const w = await wrapper(r.root), p = plan({ wrap: w.wrap, wrap_grace_s: 1 });
+    const pidFile = join(r.root, 'background-pid');
+    // Redirect both streams so the survivor does not keep the wrapper's close event pending.
+    const run = `sleep 30 >/dev/null 2>&1 & echo $! > ${shellQuote(pidFile)}; echo before-close; sleep 1.4; exit 0`;
+    let finished = false;
+    const start = Date.now();
+    pending = runCommand({ plan: p, signal: controller.signal }, run, r.cwd, 1, undefined, 'sleep 3; echo slow-diagnostic');
+    pending.then(() => { finished = true; });
+    await new Promise(resolve => setTimeout(resolve, 2400));
+    assert.equal(finished, false, 'the slow diagnostic must still be running at the child-death assertion');
+    const pid = Number(await readFile(pidFile, 'utf8'));
+    await dead(pid);
+    assert.ok(Date.now() - start < 2800, 'child cleanup checked by timeout + grace + 800ms tolerance');
+    const result = await pending;
+    assert.equal(result.code, null); assert.equal(result.error, 'timeout after 1s');
+    assert.equal(result.measurementLog, 'before-close\n');
+    assert.match(result.log, /slow-diagnostic/);
+    assert.match(result.log, new RegExp(`\\n${pid} \\d+ .*sleep 30`), 'snapshot contains the child before cleanup');
+  } finally {
+    controller.abort();
+    await pending;
+    await r.cleanup();
+  }
+});
+
 test('RX5: a driver pass attests through the wrapper and keeps ledger/replay local', { timeout: 120_000 }, async () => {
   const r = await repo(); let driver: Driver | undefined;
   try {

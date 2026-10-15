@@ -351,7 +351,11 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
     p.on('error', e => { error = e.message; spawnError = true; });
     p.on('close', async (code, signal) => {
-      clearTimeout(timer); clearTimeout(escalation); clearTimeout(wrapperDeadline); ctx.signal?.removeEventListener('abort', abort);
+      clearTimeout(timer); clearTimeout(escalation);
+      // RX2 #2265: close may leave background group members alive with redirected streams.
+      // Do not cancel their hard deadline and then wait for a slow timeout diagnostic.
+      if (wrapped && measurementLog !== undefined) kill();
+      clearTimeout(wrapperDeadline); ctx.signal?.removeEventListener('abort', abort);
       const details = timeoutDetails ? await timeoutDetails : undefined;
       kill();
       if (details !== undefined) {
