@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.24.0
+
+No new ledger entry kind and no gate weakened. New optional plan keys:
+`sweep.every`, `risk`, `closure_neutral`. New optional ledger fields:
+`sweep.boundary` and `escape.sweep`. **Upgrade order:** upgrade the CLI, every
+driver and every pi session that loads owed (restart them) before a 0.24
+sweep records its first confirmed boundary or automatic escape, and before
+the plan sets `sweep.every`, `risk` or `closure_neutral`. Older owed refuses
+the new ledger fields and a plan with `sweep.every`. It ignores `risk`, which
+can raise or lower review requirements, so a merge by either version under a
+different requirement makes the other version refuse the ledger;
+`closure_neutral` alone is only conservative (SPEC Compatibility).
+
+- **Scheduled sweeps that find their own culprit (SW).** `sweep.every:
+  {merges, minutes}` makes a running driver start the advisory sweep in the
+  background when either threshold is reached, alongside node work, under the
+  shared machine lease. `owed sweep --due` measures only when due, so it can
+  run from cron. A head that fails twice, with a confirmed first failing owed
+  merge (two failed samples) and a passing predecessor, records a `missing`
+  escape by `executor:owed` with one notice naming the merge, the broken tests
+  and a coverage hint; an existing escape for the same merge and names
+  suppresses a duplicate. Flaky heads, inconsistent bisects and errors only
+  report. Sweeps still never gate a merge (SPEC §3.9, §7.15b).
+- **Review effort follows the diff (RK).** The optional plan list `risk`
+  (`{paths, review: {count, min_rank}}`, first match wins per changed path)
+  derives each candidate's review count and rank from its diff; classes may
+  lower or raise the node's review. `closure_neutral` (`{path, json_ignore}`)
+  lets a closure file such as package.json change only the named JSON
+  properties (for example a version bump) without a closure review. A
+  candidate whose closure changes are all neutral counts as not touching the
+  closure: it may join a batch merge, and ruling delivery does not wait for
+  a closure reviewer.
+  Lowering either policy needs the owner, even under a review allowance.
+  `why`, status and reviewer packets show the derived requirement; `owed
+  report --metrics` counts reviews by the writer's own model
+  (`reviews.sameModel`) (SPEC §3.8, §6.2a, §7.21, §9.4, §9.5).
+- **Hotfixes land while the driver runs (AD).** `owed adopt --commit <c>
+  --note …` fast-forwards trunk to an off-ref owner hotfix under the merge
+  lock: a running merge finishes first, the changed invariants are measured,
+  and the ref is advanced before the adoption is recorded. A hotfix that is no
+  longer a fast-forward is refused before measuring, naming the new trunk. A
+  commit already in the ledger trunk is refused with `nothing to adopt`
+  (SPEC §8.3.2).
+- **Retrying an act is safe (ID).** Repeating an identical `review`,
+  `evidence`, `approve` or `waive` on the same open candidate records nothing
+  and succeeds with `already recorded as #<seq>`. `why` and `report` fold runs
+  of identical historical acts into one line with `×<k>` (SPEC §8.3.3).
+
 ## 0.23.0
 
 No new ledger entry kind and no gate weakened. New optional fields:
