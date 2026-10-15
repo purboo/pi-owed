@@ -7,6 +7,7 @@ import * as git from '../src/git.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa, type SendResult } from '../src/dsa.ts';
 import { writerLaunch } from '../src/drive.ts';
+import { Driver } from '../src/drive-run.ts';
 import { projectId, runId, runLabels } from '../src/reducer.ts';
 import { rebasePending } from '../src/rebase-view.ts';
 import { answerText } from '../src/answer.ts';
@@ -126,14 +127,62 @@ test('SB3: a recorded candidate containing trunk commits fails writes with the c
 });
 
 class Client extends Dsa {
-  views = new Map<string, RunView>(); fail = new Set<string>(); sends: { to: string; kind: string }[] = [];
+  views = new Map<string, RunView>(); fail = new Set<string>(); sends: { to: string; kind: string; message: string }[] = [];
   constructor() { super({ bin: '/bin/true' }); }
   override async describe(rid: string): Promise<RunView> { return this.views.get(rid) ?? { rid, state: 'sealed', status: 'ok' }; }
-  override async send(_id: string, to: string, kind: string): Promise<SendResult> {
-    this.sends.push({ to, kind });
+  override async inspect(rid: string) { return { view: await this.describe(rid) }; }
+  override async request(_id: string) { return { state: 'applied' as const }; }
+  override async send(_id: string, to: string, kind: string, message: string | Uint8Array): Promise<SendResult> {
+    this.sends.push({ to, kind, message: String(message) });
     return this.fail.has(to) ? { outcome: 'rejected', reason: 'offline' } : { outcome: 'applied', spec_digest: 'digest' };
   }
 }
+
+/** Launches a's writer (sealed ok by default in the fake dsa) so the driver owes it follow-ups. */
+async function launchWriter(cwd: string): Promise<string> {
+  const s = (await ops.readState({ cwd })).state, project = projectId(s), rid = runId(project, 'a', 1, 'writer'), built = writerLaunch(s, 'a', project);
+  await ops.launch({ cwd, as: parent, node: 'a', attempt: 1, role: 'writer', rid, spec: built.spec, labels: built.labels, rulings: 0 });
+  return rid;
+}
+async function driverSends(cwd: string, rid: string) {
+  const dsa = new Client(), driver = new Driver({ cwd, dsa, log: () => {}, handleSignals: false, max: 1 });
+  try { await driver.pass(); await driver.settle(); } finally { driver.abort.abort(); await driver.settle(); }
+  return dsa.sends.filter(x => x.to === rid);
+}
+
+test('SB2: with HEAD already on the new base, the driver rebase follow-up names an upstream that replays no trunk commits', { timeout: 120_000 }, async () => {
+  const f = await fixture();
+  try {
+    const rid = await launchWriter(f.cwd);
+    await commitAt(f.a.worktree, { 'src/a': 'a' });
+    assert.equal((await g(f.a.worktree, ['rebase', 'main'])).code, 0);
+    await assert.rejects(ops.submit({ cwd: f.a.worktree, node: 'a', as: writer('a') }), /contains trunk commits after its slot base/);
+    await ops.rebase({ cwd: f.cwd, node: 'a', as: parent });
+    const sends = await driverSends(f.cwd, rid), rebase = sends.find(x => x.message.includes('trunk moved; rebase your worktree'));
+    assert.ok(rebase, JSON.stringify(sends));
+    assert.ok(rebase.message.includes(`\`git rebase --onto ${f.trunk} ${f.trunk}\``), rebase.message);
+    assert.ok(!rebase.message.includes(f.base), rebase.message);
+  } finally { await f.cleanup(); }
+});
+
+test('SB2: the repair follow-up after a rebase names an upstream that replays no trunk commits', { timeout: 120_000 }, async () => {
+  const f = await fixture();
+  try {
+    const rid = await launchWriter(f.cwd);
+    await commitAt(f.a.worktree, { 'src/a': 'a' });
+    assert.equal((await g(f.a.worktree, ['rebase', 'main'])).code, 0);
+    await ops.rebase({ cwd: f.cwd, node: 'a', as: parent });
+    await ops.submit({ cwd: f.a.worktree, node: 'a', as: writer('a') }); await ops.attest({ cwd: f.cwd, node: 'a' });
+    await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'r1' }, node: 'a', verdict: 'block', rank: 1, note: 'needs work' });
+    const t2 = await f.merge('c', { 'more/c': 'c' });
+    assert.equal((await g(f.a.worktree, ['rebase', 'main'])).code, 0, 'the writer follows trunk by hand again');
+    await ops.rebase({ cwd: f.cwd, node: 'a', as: parent });
+    const sends = await driverSends(f.cwd, rid), repair = sends.find(x => x.message.includes('Review blocks on your candidate'));
+    assert.ok(repair, JSON.stringify(sends));
+    assert.ok(repair.message.includes(`\`git rebase --onto ${t2} ${t2}\``), repair.message);
+    assert.ok(!repair.message.includes(`--onto ${t2} ${f.trunk}`), repair.message);
+  } finally { await f.cleanup(); }
+});
 
 test('SB4: answer prints one line, a second only for other calls reached or missed (with the exact retry), never the text', { timeout: 120_000 }, async () => {
   const r = await repo();

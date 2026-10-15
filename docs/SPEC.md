@@ -4156,7 +4156,9 @@ newest recorded slot base of this attempt ancestral to HEAD, falling back to
 already in HEAD (a merge of trunk or a rebase onto it) are never replayed: when
 `git merge-base HEAD <new base>` descends from that upstream, it is the upstream,
 so the command replays only the node's own commits. The same command appears in
-the `owed rebase` packet, the rebase follow-up and the SB1 refusal. Follow-ups retain allowed-writes,
+the `owed rebase` packet, every driver follow-up naming a rebase (drift, rebase
+and repair follow-ups, also when HEAD already descends from the new base) and
+the SB1 refusal; it changes only the command text, never when a follow-up is due. Follow-ups retain allowed-writes,
 conflict, rerun/commit and `owed submit <node>` instructions. No new ledger
 field records this Git fact.
 
