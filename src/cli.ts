@@ -32,7 +32,7 @@ const terminal: CliIo = { log: text => console.log(text), error: text => console
 const ABORTABLE = ['attest','merge','init','adopt','sweep'], SIGNALS: NodeJS.Signals[] = ['SIGINT','SIGTERM','SIGHUP'];
 const signalExit = (s: NodeJS.Signals): number => s === 'SIGINT' ? 130 : 143;
 /** MT: the receipt of a batch merge: one line per member merge entry, then the trunk move. */
-const batchMergeText = async (cwd: string, r: ops.BatchMergeResult): Promise<string> => [...await ops.mergedLines(cwd, r.entries.flatMap(e => e.kind === 'merge' ? [{ node: e.node, commit: e.commit }] : [])), ...(r.dropped.length ? [`Not batched (conflict; merge alone after a rebase): ${r.dropped.join(', ')}`] : []), `Batch of ${r.nodes.length}: ${r.nodes.join(', ')}${leaseText(r)}`].join('\n');
+const batchMergeText = async (cwd: string, r: ops.BatchMergeResult): Promise<string> => [...await ops.mergedLines(cwd, r.entries.flatMap(e => e.kind === 'merge' ? [{ node: e.node, commit: e.commit }] : []), r.deferred && Object.fromEntries(Object.entries(r.deferred).map(([id, items]) => [id, items.length]))), ...(r.dropped.length ? [`Not batched (conflict; merge alone after a rebase): ${r.dropped.join(', ')}`] : []), `Batch of ${r.nodes.length}: ${r.nodes.join(', ')}${leaseText(r)}`].join('\n');
 /** Signals within this time of the first are one stop request (D16a.3). */
 const SAME_REQUEST_MS = 1000;
 export async function main(argv: string[], io: CliIo = terminal): Promise<number> {
