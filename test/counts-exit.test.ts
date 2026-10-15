@@ -215,7 +215,7 @@ test('#557: owed why shows a fail observation\'s note under its item, and the dr
       '          Updating crates.io index',
       '      error: package ID specification `demo-studio-server` did not match any packages',
       '      help: a package with a similar name exists: `demo-studio`'].join('\n');
-    const why = (await cli(x.cwd, ['why', 'a'])).stdout;
+    const why = (await cli(x.cwd, ['why', 'a', '--full'])).stdout;
     const at = why.split('\n').findIndex(l => l.includes('a/check:unit'));
     assert.ok(at >= 0, why);
     assert.equal(why.split('\n').slice(at + 1, at + 6).join('\n'), block, why);

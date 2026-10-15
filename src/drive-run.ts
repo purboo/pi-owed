@@ -32,7 +32,7 @@ import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, re
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
 import { mergeBatchPlan, sharedParked, sharedParkKey, sharedPhase } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
-import { callAt, decide, rejectedHalt, wantsRebaseConflicts } from './drive.ts';
+import { callAt, decide, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
@@ -480,6 +480,20 @@ export class Driver {
     writeFileSync(temp, JSON.stringify(Object.fromEntries(this.mergeWaiting)), { mode: 0o600 });
     renameSync(temp, path);
   }
+  /** QT5: the last still-asking list written to `drive/asking.json` (a runtime cache `owed status` reads while this driver runs). */
+  private asking?: string;
+  private recordAsking(list: readonly import('./drive.ts').StillAsking[]): void {
+    if (!this.ledger) return;
+    const body = JSON.stringify(list);
+    if (body === this.asking) return;
+    try {
+      const dir = join(this.ledger.dir, 'drive'), path = join(dir, 'asking.json'), temp = `${path}.${process.pid}.tmp`;
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(temp, body, { mode: 0o600 });
+      renameSync(temp, path);
+      this.asking = body;
+    } catch { /* a cache only: status shows it after the next successful write */ }
+  }
   /** The loop calls this before a pass started by its timer or by a dsa event (not by a measurement ending). */
   tick(): void { this.cycle++; }
   /** A stop at once runs: ended measurements are not handled (their results are not recorded by the driver). */
@@ -637,7 +651,9 @@ export class Driver {
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
     const { runs, blobs, rejected, conflicts, rebasePending, rebaseWork } = await this.observe(s, measuring);
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, measuring, now: Date.now(), noticed: this.facts.once });
+    const now = Date.now();
+    this.recordAsking(stillAsking(s, runs, now));
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, measuring, now, noticed: this.facts.once });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass

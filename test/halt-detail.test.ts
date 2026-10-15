@@ -94,10 +94,10 @@ test('K2.2: owed why and owed status show an exec block\'s failing note on its l
     const shortB = `${(fb.note ?? '').replace(/\n/g, '\\n').slice(0, 199)}…`;
 
     // K2.2 why: the block line carries the note (one line, at most 200 characters).
-    const whyA = (await cli(x.cwd, ['why', 'a'])).stdout;
+    const whyA = (await cli(x.cwd, ['why', 'a', '--full'])).stdout;
     const blockA = whyA.split('\n').find(l => l.startsWith(`⛔ blocked #${fa.seq} check:unit`));
     assert.ok(blockA?.endsWith(` — note: ${noteA}`), whyA);
-    const whyB = (await cli(x.cwd, ['why', 'b'])).stdout;
+    const whyB = (await cli(x.cwd, ['why', 'b', '--full'])).stdout;
     const blockB = whyB.split('\n').find(l => l.startsWith(`⛔ blocked #${fb.seq} check:unit`));
     assert.ok(blockB?.endsWith(` — note: ${shortB}`), whyB);
     assert.equal(shortB.length, 200);
@@ -133,7 +133,7 @@ test('K2.3: waivers say what they mean and their true scope; why shows a waived 
     const meaningA = `waived check:unit for candidate #${candA.seq} ${candA.commit.slice(0, 12)} (key ${k12}): in effect now; owed counts check:unit as waived, not measured, for every candidate of a whose check:unit key is ${k12}, in this or a later attempt, while no unaccepted active block remains on check:unit; a later block suspends the waiver and clearing that block restores it; a change to the check definition, setup, exec, closure or the content of its reads changes the key, and owed measures it again; the flaky block #${fa.seq} stays recorded as accepted risk; --accept-risk clears #${fa.seq} whatever its key, and check:unit is no longer measured on key ${k12}`;
     assert.equal(json.meaning, meaningA);
     // K2.3 why: the waived item.
-    const whyW = (await cli(x.cwd, ['why', 'a'])).stdout;
+    const whyW = (await cli(x.cwd, ['why', 'a', '--full'])).stdout;
     assert.ok(whyW.split('\n').some(l => l.startsWith('⚠ a/check:unit waived (not measured for this candidate) by owner:cli: flaky runner (delegated)')), whyW);
     // The stated scope holds: a new candidate that leaves the check's reads alone keeps the waiver ...
     await commitAt(slots.a!, { 'doc/a': 'docs\n' });

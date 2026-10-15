@@ -631,6 +631,79 @@ const needsRulingText = (b: Block & { note: string }): string => `⛔ ${b.node}:
 function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
+/** QT2: the next command for an unsatisfied item of node `node`, by who discharges it. */
+function itemNext(card: string, i: ItemView): string {
+  // QT-R1 (5): never a command the CLI refuses: trunk invariants (why trunk / why inv:*) get the commands the status
+  // and decision views give; other items are addressed to their own subject.
+  if (i.subject === 'trunk') return i.mark === '⊥' ? 'owed attest --trunk' : trunkDecision(i.obligation);
+  const node = i.subject || card;
+  if (i.discharger === 'executor') return `owed attest ${node} ${SKIP_ATTEST}`;
+  if (i.discharger === 'writer') return `the writer fixes it and runs owed submit ${node}`;
+  if (i.discharger === 'reviewer') return `a reviewer records owed review ${node}${obligationFlag(i.obligation)} --ok|--block --rank <N> --note "<why>"`;
+  if (i.discharger === 'parent') return `owed decide ${node} --text "<decision>"`;
+  if (i.obligation === 'approve') return `owed approve ${node}`;
+  if (i.obligation.startsWith('evidence:')) return `owed evidence ${node} ${i.obligation.slice(9)} --note "<what>"`;
+  if (reviewObligation(i.obligation)) return `owed review ${node}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()} (owner decision)`;
+  return `owed waive ${node} ${i.obligation} --reason "<why>" (owner)`;
+}
+/**
+ * QT2: the default `owed why <node>` card: the outcome line, then one line per unsatisfied obligation, active block and
+ * active condition (halt, hold, wait, pending rebase, conflicts, out-of-writes paths), each with its reason and the next
+ * command; everything else (observations, history, superseded blocks, rulings text, ΔO⁻) only with `--full`.
+ */
+export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): string {
+  if (options.full) return renderReceipt(v, { full: true });
+  const blocked = new Set(v.blocks.map(b => b.obligation));
+  const review = (b: ReceiptCard['blocks'][number]): string | undefined => {
+    const e = v.items.find(i => i.obligation === b.obligation)?.observations.find(o => o.seq === b.seq);
+    return e?.kind === 'review' && e.note ? shortNote(e.note) : b.note;
+  };
+  const command = (reason: string): string | undefined => reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim();
+  const lines = [
+    ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []),
+    ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []),
+    ...(v.held !== undefined ? [`held by abandon; release with owed decide ${v.node} --text "<decision>"`] : []),
+    ...(v.halt ? [`⏸ halted (attempt ${v.halt.attempt}), ${v.halt.needs === 'owner' ? NEEDS_OWNER_TEXT : NEEDS_PARENT_TEXT}: ${oneLine(v.halt.reason)}${command(v.halt.reason) ? '' : ` → ${resumeCommands(v.node)}`}`] : []),
+    ...(v.reported !== undefined ? [`reported (resume #${v.reported}): parked with the writer's report, waiting for the parent → owed decide ${v.node} --text "<decision>"`] : []),
+    ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when they merge`] : []),
+    ...v.items.filter(i => i.status === 'D' && !(blocked.has(i.obligation) && i.mark === '⛔')).map(i => `${i.mark} ${i.obligation}: ${oneLine(i.detail)} → ${itemNext(v.node, i)}`),
+    ...v.blocks.map(b => { const why = review(b); return `⛔ ${b.obligation} blocked${rulingMark(b)}${why ? `: ${why}` : ''} → ${oneLine(b.clear)}`; }),
+    ...(v.mergeChecks ?? []).filter(i => i.status === 'D').map(i => `${i.mark} merge check ${i.obligation}: ${oneLine(i.detail)} → owed why ${v.node} --full`),
+    ...(v.outOfWrites ? outOfWritesText(v.outOfWrites).split('\n') : []),
+    ...(v.modelWarnings ?? []).filter((w): w is string => typeof w === 'string').map(w => `Warning: ${w}`),
+    ...conflictLines(Object.fromEntries(Object.entries(v.conflicts ?? {}).filter(([, paths]) => paths === null || paths.length > 0))),
+    // left022: the ruling the parent must forward is the content of that act: kept whole.
+    ...(v.rulingFollowUp ? [`Ruling to forward:\n${v.rulingFollowUp}`] : []),
+  ];
+  // risk (0.24): the derived review requirement says what review would satisfy the node; context, not outstanding.
+  const context = [...(v.reviewRequirement && v.phase !== 'merged' ? [oneLine(reviewRequirementText(v.reviewRequirement))] : [])];
+  const open = lines.filter(l => !l.startsWith('Warning: ')).length;
+  const outcome = v.phase === 'merged' ? 'merged' : `${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
+  return [`${v.node}: ${outcome}`, ...lines, ...context, `Details: owed why ${v.node} --full`].join('\n');
+}
+/** QT4: the obligations owed measures (checks, strength, red, writes, invariants). */
+const MEASURED = /^(?:(?:check|strength|red|inv):|writes$)/;
+/** QT4: `<node> merged (<commit12>); measured <n>, waived <n>, debt <n>` from the merged node's card and its deferred debt. */
+export function mergedLine(v: ReceiptCard, commit: string, debt?: number): string {
+  const measured = v.items.filter(i => i.status === 'E' && MEASURED.test(i.obligation)).length, waived = v.items.filter(i => i.status === 'W').length;
+  return `${v.node} merged (${commit.slice(0, 12)}); measured ${measured}, waived ${waived}${debt === undefined ? '' : `, debt ${debt}`}`;
+}
+/**
+ * QT3: the failures of a repair follow-up recorded after entry `since` (the last message to the writer): failing
+ * measured items with their notes, and active review blocks; `earlier` names the obligations still failing from before.
+ */
+export function newFailures(v: ReceiptCard, since: number): { lines: string[]; earlier: string[] } {
+  const lines: string[] = [], earlier: string[] = [];
+  for (const i of v.items) {
+    if (i.status !== 'D' || (i.mark !== '✘' && !v.blocks.some(b => b.obligation === i.obligation && b.kind === 'exec'))) continue;
+    const fails = i.observations.filter(e => e.kind === 'obs' && e.verdict === 'fail');
+    if (!fails.some(e => e.seq > since)) { earlier.push(i.obligation); continue; }
+    const fresh = fails.filter(e => e.seq > since), names = [...new Set(fresh.flatMap(e => e.kind === 'obs' ? e.failed ?? [] : []))];
+    lines.push(`- ${i.obligation}: ${oneLine(i.detail)}${names.length ? `; failed tests: ${names.map(oneLine).join(', ')}` : ''}${failNotes(fresh)}`);
+    if (i.obligation === 'writes' && v.outOfWrites) lines.push(...outOfWritesText(v.outOfWrites).split('\n'));
+  }
+  return { lines, earlier };
+}
 const conflictLines = (conflicts: Record<string, string[] | null> | undefined): string[] => Object.entries(conflicts ?? {}).map(([target, paths]) => `conflicts with ${target}: ${paths === null ? 'unknown; retry owed status' : paths.map(oneLine).join(', ') || 'none'}`);
 export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}): string {
   const history = actHistories.get(v) ?? v.items.flatMap(i => i.observations);
@@ -825,8 +898,9 @@ export function ownerCommands(s: State, node: string): string[] {
  */
 const ownerAs = (): string => process.env.OWED_CONFIRM?.trim() === 'owner' ? 'owner:human' : 'owner:cli';
 /** The command that removes an owner-queue item from the owner's queue. */
+const trunkDecision = (obligation: string): string => `owed plan <plan.yaml> (add a node that repairs ${obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
 function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
-  if (i.subject === 'trunk') return `owed plan <plan.yaml> (add a node that repairs ${i.obligation}; invariants cannot be waived, only a measured pass on a later merge clears this debt)`;
+  if (i.subject === 'trunk') return trunkDecision(i.obligation);
   const n = s.nodes[i.subject];
   if (n && !n.slot?.open) return dispatchHint(n);
   const flag = candidateFlag(s, i.subject);

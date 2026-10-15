@@ -10,7 +10,7 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText, slotGitInProgress, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
-import { planReceipt, renderEntry, withActHistory } from './views.ts';
+import { planReceipt, renderEntry, withActHistory, mergedLine } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
@@ -23,7 +23,7 @@ import { runJob, runCommand, lastLines } from './exec.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
-import { unruledBlocks } from './drive.ts';
+import { unruledBlocks, stillAskingNeeds, type StillAsking } from './drive.ts';
 import { driveStatus, readLock, driveStart, type DriveStart } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
@@ -1693,7 +1693,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
   },'merge',o.signal,{activity:`merge ${o.node}`});
 }
 // ---------- batch merge (merge train, MT) ----------
-export interface BatchMergeResult { nodes: string[]; commit: string; entries: Entry[]; dropped: string[]; lease?: string }
+export interface BatchMergeResult { nodes: string[]; commit: string; entries: Entry[]; dropped: string[]; lease?: string; /** QT4: per member, the deferred items left on this merge's keys (as MergeResult.deferred). */ deferred?: Record<string, ItemView[]> }
 /** MT: refusal prefix of a batch merge that measured or decided nothing for single members; they merge one at a time. */
 export const BATCH_REFUSED = 'batch merge ';
 /** MT1: the requested members in merge-queue order; refuses a member that cannot be batched, naming why. */
@@ -1773,11 +1773,13 @@ function incompleteBatchText(s: State): string | undefined {
   return `batch merge of ${b.members.join(', ')} is incomplete after #${open.seq} (${open.node}); missing: ${missing.join(', ')}; restore refs/heads/${s.trunk.name} to ${b.final} (e.g. from the reflog: git update-ref refs/heads/${s.trunk.name} ${b.final}), then any owed write completes the batch; if trunk history no longer contains the batch commits, the ledger tail and trunk disagree and need manual repair`;
 }
 /** MT3: errors of appending the member merge `drafts` in order after `current` (each judged on the state after the previous). */
-function batchGuard(latest: Awaited<ReturnType<typeof load>>, current: State, drafts: Draft[]): string[] {
+function batchGuard(latest: Awaited<ReturnType<typeof load>>, current: State, drafts: Draft[], deferred?: Record<string, ItemView[]>): string[] {
   let s = current, own = false;
   for (const d of drafts) {
     const errors = validateDraft(s, d);
     if (errors.length) return errors.map(e => `${'node' in d ? d.node : '?'}: ${e}`);
+    // QT4: the debt left on this member's merge keys, the same items a single merge reports as `deferred`.
+    if (deferred && d.kind === 'merge') deferred[d.node] = mergeGuard(s, d.node, d).invItems.filter(i => i.status === 'D');
     const entry = { ...d, seq: s.seq + 1, ts: new Date().toISOString(), prev: s.head } as Entry;
     entry.hash = entryHash(entry); s = own ? extendState(s, [entry]) : reduceFrom(s, [entry], latest.lookup); own = true;
   }
@@ -1824,7 +1826,7 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
       const current = prospective(latest,observations);
       if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
       const drafts: Draft[] = chain.map((c, i) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[i]!.facts, state:facts[i]!.state, batch:{ final, state:batchState, keys, members }, ...leaseWaitField() }));
-      const reasons = batchGuard(latest,current,drafts);
+      const deferred: Record<string, ItemView[]> = {}, reasons = batchGuard(latest,current,drafts,deferred);
       if (reasons.length) {
         if (observations.length) await ledger.append(observations);
         const failed = observations.flatMap(d => d.kind === 'obs' && d.verdict === 'fail' ? [`${d.subject}/${d.obligation}: ${d.note ?? (d.failed?.length ? `failed tests: ${d.failed.join(', ')}` : 'failed')}`] : []);
@@ -1832,7 +1834,7 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
       }
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,final);
       const appended = await ledger.append([...observations,...drafts]);
-      return { nodes:members, commit:final, entries:appended.slice(observations.length), dropped };
+      return { nodes:members, commit:final, entries:appended.slice(observations.length), dropped, deferred };
     },undefined,o.signal);
   },'merge',o.signal);
 }
@@ -2071,6 +2073,7 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   const red=await sweepRed(cwd,entries,state.trunk.commit);
   if (red) view.sweepRed=red;
   await applyMergeWaiting(cwd, dir, state, view);
+  if (driverRunning) await applyStillAsking(dir, state, view, now);
   const pendingBases: NonNullable<StatusView['rebasePending']> = {};
   for (const id of Object.keys(state.nodes)) {
     const r = await rebasePending(state, id);
@@ -2135,6 +2138,17 @@ async function candidateConflicts(cwd: string, state: State, only?: string): Pro
   }
   return conflicts;
 }
+/**
+ * QT4 (QT-R1 6): one `<node> merged (<commit12>); measured <n>, waived <n>, debt <n>` line per merged node. Best-effort:
+ * the read runs after the merge was committed, so a failure there only shortens the line to `<node> merged (<commit12>)`.
+ * `debt`: the deferred items left on this merge's keys per node (the merge result's `deferred`). A node the caller gives
+ * no count for gets no debt field: the ledger's defers of a node include defers on older merge keys.
+ */
+export async function mergedLines(cwd: string, merged: readonly { node: string; commit: string }[], debt?: Readonly<Record<string, number>>): Promise<string[]> {
+  return Promise.all(merged.map(async ({ node, commit }) => {
+    try { return mergedLine(await why({ cwd, node }), commit, debt?.[node]); } catch { return `${node} merged (${commit.slice(0, 12)})`; }
+  }));
+}
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
   if (o.node === 'trunk' && !state.nodes.trunk) {
@@ -2162,6 +2176,18 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   return card;
 }
 /** DR2: a missing/corrupt busy file cannot create acceptance evidence or hide a gate. */
+/** QT5: answered questions the running driver last saw still open on the subagent host, as Needs-you items. */
+async function applyStillAsking(dir: string, state: State, view: StatusView, now: number): Promise<void> {
+  if (!view.summary) return;
+  let cached: unknown;
+  try { cached = JSON.parse(await readFile(join(dir,'drive','asking.json'),'utf8')); } catch { return; }
+  if (!Array.isArray(cached)) return;
+  const valid = cached.filter((a): a is StillAsking => !!a && typeof a.node === 'string' && typeof a.rid === 'string' && typeof a.qid === 'string' && Number.isSafeInteger(a.rev));
+  for (const { node, text } of stillAskingNeeds(state, valid, now)) {
+    const reason = text.slice(node.length + 2);
+    if (!view.summary.needs.some(n => n.node === node && n.reason === reason)) view.summary.needs.unshift({ node, reason, command: '' });
+  }
+}
 async function applyMergeWaiting(cwd: string, dir: string, state: State, view: StatusView): Promise<void> {
   const driver = await driveStatus({ cwd });
   const measuring = driver.running ? driver.measuring ?? [] : [];

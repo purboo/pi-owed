@@ -184,7 +184,7 @@ test('D18b.2: a measured failure plus an unresolved needs-parent block halts; af
   assert.ok(repair?.do === 'send' && repair.reason === 'repair', JSON.stringify(repair));
   assert.ok(repair.message.includes(`(needed a parent ruling; ruling #${rule.seq}: use RFC 7807): which error format?`), repair.message);
   assert.ok(repair.message.includes(`Rulings since dispatch:\n- #${rule.seq} use RFC 7807`), repair.message);
-  assert.match(repair.message, new RegExp(`⛔ blocked #${fail.seq} check:unit`));
+  assert.ok(fail.seq > 0); assert.match(repair.message, /\n- check:unit: /);
 });
 
 test('D18b.5: a needs-parent block and a writer-fixable block on one candidate: halt first, then one repair with both notes and the ruling', () => {
@@ -266,10 +266,11 @@ test('CLI: review --block --needs-parent records needs; --ok --needs-parent is r
     const st = await cli(r.cwd, ['status', '--full']);
     assert.ok(st.stdout.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${e.seq} review (needs a parent ruling): which API?; record owed decide a --writer --text "<decision>"`), st.stdout);
     assert.equal((await cli(r.cwd, ['rule', 'general', '--nodes', '*'])).code, 0);
-    assert.match((await cli(r.cwd, ['why', 'a'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(needs a parent ruling\\)`));
+    assert.match((await cli(r.cwd, ['why', 'a', '--full'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(needs a parent ruling\\)`));
+    assert.match((await cli(r.cwd, ['why', 'a'])).stdout, /^⛔ review blocked \(needs a parent ruling\): which API\? → /m, 'QT-R1: the default card keeps the needs-parent mark');
     assert.equal((await cli(r.cwd, ['rule', 'use the v2 API', '--nodes', 'a'])).code, 0);
     const rule = await last(r.cwd);
-    assert.match((await cli(r.cwd, ['why', 'a'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(ruled #${rule.seq}\\)`));
+    assert.match((await cli(r.cwd, ['why', 'a', '--full'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(ruled #${rule.seq}\\)`));
     assert.doesNotMatch((await cli(r.cwd, ['status'])).stdout, /needs a parent ruling/);
   } finally { await r.cleanup(); }
 });

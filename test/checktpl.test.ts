@@ -42,7 +42,7 @@ test('CT1 node-tap: literal prefix, shell-safe files, successful-test counting a
     const obs = observation(f); assert.equal(obs.verdict, 'pass', obs.note); assert.equal(obs.counts?.pass, 1); assert.equal(obs.counts?.tests, 1);
     const run = parsePlan(f.text).nodes[0]!.checks[0]!.run;
     assert.match(run, /^# owed-template\/v1\/node-tap\n/); assert.match(run, /node --test --test-reporter=tap/); assert.ok(f.packet.includes(run));
-    const why = await cli(f.cwd, ['why', 'a']); assert.equal(why.code, 0, why.stderr); assert.ok(why.stdout.includes(run));
+    const why = await cli(f.cwd, ['why', 'a', '--full']); assert.equal(why.code, 0, why.stderr); assert.ok(why.stdout.includes(run));
     const json = await cli(f.cwd, ['why', 'a', '--json']); assert.equal(json.code, 0, json.stderr);
     assert.equal(JSON.parse(json.stdout).items.find((i: { obligation: string }) => i.obligation === 'check:gate').run, run);
     assert.equal(f.result.receipt.items.find(i => i.obligation === 'check:gate')?.run, run);
@@ -155,9 +155,9 @@ test('CT1 templates work on invariants and normalize to exactly the same plan/ch
     const f = await measured(check, files, cargoWrapper, true);
     try {
       await ops.merge({ cwd: f.cwd, node: 'a', as: parent });
-      const why = await cli(f.cwd, ['why', 'inv:gate']); assert.equal(why.code, 0, why.stderr);
+      const why = await cli(f.cwd, ['why', 'inv:gate', '--full']); assert.equal(why.code, 0, why.stderr);
       const expanded = parsePlan(f.text).invariants[0]!; assert.ok(why.stdout.includes(expanded.run));
-      const trunk = await cli(f.cwd, ['why', 'trunk']); assert.equal(trunk.code, 0, trunk.stderr); assert.ok(trunk.stdout.includes(expanded.run));
+      const trunk = await cli(f.cwd, ['why', 'trunk', '--full']); assert.equal(trunk.code, 0, trunk.stderr); assert.ok(trunk.stdout.includes(expanded.run));
       const plain = parsePlan(planText({ run: expanded.run, ...(expanded.min_tests === undefined ? {} : { min_tests: expanded.min_tests }) }, true, cargoWrapper));
       assert.deepEqual(parsePlan(f.text), plain, 'template metadata is not persisted');
       const state = await ops.status({ cwd: f.cwd });

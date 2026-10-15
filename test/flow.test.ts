@@ -199,7 +199,7 @@ test('rebase in place: trunk moves, the slot base becomes trunk, the candidate i
     assert.equal(why.blocks.length, 1);
     assert.equal(why.rebase?.previous?.commit, oldCommit);
     assert.equal(why.rebase?.rangeDiff, `git range-diff ${oldBase}..${oldCommit} ${trunk}..${newCommit}`);
-    assert.match((await cli(r.cwd, ['why', 'a'])).stdout, /Re-review only the resolution: git range-diff/);
+    assert.match((await cli(r.cwd, ['why', 'a', '--full'])).stdout, /Re-review only the resolution: git range-diff/);
     assert.equal((await ops.status({ cwd: r.cwd })).nodes.a!.candidate!.base, trunk, 'the new candidate is based on the new slot base');
   } finally { await r.cleanup(); }
 });

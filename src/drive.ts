@@ -4,12 +4,12 @@
 import { canonical, sha256 } from './canon.ts';
 import { rebaseFollowupSent, rebaseWorkText, type RebasePending } from './rebase-view.ts';
 import { answerRetry } from './answer.ts';
+import { clockTime } from './clock.ts';
 import { driveConfig } from './plan.ts';
 import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers } from './reducer.ts';
-import { clockTime } from './clock.ts';
-import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import { nodeReview } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -169,7 +169,7 @@ export function verdictMessage(node: string, c: { seq: number; commit: string },
     'Record it now, one command per obligation (choose --ok or --block and the rank your packet asks for):',
     ...awaiting.map(o => `owed review ${node} --obligation ${o} --candidate ${c12} --as ${who} --ok|--block --rank <N> --note "<why>"`)].join('\n');
 }
-export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node}\` for reviews you already recorded on this candidate, finish the rest.`;
+export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node} --full\` for reviews you already recorded on this candidate, finish the rest.`;
 /**
  * Ending of a halt for a run dsa rejected (D15.1): its id and bytes are fixed for the attempt and dsa answers the
  * same id the same way, so clearing the halt only re-halts; a new attempt is the recovery.
@@ -180,29 +180,39 @@ export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, rea
 export const fencedMessage = (reason: string): string => `Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`;
 /**
  * Repair follow-up: what to do, the notes of active review blocks (a needs-parent block quotes the ruling that resolved
- * it, which may predate the dispatch when the block came from an earlier attempt), the rulings covering the node recorded after the attempt's dispatch (D18.4), then the `owed why` card of the node.
+ * it, which may predate the dispatch when the block came from an earlier attempt), the rulings covering the node recorded after the attempt's dispatch (D18.4).
+ * QT3: only failures recorded after the last send to the writer's run are detailed; older ones still failing are named
+ * in one line, and the message points to `owed why <node> --full` instead of embedding the card.
  */
-export function repairMessage(s: State, node: string): string { return repairFollowUp(s, node).message; }
+export function repairMessage(s: State, node: string, rejected?: ReadonlyMap<string, string>): string { return repairFollowUp(s, node, rejected).message; }
 /**
  * The repair follow-up and the `rulings` its send entry records (E4): the highest seq of the rulings it carries (the
  * rulings since dispatch and the rulings quoted by needs-parent block notes), 0 when none. Both come from one state, so
  * a ruling recorded after this state is never counted as carried.
  */
-export function repairFollowUp(s: State, node: string): { message: string; rulings: number } {
-  const n = s.nodes[node]!, c = n.candidate!, entries = entriesOf(s), quoted: Rule[] = [];
-  const notes = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active').map(b => {
+export function repairFollowUp(s: State, node: string, rejected?: ReadonlyMap<string, string>): { message: string; rulings: number } {
+  const n = s.nodes[node]!, entries = entriesOf(s), quoted: Rule[] = [];
+  // QT3 (QT-R1 4): only failures recorded after the latest repair follow-up to this writer's run that was not refused;
+  // ruling steers, report/rebase/interrupted follow-ups and refused sends do not count. Before the first, all are new.
+  const ar = n.runs.find(r => r.attempt === n.slot!.attempt), rid = writerRid(s, node);
+  const since = Math.max(-1, ...(ar?.sends ?? []).filter(x => x.rid === rid && x.reason === 'repair' && x.sendKind === 'follow-up' && !rejected?.has(x.send)).map(x => x.seq));
+  const active = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active');
+  const notes = active.filter(b => b.seq > since).map(b => {
     const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
     if (ruled && deliversRule(ruled, writerRid(s, node))) quoted.push(ruled);
     return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${b.needs === 'parent' ? (ruled ? ` (needed a parent ruling; ruling #${ruled.seq}${deliversRule(ruled, writerRid(s, node)) ? `: ${ruled.text}` : ''})` : ' (needs a parent ruling)') : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
   });
-  const since = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq && deliversRule(r, writerRid(s, node))), rulings = since.map(r => `- #${r.seq} ${r.text}`);
+  const scoped = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq && deliversRule(r, writerRid(s, node))), rulings = scoped.map(r => `- #${r.seq} ${r.text}`);
+  const failed = newFailures(receipt(s, entries, node), since);
+  const earlier = [...new Set([...failed.earlier, ...active.filter(b => b.seq <= since).map(b => b.obligation)])];
   // K5.2: the rulings come first.
-  return { rulings: carried([...since, ...quoted]), message: [...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
-    `owed found problems with your candidate ${c.commit} (submit #${c.seq}) of ${node}, attempt ${n.slot!.attempt}.`,
-    `Fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself.`,
+  return { rulings: carried([...scoped, ...quoted]), message: [...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
+    `owed found problems with your candidate of ${node}.`,
+    ...(failed.lines.length ? ['Failures new since my last message:', ...failed.lines] : []),
     ...(notes.length ? ['Review blocks (the reviewer\'s note):', ...notes] : []),
-    `The \`owed why ${node}\` card:`, '',
-    renderReceipt(receipt(s, entries, node))].join('\n') };
+    ...(!failed.lines.length && !notes.length ? ['No new failures since my last message.'] : []),
+    ...(earlier.length ? [`Still failing from before: ${earlier.join(', ')}.`] : []),
+    `Next: fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself. Everything else: \`owed why ${node} --full\`.`].join('\n') };
 }
 /** G3.7: the conflicting-files clause of a rebase instruction; empty when the list is unknown. */
 const conflictText = (conflicts?: readonly string[]): string => conflicts ? ` (files that conflict with your previous candidate: ${conflicts.length ? conflicts.join(', ') : 'none'})` : '';
@@ -583,6 +593,43 @@ export function sharedWaiting(s: State, id: string, opts: Pick<DriveOpts, 'notic
   const parks = sharedParked(s, id);
   return parks.length > 0 && (parks.some(p => p.fix !== undefined) || !!opts.noticed?.has(sharedParkKey(s, id)));
 }
+/** QT5: how long an answered question may stay open on the subagent host before owed says so (default 10 minutes). */
+export const answerGraceMs = (s: State): number => (s.plan.drive?.answer_grace_s ?? 600) * 1000;
+/**
+ * QT5: an answered question the subagent host still lists as open after the grace, in status, wakes and Needs-you:
+ * `<node>: answered at #<seq> (HH:MM), still asking after <m>m: retry with <the exact answer retry>`.
+ */
+export function stillAskingText(node: string, e: import('./types.ts').RuleEntry, now: number): string {
+  const minutes = Math.max(0, Math.floor((now - Date.parse(e.ts)) / 60_000));
+  return `${node}: answered at #${e.seq} (${clockTime(e.ts, now)}), still asking after ${minutes}m: retry with ${answerRetry(node, e)}`;
+}
+/** QT5: one answered question the subagent host still lists as open after the grace (a runtime fact, never a ledger entry). */
+export interface StillAsking { node: string; rid: string; qid: string; rev: number }
+/** QT5: the answered questions of open attempts that the described runs still ask after the grace, at `now`. */
+export function stillAsking(s: State, runs: ReadonlyMap<string, RunView>, now: number): StillAsking[] {
+  const out: StillAsking[] = [];
+  for (const n of Object.values(s.nodes)) {
+    if (!n.slot?.open || n.merged) continue;
+    for (const l of n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? []) {
+      const v = runs.get(l.rid);
+      if (v?.state !== 'asking') continue;
+      for (const q of v.questions ?? []) {
+        const e = answeredQuestion(s, l.rid, q.qid, q.rev);
+        if (e && now - Date.parse(e.ts) >= answerGraceMs(s)) out.push({ node: n.id, rid: l.rid, qid: q.qid, rev: q.rev });
+      }
+    }
+  }
+  return out;
+}
+/** QT5: the recorded still-asking facts that remain true for `s` at `now`, with their Needs-you text. */
+export function stillAskingNeeds(s: State, asking: readonly StillAsking[], now: number): { node: string; text: string }[] {
+  return asking.flatMap(a => {
+    const n = s.nodes[a.node];
+    if (!n?.slot?.open || n.merged || !n.runs.find(r => r.attempt === n.slot!.attempt)?.launches.some(l => l.rid === a.rid)) return [];
+    const e = answeredQuestion(s, a.rid, a.qid, a.rev);
+    return e && now - Date.parse(e.ts) >= answerGraceMs(s) ? [{ node: a.node, text: stillAskingText(a.node, e, now) }] : [];
+  });
+}
 /** QN1: a durable answer covers that question at its recorded revision and older revisions. */
 export function answeredQuestion(s: State, rid: string, qid: string, rev?: number) {
   const e = entriesOf(s).findLast(e => e.kind === 'rule' && ruleAnswers(e).some(a => a.rid === rid && a.qid === qid && (rev === undefined || rev <= a.rev))) as import('./types.ts').RuleEntry | undefined;
@@ -612,10 +659,10 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const questions = v.questions ?? [], open = questions.filter(q => !answeredQuestion(s, l.rid, q.qid, q.rev));
     const answers = questions.flatMap(q => answeredQuestion(s, l.rid, q.qid, q.rev) ?? []);
     const overdue = answers.find(e => !opts.noticed?.has(`answer-grace\u0000${l.rid}\u0000${e.answer!.qid}`)
-      && opts.now !== undefined && opts.now - Date.parse(e.ts) >= (s.plan.drive?.answer_grace_s ?? 900) * 1000);
+      && opts.now !== undefined && opts.now - Date.parse(e.ts) >= answerGraceMs(s));
     if (overdue) {
-      const q = overdue.answer!, age = Math.floor((opts.now! - Date.parse(overdue.ts)) / 1000);
-      return { do: 'notify', node: id, rid: l.rid, qid: q.qid, rev: questions.find(q => q.qid === overdue.answer!.qid)!.rev, answerRetry: true, once: `answer-grace\u0000${l.rid}\u0000${q.qid}`, text: `${id}: answer #${overdue.seq} recorded ${age}s ago but run ${l.rid} still shows question ${q.qid}; retry delivery: ${answerRetry(id, overdue)}` };
+      const q = overdue.answer!;
+      return { do: 'notify', node: id, rid: l.rid, qid: q.qid, rev: questions.find(q => q.qid === overdue.answer!.qid)!.rev, answerRetry: true, once: `answer-grace\u0000${l.rid}\u0000${q.qid}`, text: stillAskingText(id, overdue, opts.now!) };
     }
     if (questions.length && !open.length) {
       const e = answers[0]!;
@@ -875,7 +922,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const outstanding = ar.sends.findLast(x => x.reason === 'repair' && x.seq > c.seq && (!wSealed || x.seq > resumed)), budget = repairsSince(s, id, ar);
       if (outstanding) return wSealed ? writerHalt(`writer run ${at(writer)} finished repair follow-up ${outstanding.send} without submitting a new candidate (${cause})`, cause, outstanding.seq) : fenced() ?? steerRulings();
       if (budget.count >= opts.repairs) { const ex = `repairs exhausted (${budget.count} of ${opts.repairs} since ${budget.label}): ${cause}`; return writerHalt(ex, ex, c.seq); }
-      const r = repairFollowUp(s, id);
+      const r = repairFollowUp(s, id, opts.rejected);
       return send(writer, 'follow-up', 'repair', r.message, r.rulings);
     };
     // D18/D18b.2: a review block on the current candidate whose reviewer says it needs a parent ruling halts (needs

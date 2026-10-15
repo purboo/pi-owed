@@ -61,7 +61,8 @@ test('MT2/MT3/MT6: a batch of 3 measures every invariant once on Mn, appends one
     const before = await entries(r), invRuns = await runs(r), trunk = st.trunk.commit, log = await reflog(r);
     const res = await cli(r.cwd, ['merge', 'a,b,c', '--as', 'parent:test']);
     assert.equal(res.code, 0, res.stderr);
-    assert.match(res.stdout, /Trunk advanced to [0-9a-f]{40} \(batch of 3: a, b, c\)/);
+    assert.match(res.stdout, /^Batch of 3: a, b, c$/m);
+    for (const id of ['a', 'b', 'c']) assert.match(res.stdout, new RegExp(`^${id} merged \\([0-9a-f]{12}\\); measured \\d+, waived 0, debt 0$`, 'm'));
     const added = (await entries(r)).slice(before.length);
     assert.deepEqual(added.map(e => e.kind === 'obs' ? `obs ${e.subject}/${e.obligation}` : `${e.kind} ${'node' in e ? e.node : ''}`),
       ['obs a/check:a', 'obs b/check:b', 'obs c/check:c', 'obs trunk/inv:inv', 'merge a', 'merge b', 'merge c']);
