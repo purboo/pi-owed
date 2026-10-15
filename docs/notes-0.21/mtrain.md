@@ -82,3 +82,19 @@ once.
   a single merge measures its own tree and a batch check failure is not reused (the member gets the block), batch
   entry order/identity on replay, torn batch tail reported by verify and completed by the next write.
 - Existing tests changed: none.
+
+## Batch-tail follow-up (`mtrain-tail`)
+- Each outer ledger lock probes the last line with positioned reads of at most 64 KiB per chunk, growing backwards
+  only until the full last line is available. The recovery hook loads/replays the full ledger only when that line
+  is a non-final batch member merge. Ordinary operations may still load the ledger for their own validation.
+- Recovery hints supersede the earlier `else adopt the trunk` wording above: restore `refs/heads/<trunk>` to the full
+  `batch.final` hash (for example, recover it from the reflog with `git update-ref refs/heads/<trunk> <final>`), then
+  any owed write completes the batch. If trunk history no longer contains the batch commits, the ledger tail and
+  trunk disagree and need manual repair. `owed adopt` cannot close an incomplete batch.
+- These hints appear in write refusals, first-parent history mismatch errors, and `verify.incompleteBatch`.
+  No new entry kind, command, plan key or compatibility requirement is introduced; recovery gates are unchanged.
+- New tests: `test/mtrain-tail.test.ts` covers the byte count on a 16 MiB ledger with an ordinary last entry,
+  growth across an oversized UTF-8 last line, empty/malformed tails, all three recovery hint paths, refusal without
+  appending, and completion by the next write after restoring the ref/history.
+- Existing tests changed: only the exact `verify.incompleteBatch` recovery-text assertion in `test/mtrain.test.ts`,
+  updated from the superseded adopt wording to MTT2's ref-restoration/manual-repair hint (plan #2294, ruling #2296).
