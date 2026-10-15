@@ -188,8 +188,8 @@ export interface HoldEntry extends Base { kind: 'hold'; node: string; abandon: n
 /** Moves the open slot of `node` from base `from` to the current trunk `base`; the open candidate is invalidated. */
 export interface RebaseEntry extends Base { kind: 'rebase'; node: string; attempt: number; base: string; from: string }
 export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts; /** MT3 (0.21): batch merge member; older owed misjudges it. */ batch?: MergeBatch }
-/** MT3 (0.21): the batch a merge entry belongs to: the final merge commit Mn, its state facts, this member's check keys on Mn, all members in order. */
-export interface MergeBatch { final: string; state: StateFacts; keys: Record<string, string>; members: string[] }
+/** MT3 (0.21): the batch a merge entry belongs to, identical on every member entry: the final merge commit Mn, its state facts, per member its check keys on Mn, all members in order. */
+export interface MergeBatch { final: string; state: StateFacts; keys: Record<string, Record<string, string>>; members: string[] }
 export interface NoteEntry extends Base { kind: 'note'; text: string }
 /** A file recorded as manual evidence: `path` repository-relative when inside the repository, else absolute; hashed when recorded. */
 export interface EvidenceFile { path: string; sha256: string; bytes: number }

@@ -92,10 +92,21 @@ function dependentCounts(plan: Plan): Map<string, number> {
 const waivedFail = (s: State, e: ObsEntry): boolean => e.verdict === 'fail' && e.merging !== undefined && e.merging === e.subject && listed(context(s).waives, e.subject).some(w => w.kind === 'waive' && w.node === e.subject && w.obligation === e.obligation && w.key !== e.key && w.seq > e.seq && (w.accept_risk ?? []).includes(e.seq));
 /** The observations that count for an item: exclude diagnostic probes and waived merge-key fails (F3). */
 const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => {
-  const obs = observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e) && grantPassReusable(s,e));
+  const obs = observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e) && grantPassReusable(s,e) && batchCounts(s, e));
   // WG5 supersedes an earlier overlap-only failure; ordinary failures keep their conflict semantics.
   return obligation === 'writes' ? obs.filter((e,i) => !e.waits_on || i === obs.length - 1) : obs;
 };
+/**
+ * MT4 / ruling #2110: which batch observations count. `undefined`: state views (an obs of a batch that merged counts,
+ * since its final tree is then trunk; of a batch that did not merge, never); `''`: a non-batch merge (never: it measures
+ * its own tree with `merging`); else the `\0`-joined members of the batch merge being judged (only that batch's obs).
+ */
+let batchScope: string | undefined;
+function inBatchScope<T>(scope: string, fn: () => T): T { const prior = batchScope; batchScope = scope; try { return fn(); } finally { batchScope = prior; } }
+function batchCounts(s: State, e: ObsEntry): boolean {
+  if (e.batch === undefined) return true;
+  return batchScope === undefined ? s.nodes[e.batch.at(-1)!]?.merged?.commit === e.commit : batchScope === e.batch.join('\0');
+}
 /** GR3: the unchanged writes key must not carry a grant-supported pass into a new attempt. */
 function grantPassReusable(s: State, e: ObsEntry): boolean {
   if (e.obligation !== 'writes' || e.verdict !== 'pass') return true;
@@ -526,7 +537,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       // (E or known-red W) and the result is D; an unchanged known-red W is not a catch.
       if (e.merging && e.verdict === 'fail' && e.by === 'executor:owed') {
         const pre = e.subject === 'trunk' ? item(s, 'trunk', e.obligation, s.trunk.invKeys[e.obligation.slice(4)] ?? '') : undefined;
-        if (!pre || pre.status !== 'D' && item(s, 'trunk', e.obligation, e.key, e.merging, e).status === 'D') h.mergeCatches.add(e.seq);
+        if (!pre || pre.status !== 'D' && inBatchScope('', () => item(s, 'trunk', e.obligation, e.key, e.merging, e)).status === 'D') h.mergeCatches.add(e.seq);
       }
       const n = s.nodes[e.subject];
       if (n && e.probe === undefined) {
@@ -883,11 +894,27 @@ export function mergeBatchPlan(s: State, size: number, queue: string[] = mergeQu
   return out.length >= 2 && !batchFailed(s, out) ? out : [];
 }
 const isFacts = (x: unknown): x is StateFacts => !!x && typeof x === 'object' && typeof (x as StateFacts).commit === 'string' && typeof (x as StateFacts).tree === 'string' && !!(x as StateFacts).invKeys && typeof (x as StateFacts).invKeys === 'object';
+/** MT3 / ruling #2110: the batch merge the ledger tail leaves incomplete (its last merge entry is not of the last member). */
+export function openBatch(s: State): Extract<Entry, { kind: 'merge' }> | undefined {
+  const e = context(s).entries.at(-1);
+  return e?.kind === 'merge' && e.batch !== undefined && e.batch.members.at(-1) !== e.node ? e : undefined;
+}
+/** Ruling #2110: entries of one batch are consecutive merge entries in members order with an identical batch object. */
+function batchOrderErrors(s: State, d: Draft): string[] {
+  const open = openBatch(s), b = d.kind === 'merge' ? d.batch : undefined;
+  if (open) {
+    const next = open.batch!.members[open.batch!.members.indexOf(open.node) + 1]!;
+    if (d.kind !== 'merge' || d.node !== next || canonical(b ?? null) !== canonical(open.batch)) return [`batch merge of ${open.batch!.members.join(', ')} is incomplete (#${open.seq} merged ${open.node}): only the merge of ${next} in the same batch may follow; the next owed write completes it when trunk is at ${open.batch!.final.slice(0, 12)}`];
+    return [];
+  }
+  if (d.kind === 'merge' && b && Array.isArray(b.members) && b.members[0] !== d.node) return [`batch merge entries must start with the first member ${String(b.members[0])}`];
+  return [];
+}
 /** MT3: shape of a batch merge entry; the last member's commit and state are the batch's final ones. */
 function batchMergeErrors(d: Extract<Draft, { kind: 'merge' }>): string[] {
   const b = d.batch;
   if (b === undefined) return [];
-  if (!b || typeof b !== 'object' || typeof b.final !== 'string' || !isFacts(b.state) || b.state.commit !== b.final || !b.keys || typeof b.keys !== 'object' || !Array.isArray(b.members) || b.members.length < 2 || b.members.some(m => typeof m !== 'string') || new Set(b.members).size !== b.members.length || !b.members.includes(d.node)) return ['merge batch must be {final, state, keys, members} with the final state and at least 2 distinct members including the node'];
+  if (!b || typeof b !== 'object' || typeof b.final !== 'string' || !isFacts(b.state) || b.state.commit !== b.final || !b.keys || typeof b.keys !== 'object' || !Array.isArray(b.members) || !b.members.every(m => !!b.keys[m] && typeof b.keys[m] === 'object') || b.members.length < 2 || b.members.some(m => typeof m !== 'string') || new Set(b.members).size !== b.members.length || !b.members.includes(d.node)) return ['merge batch must be {final, state, keys: {member: keys}, members} with the final state and at least 2 distinct members including the node'];
   const last = b.members.at(-1) === d.node;
   if (last && (d.commit !== b.final || canonical(d.state) !== canonical(b.state))) return ['the last batch member must merge the final batch commit and state'];
   if (!last && d.commit === b.final) return ['only the last batch member merges the final batch commit'];
@@ -1174,6 +1201,7 @@ export function grantHint(s: State, id: string, paths = s.nodes[id]?.candidate?.
 }
 export function validateDraft(s: State, d: Draft): string[] {
   const errors: string[] = [];
+  errors.push(...batchOrderErrors(s, d));
   const r = role(d.by);
   const allow = (...roles: string[]): void => { if (!roles.includes(r)) errors.push(`${d.kind} insufficient permissions; requires ${roles.join('/')}`); };
   if (!/^(owner|parent|writer|reviewer|executor):.+$/.test(d.by)) errors.push('Invalid identity format');
@@ -1661,7 +1689,8 @@ export function jobCurrent(s: State, j: AttestJob): boolean {
   if (j.attribution) return n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === j.obligation && b.key === j.key && listed(context(s).bySeq, b.seq).some(e => e.kind === 'obs' && e.seq === b.seq && e.commit === j.commit && e.base === j.base));
   return !!n.slot?.open && !!n.candidate && n.candidate.keys[j.obligation] === j.key;
 }
-export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): AttestJob[] {
+export function mergeJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): AttestJob[] { return inBatchScope('', () => scopedMergeJobs(s, id, m)); }
+function scopedMergeJobs(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts }): AttestJob[] {
   const spec = nodeSpec(s, id);
   if (!spec || !s.nodes[id]?.candidate) throw new OwedError(`Node ${id} has no current candidate`);
   const jobs: AttestJob[] = [];
@@ -1681,7 +1710,8 @@ export function batchQuarantine(s: State, members: string[]): QuarantineNames { 
  * MT2: jobs of a batch merge on its final tree `final` (state facts `st`): every member's node checks on its keys there
  * (`keys[member]`) and every invariant on `st`, skipping keys that already have a verdict.
  */
-export function batchJobs(s: State, members: string[], keys: Record<string, Record<string, string>>, st: StateFacts): AttestJob[] {
+export function batchJobs(s: State, members: string[], keys: Record<string, Record<string, string>>, st: StateFacts): AttestJob[] { return inBatchScope(members.join('\0'), () => scopedBatchJobs(s, members, keys, st)); }
+function scopedBatchJobs(s: State, members: string[], keys: Record<string, Record<string, string>>, st: StateFacts): AttestJob[] {
   const merged = (id: string): boolean => !!s.nodes[id]?.merged || members.includes(id), jobs: AttestJob[] = [];
   const q = (j: AttestJob): AttestJob => { const e = j.spec ? activeQuarantine(s.plan, j.spec, merged) : []; return e.length ? { ...j, quarantined: e } : j; };
   for (const id of members) {
@@ -1847,9 +1877,12 @@ export function carriedDefer(s: State, node: string, inv: string, key: string): 
   return { defer, carried };
 }
 export function mergeGuard(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts; batch?: MergeBatch }): MergeGuard {
+  return inBatchScope(m.batch?.members.join('\0') ?? '', () => scopedMergeGuard(s, id, m));
+}
+function scopedMergeGuard(s: State, id: string, m: { facts: CandidateFacts; state: StateFacts; batch?: MergeBatch }): MergeGuard {
   const reasons: string[] = [];
   // MT3: a batch member's invariants and merge-tree checks are judged on the final batch tree Mn.
-  const inv = m.batch?.state ?? m.state, checkKeys = m.batch?.keys ?? m.facts.keys;
+  const inv = m.batch?.state ?? m.state, checkKeys = m.batch?.keys[id] ?? m.facts.keys;
   const n = s.nodes[id], spec = nodeSpec(s, id);
   const nodeItemsOnMerge: ItemView[] = [];
   if (!n?.accepted) reasons.push(`Node ${id} current candidate is not yet accepted`);
