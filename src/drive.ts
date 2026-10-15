@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { rebaseFollowupSent, rebaseWorkText, type RebasePending } from './rebase-view.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
-import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting } from './reducer.ts';
+import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
@@ -889,7 +889,11 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       if (m && m.candidate === c.seq) return m.rebase ? { do: 'rebase', node: id } : halt(`merge refused: ${m.reason}`, m.needs ?? 'human');
       return { do: 'merge', node: id };
     }
-    if (waitingWrites) return fenced() ?? steerRulings();
+    if (waitingWrites) {
+      const cycle = writesWaitCycle(s,id);
+      if (cycle) return halt(`writes ownership wait cycle: ${cycle.join(' -> ')}; resolve the ownership overlap with owed plan or abandon one slot, then run owed resume ${id}`, 'human');
+      return fenced() ?? steerRulings();
+    }
     // Liveness (D12): a candidate that is not accepted while no driver run of the attempt is unsealed never yields
     // "nothing to do": halt needing the owner with every non-E item and active block (K5.2: a due ruling follow-up first).
     // 0.8 (L3.1): to the writer when the candidate has a failed item, an active block on its keys or a flaky block; when its

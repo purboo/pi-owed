@@ -1,3 +1,4 @@
+import { writesSyntax } from './writes.ts';
 import type { Entry, Plan, State } from './types.ts';
 import { driveReviewerSlot, reviewerBase, writesOverlap, applicableRules } from './reducer.ts';
 
@@ -25,7 +26,7 @@ export function parentOverlapWarnings(plan: Plan, state: State): string[] {
     if (!added && !ready) continue;
     for (const b of nodes) {
       const pair = [a.id,b.id].sort().join('\0');
-      if (a.id === b.id || seen.has(pair) || !critical.has(b.id) || ancestors(a.id,b.id) || ancestors(b.id,a.id) || !writesOverlap(a.writes,b.writes)) continue;
+      if (a.id === b.id || seen.has(pair) || !critical.has(b.id) || ancestors(a.id,b.id) || ancestors(b.id,a.id) || !writesOverlap(a.writes,b.writes,writesSyntax(plan))) continue;
       seen.add(pair); warnings.push(`writes of ${a.id} overlap ${b.id} (on the critical path): consider deps ${a.id} after ${b.id}`);
     }
   }
