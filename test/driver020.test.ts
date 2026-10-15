@@ -1,11 +1,12 @@
 // DR1–DR4: real ledger/CLI/driver behavior; no synthetic acceptance shortcuts.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { existsSync, appendFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
-import { Driver } from '../src/drive-run.ts';
+import { Driver, procStart, reportText } from '../src/drive-run.ts';
 import { Dsa, type SendResult } from '../src/dsa.ts';
 import { writerLaunch, rulingFollowUp } from '../src/drive.ts';
 import { projectId, runId, runLabels } from '../src/reducer.ts';
@@ -37,7 +38,8 @@ async function fixture(nodes: object[], extra: object | ((root: string) => objec
   await r.put('seed', 'fixture'); await r.commit();
   await ops.init({ cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(p), measure: false });
   const dsa = new Client(), lines: string[] = [];
-  const driver = new Driver({ cwd: r.cwd, dsa, log: l => lines.push(l), handleSignals: false, stay: true });
+  const logDir = join(process.env.OWED_DIR!, 'drive'); await mkdir(logDir, { recursive: true });
+  const driver = new Driver({ cwd: r.cwd, dsa, json: true, log: l => { lines.push(reportText(JSON.parse(l))); appendFileSync(join(logDir, 'log.jsonl'), l + '\n'); }, handleSignals: false, stay: true });
   const launch = async (id: string, role: 'writer' | 'reviewer' = 'writer', model = 'selected') => {
     const s = (await ops.readState(r)).state, project = projectId(s), rid = runId(project,id,1,role,role === 'reviewer' ? 1 : undefined);
     const built = role === 'writer' ? writerLaunch(s,id,project) : { spec: JSON.stringify({ model }), labels: runLabels(project,id,1,role) };
@@ -52,7 +54,7 @@ async function fixture(nodes: object[], extra: object | ((root: string) => objec
     if (review) await ops.review({ ...r, as: { role: 'reviewer', id: `${id}-review` }, node: id, verdict: 'ok', rank: 1, note: 'verified', named: commit });
     return { slot, commit };
   };
-  return { ...r, p, dsa, lines, driver, launch, candidate, async done() { driver.abort.abort(); await driver.settle(); await r.cleanup(); } };
+  return { ...r, p, dsa, lines, driver, launch, candidate, async live() { await writeFile(join(logDir, '..', 'drive.lock'), JSON.stringify({ pid: process.pid, host: hostname(), start: procStart(process.pid), at: new Date().toISOString(), token: 'fixture' })); }, async done() { driver.abort.abort(); await driver.settle(); await r.cleanup(); } };
 }
 const waitFor = async (check: () => boolean, label: string) => {
   const end = Date.now() + 10_000;
@@ -91,7 +93,7 @@ test('DR2: lease busy reason persists through status, acceptance age is not disp
     assert.match((await cli(f.cwd,['status','--full'])).stdout,/merge waiting for .*attest --trunk since/);
     const since = wait!.since;
     f.driver.tick(); await f.driver.pass(); await f.driver.settle();
-    assert.equal((await ops.status(f)).mergeWaiting!.a!.since,since);
+    assert.equal((await ops.status(f)).mergeWaiting!.a!.since, since, 'consecutive busy retries keep the first busy end');
     await commitAt(n.slot!.worktree, { 'a.txt': 'new' });
     await ops.submit({ cwd:n.slot!.worktree,as:{role:'writer',id:'a#1'},node:'a' });
     assert.equal((await ops.status(f)).mergeWaiting,undefined);
@@ -102,6 +104,7 @@ test('DR1/DR2: accepted merge preempts driver trunk attest and shows internal wa
   const f = await fixture([node('a',[],{ approve:'owner' })]);
   const mark = join(f.root,'trunk-started'), gate = join(f.root,'gate');
   try {
+    await f.live();
     const { commit } = await f.candidate('a');
     const p = { ...f.p, invariants:[{ id:'slow', run:`echo started > '${mark}'; while [ ! -f '${gate}' ]; do sleep 0.05; done`, reads:['seed'] }], drive:{ measure:1 } };
     await ops.planSet({ ...f,as:owner,channel:'delegated',note:'add invariant',plan:JSON.stringify(p) });

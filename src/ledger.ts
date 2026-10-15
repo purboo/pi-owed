@@ -70,7 +70,7 @@ export function lockActivityText(owner: LockOwner): string {
 }
 export function lockTimeoutText(name: string, owner?: LockOwner): string {
   const what = name === 'lock' ? 'the ledger lock' : `the ${name} lock`;
-  return owner ? `timed out waiting for ${what} held by pid ${owner.pid} on ${owner.host} since ${owner.ts}${lockActivityText(owner)}; retry` : `timed out waiting for ${what}; retry`;
+  return owner ? `timed out waiting for ${what} held by pid ${owner.pid} on ${owner.host} since ${clockTime(owner.ts)}${lockActivityText(owner)}; retry` : `timed out waiting for ${what}; retry`;
 }
 async function readOwner(path: string): Promise<LockOwner | undefined> {
   try {

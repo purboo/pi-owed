@@ -117,14 +117,14 @@ test('CR2 plan and amend preserve carried candidates and act lines without progr
   } finally { await r.cleanup(); }
 });
 
-test('CR2 rule shows its recorded entry and brief while report keeps the full escape section', async () => {
+test('CR2 rule shows only its receipt and delivery notices while report keeps the full escape section', async () => {
   const r = await fixture();
   try {
     await submitted(r);
     const reply = await r.h.call('rule', { text: 'Keep the interface.', nodes: ['a'] });
     const entry = reply.details as Awaited<ReturnType<typeof ops.rule>>;
-    assert.equal(text(reply).split('\n')[0], views.renderEntry(entry));
-    compact(text(reply)); assert.ok(text(reply).endsWith(detailsLine));
+    assert.equal(text(reply).split('\n')[0], `Recorded #${entry.seq} ruling (a); delivered 0/2`);
+    assert.doesNotMatch(text(reply), /Keep the interface\.|Details: owed status|owed:/);
     assert.match(text(await r.h.call('report')), /Escapes \(all time\)/);
     assert.match(text(await r.h.call('status')), /In progress \(1\):/);
     assert.match(text(await r.h.call('status', { full: true })), /Pending reviewer:/);

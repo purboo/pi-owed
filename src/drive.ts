@@ -8,6 +8,7 @@ import { driveConfig } from './plan.ts';
 import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers } from './reducer.ts';
+import { clockTime } from './clock.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -191,9 +192,9 @@ export function repairFollowUp(s: State, node: string): { message: string; rulin
   const notes = n.blocks.filter(b => b.kind === 'judgment' && b.state === 'active').map(b => {
     const e = entries.find(x => x.seq === b.seq), ruled = b.needs === 'parent' ? parentRuling(s, b) : undefined;
     if (ruled && deliversRule(ruled, writerRid(s, node))) quoted.push(ruled);
-    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${b.needs === 'parent' ? (ruled ? ` (needed a parent ruling; ruling #${ruled.seq}${deliversRule(ruled, writerRid(s, node)) ? `: ${oneLine(ruled.text)}` : ''})` : ' (needs a parent ruling)') : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
+    return `- #${b.seq} ${b.obligation} by ${e?.by ?? '?'} rank ${b.rank}${b.needs === 'parent' ? (ruled ? ` (needed a parent ruling; ruling #${ruled.seq}${deliversRule(ruled, writerRid(s, node)) ? `: ${ruled.text}` : ''})` : ' (needs a parent ruling)') : ''}: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`;
   });
-  const since = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq && deliversRule(r, writerRid(s, node))), rulings = since.map(r => `- #${r.seq} ${oneLine(r.text)}`);
+  const since = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq && deliversRule(r, writerRid(s, node))), rulings = since.map(r => `- #${r.seq} ${r.text}`);
   // K5.2: the rulings come first.
   return { rulings: carried([...since, ...quoted]), message: [...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
     `owed found problems with your candidate ${c.commit} (submit #${c.seq}) of ${node}, attempt ${n.slot!.attempt}.`,
@@ -273,7 +274,7 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
   const rules = [...since, ...quoted.filter(q => !since.some(r => r.seq === q.seq))].sort((a, b) => a.seq - b.seq);
   const rb = slot.rebase && slot.rebase.seq > last.seq ? slot.rebase : undefined;
   return { rulings: carried(rules), message: [
-    ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`)] : []),
+    ...(rules.length ? [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${r.text}`)] : []),
     `Review blocks on your candidate ${last.facts.commit} (submit #${last.seq}) of ${node}, attempt ${slot.attempt} (the reviewer's note):`, ...notes,
     ...(rb && work?.recovery ? [work.recovery] : []),
     rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${rb.base} $(git merge-base HEAD ${rb.base})`}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
@@ -321,13 +322,27 @@ const undelivered = (s: State, node: string, ar: AttemptRuns, writer: LaunchEntr
   const d = deliveredRulings(s, node, ar, writer, refused);
   return rulingsInScope(s, node).filter(r => r.seq > d && deliversRule(r,writer.rid));
 };
+/** LO-W4: the rulings the slot writer may still need, for why's manual forwarding section. */
+export function rulingToForward(s: State, node: string): string | undefined {
+  const n = s.nodes[node], slot = n?.slot;
+  if (!n || !slot?.open || n.merged) return undefined;
+  const ar = n.runs.find(r => r.attempt === slot.attempt), writer = ar?.launches.find(l => l.role === 'writer');
+  let rules: Rule[];
+  if (ar && writer) rules = undelivered(s, node, ar, writer);
+  else {
+    const submitted = entriesOf(s).findLast(e => e.kind === 'submit' && e.node === node && e.attempt === slot.attempt && e.by === slot.writer);
+    const since = Math.max(slot.rulings_seen, submitted?.seq ?? -1);
+    rules = rulingsInScope(s, node).filter(r => r.seq > since);
+  }
+  return rules.length ? rulingMessage(node, 'writer', rules) : undefined;
+}
 /**
  * K5.2: a writer follow-up (`submit`, `rebase`) with the undelivered in-scope rulings first; `rulings` (their highest
  * seq) only when it carries at least one, so a follow-up without rulings stays readable by 0.6.x.
  */
 function withRulings(s: State, node: string, ar: AttemptRuns, writer: LaunchEntry, message: string, refused?: Refused): { message: string; rulings?: number } {
   const rules = undelivered(s, node, ar, writer, refused);
-  return rules.length ? { message: [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${oneLine(r.text)}`), message].join('\n'), rulings: carried(rules) } : { message };
+  return rules.length ? { message: [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${r.text}`), message].join('\n'), rulings: carried(rules) } : { message };
 }
 /** One evidence line of a halt (K5.4): one line, at most 200 characters. */
 const clip = (text: string): string => { const t = oneLine(text); return t.length > 200 ? `${t.slice(0, 199)}…` : t; };
@@ -341,7 +356,7 @@ export function rulingFollowUp(s: State, node: string, refused?: Refused): { mes
   if (!n || !slot || !ar || !writer) return undefined;
   const rules = undelivered(s, node, ar, writer, refused);
   if (!rules.some(r => r.nodes !== '*')) return undefined;
-  return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
+  return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rulingLines(rules),
     ...blockLines(s, node), `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`].join('\n') };
 }
 /**
@@ -378,7 +393,7 @@ function reviewerRuling(s: State, n: NodeState, ar: AttemptRuns, reviewers: read
   if (!inScope.some(r => r.seq > delivered) && !answerAckDue(s, n, ar, l, opts.rejected)) return undefined;
   // AN3 / #1266: acknowledgment covers every in-scope ruling, including already delivered answers.
   const rules = inScope, top = carried(rules);
-  return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'follow-up', reason: 'ruling', rulings: top, message: [`New parent rulings for ${n.id}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
+  return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'follow-up', reason: 'ruling', rulings: top, message: [`New parent rulings for ${n.id}:`, ...rulingLines(rules),
     `Re-review the current candidate ${c.commit} (submit #${c.seq}) in their light and record your verdict with --ack-rulings ${top}; block if the writer must change something.`].join('\n') };
 }
 /**
@@ -448,7 +463,7 @@ export function environmentWait(s: State, jobs: readonly { subject: string; obli
 }
 /** F2.2: the notify of a node whose attest waits after an environment error: the note and the retry time. */
 export const environmentText = (node: string, w: EnvironmentWait): string =>
-  `${node}: environment failure #${w.latest.seq} ${w.latest.obligation}: ${clip(w.latest.note ?? '')}; attest waits (${w.step} in a row), retry at ${new Date(w.until).toISOString()}; the driver does not halt for it (free the disk or fix the setup; owed decide ${node} --resume --text "<retry setup>" retries at once)`;
+  `${node}: environment failure #${w.latest.seq} ${w.latest.obligation}: ${clip(w.latest.note ?? '')}; attest waits (${w.step} in a row), retry at ${clockTime(w.until)}; the driver does not halt for it (free the disk or fix the setup; owed decide ${node} --resume --text "<retry setup>" retries at once)`;
 
 // ---------- driver reviewers ----------
 /**
@@ -584,7 +599,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const rules = undelivered(s, id, ar, l, opts.rejected);
       const rebase = firstRebaseFollowUp
         ? rebaseMessage(s,id,opts.conflicts?.get(id),opts.rebasePending?.get(id) ?? opts.rebaseWork?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
-      return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${oneLine(r.text)}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
+      return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${r.text}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
     }
     const rebased = l.role === 'writer' && sendKind === 'follow-up' && reason !== 'rebase' && firstRebaseFollowUp && executorRebased(s,id) ? rebaseMessage(s,id) : undefined;
     message = rebased ? `${rebased}\n${message}` : message;
@@ -724,7 +739,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   if (c && pending.length === 1 && pending[0]!.obligation === 'rulings' && !n.items.some(i => i.obligation === 'review' || i.obligation === 'closure-review') && !n.blocks.some(b => b.state === 'active' || b.state === 'flaky')) {
     const seen = Math.max(slot.rulings_seen, ...ar.sends.filter(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up').map(x => x.rulings ?? -1));
     const rules = rulingsInScope(s, id).filter(r => r.seq > seen);
-    if (rules.length) return send(writer, 'follow-up', 'ruling', [`New parent rulings for ${id}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`), `Apply these rulings to candidate ${c.commit} (submit #${c.seq}), then run \`owed submit ${id}\` (the same commit may be submitted again). This candidate has no review obligation; resubmitting records the delivered rulings as seen.`].join('\n'), carried(rules));
+    if (rules.length) return send(writer, 'follow-up', 'ruling', [`New parent rulings for ${id}:`, ...rulingLines(rules), `Apply these rulings to candidate ${c.commit} (submit #${c.seq}), then run \`owed submit ${id}\` (the same commit may be submitted again). This candidate has no review obligation; resubmitting records the delivered rulings as seen.`].join('\n'), carried(rules));
     return undefined; // Sent once for this set; a finished generation does not turn its resubmit wait into owner debt.
   }
   // F5: an explicit writer ruling takes priority over the generic resubmit/repair route.
@@ -739,7 +754,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       if (sent) {
         const rules = s.rules.filter(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last!.seq && deliversRule(r, writer.rid));
         // G3.5 (0.12): with the same active/flaky block lines as `rulingFollowUp`.
-        return send(writer, 'follow-up', 'ruling', [`Parent rulings for ${id} (apply them; they override your packet):`, ...rules.map(r => `#${r.seq} (${(r.nodes as string[]).join(', ')}): ${oneLine(r.text)}`), ...blockLines(s, id), `Then commit and run \`owed submit ${id}\` (the same commit may be submitted again).`].join('\n'), carried(rules));
+        return send(writer, 'follow-up', 'ruling', [`Parent rulings for ${id} (apply them; they override your packet):`, ...rules.map(r => `#${r.seq} (${(r.nodes as string[]).join(', ')}): ${r.text}`), ...blockLines(s, id), `Then commit and run \`owed submit ${id}\` (the same commit may be submitted again).`].join('\n'), carried(rules));
       }
     } else {
       const steer = rulingSteer(s, n, ar, live, view);
@@ -1032,7 +1047,7 @@ function prospectiveNotice(s: State, n: NodeState, ar: AttemptRuns, runs: Readon
     }
     const seen = Math.max(-1, ...notices.map(x => x.rulings ?? -1)), pending = rules.filter(r => r.seq > seen);
     if (!pending.length) continue;
-    return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'notify', reason: 'ruling', rulings: carried(pending), message: [`Prospective policy for future attempts of ${n.id}:`, ...pending.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`), 'This attempt predates the policy; no change or acknowledgment is required.'].join('\n') };
+    return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'notify', reason: 'ruling', rulings: carried(pending), message: [`Prospective policy for future attempts of ${n.id}:`, ...rulingLines(pending), 'This attempt predates the policy; no change or acknowledgment is required.'].join('\n') };
   }
   return undefined;
 }
@@ -1047,9 +1062,12 @@ function answerAckDue(s: State, n: NodeState, ar: AttemptRuns, l: LaunchEntry, r
   return rulingsInScope(s, n.id).some(r => !deliversRule(r,l.rid) && r.seq > Math.max(acked, requested));
 }
 /** Steer message of undelivered rulings (D22.2): one line per ruling `#<seq> (<nodes>): <text>`, then what to do. */
+function rulingLines(rules: readonly Rule[]): string[] {
+  return rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${r.text}`);
+}
 export function rulingMessage(node: string, role: RunRole, rules: readonly Rule[]): string {
   const top = Math.max(...rules.map(r => r.seq));
-  return [`New parent rulings for ${node}:`, ...rules.map(r => `#${r.seq} (${r.nodes === '*' ? '*' : r.nodes.join(', ')}): ${oneLine(r.text)}`),
+  return [`New parent rulings for ${node}:`, ...rulingLines(rules),
     role === 'writer' ? 'Apply these rulings; they override your packet. If you already submitted, fix and submit again.' : `Judge the candidate against these rulings and record your review with --ack-rulings ${top}.`].join('\n');
 }
 /**

@@ -1,6 +1,7 @@
 // 0.7.0 K6 (wais #13): attests and merges run in the background while the driver serves other nodes; `drive.measure`
 // caps them, one merge at a time; stop waits, stop-now aborts, --once waits; exit 75 of owed attest is busy; a restarted
 // driver retries the attest a dead driver's child still runs; `owed drive --status` lists the in-flight measurements.
+import { clockTime } from '../src/clock.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -108,7 +109,7 @@ test('K6 wais #13: while node a merge measures (slow invariant), node b is dispa
     assert.equal(started(l.lines, 'merge', 'a').length, 1, l.text());
     const st = await driveStatus({ cwd: f.cwd });
     assert.deepEqual(st.measuring?.map(m => [m.node, m.do]), [['a', 'merge']], JSON.stringify(st));
-    assert.match(renderDriveStatus(st), /^measuring: a merge since \d{4}-\d\d-\d\dT/m);
+    assert.match(renderDriveStatus(st), /^measuring: a merge since (?:\d{4}-\d\d-\d\d )?\d\d:\d\d$/m);
     assert.match(await driverLine(f.cwd), /; measuring a merge since \S+; /);
     // A plan update adds b while a's merge is still measuring: the driver dispatches b and launches its writer.
     const p1 = v1(f.path);
@@ -320,8 +321,8 @@ test('K6 status, /owed and owed_drive status list the in-flight measurements rea
     assert.equal(s.running, true);
     assert.deepEqual(s.measuring, [{ node: 'a', do: 'attest', since: t(1) }, { node: 'b', do: 'merge', since: t(2) }]);
     const text = renderDriveStatus(s);
-    assert.match(text, new RegExp(`^measuring: a attest since ${t(1)}\\nmeasuring: b merge since ${t(2)}$`, 'm'), text);
-    assert.match(await driverLine(r.cwd), new RegExp(`^Driver: running pid ${process.pid} since \\S+; measuring a attest since ${t(1)}, b merge since ${t(2)}; `));
+    assert.match(text, new RegExp(`^measuring: a attest since ${clockTime(t(1))}\\nmeasuring: b merge since ${clockTime(t(2))}$`, 'm'), text);
+    assert.match(await driverLine(r.cwd), new RegExp(`^Driver: running pid ${process.pid} since (?:\\d{4}-\\d\\d-\\d\\d )?\\d\\d:\\d\\d; measuring a attest since ${clockTime(t(1))}, b merge since ${clockTime(t(2))}; `));
     // The started line reads as text too; once everything ended (or the driver exited), nothing is listed.
     assert.match(readFileSync(log, 'utf8'), /"outcome":"started"/);
     await writeFile(log, `${JSON.stringify({ do: 'attest', node: 'a', outcome: 'started', at: t(1) })}\n${JSON.stringify({ event: 'killed' })}\n`);

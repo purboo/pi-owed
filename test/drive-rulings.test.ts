@@ -86,7 +86,7 @@ test('D22.2: a running writer gets every in-scope ruling after its dispatch as o
   const x = r.rule('use RFC 7807\nfor errors'), other = r.rule('only for c', ['c']), all = r.rule('all nodes', '*');
   const a = act(r, runsOf(view(W(), 'running')));
   assert.deepEqual(a, { do: 'send', node: 'a', attempt: 1, rid: W(), sendKind: 'steer', reason: 'ruling', rulings: all.seq,
-    message: ['New parent rulings for a:', `#${x.seq} (a): use RFC 7807\\nfor errors`, `#${all.seq} (*): all nodes`, WRITER_TAIL].join('\n') });
+    message: ['New parent rulings for a:', `#${x.seq} (a): use RFC 7807\nfor errors`, `#${all.seq} (*): all nodes`, WRITER_TAIL].join('\n') });
   assert.ok(!a.message.includes('before dispatch') && !a.message.includes(`#${other.seq}`), 'neither dispatch-time nor out-of-scope rulings');
   // Recorded: delivered; nothing more until a newer ruling, which goes alone.
   r.record(a);

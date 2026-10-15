@@ -1,5 +1,6 @@
 import { withWritesSyntax, writesSyntax } from './writes.ts';
 import { canonical } from './canon.ts';
+import { clockTime } from './clock.ts';
 import { OwedError } from './errors.ts';
 import { planDowngrades } from './plan.ts';
 import { uncoveredDowngrades } from './reducer.ts';
@@ -271,7 +272,7 @@ export function renderMetrics(m: Metrics): string {
   const phase = (d: DurationMetrics): string => `median ${time(d.median)}, p90 ${time(d.p90)}`;
   const classes = Object.entries(m.parentActs.byClass).filter(([,count]) => count > 0)
     .sort(([a,x],[b,y]) => y-x || a.localeCompare(b)).slice(0,5).map(([cls,count]) => `${cls} ${count}`).join(', ');
-  return [`Metrics (since ${m.since === -1 ? 'start' : m.since}, until ${m.until ?? 'latest'}); merged nodes: ${m.mergedNodes}`,
+  return [`Metrics (since ${m.since === -1 ? 'start' : typeof m.since === 'string' ? clockTime(m.since) : m.since}, until ${typeof m.until === 'string' ? clockTime(m.until) : m.until ?? 'latest'}); merged nodes: ${m.mergedNodes}`,
     `Parent acts per merged node: ${number(m.parentActs.perMergedNode)} (${m.parentActs.total} total); top classes: ${classes || 'none'}`,
     `Attributed parent acts per merged node: ${number(m.parentActs.perMergedNodeAttributed)}; pending ${number(m.parentActs.pending)}; unattributed ${number(m.parentActs.unattributed)}`,
     `Parent acts by node: ${Object.entries(m.parentActs.byNode).sort(([a],[b]) => a.localeCompare(b)).map(([id,v]) => `${id} ${number(v)}`).join(', ') || 'none'}`,

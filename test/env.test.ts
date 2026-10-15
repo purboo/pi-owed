@@ -1,4 +1,5 @@
 // 0.11 env (contract-0.11.md F2): environment failures wait, they do not halt (wais #36, #12).
+import { clockTime } from '../src/clock.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access } from 'node:fs/promises';
@@ -126,13 +127,13 @@ test('F2.2: environment errors never reach the "no verdict twice" halt; the atte
   const w1 = r.act(T0 + 30_000);
   assert.ok(w1?.do === 'notify', JSON.stringify(w1));
   assert.match(w1.text, new RegExp(`environment failure #${e1.seq} check:unit: environment: ENOSPC: command exited 1`));
-  assert.ok(w1.text.includes(`retry at ${new Date(T0 + MIN).toISOString()}`), w1.text);
+  assert.ok(w1.text.includes(`retry at ${clockTime(T0 + MIN)}`), w1.text);
   assert.deepEqual(r.act(T0 + MIN), { do: 'attest', node: 'a' }, 'after the back-off: attest');
   r.at(T0 + MIN); const e2 = r.obs('check:unit', 'error', 'environment: setup failed: 1');
   r.at(T0 + 3 * MIN); r.obs('check:unit', 'error', 'environment: No space left on device');
   const w3 = r.act(T0 + 3 * MIN + 1);
   assert.ok(w3?.do === 'notify', `three environment errors: no halt, a wait: ${JSON.stringify(w3)}`);
-  assert.ok(w3.text.includes(`retry at ${new Date(T0 + 8 * MIN).toISOString()}`), `third step waits 5 min: ${w3.text}`);
+  assert.ok(w3.text.includes(`retry at ${clockTime(T0 + 8 * MIN)}`), `third step waits 5 min: ${w3.text}`);
   assert.equal(w3.once, w1.once, 'one notify per streak: the same once key');
   assert.ok(w1.once?.includes(String(e1.seq)) && e2.seq > e1.seq);
   // No clock: no back-off (an older executor, or a caller that does not wait).
@@ -142,15 +143,16 @@ test('F2.2: environment errors never reach the "no verdict twice" halt; the atte
 test('F2.2: back-off steps 1, 2, 5, 10, then 30 min; a non-environment error ends the streak and still counts', () => {
   const r = rig(); r.obs('writes', 'pass');
   let t = T0;
-  const steps: number[] = [];
   for (let i = 0; i < 6; i++) {
     r.at(t); r.obs('check:unit', 'error', `environment: ENOSPC ${i}`);
     const a = r.act(t + 1);
     assert.ok(a?.do === 'notify', JSON.stringify(a));
-    const until = Date.parse(/retry at (\S+);/.exec(a.text)![1]!);
-    steps.push((until - t) / MIN); t = until;
+    const until = t + [1, 2, 5, 10, 30, 30][i]! * MIN;
+    assert.ok(a.text.includes(`retry at ${clockTime(until)};`), a.text);
+    assert.equal(r.act(until - 1)?.do, 'notify', 'still waits before the retry boundary');
+    assert.deepEqual(r.act(until), { do: 'attest', node: 'a' }, 'attests at the retry boundary');
+    t = until;
   }
-  assert.deepEqual(steps, [1, 2, 5, 10, 30, 30]);
   // One ordinary error after the streak: the streak ends (no wait); a second ordinary error halts as before.
   r.at(t); r.obs('check:unit', 'error', 'check cut off');
   assert.deepEqual(r.act(t + 1), { do: 'attest', node: 'a' });
@@ -163,12 +165,12 @@ test('F2.2: the streak counts since the latest resume; a new streak gets a new n
   const r = rig(); r.obs('writes', 'pass');
   r.obs('check:unit', 'error', 'environment: ENOSPC'); r.obs('check:unit', 'error', 'environment: ENOSPC');
   const before = r.act(T0 + 1);
-  assert.ok(before?.do === 'notify' && before.text.includes(`retry at ${new Date(T0 + 2 * MIN).toISOString()}`), JSON.stringify(before));
+  assert.ok(before?.do === 'notify' && before.text.includes(`retry at ${clockTime(T0 + 2 * MIN)}`), JSON.stringify(before));
   r.halt(); r.resume();
   assert.deepEqual(r.act(T0 + 1), { do: 'attest', node: 'a' }, 'resume: the streak starts again');
   const e = r.obs('check:unit', 'error', 'environment: ENOSPC');
   const after = r.act(T0 + 1);
-  assert.ok(after?.do === 'notify' && after.text.includes(`retry at ${new Date(T0 + MIN).toISOString()}`), JSON.stringify(after));
+  assert.ok(after?.do === 'notify' && after.text.includes(`retry at ${clockTime(T0 + MIN)}`), JSON.stringify(after));
   assert.notEqual(after.once, before.once);
   assert.ok(after.once?.endsWith(String(e.seq)));
 });
