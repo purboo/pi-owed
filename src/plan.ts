@@ -14,6 +14,7 @@ export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent
 export function driveConfig(plan: Plan, node?: string): DriveConfig {
   const cfg = structuredClone(plan.drive ?? DRIVE_DEFAULTS), own = node === undefined ? undefined : plan.nodes.find(n => n.id === node)?.drive;
   for (const role of ['writer', 'reviewer'] as const) cfg[role] = overrideAgent(cfg[role], own?.[role]);
+  if (own?.same_model !== undefined) cfg.same_model = own.same_model;
   return cfg;
 }
 /** K3: one role of the plan's config with a node override applied (see `driveConfig`). */
@@ -31,20 +32,25 @@ function parseAgent(x: unknown, label: string, errors: string[]): NodeDriveAgent
   if (a.model !== undefined) { if (typeof a.model !== 'string' || !a.model.trim()) errors.push(`${label}.model: expected non-empty string`); else res.model = a.model; }
   return res;
 }
-/**
- * K3: parses a node's optional `drive` field ({writer?, reviewer?}, each {agent?, model?}); unknown keys and bad types
- * are errors. Empty role objects and an empty block are dropped (undefined), so `drive: {}` equals no field.
- */
+/** MD2: an informational acknowledgement, never an acceptance downgrade. */
+function parseSameModel(value: unknown, label: string, errors: string[]): 'accepted' | undefined {
+  if (value === undefined) return;
+  if (value === 'accepted') return value;
+  errors.push(`${label}: expected accepted; set same_model: accepted to acknowledge the warning`);
+}
+/** K3/MD2: optional node roles and same-model acknowledgement; empty blocks are dropped. */
 function parseNodeDrive(v: unknown, p: string, errors: string[]): NodeDrive | undefined {
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push(`${p}.drive: expected object`); return undefined; }
   const r = v as Record<string, unknown>, out: NodeDrive = {};
-  for (const k of Object.keys(r)) if (k !== 'writer' && k !== 'reviewer') errors.push(`${p}.drive.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (k !== 'writer' && k !== 'reviewer' && k !== 'same_model') errors.push(`${p}.drive.${k}: unknown key`);
+  const ack = parseSameModel(r.same_model, `${p}.drive.same_model`, errors);
+  if (ack) out.same_model = ack;
   for (const role of ['writer', 'reviewer'] as const) {
     if (r[role] === undefined) continue;
     const a = parseAgent(r[role], `${p}.drive.${role}`, errors);
     if (a && Object.keys(a).length) out[role] = a;
   }
-  return out.writer || out.reviewer ? out : undefined;
+  return out.writer || out.reviewer || out.same_model ? out : undefined;
 }
 /** Default of `drive.measure` (0.7.0): attests and merges the driver runs at once. */
 export const MEASURE_DEFAULT = 2;
@@ -59,7 +65,7 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
   const out = structuredClone(DRIVE_DEFAULTS);
   if (!v || typeof v !== 'object' || Array.isArray(v)) { errors.push('drive: expected object'); return out; }
   const r = v as Record<string, unknown>;
-  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'idle_rewake_min', 'answer_grace_s', 'writer', 'reviewer'].includes(k)) errors.push(`drive.${k}: unknown key`);
+  for (const k of Object.keys(r)) if (!['max', 'repairs', 'measure', 'min_free_mb', 'idle_rewake_min', 'answer_grace_s', 'writer', 'reviewer', 'same_model'].includes(k)) errors.push(`drive.${k}: unknown key`);
   const int = (x: unknown, label: string, min: number, dflt: number): number => { if (x === undefined) return dflt; if (typeof x !== 'number' || !Number.isInteger(x) || x < min) { errors.push(`${label}: expected integer >= ${min}`); return dflt; } return x; };
   out.max = int(r.max, 'drive.max', 1, out.max);
   out.repairs = int(r.repairs, 'drive.repairs', 0, out.repairs);
@@ -72,6 +78,8 @@ function parseDrive(v: unknown, errors: string[]): DriveConfig {
     const a = parseAgent(x, label, errors);
     return a ? { agent: a.agent ?? dflt.agent, ...(a.model !== undefined ? { model: a.model } : {}) } : dflt;
   };
+  const ack = parseSameModel(r.same_model, 'drive.same_model', errors);
+  if (ack) out.same_model = ack;
   out.writer = agent(r.writer, 'drive.writer', out.writer);
   out.reviewer = agent(r.reviewer, 'drive.reviewer', out.reviewer);
   return out;
