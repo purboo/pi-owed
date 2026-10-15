@@ -5,6 +5,7 @@ import type { Plan, AttestJob, ObsEntry, Counts, QuarantineEntry } from './types
 import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths, keyCommitsTo } from './git.ts';
 import { leaseEnvironment } from './lease.ts';
+import { remeasureMatches } from './remeasure-on.ts';
 
 /**
  * K2.1: the note of a non-red check that fails on its count: `zero tests; exit <code>`, or `min_tests unmet: counted
@@ -127,9 +128,9 @@ function assertionValue(value: unknown): string {
   return errorSignature(typeof value === 'string' ? value : JSON.stringify(value) ?? String(value)).replace(/\s+/g, ' ').slice(0, 120);
 }
 /** Pure extraction with an explicit run directory for executor-only path shortening. */
-function groupsAt(log: string, failed: readonly string[], cwd?: string, signature = false): { groups: ErrorGroup[]; hasError: boolean } {
+function groupsAt(log: string, failed: readonly string[], cwd?: string, signature = false, full = false): { groups: ErrorGroup[]; hasError: boolean } {
   const wanted = new Set(failed), points: { name: string; message?: string; location?: string; signatureLocation?: string; expected?: string; actual?: string; parent?: boolean; at: number }[] = [];
-  const clean = stripAnsi(log).replace(/\r\n/g, '\n'), lines = clean.split('\n');
+  const clean = full ? log : stripAnsi(log).replace(/\r\n/g, '\n'), lines = clean.split('\n');
   let offset = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!, point = /^\s*not ok \d+\s*-\s*(.+)$/.exec(line);
@@ -161,7 +162,7 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string, signatur
       }
       const raw = typeof diagnostic.error === 'string' ? diagnostic.error : '';
       // Folded YAML scalars also display their first source line, before YAML joins the lines.
-      const message = raw ? errorMessage(blockMessage ?? raw.split('\n')[0]!, !signature) : '';
+      const message = full ? raw : raw ? errorMessage(blockMessage ?? raw.split('\n')[0]!, !signature) : '';
       // Node omits YAML fields for undefined values; its assertion diff still carries them.
       if (diagnostic.code === 'ERR_ASSERTION') {
         const diff = raw.split('\n');
@@ -187,7 +188,7 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string, signatur
     const name = m[1] ?? m[4]!;
     // A quoted legacy header without a closing message is not a new-style location.
     if (!wanted.has(name) || (!m[1] && m[5]!.startsWith("'"))) continue;
-    const message = errorMessage(signature ? (m[2] ?? m[6]!).split('\n')[0]! : m[2] ?? m[6]!, !signature);
+    const message = full ? m[2] ?? m[6]! : errorMessage(signature ? (m[2] ?? m[6]!).split('\n')[0]! : m[2] ?? m[6]!, !signature);
     points.push({ name, ...(message ? { message } : {}), location: errorLocation(m[3] ?? m[5]!, cwd), at: header.index + m.index });
   }
   points.sort((a, b) => a.at - b.at);
@@ -225,7 +226,7 @@ function recordSignatures(obs: { failed?: string[]; signatures?: Record<string, 
   if (Object.keys(out).length) obs.signatures = out;
 }
 /** FG1: distinct errors, most common first, then first appearance; no ambient cwd or state. */
-export function errorGroups(log: string, failed: readonly string[]): ErrorGroup[] { return groupsAt(log, failed).groups; }
+export function errorGroups(log: string, failed: readonly string[], full = false): ErrorGroup[] { return groupsAt(log, failed, undefined, false, full).groups; }
 function failedTests(log: string, failed: readonly string[], cwd: string): string {
   const quotes = failed.slice(0, 3).map(name => {
     const g = groupsAt(log, [name], cwd).groups[0]!;
@@ -408,7 +409,7 @@ export const quarantineNote = (q: Map<string, string>): string => `quarantined: 
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   const start = Date.now();
   const obs: Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'> = { kind: 'obs', by: 'executor:owed', subject: job.subject, obligation: job.obligation, key: job.key, verdict: 'error', exit: null, durationMs: 0, commit: job.commit, base: job.base, attribution: job.attribution };
-  let bytes = Buffer.alloc(0), truncated = false, protocolWarnings = 0;
+  let bytes = Buffer.alloc(0), measurementBytes = Buffer.alloc(0), truncated = false, protocolWarnings = 0;
   function capture(data: Buffer | string): void {
     bytes = Buffer.concat([bytes, Buffer.isBuffer(data) ? data : Buffer.from(data)]);
     if (bytes.length > LIMIT) { truncated = true; bytes = bytes.subarray(bytes.length - LIMIT); }
@@ -492,6 +493,9 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         const runStart = Date.now();
         if (repeat) capture(`\n=== run ${index + 1}/${runs} ===\n`);
         const raw = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout); obs.exit = raw.code;
+        // RO/SIG: matching consumes only frozen measurement output, never timeout diagnostics or later capture.
+        measurementBytes = Buffer.concat([measurementBytes, Buffer.from(raw.measurementLog ?? raw.log)]);
+        if (measurementBytes.length > LIMIT) measurementBytes = measurementBytes.subarray(measurementBytes.length - LIMIT);
         obs.note = undefined; obs.verdict = 'error';
         const warnings: string[] = [];
         obs.counts = parseCounts(raw.measurementLog ?? raw.log, note => { warnings.push(note); protocolWarnings++; });
@@ -574,5 +578,9 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   if (timeoutNote) obs.note = timeoutNote;
   if (protocolWarnings && !obs.note?.includes('malformed owed-counts')) obs.note = `${obs.note ? `${obs.note}; ` : ''}${protocolWarnings} malformed owed-counts line(s) ignored`;
   obs.log = await ctx.ledger.putBlob(truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes);
+  if (job.kind === 'inv' && obs.verdict === 'fail') {
+    const matched = remeasureMatches(obs,measurementBytes.toString(),ctx.plan.invariants.find(i => i.id === job.spec?.id)?.remeasure_on ?? []);
+    if (matched.length) obs.remeasure_match = matched;
+  }
   obs.durationMs = Date.now() - start; return obs;
 }

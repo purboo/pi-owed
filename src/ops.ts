@@ -19,7 +19,6 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, ty
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
-import { matchesRemeasureOn } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
@@ -403,7 +402,7 @@ async function automaticInvariantRemeasure(cwd: string, ledger: Ledger, snapshot
   const latest = (await load(ledger)).state;
   if (latest.planSha !== snapshot.planSha || latest.trunk.commit !== snapshot.trunk.commit) return;
   if (entriesOf(latest).some(e => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === job.obligation && e.key === job.key && e.auto_remeasure)) return;
-  if (!matchesRemeasureOn(first,(await ledger.getBlob(first.log ?? '')).toString(),needles)) return;
+  if (!first.remeasure_match?.length || !first.remeasure_match.every(n => needles.includes(n))) return;
   checkAbort(signal);
   const retry = await runJob({cwd,ledger,plan:snapshot.plan,signal},job);
   return { ...retry, ...(first.merging ? { merging:first.merging } : {}), auto_remeasure:true };

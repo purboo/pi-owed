@@ -275,7 +275,7 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
   const trunkRed = blocks.flatMap(b => trunkRedOf(s, b.seq, b.key) ?? []);
   if (out.status === 'D' && trunkRed.length) Object.assign(out, { discharger: 'parent', detail: trunkRed.map(r => `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}`).join('; ') });
   if (subject === 'trunk') {
-    const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key);
+    const defer = s.deferred.findLast(d => d.id === obligation.slice(4) && d.key === key && (!automaticInvariantConflict(s,obligation,key) || d.node === merging));
     if (defer) Object.assign(out, { mark: '⏸', discharger: 'owner', detail: `${obligation} deferred, still debt`, evidence: [...out.evidence, defer.seq] });
     else {
       const red = context(s).invRed?.get(obligation), fail = decidingInvariantFail(s, obligation, key);
@@ -414,7 +414,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure', 'remeasure_errors'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure', 'remeasure_match'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -1227,12 +1227,15 @@ export function validateDraft(s: State, d: Draft): string[] {
         if (d.obligation !== 'writes' || d.verdict !== 'fail' || d.attribution !== undefined || d.merging !== undefined || d.probe !== undefined || !target?.slot?.open || !c || d.commit !== c.commit || d.base !== c.base || d.key !== c.keys.writes || !Array.isArray(d.waits_on) || !d.waits_on.length || canonical(d.waits_on) !== canonical(expected) || !refused.length || refused.some(r => r.reasons.some(reason => !reason.startsWith('overlaps open node ')))) errors.push('obs waits_on requires only current candidate writes overlaps with the named open nodes');
       }
       if (d.auto_remeasure !== undefined && (d.auto_remeasure !== true || d.subject !== 'trunk' || !d.obligation.startsWith('inv:') || d.probe !== undefined || d.attribution)) errors.push('obs auto_remeasure must be true on a non-attribution invariant observation');
-      if (d.remeasure_errors !== undefined && (d.subject !== 'trunk' || d.verdict !== 'fail' || !Array.isArray(d.remeasure_errors) || !d.remeasure_errors.length || d.remeasure_errors.some(x => typeof x !== 'string' || !x) || (d.failed?.length ? d.remeasure_errors.length !== d.failed.length : d.remeasure_errors.length !== 1))) errors.push('obs remeasure_errors must contain full matching text for every invariant failure');
+      if (d.remeasure_match !== undefined) {
+        const needles = s.plan.invariants.find(i => `inv:${i.id}` === d.obligation)?.remeasure_on ?? [];
+        if (d.subject !== 'trunk' || d.verdict !== 'fail' || !Array.isArray(d.remeasure_match) || !d.remeasure_match.length || d.remeasure_match.length > needles.length || d.remeasure_match.some(x => typeof x !== 'string' || !needles.includes(x)) || new Set(d.remeasure_match).size !== d.remeasure_match.length) errors.push('obs remeasure_match must be non-empty unique entries from the invariant remeasure_on, bounded by that list');
+      }
       if (d.auto_remeasure === true) {
         const prior = observations(s,d.subject,d.obligation,d.key), first = prior.at(-1);
         const needles = s.plan.invariants.find(i => `inv:${i.id}` === d.obligation)?.remeasure_on ?? [];
         if (prior.some(e => e.auto_remeasure)) errors.push('obs auto_remeasure already consumed on this key');
-        if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || !first.remeasure_errors?.length || !needles.length || !first.remeasure_errors.every(text => needles.some(n => text.includes(n)))) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on');
+        if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || !first.remeasure_match?.length || !needles.length || !first.remeasure_match.every(text => needles.includes(text))) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on');
       }
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
       break;
@@ -1670,7 +1673,7 @@ export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
     const key = st.invKeys[i.id] ?? '', o = `inv:${i.id}`;
     const v = item(s, 'trunk', o, key);
     if (!key) reasons.push(`invariant ${i.id} missing adopt obligation key`);
-    else if (v.mark === '⊤' && automaticInvariantConflict(s,o,key)) {
+    else if (automaticInvariantConflict(s,o,key)) {
       failed.push(i.id);
       reasons.push(`invariant ${i.id} owner conflict: ${v.detail}; fix the invariant before adopt`);
     }

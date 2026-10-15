@@ -7,8 +7,8 @@ import { Ledger } from '../src/ledger.ts';
 import { Driver, DRIVE_PRINCIPAL } from '../src/drive-run.ts';
 import { Dsa } from '../src/dsa.ts';
 import { runId, runLabels } from '../src/reducer.ts';
-import { entriesOf, observationsOf, reduce, invariantTrunkComparison } from '../src/reducer.ts';
-import type { ObsEntry, Entry } from '../src/types.ts';
+import { entriesOf, observationsOf, reduce, invariantTrunkComparison, validateDraft } from '../src/reducer.ts';
+import type { ObsEntry, Entry, Draft } from '../src/types.ts';
 import { parsePlan } from '../src/plan.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
@@ -103,12 +103,11 @@ test('RO2: trunk genesis failure retries once (parallel executor), replay and re
   } finally { await r.cleanup(); }
 });
 
-test('RO2: every parsed failure must match its own error, not test titles or passing tail; anonymous crash uses last 20 lines', {timeout:180_000}, async () => {
+test('RO2: every parsed failure must match its own raw error, not test titles or passing tail; anonymous crash uses captured log', {timeout:180_000}, async () => {
   const failures = [
     tapFailure('browser fixture timed out','unrelated assertion'),
     tapFailure('browser fixture','unrelated assertion') + 'browser fixture timed out\n',
     tapFailure('browser fixture','browser fixture timed out').replace('1..1\n# tests 1\n# pass 0\n# fail 1\n','') + tapFailure('other fixture','assertion mismatch').replace('not ok 1','not ok 2').replace('1..1','1..2').replace('# tests 1','# tests 2').replace('# fail 1','# fail 2'),
-    Array.from({length:21},(_,i) => i === 0 ? 'browser fixture timed out' : 'noise').join('\n') + '\n',
   ];
   for (const failure of failures) {
     const r = await fixture({failure,always:true});
@@ -206,16 +205,16 @@ test('RO ruling #2097: reduce refuses unproven, nonmatching, non-adjacent and du
     const throughFirst = entries.filter(e => e.seq <= first!.seq);
     const replay = (prefix: Entry[], changes: Partial<ObsEntry> = {}) => reduce([...prefix,{...retry!,...changes,seq:(prefix.at(-1)?.seq ?? -1)+1} as Entry],lookup);
     assert.throws(() => replay(entries.filter(e => e.seq < first!.seq)),/preceding same-key failure/);
-    assert.throws(() => replay([...throughFirst,{...first!,verdict:'pass',remeasure_errors:undefined,seq:first!.seq+1} as Entry]),/preceding same-key failure/);
-    assert.throws(() => replay(throughFirst.map(e => e.seq === first!.seq ? {...first!,remeasure_errors:['unrelated failure']} as Entry : e)),/preceding same-key failure/);
-    assert.throws(() => replay(throughFirst.map(e => e.seq === first!.seq ? {...first!,remeasure_errors:undefined} as Entry : e)),/preceding same-key failure/);
+    assert.throws(() => replay([...throughFirst,{...first!,verdict:'pass',remeasure_match:undefined,seq:first!.seq+1} as Entry]),/preceding same-key failure/);
+    assert.throws(() => replay(throughFirst.map(e => e.seq === first!.seq ? {...first!,remeasure_match:['unrelated failure']} as Entry : e)),/remeasure_match/);
+    assert.throws(() => replay(throughFirst.map(e => e.seq === first!.seq ? {...first!,remeasure_match:undefined} as Entry : e)),/preceding same-key failure/);
     assert.throws(() => replay(entries),/already consumed on this key/);
     assert.equal(reduce(entries,lookup).invariants[0]!.mark,'⊤');
     assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
   } finally { await r.cleanup(); }
 });
 
-test('RO ruling #2097: full first-line error matches past character 180 without display truncation authorizing second-line text', {timeout:120_000}, async () => {
+test('RO ruling #2165: full raw error matches past character 180 and multiline text without display truncation', {timeout:120_000}, async () => {
   const error = 'x'.repeat(190) + ' browser fixture timed out';
   const r = await fixture({failure:tapFailure('long fixture',error)});
   try {
@@ -223,13 +222,58 @@ test('RO ruling #2097: full first-line error matches past character 180 without 
     await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}));
     const obs = (await r.obs()).filter(e => e.merging === 'a');
     assert.deepEqual(obs.map(e => e.verdict),['fail','pass']);
-    assert.ok(obs[0]!.remeasure_errors![0]!.includes(error));
+    assert.deepEqual(obs[0]!.remeasure_match,['browser fixture timed out']);
     assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
   } finally { await r.cleanup(); }
   const multiline = await fixture({failure:tapFailure('multiline fixture','placeholder').replace("error: 'placeholder'","error: |\n    unrelated first line\n    browser fixture timed out")});
   try {
     await multiline.candidate();
     await assert.rejects(ops.merge({cwd:multiline.cwd,node:'a',as:parent}));
-    assert.equal((await multiline.obs()).filter(e => e.merging === 'a').length,1);
+    assert.equal((await multiline.obs()).filter(e => e.merging === 'a').length,2);
   } finally { await multiline.cleanup(); }
+});
+
+
+test('RO ruling #2165: node a defer does not resolve the trunk conflict for unrelated unchanged-key adopt', {timeout:120_000}, async () => {
+  const r = await fixture({trunk:true,reads:['README']});
+  try {
+    await r.candidate();
+    const key = (await r.obs())[0]!.key;
+    await ops.defer({cwd:r.cwd,as:owner,channel:'delegated',node:'a',items:[{id:'x',key}],reason:'node a only'});
+    const state = (await ops.readState({cwd:r.cwd})).state;
+    assert.equal(state.invariants[0]!.mark,'⊤');
+    const before = (await (await Ledger.open(r.cwd)).read()).filter(e => e.kind === 'adopt').length;
+    await commitAt(r.cwd,{'other':'unrelated trunk change'});
+    await assert.rejects(ops.adopt({cwd:r.cwd,as:owner,channel:'delegated',note:'no trunk invariant resolution'}),/owner conflict/);
+    assert.equal((await (await Ledger.open(r.cwd)).read()).filter(e => e.kind === 'adopt').length,before);
+  } finally { await r.cleanup(); }
+});
+
+test('RO ruling #2165: anonymous needle after char 220 and earlier than last 20 lines; named literal semicolon is unnormalized', {timeout:180_000}, async () => {
+  for (const failure of ['x'.repeat(240) + ' browser fixture timed out\n' + 'noise\n'.repeat(25),tapFailure('raw error','connection; refused')]) {
+    const needle = failure.includes('connection; refused') ? 'connection; refused' : 'browser fixture timed out';
+    const r = await fixture({failure,needles:[needle]});
+    try {
+      await r.candidate(); await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}));
+      const obs = (await r.obs()).filter(e => e.merging === 'a');
+      assert.deepEqual(obs.map(e => e.verdict),['fail','pass']);
+      assert.deepEqual(obs[0]!.remeasure_match,[needle]);
+      assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
+    } finally { await r.cleanup(); }
+  }
+});
+
+test('RO ruling #2165: validateDraft bounds remeasure_match to unique configured string literals; field-free old ledger replays', {timeout:120_000}, async () => {
+  const r = await fixture({trunk:true,needles:['browser fixture timed out','another literal']});
+  try {
+    await r.init();
+    const entries = await (await Ledger.open(r.cwd)).read(), first = (await r.obs())[0]!;
+    const lookup = () => parsePlan(r.plan), before = reduce(entries.filter(e => e.seq < first.seq),lookup);
+    for (const value of [['unconfigured'],[42],[null],['browser fixture timed out','browser fixture timed out'],['browser fixture timed out','another literal','third'],['x'.repeat(2*1024*1024)],'x'.repeat(2*1024*1024),[],{}]) {
+      assert.ok(validateDraft(before,{...first,remeasure_match:value} as unknown as Draft).some(e => e.includes('remeasure_match')));
+    }
+    assert.deepEqual(validateDraft(before,{...first,remeasure_match:['browser fixture timed out','another literal']} as Draft),[]);
+    const legacy = entries.filter(e => e.seq <= first.seq).map(e => e.kind === 'obs' ? {...e,remeasure_match:undefined} : e);
+    assert.equal(reduce(legacy,lookup).invariants[0]!.mark,'✘');
+  } finally { await r.cleanup(); }
 });
