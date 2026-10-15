@@ -223,7 +223,7 @@ test('MT3 ruling #2110: a torn batch tail is reported by verify and completed by
     await writeFile(file, lines.slice(0, -1).join('\n') + '\n'); await rm(join(ledger.dir, 'snapshot'), { recursive: true, force: true });
     const v = await ops.verify({ cwd: r.cwd });
     assert.equal(v.ok, true);
-    assert.equal(v.incompleteBatch, `batch merge of a, b, c is incomplete after #${last.seq - 1} (b); missing: c; the next owed write completes it when trunk main is at ${last.commit.slice(0, 12)}, else adopt the trunk`);
+    assert.equal(v.incompleteBatch, `batch merge of a, b, c is incomplete after #${last.seq - 1} (b); missing: c; restore refs/heads/main to ${last.commit} (e.g. from the reflog: git update-ref refs/heads/main ${last.commit}), then any owed write completes the batch; if trunk history no longer contains the batch commits, the ledger tail and trunk disagree and need manual repair`);
     const out = await cli(r.cwd, ['verify']); assert.equal(out.code, 0, out.stderr); assert.match(out.stdout, /^incompleteBatch: batch merge of a, b, c is incomplete/m);
     // Trunk not at batch.final: nothing else may be written.
     await git(r.cwd, ['update-ref', 'refs/heads/main', last.prior]);

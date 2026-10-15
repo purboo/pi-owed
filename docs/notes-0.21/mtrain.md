@@ -96,5 +96,5 @@ once.
 - New tests: `test/mtrain-tail.test.ts` covers the byte count on a 16 MiB ledger with an ordinary last entry,
   growth across an oversized UTF-8 last line, empty/malformed tails, all three recovery hint paths, refusal without
   appending, and completion by the next write after restoring the ref/history.
-- Existing tests changed: none (the dispatch authorizes only the new test file). The exact old hint assertion in
-  `test/mtrain.test.ts` expects the superseded adopt wording and needs the parent to update it during integration.
+- Existing tests changed: only the exact `verify.incompleteBatch` recovery-text assertion in `test/mtrain.test.ts`,
+  updated from the superseded adopt wording to MTT2's ref-restoration/manual-repair hint (plan #2294, ruling #2296).
