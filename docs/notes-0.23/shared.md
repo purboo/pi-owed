@@ -71,5 +71,12 @@ of those cargo observations carried `signatures`.
 - FS5 "accepted" fix = open slot, accepted, not halted; a parked node waits while that holds.
 - FS6 is applied by `owed merge` itself (driver and CLI), not only the driver.
 
+## Known limitations
+- `trunkKeyUnchanged` (ruling #2458) does not account for a change of the active quarantine set after other nodes
+  merge, although the invariant key includes the quarantine names. The reducer may then show a trunk-red park (status,
+  FS5 waiting, batch exclusion) while the ops merge guard computes a different merge key, refuses, and halts as a mixed
+  refusal. Display and FS5 waiting can be inaccurate in that case; the gate itself stays correct (ruling #2485 (3)).
+- Ruling #2485 (1): queued `trunk\0…` notices are revalidated at delivery in `drive-bg.ts` like `trunk-red\0`/`shared\0`.
+
 ## Checks
 See the submit report (focused `test/shared.test.ts`, tsc, full suite, red check on 80d5e06286c3).
