@@ -9,12 +9,12 @@ import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type LockOwner } from './ledger.ts';
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
-import { rebasePending, rebasePendingText } from './rebase-view.ts';
+import { rebasePending, rebasePendingText, slotGitInProgress, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
 import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
-import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
+import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, reviewCarrySource, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
@@ -30,6 +30,7 @@ import { editText, editDiff, type EditFields } from './edit.ts';
 import { lintPlanShell } from './planlint.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
+import { assertNoLedgerLock } from './lock-context.ts';
 import { mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
@@ -1240,6 +1241,7 @@ export async function submit(o: Actor & { node: string; commit?: string; model?:
   // D23: approve and evidence keys derive from the patch, like review.
   Object.assign(facts.keys, manualKeys(spec,facts.patch));
   const model = await recordedModel(o.cwd,state,o.node,by(o),o.model);
+  await addReviewCarry(o.cwd,state,o.node,facts);
   return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts, ...(model !== undefined ? { model } : {}) }; guard(current,d); return (await ledger.append([d]))[0]!; });
 }
 export async function attest(o: MeasurementContext & { node: string; rerun?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestResult> {
@@ -1398,15 +1400,112 @@ export async function recordedPlanReceipt(o: Context & { entry: Entry }): Promis
   const { state } = await load(ledger), prior = planAt(state,e.seq), next = planAt(state,e.seq+1);
   return planReceipt(e, prior, next);
 }
-export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry }
+/** ER1: explicit merge base is C's recorded base, not Git's heuristic merge-base. No tree equality, no carry. */
+async function addReviewCarry(cwd: string, s: State, node: string, facts: CandidateFacts): Promise<void> {
+  const source = reviewCarrySource(s,node,facts);
+  if (!source || source.previous.facts.commit === facts.commit && !source.previous.facts.carry) return;
+  const previous = source.previous.facts;
+  const merged = await git.git(cwd,['merge-tree','--write-tree','--merge-base',previous.base,facts.base,previous.commit],{allowFail:true,timeoutMs:15_000});
+  if (!merged.code && merged.stdout.trim().split('\n')[0] === facts.tree) facts.carry = { from:previous.commit, reviews:source.reviews };
+}
+export interface RebaseResult { node: string; attempt: number; worktree: string; branch: string; base: string; from: string; previous?: { base: string; commit: string; submit: number }; packet: string; entry: Entry; applied?: boolean; submit?: Entry; conflicts?: string[]; error?: string; callerAssertion?: string }
 /** Moves the open slot of a node onto the current trunk (parent/owner or the slot writer); the writer then rebases the same worktree and submits again. `since`: as for launch (F1). */
-export async function rebase(o: Actor & { node:string; since?: number }): Promise<RebaseResult> {
+/** ER2: shared by rebase and every writer launch/send intent; always before the ledger lock. */
+export const slotOperationLock = (node: string): string => `rebase-${sha256(node).slice(0,16)}`;
+type RebaseOptions = Actor & { node:string; since?: number; apply?: boolean; /** Internal driver supplies a fresh current-generation check through its dsa adapter. */ writerIdle?: () => Promise<boolean>; automatic?: boolean };
+export async function rebase(o: RebaseOptions): Promise<RebaseResult> {
+  assertNoLedgerLock();
+  const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(() => rebaseInternal(o),slotOperationLock(o.node));
+}
+async function rebaseInternal(o: RebaseOptions): Promise<RebaseResult> {
+  if (o.apply) {
+    const applied = await applyRebase(o);
+    if (applied) return applied;
+  }
   const entry = await mutate(o,s => { const n = node(s,o.node); if (!n.slot?.open) throw new OwedError(`Node ${o.node} has no open writer slot`); return {kind:'rebase',by:by(o),channel:o.channel,node:o.node,attempt:n.slot.attempt,base:s.trunk.commit,from:n.slot.base}; },{ node:o.node, since:o.since });
   if (entry.kind !== 'rebase') throw new OwedError('unexpected rebase entry','internal');
   const { state } = await load(await Ledger.open(o.cwd)), slot = state.nodes[o.node]!.slot!, previous = slot.rebase?.seq === entry.seq ? slot.rebase.previous : undefined;
   const work = await rebasePending(state, o.node, true);
-  const packet = [`# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `First commit your work, then run: ${work?.command ?? `git rebase --onto ${entry.base} ${entry.from}`}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
+  const packet = [`# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, ...(work?.recovery ? [work.recovery] : []), `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `First commit your work, then run: ${work?.command ?? `git rebase --onto ${entry.base} $(git merge-base HEAD ${entry.base})`}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
   return { node:o.node, attempt:entry.attempt, worktree:slot.worktree, branch:slot.branch, base:entry.base, from:entry.from, ...(previous ? { previous } : {}), packet, entry };
+}
+/** ER2: slot mutation lock precedes ledger lock. Git never runs under the ledger lock; the final CAS records both receipts. */
+async function applyRebase(o: Actor & { node:string; since?: number; writerIdle?: () => Promise<boolean>; automatic?: boolean }): Promise<RebaseResult | undefined> {
+  owner(o);
+  if (!['parent','owner'].includes(o.as.role)) throw new OwedError('rebase --apply requires parent/owner; the writer uses the manual rebase route');
+  const ledger = await Ledger.open(o.cwd);
+  {
+    const snapshot = await load(ledger), s = snapshot.state, n = node(s,o.node), slot = n.slot;
+    if (!slot?.open) throw new OwedError(`Node ${o.node} has no open writer slot`);
+    decidedOn(snapshot.entries,o.node,o.since);
+    const d: Draft = {kind:'rebase',by:by(o),channel:o.channel,node:o.node,attempt:slot.attempt,base:s.trunk.commit,from:slot.base};
+    guard(s,d);
+    const writer = n.runs.find(r => r.attempt === slot.attempt)?.launches.find(l => l.role === 'writer');
+    const intent = snapshot.entries.findLast(e => e.seq > (n.candidate?.seq ?? -1) && 'node' in e && e.node === o.node && (e.kind === 'launch' && e.role === 'writer' || e.kind === 'send' && e.rid === writer?.rid && e.sendKind === 'follow-up'));
+    let idle = !writer && !o.automatic && ['parent','owner'].includes(o.as.role);
+    if (writer && !intent) {
+      if (o.writerIdle && by(o) === DRIVER) idle = await o.writerIdle();
+      else { const { Dsa } = await import('./dsa.ts'); try {
+        const dsa = new Dsa({cwd:o.cwd,timeoutMs:5000}), inspected = await dsa.inspect(writer.rid);
+        idle = inspected.view.state === 'sealed';
+        // A prior follow-up can have a newer generation than describe: compare its durable applied receipt.
+        const followup = n.runs.find(r => r.attempt === slot.attempt)?.sends.findLast(e => e.rid === writer.rid && e.sendKind === 'follow-up');
+        if (idle && followup) {
+          const bytes = await ledger.getBlob(followup.message), delivered = await dsa.send(followup.send,writer.rid,'follow-up',bytes);
+          idle = delivered.outcome === 'applied' && (delivered.generation === undefined || inspected.gen !== undefined && inspected.gen >= delivered.generation);
+        }
+      } catch { idle = false; } }
+    }
+    const head = await git.revParse(slot.worktree,'HEAD');
+    const inProgress = await slotGitInProgress(slot.worktree);
+    const recovery = rebaseRecovery(head,n.candidate?.commit,inProgress,s.trunk.commit,o.node);
+    const refuse = !writer && o.automatic ? 'no recorded writer run' : !idle ? 'writer run is live, unknown or has a pending intent' : inProgress ? 'slot has a rebase or merge in progress' : !await git.isClean(slot.worktree) ? 'slot worktree is dirty' : !n.candidate || head !== n.candidate.commit ? 'slot HEAD is not the current candidate' : undefined;
+    if (refuse) {
+      if (o.automatic) {
+        const fallback = await rebaseInternal({...o,apply:false});
+        return {...fallback,packet:recovery ? `${recovery}\n${fallback.packet}` : fallback.packet};
+      }
+      throw new OwedError(`rebase --apply refused: ${refuse}; ${recovery ?? 'finish the writer work and submit first'}`);
+    }
+    const target = s.trunk.commit;
+    let rebased: string | undefined, conflicts: string[] = [], error: string | undefined;
+    try {
+      // SB2: do not replay trunk commits already merged into the writer branch.
+      const upstream = await trunkUpstream(slot.worktree,head,target,slot.base);
+      const r = await git.git(slot.worktree,['rebase','--onto',target,upstream],{allowFail:true,timeoutMs:60_000,env:{GIT_EDITOR:'true',GIT_SEQUENCE_EDITOR:'true'}});
+      if (r.code) {
+        conflicts = (await git.git(slot.worktree,['diff','--name-only','--diff-filter=U','-z'])).stdout.split('\0').filter(Boolean);
+        throw new OwedError(`git rebase failed: ${r.stderr.trim().replace(/\s+/g,' ')}`);
+      }
+      rebased = await git.revParse(slot.worktree,'HEAD');
+      if (await slotGitInProgress(slot.worktree) || !await git.isClean(slot.worktree) || !await git.isAncestor(o.cwd,target,rebased)) throw new OwedError('rebase did not leave a clean descendant of the new base');
+      await git.checkCandidateLimits(o.cwd,s.plan.limits,target,rebased);
+      const spec = s.plan.nodes.find(x => x.id === o.node)!, facts = await git.candidateFacts(o.cwd,s.plan,spec,target,rebased,slot.attempt,stateQuarantine(s));
+      Object.assign(facts.keys,manualKeys(spec,facts.patch)); facts.rebased = true;
+      await addReviewCarry(o.cwd,s,o.node,facts);
+      // Recheck immediately before the append lock; the node op lock still excludes all owed writer intents.
+      if (await git.revParse(slot.worktree,'HEAD') !== rebased || await slotGitInProgress(slot.worktree) || !await git.isClean(slot.worktree)) throw new OwedError('slot changed during executor rebase; nothing recorded');
+      return await ledger.withLock(async () => {
+        const latest = await load(ledger); stable(s,latest.state,o.node); decidedOn(latest.entries,o.node,o.since);
+        guard(latest.state,d);
+        const submit: Draft = {kind:'submit',by:'executor:owed',node:o.node,attempt:slot.attempt,facts};
+        guard(prospective(latest,[d]),submit);
+        const [entry,submitted] = await ledger.append([d,submit]);
+        return {node:o.node,attempt:slot.attempt,worktree:slot.worktree,branch:slot.branch,base:target,from:slot.base,entry:entry!,submit:submitted!,applied:true,packet:`owed rebased your worktree onto ${target.slice(0,12)} (clean); continue from HEAD`,...(!writer ? {callerAssertion:`no recorded writer run; caller asserts none is active in ${oneLine(slot.worktree)}`} : {})};
+      });
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      await git.git(slot.worktree,['rebase','--abort'],{allowFail:true,timeoutMs:15_000});
+      // A successful Git rebase followed by a stale ledger result is ours to roll back only while HEAD/tree are still ours.
+      if (rebased && await git.revParse(slot.worktree,'HEAD') === rebased && await git.isClean(slot.worktree)) await git.git(slot.worktree,['reset','--hard',head],{timeoutMs:15_000});
+      if (await git.revParse(slot.worktree,'HEAD') !== head || await slotGitInProgress(slot.worktree) || !await git.isClean(slot.worktree)) throw new OwedError(`${error}; rebase rollback failed: HEAD/tree not restored; inspect ${slot.worktree}`,'internal');
+      if (e instanceof OwedError && (e.code === 'stale' || e.message.includes('changed; retry'))) throw e;
+    }
+    // Conflict/error: rollback is proved before the old writer route invalidates the candidate.
+    const fallback = await rebaseInternal({...o,apply:false});
+    return {...fallback,applied:false,conflicts,error};
+  }
 }
 export async function merge(o: Actor & { node:string; signal?: AbortSignal; lease?: boolean }): Promise<MergeResult> {
   owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
@@ -2133,8 +2232,9 @@ export async function brief(o: Context & {since?:number|string; now?:number}): P
  * decided on; a later non-driver entry naming the node refuses with code `stale` (`decidedOn`), also for a recorded launch.
  */
 export async function launch(o: Actor & { node: string; attempt: number; role: RunRole; rid: string; spec: string; labels: Record<string, string>; rulings?: number; since?: number }): Promise<{ entry: LaunchEntry; created: boolean }> {
+  assertNoLedgerLock();
   owner(o); const ledger = await Ledger.open(o.cwd), spec = await ledger.putBlob(o.spec);
-  return ledger.withLock(async () => {
+  return ledger.withLock(() => ledger.withLock(async () => {
     const { state, entries } = await load(ledger);
     decidedOn(entries, o.node, o.since);
     const dispatched = entries.some(e => e.kind === 'dispatch' && e.node === o.node && e.attempt === o.attempt);
@@ -2146,17 +2246,18 @@ export async function launch(o: Actor & { node: string; attempt: number; role: R
     }
     const d: Draft = { kind: 'launch', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, role: o.role, rid: o.rid, spec, labels: o.labels, ...(o.rulings !== undefined ? { rulings: o.rulings } : {}) };
     guard(state, d); return { entry: (await ledger.append([d]))[0] as LaunchEntry, created: true };
-  });
+  }),slotOperationLock(o.node));
 }
 /** Records the intent to send `message` (exact bytes, stored as a blob) to run `rid`; the send id `${rid}:${sendKind}:${seq}` is assigned under the lock. `since`: as for launch (F1). */
 export async function send(o: Actor & { node: string; attempt: number; rid: string; sendKind: SendKind; message: string; reason: SendReason; rulings?: number; since?: number }): Promise<SendEntry> {
+  assertNoLedgerLock();
   owner(o); const ledger = await Ledger.open(o.cwd), message = await ledger.putBlob(o.message);
-  return ledger.withLock(async () => {
+  return ledger.withLock(() => ledger.withLock(async () => {
     const { state, entries } = await load(ledger);
     decidedOn(entries, o.node, o.since);
     const d: Draft = { kind: 'send', by: by(o), channel: o.channel, node: o.node, attempt: o.attempt, rid: o.rid, send: `${o.rid}:${o.sendKind}:${state.seq + 1}`, sendKind: o.sendKind, message, reason: o.reason, ...(o.rulings !== undefined ? { rulings: o.rulings } : {}) };
     guard(state, d); return (await ledger.append([d]))[0] as SendEntry;
-  });
+  }),slotOperationLock(o.node));
 }
 /**
  * 0.8 (L1): records `resume` on the open attempt of `node` (parent or owner): it clears a driver halt without an

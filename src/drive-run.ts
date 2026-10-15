@@ -512,7 +512,10 @@ export class Driver {
       const pendingBase = await rebasePending(s, n.id);
       if (pendingBase) pendingBases.set(n.id, pendingBase);
       const work = await rebaseWorkOf(s, n.id, pendingBase);
-      if (work) rebaseWork.set(n.id, work);
+      if (work) {
+        rebaseWork.set(n.id, work);
+        if (!pendingBase && work.recovery && n.slot.rebase && (!n.candidate || n.candidate.seq < n.slot.rebase.seq)) pendingBases.set(n.id,work);
+      }
       const ar = n.runs.find(r => r.attempt === n.slot!.attempt), epoch = reviewEpoch(s, n.id);
       if (!ar) continue;
       const policy = s.rules.filter(r => r.prospective && r.seq > n.slot!.dispatchSeq && (r.nodes === '*' || r.nodes.includes(n.id)));
@@ -902,6 +905,14 @@ export class Driver {
    * after it, ops records nothing (code `stale`), no dsa call is made, and the outcome is `stale` (no halt, no wake):
    * the next pass decides again. A re-send of a recorded entry and the verdict halts of dsa answers carry no `since`.
    */
+  /** ER2: re-check dsa immediately before touching the slot; missing inspection is never proof of an idle writer. */
+  private async rebaseSlot(s: State, node: string, since?: number): Promise<ops.RebaseResult> {
+    const writer = s.nodes[node]?.runs.find(r => r.attempt === s.nodes[node]?.slot?.attempt)?.launches.find(l => l.role === 'writer');
+    return ops.rebase({cwd:this.o.cwd,as:DRIVE_PRINCIPAL,node,since,apply:true,automatic:true,writerIdle:async () => {
+      if (!writer) return true;
+      try { const inspected = await this.dsa.inspect(writer.rid), view = this.current(inspected.view,inspected.gen); return view.state === 'sealed'; } catch { return false; }
+    }});
+  }
   private async execute(s: State, a: Action): Promise<{ report: ActionReport; applied: boolean }> {
     const base: ActionReport = { do: a.do, node: a.node, outcome: 'done' };
     const cwd = this.o.cwd, as = DRIVE_PRINCIPAL, since = s.seq;
@@ -966,7 +977,7 @@ export class Driver {
         }
         // K6: attest and merge are started by `pass` (`start`), never executed inline.
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
-        case 'rebase': { const r = await ops.rebase({ cwd, as, node: a.node, since }); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
+        case 'rebase': { const r = await this.rebaseSlot(s, a.node, since); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
         case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
         case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.once !== undefined ? { once:a.once } : {}), ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
@@ -977,6 +988,7 @@ export class Driver {
         if (a.do === 'launch' && a.role === 'writer') await ops.closeStaleSlot({ cwd, node:a.node, attempt:a.attempt });
         return done('stale', false, `${e.message}; decided again next pass`, a.do === 'halt' ? { attempt: a.attempt, needs: a.needs } : a.do === 'launch' ? { attempt: a.attempt, role: a.role, rid: a.rid } : extra);
       }
+      if (e instanceof OwedError && e.code === 'busy' && ['rebase','launch','send'].includes(a.do)) return done('retry', false, `${e.message}; retry next pass`);
       if (a.do === 'dispatch' && ops.isCasRefusal(e)) return done('retry', false, `${e.message}; retry next pass`);
       if (e instanceof OwedError || e instanceof DsaError) return done('error', false, e.message, extra);
       throw e;
@@ -1102,7 +1114,9 @@ export class Driver {
         // and the next pass decides on the new state (a new candidate, a rebase follow-up). Reported, never a halt.
         if (/^slot of \S+ changed \(/.test(e.message) || /^candidate #\d+ \S+ of \S+ was invalidated by plan #\d+/.test(e.message)) return [report('superseded', `merge refused (${e.message}); the next pass decides on the new state`)];
         if (e.message.startsWith('rebase needed')) {
-          const r = await ops.rebase({ cwd, as, node });
+          let r: ops.RebaseResult;
+          try { r = await this.rebaseSlot(await loadState(this.ledger!), node); }
+          catch (error) { if (error instanceof OwedError && error.code === 'busy') return [report('retry', `${error.message}; retry next pass`)]; throw error; }
           return [report('rebased', `merge refused (${e.message}); slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`)];
         }
         if (/trunk changed \(CAS\)/.test(e.message)) {
