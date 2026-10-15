@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, writeFile, access, rm, mkdir, readdir, chmod } from 'node:fs/promises';
@@ -187,24 +189,34 @@ test('AW #2090: expired foreign and undated markers never block; live markers na
 
 test('AW #2090: two concurrent CLI adopts share each request\'s 600ms total budget', {timeout:60_000}, async()=>{
   const f = await fixture(), releaseMerge = await hold(f.ledger), releaseLedger = await hold(f.ledger,'test commit blocker','lock');
-  let outcomes: Promise<Awaited<ReturnType<typeof cli>>[]> | undefined;
+  let outcomes: Promise<{code:number;stderr:string;pid:number;exited:number}[]> | undefined;
   try {
     await commitAt(f.cwd,{hotfix:'ok'});
-    const before = await f.ledger.read(), started = Date.now();
-    outcomes = Promise.all([1,2].map(()=>cli(f.cwd,['adopt','--note','hotfix','--wait','0.6','--no-lease'])));
+    const before = await f.ledger.read();
+    const exits = [1,2].map(() => new Promise<{code:number;stderr:string;pid:number;exited:number}>(resolve => {
+      const entry = fileURLToPath(new URL('../bin/owed.js',import.meta.url));
+      // Optional deterministic startup load reproduces #2299 without charging it to adopt's budget.
+      const script = `await new Promise(r=>setTimeout(r,${Number(process.env.NITS022_STARTUP_DELAY_MS ?? 0)})); process.argv=[process.execPath,${JSON.stringify(entry)},'adopt','--note','hotfix','--wait','0.6','--no-lease']; await import(${JSON.stringify(entry)});`;
+      const child = execFile(process.execPath,['--input-type=module','-e',script],{cwd:f.cwd,env:process.env,timeout:30_000},(error,_stdout,stderr)=>resolve({code:error ? Number(error.code) : 0,stderr,pid:child.pid!,exited:Date.now()}));
+    }));
+    outcomes = Promise.all(exits);
     await until(async()=>(await pendingFiles(f.pendingDir)).length === 2,'both adopters publish independent PID markers');
     const files = await pendingFiles(f.pendingDir);
     assert.notEqual(files[0],files[1]);
+    const since = new Map<number,number>();
     for (const file of files) {
       const marker=JSON.parse(await readFile(join(f.pendingDir,file),'utf8'));
+      since.set(marker.pid,Date.parse(marker.since));
       assert.equal(Date.parse(marker.until)-Date.parse(marker.since),60_600);
     }
     assert.equal(existsSync(join(f.ledger.dir,'adopt-queue')),false);
     await sleep(200);await releaseMerge();
     const results = await outcomes;
-    assert.ok(Date.now()-started <= 1600,'600ms budget + 1s allowance, including both lock waits');
-    for (const result of results) assert.equal(result.code,75,result.stderr);
-    assert.ok(results.some(result=>result.stderr.includes('ledger lock')),results.map(r=>r.stderr).join('\n'));
+    for (const result of results) {
+      assert.equal(result.code,75,result.stderr);
+      assert.match(result.stderr,/ledger lock/);
+      assert.ok(result.exited-since.get(result.pid)! <= 1600,'each request: 600ms total budget + 1s exit/scheduling allowance');
+    }
     assert.deepEqual(await pendingFiles(f.pendingDir),[]);
     assert.deepEqual(await f.ledger.read(),before);
   } finally {await releaseMerge();await releaseLedger();await outcomes;await f.cleanup();}

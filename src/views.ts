@@ -291,7 +291,7 @@ function outsideWrites(s: State, node: string): ReceiptCard['outOfWrites'] {
   const covered = seq !== undefined && writesAllowed(s.plan,node,paths);
   const failure = observationsOf(s,node,'writes',writes.key).findLast(o => o.verdict === 'fail');
   // Only a recorded GR2 refusal demonstrates an attempted grant; an old writes failure does not.
-  const grantRefused = covered && !!failure?.note && /(?:; (?:under closure|overlaps open node [^\n]+)$|\((?:under closure|owned by open node )[^\n]*)/.test(failure.note);
+  const grantRefused = covered && failure?.grant_refused === true;
   const hint = grantHint(s,node,paths) ?? (failure?.waits_on ? failure.note : covered && !grantRefused ? 'hint: paths are now pre-authorized; submit a new commit (any change, e.g. an amended commit message) so the writes item is measured again under the new allow rule' : undefined);
   return paths.length ? { paths, ...(covered ? { allowance: seq } : {}), ...(grantRefused ? { grantRefused: true } : {}), ...(hint ? { hint } : {}) } : undefined;
 }
@@ -449,6 +449,7 @@ function genesisStatus(s: State): { genesis?: GenesisStatus } {
   return g.pending.length ? { genesis: { observed: g.observed.length, total: g.ids.length, pending: g.pending } } : {};
 }
 export function mergeWaitingText(w: NonNullable<StatusView['mergeWaiting']>[string], kind = 'merge'): string {
+  if (w.reason.startsWith('in batch with ')) return `${kind} ${oneLine(w.reason)}`;
   const reason = `${oneLine(w.reason)}${w.job ? '' : mergeWaitSuffix(w.reason, w.since)}`;
   return `${kind} waiting for ${reason}${w.ahead !== undefined && w.ahead >= 0 ? `; ${w.ahead} ${w.ahead === 1 ? 'merge' : 'merges'} ahead` : ''}`;
 }

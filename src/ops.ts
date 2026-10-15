@@ -321,8 +321,8 @@ async function writerTree(s: State, id: string, dirs: string[], env: NodeJS.Proc
  * The plan blob bytes and sha stored for a plan text (canonical YAML); refuses a `worktrees:` block a new plan must
  * not have (G4) and node ids equal ignoring case.
  */
-function planBlob(text: string, checkWrites = true) {
-  const plan = withWritesSyntax(parsePlan(text),2), hygiene = [...(checkWrites ? writesSyntaxErrors(plan) : []),...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan), ...execEnvErrors(plan)];
+function planBlob(text: string, checkWrites = true, prior?: Plan) {
+  const plan = withWritesSyntax(parsePlan(text),2), hygiene = [...(checkWrites ? writesSyntaxErrors(plan,prior) : []),...(plan.worktrees ? worktreesErrors(plan.worktrees) : []), ...nodeIdCaseErrors(plan), ...execEnvErrors(plan)];
   if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
   const source = JSON.parse(canonical(plan));
   // PL1: retain diagnostic source even before SG's parsed check field is integrated.
@@ -336,7 +336,7 @@ function planBlob(text: string, checkWrites = true) {
   }
   const data = stringify(source, { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
 }
-async function storePlan(ledger: Ledger, text: string) { const b = planBlob(text); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
+async function storePlan(ledger: Ledger, text: string, prior?: Plan) { const b = planBlob(text,true,prior); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
 /** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
 const aborted = (): OwedError => new OwedError('aborted', 'aborted');
 function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) throw aborted(); }
@@ -411,7 +411,7 @@ async function automaticInvariantRemeasure(cwd: string, ledger: Ledger, snapshot
 function automaticRemeasureHints(state: State, items: ItemView[], node: string): { lines: string[]; keys: Set<string> } {
   const lines: string[] = [], keys = new Set<string>();
   for (const item of items.filter(i => i.status === 'D')) {
-    const obs = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === item.obligation && e.key === item.key);
+    const obs = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && !e.batch && e.subject === 'trunk' && e.obligation === item.obligation && e.key === item.key);
     const retry = obs.find(e => e.auto_remeasure);
     if (!retry) continue;
     keys.add(item.key);
@@ -447,7 +447,7 @@ async function writesGrantDrafts(cwd: string, ledger: Ledger, s: State, job: Att
   const overlapOnly = refused.length > 0 && refused.every(r => r.reasons.every(reason => reason.startsWith('overlaps open node ')));
   const failures = refused.map(r => `${r.path} (${r.reasons.filter(reason => !reason.startsWith('overlaps open node ')).concat(r.owners.map(id => `owned by open node ${id}`)).join('; ')})`);
   const note = refused.length ? `outside writes: ${failures.join(', ')}${overlapOnly ? `; re-measured automatically after ${owners.join(', ')} merges` : owners.length ? `; resolve other refusals, then re-measure after ${owners.join(', ')} merges` : ''}${labels.length ? `; ${labels.join('; ')}` : ''}` : `all changed paths within writes${labels.length ? ` (${labels.join('; ')})` : ''}`;
-  drafts.push({...obs,verdict:refused.length ? 'fail' : 'pass',exit:refused.length ? 1 : 0,note,log:await ledger.putBlob(note),...(overlapOnly ? {waits_on:owners} : {})});
+  drafts.push({...obs,verdict:refused.length ? 'fail' : 'pass',exit:refused.length ? 1 : 0,note,log:await ledger.putBlob(note),...(refused.some(r => r.reasons.some(reason => reason === 'under closure' || reason.startsWith('overlaps open node '))) ? {grant_refused:true} : {}),...(overlapOnly ? {waits_on:owners} : {})});
   return drafts;
 }
 /**
@@ -614,9 +614,11 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
 export interface NotCarried { node: string; reason: string }
 /** `notCarried` (N1, optional): receives one item per open candidate the plan entry invalidated and could not carry. */
 export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[]; shellWarnings?: string[] }): Promise<Entry> {
-  owner(o); const ledger = await Ledger.open(o.cwd), b = planBlob(o.plan);
+  owner(o); const ledger = await Ledger.open(o.cwd), b = planBlob(o.plan,false);
   // N2: each attempt recomputes carries from its own fresh locked read; only the successful attempt reports skips.
   return retryCas(ledger, async before => {
+    const hygiene = writesSyntaxErrors(b.plan,before.plan);
+    if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
     const priorText = (await ledger.getBlob(before.planSha)).toString();
     const warnings = lintPlanShell(b.plan,before.plan,o.plan,priorText);
     const p = { plan:b.plan, sha:await ledger.putBlob(b.data) };
@@ -726,7 +728,7 @@ async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<Amen
   if (writesCovered(s.plan,o.node,added)) throw new OwedError(`not needed: ${added.join(', ')} are covered by allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}); owed grants them at measurement; tell the writer to edit them`);
   const next = spliceWrites(read.plan,doc,item,added);
   if (next === undefined) throw new OwedError(`cannot edit ${read.path}: writes of node ${o.node} is not a list`);
-  const plan = planBlob(next).plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
+  const plan = planBlob(next,true,s.plan).plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
   if (canonical(plan) !== canonical(expect)) throw new OwedError(`cannot edit ${read.path}: the edited file would change more than the writes of ${o.node}`,'internal');
   return { node:o.node, file:await realpath(resolve(o.cwd,source)), path:read.path, text:read.plan, next, prior:s.plan, plan, added, present, planSha:s.planSha };
 }
@@ -772,7 +774,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
   // N2 (00:3x): retried like owed plan; each attempt re-reads the ledger and the file (amendEdit), and a failed attempt
   // removes its temporary file before the refusal leaves the lock.
   return retryCas(ledger, async before => {
-  const { entries } = await load(ledger), e = await amendEdit(o,entries,before), p = await storePlan(ledger,e.next);
+  const { entries } = await load(ledger), e = await amendEdit(o,entries,before), p = await storePlan(ledger,e.next,before.plan);
   const limit = o.note.trim(), widened = e.added.map(x => `+${x}`).join(', '), notCarried: NotCarried[] = [];
   return ledger.withLock(async () => {
     const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:`amend ${o.node}: writes ${widened}. Limit: ${limit}`, notCarried },ledger,p,before);
@@ -806,7 +808,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   if (o.rule !== undefined && !o.rule.trim()) throw new OwedError('--rule needs non-empty text','usage');
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
-  const next = editText(read.plan,o), plan = planBlob(next).plan;
+  const next = editText(read.plan,o), plan = planBlob(next,true,s.plan).plan;
   return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString())] };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
@@ -816,7 +818,7 @@ export async function edit(o: Actor & EditArgs): Promise<EditResult | EditPrevie
   if (o.dry_run) return editPreview(o);
   owner(o); const ledger = await Ledger.open(o.cwd);
   return retryCas(ledger,async before => {
-    const { entries } = await load(ledger), e = await prepareEdit(o,entries,before), p = await storePlan(ledger,e.next), notCarried: NotCarried[] = [];
+    const { entries } = await load(ledger), e = await prepareEdit(o,entries,before), p = await storePlan(ledger,e.next,before.plan), notCarried: NotCarried[] = [];
     return ledger.withLock(async () => {
       const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:o.note.trim(), notCarried },ledger,p,before);
       if (await readFile(e.file,'utf8') !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while editing; nothing recorded`);

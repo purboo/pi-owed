@@ -224,12 +224,12 @@ test('WG2098 legacy brackets and wildcard prefixes replay cold and retain grants
     await r.ledger.removeSnapshot();await writeFile(join(r.ledger.dir,'cache','plans',`${s.planSha}.json`),JSON.stringify({v:'plan-cache/1 owed/0.20.0',sha:s.planSha,plan:s.plan}));
     const status=await cli(r.cwd,['status','--full']);assert.equal(status.code,0,status.stdout+status.stderr);
     assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
-    const before=(await r.ledger.read()).length;
-    await assert.rejects(ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'}),/app\/\[id\]\//);
-    assert.equal((await r.ledger.read()).length,before);
     await ops.merge({cwd:r.cwd,node:'a',as:parent});
     await commitAt(r.cwd,{'tool?/run':'allowed'});await ops.adopt({cwd:r.cwd,note:'literal legacy prefix',as:parent});
     await commitAt(r.cwd,{'toolX/run':'outside'});await assert.rejects(ops.adopt({cwd:r.cwd,note:'not a literal match',as:parent}),/toolX\/run/);
+    // NT: retained legacy literals no longer prevent an otherwise valid plan edit.
+    const updated=await ops.planSet({cwd:r.cwd,plan:JSON.stringify(p),as:owner,channel:'flag'});
+    assert.equal(updated.kind,'plan');assert.equal(writesSyntax((await r.state()).s.plan),2);
   }finally{await r.cleanup();}
 });
 
