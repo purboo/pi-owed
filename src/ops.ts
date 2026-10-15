@@ -8,7 +8,7 @@ import { stringify, parseDocument, isMap, isSeq, isScalar, type YAMLMap } from '
 import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type LockOwner } from './ledger.ts';
 import { withLockDeadline } from './lock-deadline.ts';
-import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason, mergeWaitSuffix } from './adopt-wait.ts';
+import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText } from './rebase-view.ts';
 import { planReceipt, renderEntry } from './views.ts';
 import * as git from './git.ts';
@@ -28,7 +28,7 @@ import { editText, editDiff, type EditFields } from './edit.ts';
 import { lintPlanShell } from './planlint.ts';
 import { computeMetrics, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { OwedError } from './errors.ts';
-import { receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
+import { mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -219,12 +219,13 @@ function candidate(s: State, id: string) { const n = node(s,id); if (!n.slot?.op
 // Keep the public error class/code; only these CAS refusals are eligible for an operation retry.
 const casRefusals = new WeakSet<OwedError>();
 function casRefusal(message: string): OwedError { const error = new OwedError(message); casRefusals.add(error); return error; }
-/** N2: fresh snapshot per attempt, at most three; a changed plan or failed rollback keeps the refusal. */
-async function retryCas<T>(ledger: Ledger, run: (before: State) => Promise<T>): Promise<T> {
+export function isCasRefusal(error: unknown): error is OwedError { return error instanceof OwedError && casRefusals.has(error); }
+/** N2/DQ1: fresh snapshot per attempt, at most three; dispatch may retry across plan changes after rollback. */
+async function retryCas<T>(ledger: Ledger, run: (before: State) => Promise<T>, freshPlan = false): Promise<T> {
   let prior: State | undefined, refusal: unknown;
   for (let attempt = 0; ; attempt++) {
     const before = (await load(ledger)).state;
-    if (prior && before.planSha !== prior.planSha) throw refusal;
+    if (prior && before.planSha !== prior.planSha && !freshPlan) throw refusal;
     try { return await run(before); }
     catch (error) {
       if (attempt === 2 || !(error instanceof OwedError) || !casRefusals.has(error)) throw error;
@@ -896,13 +897,19 @@ async function setupSlot(plan: Plan, worktree: string): Promise<{ line: string; 
   const excluded = paths.length ? `; excluded: ${paths.map(path => oneLine(`/${path}`)).join(', ')}` : '';
   return { line: `Setup: ran \`${oneLine(run)}\` in this worktree (exit 0${excluded})`, excludes, paths };
 }
+function readyDispatchNode(state: State, id: string) {
+  const n = node(state, id), spec = state.plan.nodes.find(x => x.id === id);
+  if (!spec) throw new OwedError(`Node ${id} does not exist in the current plan; refresh the plan before dispatching`);
+  if (n.held !== undefined) throw new OwedError(`${id} is held by abandon #${n.held}; release it with owed resume ${id}`);
+  if (n.phase !== 'ready' || n.slot?.open) throw new OwedError('dispatch requires a ready node with no open slot');
+  return { n, spec };
+}
 export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean }): Promise<DispatchPacket> {
   // The main worktree root: dispatching from inside a slot worktree must not nest the new worktree in it.
   // Resolved first, so an unverifiable layout is refused before any ledger, exclude or worktree effect.
   owner(o); const root = await git.mainRoot(o.cwd), ledger = await Ledger.open(o.cwd);
   return ledger.withLock(() => retryCas(ledger, async state => {
-    const n = node(state,o.node), spec = state.plan.nodes.find(x => x.id === o.node)!;
-    if (n.held !== undefined) throw new OwedError(`${o.node} is held by abandon #${n.held}; release it with owed resume ${o.node}`);
+    const { n, spec } = readyDispatchNode(state, o.node);
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(o.node)) throw new OwedError('Node id is unsafe for a worktree path','usage');
     // Overlapping writes of concurrent slots produce conflicts or ambiguous ownership; refuse unless explicitly allowed.
     const overlaps = overlapping(state,o.node);
@@ -954,7 +961,7 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
       throw await rolledBack(error,[['setup exclude cleanup',undoExcludes],['git worktree remove',run(['worktree','remove',...(hasSetup ? ['--force'] : []),worktree])],['git branch -d',dropBranch],['directory cleanup',unmake]]);
     }
     return { node:o.node, attempt, worktree, branch, packet, entry, subagent:{agent:'worker',cwd:worktree,task:packet} };
-  }),'dispatch');
+  }, true),'dispatch');
 }
 /**
  * Runs every rollback step of a failed dispatch, even after an earlier step failed; a step returns its failure text
@@ -1531,9 +1538,10 @@ async function applyMergeWaiting(dir: string, state: State, view: StatusView): P
       const n = state.nodes[id];
       if (!n?.slot?.open || n.merged || wait.attempt !== n.slot.attempt || wait.candidate !== n.candidate?.seq || typeof wait.reason !== 'string' || !Number.isFinite(Date.parse(wait.since))) continue;
       if (wait.reason.startsWith('adopt (pending since ') && !adoptPending) continue;
-      current[id] = wait;
+      const { ahead: _cachedAhead, ...waiting } = wait, ahead = view.mergeQueue.indexOf(id);
+      current[id] = { ...waiting, ...(ahead >= 0 ? { ahead } : {}) };
       const progress = view.summary?.progress.find(p => p.node === id);
-      if (progress && n.candidate) progress.phase = `${n.accepted ? 'merge' : 'measure'} waiting for ${oneLine(wait.reason)}${mergeWaitSuffix(wait.reason,wait.since)}`;
+      if (progress && n.candidate) progress.phase = mergeWaitingText(current[id]!, n.accepted ? 'merge' : 'measure');
     }
     if (Object.keys(current).length) view.mergeWaiting = current;
   } catch { /* cache miss */ }
