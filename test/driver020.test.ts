@@ -131,7 +131,8 @@ test('DR1: accepted node preempts advisory sweep, and no new sweep starts while 
 });
 
 test('DR3: CLI stores actual model, why warns on same model and unknown pool membership is explicit', { timeout:120_000 }, async () => {
-  const f=await fixture([node('a',[],{review:{count:1,min_rank:1}})]);
+  const f=await fixture([node('a',[],{review:{count:1,min_rank:1}})]), priorDsaHome=process.env.DSA_HOME;
+  process.env.DSA_HOME=join(f.root,'isolated-dsa');
   try {
     const {slot,commit}=await f.candidate('a'); await f.launch('a','reviewer','review-selected');
     const submit=await cli(slot.worktree,['submit','a','--model','actual','--json']); assert.equal(submit.code,0,submit.stderr); assert.equal(JSON.parse(submit.stdout).model,'actual');
@@ -145,7 +146,7 @@ test('DR3: CLI stores actual model, why warns on same model and unknown pool mem
     await cli(slot.worktree,['submit','a']);
     assert.match((await cli(f.cwd,['why','a'])).stdout,/writer model unknown/);
     const bad=await cli(slot.worktree,['submit','a','--model','']); assert.notEqual(bad.code,0);
-  } finally { await f.done(); }
+  } finally { if(priorDsaHome===undefined) delete process.env.DSA_HOME; else process.env.DSA_HOME=priorDsaHome; await f.done(); }
 });
 
 test('DR3: submitting and reviewing agents record the actual dsa status model without changing launch intents', {timeout:120_000},async()=>{

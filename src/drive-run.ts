@@ -234,6 +234,7 @@ class Facts {
  */
 interface Measurement {
   do: 'attest' | 'merge'; node: string; attempt: number; at: string;
+  batch?: string[];
   ended: Promise<void>;
   done: boolean;
   /** DR1: only driver-owned trunk refreshes may be preempted. */
@@ -663,7 +664,8 @@ export class Driver {
           // DQ2: the merge blocks a second merge even when an attest also occupies capacity.
           const blocker = inFlight.find(m => m.do === 'merge') ?? inFlight[0]!;
           const job = `${blocker.attempt === 0 ? 'trunk' : blocker.node} ${blocker.do}`;
-          this.recordMergeWaiting(a.node, `driver-internal job (${job}, since ${new Date(blocker.at).toISOString().slice(11,16)})`, s, job);
+          const reason = blocker.batch?.includes(a.node) ? `in batch with ${blocker.node}` : `driver-internal job (${job}, since ${new Date(blocker.at).toISOString().slice(11,16)})`;
+          this.recordMergeWaiting(a.node, reason, s, job);
           continue;
         }
         // Busy back-off: a measurement that ended busy waits for the next timed or event pass.
@@ -783,7 +785,7 @@ export class Driver {
   /** Starts the attest or merge of `node` without awaiting it; returns its `started` report. */
   private start(s: State, what: 'attest' | 'merge', node: string, batch?: string[]): ActionReport {
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
-    const m: Measurement = { do: what, node, attempt, at, done: false, ended: Promise.resolve() };
+    const m: Measurement = { do: what, node, attempt, at, ...(batch ? {batch} : {}), done: false, ended: Promise.resolve() };
     const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && { members: batch, trunk: s.trunk.commit });
     let busy: ActionReport | undefined;
     m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })

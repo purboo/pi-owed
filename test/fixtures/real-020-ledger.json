@@ -1,0 +1,303 @@
+{
+  "entries": [
+    {
+      "kind": "genesis",
+      "by": "owner:human",
+      "channel": "tty",
+      "trunk": "main",
+      "commit": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "plan": "35549e9031983f05c705a402bf049ab6f8f6144336f8b40a4cf86289f1a6cf84",
+      "state": {
+        "commit": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+        "tree": "887be6127087861d8a0c0e743724d7da47c57c39",
+        "invKeys": {
+          "typecheck": "75442b825c9cd1822459b1da1ffbffab48ab31c02c3e4017272d62f3b11e046b",
+          "suite": "b193321b6edaaecf0026e5a26911884f3bb4ad58a30d5233edfd534f79bcb2c4"
+        }
+      },
+      "seq": 0,
+      "ts": "2026-10-08T23:52:59.018Z",
+      "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hash": "b1da092bfb45c32517e0fa42820b3322b824a413d8f71b5301a77facae9f3c9c"
+    },
+    {
+      "kind": "obs",
+      "by": "executor:owed",
+      "subject": "trunk",
+      "obligation": "inv:typecheck",
+      "key": "75442b825c9cd1822459b1da1ffbffab48ab31c02c3e4017272d62f3b11e046b",
+      "verdict": "pass",
+      "exit": 0,
+      "durationMs": 5037,
+      "commit": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "seq": 1,
+      "ts": "2026-10-08T23:53:04.074Z",
+      "prev": "b1da092bfb45c32517e0fa42820b3322b824a413d8f71b5301a77facae9f3c9c",
+      "hash": "c64655901f4a7cdd91fd7021740811b2a984052b4d7cbbaf717208218511e83b"
+    },
+    {
+      "kind": "obs",
+      "by": "executor:owed",
+      "subject": "trunk",
+      "obligation": "inv:suite",
+      "key": "b193321b6edaaecf0026e5a26911884f3bb4ad58a30d5233edfd534f79bcb2c4",
+      "verdict": "pass",
+      "exit": 0,
+      "durationMs": 10831,
+      "commit": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "counts": {
+        "format": "tap",
+        "tests": 44,
+        "pass": 44,
+        "fail": 0,
+        "skip": 0
+      },
+      "log": "4d68bfef18ef0eb3bd36ca14f51204f88b54b6adca26d1574a99881ce24351d1",
+      "seq": 2,
+      "ts": "2026-10-08T23:53:14.913Z",
+      "prev": "c64655901f4a7cdd91fd7021740811b2a984052b4d7cbbaf717208218511e83b",
+      "hash": "eed47bbafa68b457fc0b63f117e8d4c1f78d9c947f480678068312ef16923c70"
+    },
+    {
+      "kind": "plan",
+      "by": "parent:cli",
+      "prior": "35549e9031983f05c705a402bf049ab6f8f6144336f8b40a4cf86289f1a6cf84",
+      "plan": "d569b9fb0b05240ea5693f34f44563179bbe46dbcceff5c5d482603307f46fc7",
+      "downgrades": [],
+      "seq": 3,
+      "ts": "2026-10-08T23:54:07.521Z",
+      "prev": "eed47bbafa68b457fc0b63f117e8d4c1f78d9c947f480678068312ef16923c70",
+      "hash": "5e7f386b3eda9bf384391fc8d8ca85df3c6dbbadb90bea20f85a0669a7e88ef5"
+    },
+    {
+      "kind": "dispatch",
+      "by": "parent:cli",
+      "node": "english",
+      "attempt": 1,
+      "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "branch": "owed/english/1",
+      "worktree": "/home/purboo/project/pi-things/pi-owed/.owed/wt/english-1",
+      "packet": "b8282c58e9189ede5f99df85b708b0df703fe4a437e4010a336e35f884dd8284",
+      "rulings_seen": -1,
+      "seq": 4,
+      "ts": "2026-10-08T23:54:12.675Z",
+      "prev": "5e7f386b3eda9bf384391fc8d8ca85df3c6dbbadb90bea20f85a0669a7e88ef5",
+      "hash": "3915512b8bff37c35c74c8d788eeb439b2190dd2445391e094e5ea81b2079c92"
+    },
+    {
+      "kind": "submit",
+      "by": "writer:english#1",
+      "node": "english",
+      "attempt": 1,
+      "facts": {
+        "commit": "f1520f6fee4fc5a33e92a9419805929a6d77514a",
+        "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+        "tree": "7c65ee29fece1c542826520218d8a3d9d1d2e30d",
+        "patch": "8f3bf9af416dc47428c52c83b9b0c5cfd19ae70a08384c0e755c44788ea48250",
+        "changed": [
+          "docs/SPEC.md",
+          "skills/owed/SKILL.md",
+          "src/cli.ts",
+          "src/extension.ts",
+          "src/ops.ts",
+          "src/reducer.ts",
+          "src/types.ts",
+          "src/views.ts",
+          "test/cli.test.ts",
+          "test/english.test.ts",
+          "test/extension.test.ts",
+          "test/reducer.test.ts"
+        ],
+        "closureTouched": false,
+        "keys": {
+          "check:english": "09c70865a66555c19f64591636379a951cff50ba5f770d8b2ced6341e0076510",
+          "red:english": "0c53ec133accd9ac8fbcc78894ecb9df20f0d2430cacf48c85ec35217b045ef1",
+          "writes": "ab92c6eab55e673ae1b2b831e855163f7d4574da99b0612abb9bf2ac76e59d85",
+          "review": "d5516f8ec00623c13084e6ec1f15104713d6e1f56cf05bc4877d918a45ac0fa1",
+          "rulings": "d299e32ac0499fbee828d79ff1c42e70a30ea5ea6fbc37622548e6d25d541600"
+        }
+      },
+      "seq": 5,
+      "ts": "2026-10-09T00:00:21.798Z",
+      "prev": "3915512b8bff37c35c74c8d788eeb439b2190dd2445391e094e5ea81b2079c92",
+      "hash": "f37105a6cd185ee6db52a913ded24b507c02348d434e883ec8e3a2afa399e91b"
+    },
+    {
+      "kind": "obs",
+      "by": "executor:owed",
+      "subject": "english",
+      "obligation": "check:english",
+      "key": "09c70865a66555c19f64591636379a951cff50ba5f770d8b2ced6341e0076510",
+      "verdict": "pass",
+      "exit": 0,
+      "durationMs": 4676,
+      "commit": "f1520f6fee4fc5a33e92a9419805929a6d77514a",
+      "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "counts": {
+        "format": "tap",
+        "tests": 3,
+        "pass": 3,
+        "fail": 0,
+        "skip": 0
+      },
+      "log": "4d9d8c054a12a88c07e3a345eb16c6e98e13e0ead9a67d998d3008c41bd96e96",
+      "seq": 6,
+      "ts": "2026-10-09T00:00:49.859Z",
+      "prev": "f37105a6cd185ee6db52a913ded24b507c02348d434e883ec8e3a2afa399e91b",
+      "hash": "5b7298b4e539de920f40c4bd894b753f389ee921b97bed0ebb7ff990f0316750"
+    },
+    {
+      "kind": "obs",
+      "by": "executor:owed",
+      "subject": "english",
+      "obligation": "red:english",
+      "key": "0c53ec133accd9ac8fbcc78894ecb9df20f0d2430cacf48c85ec35217b045ef1",
+      "verdict": "pass",
+      "exit": 1,
+      "durationMs": 630,
+      "commit": "f1520f6fee4fc5a33e92a9419805929a6d77514a",
+      "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "counts": {
+        "format": "tap",
+        "tests": 3,
+        "pass": 0,
+        "fail": 3,
+        "skip": 0
+      },
+      "log": "946103134acd1fccf1a2b05067291a9bf4e2b1ea2c67501500f12228eb00452c",
+      "seq": 7,
+      "ts": "2026-10-09T00:00:50.503Z",
+      "prev": "5b7298b4e539de920f40c4bd894b753f389ee921b97bed0ebb7ff990f0316750",
+      "hash": "e3fe9efc38bd0036aa65258ccd68c18509686439ae445b063a0d3561c381880b"
+    },
+    {
+      "kind": "obs",
+      "by": "executor:owed",
+      "subject": "english",
+      "obligation": "writes",
+      "key": "ab92c6eab55e673ae1b2b831e855163f7d4574da99b0612abb9bf2ac76e59d85",
+      "verdict": "pass",
+      "exit": 0,
+      "durationMs": 7,
+      "commit": "f1520f6fee4fc5a33e92a9419805929a6d77514a",
+      "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "note": "all changed paths within writes",
+      "log": "a66fb5f390cd7c3feb625f8b4f012ae69ee11a194129a40d82f962e3a337b6c2",
+      "seq": 8,
+      "ts": "2026-10-09T00:00:50.521Z",
+      "prev": "e3fe9efc38bd0036aa65258ccd68c18509686439ae445b063a0d3561c381880b",
+      "hash": "b00afaa0bb23a7d929daeecf7c999e9b36fc7b2a1c49863a5a2cb4cb6c542ddb"
+    },
+    {
+      "kind": "review",
+      "by": "reviewer:opus-en1",
+      "node": "english",
+      "attempt": 1,
+      "obligation": "review",
+      "key": "d5516f8ec00623c13084e6ec1f15104713d6e1f56cf05bc4877d918a45ac0fa1",
+      "verdict": "ok",
+      "rank": 1,
+      "note": "Reviewed git diff c515df9..f1520f6. AST comparison of src/{cli,ops,reducer,views,extension,types}.ts with string literals masked shows only string/join-separator changes, except views.ts itemText now always prints the label (old '封' special case removed; ⛔ blocked is rendered) - display only. Mark '⛔' appears only in the ItemView view type; it is not persisted in the ledger. Entry kinds, fields, key formulas, validation conditions, exit codes and the packet's use in keys are unchanged. SKILL.md/SPEC.md translations faithfully keep the rules: same-rank different reviewer cannot clear, owner-only waive/defer/downgrade, defer is debt not a pass, invariants cannot be waived, execution-attribution semantics. The updated assertions in cli/extension/reducer tests are equivalent in strength (Attribution is slightly stricter; Merges and defer were already loose on base). english.test.ts drives real CLI and extension paths, including refusals, owner confirmation prompts and doc scans. Ran in a detached worktree: tsc --noEmit exit 0; node --test english/cli/extension/reducer 31/31 pass. Non-blocking: missing space after colon at src/cli.ts:55 (failed:), src/ops.ts:123 (accepted:), src/reducer.ts:345 (unsatisfied:); reducer downgradeDetails wording still differs from plan.ts planDowngrades (pre-existing), so downgrade lists may show duplicates; english.test.ts does not scan bin/ or dev/plan.yaml (dev/plan.yaml still has CJK but is not user-facing).",
+      "seq": 9,
+      "ts": "2026-10-09T00:03:49.363Z",
+      "prev": "b00afaa0bb23a7d929daeecf7c999e9b36fc7b2a1c49863a5a2cb4cb6c542ddb",
+      "hash": "69415c16d2efb388edbc25d96276033ecad71abb7b639e2b1545871aab4eb487"
+    },
+    {
+      "kind": "obs",
+      "by": "executor:owed",
+      "subject": "trunk",
+      "obligation": "inv:typecheck",
+      "key": "71d10440b79122a3cccee2f382829d9bff2e9b94a1a2dcce10d5867b06c7099b",
+      "verdict": "pass",
+      "exit": 0,
+      "durationMs": 4801,
+      "commit": "3f662bf0fba7ef26112761baeb85e2eee8527cbc",
+      "base": "3f662bf0fba7ef26112761baeb85e2eee8527cbc",
+      "log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "seq": 10,
+      "ts": "2026-10-09T00:04:34.371Z",
+      "prev": "69415c16d2efb388edbc25d96276033ecad71abb7b639e2b1545871aab4eb487",
+      "hash": "3e5b5084877d740bb1830f6bff59d95742cf8b76fe9e1d8f06a2bd0a250c85d3"
+    },
+    {
+      "kind": "obs",
+      "by": "executor:owed",
+      "subject": "trunk",
+      "obligation": "inv:suite",
+      "key": "52555ae3bfd1a668f4a254c8f50827c3609536a793cf36d06002f076b5fa6dd1",
+      "verdict": "pass",
+      "exit": 0,
+      "durationMs": 14562,
+      "commit": "3f662bf0fba7ef26112761baeb85e2eee8527cbc",
+      "base": "3f662bf0fba7ef26112761baeb85e2eee8527cbc",
+      "counts": {
+        "format": "tap",
+        "tests": 47,
+        "pass": 47,
+        "fail": 0,
+        "skip": 0
+      },
+      "log": "85b4f0d223b7455626b6131d47ca8ff818687954173ead12a3a86b34d992bfb2",
+      "seq": 11,
+      "ts": "2026-10-09T00:04:34.371Z",
+      "prev": "3e5b5084877d740bb1830f6bff59d95742cf8b76fe9e1d8f06a2bd0a250c85d3",
+      "hash": "e14d086e08808826a1679fe1d94a6e25092cc0268fd5312ae0091bee8877f80e"
+    },
+    {
+      "kind": "merge",
+      "by": "executor:owed",
+      "node": "english",
+      "attempt": 1,
+      "prior": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+      "commit": "3f662bf0fba7ef26112761baeb85e2eee8527cbc",
+      "facts": {
+        "commit": "3f662bf0fba7ef26112761baeb85e2eee8527cbc",
+        "base": "c515df9283da0b5b40c5d582e3d809b441a3e3b6",
+        "tree": "7c65ee29fece1c542826520218d8a3d9d1d2e30d",
+        "patch": "8f3bf9af416dc47428c52c83b9b0c5cfd19ae70a08384c0e755c44788ea48250",
+        "changed": [
+          "docs/SPEC.md",
+          "skills/owed/SKILL.md",
+          "src/cli.ts",
+          "src/extension.ts",
+          "src/ops.ts",
+          "src/reducer.ts",
+          "src/types.ts",
+          "src/views.ts",
+          "test/cli.test.ts",
+          "test/english.test.ts",
+          "test/extension.test.ts",
+          "test/reducer.test.ts"
+        ],
+        "closureTouched": false,
+        "keys": {
+          "check:english": "09c70865a66555c19f64591636379a951cff50ba5f770d8b2ced6341e0076510",
+          "red:english": "0c53ec133accd9ac8fbcc78894ecb9df20f0d2430cacf48c85ec35217b045ef1",
+          "writes": "f13a90b39e51d75ca13aee912783989ba551435db0177b82ec7901517959a688",
+          "review": "d5516f8ec00623c13084e6ec1f15104713d6e1f56cf05bc4877d918a45ac0fa1",
+          "rulings": "d299e32ac0499fbee828d79ff1c42e70a30ea5ea6fbc37622548e6d25d541600"
+        }
+      },
+      "state": {
+        "commit": "3f662bf0fba7ef26112761baeb85e2eee8527cbc",
+        "tree": "7c65ee29fece1c542826520218d8a3d9d1d2e30d",
+        "invKeys": {
+          "typecheck": "71d10440b79122a3cccee2f382829d9bff2e9b94a1a2dcce10d5867b06c7099b",
+          "suite": "52555ae3bfd1a668f4a254c8f50827c3609536a793cf36d06002f076b5fa6dd1"
+        }
+      },
+      "seq": 12,
+      "ts": "2026-10-09T00:04:34.371Z",
+      "prev": "e14d086e08808826a1679fe1d94a6e25092cc0268fd5312ae0091bee8877f80e",
+      "hash": "996a7269d4407bf11ab23bee9662fe05cf79426e68bdd013253aec323059d10d"
+    }
+  ],
+  "plans": {
+    "35549e9031983f05c705a402bf049ab6f8f6144336f8b40a4cf86289f1a6cf84": "closure:\n  - dev/**\n  - test/helpers/**\n  - tsconfig.json\n  - tsconfig.build.json\n  - package.json\n  - package-lock.json\ninvariants:\n  - id: typecheck\n    reads:\n      - src/**\n      - test/**\n      - tsconfig.json\n      - package.json\n    run: npx tsc -p tsconfig.json --noEmit\n    timeout_s: 300\n  - id: suite\n    min_tests: 44\n    reads:\n      - \"**\"\n    run: node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'\n    timeout_s: 900\nnodes:\n  - brief: >\n      Add `owed gc [--dry-run]` (CLI) and `ops.gc({cwd, dryRun})`. It removes\n      the slot worktree\n\n      (`git worktree remove`, refusing dirty ones: list them as kept) and\n      deletes the branch\n\n      `owed/<node>/<attempt>` for every attempt that is merged or abandoned,\n      never for an open\n\n      slot; then runs `git worktree prune`. It appends a `note` entry describing\n      what was removed\n\n      (no new entry kind). Output lists removed/kept with reasons; `--json`\n      returns\n\n      `{removed:[{node,attempt,worktree,branch}], kept:[{...,reason}]}`.\n      Idempotent: a second run\n\n      removes nothing. Document in docs/SPEC.md §8/§10 and README.\n    checks:\n      - id: gc\n        min_tests: 3\n        reads:\n          - src/**\n          - bin/**\n          - test/gc.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/gc.test.ts\n        tests:\n          - test/gc.test.ts\n        timeout_s: 300\n    deps: []\n    id: gc\n    review:\n      count: 1\n      min_rank: 1\n    title: owed gc — reclaim finished worktrees and branches\n    writes:\n      - src/ops.ts\n      - src/git.ts\n      - src/cli.ts\n      - docs/SPEC.md\n      - README.md\n      - test/gc.test.ts\n  - brief: >\n      Add `owed brief [--since seq|ISO]` (CLI), `ops.brief(...)`,\n      `views.renderBrief(...)` and a\n\n      pi tool `owed_brief`. Sections, in this order, each item one line: (1)\n      需要你决定 — owner\n\n      queue items, sorted by number of transitively blocked downstream nodes,\n      each with the exact\n\n      command that discharges it; (2) 已合并 — per merged node: counts of ✔\n      measured / ⚠ waived\n\n      obligations, 未测改动 count, reviewers; (3) 被拒或被封 — active blocks with node,\n      obligation,\n\n      the failing obs seq and how to clear; (4) 进行中 — dispatched/submitted nodes\n      with age;\n\n      (5) 一行总计 (merged / accepted-unmerged / blocked / ready counts). A waived\n      item must never\n\n      be shown as measured. Plain text by default, `--json` returns the\n      structured view. Document in\n\n      SPEC §9 and README.\n    checks:\n      - id: brief\n        min_tests: 3\n        reads:\n          - src/**\n          - bin/**\n          - test/brief.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/brief.test.ts\n        tests:\n          - test/brief.test.ts\n        timeout_s: 300\n    deps: []\n    id: brief\n    review:\n      count: 1\n      min_rank: 1\n    title: Morning brief — what finished, what was rejected, what needs the owner\n    writes:\n      - src/ops.ts\n      - src/views.ts\n      - src/cli.ts\n      - src/extension.ts\n      - docs/SPEC.md\n      - README.md\n      - test/brief.test.ts\n  - brief: >\n      New entry kinds (types.ts Entry union, reducer, validateDraft):\n\n      - `escape` {node, merge: seq of the merge entry, class:\n      'missing'|'false-pass'|'reuse'|'weak'|'waiver',\n        note, evidence?: string}: a defect found after a node was merged. by parent or owner. class\n        maps to escape classes ② / ①a / ①b / ①c / ③ (missing obligation; false affirmative obs;\n        unsound evidence reuse; weak oracle; owner waiver). Refuse if `merge` is not a merge of `node`.\n      - `decoy-commit` {digest} by owner only: sha256 hex of the canonical JSON\n      of the reveal payload\n        {nonce, decoys:[{node, defect}]}.\n      - `decoy-reveal` {nonce, decoys:[{node, defect}]} by owner only: refused\n      unless it hashes to an\n        earlier unrevealed decoy-commit made before every listed node was first dispatched.\n      Reducer derives `state.escapes` and `state.decoys` with per-decoy outcome:\n      'caught' (the decoy\n\n      node got an execution or judgment block, or a rejecting obs, before any\n      merge of it),\n\n      'escaped' (merged with no prior block), 'pending' (neither yet). Metrics:\n      escape counts by\n\n      class; decoys caught / escaped / pending; escape rate = escaped / (caught\n      + escaped).\n\n      CLI: `owed escape <node> --merge N --class C --note T`, `owed decoy commit\n      <digest>`,\n\n      `owed decoy reveal <file.json>`, `owed decoy digest <file.json>` (helper,\n      no ledger write),\n\n      and a 逃逸 section in `owed report`. Owner commands use the existing owner\n      channel rules.\n\n      Document in SPEC (entry kinds, reducer, CLI) and README (north-star\n      metric).\n    checks:\n      - id: escape\n        min_tests: 5\n        reads:\n          - src/**\n          - bin/**\n          - test/escape.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/escape.test.ts\n        tests:\n          - test/escape.test.ts\n        timeout_s: 300\n    deps: []\n    id: escape\n    review:\n      count: 1\n      min_rank: 1\n    title: Escape ledger and commit-reveal decoys (the north-star metric)\n    writes:\n      - src/types.ts\n      - src/reducer.ts\n      - src/ops.ts\n      - src/cli.ts\n      - src/views.ts\n      - docs/SPEC.md\n      - README.md\n      - test/escape.test.ts\n  - brief: >\n      CheckSpec gains `mutants?: string[]` (globs of patch files that must lie\n      inside the plan\n\n      closure; validate in plan.ts) and `min_kill?: number` in (0,1], default 1.\n      For such a check\n\n      the node gets obligation `strength:<check id>` (items list, keys,\n      attestJobs). Executor: for\n\n      each mutant patch (read from the base B, never from the candidate)\n      materialize the candidate,\n\n      overlay closure from B as for the check, `git apply` the patch (a patch\n      that does not apply\n\n      counts as not killed and is reported), run the check command; killed iff\n      exit != 0 or failing\n\n      tests > 0 (a zero-test run is not a kill). Verdict pass iff killed/total\n      >= min_kill; record\n\n      counts {tests: total, pass: killed, fail: survived} and a log listing each\n      mutant result.\n\n      Key = H(o:'strength', id, run, timeout_s, setup, min_tests, closure digest\n      of B, mutants digest\n\n      of B, readsDigest(C, reads)) — changes when the candidate's read set, the\n      check or any\n\n      mutant changes. A failed strength obs is an execution block like any\n      other. The receipt card\n\n      shows \"强度 k/n\". Document in SPEC (§3 schema, §4 keys, §7 executor) and\n      README.\n    checks:\n      - id: strength\n        min_tests: 4\n        reads:\n          - src/**\n          - bin/**\n          - test/strength.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/strength.test.ts\n        tests:\n          - test/strength.test.ts\n        timeout_s: 600\n    deps: []\n    id: strength\n    review:\n      count: 1\n      min_rank: 1\n    title: Mutation counterfactuals — measure oracle strength\n    writes:\n      - src/types.ts\n      - src/plan.ts\n      - src/git.ts\n      - src/exec.ts\n      - src/reducer.ts\n      - src/views.ts\n      - docs/SPEC.md\n      - README.md\n      - test/strength.test.ts\nsetup: ln -s \"$(dirname \"$(git rev-parse --path-format=absolute\n  --git-common-dir)\")/node_modules\" node_modules\ntrunk: main\nversion: 1\n",
+    "d569b9fb0b05240ea5693f34f44563179bbe46dbcceff5c5d482603307f46fc7": "closure:\n  - dev/**\n  - test/helpers/**\n  - tsconfig.json\n  - tsconfig.build.json\n  - package.json\n  - package-lock.json\ninvariants:\n  - id: typecheck\n    reads:\n      - src/**\n      - test/**\n      - tsconfig.json\n      - package.json\n    run: npx tsc -p tsconfig.json --noEmit\n    timeout_s: 300\n  - id: suite\n    min_tests: 44\n    reads:\n      - \"**\"\n    run: node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'\n    timeout_s: 900\nnodes:\n  - brief: >\n      Make every user-facing string English: CLI help, usage and refusal\n      messages (OwedError texts),\n\n      all CLI/tool output (status, receipt card, report,\n      merge/dispatch/submit/review results),\n\n      receipt labels and phase names (keep the marks ✔ ⚠ ✘ ⊥ ⊤ ⏸; replace the\n      CJK mark 封 by\n\n      ⛔ \"blocked\"), the dispatch packet text, pi extension tool descriptions,\n      confirmation dialogs\n\n      and /owed output, skills/owed/SKILL.md, docs/SPEC.md and docs/MODULES.md.\n      Do not change the\n\n      ledger format (entry kinds, field names, key formulas). Update existing\n      tests that match\n\n      CJK text. New test/english.test.ts drives a real CLI session in a temp\n      repo (pre-init refusal,\n\n      usage error, init with --i-am-owner, status, dispatch, submit, attest with\n      a failing then\n\n      passing check, review incl. a refused self-review, merge, report, why,\n      verify) plus the\n\n      extension (fake pi: tool descriptions, owed_status/owed_why output,\n      confirm summaries) and\n\n      asserts that no output, error, tool text, SKILL.md or docs file contains\n      CJK characters\n\n      (/[\\u3000-\\u303f\\u3400-\\u9fff\\uff00-\\uffef]/).\n    checks:\n      - id: english\n        min_tests: 3\n        reads:\n          - src/**\n          - bin/**\n          - skills/**\n          - docs/**\n          - test/english.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/english.test.ts\n        tests:\n          - test/english.test.ts\n        timeout_s: 300\n    deps: []\n    id: english\n    review:\n      count: 1\n      min_rank: 1\n    title: English user interface\n    writes:\n      - src/\n      - skills/\n      - docs/\n      - README.md\n      - test/\n  - brief: >\n      Add `owed gc [--dry-run]` (CLI) and `ops.gc({cwd, dryRun})`. It removes\n      the slot worktree\n\n      (`git worktree remove`, refusing dirty ones: list them as kept) and\n      deletes the branch\n\n      `owed/<node>/<attempt>` for every attempt that is merged or abandoned,\n      never for an open\n\n      slot; then runs `git worktree prune`. It appends a `note` entry describing\n      what was removed\n\n      (no new entry kind). Output lists removed/kept with reasons; `--json`\n      returns\n\n      `{removed:[{node,attempt,worktree,branch}], kept:[{...,reason}]}`.\n      Idempotent: a second run\n\n      removes nothing. Document in docs/SPEC.md §8/§10 and README.\n    checks:\n      - id: gc\n        min_tests: 3\n        reads:\n          - src/**\n          - bin/**\n          - test/gc.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/gc.test.ts\n        tests:\n          - test/gc.test.ts\n        timeout_s: 300\n    deps:\n      - english\n    id: gc\n    review:\n      count: 1\n      min_rank: 1\n    title: owed gc — reclaim finished worktrees and branches\n    writes:\n      - src/ops.ts\n      - src/git.ts\n      - src/cli.ts\n      - docs/SPEC.md\n      - README.md\n      - test/gc.test.ts\n  - brief: >\n      Add `owed brief [--since seq|ISO]` (CLI), `ops.brief(...)`,\n      `views.renderBrief(...)` and a\n\n      pi tool `owed_brief`. Sections, in this order, each item one line: (1)\n      \"Needs your decision\" — owner\n\n      queue items, sorted by number of transitively blocked downstream nodes,\n      each with the exact\n\n      command that discharges it; (2) \"Merged\" — per merged node: counts of\n      measured / waived\n\n      obligations, untested-change count, reviewers; (3) \"Rejected or blocked\" —\n      active blocks with node, obligation,\n\n      the failing obs seq and how to clear; (4) \"In progress\" —\n      dispatched/submitted nodes with age;\n\n      (5) a one-line total (merged / accepted-unmerged / blocked / ready\n      counts). A waived item must never\n\n      be shown as measured. Plain text by default, `--json` returns the\n      structured view. Document in\n\n      SPEC §9 and README.\n    checks:\n      - id: brief\n        min_tests: 3\n        reads:\n          - src/**\n          - bin/**\n          - test/brief.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/brief.test.ts\n        tests:\n          - test/brief.test.ts\n        timeout_s: 300\n    deps:\n      - english\n    id: brief\n    review:\n      count: 1\n      min_rank: 1\n    title: Morning brief — what finished, what was rejected, what needs the owner\n    writes:\n      - src/ops.ts\n      - src/views.ts\n      - src/cli.ts\n      - src/extension.ts\n      - docs/SPEC.md\n      - README.md\n      - test/brief.test.ts\n  - brief: >\n      New entry kinds (types.ts Entry union, reducer, validateDraft):\n\n      - `escape` {node, merge: seq of the merge entry, class:\n      'missing'|'false-pass'|'reuse'|'weak'|'waiver',\n        note, evidence?: string}: a defect found after a node was merged. by parent or owner. class\n        maps to escape classes ② / ①a / ①b / ①c / ③ (missing obligation; false affirmative obs;\n        unsound evidence reuse; weak oracle; owner waiver). Refuse if `merge` is not a merge of `node`.\n      - `decoy-commit` {digest} by owner only: sha256 hex of the canonical JSON\n      of the reveal payload\n        {nonce, decoys:[{node, defect}]}.\n      - `decoy-reveal` {nonce, decoys:[{node, defect}]} by owner only: refused\n      unless it hashes to an\n        earlier unrevealed decoy-commit made before every listed node was first dispatched.\n      Reducer derives `state.escapes` and `state.decoys` with per-decoy outcome:\n      'caught' (the decoy\n\n      node got an execution or judgment block, or a rejecting obs, before any\n      merge of it),\n\n      'escaped' (merged with no prior block), 'pending' (neither yet). Metrics:\n      escape counts by\n\n      class; decoys caught / escaped / pending; escape rate = escaped / (caught\n      + escaped).\n\n      CLI: `owed escape <node> --merge N --class C --note T`, `owed decoy commit\n      <digest>`,\n\n      `owed decoy reveal <file.json>`, `owed decoy digest <file.json>` (helper,\n      no ledger write),\n\n      and an \"Escapes\" section in `owed report`. Owner commands use the existing\n      owner channel rules.\n\n      Document in SPEC (entry kinds, reducer, CLI) and README (north-star\n      metric).\n    checks:\n      - id: escape\n        min_tests: 5\n        reads:\n          - src/**\n          - bin/**\n          - test/escape.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/escape.test.ts\n        tests:\n          - test/escape.test.ts\n        timeout_s: 300\n    deps:\n      - english\n    id: escape\n    review:\n      count: 1\n      min_rank: 1\n    title: Escape ledger and commit-reveal decoys (the north-star metric)\n    writes:\n      - src/types.ts\n      - src/reducer.ts\n      - src/ops.ts\n      - src/cli.ts\n      - src/views.ts\n      - docs/SPEC.md\n      - README.md\n      - test/escape.test.ts\n  - brief: >\n      CheckSpec gains `mutants?: string[]` (globs of patch files that must lie\n      inside the plan\n\n      closure; validate in plan.ts) and `min_kill?: number` in (0,1], default 1.\n      For such a check\n\n      the node gets obligation `strength:<check id>` (items list, keys,\n      attestJobs). Executor: for\n\n      each mutant patch (read from the base B, never from the candidate)\n      materialize the candidate,\n\n      overlay closure from B as for the check, `git apply` the patch (a patch\n      that does not apply\n\n      counts as not killed and is reported), run the check command; killed iff\n      exit != 0 or failing\n\n      tests > 0 (a zero-test run is not a kill). Verdict pass iff killed/total\n      >= min_kill; record\n\n      counts {tests: total, pass: killed, fail: survived} and a log listing each\n      mutant result.\n\n      Key = H(o:'strength', id, run, timeout_s, setup, min_tests, closure digest\n      of B, mutants digest\n\n      of B, readsDigest(C, reads)) — changes when the candidate's read set, the\n      check or any\n\n      mutant changes. A failed strength obs is an execution block like any\n      other. The receipt card\n\n      shows \"strength k/n\". Document in SPEC (§3 schema, §4 keys, §7 executor)\n      and README.\n    checks:\n      - id: strength\n        min_tests: 4\n        reads:\n          - src/**\n          - bin/**\n          - test/strength.test.ts\n        red: true\n        red_expect: ERR_ASSERTION\n        run: node --test --test-reporter=tap test/strength.test.ts\n        tests:\n          - test/strength.test.ts\n        timeout_s: 600\n    deps:\n      - english\n    id: strength\n    review:\n      count: 1\n      min_rank: 1\n    title: Mutation counterfactuals — measure oracle strength\n    writes:\n      - src/types.ts\n      - src/plan.ts\n      - src/git.ts\n      - src/exec.ts\n      - src/reducer.ts\n      - src/views.ts\n      - docs/SPEC.md\n      - README.md\n      - test/strength.test.ts\nsetup: ln -s \"$(dirname \"$(git rev-parse --path-format=absolute\n  --git-common-dir)\")/node_modules\" node_modules\ntrunk: main\nversion: 1\n"
+  }
+}
