@@ -1,6 +1,8 @@
 # Scheduled advisory sweeps
 
-`sweep.every: {merges?: N, minutes?: M}` accepts positive integers with at least one threshold. Either threshold makes a sweep due. Running drivers, including non-staying drivers, start due sweeps in the background, using the shared machine lease with no waiting. Scheduled sweeps have a separate operation lock, consume no node measurement slot, continue alongside node work, and are cancelled on driver stop. Without `every`, staying drivers retain the existing idle-only scheduling and node-work preemption.
+`sweep.every: {merges?: N, minutes?: M}` accepts positive integers with at least one threshold. Either threshold makes a sweep due. Drivers that keep running (foreground or detached, staying or not) start due sweeps in the background, using the shared machine lease with no waiting. Scheduled sweeps have a separate operation lock, consume no node measurement slot, continue alongside node work, and are cancelled on driver stop. Without `every`, staying drivers retain the existing idle-only scheduling and node-work preemption.
+
+`owed drive --once` and the pi `owed_drive` pass never start a sweep. They retain K6: wait only for the node measurements their pass started. When a scheduled sweep is due, they print `sweep due; --once does not start it (run owed sweep --due or a background driver)`; JSON output emits one `sweep-due` event. A continuously running idle driver uses the existing ledger-change wake for merge thresholds and one timer at the minute deadline. Ledger polling does not trigger a full pass or reread the ledger merely to check the sweep schedule; a ledger wake or the deadline causes a new pass and re-arms the timer.
 
 `owed sweep --due` (tool `owed_sweep` parameter `due: true`) measures only when due. Otherwise it records nothing, exits successfully, and prints `sweep not due: next after N merges or at HH:MM`; absent thresholds omit their clause, and the time uses the local timezone. `--due` requires `sweep.every`. Regular `owed sweep` still forces a measurement. Sweep failure exit status remains nonzero; no sweep verdict gates a merge.
 
@@ -15,6 +17,7 @@ Each newly recorded escape produces one notice: `escape: NODE (merge #S) broke N
 - New optional plan field: `sweep.every`, with optional `merges` and `minutes`. Existing sweep definitions keep their previous keys when `every` is absent; changing only `every` also preserves them.
 - New optional ledger field: `sweep.boundary: {head, merge}`. It is present only on the final passing predecessor sample and references earlier samples and the culprit merge. Strict replay checks the shape, one contiguous same-definition run, two failed head samples, two failed culprit samples, the passing predecessor commit, and current definition key.
 - New optional ledger field: `escape.sweep`, citing the confirmed boundary entry. Strict replay permits it only for `executor:owed`, class `missing`, with matching node/merge, canonical evidence and no prior escape for the same merge/names. Existing field-free manual escape validation is unchanged. Dedupe can also recognize a manual escape whose evidence cites the sweep in the canonical format.
+- Runtime JSON adds the `sweep-due` event for once calls; no ledger field is added for the idle deadline or once notice.
 - No new entry kind or acceptance obligation. Field-free historical ledgers retain their states and keys. Upgrade readers before recording the new fields or executor principal; older readers refuse these records.
 
 ## Existing tests adjusted

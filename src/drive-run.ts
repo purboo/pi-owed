@@ -197,6 +197,8 @@ export interface PassResult {
   waiting: (Waiting & { node: string })[];
   counts: IdleCounts;
   idleRewakeMin: number;
+  /** Scheduled sweep timing computed in this pass; runtime only, used by the idle loop. */
+  sweep?: {due:boolean; at?:number};
 }
 
 /**
@@ -379,7 +381,7 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
+export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full' | 'sweep-due'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
 /** FL4: counts are disjoint for parked nodes; open counts every open slot. */
 export interface IdleCounts { ready: number; open: number; waiting: number; reported: number; later: number }
 export const idleWaitText = (c: IdleCounts): string => `idle: ${c.ready} ready, ${c.open} open, ${c.waiting} waiting, ${c.reported} reported, ${c.later} later; staying until the ledger changes (owed drive --stop ends it)`;
@@ -398,6 +400,7 @@ export function reportText(json: object): string {
   if ('event' in json) {
     const e = json as LoopEvent;
     switch (e.event) {
+      case 'sweep-due': return 'sweep due; --once does not start it (run owed sweep --due or a background driver)';
       case 'idle': return 'idle: nothing open and nothing ready';
       case 'idle-wait': return e.counts ? idleWaitText(e.counts) : IDLE_WAIT_TEXT;
       case 'stopped': return 'stopped';
@@ -727,13 +730,17 @@ export class Driver {
     // Scheduled sweeps have their own shared lease and operation lock, outside node measurement capacity.
     // Legacy sweeps retain idle-only scheduling and preemption.
     let sweepBusy = this.sweepBusyAt === this.cycle;
+    let sweepSchedule: PassResult['sweep'];
     const scheduledSweep=!!s.plan.sweep?.every;
     const idleSweep=!mergeReady && this.o.stay && !this.o.once && !this.measuring.size && !Object.values(s.nodes).some(n=>n.phase === 'ready') && !actions.some(a=>a.do !== 'notify');
     if ((scheduledSweep || idleSweep) && !this.stopping && !drift && checked && s.plan.sweep && !this.sweepRun && !sweepBusy) {
       const entries = await ledger.read();
-      const due=scheduledSweep ? (await sweepDue(this.root!,s.plan,entries,s.trunk.commit,Date.now(),this.startedAt)).due
-        : !entries.some(e=>e.kind === 'sweep' && !e.bisect && e.commit === s.trunk.commit);
-      if (due) {
+      if (scheduledSweep) sweepSchedule=await sweepDue(this.root!,s.plan,entries,s.trunk.commit,Date.now(),this.startedAt);
+      const due=sweepSchedule?.due ?? !entries.some(e=>e.kind === 'sweep' && !e.bisect && e.commit === s.trunk.commit);
+      if (due && this.o.once) {
+        const event: LoopEvent={event:'sweep-due'};
+        this.o.log(this.o.json ? JSON.stringify(event) : reportText(event));
+      } else if (due) {
         low ??= await this.diskLow(s,reports);
         if (low) sweepBusy=true;
         else { const r=this.startSweep(s); reports.push(r); this.emit(r); }
@@ -743,7 +750,7 @@ export class Driver {
     const nodes = Object.values(s.nodes).filter(n => !n.merged && n.phase !== 'removed');
     const counts: IdleCounts = { ready: nodes.filter(n => n.phase === 'ready').length, open: nodes.filter(n => n.slot?.open).length, waiting: waiting.length, reported: nodes.filter(n => reportedOf(s,n.id) !== undefined).length, later: s.plan.nodes.filter(n => n.later && !s.nodes[n.id]?.merged).length };
     const open = nodes.some(n => n.slot?.open && !waitingFor(s,n.id) && reportedOf(s,n.id) === undefined && !s.plan.nodes.find(x => x.id === n.id)?.later);
-    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !sweepBusy && !this.sweepRun && !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting, counts, idleRewakeMin: idleRewakeMin(s.plan) };
+    return { actions: reports, progress: applied || handled > 0 || head !== s.head, idle: !sweepBusy && !this.sweepRun && !open && !actions.some(a => a.do === 'dispatch') && !this.measuring.size, head: s.head, waiting, counts, idleRewakeMin: idleRewakeMin(s.plan), ...(sweepSchedule ? {sweep:{due:sweepSchedule.due,at:sweepSchedule.at}} : {}) };
   }
 
   /**
@@ -1219,6 +1226,20 @@ const errorCode = (e: unknown): number => e instanceof OwedError ? (REFUSALS.inc
 /** `record`: write the exit record (`--json` loop); `reason`: how the loop ended; `written`: the record is out. */
 interface LoopEnd { record?: boolean; reason?: ExitReason; written?: boolean }
 
+/** One idle deadline per pass; ledger polling never reloads state just to check minutes. */
+function sweepDeadline(at: number | undefined, stop: AbortSignal): {signal:AbortSignal; cancel():void} {
+  const due=new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm=(): void => {
+    if (at === undefined || !Number.isFinite(at)) return;
+    const remaining=at-Date.now();
+    if (remaining <= 0) {due.abort(); return;}
+    timer=setTimeout(arm,Math.min(remaining,2_147_483_647));
+  };
+  arm();
+  return {signal:AbortSignal.any([stop,due.signal]),cancel:()=>clearTimeout(timer)};
+}
+
 async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
   const output = o.log;
   let identity = { pid: process.pid, start: procStart(process.pid), at: new Date().toISOString() };
@@ -1276,7 +1297,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
     identity = { pid: lock.owner.pid, start: lock.owner.start, at: lock.owner.at };
     if (!o.once && driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     // K6: --once (and the pi tool's pass) waits for the measurements its pass started and handles them.
-    if (o.once) { const r = await driver.pass(); await driver.settle(); if (hardStop) await hardStop; if (r.idle) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
+    if (o.once) { const r = await driver.pass(); await driver.settle(); if (hardStop) await hardStop; if (r.idle && !r.sweep?.due) say('idle: nothing open and nothing ready', { event: 'idle' }); return 0; }
     const dsa = driver.dsa, cursorFile = join(ledger.dir, 'drive', 'cursor'), LIMIT = o.limit ?? 100;
     await mkdir(join(ledger.dir, 'drive'), { recursive: true });
     let cursor: string | undefined = (await readFile(cursorFile, 'utf8').catch(() => '')).trim() || undefined, limit = LIMIT, lastError = '';
@@ -1320,7 +1341,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
     let counts: IdleCounts = { ready:0, open:0, waiting:0, reported:0, later:0 }, rewake = 60;
     for (;;) {
       /** H1.2: the ledger head the idle pass decided on; undefined when the last pass was not idle. */
-      let idle: string | undefined;
+      let idle: string | undefined, sweepAt: number | undefined;
       for (let burst = 0; burst < 20 && !driver.stopping; burst++) {
         let r: PassResult;
         try { r = await driver.pass(); }
@@ -1335,7 +1356,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
         }
         if (r.idle && !o.stay) { say('idle: nothing open and nothing ready', { event: 'idle' }); end.reason = 'idle'; return 0; }
         counts = r.counts; rewake = r.idleRewakeMin;
-        if (r.idle) { idle = r.head; break; }
+        if (r.idle) { idle = r.head; sweepAt=r.sweep?.at; break; }
         idleAt = undefined;
         if (!r.progress) break;
       }
@@ -1343,15 +1364,17 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
         // Stay: keep the lock and wait for the ledger head to differ from the head the idle pass decided on (a plan
         // update, a ruling, an abandon…), then pass. An entry appended during that pass is already a change: no wait.
         if (idleAt === undefined) { idleAt = new Date().toISOString(); idleWake = Date.now(); const e: LoopEvent = { event: 'idle-wait', at: idleAt, counts }; say(reportText(e), e); }
-        const head = idle;
-        while (!driver.stopping && ledgerHead(ledger.dir) === head) {
-          await driver.wait(o.pollMs ?? 3000, stop.signal);
-          if (!driver.stopping && ledgerHead(ledger.dir) === head && idleRewakeDue(Date.now(),idleWake,rewake)) {
-            idleWake = Date.now(); const e: LoopEvent = { event:'idle-wait', at:new Date(idleWake).toISOString(), counts }; say(reportText(e),e);
+        const head = idle, wake=sweepDeadline(sweepAt,stop.signal);
+        try {
+          while (!driver.stopping && !wake.signal.aborted && ledgerHead(ledger.dir) === head) {
+            await driver.wait(o.pollMs ?? 3000, wake.signal);
+            if (!driver.stopping && ledgerHead(ledger.dir) === head && idleRewakeDue(Date.now(),idleWake,rewake)) {
+              idleWake = Date.now(); const e: LoopEvent = { event:'idle-wait', at:new Date(idleWake).toISOString(), counts }; say(reportText(e),e);
+            }
+            // Waiting/reported runs may ask questions, or complete a pending report, without ledger changes.
+            if (counts.open) { await poll(); driver.tick(); break; }
           }
-          // Waiting/reported runs may ask questions, or complete a pending report, without ledger changes.
-          if (counts.open || (await loadState(ledger)).plan.sweep?.every) { await poll(); driver.tick(); break; }
-        }
+        } finally { wake.cancel(); }
         driver.tick();
       } else {
         // K6: a measurement that ends wakes the loop at once; only a timed or event pass ends a busy back-off (tick).
