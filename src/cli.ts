@@ -35,11 +35,12 @@ const batchMergeText = (r: ops.BatchMergeResult): string => [...r.entries.map(e 
 const SAME_REQUEST_MS = 1000;
 export async function main(argv: string[], io: CliIo = terminal): Promise<number> {
   const abort = new AbortController(), got: { signal?: NodeJS.Signals; at?: number; unhandle?: () => void } = {};
+  let command: string | undefined;
   try {
     const args:string[] = [], opts = new Map<string,string|boolean>(), files:string[] = [], sets:string[] = [], unsets:string[] = [];
     for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (a === '--' && args[0] === 'answer') { args.push(...argv.slice(i+1)); break; } if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key) && !['file','set','unset'].includes(key)) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); if (key === 'file') files.push(v); if (key === 'set') sets.push(v); if (key === 'unset') unsets.push(v); } }
     if (opts.has('help')) { io.log(HELP); return 0; }
-    const cmd=args.shift(); if(!cmd) usage(HELP);
+    const cmd=args.shift(); command=cmd; if(!cmd) usage(HELP);
     const allowed:Record<string,string[]> = { init:['no-lease'],plan:['rev','note'],amend:['writes','note','plan'],answer:['qid','rid','rev'],edit:['set','unset','invariant','node-new','rule','writer','resume','after','expect','note','dry-run','plan'],rule:['nodes','writer','prospective'],dispatch:['allow-overlap'],submit:['commit','model'],rebase:[],attest:['rerun','genesis','trunk','no-lease','remeasure','all'],review:['ok','block','needs-parent','rank','note','ack-rulings','obligation','candidate','model'],waive:['reason','accept-risk','candidate'],defer:['reason'],abandon:['note','reason','hold'],resume:['after','expect','note','remeasure'],merge:['no-lease'],sweep:['commit','no-lease'],status:['full'],idle:[],why:['full'],report:['since','metrics','until'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[],gc:['dry-run'],adopt:['commit','note','no-lease','wait'],approve:['note','block','candidate'],evidence:['file','note','candidate'],drive:['once','max','detach','status','stop','now','stay'] };
     if (!allowed[cmd]) usage(`Unknown command ${cmd}`);
     for (const k of opts.keys()) if (!['json','as','i-am-owner'].includes(k) && !allowed[cmd]!.includes(k)) usage(`${cmd} does not support --${k}`);
@@ -194,6 +195,8 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     if(error.code === 'aborted') { if(error.message !== 'aborted') io.error(error.message); io.error(`Aborted: ${got.signal ?? 'signal'}`); return signalExit(got.signal ?? 'SIGINT'); }
     // G1.5: `version` (the ledger needs a newer owed) is a refusal to replay: exit 1, its own text.
     if(error.code === 'version') { io.error(error.message); return 1; }
-    io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : error.code === 'busy' ? 'Busy' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : error.code === 'busy' ? 75 : 3;
+    // WD: idle reserves 3 for a successful not-idle assessment; internal errors use EX_SOFTWARE (70).
+    // Other commands keep their existing internal-error exit code.
+    io.error(`${error.code === 'usage' ? 'Usage error' : error.code === 'refused' ? 'Refused' : error.code === 'busy' ? 'Busy' : 'Internal error'}: ${error.message}`); return error.code === 'usage' ? 2 : error.code === 'refused' ? 1 : error.code === 'busy' ? 75 : command === 'idle' ? 70 : 3;
   } finally { got.unhandle?.(); }
 }
