@@ -5,7 +5,7 @@ import { canonical, sha256 } from './canon.ts';
 import { rebaseFollowupSent, rebaseWorkText, type RebasePending } from './rebase-view.ts';
 import { answerRetry } from './answer.ts';
 import { driveConfig } from './plan.ts';
-import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping } from './reducer.ts';
+import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting } from './reducer.ts';
 import { priorCandidateBlock } from './reducer.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, renderReceipt, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
@@ -821,6 +821,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       return { do: 'attest', node: id };
     }
     if (jobs.length) return halt(`attest recorded no verdict twice: ${jobs.map(x => `${x.j.obligation} (${x.errors.map(o => `#${o.seq} ${o.note ?? `exit ${o.exit}`}`).join('; ')})`).join(', ')}`);
+    const writesWait = writesWaiting(s,id);
+    const waitingWrites = writesWait?.waits_on?.some(owner => s.nodes[owner]?.slot?.open);
     // Repair: one follow-up per candidate, at most `repairs` per attempt; a writer that finishes it without resubmitting halts.
     // K5.1: the budget counts the repairs since the node's epoch; K5.2: a due ruling follow-up replaces either halt.
     const repair = (cause: string): Action | undefined => {
@@ -837,7 +839,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const unruled = n.blocks.filter(b => b.kind === 'judgment' && b.key === c.keys[b.obligation] && awaitingRuling(s, b));
     if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
     // Row 11: a measured block: an obligation of the candidate failed (✘), or an active execution block binds it.
-    const measured = n.items.filter(i => i.mark === '✘' || n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation));
+    const measured = n.items.filter(i => (i.mark === '✘' || n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation)) && !(waitingWrites && i.obligation === 'writes'));
     if (measured.length) {
       // K5.3: the same count below min_tests twice: the threshold may be the plan's mistake; the parent decides.
       const hint = thresholdHint(s, id, measured.map(i => i.obligation));
@@ -887,6 +889,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       if (m && m.candidate === c.seq) return m.rebase ? { do: 'rebase', node: id } : halt(`merge refused: ${m.reason}`, m.needs ?? 'human');
       return { do: 'merge', node: id };
     }
+    if (waitingWrites) return fenced() ?? steerRulings();
     // Liveness (D12): a candidate that is not accepted while no driver run of the attempt is unsealed never yields
     // "nothing to do": halt needing the owner with every non-E item and active block (K5.2: a due ruling follow-up first).
     // 0.8 (L3.1): to the writer when the candidate has a failed item, an active block on its keys or a flaky block; when its

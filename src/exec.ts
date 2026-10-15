@@ -1,3 +1,4 @@
+import { matchesWrite } from './writes.ts';
 import { spawn } from 'node:child_process';
 import { parse as parseYaml } from 'yaml';
 import type { Plan, AttestJob, ObsEntry, Counts, QuarantineEntry } from './types.ts';
@@ -433,7 +434,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
     if (job.kind === 'writes') {
       const node = ctx.plan.nodes.find(n => n.id === job.subject); if (!node) throw new Error(`unknown node ${job.subject}`);
       const paths = (await git(ctx.cwd, ['diff', '--no-renames', '--name-only', '-z', job.base, job.commit])).stdout.split('\0').filter(Boolean);
-      const bad = paths.filter(p => !node.writes.some(prefix => p.startsWith(prefix)) && !ctx.grantedWrites?.includes(p));
+      const bad = paths.filter(p => !node.writes.some(prefix => matchesWrite(p, prefix)) && !ctx.grantedWrites?.includes(p));
       obs.verdict = bad.length ? 'fail' : 'pass'; obs.exit = bad.length ? 1 : 0; obs.note = bad.length ? `outside writes: ${bad.join(', ')}` : 'all changed paths within writes'; capture(obs.note);
     } else if (job.kind === 'strength') {
       // Mutation counterfactuals: every mutant patch comes from the base B, never from the candidate.

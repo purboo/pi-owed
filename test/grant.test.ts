@@ -53,11 +53,11 @@ test('covered changed paths get one grant before pass, no failing observation, a
     const {s}=await r.state(); assert.match(renderBrief(briefView(s,es)),/Downgrades under allowance[\s\S]*granted by owed/);
   } finally {await r.cleanup();}
 });
-test('uncovered paths fail atomically with first reason and deduplicated learning hint', async()=>{
+test('uncovered paths fail individually after partial grants with deduplicated learning hint', async()=>{
   const r=await fixture(); try {
     await r.submit({'docs/ok':'ok','new/a':'a','new/b':'b','rootfile':'r','uncovered':'u'}); await r.attest();
-    const es=await r.all(); assert.equal(grants(es).length,0); assert.equal(writes(es)[0]!.verdict,'fail');
-    assert.equal(writes(es)[0]!.note,'outside writes: docs/ok, new/a, new/b, rootfile, uncovered; not covered by an allow rule');
+    const es=await r.all(); assert.deepEqual(grants(es).map(g=>g.paths),[['docs/ok','rootfile']]); assert.equal(writes(es)[0]!.verdict,'fail');
+    assert.equal(writes(es)[0]!.note,`outside writes: new/a (not covered by an allow rule), new/b (not covered by an allow rule), uncovered (not covered by an allow rule); granted #${grants(es)[0]!.seq}: docs/ok, rootfile`);
     assert.doesNotMatch(writes(es)[0]!.note!,/hint:/);
     assert.equal((await r.ledger.getBlob(writes(es)[0]!.log!)).toString(),writes(es)[0]!.note);
     const hint='hint: an allow rule {nodes: ["a"], writes: ["new/","uncovered"]} would let owed grant these';
@@ -107,16 +107,16 @@ test('dispatch-time allowance comparison ignores object key insertion order', as
 test('closure paths are never granted, including mixed covered paths', async()=>{
   const r=await fixture(plan({closure:['docs/pinned*']})); try {
     await r.submit({'docs/pinned':'x','docs/ok':'y'}); await r.attest();
-    assert.equal(grants(await r.all()).length,0); assert.match(writes(await r.all())[0]!.note!,/under closure/);
+    assert.deepEqual(grants(await r.all()).map(g=>g.paths),[['docs/ok']]); assert.match(writes(await r.all())[0]!.note!,/under closure/);
     assert.match(renderReceipt(await ops.why({cwd:r.cwd,node:'a'})),/but grant refused/);
     const {s,lookup}=await r.state();
     assert.throws(()=>reduceFrom(s,[forged(s,{kind:'grant',by:'executor:owed',node:'a',attempt:1,commit:s.nodes.a!.candidate!.commit,paths:['docs/pinned'],allowance:0})],lookup),/under closure/);
   } finally {await r.cleanup();}
 });
-test('another open slot owns its plan writes: overlap refuses the entire grant', async()=>{
+test('another open slot owns its paths while unrelated paths receive a partial grant', async()=>{
   const r=await fixture(plan({nodes:[node('a',['src/']),node('b',['docs/shared/'])]})); try {
     await ops.dispatch({cwd:r.cwd,node:'b',as:parent}); await r.submit({'docs/shared/x':'x','docs/ok':'x'}); await r.attest();
-    assert.equal(grants(await r.all()).length,0); assert.match(writes(await r.all())[0]!.note!,/overlaps open node b/);
+    assert.deepEqual(grants(await r.all()).map(g=>g.paths),[['docs/ok']]); assert.match(writes(await r.all())[0]!.note!,/owned by open node b/);
     const {s,lookup}=await r.state();
     assert.throws(()=>reduceFrom(s,[forged(s,{kind:'grant',by:'executor:owed',node:'a',attempt:1,commit:s.nodes.a!.candidate!.commit,paths:['docs/shared/x'],allowance:0})],lookup),/overlaps open node b/);
   } finally {await r.cleanup();}
@@ -175,7 +175,7 @@ test('removed nodes retain ownership while their writer slot remains open', asyn
   const r=await fixture(p); try {
     await ops.dispatch({cwd:r.cwd,node:'b',as:parent});
     await ops.planSet({cwd:r.cwd,as:owner,channel:'flag',plan:JSON.stringify({...p,nodes:[node('a',['src/'])]})});
-    await r.submit({'docs/shared/x':'x'}); await r.attest(); assert.equal(grants(await r.all()).length,0); assert.match(writes(await r.all())[0]!.note!,/overlaps open node b/);
+    await r.submit({'docs/shared/x':'x'}); await r.attest(); assert.equal(grants(await r.all()).length,0); assert.match(writes(await r.all())[0]!.note!,/owned by open node b/);
   } finally {await r.cleanup();}
 });
 test('effective writes merge recheck accepts exact grants, refuses ungranted changes', async()=>{
@@ -230,7 +230,7 @@ test('dispatch overlap includes exact granted paths; another grant cannot steal 
     // Remove b's plan prefix so its request would otherwise be covered by allow.
     await ops.planSet({cwd:r.cwd,as:owner,channel:'flag',plan:JSON.stringify(plan({allow:[{nodes:['*'],writes:['docs/']}]}))});
     await ops.attest({cwd:r.cwd,node:'b'});
-    const all=await r.all(); assert.equal(grants(all).length,grants(es).length); assert.match(writes(all).filter(x=>x.subject === 'b').at(-1)!.note!,/overlaps open node a/); assert.ok(commit);
+    const all=await r.all(); assert.equal(grants(all).length,grants(es).length); assert.match(writes(all).filter(x=>x.subject === 'b').at(-1)!.note!,/owned by open node a/); assert.ok(commit);
   } finally {await r.cleanup();}
 });
 test('grant-free ledger preserves the 0.16 writes key formula and ready/accepted states', async()=>{
