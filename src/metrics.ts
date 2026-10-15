@@ -9,7 +9,7 @@ export interface MetricsWindow { since?: number | string; until?: number | strin
 export interface DurationMetrics { samples: number; median: number | null; p90: number | null; max: number | null }
 export interface HaltMetric {
   seq: number; node: string; attempt: number; reason: string; normalizedReason: string;
-  class: 'decision' | 'no-decision'; endedBy: number | null; decisionSeqs: number[];
+  class: 'decision' | 'no-decision'; endedBy: number | null; decisionSeqs: number[]; /** MX1 */ interruption: InterruptionClass;
 }
 export interface MergedMetric {
   node: string; attempt: number; seq: number; submitToMergeMs: number | null; dispatchToMergeMs: number | null;
@@ -17,11 +17,18 @@ export interface MergedMetric {
 }
 export type ParentActClass = 'writes' | 'answer' | 'trunk' | 'resume' | 'rule' | 'plan' | 'review' | 'waive' | 'defer' | 'evidence' | 'abandon' | 'approve' | 'other';
 const parentActClasses: readonly ParentActClass[] = ['writes','answer','trunk','resume','rule','plan','review','waive','defer','evidence','abandon','approve','other'];
+/** MX1: interruption classes of driver halts by their recorded text (ruling #2572: state-based classes are in report --counterfactual). */
+export type InterruptionClass = 'shared' | 'trunk-red' | 'fix-wait' | 'review' | 'writes' | 'no-submit' | 'repairs-exhausted' | 'attest-error' | 'other';
+export const interruptionClasses: readonly InterruptionClass[] = ['shared','trunk-red','fix-wait','review','writes','no-submit','repairs-exhausted','attest-error','other'];
 export interface Metrics {
-  parentActs: { total: number; perMergedNode: number | null; byClass: Record<ParentActClass, number>; byNode: Record<string, number>; perMergedNodeAttributed: number | null; pending: number; unattributed: number };
+  parentActs: { total: number; perMergedNode: number | null; byClass: Record<ParentActClass, number>; byNode: Record<string, number>; perMergedNodeAttributed: number | null; pending: number; unattributed: number;
+    /** MX1: acts whose every target node merged in the window. */ mergedOnly: { total: number; perMergedNode: number | null } };
+  /** MX1: parent acts sharing a `decision` id, a resume batch or a legacy amend pair count once. */
+  decisions: number; actsPerDecision: number | null;
+  latency: { phases: { measure: DurationMetrics; review: DurationMetrics; mergeWait: DurationMetrics }; /** MX3 */ leaseWaitMs: DurationMetrics };
   grants: { total: number; perMergedNode: number | null };
   since: number | string; until: number | string | null; mergedNodes: number; merged: MergedMetric[];
-  interruptions: { total: number; halts: number; answers: number; perMergedNode: number | null };
+  interruptions: { total: number; halts: number; answers: number; perMergedNode: number | null; /** MX1: driver halts by class */ byClass: Record<InterruptionClass, number> };
   halts: HaltMetric[];
   haltReasons: Record<'decision' | 'no-decision', { reason: string; count: number }[]>;
   submitToMergeMs: DurationMetrics; dispatchToMergeMs: DurationMetrics;
@@ -49,7 +56,7 @@ const elapsed = (start: Entry | undefined, end: Entry): number | null => {
   const ms = start ? Date.parse(end.ts)-Date.parse(start.ts) : NaN;
   return Number.isFinite(ms) && ms >= 0 ? ms : null;
 };
-const parentAct = (e: Entry): boolean => e.by !== 'parent:drive' && /^(parent|owner):/.test(e.by);
+export const parentAct = (e: Entry): boolean => e.by !== 'parent:drive' && /^(parent|owner):/.test(e.by);
 /** PA: compare recorded laws, ignoring allowance coverage only while detecting downgrades. */
 function writesOnlyDowngrades(prev: Plan, next: Plan): boolean {
   const ds = [...planDowngrades(prev,next), ...uncoveredDowngrades(withWritesSyntax({...prev,allow:[]},writesSyntax(prev)),withWritesSyntax({...next,allow:[]},writesSyntax(next)))];
@@ -71,6 +78,38 @@ function parentActClass(e: Entry, prev: Plan | undefined, next: Plan | undefined
   const kind: string = e.kind;
   return ['resume','waive','defer','evidence','abandon','approve'].includes(kind) ? kind as ParentActClass : 'other';
 }
+/** MX1: the recorded halt reason's class (text only, no replay). */
+export function haltReasonClass(reason: string): InterruptionClass {
+  if (/^shared failure: |shared failure persisted/.test(reason)) return 'shared';
+  if (/\btrunk-red\b|\btrunk red\b/.test(reason)) return 'trunk-red';
+  if (/\bwaiting: fix\b/.test(reason)) return 'fix-wait';
+  if (/^repairs exhausted\b/.test(reason)) return 'repairs-exhausted';
+  if (/without submitting a (new )?candidate|finished without submitting/.test(reason)) return 'no-submit';
+  if (/^(attest error|merge error)\b|^attest recorded no verdict/.test(reason)) return 'attest-error';
+  if (/\breview(-missing| block|er run)\b|^stale review block|awaiting owner approval/.test(reason)) return 'review';
+  if (/\bwrites\b/.test(reason)) return 'writes';
+  return 'other';
+}
+/**
+ * MX1 phases from the ledger alone: the candidate submit, its last measurement (node observation on that commit) and
+ * acceptance = the last measurement, review or owner act on the candidate before the merge.
+ */
+function trackPhase(phases: Map<string, { submit?: Entry; measured?: Entry; accepted?: Entry }>, e: Entry): void {
+  if (e.kind === 'dispatch' || e.kind === 'rebase') { phases.delete(e.node); return; }
+  if (e.kind === 'submit') {
+    const p = phases.get(e.node);
+    if (!(p?.submit?.kind === 'submit' && p.submit.facts.commit === e.facts.commit)) phases.set(e.node,{ submit:e });
+    return;
+  }
+  const node = e.kind === 'obs' ? e.subject : ['review','waive','evidence','defer'].includes(e.kind) && 'node' in e ? e.node : undefined;
+  const p = node === undefined ? undefined : phases.get(node);
+  if (!p?.submit || p.submit.kind !== 'submit') return;
+  if (e.kind === 'obs') {
+    if (e.merging !== undefined || e.probe !== undefined || e.batch !== undefined || e.commit !== p.submit.facts.commit) return;
+    p.measured = e;
+  }
+  p.accepted = e;
+}
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** NT2: word-shaped node ids must not erase verbs or ordinary prose. */
 function haltNormalizer(nodeIds: ReadonlySet<string>): (reason: string) => string {
@@ -89,7 +128,7 @@ function haltNormalizer(nodeIds: ReadonlySet<string>): (reason: string) => strin
 }
 
 /** PO3: explicit node targets, including changed/added/removed plan nodes. */
-function actNodes(e: Entry, prev?: Plan, next?: Plan): string[] {
+export function actNodes(e: Entry, prev?: Plan, next?: Plan): string[] {
   if ('node' in e) return [e.node];
   if (e.kind === 'rule') return e.nodes === '*' ? [] : [...new Set(e.nodes)];
   if (e.kind === 'plan' && prev && next) return [...new Set([...prev.nodes,...next.nodes].map(n => n.id))].filter(id => canonical(prev.nodes.find(n => n.id === id)) !== canonical(next.nodes.find(n => n.id === id)));
@@ -121,6 +160,10 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
   const byClass = Object.fromEntries(parentActClasses.map(cls => [cls,0])) as Record<ParentActClass,number>;
   const byNode: Record<string,number> = {}, countedBatches = new Set<number>();
   let unattributed = 0;
+  const actTargets: string[][] = [], decisionKeys = new Set<string>(), countedPlans = new Set<number>();
+  interface Phase { submit?: Entry; measured?: Entry; accepted?: Entry }
+  const phases = new Map<string, Phase>(), phaseSamples: { measure: (number | null)[]; review: (number | null)[]; mergeWait: (number | null)[] } = { measure:[], review:[], mergeWait:[] };
+  const leaseWaits: number[] = [];
   const batchNodes = new Map<number,string[]>();
   for (const e of history) if (e.kind === 'resume' && e.batch !== undefined) {
     const nodes = batchNodes.get(e.batch) ?? []; if (!nodes.includes(e.node)) nodes.push(e.node); batchNodes.set(e.batch,nodes);
@@ -130,7 +173,7 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
   const decision = (node: string, seq: number): void => { const h = active.get(node); if (h) { h.class = 'decision'; h.decisionSeqs.push(seq); } };
   const addHalt = (e: HaltEntry): void => {
     endHalt(e.node,e.seq);
-    const h: HaltMetric = { seq:e.seq,node:e.node,attempt:e.attempt,reason:e.reason,normalizedReason:normalize(e.reason),class:'no-decision',endedBy:null,decisionSeqs:[] };
+    const h: HaltMetric = { seq:e.seq,node:e.node,attempt:e.attempt,reason:e.reason,normalizedReason:normalize(e.reason),class:'no-decision',endedBy:null,decisionSeqs:[],interruption:haltReasonClass(e.reason) };
     active.set(e.node,h); if (included(e)) halts.push(h);
   };
   for (const e of history) {
@@ -143,6 +186,10 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
           if (batch !== undefined) countedBatches.add(batch);
           parentActsTotal++; byClass[parentActClass(e,previousPlan,nextPlan,lastHalts)]++;
           const targets = batch === undefined ? actNodes(e,previousPlan,nextPlan) : batchNodes.get(batch)!;
+          actTargets.push(targets);
+          // MX1: one decision per `decision` group, resume batch or legacy amend pair (a plan and the ruling naming it).
+          const amended = e.kind === 'rule' && e.decision === undefined ? /^writes of .+ widened by plan #(\d+): /.exec(e.text)?.[1] : undefined;
+          decisionKeys.add(e.decision !== undefined ? `d${e.decision}` : batch !== undefined ? `b${batch}` : amended !== undefined && countedPlans.has(Number(amended)) ? `p${amended}` : e.kind === 'plan' ? (countedPlans.add(e.seq), `p${e.seq}`) : `e${e.seq}`);
           if (!targets.length) unattributed++;
           for (const id of targets) byNode[id] = (byNode[id] ?? 0)+1/targets.length;
         }
@@ -151,6 +198,8 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
       if ((e.kind as string) === 'grant') grantsTotal++;
     }
     if (e.kind === 'halt') lastHalts.set(e.node,e.reason);
+    if ((e.kind === 'obs' || e.kind === 'merge') && e.lease_wait_ms !== undefined && included(e)) leaseWaits.push(e.lease_wait_ms);
+    trackPhase(phases,e);
     if (e.kind === 'genesis' || e.kind === 'plan') {
       const p = nextPlan; if (!p) throw new OwedError(`Missing plan ${e.plan}`, 'internal');
       const next = new Map(p.nodes.map(n => [n.id,canonical(n)]));
@@ -183,6 +232,10 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
       if (included(e)) {
         const a = attemptOf(e.node,e.attempt), repairsByAttempt = [...attempts.get(e.node)!].sort(([a],[b]) => a-b)
           .map(([attempt,v]) => ({ attempt,submits:v.submits,repairs:Math.max(v.submits-1,0) }));
+        const ph = phases.get(e.node), measured = ph?.measured ?? ph?.submit, accepted = ph?.accepted ?? measured;
+        phaseSamples.measure.push(ph?.submit && ph.measured ? elapsed(ph.submit,ph.measured) : null);
+        phaseSamples.review.push(measured && accepted ? elapsed(measured,accepted) : null);
+        phaseSamples.mergeWait.push(accepted ? elapsed(accepted,e) : null);
         merged.push({ node:e.node,attempt:e.attempt,seq:e.seq,submitToMergeMs:elapsed(a.firstSubmit,e),dispatchToMergeMs:elapsed(dispatches.get(e.node),e),
           firstPass:e.attempt === 1 && !a.blocked,repairs:repairsByAttempt.reduce((sum,v) => sum+v.repairs,0),repairsByAttempt });
       }
@@ -197,10 +250,14 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
   const firstPass = merged.filter(m => m.firstPass).length, repairs = merged.reduce((sum,m) => sum+m.repairs,0), n = merged.length;
   const mergedIds = new Set(merged.map(m => m.node)), attributed = Object.entries(byNode).filter(([id]) => mergedIds.has(id)).reduce((sum,[,v]) => sum+v,0);
   const pending = Object.entries(byNode).filter(([id]) => !mergedIds.has(id)).reduce((sum,[,v]) => sum+v,0);
+  const mergedOnly = actTargets.filter(t => t.length && t.every(id => mergedIds.has(id))).length;
+  const interruptionsByClass = Object.fromEntries(interruptionClasses.map(c => [c,halts.filter(h => h.interruption === c).length])) as Record<InterruptionClass,number>;
   return { since,until:until ?? null,mergedNodes:n,merged,
-    parentActs:{total:parentActsTotal,perMergedNode:ratio(parentActsTotal,n),byClass,byNode,perMergedNodeAttributed:ratio(attributed,n),pending,unattributed},
+    parentActs:{total:parentActsTotal,perMergedNode:ratio(parentActsTotal,n),byClass,byNode,perMergedNodeAttributed:ratio(attributed,n),pending,unattributed,mergedOnly:{total:mergedOnly,perMergedNode:ratio(mergedOnly,n)}},
+    decisions:decisionKeys.size,actsPerDecision:ratio(parentActsTotal,decisionKeys.size),
+    latency:{phases:{measure:durations(phaseSamples.measure),review:durations(phaseSamples.review),mergeWait:durations(phaseSamples.mergeWait)},leaseWaitMs:durations(leaseWaits)},
     grants:{total:grantsTotal,perMergedNode:ratio(grantsTotal,n)},
-    interruptions:{total:halts.length+answers,halts:halts.length,answers,perMergedNode:ratio(halts.length+answers,n)},halts,
+    interruptions:{total:halts.length+answers,halts:halts.length,answers,perMergedNode:ratio(halts.length+answers,n),byClass:interruptionsByClass},halts,
     haltReasons:{decision:top('decision'),'no-decision':top('no-decision')},
     submitToMergeMs:durations(merged.map(m => m.submitToMergeMs)),dispatchToMergeMs:durations(merged.map(m => m.dispatchToMergeMs)),
     firstPassAcceptance:{nodes:firstPass,rate:ratio(firstPass,n)},repairs:{total:repairs,perMergedNode:ratio(repairs,n)} };
@@ -211,6 +268,7 @@ export function renderMetrics(m: Metrics): string {
   const number = (v: number | null): string => v === null ? 'n/a' : String(Math.round(v*1000)/1000);
   const time = (v: number | null): string => v === null ? 'n/a' : `${number(v/1000)}s`;
   const summary = (d: DurationMetrics, max: boolean): string => `median ${time(d.median)}, p90 ${time(d.p90)}${max ? `, max ${time(d.max)}` : ''} (${d.samples} samples)`;
+  const phase = (d: DurationMetrics): string => `median ${time(d.median)}, p90 ${time(d.p90)}`;
   const classes = Object.entries(m.parentActs.byClass).filter(([,count]) => count > 0)
     .sort(([a,x],[b,y]) => y-x || a.localeCompare(b)).slice(0,5).map(([cls,count]) => `${cls} ${count}`).join(', ');
   return [`Metrics (since ${m.since === -1 ? 'start' : m.since}, until ${m.until ?? 'latest'}); merged nodes: ${m.mergedNodes}`,
@@ -220,6 +278,11 @@ export function renderMetrics(m: Metrics): string {
     `Grants: ${m.grants.total}; per merged node ${number(m.grants.perMergedNode)}`,
     `Driver halts + answers per merged node (partial): ${number(m.interruptions.perMergedNode)} (${m.interruptions.total} total: ${m.interruptions.halts} halts, ${m.interruptions.answers} answers)`,
     `Halts: decision ${m.halts.filter(h => h.class === 'decision').length}, no-decision ${m.halts.filter(h => h.class === 'no-decision').length}`,
+    `Halts by class (recorded text): ${Object.entries(m.interruptions.byClass).filter(([,c]) => c > 0).map(([cls,c]) => `${cls} ${c}`).join(', ') || 'none'}; state-based classes: owed report --counterfactual`,
+    `Decisions: ${m.decisions}; parent acts per decision ${number(m.actsPerDecision)}`,
+    `Parent acts on merged nodes only: ${m.parentActs.mergedOnly.total}; per merged node ${number(m.parentActs.mergedOnly.perMergedNode)}`,
+    `Phases of merged nodes: measure ${phase(m.latency.phases.measure)}; review ${phase(m.latency.phases.review)}; merge wait ${phase(m.latency.phases.mergeWait)}`,
+    ...(m.latency.leaseWaitMs.samples ? [`Machine lease wait: ${summary(m.latency.leaseWaitMs,false)}`] : []),
     `Submit to merge: ${summary(m.submitToMergeMs,true)}`,`First dispatch to merge: ${summary(m.dispatchToMergeMs,false)}`,
     `First-pass acceptance: ${m.firstPassAcceptance.nodes}/${m.mergedNodes} (${m.firstPassAcceptance.rate === null ? 'n/a' : `${number(m.firstPassAcceptance.rate*100)}%`})`,
     `Repairs: ${m.repairs.total}; per merged node ${number(m.repairs.perMergedNode)}`,

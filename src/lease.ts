@@ -4,7 +4,7 @@ import { Dsa, dsaAvailable } from './dsa.ts';
 import { currentLockDeadline } from './lock-deadline.ts';
 import { OwedError } from './errors.ts';
 
-const scope = new AsyncLocalStorage<{ leased: boolean }>();
+const scope = new AsyncLocalStorage<{ leased: boolean; waitMs?: number }>();
 export const LEASE = 'machine (shared)';
 export interface LeaseOptions { cwd: string; lease?: boolean; signal?: AbortSignal; noWait?: boolean; dsa?: Dsa }
 /** Concurrent in-process measurements must not set process.env: each has its own lease context. */
@@ -12,6 +12,11 @@ export function machineLeased(): boolean { return scope.getStore()?.leased === t
 export function measurementScope(): boolean { return scope.getStore() !== undefined; }
 export function leaseEnvironment(): NodeJS.ProcessEnv { return machineLeased() ? { OWED_LEASED: '1' } : {}; }
 export function leaseText(r: { lease?: string }): string { return r.lease ? `\nlease: ${r.lease}` : ''; }
+/** MX3: `lease_wait_ms` for an obs/merge recorded inside a leased measurement: the wait before the command started. */
+export function leaseWaitField(): { lease_wait_ms?: number } {
+  const ms = scope.getStore()?.waitMs;
+  return ms === undefined ? {} : { lease_wait_ms: ms };
+}
 
 /** AW #2090: bound only lease acquisition; checks retain their own execution timeout. */
 async function leaseBeforeDeadline<T>(signal: AbortSignal | undefined, run: (signal: AbortSignal | undefined, acquired: () => void) => Promise<T>): Promise<T> {
@@ -41,12 +46,14 @@ export async function withMachineLease<T>(o: LeaseOptions, measure: (signal?: Ab
   if (o.signal?.aborted) throw new OwedError('aborted', 'aborted');
   const dsa = o.dsa ?? new Dsa();
   if (measurementScope() || machineLeased() || o.lease === false || !dsaAvailable(dsa.bin)) {
-    return scope.run({ leased: machineLeased() }, () => measure(o.signal));
+    const outer = scope.getStore()?.waitMs;
+    return scope.run({ leased: machineLeased(), ...(outer !== undefined ? { waitMs: outer } : {}) }, () => measure(o.signal));
   }
+  const started = Date.now();
   try {
     const r = await leaseBeforeDeadline(o.signal,(signal,acquired) => dsa.holdWhile('machine', signal => {
       acquired();
-      return scope.run({ leased: true }, () => measure(signal));
+      return scope.run({ leased: true, waitMs: Math.max(0, Date.now() - started) }, () => measure(signal));
     }, { shared: true, cwd: o.cwd, noWait: o.noWait, signal }));
     if (r.outcome === 'busy') throw new OwedError(r.reason, 'busy');
     if (r.outcome === 'refused') throw new OwedError(`pi-durable-subagents hold refused: ${r.reason}`);

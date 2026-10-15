@@ -186,6 +186,8 @@ export interface ObsEntry extends Base {
   remeasure_match?: string[];
   /** MT4 (0.21): measured on a batch merge tree (members in order); never `merging`, never a block. */
   batch?: string[];
+  /** MX3 (0.23): milliseconds the command waited for the machine lease before it started; older owed refuses it. */
+  lease_wait_ms?: number;
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }
@@ -196,7 +198,7 @@ export interface AbandonEntry extends Base { kind: 'abandon'; node: string; atte
 export interface HoldEntry extends Base { kind: 'hold'; node: string; abandon: number; reason?: string }
 /** Moves the open slot of `node` from base `from` to the current trunk `base`; the open candidate is invalidated. */
 export interface RebaseEntry extends Base { kind: 'rebase'; node: string; attempt: number; base: string; from: string }
-export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts; /** MT3 (0.21): batch merge member; older owed misjudges it. */ batch?: MergeBatch }
+export interface MergeEntry extends Base { kind: 'merge'; node: string; attempt: number; prior: string; commit: string; facts: CandidateFacts; state: StateFacts; /** MT3 (0.21): batch merge member; older owed misjudges it. */ batch?: MergeBatch; /** MX3 (0.23): milliseconds the merge waited for the machine lease before it started. */ lease_wait_ms?: number }
 /** MT3 (0.21): the batch a merge entry belongs to, identical on every member entry: the final merge commit Mn, its state facts, per member its check keys on Mn, all members in order. */
 export interface MergeBatch { final: string; state: StateFacts; keys: Record<string, Record<string, string>>; members: string[] }
 export interface NoteEntry extends Base { kind: 'note'; text: string }
