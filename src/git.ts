@@ -210,11 +210,25 @@ export async function stateFacts(cwd: string, plan: Plan, commit: string, q?: Qu
   for (const c of plan.invariants) invKeys[c.id] = await checkKey(cwd, plan, c, commit, closure, 'inv', q?.(c));
   return { commit, tree: await tree(cwd, commit), invKeys };
 }
-/** UX3: immutable commit-pair diagnostics; never acceptance evidence. */
-export async function conflictPaths(cwd: string, left: string, right: string): Promise<string[] | undefined> {
+/** UX3: resolve request metadata once; memoize unordered probes, including cache misses. */
+export async function conflictProbe(cwd: string, commits: string[]): Promise<(left: string, right: string) => Promise<string[] | undefined>> {
+  let dir: string;
+  try { dir = join(await commonDir(cwd), 'owed', 'cache'); }
+  catch { return async () => undefined; }
+  const resolved = new Map(await Promise.all([...new Set(commits)].map(async ref => [ref, await revParse(cwd, ref).catch(() => undefined)] as const)));
+  const pairs = new Map<string, Promise<string[] | undefined>>();
+  return (left, right) => {
+    const a = resolved.get(left), b = resolved.get(right);
+    if (!a || !b) return Promise.resolve(undefined);
+    const pair = [a, b].sort(), key = pair.join('-');
+    let pending = pairs.get(key);
+    if (!pending) { pending = conflictPaths(cwd, dir, pair); pairs.set(key, pending); }
+    return pending;
+  };
+}
+/** Immutable commit-pair diagnostics; never acceptance evidence. */
+async function conflictPaths(cwd: string, dir: string, pair: string[]): Promise<string[] | undefined> {
   try {
-    const pair = [await revParse(cwd, left), await revParse(cwd, right)].sort();
-    const dir = join(await commonDir(cwd), 'owed', 'cache');
     const file = join(dir, `conflicts-${pair.join('-')}.json`);
     try {
       const cached = JSON.parse(await readFile(file, 'utf8'));
