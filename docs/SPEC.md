@@ -1986,8 +1986,11 @@ allowlisted runs: a quarantine on a template never excuses in 0.20.
 
 ### 7.18 Timeout evidence and diagnostics (0.20.1, SG5)
 
-A measurement timeout remains an **error**, never a passing measurement. Its
-log blob retains the last 256 KiB of captured stdout/stderr, followed by
+A timeout in a check/red/invariant observation remains an **error**, never a
+passing observation. Strength (mutant) runs retain the existing semantics
+(§7 step 4): a timed-out mutant counts as killed when the run is not zero-test,
+and the strength observation can pass if killed/total meets `min_kill`.
+The timeout log blob retains the last 256 KiB of captured stdout/stderr, followed by
 `timeout after Ns`, optional diagnostic output and a best-effort pre-kill
 process tree. The note is `timeout after Ns` plus the last three measurement
 output lines. The measurement process group is stopped at the timeout boundary;
