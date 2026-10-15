@@ -19,6 +19,7 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, ty
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
 import { validateDraft, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
+import { matchesRemeasureOn } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult } from './lease.ts';
 import { unguardedPaths, mergeCoverage } from './sweep.ts';
 export { sweep } from './sweep.ts';
@@ -371,7 +372,11 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
     try {
       for (let i = 0; i < jobs.length; i++) {
         const obs = await ready[i]!.p;
-        if (obs) await record(jobs[i]!,obs,signal?.aborted ? undefined : signal);
+        if (obs) {
+          await record(jobs[i]!,obs,signal?.aborted ? undefined : signal);
+          const retry = await automaticInvariantRemeasure(cwd,ledger,snapshot,jobs[i]!,obs,signal);
+          if (retry) await record(jobs[i]!,retry,signal);
+        }
       }
     } catch (e) { stopped = true; throw e; }
     finally { await measuring; }
@@ -385,6 +390,47 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
     const obs = await runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), grantedWrites:job.attribution ? [] : grantsOf(snapshot,job.subject).flatMap(g => g.paths), signal }, job);
     checkAbort(signal);
     await record(job,obs,signal);
+    const retry = await automaticInvariantRemeasure(cwd,ledger,snapshot,job,obs,signal);
+    if (retry) await record(job,retry,signal);
+  }
+  return out;
+}
+/** RO2–RO3: caller keeps its lease/outer lock; never run a command under the ledger lock. */
+async function automaticInvariantRemeasure(cwd: string, ledger: Ledger, snapshot: State, job: AttestJob, first: Draft, signal?: AbortSignal): Promise<Draft | undefined> {
+  if (signal?.aborted || job.kind !== 'inv' || job.attribution || first.kind !== 'obs') return;
+  const needles = snapshot.plan.invariants.find(i => i.id === job.spec?.id)?.remeasure_on ?? [];
+  if (!needles.length || first.verdict !== 'fail') return;
+  const latest = (await load(ledger)).state;
+  if (latest.planSha !== snapshot.planSha || latest.trunk.commit !== snapshot.trunk.commit) return;
+  if (entriesOf(latest).some(e => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === job.obligation && e.key === job.key && e.auto_remeasure)) return;
+  if (!matchesRemeasureOn(first,(await ledger.getBlob(first.log ?? '')).toString(),needles)) return;
+  checkAbort(signal);
+  const retry = await runJob({cwd,ledger,plan:snapshot.plan,signal},job);
+  return { ...retry, ...(first.merging ? { merging:first.merging } : {}), auto_remeasure:true };
+}
+/** RO3: a refusal quotes both votes; a fail/pass conflict cannot be repaired by another retry. */
+function automaticRemeasureHints(state: State, items: ItemView[], node: string): { lines: string[]; keys: Set<string> } {
+  const lines: string[] = [], keys = new Set<string>();
+  for (const item of items.filter(i => i.status === 'D')) {
+    const obs = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === item.obligation && e.key === item.key);
+    const retry = obs.find(e => e.auto_remeasure);
+    if (!retry) continue;
+    keys.add(item.key);
+    const first = obs.find(e => e.seq < retry.seq && e.verdict === 'fail');
+    const quote = (e: ObsEntry) => `#${e.seq} ${e.verdict}${e.note ? ` (${oneLine(e.note.split('; last output:')[0]!)})` : ''}`;
+    lines.push(`${item.obligation} automatic same-key remeasure: ${[first,retry].filter((e): e is ObsEntry => !!e).map(quote).join('; ')}; ${item.mark === '⊤' ? `conflicting pass and fail need the owner: fix the invariant or owed defer ${node} ${item.obligation.slice(4)} --reason "<why retaining debt is acceptable>"` : 'retry consumed on this key; fix the invariant before retrying merge'}`);
+  }
+  return { lines, keys };
+}
+/** RO: keep both observations in measurement order, using the same key and the caller's final CAS. */
+async function automaticInvariantResults(cwd: string, ledger: Ledger, state: State, jobs: AttestJob[], observations: Draft[], signal?: AbortSignal): Promise<Draft[]> {
+  const out: Draft[] = [];
+  for (const first of observations) {
+    out.push(first);
+    if (first.kind !== 'obs') continue;
+    const job = jobs.find(j => j.subject === first.subject && j.obligation === first.obligation && j.key === first.key);
+    const retry = job && await automaticInvariantRemeasure(cwd,ledger,state,job,first,signal);
+    if (retry) out.push(retry);
   }
   return out;
 }
@@ -1063,8 +1109,8 @@ async function remeasureMerge(o: MeasurementContext & { node: string; all?: bool
   if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again`);
   const m = await mergeFacts(o.cwd,state,o.node,built.commit), jobs = remeasureJobs(state,o.node,m,o.all);
   const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async job => ({ ...await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job), merging:o.node }) as Draft);
-  const observations = run.observations.filter((x): x is Draft => x !== undefined);
-  if (run.aborted) return abortWith(ledger,state,observations,o.node);
+  const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs,run.observations.filter((x): x is Draft => x !== undefined),o.signal);
+  if (run.aborted || o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
   return ledger.withLock(async () => {
     const latest = await load(ledger); nodeStable(state,latest,o.node);
     const moved = latest.state.planSha !== state.planSha || !!await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
@@ -1217,8 +1263,8 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     // job starts, and the merge stops before trunk moves, keeping the completed observations (abortWith).
     const jobs = [...genesisJobs(state).map(job => ({ job, merging: false })),...mergeJobs(state,o.node,m).map(job => ({ job, merging: true }))];
     const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); return merging ? {...obs,merging:o.node} as Draft : obs; });
-    const observations = run.observations.filter((x): x is Draft => x !== undefined);
-    if (run.aborted) return abortWith(ledger,state,observations,o.node);
+    const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs.map(j => j.job),run.observations.filter((x): x is Draft => x !== undefined),o.signal);
+    if (run.aborted || o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
     // TR1: before refusing a measured/reused node-check fail, probe trunk under this same lease and merge lock.
     // No ledger lock while commands run; the existing final CAS discards stale results.
     const preview = mergeCurrent(snapshot,o.node,m,observations,true).state;
@@ -1270,8 +1316,9 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
         }));
         const trunkRed = (g?.nodeItems ?? []).filter(i => i.status === 'D').flatMap(i => i.evidence.flatMap(seq => trunkRedHint(current,seq,i.key) ?? []));
         const lead = await mergeTreeBreakLead(o.cwd,current,o.node,[built.commit]);
-        const reused = reusedHint(o.node,failedObs.filter(e => e.subject === 'trunk' && e.seq <= latest.state.seq),Date.now(),by(o) === DRIVER);
-        throw new OwedError([...lead, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs), ...(reused ? [reused] : [])].join('; '));
+        const automatic = automaticRemeasureHints(current,g?.invItems ?? [],o.node);
+        const reused = reusedHint(o.node,failedObs.filter(e => e.subject === 'trunk' && e.seq <= latest.state.seq && !automatic.keys.has(e.key)),Date.now(),by(o) === DRIVER);
+        throw new OwedError([...automatic.lines, ...lead, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs), ...(reused ? [reused] : [])].join('; '));
       }
       const d: Draft = {kind:'merge',by:'executor:owed',node:o.node,attempt:n.slot!.attempt,prior:state.trunk.commit,commit:built.commit,facts:lm.facts,state:lm.state}; guard(current,d);
       await git.advanceTrunk(o.cwd,state.trunk.name,state.trunk.commit,built.commit);
@@ -1324,7 +1371,8 @@ function mergeCurrent(latest: Awaited<ReturnType<typeof load>>, id: string, m: {
   for (const obs of observations) {
     if (obs.kind !== 'obs') continue;
     const jobs = obs.merging !== undefined ? (nodeJobs ? mergeJobs(current,id,m) : []) : genesisJobs(current);
-    if (!jobs.some(j => sameJob(j,obs)) || validateDraft(current,obs).length) continue;
+    const automaticPair = obs.auto_remeasure && kept.some(first => first.kind === 'obs' && first.verdict === 'fail' && sameJob(first,obs) && first.merging === obs.merging);
+    if ((!automaticPair && !jobs.some(j => sameJob(j,obs))) || validateDraft(current,obs).length) continue;
     const entry = {...obs,seq:current.seq+1,ts:new Date().toISOString(),prev:current.head} as Entry;
     // G1.3: folded onto a private copy of the loaded state.
     entry.hash=entryHash(entry); current = own ? extendState(current,[entry]) : reduceFrom(current,[entry],latest.lookup); own = true; kept.push(obs);
@@ -1403,9 +1451,10 @@ async function adoptHeld(o: Parameters<typeof adopt>[0], ledger: Ledger): Promis
     if (o.as.role === 'parent') { const outside = unadoptable(state.plan,p.changed); if (outside !== undefined) throw new OwedError(`parent adoption refused: changed path ${outside} is not under an allow adopt prefix (${adoptPrefixes(state.plan).join(', ') || 'none'}); the owner must adopt it`); }
     const sf = await git.stateFacts(o.cwd,state.plan,p.commit,stateQuarantine(state));
     // M1: up to exec.parallel jobs at once, observations in job order; an abort keeps the completed ones (abortWith).
-    const run = await measureAll([...genesisJobs(state),...adoptJobs(state,sf)],parallelOf(state.plan),o.signal,job => runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job));
-    const observations = run.observations.filter((x): x is Draft => x !== undefined);
-    if (run.aborted) return abortWith(ledger,state,observations);
+    const jobs = [...genesisJobs(state),...adoptJobs(state,sf)];
+    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,job => runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job));
+    const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs,run.observations.filter((x): x is Draft => x !== undefined),o.signal);
+    if (run.aborted || o.signal?.aborted) return abortWith(ledger,state,observations);
     return ledger.withLock(async () => {
       const latest = await load(ledger); stable(state,latest.state);
       const now = await git.git(o.cwd,['rev-parse','--verify','--quiet','--end-of-options',`refs/heads/${p.trunk}^{commit}`],{allowFail:true});

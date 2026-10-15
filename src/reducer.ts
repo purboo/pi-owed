@@ -284,6 +284,14 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
         : invariantRedText(s, obligation, red, fail) });
     }
   }
+  if (subject === 'trunk' && out.status === 'D') {
+    const obs = counted(s,subject,obligation,key), retry = obs.find(e => e.auto_remeasure);
+    const first = retry && obs.find(e => e.seq < retry.seq && e.verdict === 'fail');
+    if (first && retry) {
+      const quote = (e: ObsEntry) => `#${e.seq} ${e.verdict}${e.note ? ` (${e.note.split('; last output:')[0]!.replace(/\s+/g,' ')})` : ''}`;
+      out.detail += `; automatic same-key remeasure: ${quote(first)}; ${quote(retry)}; ${out.mark === '⊤' ? 'conflicting pass and fail need the owner: fix the invariant or defer it for a specific node' : 'retry consumed on this key; fix the invariant'}`;
+    }
+  }
   return out;
 }
 function nodeItems(s: State, id: string, facts: CandidateFacts): ItemView[] {
@@ -406,7 +414,7 @@ function answerRevisionErrors(s: State, a: import('./types.ts').AnswerRef | unde
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'text', 'nodes', 'writer', 'prospective', 'answer', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'waits_on', 'auto_remeasure'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -422,6 +430,7 @@ export function newerEntry(e: Entry): OwedError | undefined {
   if (kind === 'obs') {
     const extra = Object.keys(x).find(k => x[k] !== undefined && !OBS_FIELDS.includes(k));
     if (extra !== undefined) return refuse(`obs ${extra} ${shown(x[extra])}`);
+    if (x.auto_remeasure !== undefined && x.auto_remeasure !== true) return refuse(`obs auto_remeasure ${shown(x.auto_remeasure)}`);
   }
   // FL2/FL3: from 0.13 unknown resume shapes are compatibility errors, not silently interpreted.
   if (kind === 'abandon' || kind === 'hold') {
@@ -1217,6 +1226,7 @@ export function validateDraft(s: State, d: Draft): string[] {
         const expected = [...new Set(refused.flatMap(r => r.owners))].sort();
         if (d.obligation !== 'writes' || d.verdict !== 'fail' || d.attribution !== undefined || d.merging !== undefined || d.probe !== undefined || !target?.slot?.open || !c || d.commit !== c.commit || d.base !== c.base || d.key !== c.keys.writes || !Array.isArray(d.waits_on) || !d.waits_on.length || canonical(d.waits_on) !== canonical(expected) || !refused.length || refused.some(r => r.reasons.some(reason => !reason.startsWith('overlaps open node ')))) errors.push('obs waits_on requires only current candidate writes overlaps with the named open nodes');
       }
+      if (d.auto_remeasure !== undefined && (d.auto_remeasure !== true || d.subject !== 'trunk' || !d.obligation.startsWith('inv:') || d.probe !== undefined || d.attribution)) errors.push('obs auto_remeasure must be true on a non-attribution invariant observation');
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
       break;
     case 'review':
