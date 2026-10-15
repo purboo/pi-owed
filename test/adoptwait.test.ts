@@ -17,6 +17,7 @@ import owed from '../src/extension.ts';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
+import { clockTime } from '../src/clock.ts';
 
 const owner = {role:'owner',id:'pi'} as const;
 const parent = {role:'parent',id:'test'} as const;
@@ -145,8 +146,8 @@ test('AW3: driver yields new merges to live pending adopt, reports it, and ignor
     assert.equal(pass.actions.some(a=>a.do==='merge' && a.outcome==='started'),false);
     assert.equal((await ops.readState(f)).state.nodes.a!.merged,undefined);
     assert.deepEqual(await f.ledger.read(),before);
-    assert.match(renderStatus(await ops.status(f)),/merge waiting for adopt \(pending since 09:23\)/);
-    assert.ok(lines.some(l=>l.includes('merge waiting for adopt (pending since 09:23)')),lines.join('\n'));
+    assert.ok(renderStatus(await ops.status(f)).includes(`merge waiting for adopt (pending since ${clockTime(marker.since)})`));
+    assert.ok(lines.some(l=>l.includes(`merge waiting for adopt (pending since ${clockTime(marker.since)})`)),lines.join('\n'));
     // Find a demonstrably dead PID, rather than depending on the machine's PID maximum.
     let dead = 99999999;
     for (;;) {try {process.kill(dead,0);dead--;} catch {break;}}
@@ -172,11 +173,11 @@ test('AW #2090: expired foreign and undated markers never block; live markers na
     await writeFile(foreign,JSON.stringify(oldest));await writeFile(f.pending,JSON.stringify(newest));
     await driver.pass();await driver.settle();
     assert.equal((await ops.readState(f)).state.nodes.a!.merged,undefined);
-    assert.match(renderStatus(await ops.status(f)),new RegExp(`pending since ${oldest.since.slice(11,16)}`));
+    assert.match(renderStatus(await ops.status(f)),new RegExp(`pending since ${clockTime(oldest.since)}`));
     await writeFile(foreign,JSON.stringify({...oldest,until:new Date(now-1).toISOString()}));
     await driver.pass();await driver.settle();
     assert.equal((await ops.readState(f)).state.nodes.a!.merged,undefined,'another live request still blocks');
-    assert.ok(lines.some(l=>l.includes(`pending since ${newest.since.slice(11,16)}`)));
+    assert.ok(lines.some(l=>l.includes(`pending since ${clockTime(newest.since)}`)));
     // Missing until is stale even for a live local PID. Expired foreign remains on disk.
     const {until:_,...oldFormat} = newest;
     await writeFile(f.pending,JSON.stringify(oldFormat));

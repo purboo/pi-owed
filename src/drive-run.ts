@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import { rebasePending, type RebasePending } from './rebase-view.ts';
 import * as git from './git.ts';
+import { clockTime } from './clock.ts';
 import { pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { Ledger } from './ledger.ts';
 import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
@@ -664,7 +665,7 @@ export class Driver {
           // DQ2: the merge blocks a second merge even when an attest also occupies capacity.
           const blocker = inFlight.find(m => m.do === 'merge') ?? inFlight[0]!;
           const job = `${blocker.attempt === 0 ? 'trunk' : blocker.node} ${blocker.do}`;
-          const reason = blocker.batch?.includes(a.node) ? `in batch with ${blocker.node}` : `driver-internal job (${job}, since ${new Date(blocker.at).toISOString().slice(11,16)})`;
+          const reason = blocker.batch?.includes(a.node) ? `in batch with ${blocker.node}` : `driver-internal job (${job}, since ${clockTime(blocker.at)})`;
           this.recordMergeWaiting(a.node, reason, s, job);
           continue;
         }

@@ -21,6 +21,7 @@ import { Dsa } from '../src/dsa.ts';
 import type { Entry } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { identity } from './helpers/surface.ts';
+import { clockTime } from '../src/clock.ts';
 
 const FAKE = fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url));
 const OWED = fileURLToPath(new URL('../bin/owed.js', import.meta.url));
@@ -300,7 +301,7 @@ test('H1.2 pi start stay:true: idle-wait wakes and the driver stays; a plan upda
     assert.ok(alive(pid), 'the driver did not exit');
     assert.ok(!f.logJson().some(x => x.event === 'exit' || x.event === 'idle'));
     const status = await h.call('drive', { action: 'status' });
-    assert.match(status.text, new RegExp(`^driver running: pid ${pid} .*\\nidle, waiting for ledger changes since \\d{4}-`));
+    assert.match(status.text, new RegExp(`^driver running: pid ${pid} .*\\nidle, waiting for ledger changes since (\\d{4}-\\d\\d-\\d\\d )?\\d\\d:\\d\\d`));
     // The plan grows: the staying driver resumes and dispatches the new node.
     await f.agent('b-writer', 'echo b > b.txt; git add b.txt; git commit -qm b; owed submit b');
     await ops.planSet({ cwd: f.cwd, as: parent, plan: JSON.stringify(planOf(node('b'))) });
@@ -359,7 +360,7 @@ test('H1.2 CLI: --stay only with --detach or the loop; --detach --stay reports i
     const json = await f.cli(['drive', '--status', '--json']);
     assert.equal((JSON.parse(json.stdout) as Json).idleSince, at);
     const text = await f.cli(['drive', '--status']);
-    assert.match(text.stdout, new RegExp(`^driver running: pid ${pid} .*\\nidle, waiting for ledger changes since ${String(at)}\\n`));
+    assert.match(text.stdout, new RegExp(`^driver running: pid ${pid} .*\\nidle, waiting for ledger changes since ${clockTime(String(at))}\\n`));
     assert.match(text.stdout, new RegExp(IDLE_WAIT.replace(/[()]/g, '\\$&')));
     await sleepMs(1000);
     assert.ok(alive(pid), 'still running');
