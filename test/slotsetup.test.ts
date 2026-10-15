@@ -331,7 +331,7 @@ test('SS changing slot_setup preserves all keys and the submitted candidate, and
   } finally { await r.cleanup(); }
 });
 
-test('SS a plan changed during setup refuses its stale result and rolls back the slot', async () => {
+test('SS/DQ1 a plan changed during setup discards stale setup and retries with fresh setup policy', async () => {
   const r = await fixture({ worktrees: { root: '../created/nested' }, slot_setup: 'touch ready; for i in {1..500}; do test -f release && exit 0; sleep 0.02; done; exit 99' });
   try {
     const pending = r.dispatch(); pending.catch(() => {});
@@ -342,8 +342,15 @@ test('SS a plan changed during setup refuses its stale result and rolls back the
     const before = await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8');
     const exclude = await readFile(join(r.cwd, '.git', 'info', 'exclude'), 'utf8');
     await writeFile(join(wt, 'release'), '');
-    await assert.rejects(pending, /Plan, candidate or trunk changed; retry/);
-    await rollbackUnchanged(r, before);
+    const dispatched = await pending;
+    assert.equal(dispatched.worktree, wt);
+    assert.equal(existsSync(join(wt, 'ready')), false, 'the stale setup worktree was removed before retry');
+    assert.equal(existsSync(join(wt, 'release')), false, 'stale setup outputs do not survive the retry');
+    assert.doesNotMatch(dispatched.packet, /^Setup:/m, 'the fresh plan disables setup');
+    const after = await readFile(join(r.root, 'ledger', 'ledger.jsonl'), 'utf8');
+    assert.ok(after.startsWith(before), 'prior ledger entries remain unchanged');
+    assert.equal(after.slice(before.length).trim().split('\n').length, 1, 'only the successful dispatch is appended');
+    assert.equal((await (await Ledger.open(r.cwd)).read()).filter(e => e.kind === 'dispatch').length, 1);
     assert.equal(await readFile(join(r.cwd, '.git', 'info', 'exclude'), 'utf8'), exclude, 'a stale setup result appends no excludes');
   } finally { await r.cleanup(); }
 });
