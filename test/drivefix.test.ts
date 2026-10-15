@@ -167,6 +167,34 @@ test('DQ2 review: a waiting node outside mergeQueue has no ahead field or queue-
   } finally { await f.done(); }
 });
 
+test('LO-W3: status derives waiting ahead from the current queue before the next driver pass', { timeout: 120_000 }, async () => {
+  const f = await fixture([node('old'), node('high'), node('child', ['high']), node('tie')]);
+  try {
+    await accepted(f, 'old'); await accepted(f, 'high'); await accepted(f, 'tie');
+    const ledger = await Ledger.open(f.cwd), dir = join(ledger.dir, 'drive'), state = (await ops.readState(f)).state;
+    await (await import('node:fs/promises')).mkdir(dir, { recursive: true });
+    const waits = Object.fromEntries(['old', 'tie'].map(id => [id, { attempt: state.nodes[id]!.slot!.attempt, candidate: state.nodes[id]!.candidate!.seq, reason: 'machine lease busy', since: new Date().toISOString(), ahead: id === 'old' ? 1 : 2 }]));
+    const path = join(dir, 'waiting.json'); await writeFile(path, JSON.stringify(waits));
+    const before = await ops.status(f);
+    assert.deepEqual(before.mergeQueue, ['high', 'old', 'tie']);
+    assert.equal(before.mergeWaiting!.old!.ahead, 1); assert.equal(before.mergeWaiting!.tie!.ahead, 2);
+
+    await ops.merge({ cwd: f.cwd, as: parent, node: 'high' });
+    // No driver pass rewrites the cache after the merge; positions must come from the new queue at read time.
+    assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), waits);
+    const json = await cli(f.cwd, ['status', '--json']); assert.equal(json.code, 0, json.stderr);
+    const after = JSON.parse(json.stdout);
+    assert.deepEqual(after.mergeQueue, ['old', 'tie']);
+    assert.equal(after.mergeWaiting.old.ahead, 0); assert.equal(after.mergeWaiting.tie.ahead, 1);
+    for (const args of [['status'], ['status', '--full']]) {
+      const text = await cli(f.cwd, args); assert.equal(text.code, 0, text.stderr);
+      assert.match(text.stdout, /old.*merge waiting for .*; 0 merges ahead/);
+      assert.match(text.stdout, /tie.*merge waiting for .*; 1 merge ahead/);
+      assert.doesNotMatch(text.stdout, /tie.*2 merges ahead/);
+    }
+  } finally { await f.done(); }
+});
+
 test('DQ2: CLI status names the running merge and queue positions in critical-path order', { timeout: 120_000 }, async () => {
   const f = await fixture([node('old'), node('high'), node('child', ['high']), node('tie')]);
   const mark = join(f.root, 'started'), gate = join(f.root, 'gate');

@@ -171,25 +171,58 @@ test('LO2: stopped, finished and replaced jobs cannot revive a stale wait; non-j
   } finally { await f.cleanup(); }
 });
 
-for (const what of ['merge', 'attest'] as const) test(`LO2: ${what} ending busy records a fresh wait only after it ends`, { timeout: 60_000 }, async () => {
+for (const what of ['merge', 'attest'] as const) test(`LO-W2: ${what} keeps its first busy end across retries and resets after non-busy work or a new candidate`, { timeout: 120_000 }, async () => {
   const f = await fixture();
   class BusyClient extends Client {
-    override async hold() { return { outcome: 'busy' as const, reason: 'machine lease busy in fixture' }; }
-    override async holdWhile<T>() { return { outcome: 'busy' as const, reason: 'machine lease busy in fixture' }; }
+    busy = true;
+    before?: () => Promise<void>;
+    private async result() {
+      await this.before?.();
+      return this.busy ? { outcome: 'busy' as const, reason: 'machine lease busy in fixture' }
+        : { outcome: 'refused' as const, reason: 'fixture non-busy refusal' };
+    }
+    override async hold() { return this.result(); }
+    override async holdWhile<T>() { return this.result(); }
   }
-  let driver: Driver | undefined;
+  const dsa = new BusyClient();
+  let driver: Driver | undefined, release: (() => void) | undefined;
   try {
-    await candidate(f, 'a', what === 'merge');
+    const slot = await candidate(f, 'a', what === 'merge');
     await ops.planSet({ cwd: f.cwd, as: parent, plan: JSON.stringify({ ...f.plan, lease: true }) });
     await running(f);
     const old = await waitRecord(f, 'a', { since: '2020-01-01T00:00:00.000Z' });
-    driver = new Driver({ cwd: f.cwd, dsa: new BusyClient(), json: true, log: l => appendFileSync(join(f.dir, 'log.jsonl'), l + '\n'), handleSignals: false });
+    driver = new Driver({ cwd: f.cwd, dsa, json: true, log: l => appendFileSync(join(f.dir, 'log.jsonl'), l + '\n'), handleSignals: false });
+    const cached = async () => JSON.parse(await readFile(join(f.dir, 'waiting.json'), 'utf8')).a;
     await driver.pass(); await driver.settle();
-    const wait = JSON.parse(await readFile(join(f.dir, 'waiting.json'), 'utf8')).a;
-    assert.match(wait.reason, /machine lease busy/); assert.notEqual(wait.since, old.since);
+    const first = await cached();
+    assert.match(first.reason, /machine lease busy/); assert.notEqual(first.since, old.since);
     const view = await ops.status(f); assert.equal(view.measuring?.a, undefined);
     assert.match(view.summary!.progress.find(p => p.node === 'a')!.phase, /waiting for .*machine lease busy/);
-  } finally { driver?.abort.abort(); await driver?.settle(); await f.cleanup(); }
+
+    let enter!: () => void;
+    const entered = new Promise<void>(r => { enter = r; }), gate = new Promise<void>(r => { release = r; });
+    dsa.before = async () => { enter(); await gate; };
+    driver.tick(); await driver.pass(); await entered;
+    assert.equal(await cached(), undefined, 'a retry clears the visible cache while measuring');
+    assert.equal((await ops.status(f)).mergeWaiting?.a, undefined);
+    release!(); dsa.before = undefined; await driver.settle();
+    assert.equal((await cached()).since, first.since, 'the repeated busy end restores the original start');
+
+    dsa.busy = false;
+    driver.tick(); await driver.pass(); await driver.settle();
+    assert.equal(await cached(), undefined, 'a non-busy end clears the visible wait');
+    await ops.resume({ cwd: f.cwd, as: parent, node: 'a', note: 'retry after fixture refusal' });
+    dsa.busy = true;
+    driver.tick(); await driver.pass(); await driver.settle();
+    const afterNonBusy = await cached();
+    assert.ok(Date.parse(afterNonBusy.since) > Date.parse(first.since), 'a non-busy end resets the cumulative start');
+
+    await commitAt(slot.worktree, { 'a.txt': 'new candidate' });
+    await ops.submit({ cwd: slot.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a' });
+    if (what === 'merge') await ops.attest({ cwd: f.cwd, node: 'a', lease: false });
+    driver.tick(); await driver.pass(); await driver.settle();
+    assert.ok(Date.parse((await cached()).since) > Date.parse(afterNonBusy.since), 'a new candidate resets the cumulative start');
+  } finally { release?.(); driver?.abort.abort(); await driver?.settle(); await f.cleanup(); }
 });
 
 function tool(cwd: string) {
@@ -221,7 +254,27 @@ test('LO3: CLI rule text is one receipt plus unknown-writer notices; JSON follow
     assert.equal(typeof followUp, 'string'); assert.ok(followUp.includes(ruling), followUp);
     assert.ok(!followUp.includes('text\\nwith literal \\\\0'), followUp);
     const why = await cli(f.cwd, ['why', 'a']); assert.equal(why.code, 0, why.stderr);
-    assert.ok(why.stdout.includes(ruling), why.stdout);
+    assert.doesNotMatch(why.stdout, /Ruling to forward:|Use this exact text/);
+  } finally { await f.cleanup(); }
+});
+
+test('LO-W1: why shows only an undelivered writer follow-up and removes it after delivery', async () => {
+  const f = await fixture();
+  const dsa = { async describe(rid: string) { return { rid, state: 'sealed' as const }; }, async send() { throw new Error('sealed writer'); } };
+  try {
+    await candidate(f, 'a', false);
+    const rule = await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: ruling, writer: true, dsa });
+    const before = await ops.why({ cwd: f.cwd, node: 'a' });
+    assert.ok(before.rulingFollowUp?.includes(ruling));
+    const text = await cli(f.cwd, ['why', 'a']); assert.equal(text.code, 0, text.stderr);
+    assert.ok(text.stdout.includes('Ruling to forward:\n')); assert.ok(text.stdout.includes(ruling));
+    const state = (await ops.readState(f)).state, rid = state.nodes.a!.runs[0]!.launches.find(l => l.role === 'writer')!.rid;
+    await ops.send({ cwd: f.cwd, as: parent, node: 'a', attempt: 1, rid, sendKind: 'follow-up', reason: 'ruling', rulings: rule.seq, message: before.rulingFollowUp! });
+    assert.equal((await ops.why({ cwd: f.cwd, node: 'a' })).rulingFollowUp, undefined);
+    for (const args of [['why', 'a'], ['why', 'a', '--full']]) {
+      const after = await cli(f.cwd, args); assert.equal(after.code, 0, after.stderr);
+      assert.doesNotMatch(after.stdout, /Ruling to forward:|Use this exact text|New parent rulings/);
+    }
   } finally { await f.cleanup(); }
 });
 

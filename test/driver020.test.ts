@@ -93,7 +93,7 @@ test('DR2: lease busy reason persists through status, acceptance age is not disp
     assert.match((await cli(f.cwd,['status','--full'])).stdout,/merge waiting for .*attest --trunk since/);
     const since = wait!.since;
     f.driver.tick(); await f.driver.pass(); await f.driver.settle();
-    assert.ok(Date.parse((await ops.status(f)).mergeWaiting!.a!.since) > Date.parse(since), 'a new measurement clears the old wait before its busy completion records a fresh one');
+    assert.equal((await ops.status(f)).mergeWaiting!.a!.since, since, 'consecutive busy retries keep the first busy end');
     await commitAt(n.slot!.worktree, { 'a.txt': 'new' });
     await ops.submit({ cwd:n.slot!.worktree,as:{role:'writer',id:'a#1'},node:'a' });
     assert.equal((await ops.status(f)).mergeWaiting,undefined);
