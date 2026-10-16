@@ -226,6 +226,38 @@ test('TF2/WF1 #3065: Follower keeps trunk-red guidance before the flaky pair des
   } finally { await r.cleanup(); }
 });
 
+test('TF1/QS4: explicit trunk probes retain shared quarantine recovery without changing candidate acceptance', async () => {
+  const r = await repo();
+  try {
+    await commitAt(r.cwd,{impl:'base','test/probe.cjs':`const {test}=require('node:test');
+test('recovered',()=>{}); test('normal',()=>{}); test('still skipped',{skip:true},()=>{});`});
+    const plan = {version:1,trunk:'main',lease:false,closure:[],invariants:[],quarantine_sets:{shared:[{test:'recovered',fix:'fix'},{test:'still skipped',fix:'fix'}]},nodes:[
+      {id:'a',writes:['impl'],checks:[{id:'unit',run:'node --test --test-reporter=tap test/probe.cjs',reads:['impl','test/'],min_tests:1,quarantine_set:'shared'}],review:{count:0,min_rank:1}},
+      {id:'fix',writes:['fixed'],checks:[],review:{count:0,min_rank:1}}
+    ]};
+    await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify(plan)});
+    const slot = await ops.dispatch({...r,as:parent,node:'a'});
+    await commitAt(slot.worktree,{impl:'candidate'});
+    await ops.submit({cwd:slot.worktree,as:{role:'writer',id:'a#1'},node:'a'});
+    await ops.attest({...r,node:'a'});
+    const before = (await ops.readState(r)).state;
+    const candidateObs = reducer.entriesOf(before).findLast((e):e is ObsEntry => e.kind === 'obs' && e.subject === 'a' && e.obligation === 'check:unit')!;
+    assert.equal(candidateObs.quarantine_passed,undefined);
+    const result = await ops.attestProbeTrunk({...r,node:'a',check:'unit'});
+    const probe = result.checks[0]!.observations[0] as ObsEntry;
+    assert.equal(probe.probe,'trunk'); assert.equal(probe.verdict,'pass');
+    assert.deepEqual(probe.quarantine_passed,['recovered']); assert.equal(probe.counts?.pass,2); assert.equal(probe.counts?.skip,1);
+    const after = (await ops.readState(r)).state;
+    assert.equal(after.nodes.a!.accepted,before.nodes.a!.accepted);
+    assert.deepEqual(after.nodes.a!.candidate,before.nodes.a!.candidate);
+    const debt = views.quarantineDebt(after);
+    assert.equal(debt.find(d => d.test === 'recovered')!.passed!.seq,probe.seq);
+    assert.equal(debt.find(d => d.test === 'still skipped')!.passed,undefined);
+    assert.match(views.renderBrief(await ops.brief(r)),/quarantined recovered passed on trunk/);
+    assert.equal((await ops.verify(r)).ok,true);
+  } finally { await r.cleanup(); }
+});
+
 test('TF2: passing probes add no shared hint, absent fix candidates are named as missing', async () => {
   const r = await fixture();
   try {

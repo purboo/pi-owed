@@ -1369,7 +1369,7 @@ export async function attestProbeTrunk(o: MeasurementContext & { node: string; c
         checkAbort(o.signal);
         const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
         if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}; nothing recorded for this run`);
-        const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},quarantinedJob(state,{kind:'check',subject:o.node,obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit}));
+        const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true},quarantinedJob(state,{kind:'check',subject:o.node,obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'}));
         checkAbort(o.signal);
         const entry = await ledger.withLock(async () => {
           const latest = (await load(ledger)).state;
