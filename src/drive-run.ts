@@ -519,6 +519,15 @@ export class Driver {
         const saved = JSON.parse(await readFile(join(this.ledger.dir, 'drive', 'waiting.json'), 'utf8')) as Record<string, { reason: string; since: string; attempt: number; candidate?: number }>;
         for (const [id, w] of Object.entries(saved)) if (typeof w.reason === 'string' && Number.isFinite(Date.parse(w.since)) && Number.isSafeInteger(w.attempt)) this.mergeWaiting.set(id, w);
       } catch { /* missing/corrupt private cache */ }
+      // NT4: terminal send refusals also live in the driver log (steers/notices need not have a halt).
+      try {
+        for (const line of (await readFile(join(this.ledger.dir,'drive','log.jsonl'),'utf8')).split('\n')) {
+          try {
+            const r = JSON.parse(line) as Partial<ActionReport>;
+            if (r.do === 'send' && typeof r.send === 'string' && (r.outcome === 'rejected' || r.outcome === 'conflict' && r.reason === 'ruling' && r.sendKind === 'notify')) this.facts.refused.set(r.send,r.detail ?? r.outcome);
+          } catch { /* torn or non-JSON log line is not a receipt */ }
+        }
+      } catch { /* missing optional driver log; halt reasons and dsa still recover refusals */ }
     }
     return this.ledger;
   }
@@ -532,6 +541,11 @@ export class Driver {
   private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]>; rebasePending: Map<string, RebasePending>; rebaseWork: Map<string, RebasePending> }> {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
     const pendingBases = new Map<string, RebasePending>(), rebaseWork = new Map<string, RebasePending>();
+    // NT4: a halt is durable even when dsa's old request receipt or the driver log has been pruned.
+    for (const e of entriesOf(s)) if (e.kind === 'halt' && e.by === DRIVER) {
+      const refusal = e.reason.match(/^dsa rejected send (\S+)(?: \([^)]*\))?: (.*?); the attempt is not lost:/);
+      if (refusal) this.facts.refused.set(refusal[1]!,refusal[2]!);
+    }
     const blob = async (sha: string) => { if (!blobs.has(sha)) { try { blobs.set(sha, (await ledger.getBlob(sha)).toString('utf8')); } catch { /* decide halts on a missing blob */ } } };
     for (const n of Object.values(s.nodes)) {
       // K6: while measuring, describe only the runs PR2 needs for prospective notices.
