@@ -264,7 +264,7 @@ export function activeQuarantineOf(s: State, spec: CheckSpec, merging?: string):
 /** MS4: `j` with the active quarantine entries of its spec (the executor applies them only when the key commits to them). */
 export function quarantinedJob(s: State, j: AttestJob, merging?: string): AttestJob {
   const q = j.spec && (j.kind === 'check' || j.kind === 'inv') ? activeQuarantineOf(s, j.spec, merging) : [];
-  return q.length ? { ...j, quarantined: q } : j;
+  return q.length ? { ...j, quarantined: q, ...(merging !== undefined ? { merging } : {}) } : j;
 }
 /** Seq of the current plan law (genesis or latest plan), never part of an obligation key. */
 export function knownRedPlanSeq(s: State): number { return context(s).lastPlan ?? context(s).genesis?.seq ?? -1; }
@@ -874,7 +874,11 @@ export function sameReplay(a: State, b: State): boolean { return isDeepStrictEqu
  * and `drive`), or the plan's setup, exec or closure changed.
  */
 export function invalidates(prev: Plan, next: Plan, id: string): boolean {
-  return canonical(writesKeySyntax(prev,prev.nodes.find(x => x.id === id)?.writes ?? [])) !== canonical(writesKeySyntax(next,next.nodes.find(x => x.id === id)?.writes ?? [])) || canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure) || canonical(prev.closure_neutral) !== canonical(next.closure_neutral);
+  return canonical(writesKeySyntax(prev,prev.nodes.find(x => x.id === id)?.writes ?? [])) !== canonical(writesKeySyntax(next,next.nodes.find(x => x.id === id)?.writes ?? [])) || canonical(withoutType(prev.nodes.find(x => x.id === id))) !== canonical(withoutType(next.nodes.find(x => x.id === id))) || prev.setup !== next.setup || execChanged(prev, next) || canonical(prev.closure) !== canonical(next.closure) || canonical(prev.closure_neutral) !== canonical(next.closure_neutral) || canonical(sharedQuarantineDefinition(prev, id)) !== canonical(sharedQuarantineDefinition(next, id));
+}
+/** QS1: shared lists referenced by this node, not unrelated sets. */
+function sharedQuarantineDefinition(plan: Plan, id: string): unknown {
+  return plan.nodes.find(n => n.id === id)?.checks.filter(c => c.quarantine_set !== undefined).map(c => [c.id, plan.quarantine_sets?.[c.quarantine_set!]]) ?? [];
 }
 /** N1: the node spec fields whose change still lets owed carry a candidate (its facts are recomputed). */
 export const CARRY_FIELDS: readonly string[] = ['checks', 'writes', 'type', 'drive', 'later'];
@@ -2262,7 +2266,7 @@ export function batchQuarantine(s: State, members: string[]): QuarantineNames { 
 export function batchJobs(s: State, members: string[], keys: Record<string, Record<string, string>>, st: StateFacts): AttestJob[] { return inBatchScope(members.join('\0'), () => scopedBatchJobs(s, members, keys, st)); }
 function scopedBatchJobs(s: State, members: string[], keys: Record<string, Record<string, string>>, st: StateFacts): AttestJob[] {
   const merged = (id: string): boolean => !!s.nodes[id]?.merged || members.includes(id), jobs: AttestJob[] = [];
-  const q = (j: AttestJob): AttestJob => { const e = j.spec ? activeQuarantine(s.plan, j.spec, merged) : []; return e.length ? { ...j, quarantined: e } : j; };
+  const q = (j: AttestJob): AttestJob => { const e = j.spec ? activeQuarantine(s.plan, j.spec, merged) : []; return e.length ? { ...j, quarantined: e, merging: members.join(', ') } : j; };
   for (const id of members) {
     const spec = nodeSpec(s, id);
     if (!spec || !s.nodes[id]?.candidate) throw new OwedError(`Node ${id} has no current candidate`);
