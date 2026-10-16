@@ -1370,7 +1370,7 @@ async function remeasureMerge(o: MeasurementContext & { node: string; all?: bool
   const built = await git.buildMerge(o.cwd,state.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
   if ('conflicts' in built) throw new OwedError(`rebase needed: run owed rebase ${o.node}, then rebase the worktree and submit again; conflicts with trunk: ${built.conflicts.map(oneLine).join(', ')}`);
   const m = await mergeFacts(o.cwd,state,o.node,built.commit), jobs = remeasureJobs(state,o.node,m,o.all);
-  const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async job => ({ ...await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job), merging:o.node }) as Draft);
+  const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async job => ({ ...await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true},job), merging:o.node }) as Draft);
   const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs,run.observations.filter((x): x is Draft => x !== undefined),o.signal);
   if (run.aborted || o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
   return ledger.withLock(async () => {
@@ -1640,7 +1640,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     // M1: up to exec.parallel jobs at once, observations in job order. An aborted run (D16) is not measured, no further
     // job starts, and the merge stops before trunk moves, keeping the completed observations (abortWith).
     const jobs = [...genesisJobs(state).map(job => ({ job, merging: false })),...mergeJobs(state,o.node,m).map(job => ({ job, merging: true }))];
-    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); return merging ? {...obs,merging:o.node} as Draft : obs; });
+    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:merging},job); return merging ? {...obs,merging:o.node} as Draft : obs; });
     const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs.map(j => j.job),run.observations.filter((x): x is Draft => x !== undefined),o.signal);
     if (run.aborted || o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
     // TR1: before refusing a measured/reused node-check fail, probe trunk under this same lease and merge lock.
@@ -1654,7 +1654,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       if (fresh) { slotBaseRed.push(fresh); continue; }
       const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit,stateQuarantine(state));
       if (entriesOf(state).some(e => e.kind === 'obs' && e.probe === 'trunk' && e.subject === o.node && e.obligation === i.obligation && e.key === key && e.commit === state.trunk.commit && e.verdict !== 'error')) continue;
-      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal}, quarantinedJob(state,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit}));
+      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true}, quarantinedJob(state,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit}));
       probes.push({...obs,probe:'trunk'});
     }
     if (o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
@@ -1848,7 +1848,7 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
     const members = chain.map(c => c.id), final = chain.at(-1)!.commit, facts = await batchFacts(o.cwd,state,chain), batchState = facts.at(-1)!.state;
     const keys = Object.fromEntries(members.map((id, i) => [id, facts[i]!.keys]));
     const jobs = [...genesisJobs(state).map(job => ({ job, tag: false })), ...batchJobs(state,members,keys,batchState).map(job => ({ job, tag: true }))];
-    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, tag }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},job); if (!tag) return obs; const { remeasure_match: _match, ...tagged } = obs; return {...tagged,batch:members} as Draft; });
+    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, tag }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:!!tag},job); if (!tag) return obs; const { remeasure_match: _match, ...tagged } = obs; return {...tagged,batch:members} as Draft; });
     const observations = run.observations.filter((x): x is Draft => x !== undefined);
     if (run.aborted) return abortWith(ledger,state,observations);
     return ledger.withLock(async () => {

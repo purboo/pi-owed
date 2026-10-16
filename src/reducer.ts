@@ -604,7 +604,7 @@ function decisionErrors(s: State, d: Draft): string[] {
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision', 'text', 'nodes', 'writer', 'prospective', 'answer', 'answers', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'grant_refused', 'waits_on', 'auto_remeasure', 'infra', 'remeasure_match', 'batch', 'lease_wait_ms'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'quarantine_passed', 'grant_refused', 'waits_on', 'auto_remeasure', 'infra', 'remeasure_match', 'batch', 'lease_wait_ms'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -1779,6 +1779,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       errors.push(...batchObsErrors(d));
       errors.push(...leaseWaitErrors(d));
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
+      if (d.quarantine_passed !== undefined && (!Array.isArray(d.quarantine_passed) || !d.quarantine_passed.length || d.quarantine_passed.some((x, i, a) => typeof x !== 'string' || !x || (i > 0 && a[i - 1]! >= x)))) errors.push('obs quarantine_passed must be a non-empty sorted unique array of test names');
       break;
     case 'review':
       allow('reviewer', 'owner'); slot(); current(d.obligation, d.key, true);
