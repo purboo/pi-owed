@@ -215,7 +215,9 @@ test('TF2/WF1 #3065: Follower keeps trunk-red guidance before the flaky pair des
     let wake:string | undefined; try { wake = await follower.step(); } finally { follower.stop(); }
     const lines = wake!.split('\n');
     const diagnosis = need.text.match(/trunk-red: [^;]+/)![0], guidance = need.text.match(/parent: fix trunk[^;]+/)![0];
-    assert.equal(lines[0],`Needs you: a — ${diagnosis}; ${guidance}`,'trunk-red diagnosis and parent fix guidance lead the wake without receipt noise');
+    const alternative = `or owed waive a check:unit --accept-risk ${fail.seq}`;
+    assert.ok(need.text.includes(`; ${alternative}`));
+    assert.equal(lines[0],`Needs you: a — ${diagnosis}; ${guidance}; ${alternative}`,'trunk-red diagnosis and parent fix/waive guidance lead the wake without receipt noise');
     assert.ok(lines[1]!.startsWith(`Needs you: a — flaky block #${fail.seq} on check:unit`),wake);
     assert.ok(lines[1]!.includes(pair),wake);
     assert.match(lines[1]!,/a pass does not erase a failure/);
