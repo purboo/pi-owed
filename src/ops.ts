@@ -9,7 +9,7 @@ import { canonical, sha256 } from './canon.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type LockOwner } from './ledger.ts';
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
-import { rebasePending, rebasePendingText, slotGitInProgress, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
+import { rebasePending, rebasePendingText, slotGitInProgress, slotGitOperation, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
 import { planReceipt, renderEntry, withActHistory, mergedLine, receiptItem } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
@@ -132,6 +132,11 @@ function cachedPlanSync(ledger: Ledger, sha: string): Plan {
 }
 /** Plan shas the ledger names (genesis and plan entries), in ledger order. */
 const planShas = (entries: Entry[]): string[] => [...new Set(entries.flatMap(e => e.kind === 'genesis' || e.kind === 'plan' ? [e.plan] : []))];
+/** DF1: unlocked readers hide every member of an incomplete final decision group; locked reads stay strict. */
+async function readVisibleEntries(ledger: Ledger): Promise<Entry[]> {
+  const read = await ledger.read(), inFlight = ledger.holdsLock() ? undefined : decisionInFlight(read);
+  return inFlight === undefined ? read : read.slice(0,inFlight);
+}
 /**
  * The verified entries, a plan lookup for the plans they (and `extra`) name, and the replayed state. G1: the plans the
  * fold needs (all of them for a full replay; those named after the cached seq, and `extra`, for a fold from a replay
@@ -140,11 +145,7 @@ const planShas = (entries: Entry[]): string[] => [...new Set(entries.flatMap(e =
 async function load(ledger: Ledger, extra: string[] = []) {
   // Capture before the first await: verification may invalidate this load while the ledger is being read.
   const control = replayControl(ledger.dir), epoch = control.epoch;
-  const read = await ledger.read();
-  // DF1: an unlocked reader treats an incomplete final decision group as a write in flight (like a torn final line):
-  // none of its members are visible. Locked loads, verify and the post-append check still refuse it.
-  const inFlight = ledger.holdsLock() ? undefined : decisionInFlight(read);
-  const entries = inFlight === undefined ? read : read.slice(0,inFlight), known = new Set([...planShas(entries), ...extra]), plans = new Map<string, Plan>();
+  const entries = await readVisibleEntries(ledger), known = new Set([...planShas(entries), ...extra]), plans = new Map<string, Plan>();
   const lookup = (sha: string): Plan => {
     let p = plans.get(sha);
     if (p) return p;
@@ -1550,7 +1551,7 @@ async function applyRebase(o: Actor & { node:string; since?: number; writerIdle?
       } catch { idle = false; } }
     }
     const head = await git.revParse(slot.worktree,'HEAD');
-    const inProgress = await slotGitInProgress(slot.worktree);
+    const inProgress = await slotGitOperation(slot.worktree);
     const recovery = rebaseRecovery(head,n.candidate?.commit,inProgress,s.trunk.commit,o.node);
     const refuse = !writer && o.automatic ? 'no recorded writer run' : !idle ? 'writer run is live, unknown or has a pending intent' : inProgress ? 'slot has a rebase or merge in progress' : !await git.isClean(slot.worktree) ? 'slot worktree is dirty' : !n.candidate || head !== n.candidate.commit ? 'slot HEAD is not the current candidate' : undefined;
     if (refuse) {
@@ -2333,7 +2334,7 @@ export async function reportMetrics(o: Context & MetricsWindow): Promise<Metrics
  * no measurement and no write: not the replay snapshot/memo of `load`, not the plan cache (a missing cache entry is parsed).
  */
 export async function reportCounterfactual(o: Context & { since?: number | string; progress?: (line: string) => void }): Promise<Counterfactual> {
-  const since = metricsBound(o.since,'since'), ledger = await Ledger.open(o.cwd), entries = await ledger.read();
+  const since = metricsBound(o.since,'since'), ledger = await Ledger.open(o.cwd), entries = await readVisibleEntries(ledger);
   if (!entries.length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   const plans = new Map<string, Plan>();
   for (const sha of planShas(entries)) plans.set(sha, planCache.get(`${ledger.dir}\0${sha}`) ?? deepFreeze((await ledger.readPlanCache(sha) as Plan | undefined) ?? parsePlan((await ledger.getBlob(sha)).toString())));

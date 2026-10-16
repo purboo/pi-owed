@@ -5,16 +5,20 @@ import { resolve } from 'node:path';
 import { git, isAncestor } from './git.ts';
 
 export interface RebasePending { head: string; base: string; upstream: string; command: string; recovery?: string }
+export type SlotGitOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
 /** Porcelain can be clean while an interrupted Git operation still owns the worktree. */
-export async function slotGitInProgress(worktree: string): Promise<boolean> {
-  for (const name of ['rebase-merge','rebase-apply','MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD']) {
+export async function slotGitOperation(worktree: string): Promise<SlotGitOperation | undefined> {
+  for (const [name, operation] of [['rebase-merge','rebase'],['rebase-apply','rebase'],['MERGE_HEAD','merge'],['CHERRY_PICK_HEAD','cherry-pick'],['REVERT_HEAD','revert']] as const) {
     const path = (await git(worktree,['rev-parse','--git-path',name])).stdout.trim();
-    try { await lstat(resolve(worktree,path)); return true; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    try { await lstat(resolve(worktree,path)); return operation; } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   }
-  return false;
+  return undefined;
 }
-export function rebaseRecovery(head: string, original: string | undefined, inProgress: boolean, base?: string, node?: string): string | undefined {
-  if (inProgress) return 'Git operation in progress; run `git rebase --abort` (or `git merge --abort` for a merge), then follow the rebase instruction.';
+export async function slotGitInProgress(worktree: string): Promise<boolean> { return !!await slotGitOperation(worktree); }
+export function rebaseRecovery(head: string, original: string | undefined, inProgress: boolean | SlotGitOperation | undefined, base?: string, node?: string): string | undefined {
+  if (inProgress) return typeof inProgress === 'string'
+    ? `Git operation in progress; run \`git ${inProgress} --abort\`, then follow the rebase instruction.`
+    : 'Git operation in progress; run `git rebase --abort` (or `git merge --abort` for a merge), then follow the rebase instruction.';
   if (original && head !== original) return `HEAD differs from last submitted candidate ${original.slice(0,12)}; keep: check \`git log ${base ?? '<slot base>'}..HEAD\` holds only this node's commits, run the focused tests, then \`owed submit ${node ?? '<node>'}\`; reset: \`git reset --hard ${original}\`, then \`git rebase --onto ${base ?? '<slot base>'} $(git merge-base HEAD ${base ?? '<slot base>'})\`.`;
   return undefined;
 }
@@ -25,7 +29,7 @@ export async function rebasePending(s: State, node: string, includeAligned = fal
   const headResult = await git(slot.worktree, ['rev-parse', 'HEAD'], { allowFail: true }).catch(() => undefined);
   if (!headResult || headResult.code) return undefined;
   const head = headResult.stdout.trim();
-  const previous = previousSubmit(s,node), inProgress = await slotGitInProgress(slot.worktree);
+  const previous = previousSubmit(s,node), inProgress = await slotGitOperation(slot.worktree);
   const recovery = rebaseRecovery(head, slot.rebase && previous && slot.rebase.seq > previous.seq ? previous.facts.commit : undefined,inProgress,slot.base,node);
   // NY7: an aligned, clean HEAD is not status drift; the driver separately reads recovery for an unsubmitted rebase.
   if (!includeAligned && !inProgress && await isAncestor(slot.worktree, slot.base, head)) return undefined;

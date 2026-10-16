@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { git } from './git.ts';
 import { actNodes, metricsBound, parentAct } from './metrics.ts';
-import { DRIVER, entriesOf, extendState, reduce, sharedParked, trunkParked } from './reducer.ts';
+import { DRIVER, entriesOf, extendState, reduce, sharedParked, trunkParked, decisionTailErrors } from './reducer.ts';
+import { OwedError } from './errors.ts';
 import type { Entry, ObsEntry, Plan, State } from './types.ts';
 
 /** FS classes: the node would have parked (FS3/TP) or waited for an accepted fix (FS5) instead of halting. */
@@ -92,6 +93,7 @@ export function replayHalts(entries: readonly Entry[], plans: (sha: string) => P
       }
     }
   }
+  const errors = decisionTailErrors(s); if (errors.length) throw new OwedError(errors.join('; '));
   for (const r of rows) r.merged = merged.has(r.node);
   return rows;
 }

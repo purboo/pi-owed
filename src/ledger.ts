@@ -1,4 +1,4 @@
-import { mkdir, readFile, open, rm, link, rename, writeFile, stat, readdir } from 'node:fs/promises';
+import { mkdir, readFile, open, rm, link, rename, writeFile, stat, readdir, realpath } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { serialize, deserialize } from 'node:v8';
 import { hostname } from 'node:os';
@@ -27,7 +27,7 @@ export const SNAPSHOT_FORMAT = 'owed-snapshot/1';
 export interface Snapshot { seq: number; hash: string; payload: Buffer }
 export async function ledgerDir(cwd: string): Promise<string> {
   const dir = process.env.OWED_DIR ? resolve(cwd, process.env.OWED_DIR) : join(resolve(cwd, (await git(cwd, ['rev-parse', '--git-common-dir'])).stdout.trim()), 'owed');
-  await mkdir(join(dir, 'blobs'), { recursive: true }); return dir;
+  await mkdir(join(dir, 'blobs'), { recursive: true }); return realpath(dir);
 }
 export function entryHash(e: Omit<Entry, 'hash'>): string {
   const { hash: _hash, ...rest } = e as Entry; return H(rest);
