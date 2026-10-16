@@ -6,7 +6,7 @@ import { mergeWaitSuffix } from './adopt-wait.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesGlob } from 'node:path';
-import { matchesAny, driveConfig, isCheckTemplateRun } from './plan.ts';
+import { matchesAny, driveConfig, isCheckTemplateRun, activeQuarantine } from './plan.ts';
 import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, driveReviewerSlot, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { sharedParked, sharedParkNotices, sharedPhase } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq, activeQuarantineOf } from './reducer.ts';
@@ -22,6 +22,7 @@ import type { WaiveEntry } from './types.ts';
 import type { InFlight } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { nearTimeoutWarnings } from './cost.ts';
+import { nodeTestRun } from './exec.ts';
 
 /** WS3: every writer packet and follow-up preserves the question path instead of requesting a known-red submit. */
 export const WRITER_DECISION = 'If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.';
@@ -121,12 +122,24 @@ export function knownRedDebt(s: State): { knownRed?: KnownRedDebt[]; lapsedKnown
 export const knownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} known red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}`;
 export const lapsedKnownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} lapsed known_red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}; removable: owed edit --invariant ${d.invariant} --set known_red='<remaining active entries>' --note "remove lapsed entries"`;
 /** MS5: one debt line per active quarantine entry: invariants `<inv>/<test>`, node checks `<node>/<check>/<test>`. */
-export interface QuarantineDebt { where: string; test: string; fix: string; note?: string }
+export interface QuarantineDebt { where: string; test: string; fix: string; note?: string; passed?: { seq: number; commit: string; merging?: string; batch?: string[] } }
 export function quarantineDebt(s: State, fix?: string): QuarantineDebt[] {
-  const of = (where: string, spec: CheckSpec): QuarantineDebt[] => activeQuarantineOf(s, spec).filter(e => fix === undefined || e.fix === fix).map(e => ({ where, test: e.test, fix: e.fix, ...(e.note ? { note: e.note } : {}) }));
-  return [...s.plan.invariants.flatMap(i => of(i.id, i)), ...s.plan.nodes.filter(n => !s.nodes[n.id]?.merged).flatMap(n => n.checks.flatMap(c => of(`${n.id}/${c.id}`, c)))];
+  const observations = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && (e.subject === 'trunk' || e.merging !== undefined || e.batch !== undefined || e.probe === 'trunk'));
+  const of = (where: string, subject: string, obligation: string, spec: CheckSpec): QuarantineDebt[] => {
+    const latest = observations.findLast(e => {
+      if (e.subject !== subject || e.obligation !== obligation) return false;
+      const plan = planAt(s, e.seq), original = subject === 'trunk' ? plan.invariants.find(i => `inv:${i.id}` === obligation) : plan.nodes.find(n => n.id === subject)?.checks.find(c => `check:${c.id}` === obligation);
+      const active = original && activeQuarantine(plan, original, id => !!s.nodes[id]?.merged, e.merging);
+      return !!active?.length && (e.quarantine_passed !== undefined || (e.counts?.format === 'tap' && nodeTestRun(original!.run) && e.execution?.completed === true));
+    });
+    return activeQuarantineOf(s, spec).filter(e => fix === undefined || e.fix === fix).map(e => ({ where, test:e.test, fix:e.fix, ...(e.note ? { note:e.note } : {}),
+      ...(latest?.quarantine_passed?.includes(e.test) ? { passed:{seq:latest.seq, commit:latest.commit, ...(latest.merging ? {merging:latest.merging} : {}), ...(latest.batch ? {batch:[...latest.batch]} : {})} } : {}) }));
+  };
+  return [...s.plan.invariants.flatMap(i => of(i.id, 'trunk', `inv:${i.id}`, i)), ...s.plan.nodes.filter(n => !s.nodes[n.id]?.merged).flatMap(n => n.checks.flatMap(c => of(`${n.id}/${c.id}`, n.id, `check:${c.id}`, c)))];
 }
-export const quarantineText = (d: QuarantineDebt): string => `quarantine ${oneLine(d.where)}/${oneLine(d.test)} until ${oneLine(d.fix)} merges`;
+export const quarantineText = (d: QuarantineDebt): string => d.passed
+  ? `quarantined ${oneLine(d.test)} passed on ${d.passed.merging !== undefined || d.passed.batch !== undefined ? `the merge tree of ${oneLine(d.passed.merging ?? d.passed.batch!.join(', '))}` : `trunk ${d.passed.commit.slice(0,12)}`} (#${d.passed.seq}); remove it from quarantine if it stays green (fix ${oneLine(d.fix)})`
+  : `quarantine ${oneLine(d.where)}/${oneLine(d.test)} until ${oneLine(d.fix)} merges`;
 /** MS5: `owed why <fix>`: the quarantine entries its merge lifts. */
 export const liftsText = (node: string, ds: QuarantineDebt[]): string => `merging ${node} lifts quarantine: ${ds.map(d => `${oneLine(d.where)}/${oneLine(d.test)}`).join(', ')}`;
 /** NT3: presentation-only defer scope; unverified debt has not had its merge key rechecked. */
@@ -1189,7 +1202,7 @@ function age(ms: number): string {
 export function renderBrief(v: Brief): string {
   const section = (title: string, lines: string[]) => [`${title}${lines.length ? ` (${lines.length}):` : ': none'}`, ...lines.map(l => `  ${l}`)];
   const since = v.since === -1 ? 'start' : typeof v.since === 'number' ? `#${v.since}` : clockTime(v.since);
-  const deferDebt = (v.summary?.debt ?? []).filter(d => d.includes(': owner defer') || d.startsWith('quarantine '));
+  const deferDebt = (v.summary?.debt ?? []).filter(d => d.includes(': owner defer') || (d.startsWith('quarantine ') || d.startsWith('quarantined ')));
   return [...(v.summary && v.trunk && v.invariants ? summaryHead(v.trunk, v.invariants, v.summary) : []),
     ...(deferDebt.length ? ['Debt:', ...deferDebt.map(d => `  ${d}`)] : []), `Brief (since ${since})`,
     ...(v.delegated?.length ? section(`Owner acts (delegated) since ${since}`, v.delegated.map(delegatedText)) : []),

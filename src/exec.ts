@@ -1,5 +1,8 @@
 import { matchesWrite, writesSyntax } from './writes.ts';
 import { spawn } from 'node:child_process';
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Plan, AttestJob, ObsEntry, Counts, QuarantineEntry } from './types.ts';
 import type { Ledger } from './ledger.ts';
@@ -300,7 +303,7 @@ async function timeoutProcessTree(pid: number | undefined): Promise<string> {
 }
 export interface CommandResult { code: number | null; error?: string; log: string; spawn?: boolean; measurementLog?: string; truncated?: boolean }
 /** Shared shell, environment, wrapper and process-group handling for measurements and slot setup. */
-export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abortGraceMs'>, run: string, cwd: string, timeout: number, capture: (data: Buffer) => void = () => {}, onTimeout?: string): Promise<CommandResult> {
+export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abortGraceMs'>, run: string, cwd: string, timeout: number, capture: (data: Buffer) => void = () => {}, onTimeout?: string, quarantineFile?: string): Promise<CommandResult> {
   assertNoLedgerLock();
   return new Promise(resolve => {
     let output = Buffer.alloc(0), error: string | undefined, spawnError = false, outputTruncated = false;
@@ -310,6 +313,9 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
     cwd = absolutePath(cwd);
     const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment() };
+    // QS2: never inherit a quarantine file into setup, counterfactuals, diagnostics or unrelated jobs.
+    delete env.OWED_QUARANTINE_FILE;
+    if (quarantineFile !== undefined) env.OWED_QUARANTINE_FILE = quarantineFile;
     const wrap = ctx.plan.exec?.wrap, wrapped = typeof wrap === 'string';
     const argv = wrapped ? ['bash', '-lc', expandWrap(wrap, cwd, timeout, run)] : [...(wrap ?? []), 'bash', '-lc', run];
     const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -496,6 +502,15 @@ export function quarantineExcuse(q: QuarantineEntry[], run: string, r: CommandRe
   if (minTests !== undefined && left < minTests) return no(`${left} tests left, below min_tests ${minTests}`);
   return { excused: hit as QuarantineEntry[] };
 }
+/** QS4: complete native TAP evidence only; skipped/TODO names are never passing evidence. */
+function tapQuarantinePassed(q: QuarantineEntry[], run: string, r: CommandResult, counts: Counts | undefined): string[] {
+  if (!nodeTestRun(run) || r.error || r.spawn || ![0, 1].includes(r.code ?? -1) || counts?.format !== 'tap' || tapComplete(r.log)) return [];
+  const results = [...r.log.matchAll(/^\s*(not )?ok \d+\s*-\s*([^\r\n]+)\r?$/gm)];
+  return q.filter(e => {
+    const own = results.filter(m => m[2] === e.test || m[2]!.startsWith(`${e.test} # `));
+    return own.length === 1 && !own[0]![1] && own[0]![2] === e.test;
+  }).map(e => e.test).sort();
+}
 /** MS4: counts without the excused tests: they count neither as passed nor as failed (min_tests sees the rest). */
 function withoutQuarantined(c: Counts, excused: QuarantineEntry[]): Counts {
   const names = new Set(excused.map(e => e.test)), failed = c.failed?.filter(n => !names.has(n));
@@ -515,9 +530,10 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
   // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
   const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, touch: ctx.plan.exec?.touch, note: (line: string) => capture(`${line}\n`) } : undefined;
-  let timeoutNote: string | undefined;
-  const command = async (run: string, cwd: string, timeout: number, onTimeout?: string): Promise<CommandResult> => {
-    const result = await runCommand(ctx, run, cwd, timeout, capture, onTimeout);
+  let timeoutNote: string | undefined, quarantineDirectory: string | undefined;
+  const quarantineFiles = new Set<string>(), fileNotes = new Set<string>();
+  const command = async (run: string, cwd: string, timeout: number, onTimeout?: string, quarantineFile?: string): Promise<CommandResult> => {
+    const result = await runCommand(ctx, run, cwd, timeout, capture, onTimeout, quarantineFile);
     if (result.error?.startsWith('timeout after')) {
       const beforeTimeout = result.measurementLog ?? result.log;
       const tail = lastLines(beforeTimeout, 3);
@@ -585,12 +601,28 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       if (repeat) obs.runs = [];
       const excusable = await excusableQuarantine(ctx, job), quarantined = new Map<string, string>(), notApplied = new Set<string>(), quarantinePassed = new Set<string>();
       let passed = 0, allCompleted = true, allCountsOK = true;
+      const recovered = new Set<string>();
       const failed = new Set<string>(), failureLogs: string[] = [];
       for (let index = 0; index < runs; index++) {
         if (ctx.signal?.aborted) throw new Error('aborted');
         const runStart = Date.now();
         if (repeat) capture(`\n=== run ${index + 1}/${runs} ===\n`);
-        const raw = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout); obs.exit = raw.code;
+        let quarantineFile: string | undefined;
+        if (excusable.length) {
+          if (excusable.some(e => /[\r\n]/.test(e.test))) fileNotes.add('quarantine file not written: a name contains a line break');
+          else {
+            quarantineDirectory = await mkdtemp(join(tmpdir(), 'owed-quarantine-'));
+            quarantineFile = join(quarantineDirectory, 'names');
+            quarantineFiles.add(quarantineDirectory);
+            await writeFile(quarantineFile, `${excusable.map(e => e.test).sort().join('\n')}\n`, { mode: 0o600 });
+          }
+        }
+        let raw: CommandResult;
+        try { raw = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout, quarantineFile); }
+        finally {
+          if (quarantineDirectory) { await rm(quarantineDirectory, { recursive: true, force: true }); quarantineFiles.delete(quarantineDirectory); quarantineDirectory = undefined; }
+        }
+        obs.exit = raw.code;
         // RO/SIG: matching consumes only frozen measurement output, never timeout diagnostics or later capture.
         measurementBytes = Buffer.concat([measurementBytes, Buffer.from(raw.measurementLog ?? raw.log)]);
         if (measurementBytes.length > LIMIT) measurementBytes = measurementBytes.subarray(measurementBytes.length - LIMIT);
@@ -605,7 +637,11 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         }
         // MS4: a completed run whose only failing tests are active quarantine names counts as if they had not run.
         const verdict = quarantineExcuse(excusable, spec.run, raw, obs.counts, named, spec.min_tests), excused = verdict.excused;
-        if (verdict.reason) notApplied.add(verdict.reason);
+        if (quarantineFile && !excused && !nodeTestRun(spec.run) && !CARGO_RUN.test(spec.run)) fileNotes.add(`quarantine file: ${excusable.length} names (owed excused nothing)`);
+        else if (verdict.reason) notApplied.add(verdict.reason);
+        if (excusable.length && (job.subject === 'trunk' || job.merging !== undefined || job.probe === 'trunk')) {
+          for (const name of tapQuarantinePassed(excusable, spec.run, raw, obs.counts)) recovered.add(name);
+        }
         if (excused) { for (const e of excused) quarantined.set(e.test, e.fix); obs.counts = withoutQuarantined(obs.counts!, excused); }
         const runFailed = excused ? [] : named, result = excused ? { ...raw, code: 0 } : raw;
         if (excused && cargoTestRun(spec.run)) obs.exit = 0;
@@ -676,13 +712,19 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       if (obs.noisy) obs.note = `${obs.note ? `${obs.note}; ` : ''}noisy (${passed}/${obs.runs!.length} passed)`;
       if (quarantinePassed.size) obs.quarantine_passed = [...quarantinePassed].sort();
       if (quarantined.size) { obs.quarantined = [...quarantined.keys()]; obs.note = `${obs.note ? `${obs.note}; ` : ''}${quarantineNote(quarantined)}`; }
+      if (recovered.size) obs.quarantine_passed = [...recovered].sort();
       if (notApplied.size) obs.note = `quarantine not applied: ${[...notApplied].join(', ')}${obs.note ? `; ${obs.note}` : ''}`;
     }
   } catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `${e instanceof EnvironmentError ? ENVIRONMENT : ''}${e instanceof Error ? e.message : String(e)}`; capture(`\n${obs.note}\n`); }
   finally {
+    for (const directory of quarantineFiles) {
+      try { await rm(directory, { recursive: true, force: true }); }
+      catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `quarantine file cleanup: ${String(e)}`; capture(obs.note); }
+    }
     if (work) { try { await work.dispose(); } catch (e) { if (obs.execution) obs.execution.completed = false; obs.verdict = 'error'; obs.note = `worktree cleanup: ${String(e)}`; capture(obs.note); } }
   }
   if (timeoutNote) obs.note = timeoutNote;
+  if (fileNotes.size) obs.note = `${[...fileNotes].join('; ')}${obs.note ? `; ${obs.note}` : ''}`;
   if (protocolWarnings && !obs.note?.includes('malformed owed-counts')) obs.note = `${obs.note ? `${obs.note}; ` : ''}${protocolWarnings} malformed owed-counts line(s) ignored`;
   obs.log = await ctx.ledger.putBlob(truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes);
   if (job.kind === 'inv' && obs.verdict === 'fail') {

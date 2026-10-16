@@ -156,6 +156,6 @@ test('MS4 fail-closed: `...; exit 3` is not a known test runner: not excused, an
     assert.equal(measuredFailure([obs as never]), true, 'PO5: a run quarantine did not excuse is a measured failure');
     assert.deepEqual(obs.failed, ['flaky one']);
     const why = (await cli(r.cwd, ['why', 'other', '--full'])).stdout;
-    assert.match(why, /other\/check:c/); assert.match(why, /note #\d+:\n {4}quarantine not applied: not a known test runner; failed tests:/);
+    assert.match(why, /other\/check:c/); assert.match(why, /note #\d+:\n {4}quarantine file: 1 names \(owed excused nothing\); failed tests:/);
   } finally { await r.cleanup(); }
 });
