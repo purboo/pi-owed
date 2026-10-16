@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.26.0
+
+No new ledger entry kind, plan key or gate, and no gate weakened. One new
+optional ledger field, `obs.infra`, and one widened validation (a setup-only
+automatic remeasure) need an upgrade order: **upgrade every reader (CLI,
+drivers, every pi session loading owed) to 0.26 and restart it before any
+0.26 executor measures** (attest, genesis/trunk, merge or adopt). 0.25
+refuses a ledger with `obs.infra` and refuses a setup-only `auto_remeasure`
+receipt. Other additions are runtime or result data only (SPEC
+Compatibility).
+
+- **A stopped writer is a question, not a missing submit (WS).** A writer
+  that sealed without a candidate and left nothing new (worktree HEAD is one
+  the driver handed it, clean) is no longer told to submit: the driver halts
+  at once, the wake, `owed why` and `owed status` quote `writer says: "<its
+  last paragraph>"` and give one command, `owed decide <node> --text
+  "<ruling>" --writer`. A writer with new work still gets one submit nudge.
+  The same rule now covers a writer sealed after a rebase follow-up, which
+  could previously wait silently. After such a halt, the decision is
+  delivered as exactly one ruling follow-up; a further seal without a new
+  candidate halts naming it, with no submit nudge. Every writer message says
+  to ask the parent instead of submitting a candidate it believes fails.
+  `owed rule` on a node whose known writer call has finished now says the
+  ruling was recorded but not sent, that the driver delivers it on its next
+  pass, and, for a halted node, to run `owed resume <node>` (or `owed
+  decide`, which records and resumes in one step); `rule` itself still
+  sends no follow-up (SPEC §9.3, §12.5.4).
+- **Asks say what is asked (AK).** A needs-parent review block shows `review
+  asks: <the ask>`, not the head of the reviewer note. Trunk-conflict and
+  trunk-red owner needs name the failing tests and the real exits instead of
+  the `owed plan <plan.yaml>` placeholder. Old ΔO⁻/downgrade lines appear only
+  with `--full`; a merge-waiting line is no longer counted as outstanding
+  (SPEC §9.2, §9.6).
+- **`--ack-rulings` is checked before anything is recorded (AK3).** A value
+  below the required ruling refuses with the number to use;
+  `--ack-rulings latest` / `ack_rulings: "latest"` records the computed
+  number (SPEC §9.2).
+- **`owed start --restart` (AK6).** Stops a running driver gracefully, waits
+  for it and starts again; a graceful stop signals each driver process at
+  most once, so repeating a restart is safe (SPEC §10.2, §12.8).
+- **Setup failures belong to the environment (IF).** A setup failure is a
+  failed run of a counted check or invariant (its spec has `min_tests`, its
+  output parsed into a counts format, or an earlier run of it was counted)
+  that asserted no test result: no count, no failed name, not a timeout or
+  incomplete run. A single-node merge-tree or trunk invariant setup failure
+  gets one automatic remeasure on the same key, even without
+  `remeasure_on`; a node check's setup failure is retried after
+  `owed decide <node> --remeasure`. The next counted pass on that key that
+  meets the original spec records `infra: <seq>` and resolves the
+  consecutive setup failures before it: no conflict, flaky block, waiver or
+  debt. Hints say `setup failure (no tests ran)` instead of suggesting a
+  rebase, and the same setup failure on two or more trees within 30 minutes
+  raises one repository notice. `why --full` labels resolved setup failures
+  `infra`, and `report --metrics` counts infra receipts per obligation.
+  Anything with a test result keeps the existing conflict rules; batch
+  observations and trunk probes are not paired (SPEC §7.26, §9.4).
+- **Where the machine time goes (CO).** `owed report --cost [--since]
+  [--json]` lists machine time per check and invariant (runs, total,
+  median/p90, failures, lease wait), how often each invariant was measured
+  per merge and which path prefixes changed its key, with a `narrow reads`
+  advice. Plan lint warns when `reads` covers almost the whole repository or
+  a check reads a closure path; `owed status` warns when an invariant's trunk
+  pass took 80 % or more of its timeout (SPEC §9.7).
+- **Ready nodes say why they wait (WA1).** `owed why` and `owed status` show
+  `ready, not dispatched: writes overlap <node> (<paths>)` with the
+  `--allow-overlap` command, or the open-attempt limit, from the same
+  predicate the driver uses (SPEC §9.8).
+- **Writes widening is forgiving (WA2).** In `decide`/`amend`, a bare path
+  means `+path`; a path the node's writes already cover is reported as
+  `already covered by <entry>` instead of refused, and a decision whose paths
+  are all covered records no plan entry (`writes unchanged`) (SPEC §8.3.1).
+- **Quieter status and safer batches (WA3, WA4).** The default status omits
+  conflict lines whose paths are all `none`. A batch merge is refused for a
+  plan change during the batch only when that change affects the batch's
+  members, invariants or guard inputs (SPEC §7.21, §9.2).
+- **Smaller fixes (NT).** `owed --version` / `owed version`; HELP lists every
+  `rebase` flag; the in-progress recovery hint names `git cherry-pick --abort`
+  / `git revert --abort`; a refused driver send survives a driver restart; a
+  question text can no longer hijack its answer command; `report
+  --counterfactual` hides an incomplete decision group like other readers;
+  the ledger lock treats a symlinked repository path as the same holder
+  (SPEC §7.23, §7.25, §9.4, §10, §12.5.3, §12.8.3).
+- **Docs.** SPEC, README and the skill describe all of the above; the skill
+  core stays under 5 KB, and the Compatibility reference gives the upgrade
+  order. The concurrent-adopt test no longer depends on which adopter wins
+  the merge lock (test only).
+
 ## 0.25.0
 
 No new ledger entry kind, plan key or gate, and no gate weakened. The only new
