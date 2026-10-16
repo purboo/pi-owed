@@ -12,7 +12,9 @@ Complete test-only check failures can use same-definition trunk probes recorded 
 
 `owed waive <node> <obligation> --tracked-by <fix>` and the tool's `tracked_by` associate waiver debt with another unmerged node of the current plan. Missing, merged and self trackers are refused without recording an act. No plan keys are added.
 
-Debt reads `waived — tracked by <fix>`. When that fix merges, default status and brief debt lists omit it; full status and report retain `settled by <fix>` and its merge receipt. This is settlement of tracked debt, not proof that a flake is gone. `owed why <fix>` lists the waived debts it tracks. Removing an unmerged tracker makes the debt visible again with `tracker <fix> left the plan`.
+Debt reads `waived — tracked by <fix>`, with the accepted failure block named when present. Each accepted failure has its own debt identity, even when the node, obligation and key are unchanged. Re-waiving the same failure replaces only that failure's tracker; distinct failures retain separate debt lines, including when a waiver accepts several blocks. Waivers without accepted blocks retain their node/obligation/key scope identity.
+
+When a debt's own tracker merges, default status and brief debt lists omit only that debt; full status and report retain `settled by <fix>` and its merge receipt. This is settlement of tracked debt, not proof that a flake is gone. `owed why <fix>` lists each waived debt it tracks. Removing an unmerged tracker keeps its debt visible with `tracker <fix> left the plan`, independently of other trackers.
 
 Adding or changing a tracker is a new waiver act, not an identical retry. An otherwise identical waiver may attach a tracker to risks already accepted by that owner on the current candidate; it neither accepts new risks nor changes the existing waiver decision.
 
@@ -24,4 +26,4 @@ Shared check hints require complete test-only failure evidence and matching sign
 
 ## Changed existing tests
 
-None. Existing tests and their gates are unchanged.
+`TF3: debt tracks a fix, why names the waived debt, and fix merge settles only its presentation` now expects the failure block suffix that distinguishes independently tracked debts. Its gate and replay assertions are unchanged. The other existing tests are unchanged.
