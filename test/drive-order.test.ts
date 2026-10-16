@@ -123,7 +123,7 @@ test('G3.1: the needs-parent halt and the measured rows 9-11 keep their order be
   const q = rig(); q.dispatch(); q.launchWriter(); q.submit(); q.pass();
   q.review('block', { rank: 2, needs: 'parent', note: 'which contract?' });
   const h = act(q, runsOf(sealed(W())));
-  assert.ok(h?.do === 'halt' && /needs a parent ruling: which contract\?/.test(h.reason), JSON.stringify(h));
+  assert.ok(h?.do === 'halt' && /review asks: which contract\?/.test(h.reason), JSON.stringify(h));
 });
 
 // ---------- G3.2: one follow-up when a new candidate is needed ----------
@@ -177,7 +177,7 @@ test('G3.2: rebase with a repairable block: one repair carrying the rebase instr
   q.add({ kind: 'adopt', by: 'owner:human', channel: 'tty', trunk: 'main', prior: 's0', commit: 's1', state: { commit: 's1', tree: 't1', invKeys: {} }, changed: ['x'], commits: 1, note: 'moved' });
   q.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, base: 's1', from: 's0' });
   const qh = act(q, runsOf(sealed(W())));
-  assert.ok(qh?.do === 'halt' && qh.reason === `review block #${np.seq} review needs a parent ruling: which contract?; record \`owed decide a --text "<decision>"\`; the writer gets the ruling with the next repair`, JSON.stringify(qh));
+  assert.ok(qh?.do === 'halt' && qh.reason === `review asks: which contract? → owed decide a --text "<ruling>" --writer`, JSON.stringify(qh));
   q.recordHalt(qh); const ru = q.rule('contract X');
   const qr = act(q, runsOf(sealed(W())));
   assert.ok(qr?.do === 'send' && qr.reason === 'repair' && qr.rulings === ru.seq && /git rebase --onto s1 \$\(git merge-base HEAD s1\)/.test(qr.message), JSON.stringify(qr));
@@ -471,7 +471,7 @@ const mixed = () => {
   const np = r.review('block', { by: 'reviewer:other', needs: 'parent', note: 'which contract?' });
   return { r, np };
 };
-const needsHalt = (np: Entry) => `review block #${np.seq} review needs a parent ruling: which contract?; record \`owed decide a --text "<decision>"\`; the writer gets the ruling with the next repair`;
+const needsHalt = (_np: Entry) => `review asks: which contract? → owed decide a --text "<ruling>" --writer`;
 
 test('#680 (a) probe: ordinary + unruled needs-parent block, plan update before the next pass → row 8 halts needing the ruling, no repair', () => {
   const { r, np } = mixed();

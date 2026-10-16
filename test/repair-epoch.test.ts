@@ -118,7 +118,7 @@ test('K5 FLAKY-COLDPLAY: repair, plan fix of min_tests + ruling, block #403, pla
   r.record(act(r));
   const b403 = r.review('block', { needs: 'parent', note: 'fails on tmpfs' });
   const h2 = act(r, sealed(view(R1, 'sealed', { status: 'ok' })));
-  assert.ok(h2?.do === 'halt' && /needs a parent ruling/.test(h2.reason), JSON.stringify(h2));
+  assert.ok(h2?.do === 'halt' && /review asks:/.test(h2.reason), JSON.stringify(h2));
   r.halt(h2);
   // #405/#406: plan v25 adds a check (the candidate is invalidated), then the ruling naming the node.
   const v25 = r.plan({ ...flaky, checks: [check({ id: 'repeat', min_tests: 100 }), check({ id: 'tmpfs', min_tests: 25 })] });

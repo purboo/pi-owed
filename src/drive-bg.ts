@@ -3,7 +3,7 @@
 // Follower reads what the driver appends and wakes a pi session with one message per poll (halts, questions, refusals,
 // the exit), so no model turn has to poll. The lock (`drive.lock`, src/drive-run.ts) stays the single-driver guarantee.
 import { spawn } from 'node:child_process';
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync } from 'node:fs';
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import * as git from './git.ts';
@@ -118,11 +118,16 @@ export const FROM_DSA_NOTE = 'note: started from inside a dsa call; if that call
  * first with no exit record or with an error record refuses with the log tail; one that has not taken the lock after
  * `waitMs` (30 s) is sent SIGTERM (pid and start time checked) and the start refuses with the log tail.
  */
-export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number; reuse?: boolean }): Promise<DriveStart> {
+export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number; reuse?: boolean; restart?: boolean }): Promise<DriveStart> {
   const ledger = await Ledger.open(o.cwd), dir = ledger.dir, repo = await git.mainRoot(o.cwd);
   if (!(await ledger.read()).length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   return ledger.withLock(async () => {
-    const log = logPath(dir), held = readLock(dir);
+    const log = logPath(dir);
+    if (o.restart && readLock(dir).state === 'live') {
+      const stopped = await stopHeld(dir, { waitExit: true });
+      if (stopped.state === 'stopping') throw new OwedError(`driver pid ${stopped.pid} is stopping after its current action and its in-flight measurements; repeating owed start --restart is safe; owed drive --stop --now stops it at once`, 'usage');
+    }
+    const held = readLock(dir);
     if (held.state === 'live' && o.reuse) return { pid:held.owner.pid, log, repo, alreadyRunning:true, ...(held.owner.start ? { start:held.owner.start } : {}), ...(held.owner.session ? { session:held.owner.session } : {}) };
     if (held.state === 'live') throw new OwedError(`a driver is running for this repository: ${describeOwner(held.owner)}; log ${log} (owed drive --status, owed drive --stop)`);
     if (held.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${held.owner.pid} on host ${held.owner.host} (since ${clockTime(held.owner.at)}); a lock of another host is never taken over: check that host, and if no driver runs there remove the lock by hand; log ${log}`);
@@ -278,8 +283,8 @@ export interface DriveStop { state: 'none' | 'stopped' | 'stopping'; pid?: numbe
  * `owed drive --stop [--now]` (D17.4): SIGTERM to the lock's pid only when its pid and process start time match a live
  * process of this host (never a reused pid; another host refuses); `now`: a second SIGTERM 1 s later (stop at once,
  * D14.8). Waits up to `waitMs` (10 s) for the lock to be released. Signals are sent under the serializing ledger lock
- * `drive-detach` (D17a.3): a concurrent `--stop` waits and then finds the lock released (one signal, not two), and a
- * stop never races a `--detach` that is still waiting for its child.
+ * `drive-detach` (D17a.3), which `start --restart` also takes: graceful stops send one signal per driver process (a
+ * recorded stop request suppresses repeats; AK-R4), and a stop never races a `--detach` that is still waiting for its child.
  */
 export async function driveStop(o: { cwd: string; now?: boolean; waitMs?: number }): Promise<DriveStop> {
   const first = readLock(await driveDir(o.cwd));
@@ -287,7 +292,7 @@ export async function driveStop(o: { cwd: string; now?: boolean; waitMs?: number
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(() => stopHeld(ledger.dir, o), 'drive-detach');
 }
-async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number }): Promise<DriveStop> {
+async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number; waitExit?: boolean }): Promise<DriveStop> {
   const lock = readLock(dir);
   if (lock.state === 'none' || lock.state === 'stale') return { state: 'none' };
   const owner = lock.owner;
@@ -295,15 +300,30 @@ async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number }): Pro
   if (owner.start === undefined) throw new OwedError(`cannot verify that pid ${owner.pid} is the driver (its lock records no process start time); not signaled`);
   const same = (): boolean => procStart(owner.pid) === owner.start && !released(dir, owner);
   if (!same()) return { state: 'none' };
-  process.kill(owner.pid, 'SIGTERM');
+  // AK-R4: graceful stops send one SIGTERM per driver process (pid + start time). The request is recorded under
+  // `drive-detach` before signaling; a request naming another owner is stale and replaced. --now may add the second.
+  const requested = stopRequested(dir, owner);
+  if (!requested) { writeStopRequest(dir, owner); process.kill(owner.pid, 'SIGTERM'); }
+  else if (o.now) process.kill(owner.pid, 'SIGTERM');
   const t0 = Date.now(), deadline = t0 + (o.waitMs ?? 10_000);
-  let second = !o.now;
+  let second = !o.now || requested;
+  const stopped = (): boolean => o.waitExit ? !pidAlive(owner.pid, owner.start) : released(dir, owner) || procStart(owner.pid) !== owner.start;
   while (Date.now() < deadline) {
-    if (released(dir, owner) || procStart(owner.pid) !== owner.start) return { state: 'stopped', pid: owner.pid };
+    if (stopped()) return { state: 'stopped', pid: owner.pid };
     if (!second && Date.now() - t0 >= 1000) { second = true; if (same()) process.kill(owner.pid, 'SIGTERM'); }
     await sleep(100);
   }
-  return released(dir, owner) ? { state: 'stopped', pid: owner.pid } : { state: 'stopping', pid: owner.pid };
+  return stopped() ? { state: 'stopped', pid: owner.pid } : { state: 'stopping', pid: owner.pid };
+}
+const stopRequestPath = (dir: string): string => `${lockPath(dir)}.stop-request`;
+function stopRequested(dir: string, owner: LockOwner): boolean {
+  try { const r = JSON.parse(readFileSync(stopRequestPath(dir), 'utf8')) as Partial<LockOwner>; return r.pid === owner.pid && r.start === owner.start && r.host === owner.host; }
+  catch { return false; }
+}
+function writeStopRequest(dir: string, owner: LockOwner): void {
+  const path = stopRequestPath(dir), tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ pid: owner.pid, start: owner.start, host: owner.host, token: owner.token }));
+  renameSync(tmp, path);
 }
 export function renderDriveStop(r: DriveStop): string {
   return r.state === 'none' ? 'no driver running' : r.state === 'stopped' ? 'stopped' : `stopping: pid ${r.pid} exits after its current action and its in-flight measurements`;
@@ -478,6 +498,9 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
       ?? (asking.length > 1 && rid && qid ? `owed answer ${node} --rid ${rid} --qid ${qid} "<text>"` : `owed answer ${node} "<text>"`);
     return `Needs you: ${node} — decide ${question} → ${command}`;
   }).join('\n');
+  // AK1: the driver already extracted the review's ask. Keep it and its single ruling command.
+  const review = source.match(/review asks: (.*?)(?= → owed decide |$)/)?.[1];
+  if (review !== undefined) return `Needs you: ${node} — review asks: ${review.slice(0,300)} → owed decide ${node} --text "<ruling>" --writer`;
   const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
   const chosen = retry ?? source.match(/(?:answer: |(?:with|or):? )(owed [^;\n`]+?)(?= \| |;|\n|`|$)/)?.[1]?.trim();
   const asks = !j.answerRetry && j.qid !== undefined;

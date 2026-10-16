@@ -195,7 +195,9 @@ test('AN3: other reviewer receives the answer and must acknowledge; later attemp
     const action = decide(state, state.plan, f.dsa.views, { max: 1, repairs: 2, project: f.project, root: f.cwd, applied: new Set(), rejected: new Map() }).find(a => a.do === 'send');
     assert.ok(action?.do === 'send' && action.rid === reviewer.rid && action.reason === 'ruling');
     assert.ok(action.message.includes(r.entry.text) && action.message.includes(`--ack-rulings ${r.entry.seq}`));
-    await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'ok', rank: 1, note: 'review' });
+    const before = (await ops.readState(f)).entries;
+    await assert.rejects(ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'ok', rank: 1, note: 'review' }), /ack-rulings must be at least/);
+    assert.deepEqual((await ops.readState(f)).entries, before);
     assert.equal((await ops.readState(f)).state.nodes.a!.items.find(i => i.obligation === 'rulings')!.status, 'D');
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'ok', rank: 1, note: 'ack', ack_rulings: r.entry.seq });
     assert.equal((await ops.readState(f)).state.nodes.a!.items.find(i => i.obligation === 'rulings')!.status, 'E');

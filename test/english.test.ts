@@ -54,8 +54,8 @@ test('English CLI output through refusal, failure, repair, review and merge', { 
     await call(worktree, ['submit', 'a']);
     const repaired = await call(r.cwd, ['attest', 'a'], 1); // Independent review remains owed.
     assert.match(repaired, /✔ measured a\/check:content/);
-    await call(r.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:a#1'], 1);
-    await call(r.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:independent', '--note', 'Inspected changes']);
+    await call(r.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:a#1', '--ack-rulings', 'latest'], 1);
+    await call(r.cwd, ['review', 'a', '--ok', '--rank', '1', '--as', 'reviewer:independent', '--note', 'Inspected changes', '--ack-rulings', 'latest']);
     await call(r.cwd, ['merge', 'a']);
     await call(r.cwd, ['status', '--json']);
     await call(r.cwd, ['report']);

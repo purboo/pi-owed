@@ -255,7 +255,7 @@ test('QT-R1 (5): the default why card of trunk and inv:* gives only commands the
       const out = await cli(r.cwd, ['why', subject]); assert.equal(out.code, 0, out.stderr);
       const item = out.stdout.split('\n').find(l => l.includes('inv:unit') && l.includes('→'));
       assert.ok(item, out.stdout);
-      assert.match(item, /→ (?:owed plan <plan\.yaml> \(add a node that repairs inv:unit; invariants cannot be waived|owed attest --trunk$)/, out.stdout);
+      assert.match(item, /→ (?:fix state: add a repair node \(owed edit --node-new\) — clears on the next trunk key|owed attest --trunk$)/, out.stdout);
       assert.doesNotMatch(out.stdout, /owed (?:attest|waive|review|approve|evidence|decide) (?:trunk|inv:)/, out.stdout);
     }
   } finally { await r.cleanup(); }
