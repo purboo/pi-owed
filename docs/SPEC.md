@@ -4204,7 +4204,8 @@ the installed package, not a ledger's reader requirements.
 `plan <plan.yaml> [--rev <commit-ish>]` (path relative to the cwd; with
 `--rev` the file is read from that commit, so a plan kept in trunk is the
 ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
-[--plan <file>]` (§3 Amend), `edit <node> --set path=yaml ... [--unset path ...]
+[--plan <file>]` (§3 Amend; bare paths mean `+path`, and already-covered paths
+are no-ops, as in §8.3.1), `edit <node> --set path=yaml ... [--unset path ...]
 [--node-new] [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
 --note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
 --note WHY` (§3 ED1/ED2),
@@ -5366,6 +5367,10 @@ even for the same clean commit; inspection does not suppress that route.
 Existing repair/ruling follow-up halts and the one-reminder bound remain.
 A writer interrupted with unknown tool outcomes retains the recovery route;
 a non-ok writer halt retains its status/error and any abandon guidance.
+The row-7 halt for a writer run sealed non-ok uses the same reply trailer
+as a clean-stop halt: `writer says: "<final paragraph>"` (or
+`writer gave no final text`) followed by
+`owed decide <node> --text "<ruling>" --writer`.
 
 Stopped-writer halts record the cause, then `writer says: "<final paragraph>"`
 and `→ owed decide <node> --text "<ruling>" --writer`. The quoted text is the
