@@ -30,6 +30,12 @@ export async function lintPlanCost(cwd: string, plan: Plan, commit: string, entr
     const path = !old || canonical(old.reads) !== canonical(check.reads) || canonical(prior?.closure) !== canonical(plan.closure) ? closure.find(p => matchesAny(p, check.reads)) : undefined;
     if (path) warnings.push(`check ${check.id} reads closure path ${path}: checks see the base version of closure files`);
   }
+  const sets = Object.keys(plan.quarantine_sets ?? {}).sort();
+  const quarantineWarning = (where: string, check: CheckSpec, old?: CheckSpec): void => {
+    if (sets.length && planCheckChanged(check, old) && /\bcargo\s+(?:\+\S+\s+)?test\b|\bnode\s+--test\b/.test(check.run) && check.quarantine === undefined && check.quarantine_set === undefined) warnings.push(`${where} runs tests without a quarantine set (sets: ${sets.join(', ')})`);
+  };
+  for (const inv of plan.invariants) quarantineWarning(`inv:${inv.id}`, inv, prior?.invariants.find(i => i.id === inv.id));
+  for (const node of plan.nodes) for (const check of node.checks) quarantineWarning(`check ${node.id}/${check.id}`, check, prior?.nodes.find(n => n.id === node.id)?.checks.find(c => c.id === check.id));
   const law = entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis');
   const previous = new Set(prior ? nearTimeoutWarnings(prior,law ? entries.filter(e => e.seq < law.seq) : []) : []);
   return [...new Set([...warnings, ...nearTimeoutWarnings(plan, entries).filter(w => !previous.has(w))])].map(w => `warning: ${w}`);

@@ -22,6 +22,8 @@ export interface CheckSpec {
   repeat?: { runs: number; need?: number };
   /** MS4 (0.20): exact failing test names excused while their fix node is in the plan and not merged; active names are part of the key. */
   quarantine?: QuarantineEntry[];
+  /** QS1: shared quarantine entries, combined with the check's own entries. */
+  quarantine_set?: string;
 }
 /** MS4 (0.20): one quarantined test name, owned by a fix node; inactive once `fix` merges or leaves the plan. */
 export interface QuarantineEntry { test: string; fix: string; note?: string }
@@ -106,6 +108,8 @@ export interface Plan {
   risk?: RiskRule[];
   /** RK: exact JSON closure paths with ignored dot paths; checks still hash full files. */
   closure_neutral?: ClosureNeutral[];
+  /** QS1: named owner-managed quarantine lists. */
+  quarantine_sets?: Record<string, QuarantineEntry[]>;
 }
 export interface Downgrade { node: string; what: string }   // e.g. {node:'a', what:'check auth-tests removed'}
 
@@ -377,5 +381,8 @@ export interface AttestJob {
   attribution?: boolean;
   /** MS4 (0.20): active quarantine entries of the spec; the executor applies them only when the key commits to their names. */
   quarantined?: QuarantineEntry[];
+  /** QS4: measurement scope, for quarantine recovery diagnostics only. */
+  merging?: string;
+  probe?: 'trunk';
 }
 export interface MergeGuard { ok: boolean; reasons: string[]; nodeItems: ItemView[]; invItems: ItemView[] }
