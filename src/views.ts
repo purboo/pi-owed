@@ -273,8 +273,9 @@ function textReceiptItem(i: ReceiptCard['items'][number], runs: ReturnType<typeo
   return { ...i, observations };
 }
 /** RR3: receipt-only deduplication; keep reducer evidence/replay and distinct-principal satisfaction unchanged. */
-function receiptItem(i: ItemView, entries: readonly Entry[]): ItemView & { observations: Entry[] } {
-  let observations = entries.filter(e => i.evidence.includes(e.seq));
+export function receiptItem(i: ItemView, entries: readonly Entry[]): ItemView & { observations: Entry[] } {
+  const infra = new Set(entries.flatMap(e => e.kind === 'obs' && i.evidence.includes(e.seq) && e.infra !== undefined ? [e.infra] : []));
+  let observations = entries.filter(e => i.evidence.includes(e.seq) || infra.has(e.seq));
   if (i.status === 'E' && reviewObligation(i.obligation)) {
     const latest = new Map<string, Entry>();
     for (const e of observations) if (e.kind === 'review' && e.seq > (latest.get(e.by)?.seq ?? -1)) latest.set(e.by, e);
@@ -517,7 +518,8 @@ function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote
   if (i.status === 'W') return waivedText(i);
   if (isManual(i.obligation)) return manualText(i);
   const label = i.status === 'E' ? (i.obligation === 'review' || i.obligation === 'closure-review' ? 'reviewed' : i.obligation === 'rulings' ? (i.detail === NO_RULINGS ? 'no rulings apply' : 'rulings acknowledged') : 'measured') : ({ '✘': 'rejected', '⊥': 'awaiting observation', '⊤': 'conflict', '⏸': 'deferred', '⛔': 'blocked' } as Record<string,string>)[i.mark] ?? i.detail;
-  const evidence = (i.observations ?? []).map(e => (e.kind === 'obs' ? `#${e.seq}${strength(e)}${noise(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`) + repetition(e)).join('; ');
+  const infra = new Set((i.observations ?? []).flatMap(e => e.kind === 'obs' && e.infra !== undefined ? [e.infra] : []));
+  const evidence = (i.observations ?? []).map(e => (e.kind === 'obs' ? `#${e.seq}${infra.has(e.seq) ? ' infra' : ''}${strength(e)}${noise(e)} log=${e.log ?? '-'} counts=${JSON.stringify(e.counts ?? {})} ${e.durationMs}ms` : e.kind === 'review' ? `${e.by} rank=${e.rank}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`) + repetition(e)).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}${(i.blockNotes ?? []).map(b => ` — note #${b.seq}: ${b.note}`).join('')}${i.hint ? ` — ${i.hint}` : ''}${failNotes(i.observations ?? [])}`;
 }
 /** K2.2: the note of an exec block's failing observation on one line, at most 200 characters. */
