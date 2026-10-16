@@ -107,7 +107,7 @@ test('L3.1 #21: an owner-needed node (flaky block) with a sealed writer gets the
   const fu = act(r);
   assert.ok(isSend(fu, 'ruling') && fu.rid === W && fu.sendKind === 'follow-up' && fu.rulings === rule.seq, JSON.stringify(fu));
   assert.equal(fu.message, ['New parent rulings for a:', `#${star.seq} (*): general guidance`, `#${rule.seq} (a): make the qpoint test deterministic: sort before comparing`,
-    'Flaky blocks of a (an attribution rerun of the failing content passed):', `- #${f.seq} check:unit: not ok 3 - qpoint order is nondeterministic`,
+    'Flaky blocks of a (an attribution rerun of the failing content passed):', `- flaky block #${f.seq} on check:unit: ac1 failed #${f.seq} (unknown failed tests) → passed #${r.entries.find(e => e.kind === 'obs' && e.attribution)?.seq} on the same key; a pass does not erase a failure: accept the risk (owed waive a check:unit --accept-risk ${f.seq} --reason "…") or fix it; current candidate ac2 passed #${r.entries.find(e => e.kind === 'obs' && e.obligation === 'check:unit' && e.commit === 'ac2')?.seq} — note: not ok 3 - qpoint order is nondeterministic`,
     'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n'));
   r.record(fu);
   // Sent once: running or sealed again without a new candidate, the node still needs the owner and is notified.
@@ -248,12 +248,12 @@ test('L3.2: flaky hints offer a ruling next to the waiver (why, status, brief, t
   const s = r.state();
   const why = renderReceipt(receipt(s, r.entries, 'a'));
   const blockLine = why.split('\n').find(l => l.startsWith(`⛔ blocked #${f.seq} check:unit`));
-  assert.ok(blockLine?.includes(`owner accepts the risk: owed waive a check:unit`) && blockLine.includes(`; ${RULE_HINT}`), why);
+  assert.ok(blockLine?.includes(`accept the risk (owed waive a check:unit`) && blockLine.includes(`; ${RULE_HINT}`), why);
   const status = renderStatus(statusView(s, r.entries));
-  const owed = status.split('\n').find(l => l.includes('a/check:unit') && l.includes('still blocked'));
-  assert.ok(owed?.includes(`owed waive a check:unit`) && owed.includes(RULE_HINT), status);
+  const owed = status.split('\n').find(l => l.includes(`flaky block #${f.seq}`));
+  assert.ok(owed?.includes(`owed waive a check:unit`) && owed.includes('passed #') && owed.includes('on the same key'), status);
   const brief = renderBrief(briefView(s, r.entries));
-  assert.ok(brief.split('\n').some(l => l.includes('a/check:unit') && l.includes(`owed waive a check:unit`) && l.includes(RULE_HINT)), brief);
+  assert.ok(brief.split('\n').some(l => l.includes(`flaky block #${f.seq}`) && l.includes(`owed waive a check:unit`) && l.includes('on the same key')), brief);
   const n = act(r);
   assert.ok(n?.do === 'notify' && n.text.includes(` | ${RULE_HINT}`) && n.text.split(RULE_HINT).length === 2, JSON.stringify(n));
 });

@@ -24,7 +24,7 @@ import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
 import { parentOverlapWarnings } from './parentops.ts';
-import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief } from './views.ts';
+import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief, waiverRecordedText } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -252,7 +252,7 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(String(p.node))}${p.after !== undefined ? ` after ${oneLine(String(p.after))}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}), ...(p.note !== undefined ? { note: p.note } : {}), ...(p.remeasure ? { remeasure: true } : {}) });
     const tail = p.after === undefined ? '' : r.merged ? `\n${p.after} is already merged: ${p.node} resumes now` : `\n${p.node} waits for ${p.after} (resume #${r.entry.seq}); the driver acts again when ${p.after} merges`;
     const phase = r.entries ? '' : `\n${renderReceipt(await ops.why({ cwd: dir, node: r.entry.kind === 'resume' ? r.entry.node : String(p.node) })).split('\n')[0]}`;
-    return result(r.entries ? r : r.entry, `${(r.entries ?? [r.entry]).map(renderEntry).join('\n')}${tail}${phase}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
+    return result(r.entries ? r : r.entry, `${(r.entries ?? [r.entry]).map(renderEntry).join('\n')}${r.remeasure?.length ? `\n${r.remeasure.join('\n')}` : ''}${tail}${phase}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
   });
   tool('gc', 'Reclaim worktrees and branches of merged or abandoned attempts (parent or owner); dry_run only reports.', Type.Object({ dry_run: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'run gc');
@@ -337,12 +337,12 @@ export default function owed(pi: ExtensionAPI): void {
     const warnings = [...planWarnings(parsePlan(read.plan)), ...(r.warnings ?? [])];
     return result({ entry: r.entry, genesis: r.entry.seq, measuring: n, warnings }, `${renderEntry(r.entry)}\nInitialized (genesis #${r.entry.seq}). ${n ? `Measuring ${n} genesis invariant${n === 1 ? '' : 's'} in the background in this session; owed_status shows progress and this session gets one message when it ends.` : 'No invariants to measure.'}${warnings.map(w => `\n${w}`).join('')}`);
   });
-  tool('waive', 'Owner waiver of a current obligation (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner); reason says why; accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), candidate: candidateParam, as, cwd }), async (p, ctx, dir, signal) => {
+  tool('waive', 'Owner waiver of a current obligation (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner); reason says why; accept_risk explicitly references block seq numbers.', Type.Object({ node, obligation: reason, reason, accept_risk: Type.Optional(Type.Array(Type.Integer({ minimum: 0 }))), full: Type.Optional(Type.Boolean()), candidate: candidateParam, as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'waive');
     // G1.2: under the gate the dialog shows the candidate the waiver lands on, and pins it.
     const v = ops.confirmGate() ? await ops.candidatePreview({ cwd: dir, node: p.node }) : undefined;
     const a = await actor(ctx, dir, who, `Waive ${oneLine(p.node)}/${oneLine(p.obligation)}\n${v ? `${candidateLines(v)}\n` : ''}Accepted risks (block seq): ${JSON.stringify(p.accept_risk ?? [])}\nThis obligation will be shown as waived, not a measured pass.${p.accept_risk?.length ? `\nThe accepted blocks are cleared whatever their key (a merge-key fail no longer counts against the merge), and ${oneLine(p.obligation)} is no longer measured on the waived key.` : ''}`, { Reason: p.reason }, signal);
-    const r = await ops.waive({ node: p.node, obligation: p.obligation, reason: p.reason, accept_risk: p.accept_risk, named: p.candidate, ...(v ? { pin: { seq: v.seq, commit: v.commit } } : {}), ...a, channel: a.channel! }), meaning = await ops.waiverMeaning({ cwd: dir, entry: r }); return result({ ...r, meaning }, `${meaning}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
+    const r = await ops.waive({ node: p.node, obligation: p.obligation, reason: p.reason, accept_risk: p.accept_risk, named: p.candidate, ...(v ? { pin: { seq: v.seq, commit: v.commit } } : {}), ...a, channel: a.channel! }), meaning = await ops.waiverMeaning({ cwd: dir, entry: r }); return result({ ...r, meaning }, `${waiverRecordedText(r as import('./types.ts').WaiveEntry)}\n${meaning}\n${renderWhy(await ops.why({ cwd: dir, node: p.node }),{full:p.full})}`);
   });
   tool('defer', 'Owner deferral of prospective merge-tree invariants; debt remains (the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner).', Type.Object({ node, items: Type.Array(node, { minItems: 1, description: 'Invariant IDs.' }), reason, as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, ownerDefault(), ['owner'], 'defer');
