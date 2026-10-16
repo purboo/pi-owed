@@ -1696,7 +1696,7 @@ Closure-review and existing review blocks remain independent gates. The
 reducer and driver use the same derived requirement for counting reviews,
 reviewer slots, suggested commands and owner escalation.
 
-**Ruling #2459:** when ALL changed closure paths are neutral under
+When ALL changed closure paths are neutral under
 `closure_neutral`, candidate facts have `closureTouched=false` and no
 closure-review key or obligation. Such a candidate may join a batch (§7.21):
 the batch remeasures final Mn using Mn's closure, and owner-declared neutral
@@ -3586,7 +3586,7 @@ move. Under the merge lock, a hotfix no longer fast-forwarding the new trunk
 refuses before measurement, naming that trunk and telling the caller to rebase
 c onto it and retry `owed adopt --commit <new> --note "<why>"`.
 
-**Ruling #2511:** an off-ref c already contained in ledger trunk is not a
+An off-ref c already contained in ledger trunk is not a
 hotfix needing rebase. It refuses before measurement with
 `nothing to adopt: <c12> is already contained in the ledger trunk <prior12>`.
 A commit equal to ledger trunk retains the existing `nothing to adopt` refusal.
@@ -4989,8 +4989,8 @@ must name the node's current open slot (node and attempt), and so must a halt.
   candidate, with the same question text, answer/ruling hint, rid/qid/rev and
   once/quiet semantics as row 5. `slotAction` neither clears the halt nor sends
   anything or takes another action on the node. PR2 prospective notices still
-  reach halted attempts (#1743). When the slot action would be a non-quiet
-  report of a concrete question (with qid, or an overdue answer retry; #1746)
+  reach halted attempts. When the slot action would be a non-quiet
+  report of a concrete question (with qid, or an overdue answer retry)
   from the halt row, row 5 or waiting branch, `decide` emits that report
   before a pending/new prospective notice once per rid/qid/rev in this driver;
   the next pass may send the notice. Reporting alone does not make an unanswered
@@ -6359,7 +6359,7 @@ receipt directly; absence of this status line is not proof of delivery.
     when the trunk ref equals the ledger trunk commit now, or when the ledger
     trunk seq is higher than the line's `facts` (QT2: adopt/merge happened).
     Failed ledger/ref reads keep the line. Unscoped lines are never dropped as
-    drift (#1378): legacy drift lines are delivered as before, while a plan node
+    drift: legacy drift lines are delivered as before, while a plan node
     named `trunk` follows normal node fact/question revalidation.
     A still-current drift is delivered, and dropped drift lines count in (c).
     Status and brief show no drift when trunk equals the ledger trunk commit.
