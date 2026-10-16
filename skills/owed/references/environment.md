@@ -2,6 +2,12 @@
 
 Read this topic when the corresponding action or failure is relevant. Return to the [core](../SKILL.md) for the loop and hard rules.
 
+## Quarantine file delivery
+
+Eligible check/invariant runs with active quarantine names receive `OWED_QUARANTINE_FILE`: an absolute private temporary file outside the measured tree, containing sorted exact names, one per line with a final newline. Each execution, including each repeat run, has its own file removed afterward. Own names containing CR/LF remain readable but cannot be delivered; the note says `quarantine file not written: a name contains a line break`. Setup, slot setup, red/mutants, sweep, timeout hooks and jobs without active names have the variable removed, even if inherited or set in `exec.env`.
+
+Scripts may consume it instead of a repository skip list; delivery never changes their exit or excuses anything. Runs without a native protocol say `quarantine file: <n> names (owed excused nothing)`. Natively refused Node/Cargo runs keep `quarantine not applied: <reason>`; Cargo-shaped scripts lacking native syntax keep their Cargo refusal too. An `exec.wrap` container may not see the host path; the wrapper must provide access. A script that skips listed tests cannot report their recovery; only complete native evidence does that. See [evidence](evidence.md) for excusal and recovery scope.
+
 ## Wrappers, timeout evidence and caches
 
 Owed measurements automatically take a shared dsa machine lease when available. A leased command receives `OWED_LEASED=1`; wrappers skip nested acquisition for that marker. CLI `--no-lease` or tool `lease:false`, or plan `lease:false`, opts out. Standalone acquisition waits; drivers use no-wait and retry next pass. The marker and lease policy change no evidence key.

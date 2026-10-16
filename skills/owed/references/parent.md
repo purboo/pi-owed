@@ -36,6 +36,14 @@ Planning: keep writes strict by default. For integration and packaging nodes, wh
 
 A changed check definition refusal lists the changed fields (`run`, `timeout_s`, `reads`, `tests`, `red_expect`): owed cannot compare commands, so replacing the definition needs owner authority or a matching check allowance. Adding a new check id avoids changing the old definition. Check-less and loop warnings on `owed plan` skip merged nodes; invariant warnings and `owed init` warnings stay unchanged. Cost lint also warns with `warning: ` for reads covering `**`/at least 90% of tracked trunk paths, checks reading base-pinned closure files, and latest trunk passes reaching 80% of an invariant timeout. Use `owed report --cost` to inspect wide/expensive reads; these warnings change no gate.
 
+## Record rebase before the writer applies it
+
+`owed rebase <node>` **without `--apply` already records** the open slot's move from its old base to current trunk and invalidates the candidate; it is not a dry run. The parent/owner or the slot writer may use this manual route. It prints the writer's `git rebase --onto <new> <old>` command, using a computed upstream when HEAD already contains trunk commits. The writer commits work first, runs that exact command in the same slot, resolves only allowed conflicts, and submits again. Blocks still bind the node; setup is not rerun.
+
+Parent/owner `owed rebase <node> --apply` additionally performs the Git rebase and executor submit when the writer is safely idle, HEAD is the current candidate and the worktree is clean. Conflicts/errors roll back before the manual route is recorded; crash leftovers need inspection, never a blind reset. Exact clean rebases may carry independent reviews, never measurements or waivers. The pi rebase tool remains manual.
+
+Submit refuses a commit containing trunk commits after the **recorded slot base**, including a writer's unrecorded trunk merge/rebase. The remedy is a parent `owed rebase <node>` first, then the writer's printed rebase and submit, not another unrecorded Git rebase. When HEAD already contains trunk history, owed advances upstream to avoid replaying other nodes' commits. See SPEC §6.1, §7.25 and §8.
+
 ## Finished writer rulings
 
 When `owed rule` sees a node's known writer call neither running nor asking, its receipt names the node/call and says `the ruling was recorded but not sent now; the driver delivers it on its next pass`. A halted node needs `owed resume <node>`; `owed decide <node> --text "<ruling>" --writer` records and resumes in one step. Rule itself never sends a follow-up, and a recorded ruling is not immediate-delivery evidence. The driver sends a due ruling before a pending-rebase stopped-writer halt; a later seal without a new submit halts naming that ruling follow-up instead of repeating submit reminders. Runtime delivery details may include `finished: [{node, writer}]`.

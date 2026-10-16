@@ -1,8 +1,22 @@
 # Compatibility and upgrade order
 
-Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020026) gives the complete public contract.
+Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020027) gives the complete public contract.
 
-## Current release: 0.26
+## Current release: 0.27
+
+No ledger entry kind is added. New plan keys are `quarantine_sets` and check/invariant `quarantine_set`; optional entry fields are `obs.quarantine_passed`, `waive.tracked_by` and `ignorable`. Field-free historical ledgers and checks without sets retain their states, definitions and keys.
+
+Checked against `v0.26.0`:
+- `src/plan.ts`, `parsePlan`: **ignores**, rather than refuses, both quarantine-set keys. It copies neither and has no unknown top-level/check-key rejection. This is not compatible policy enforcement: old executors omit shared names from keys/behavior, old plan writes can discard them, and recorded 0.27 measurement keys can later cause old replay to refuse.
+- `src/reducer.ts`, `OBS_FIELDS`/`newerEntry`: refuses `obs.quarantine_passed` with code `version`, including marked observations.
+- `src/reducer.ts` and `src/identical-acts.ts`: ignore extra `waive.tracked_by` and `ignorable` on waive; old views cannot track/settle debt and old retry comparison cannot distinguish tracker changes. Waiver gate effects remain unchanged.
+- `ignorable`: `newerEntry` refuses it with `version` on rule/obs/defer/abandon/hold/resume. Strict validation refuses it as an ordinary invalid entry on escape, decoy-commit/reveal, adopt, launch, send, halt, evidence and sweep; grant/refresh have separate unknown-field refusals. Permissive kinds ignore it. Readers before 0.27 still refuse it where they refuse unknown fields; no marker can retrofit those readers.
+- `OWED_QUARANTINE_FILE` is runtime environment, not a ledger field. 0.26's `src/exec.ts` neither delivers nor consumes it and does not remove inherited values. Upgrade executors/wrappers for per-run plan delivery; containers need access to the host file.
+- `attest --probe-trunk [--check ID] [--runs N]` needs 0.27 CLI support; 0.26's `src/cli.ts` refuses these options. Existing `obs`/`probe:"trunk"` replay in 0.26 unless the observation carries new optional fields. The pi attest tool has no probe parameters: use CLI. `--tracked-by` and waive `--full`/tool `full:true` likewise need the current input surface.
+
+**Upgrade every reader to 0.27 before the first 0.27 writer records shared quarantine policy, `obs.quarantine_passed`, `waive.tracked_by` or an entry carrying `ignorable`:** upgrade CLI, every driver and every pi session loading owed, restarting drivers/sessions; upgrade result consumers and executors too. Feedback is automatic even on existing own-quarantine plans: finish before any 0.27 executor measurement (attest, genesis/trunk, merge, adopt or probes), not merely before enabling sets or merging. Never strip fields or rewrite receipts for old readers. Once all readers understand `ignorable`, they honour every listed unknown display field; the writer registry is not a reader whitelist. Plan keys and nested shapes have no such extensibility guarantee.
+
+## 0.26 setup and runtime recovery
 
 No new ledger entry kind or plan key is added. Optional `obs.infra` names the immediately preceding setup failure resolved by a qualifying counted same-key pass. Field-free historical ledgers retain their states and keys. A 0.25 reader (`src/reducer.ts`, `OBS_FIELDS`/`newerEntry`) refuses the entire ledger with `version` when this field first appears. Its existing `auto_remeasure` validation also refuses a receipt authorized only by the new setup predicate, even if the retry never records an infra pass; that is an ordinary invalid-entry refusal.
 
