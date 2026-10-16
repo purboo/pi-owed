@@ -94,7 +94,12 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   });
   out.brief = attempt(() => {
     const brief = v.briefView(s,prefix,-1,Date.UTC(2027,0,1));
-    if (m === BASE) brief.totals.waiting = Object.values(s.nodes).filter(n => !n.merged && (wait(n.id) || n.phase === 'blocked')).length;
+    if (m === BASE) {
+      brief.totals.waiting = Object.values(s.nodes).filter(n => !n.merged && (wait(n.id) || n.phase === 'blocked')).length;
+      // AK2 changes only trunk decision guidance. Adapt this field from the frozen state's same history;
+      // reducer facts, all other decision fields and the exact rendered comparison remain untouched.
+      for (const d of brief.decisions) if (d.node === 'trunk') d.command = curViews.trunkDecision(s,d.obligation,undefined,prefix);
+    }
     // SQ changes only the default prefix; compare the retained morning sections against the frozen renderer.
     if (m === CUR) delete (brief as curViews.Brief).summary;
     return rendered(v.renderBrief(brief));
@@ -133,7 +138,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       // NY6: full preserves the frozen receipt's weak-confirmation provenance.
       return rendered(m === CUR ? curViews.renderReceipt(card as curViews.ReceiptCard,{full:true}) : v.renderReceipt(card));
     });
-    q.owner = attempt(() => v.ownerCommands(s, id).map(rendered));
+    q.owner = attempt(() => v.ownerCommands(s, id).map(command => rendered(m === BASE ? command.replace(/owed plan <plan\.yaml> \(add a node that repairs (inv:[^;]+); invariants cannot be waived, only a measured pass on a later merge clears this debt\)/g, (_all, obligation: string) => curViews.trunkDecision(s,obligation,undefined,prefix)) : command)));
     if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(reviewState, id));
     out[`node:${id}`] = q;
   }

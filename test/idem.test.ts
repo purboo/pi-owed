@@ -68,8 +68,8 @@ test('ID1: note, rank, acknowledgment set, needs-parent and latest A,B,A remain 
     assert.equal(sameSet.seq,ack.seq,'watermarks acknowledging the same applicable set are identical');
     assert.deepEqual(await f.entries(),before);
     await assert.rejects(f.review({ ack_rulings:unrelated.seq + 100 }),/future rulings/);
-    const block = await f.review({ verdict:'block' });
-    assert.ok((await f.review({ verdict:'block', needs:'parent' })).seq > block.seq);
+    const block = await f.review({ verdict:'block', ack_rulings:rule.seq });
+    assert.ok((await f.review({ verdict:'block', needs:'parent', ack_rulings:rule.seq })).seq > block.seq);
     assert.equal((await ops.readState({cwd:f.cwd})).state.nodes.a!.accepted,false,'repeated reviews cannot satisfy two principals');
   } finally { await f.cleanup(); }
 });
