@@ -124,6 +124,7 @@ test('G3.2: after a restart, a sent but not yet visible follow-up generation is 
     await f.pass();                                           // writer launch
     const rid = [...f.dsa.views.keys()][0]!;
     assert.ok(rid.endsWith(':a:1:writer'), rid);
+    await commitAt((await stateOf(f.cwd)).nodes.a!.slot!.worktree, { 'a.txt': 'work to submit\n' });
     f.dsa.views.set(rid, { rid, state: 'sealed', status: 'ok' });
     const sent = await f.pass();                              // sealed without a candidate: submit follow-up (generation 2)
     const s = sent.find(a => a.do === 'send');
@@ -358,7 +359,9 @@ test('G3.6: the text line of a failed send names its node as a word', { timeout:
     }
     const lines: string[] = [], dsa = new Failing();
     const d = new Driver({ cwd: r.cwd, log: l => lines.push(l), dsa, session: null, handleSignals: false });
-    await d.pass(); await d.pass();
+    await d.pass();
+    await commitAt((await stateOf(r.cwd)).nodes.a!.slot!.worktree, { 'a.txt': 'work to submit\n' });
+    await d.pass();
     const rid = runId(d.project!, 'a', 1, 'writer');
     const line = lines.find(l => l.startsWith('send '));
     assert.equal(line?.startsWith(`send follow-up (submit) for node a to ${rid}: error — timed out waiting for the ledger lock`), true, lines.join('\n'));

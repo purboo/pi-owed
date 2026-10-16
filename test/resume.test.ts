@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { sha256 } from '../src/canon.ts';
-import { decide, repairEpoch, type Action, type DriveOpts } from '../src/drive.ts';
+import { decide, repairEpoch, submitMessage, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, resumeOf, runId, validateDraft, waitingFor } from '../src/reducer.ts';
 import { Dsa, toRunView, type RunResult } from '../src/dsa.ts';
 import { renderEntry, renderReceipt, renderStatusFull as renderStatus, receipt, statusView } from '../src/views.ts';
@@ -81,7 +81,7 @@ function rig() {
 type Rig = ReturnType<typeof rig>;
 const view = (rid: string, state: RunView['state'], extra: Partial<RunView> = {}): [string, RunView] => [rid, { rid, state, ...extra }];
 const sealed = (extra: Partial<RunView> = {}) => new Map([view(W, 'sealed', { status: 'ok', ...extra })]);
-const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(r.entries.flatMap(e => e.kind === 'send' ? [e.send] : [])), rejected: new Map(), blobs: r.blobs, ...o });
+const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(r.entries.flatMap(e => e.kind === 'send' ? [e.send] : [])), rejected: new Map(), blobs: r.blobs, writerWork: new Map([['a', { head: 'a-new-work', dirty: false }]]), ...o });
 function act(r: Rig, runs: Map<string, RunView> = sealed(), o: Partial<DriveOpts> = {}): Action | undefined {
   const s = r.state(), mine = decide(s, s.plan, runs, optsOf(r, o)).filter(x => x.node === 'a');
   assert.ok(mine.length <= 1, `at most one action per node: ${JSON.stringify(mine)}`);
@@ -176,7 +176,7 @@ test('L1.3: a resume lets the driver attest again after two errors, and nudge a 
   const h = act(r); assert.ok(h?.do === 'halt' && /finished without submitting a candidate/.test(h.reason), JSON.stringify(h)); r.halt(h);
   const res = r.resume({ note: 'try again' });
   const sub2 = act(r);
-  assert.ok(isSend(sub2, 'submit') && sub2.message === `The parent resumed this node (#${res.seq}): try again\ncommit your work and run \`owed submit a\``, JSON.stringify(sub2));
+  assert.ok(isSend(sub2, 'submit') && sub2.message === `The parent resumed this node (#${res.seq}): try again\n${submitMessage('a')}`, JSON.stringify(sub2));
   r.record(sub2);
   // Rows 9-10: errors twice halt; after a resume the attest runs again.
   r.submit(); r.obs('writes', 'pass'); r.obs('check:unit', 'error'); r.obs('check:unit', 'error');
@@ -215,7 +215,7 @@ test('L1.2/L1.3 (#17): resume --after b makes a wait (no action but asking notic
   assert.equal(waitingFor(r.state(), 'a'), undefined);
   const woke = act(r);
   assert.ok(isSend(woke, 'submit'), JSON.stringify(woke));
-  assert.equal(woke.message, `The parent resumed this node (#${w2.seq}) after b merged at ${MERGED.slice(0, 12)}: wait for b after all\ncommit your work and run \`owed submit a\``);
+  assert.equal(woke.message, `The parent resumed this node (#${w2.seq}) after b merged at ${MERGED.slice(0, 12)}: wait for b after all\n${submitMessage('a')}`);
   // An abandon ends a wait as well.
   const r2 = started();
   r2.resume({ after: 'b' });
@@ -234,9 +234,9 @@ test('L1.4 (#16): describe reports the call address <wid>/<key>; halts naming a 
   const r = started();
   const bad = act(r, sealed({ status: 'failed', error: 'boom', to: 'w7/tasks:0' }));
   assert.ok(bad?.do === 'halt', JSON.stringify(bad));
-  assert.equal(bad.reason, `writer run ${W} (to:"w7/tasks:0") sealed failed: boom`);
+  assert.equal(bad.reason, `writer run ${W} (to:"w7/tasks:0") sealed failed: boom; writer gave no final text → owed decide a --text "<ruling>" --writer`);
   const plain = act(r, sealed({ status: 'failed', error: 'boom' }));
-  assert.ok(plain?.do === 'halt' && plain.reason === `writer run ${W} sealed failed: boom`, JSON.stringify(plain));
+  assert.ok(plain?.do === 'halt' && plain.reason === `writer run ${W} sealed failed: boom; writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(plain));
   r.record(act(r, sealed({ to: 'w7/tasks:0' })));
   const fin = act(r, sealed({ to: 'w7/tasks:0' }));
   assert.ok(fin?.do === 'halt' && fin.reason.startsWith(`writer run ${W} (to:"w7/tasks:0") finished without submitting a candidate`), JSON.stringify(fin));

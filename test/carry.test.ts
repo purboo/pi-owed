@@ -10,7 +10,7 @@ import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
 import { decide, planChangedMessage, rebaseMessage, writerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
-import { receipt, renderReceipt, renderStatusFull as renderStatus, statusView } from '../src/views.ts';
+import { receipt, renderReceipt, renderStatusFull as renderStatus, statusView, WRITER_DECISION } from '../src/views.ts';
 import type { CandidateFacts, Draft, Entry, NodeSpec, Plan, RunView, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import owed from '../src/extension.ts';
@@ -230,7 +230,7 @@ test('N1.4: row 8 after a rebased and submitted slot is invalidated by a brief c
   if (a?.do !== 'send') throw Error('send');
   assert.equal(a.reason, 'submit');
   assert.equal(a.message, planChangedMessage('a', p.seq, ['brief']));
-  assert.equal(a.message, `plan #${p.seq} changed this node's spec (brief); resubmit (re-run checks if needed, then \`owed submit a\`)`);
+  assert.equal(a.message, `plan #${p.seq} changed this node's spec (brief); resubmit (re-run checks if needed, then \`owed submit a\`)\n${WRITER_DECISION}`);
   assert.notEqual(a.message, rebaseMessage(s, 'a'));
   // A rebase with no submit after it still gets the rebase follow-up first.
   r.add({ kind: 'adopt', by: 'owner:human', channel: 'tty', trunk: 'main', prior: 's1', commit: 's2', state: { commit: 's2', tree: 't2', invKeys: {} }, changed: ['x'], commits: 1, note: 'moved' });

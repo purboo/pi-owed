@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canonical, sha256 } from '../src/canon.ts';
-import { blockText, decide, driverSlot, rejectedFixed, rejectedHalt, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, type Action, type DriveOpts } from '../src/drive.ts';
+import { blockText, decide, driverSlot, rejectedFixed, rejectedHalt, launchSpec, ownerNeeded, rebaseMessage, repairMessage, reviewerLaunch, writerLaunch, writerTask, WRITER_INTERRUPTED, submitMessage, fencedMessage, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, runLabels, projectId, entriesOf } from '../src/reducer.ts';
-import { reviewPacket, dispatchPacket, ownerCommands } from '../src/views.ts';
+import { reviewPacket, dispatchPacket, ownerCommands, WRITER_DECISION } from '../src/views.ts';
 /** D25.6: the clause naming the commands the main agent can run, appended to owner halts and notifications. */
 const resolves = (s: State, node: string): string => `; the main agent resolves it with: ${ownerCommands(s, node).join(' | ')}`;
 import { Ledger } from '../src/ledger.ts';
@@ -66,7 +66,7 @@ function rig(plan: Plan = basePlan(DRIVE)) {
 type Rig = ReturnType<typeof rig>;
 const view = (rid: string, state: RunView['state'], extra: Partial<RunView> = {}): [string, RunView] => [rid, { rid, state, ...extra }];
 const runsOf = (...vs: [string, RunView][]) => new Map(vs);
-const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: r.blobs, ...o });
+const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: r.blobs, writerWork: new Map(Object.keys(r.state().nodes).map(id => [id, { head: `${id}-new-work`, dirty: false }])), ...o });
 /**
  * Liveness guard (D12): an open attempt with a candidate that gets no action must have an unsealed driver run (the
  * writer or a reviewer run of the candidate). Tests of deliberate idling (halted, missing run views) pass `idle`.
@@ -182,7 +182,7 @@ test('row 6: writer sealed unknown → follow-up interrupted (exact text); not a
     const a = act(r, runsOf(view(W(), state, { status: 'unknown', lastFence: { reason: 'restart', at: T0 } })));
     assert.deepEqual(a, { do: 'send', node: 'a', attempt: 1, rid: W(), sendKind: 'follow-up', message: WRITER_INTERRUPTED, reason: 'interrupted' }, 'outranks attest');
   }
-  assert.equal(WRITER_INTERRUPTED, 'You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.');
+  assert.equal(WRITER_INTERRUPTED, `You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and \`owed submit\`.\n${WRITER_DECISION}`);
   assert.equal(act(r, runsOf(view(W(), 'sealed')))?.do, 'send', 'a sealed run without status is unknown');
 });
 
@@ -190,14 +190,14 @@ test('row 7: writer sealed failed/timeout/budget/stopped/other → halt needs hu
   const r = submitted();
   for (const status of ['failed', 'timeout', 'budget', 'stopped', 'rejected', 'weird']) {
     const a = act(r, runsOf(view(W(), 'sealed', { status, error: 'boom' })));
-    assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `writer run ${W()} sealed ${status}: boom${status === 'rejected' ? `; ${rejectedFixed('a')}` : ''}`, needs: 'human' });
+    assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, reason: `writer run ${W()} sealed ${status}: boom${status === 'rejected' ? `; ${rejectedFixed('a')}` : ''}; writer gave no final text → owed decide a --text "<ruling>" --writer`, needs: 'human' });
   }
   assert.equal(act(r, runsOf(view(W(), 'pruned', { status: 'failed' })))?.do, 'halt');
 });
 
 test('row 8: writer sealed ok without a candidate → one submit follow-up, then halt', () => {
   const r = rig(); r.dispatch(); r.launchWriter();
-  assert.deepEqual(act(r, runsOf(okWriter())), { do: 'send', node: 'a', attempt: 1, rid: W(), sendKind: 'follow-up', message: 'commit your work and run `owed submit a`', reason: 'submit' });
+  assert.deepEqual(act(r, runsOf(okWriter())), { do: 'send', node: 'a', attempt: 1, rid: W(), sendKind: 'follow-up', message: submitMessage('a'), reason: 'submit' });
   r.send(W(), 'submit');
   const a = act(r, runsOf(okWriter()), { applied: applied(r) });
   assert.ok(a?.do === 'halt' && a.needs === 'human' && /finished without submitting a candidate after follow-up/.test(a.reason));
@@ -331,7 +331,8 @@ test('row 17: merge refused because trunk moved → rebase, then the rebase foll
   r.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, base: 's1', from: 's0' });
   const f = act(r, runs);
   assert.deepEqual(f, { do: 'send', node: 'a', attempt: 1, rid: W(), sendKind: 'follow-up', reason: 'rebase', message: rebaseMessage(r.state(), 'a') });
-  assert.match(f.message, /^trunk moved; rebase your worktree onto main \(s1\): first commit your work, then in \/repo\/\.owed\/wt\/a-1 run `git rebase --onto s1 \$\(git merge-base HEAD s1\)`.*`owed submit a`$/);
+  assert.match(f.message, /^trunk moved; rebase your worktree onto main \(s1\): first commit your work, then in \/repo\/\.owed\/wt\/a-1 run `git rebase --onto s1 \$\(git merge-base HEAD s1\)`.*`owed submit a`\n/);
+  assert.ok(f.message.endsWith(WRITER_DECISION));
   r.send(W(), 'rebase', 'follow-up', f.message);
   assert.equal((act(r, runs, { applied: applied(r) }) as { reason?: string }).reason, 'submit', 'then the usual submit nudge');
 });
@@ -340,7 +341,7 @@ test('row 18: fenced running writer (fence newer than the last steer) → steer;
   const r = rig(); r.dispatch(); r.launchWriter();
   const fence = { reason: 'orchestrator restart', at: T0 + 2500 };
   assert.deepEqual(act(r, runsOf(view(W(), 'running', { lastFence: fence }))), { do: 'send', node: 'a', attempt: 1, rid: W(), sendKind: 'steer', reason: 'fenced',
-    message: 'Your previous execution was cut off (orchestrator restart); processes your tools started are gone; rerun anything you were measuring.' });
+    message: fencedMessage('orchestrator restart') });
   const steer = r.send(W(), 'fenced', 'steer');
   assert.ok(Date.parse(steer.ts) > fence.at);
   assert.equal(act(r, runsOf(view(W(), 'running', { lastFence: fence })), { applied: applied(r) }), undefined, 'already steered');
@@ -572,7 +573,7 @@ test('D11: the slot reviewer records a new block on c2 → exactly one repair', 
   assert.equal(r.entries.filter(e => e.kind === 'send' && e.reason === 'repair').length, 2, 'one repair per candidate (c1, c2)');
   // With repairs 1 the c2 block exhausts the cap instead.
   const { r: q } = reReview(); q.review('block', 'reviewer:drive-a-1-1', 1);
-  assert.match((act(q, runs, { applied: applied(q), repairs: 1 }) as { reason: string }).reason, /^repairs exhausted \(1 of 1 since dispatch\): review block #\d+ review$/);
+  assert.match((act(q, runs, { applied: applied(q), repairs: 1 }) as { reason: string }).reason, /^repairs exhausted \(1 of 1 since dispatch\): review block #\d+ review; writer gave no final text → owed decide a --text "<ruling>" --writer$/);
 });
 
 test('D11: the slot reviewer oks c2 but a stale closure-review block stays active → halt needing the owner, naming the seq', () => {
@@ -696,7 +697,7 @@ test('D15.1/SR4: a rejected run keeps abandon recovery; a rejected send can reco
   assert.doesNotMatch(send.reason, /start a new attempt/);
   // describe reporting the run rejected (dsa recorded the rejection): row 7 names the same recovery.
   const sealed = act(r, runsOf(view(W(), 'sealed', { status: 'rejected', error: 'unknown agent' })), { applied: applied(r) });
-  assert.ok(sealed?.do === 'halt' && sealed.reason === `writer run ${W()} sealed rejected: unknown agent; ${fixed}`, JSON.stringify(sealed));
+  assert.ok(sealed?.do === 'halt' && sealed.reason === `writer run ${W()} sealed rejected: unknown agent; ${fixed}; writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(sealed));
 });
 
 test('D15.1 (widened): describe reporting a reviewer run rejected halts review-missing with the abandon recovery', () => {

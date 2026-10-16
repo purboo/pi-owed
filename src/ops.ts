@@ -37,7 +37,7 @@ import { counterfactual, type Counterfactual } from './counterfactual.ts';
 import { actScope, actContent, type RecordedAct } from './identical-acts.ts';
 import { OwedError } from './errors.ts';
 import { assertNoLedgerLock } from './lock-context.ts';
-import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText } from './views.ts';
+import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText, WRITER_DECISION } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -1526,7 +1526,7 @@ async function rebaseInternal(o: RebaseOptions): Promise<RebaseResult> {
   if (entry.kind !== 'rebase') throw new OwedError('unexpected rebase entry','internal');
   const { state } = await load(await Ledger.open(o.cwd)), slot = state.nodes[o.node]!.slot!, previous = slot.rebase?.seq === entry.seq ? slot.rebase.previous : undefined;
   const work = await rebasePending(state, o.node, true);
-  const packet = [`# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, ...(work?.recovery ? [work.recovery] : []), `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `First commit your work, then run: ${work?.command ?? `git rebase --onto ${entry.base} $(git merge-base HEAD ${entry.base})`}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
+  const packet = [WRITER_DECISION, `# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, ...(work?.recovery ? [work.recovery] : []), `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `First commit your work, then run: ${work?.command ?? `git rebase --onto ${entry.base} $(git merge-base HEAD ${entry.base})`}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
   return { node:o.node, attempt:entry.attempt, worktree:slot.worktree, branch:slot.branch, base:entry.base, from:entry.from, ...(previous ? { previous } : {}), packet, entry };
 }
 /** ER2: slot mutation lock precedes ledger lock. Git never runs under the ledger lock; the final CAS records both receipts. */
@@ -1592,7 +1592,7 @@ async function applyRebase(o: Actor & { node:string; since?: number; writerIdle?
         const submit: Draft = {kind:'submit',by:'executor:owed',node:o.node,attempt:slot.attempt,facts};
         guard(prospective(latest,[d]),submit);
         const [entry,submitted] = await ledger.append([d,submit]);
-        return {node:o.node,attempt:slot.attempt,worktree:slot.worktree,branch:slot.branch,base:target,from:slot.base,entry:entry!,submit:submitted!,applied:true,packet:`owed rebased your worktree onto ${target.slice(0,12)} (clean); continue from HEAD`,...(!writer ? {callerAssertion:`no recorded writer run; caller asserts none is active in ${oneLine(slot.worktree)}`} : {})};
+        return {node:o.node,attempt:slot.attempt,worktree:slot.worktree,branch:slot.branch,base:target,from:slot.base,entry:entry!,submit:submitted!,applied:true,packet:`owed rebased your worktree onto ${target.slice(0,12)} (clean); continue from HEAD\n${WRITER_DECISION}`,...(!writer ? {callerAssertion:`no recorded writer run; caller asserts none is active in ${oneLine(slot.worktree)}`} : {})};
       });
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
