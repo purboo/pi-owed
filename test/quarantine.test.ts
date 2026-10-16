@@ -69,10 +69,11 @@ test('MS4 fail-closed (#1907/#1925 rulings): excused only for a plain complete `
   // min_tests: the remaining tests must still meet it, else the run fails as without quarantine.
   assert.equal(why(q, run, r, tap, ['flaky one'], 2), '1 tests left, below min_tests 2');
   assert.deepEqual(quarantineExcuse(q, run, r, tap, ['flaky one'], 1).excused, q);
-  // cargo is never excused in 0.20 (backlog).
+  // QS3: Cargo is now native, but this incomplete fixture still cannot excuse a failure.
   const cargoLog = 'test flaky one ... FAILED\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured\n';
   const cargo = { format: 'cargo', tests: 2, pass: 1, fail: 1 };
-  for (const c of ['cargo test --no-fail-fast', 'cargo test', 'cargo +nightly test --no-fail-fast']) assert.equal(why(q, c, { code: 101, log: cargoLog }, cargo, ['flaky one']), 'cargo runs are not excused in 0.20', c);
+  for (const c of ['cargo test --no-fail-fast', 'cargo +nightly test --no-fail-fast']) assert.equal(why(q, c, { code: 101, log: cargoLog }, cargo, ['flaky one']), 'cargo test result outside a block', c);
+  assert.equal(why(q, 'cargo test', { code: 101, log: cargoLog }, cargo, ['flaky one']), 'not a plain cargo test --no-fail-fast run');
   assert.deepEqual(quarantineExcuse([], run, r, tap, ['flaky one']), {});
   assert.deepEqual(quarantineExcuse(q, run, { code: 0, log: '' }, { format: 'tap', tests: 2, pass: 2, fail: 0 }, []), {}, 'a passing run needs no excuse');
 });
