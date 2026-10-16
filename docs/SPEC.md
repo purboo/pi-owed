@@ -53,6 +53,15 @@ Other additions are runtime/results, not ledger fields:
 - The driver lock may carry optional `max`, the command-line override.
   0.25's `src/drive-bg.ts`/`src/drive-run.ts` ignore that unknown lock property;
   locks without it use the plan limit for current dispatch diagnostics (§9.8).
+- Ruling delivery adds optional `finished: [{node, writer}]` on `delivery`
+  (and answer `rulingDelivery`), describing known writer calls that are neither
+  running nor asking (§9.3). 0.25's `src/answer.ts` ignores this unknown result
+  property; its rule renderer shows only counts/failure/unknown-writer lines.
+  No ledger field is added. `RunView.result` already exists in 0.25's
+  `src/types.ts`; 0.26 also retains available final text for pruned runs, which
+  0.25's `src/dsa.ts` discards. Worktree inspections are runtime facts, not
+  replay inputs. Existing launch/send retries keep their recorded bytes;
+  upgrade/restart the driver for the stopped-writer policy (§12.5.4).
 - Graceful stops record `drive.lock.stop-request` (§12.8), not a ledger entry.
   0.25's `src/drive-bg.ts` ignores this file and signals on every stop; use only
   0.26 stop/restart clients for the at-most-once graceful-stop guarantee.
@@ -3966,9 +3975,19 @@ CLI `owed rule` and pi `owed_rule` return
 `Recorded #S ruling (<nodes>); delivered <k>/<n>`. The denominator includes
 successful, pending and failed role deliveries. Each delivery failure or
 unknown writer adds one line directing the reader to `owed why <node>`.
-Known sealed calls stay pending. The default receipt omits ruling bodies,
-follow-ups, active-block quotes and status brief; JSON/tool details retain
-complete plain-string follow-ups, preserving literal newlines and backslashes.
+Known calls that are neither running nor asking remain pending. For each
+node with such a known writer, the receipt adds:
+`<node>: writer call <rid> has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if <node> is halted, run owed resume <node> (owed decide records and resumes in one step)`.
+`owed rule` never sends follow-ups itself. Use the printed resume action for a
+halted node, or `owed decide <node> --text "<ruling>" --writer` to record the
+decision and resume in one step. Delivery remains the driver's next eligible
+pass; a recorded ruling is not proof of immediate delivery. Runtime delivery
+results add optional `finished: [{node, writer}]`; unknown writers retain the
+separate forwarding hint.
+
+The default receipt omits ruling bodies, follow-up messages, active-block
+quotes and status brief; JSON/tool details retain complete plain-string
+follow-ups, preserving literal newlines and backslashes.
 The separate decide receipt is specified in §8.3.1.
 
 Why's `Ruling to forward` contains only in-scope rulings the open slot writer
@@ -4955,10 +4974,10 @@ included, so no repair carries an undecided contract — if any review block on
 the current candidate has `needs: 'parent'` and no ruling naming
 the node (`--nodes` includes it; a `*` ruling is general guidance and does not
 count) has a seq above the block's, the action is a halt needing `human`:
-`review block #<seq> <obligation> needs a parent ruling: <note>; record
-\`owed rule --nodes <node> "<decision>"\`; the writer gets the ruling with the
-next repair` (one clause per such block; with a repair already outstanding the
-ruling reaches the writer with the following repair or the re-review). No repair follow-up is sent and none is
+`review asks: <ask> → owed decide <node> --text "<ruling>" --writer`
+(one clause per such block; extraction and presentation are in §9.2).
+With a repair already outstanding the ruling reaches the writer with the
+following repair or the re-review. No repair follow-up is sent and none is
 counted. That node-named ruling also clears the halt (§12.3); the block is then
 repaired as usual, and every repair message lists, first (0.7; before 0.7 after
 the review notes), the rulings covering the node recorded after the dispatch (`Rulings since
@@ -4991,7 +5010,7 @@ its `Rulings since dispatch:` block. Before all of this (review #680), when an a
 that latest submit still awaits a parent ruling, row 8 halts with the
 needs-parent halt text (also when no block is repairable): a repair, rebase or
 submit follow-up would make the unruled block stale and let a re-review bypass
-the parent question. Without any such block row 8 is unchanged.
+the parent question. The remaining row-8 behavior follows §12.5.4.
 
 Rebase or resubmit in row 8 (0.10, N1.4, wais #1375). Without a current
 candidate, the `rebase` follow-up is sent only when the slot has a rebase and no
@@ -5280,8 +5299,10 @@ invalidate candidates. Prospective policy behavior is unchanged.
 
 Rule text receipts use §9.3's delivery counts and forwarding guidance. Rule
 results add optional `delivery: {delivered:string[], pending:number,
-failures:string[], slots?: {node, writer?, followUp}[]}`; answers
-add the same as `rulingDelivery`. Pending counts applicable non-running launches
+failures:string[], slots?: {node, writer?, followUp}[], finished?: {node, writer}[]}`;
+answers add the same as `rulingDelivery`. A known non-running/non-asking writer
+adds the recorded-but-not-sent-now receipt line; rule never starts its
+follow-up. Pending counts applicable non-running launches
 and required not-yet-dispatched roles, skipping merged nodes. Request id is
 `owed-rule-<seq>-<rid>-<sha256(exact message body)[0:12]>`: identical bytes
 are idempotent, changed bytes produce a new request, avoiding request-conflict
@@ -5327,6 +5348,74 @@ A refused repair does not move the findings boundary; a delivered repair does.
 Recovery is bounded by retained evidence: if every refusal receipt is removed,
 old refusal cannot be inferred. All binding failures remain in the full receipt.
 
+### 12.5.4 Stopped writers and decision questions (0.26, WS)
+
+A successful sealed writer without a current candidate receives a submit
+reminder only when actual work remains. Outside ledger locks, after checking
+the current runner generation, the driver inspects worktree HEAD and dirtiness.
+In the ordinary row-8 path, the handed head is the latest submitted commit
+when it follows the latest rebase (including an executor-rebased submit),
+otherwise the current slot base. Clean HEAD equal to that head halts with
+`writer stopped without a candidate`; no submit reminder is sent. A different
+HEAD or dirty worktree can receive one submit reminder, then a halt if no
+candidate follows. Missing inspection facts halt conservatively with
+`cannot inspect writer worktree; no submit nudge sent`.
+
+A plan-invalidated candidate still receives its plan-changed resubmit message,
+even for the same clean commit; inspection does not suppress that route.
+Existing repair/ruling follow-up halts and the one-reminder bound remain.
+A writer interrupted with unknown tool outcomes retains the recovery route;
+a non-ok writer halt retains its status/error and any abandon guidance.
+
+Stopped-writer halts record the cause, then `writer says: "<final paragraph>"`
+and `→ owed decide <node> --text "<ruling>" --writer`. The quoted text is the
+last nonempty paragraph of the run's final reply (`RunView.result`), whitespace
+flattened to one line and bounded to 300 characters before JSON quoting/control
+escaping. A long paragraph ends in an ellipsis; missing text says
+`writer gave no final text`. Pruned runs retain a reply only while describe
+still supplies it. Wakes, default why and status Needs-you show that reply and
+the one decision command, keeping measurement/repair dumps in full evidence.
+The parser uses owed's own final trailer, so commands inside the writer's
+reply cannot replace the next action. The quote is context for the parent,
+never a candidate, measurement or acceptance receipt.
+
+Pending Git drift cannot leave a sealed writer silent after a rebase follow-up.
+The existing question, owner, report and unresolved-review priorities still
+apply. When that drift branch is reached and the writer is still running,
+wait; for a sealed writer, send a due named ruling follow-up before any
+stopped-writer halt. Otherwise inspect a **set of handed HEADs**: the last
+submitted commit, or the original dispatch base when there is no submit, plus
+`from` (pre-rebase slot base) of every later rebase of this attempt. This is
+not the last observed writer HEAD. A clean HEAD in that set halts immediately,
+naming the rebase follow-up and quoting the final reply. Missing inspection
+facts also halt. A HEAD outside the set or dirty worktree can get one additional
+submit reminder carrying the rebase instructions; sealing again without a
+candidate halts, naming the rebase and reminder. The bound is counted after
+the rebase follow-up and latest resume.
+
+After a pending-rebase halt, `owed decide <node> --text "<ruling>" --writer`
+records guidance and resumes. The next eligible pass delivers exactly one due
+ruling follow-up before halting again. If a ruling follow-up is later than
+both the rebase follow-up and latest resume, and the writer seals again
+without a new submit, the halt names that ruling follow-up instead. This
+check precedes HEAD/dirty inspection: even an unsubmitted commit outside the
+handed set, or dirty work left behind, cannot trigger another submit reminder.
+A refused ruling follow-up retains its rejection guidance. This is the same
+finished-ruling boundary as the ordinary writer-halt path; no send/halt loop
+or new ledger kind is introduced.
+
+Dispatch packets and writer follow-ups (rebase, repair, submit, plan-changed,
+ruling, interruption and report) carry this sentence:
+`If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.`
+Submit reminders also say:
+`If you stopped for a parent decision, do not submit: ask the question instead.`
+Actual runner questions keep the existing verbatim-question/answer flow;
+the driver never chooses an answer. Writer/reviewer messages stay English.
+Checks, reviews and merge gates are unchanged; old ledgers retain their replay
+states and keys, and recorded message retries keep their original bytes.
+Worktree facts can be unavailable, and pruned final replies may be lost;
+no new idle-watchdog guarantee for writing without a live call is added.
+
 ### 12.6 Review packet (D5)
 
 `reviewPacket(state, node, n)` (`src/views.ts`, pure) is the task of the
@@ -5355,7 +5444,9 @@ lines themselves are unchanged). Before that line (0.6.1 H2.3) it says that
 `--ok` means the candidate meets the node's goal as its title and brief state
 it, not only that the writer's report or evidence is accurate, and that a
 candidate or report saying the goal is not met is a `--block` (`--needs-parent`
-when the goal itself is in question). The driver does not parse review notes.
+when the goal itself is in question). The driver extracts an ask from review
+notes for presentation (§9.2); the recorded verdict and needs-parent flag,
+not inferred prose, control acceptance and repair routing.
 `reviewRuns(state, node)` = `max(derived review count, 1 if closure-review is
 required else 0)` runs per candidate (§6.2a); with `k = n - reviewerBase(state, node)`,
 `reviewObligations(state, node, n)` = `review` while `1 ≤ k ≤ derived review count`,
