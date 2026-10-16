@@ -21,8 +21,12 @@ Compatibility).
   could previously wait silently. After such a halt, the decision is
   delivered as exactly one ruling follow-up; a further seal without a new
   candidate halts naming it, with no submit nudge. Every writer message says
-  to ask the parent instead of submitting a candidate it believes fails
-  (SPEC §12.5.4).
+  to ask the parent instead of submitting a candidate it believes fails.
+  `owed rule` on a node whose known writer call has finished now says the
+  ruling was recorded but not sent, that the driver delivers it on its next
+  pass, and, for a halted node, to run `owed resume <node>` (or `owed
+  decide`, which records and resumes in one step); `rule` itself still
+  sends no follow-up (SPEC §9.3, §12.5.4).
 - **Asks say what is asked (AK).** A needs-parent review block shows `review
   asks: <the ask>`, not the head of the reviewer note. Trunk-conflict and
   trunk-red owner needs name the failing tests and the real exits instead of
@@ -36,14 +40,22 @@ Compatibility).
 - **`owed start --restart` (AK6).** Stops a running driver gracefully, waits
   for it and starts again; a graceful stop signals each driver process at
   most once, so repeating a restart is safe (SPEC §10.2, §12.8).
-- **Setup failures belong to the environment (IF).** A failure that ran no
-  test (no count, no failed name, not a timeout) of a merge-tree or trunk
-  invariant gets one automatic remeasure on the same key. A counted pass that
-  meets the spec then records `infra: <seq>` and satisfies the obligation:
-  no conflict, flaky block, waiver or debt. Hints say `setup failure (no
-  tests ran)` instead of suggesting a rebase, and the same setup failure on
-  two or more trees within 30 minutes raises one repository notice. Anything
-  with a test result keeps the existing conflict rules (SPEC §7.26).
+- **Setup failures belong to the environment (IF).** A setup failure is a
+  failed run of a counted check or invariant (its spec has `min_tests`, its
+  output parsed into a counts format, or an earlier run of it was counted)
+  that asserted no test result: no count, no failed name, not a timeout or
+  incomplete run. A single-node merge-tree or trunk invariant setup failure
+  gets one automatic remeasure on the same key, even without
+  `remeasure_on`; a node check's setup failure is retried after
+  `owed decide <node> --remeasure`. The next counted pass on that key that
+  meets the original spec records `infra: <seq>` and resolves the
+  consecutive setup failures before it: no conflict, flaky block, waiver or
+  debt. Hints say `setup failure (no tests ran)` instead of suggesting a
+  rebase, and the same setup failure on two or more trees within 30 minutes
+  raises one repository notice. `why --full` labels resolved setup failures
+  `infra`, and `report --metrics` counts infra receipts per obligation.
+  Anything with a test result keeps the existing conflict rules; batch
+  observations and trunk probes are not paired (SPEC §7.26, §9.4).
 - **Where the machine time goes (CO).** `owed report --cost [--since]
   [--json]` lists machine time per check and invariant (runs, total,
   median/p90, failures, lease wait), how often each invariant was measured
