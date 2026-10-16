@@ -213,9 +213,15 @@ test('AW #2090: two concurrent CLI adopts share each request\'s 600ms total budg
     assert.equal(existsSync(join(f.ledger.dir,'adopt-queue')),false);
     await sleep(200);await releaseMerge();
     const results = await outcomes;
+    // Each request is bounded by its own budget across both waits. Which lock exhausts it depends on scheduling:
+    // if the later-started adopter wins the released merge lock, the earlier one times out on the merge lock
+    // held by that adopter (#2812), not on the ledger lock. The lock name is incidental; the bound is the contract.
+    const holders = new Set([process.pid,...results.map(r=>r.pid)]);
     for (const result of results) {
       assert.equal(result.code,75,result.stderr);
-      assert.match(result.stderr,/ledger lock/);
+      const busy = /timed out waiting for the (merge|ledger) lock(?: held by pid (\d+))?/.exec(result.stderr);
+      assert.ok(busy,result.stderr);
+      if (busy[1] === 'merge' && busy[2] !== undefined) assert.ok(holders.has(Number(busy[2])),`merge lock holder ${busy[2]} is the test or the other adopter`);
       assert.ok(result.exited-since.get(result.pid)! <= 1600,'each request: 600ms total budget + 1s exit/scheduling allowance');
     }
     assert.deepEqual(await pendingFiles(f.pendingDir),[]);
