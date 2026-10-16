@@ -470,9 +470,11 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   // QT-R1 (3): every open question of a run is its own need, with its text and its own answer command (askingText).
   const asking = j.answerRetry ? [] : source.split('\n').filter(l => /\basks \(qid [^)]*\): /.test(l));
   if (asking.length) return asking.map(l => {
-    const question = oneLine(l.match(/asks \(qid [^)]*\): (.*?)(?= — the driver never answers|$)/)?.[1] ?? 'the run’s open question');
+    const trailer = l.lastIndexOf(' — the driver never answers; answer: ');
+    const body = trailer < 0 ? l : l.slice(0,trailer);
+    const question = oneLine(body.match(/asks \(qid [^)]*\): (.*)$/)?.[1] ?? 'the run’s open question');
     const rid = l.match(/\brun (\S+) asks \(qid /)?.[1], qid = l.match(/asks \(qid ([^,)]+)/)?.[1];
-    const command = l.match(/answer: (owed [^;\n`]+?)(?=;|$)/)?.[1]?.trim()
+    const command = (trailer < 0 ? undefined : l.slice(trailer).match(/^ — the driver never answers; answer: (owed [^;\n`]+); in pi: [^\n]*$/)?.[1]?.trim())
       ?? (asking.length > 1 && rid && qid ? `owed answer ${node} --rid ${rid} --qid ${qid} "<text>"` : `owed answer ${node} "<text>"`);
     return `Needs you: ${node} — decide ${question} → ${command}`;
   }).join('\n');
