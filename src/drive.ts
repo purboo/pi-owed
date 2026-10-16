@@ -883,6 +883,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
         const refused = opts.rejected.get(rf.send);
         return stoppedHalt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${reason})`);
       };
+      if (rf) return driftHalt(`writer stopped without a candidate after rebase follow-up ${follow.send}`);
       const work = opts.writerWork?.get(id);
       if (!work) return driftHalt(`cannot inspect writer worktree after rebase follow-up ${follow.send}; no submit nudge sent`);
       // WS5/WS-R2: handed HEADs are the last submit (else dispatch base) plus every later rebase `from` of this attempt.
