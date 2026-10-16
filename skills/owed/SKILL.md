@@ -14,9 +14,9 @@ The default `core` profile has seven direct tools:
 - `owed_why`: what a node still owes; `full:true` for evidence.
 - `owed_decide`: parent decision, answer and recovery.
 - `owed_drive`: one pass, or start/status/stop the background driver.
-- `owed_start`: preflight, init/update plan and start/reuse the driver.
+- `owed_start`: preflight, init/update plan and start/reuse the driver; `restart:true` drains it first.
 - `owed_submit`: submit from the writer's committed, clean slot.
-- `owed_review`: independent verdict on the candidate actually read.
+- `owed_review`: independent verdict on the candidate actually read; read rulings before `ack_rulings:"latest"`.
 
 Other tools remain registered but deferred: use `tool_search` when they are not declared, or the `owed <command>` CLI (`owed help`). At session start owed activates reachable `tool_search`, as the host's MCP extension does; if discovery cannot work it falls back to direct tools without removing active tools. `OWED_TOOLS=all` makes every tool direct and opts out of search activation.
 
