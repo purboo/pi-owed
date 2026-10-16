@@ -23,7 +23,7 @@ Other tools remain registered but deferred: use `tool_search` when they are not 
 Write the plan, then `owed start --plan <file>` (later `owed start` rereads its recorded source). The driver runs and wakes you with `Needs you:` / `Done:` lines. Act with `owed decide <node> --text "<decision and why>"`, `owed answer`, or the command the line gives; the running driver continues. Use `owed why <node>` for outstanding work and `owed why <node> --full` for evidence. Finish only when owed shows the node merged.
 
 Main agent = parent and delegated owner: plans, decisions and acceptance; owner tools default to `owner:pi`, no dialog unless `OWED_CONFIRM=owner`.
-Writer: implement only the packet's scope, commit and submit in its slot worktree.
+Writer: implement only the packet's scope, commit and submit in its slot worktree. If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.
 Reviewer: independently inspect the actual candidate and evidence, record a verdict, never edit.
 
 ## Six hard rules

@@ -42,6 +42,14 @@ An answered question still open after `drive.answer_grace_s` (default 600 second
 
 Single and batch CLI merges give `<node> merged (<commit12>); measured <n>, waived <n>, debt <n>` per member; debt counts only this merge's keys. Single merges retain deferred/coverage lines, batches retain dropouts and `Batch of <n>: <nodes>`. The post-commit receipt read is best-effort: if it fails the shortened merged line still means success, not a refusal. No provided current-key count means no debt field.
 
+## Stopped writers
+
+A successful sealed writer without a candidate gets a submit reminder only when actual HEAD/dirty inspection finds work; clean handed HEAD or unavailable inspection halts. Plan-changed same-commit resubmits keep their route. After a pending-rebase follow-up, handed HEADs are the latest submit (or dispatch base) plus every later rebase's `from`; clean membership halts, otherwise one reminder carries the rebase instruction, then a seal without submit halts. Running writers wait and actual questions keep their answer flow.
+
+Pending-rebase halts send a due named ruling follow-up first. After `owed decide ... --writer` records/resumes and that follow-up is delivered, a later seal without a new submit halts naming it, with zero extra submit sends, if it is later than both the rebase follow-up and latest resume. This takes precedence over HEAD/dirty inspection, including unsubmitted commits outside the handed set. Ordinary repair/ruling budgets remain binding.
+
+Wakes/default why/status give `writer says: "<final paragraph>"` (last nonempty paragraph, flattened, at most 300 characters before escaping, ellipsis on truncation) or `writer gave no final text`, then `owed decide <node> --text "<ruling>" --writer`. Full evidence retains the halt cause and failures. Pruned replies require retained runner text. Packets and writer follow-ups instruct questions for decisions outside writes and prohibit known failing submissions; submit reminders say to ask if stopped for a parent decision. No new ledger kind/key or idle-watchdog guarantee is added.
+
 ## Models and reviewer runs
 
 Model-warning acknowledgments preserve candidate commits/keys and never clear independent review blocks; unknown pool branches do not invalidate a proved membership match.

@@ -226,6 +226,35 @@ and `owed drive --stop` without `--now` signal each pid/start-time process at
 most once: repeated requests wait, never escalate. Preflight and foreign-host
 protection still apply (SPEC §10.2, §12.8).
 
+### Stopped writers and parent questions
+
+When a successful writer finishes without a candidate, the driver inspects its
+worktree. A clean HEAD at the handed commit halts without a submit reminder;
+a new commit or dirty worktree can receive one reminder, then halts if nothing
+is submitted. Plan-changed resubmissions still allow the same clean commit.
+After a pending-rebase follow-up, no new work means clean HEAD at any of the
+last submitted commit (or original dispatch base) and each later rebase's
+pre-rebase base; work outside that set can receive one reminder carrying the
+rebase instructions. Unavailable inspection facts halt conservatively.
+
+Stopped-writer wakes, default why and status quote `writer says: "<final
+paragraph>"` and offer `owed decide <node> --text "<ruling>" --writer`. The
+last nonempty paragraph becomes one line of at most 300 characters, ending
+with an ellipsis if truncated; missing text is explicit. Full evidence keeps
+the cause, run and failure details. Pruned replies depend on what the runner
+still retains. Real questions keep their existing answer flow.
+
+A due ruling follow-up takes precedence over a pending-rebase halt. After
+that follow-up, if the writer seals again without a new submit, the driver
+halts naming it and sends no further submit reminder. This applies when the
+ruling follow-up follows both the rebase follow-up and latest resume, even
+with dirty files or an unsubmitted commit outside the handed set (SPEC §12.5.4).
+
+Writer packets/follow-ups say to ask the parent a question when a decision
+exceeds allowed writes, and never submit a candidate believed to fail its
+checks. Submit reminders also say to ask when stopped for a parent decision.
+A reminder is not permission to submit known failing work.
+
 ### Quiet output and evidence
 
 Unresolved needs-parent reviews say `review asks: <ask>` and give one
@@ -497,7 +526,11 @@ Prefer `owed decide <node[,node...]> --text "<decision>"` (pi
 `owed_decide {nodes: ["A"], text: "..."}`) for guidance that combines ruling,
 question answer and recovery. It answers at most one open question per node
 across writer and reviewer runs and resumes halted/held nodes by default.
-`--writer` requires resubmission; `--no-resume` keeps the halt. Add
+`--writer` requires resubmission; `--no-resume` keeps the halt. When `owed rule` finds a
+known writer call neither running nor asking, its receipt says the ruling was
+recorded but not sent now; the driver delivers it on its next pass. A halted
+node needs `owed resume <node>`; decide records and resumes in one step.
+`owed rule` never sends follow-ups itself (SPEC §9.3). Add
 `--writes path` (or `+path`) to amend the recorded plan with the same authority as amend,
 `--defer INV` as owner to retain current merge-key debt, `--after FIX` to wait,
 or `--remeasure` to request same-key invariant measurement. After/remeasure
@@ -1142,8 +1175,9 @@ The current open slot is never touched, nor a finished worktree that contains an
 
 ### 0.26
 
-Review needs quote the actual ask; insufficient ruling acknowledgment refuses
-before recording (`--ack-rulings latest` records a number). Ready nodes explain
+Review needs quote the actual ask; stopped writers quote their final reply
+and ask for a parent decision instead of an empty submit. Insufficient ruling
+acknowledgment refuses before recording (`--ack-rulings latest` records a number). Ready nodes explain
 why dispatch is skipped, writes amendments accept bare/covered scopes, and
 unrelated node-only plan edits no longer invalidate a measured batch. Setup
 failures can resolve through a qualifying exact-key counted pass; upgrade every
@@ -1151,7 +1185,7 @@ reader before the first incompatible executor receipt. `report --cost` and
 reads/timeout warnings expose measurement cost. `start --restart` is graceful
 and safely repeatable; version commands and operation-specific Git recovery
 hints improve diagnostics. See SPEC §7.21, §7.26, §8.3.1, §9.2, §9.6–9.8,
-§10.2 and §12.8.
+§10.2, §12.5.4 and §12.8.
 
 ### 0.25
 
