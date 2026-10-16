@@ -97,32 +97,40 @@ test('QN1: the default 600-second grace logs a quiet line without writing the le
   } finally { await f.cleanup(); }
 });
 
-test('QN1 live queue: answer-bound hibernated call stays asking with identical qid/rev until the 600s grace, then one retry wake', async () => {
-  const f = await fixture(), realNow = Date.now;
-  try {
-    const e = await f.answer(); // durable rule exists while answer-bound resume waits for a provider slot
-    const originalQuestion = structuredClone(f.view.questions);
-    const lines: Record<string, unknown>[] = [];
-    const driver = new Driver({ cwd: f.cwd, dsa: f.dsa, json: true, log: l => lines.push(JSON.parse(l)), session: null });
-    const recorded = Date.parse(e.ts);
-    for (const age of [0, 60_000, 599_999]) {
-      Date.now = () => recorded + age;
-      await driver.pass();
-      assert.equal(lines.filter(x => wakeReport(x)).length, 0, 'the answer rule resolves the question while resume is queued');
-    }
-    assert.equal(lines.length, 1);
-    assert.equal(lines[0]!.text, `a: answered #${e.seq}, waiting for the run to resume`);
-    for (const age of [600_000, 601_000, 1_800_000]) {
-      Date.now = () => recorded + age;
-      await driver.pass();
-    }
-    const wakes = lines.filter(x => wakeReport(x));
-    assert.equal(wakes.length, 1); assert.equal(wakes[0]!.answerRetry, true);
-    assert.match(String(wakes[0]!.text), /^a: answered at #\d+ \(\d\d:\d\d\), still asking after 10m: retry with owed answer 'a' --rid '[^']+' --qid 'q1' /);
-    assert.equal(f.view.state, 'asking'); assert.deepEqual(f.view.questions, originalQuestion);
-    assert.deepEqual(wakes[0]!.qid, e.answer!.qid); assert.equal(wakes[0]!.rev, e.answer!.rev);
-  } finally { Date.now = realNow; await f.cleanup(); }
-});
+for (const [suffix, hour, minute] of [['', 12, 0], [' (local 23:55 across midnight)', 23, 55]] as const) {
+  test(`QN1 live queue: answer-bound hibernated call stays asking with identical qid/rev until the 600s grace, then one retry wake${suffix}`, async t => {
+    const recorded = new Date(2026, 0, 15, hour, minute).getTime();
+    // Ledger.append uses new Date(), so pin both it and Date.now before creating any ledger entries.
+    t.mock.timers.enable({ apis: ['Date'], now: recorded });
+    let f: Awaited<ReturnType<typeof fixture>> | undefined;
+    try {
+      f = await fixture();
+      const e = await f.answer(); // durable rule exists while answer-bound resume waits for a provider slot
+      assert.equal(e.ts, new Date(recorded).toISOString(), 'the durable answer uses the pinned local clock');
+      const originalQuestion = structuredClone(f.view.questions);
+      const lines: Record<string, unknown>[] = [];
+      const driver = new Driver({ cwd: f.cwd, dsa: f.dsa, json: true, log: l => lines.push(JSON.parse(l)), session: null });
+      for (const age of [0, 60_000, 599_999]) {
+        t.mock.timers.setTime(recorded + age);
+        await driver.pass();
+        assert.equal(lines.filter(x => wakeReport(x)).length, 0, 'the answer rule resolves the question while resume is queued');
+      }
+      assert.equal(lines.length, 1);
+      assert.equal(lines[0]!.text, `a: answered #${e.seq}, waiting for the run to resume`);
+      for (const age of [600_000, 601_000, 1_800_000]) {
+        t.mock.timers.setTime(recorded + age);
+        await driver.pass();
+      }
+      const wakes = lines.filter(x => wakeReport(x));
+      assert.equal(wakes.length, 1); assert.equal(wakes[0]!.answerRetry, true);
+      const shown = clockTime(e.ts, recorded + 600_000); // the one retry wake is recorded at the grace boundary
+      assert.equal(shown, suffix ? '2026-01-15 23:55' : '12:00', 'only the cross-midnight answer needs a local date');
+      assert.equal(wakes[0]!.text, `a: answered at #${e.seq} (${shown}), still asking after 10m: retry with ${answerRetry('a', e)}`);
+      assert.equal(f.view.state, 'asking'); assert.deepEqual(f.view.questions, originalQuestion);
+      assert.deepEqual(wakes[0]!.qid, e.answer!.qid); assert.equal(wakes[0]!.rev, e.answer!.rev);
+    } finally { t.mock.timers.reset(); await f?.cleanup(); }
+  });
+}
 
 test('QN1 repair #1514: grace retry held while pi is busy survives owed resume and is delivered exactly once', async () => {
   const f = await fixture(), l = logFixture(f.root), realNow = Date.now;
