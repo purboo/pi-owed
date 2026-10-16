@@ -186,6 +186,8 @@ export interface ObsEntry extends Base {
   waits_on?: string[];
   /** MS4 (0.20): failing test names excused by active quarantine entries (they neither passed nor failed). */
   quarantined?: string[];
+  /** QS4 (0.27): active quarantine names that passed in a complete native trunk/merge-tree run; display only. */
+  quarantine_passed?: string[];
   /** RO3: this observation consumed the one automatic invariant remeasure on its key. */
   auto_remeasure?: true;
   /** IF2 (0.26): the immediately preceding same-key setup failure resolved by this counted pass. */
