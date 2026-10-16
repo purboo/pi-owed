@@ -6,9 +6,9 @@ Read this topic when the corresponding action or failure is relevant. Return to 
 
 When one shared failure blocks several nodes, inspect the repository notice and fix the common cause once; name the exact failed test in the fix node's brief. Eligible failures get one same-key retry, accepted non-halted fix candidates go first, and parked nodes reconsider when trunk/evidence/plan/candidate/defer changes. Mixed failures and three distinct failing merge keys still halt. To retain debt knowingly, the parent acting as owner uses `owed decide A,B --defer INV --text "<reason>"`, or records a narrow `allow[].defer` permission: executor deferral requires matching signatures plus a pass and failure on that merge key. Name-only matching supports waiting, never automatic deferral; debt stays visible.
 
-Set invariant-only `remeasure_on` to literal case-sensitive raw diagnostic substrings (empty list disables). Every failure must match; missing/incomplete diagnostics, titles, and error/timeouts do not qualify. Unparsed failures use captured raw output. The policy changes no measurement key or exhausted budget and reacts to current measurements, not cached failures.
+Set invariant-only `remeasure_on` to literal case-sensitive raw diagnostic substrings (empty list disables configured matching, not eligible shared/setup retries). Every failure must match; missing/incomplete diagnostics, titles, and error/timeouts do not qualify. Unparsed failures use captured raw output. The policy changes no measurement key or exhausted budget and reacts to current measurements, not cached failures.
 
-Preserve both automatic votes: repeat pools them; otherwise pass plus fail is an owner conflict even on unchanged keys. Exact-key evidence governs; a specific-node defer neither resolves trunk conflict nor authorizes other merges/adoption. Explicit manual remeasurement remains available after the durable automatic budget is used.
+Preserve both behavioural automatic votes: repeat pools them; otherwise pass plus fail is an owner conflict even on unchanged keys. The counted setup-pair exception below removes only zero-result failures, not behavioural votes. Exact-key evidence governs; a specific-node defer neither resolves trunk conflict nor authorizes other merges/adoption. Explicit manual remeasurement remains available after the durable automatic budget is used.
 
 Compare `v2|` failure signatures by masked first error, innermost repository test `path:line` and independently masked expected/actual values (120 characters each); historical untagged signatures never match v2, including for defer carry.
 
@@ -48,9 +48,19 @@ Merge refusals, driver merge-refused halts and `why` blocks name other-tree fail
 
 Writes-grant recovery: after adding a covering allowance to a failed writes key, submit a new commit (an amended commit message suffices); attribution then `attest --rerun` on that key creates a conflict. Mixed trunk-red refusals still include the uncovered-path allow hint.
 
-Negative observations may only be cleared by the rules. Execution failures require attribution on the original key/commit/base: another failure clears the old block; a pass creates a conflict that only an owner waiver accepting the risk of the corresponding seq clears (the main agent decides it, with a reason).
+Negative observations may only be cleared by the rules. Apart from validated setup pairing, execution failures require attribution on the original key/commit/base: another failure clears the old block; a pass creates a conflict that only an owner waiver accepting the risk of the corresponding seq clears (the main agent decides it, with a reason).
 
 Do not directly edit the ledger, blobs, or closure to bypass rejection. Defer only permits a specific merge to retain invariant debt; it is not a pass. Invariants cannot be waived.
+
+## Setup failures
+
+A counted check/invariant `fail` that asserted no test result is a setup failure: tests absent/zero, no failed names or nonzero pass/fail/skip counts, no timeout or incomplete execution. Executor `error` is excluded, and every recorded repeat run must qualify. Counted means `min_tests`, parsed format or earlier counted executor history for the subject/obligation.
+
+Single-node merge-tree/trunk invariants get one durable same-key retry without needing `remeasure_on`; node checks use attribution even on the current candidate key. The next same-subject/obligation/key counted pass can record `obs.infra` naming the immediately preceding setup failure, resolving its maximal consecutive setup sequence with no conflict, flaky block, waiver or debt. Positive count, exit 0, fail 0 and the failed run's original spec must hold for every executed repeat run. Batch observations/probes do not pair; real test results, timeouts/errors and intervening measurements prevent resolution. Without `infra`, old conflict rules remain.
+
+Refusals/halts classify the latest measurement on the failing key, quote the normalized setup error, and say `fix it, then owed decide <node> --remeasure`, not rebase. This decision lets the driver retry current candidate-check setup failures too. Matching captured signatures on at least two subjects within thirty minutes give one repository notice per signature/trunk; candidate and merge tree of a node count as one subject. Signatures/notices are diagnostics only: the qualifying counted pass on the exact key is the proof. Full why keeps referenced failures labelled `infra`; metrics count pairing receipts, once per receipt even if it resolves several predecessors.
+
+Upgrade every reader before 0.26 executor measurements can write these automatic receipts; see [compatibility](compatibility.md).
 
 ## Debt, templates and repeated checks
 
@@ -83,6 +93,12 @@ A failure before the command runs (tree preparation, spawn, `setup`) or a disk-f
 `repeat: {runs: N, need: K}` (`1 <= K <= N <= 9`, need defaults to N) measures sequentially in one tree, stopping when K passes are reached or unreachable; errors stop as errors. It is part of the key, refused on red/mutants checks, and honored at merge. Per-run `min_tests` applies; do not sum runs to meet it. `noisy (2/3 passed)` describes disagreement, not a separate block. A column-0 `owed-counts {"pass":2,"fail":1,"failed":["latency gate"]}` supplies counts (last valid line wins; indented/comments ignored); only this format's fail > 0 fails even on exit 0. Names from owed/TAP/cargo lead per-test failure quotes, including reused observations; only anonymous failures retain the bounded last-output fallback.
 
 `min_tests` counts one TAP, jest/vitest or pytest summary (the last in the log); cargo `test result:` lines add up. Do not loop a TAP command to reach `min_tests` (`owed_plan` warns about such a check); raise the number of tests. Only the parent/owner may correct a mistaken threshold under the contract's or a ruling's authority, with a reason; never loosen it merely to turn a failure green.
+
+## Measurement cost
+
+`owed report --cost [--since <seq|ISO>] [--json]` orders checks/invariants by total machine time: observation executions, total/median/nearest-rank p90 duration, failures, setup failures separately and lease wait. Checks sharing an id aggregate across nodes; repeat observations count once. Invariants add measured-versus-recorded merges (batch measurements count for each member), five invalidating reads prefixes (first two path segments), and dominant-prefix narrowing advice. Same-key retries add cost, not invalidations; refused trees are not trunk samples. The first in-window key retains its historical predecessor for comparison.
+
+Cost is CLI-only and exclusive with metrics/counterfactual; since is exclusive, until metrics-only. Missing observations have no inferred time; missing measured commits prevent prefix attribution, and command/closure changes are not reads-prefix causes. Setup counts here are diagnostic heuristics, not the reducer's acceptance predicate. Plan lint warns for `**`/at least 90% reads and base-pinned closure intersections; default status warns at 80% of an invariant timeout from its latest landed/pure trunk pass. Lint uses `warning: ` and deduplicates receipt strings; unchanged start does not repeat cost lint. None of this changes a gate.
 
 ## Sweeps, escapes and reports
 
