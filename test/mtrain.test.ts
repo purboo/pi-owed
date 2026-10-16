@@ -144,8 +144,11 @@ test('MT4: a batch invariant fail is recorded unattributed, refused, not batched
     const mid = (await entries(r)).length, invRuns = await runs(r);
     await assert.rejects(ops.merge({ cwd: r.cwd, as: parent, node: 'b' }), /invariant inv new debt/);
     const own = (await entries(r)).slice(mid).filter((e): e is Obs => e.kind === 'obs' && e.obligation === 'inv:inv');
-    assert.equal(await runs(r), invRuns + 1, 'measured again on the single-member tree');
-    assert.deepEqual(own.map(e => [e.merging, e.batch, e.verdict, e.key]), [['b', undefined, 'fail', added.find(e => e.obligation === 'inv:inv')!.key]]);
+    // IF1: the single merge's no-result failure gets one bounded setup retry; the batch never does.
+    assert.equal(await runs(r), invRuns + 2, 'measured and retried once on the single-member tree');
+    const key = added.find(e => e.obligation === 'inv:inv')!.key;
+    assert.deepEqual(own.map(e => [e.merging, e.batch, e.verdict, e.key, e.auto_remeasure, e.infra]),
+      [['b', undefined, 'fail', key, undefined, undefined], ['b', undefined, 'fail', key, true, undefined]]);
     s = await ops.status({ cwd: r.cwd });
     assert.equal(s.nodes.a!.phase, 'merged');
     assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);

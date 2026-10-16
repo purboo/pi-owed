@@ -28,6 +28,8 @@ export interface Metrics {
   decisions: number; actsPerDecision: number | null;
   latency: { phases: { measure: DurationMetrics; review: DurationMetrics; mergeWait: DurationMetrics }; /** MX3 */ leaseWaitMs: DurationMetrics };
   reviews: { sameModel: number };
+  /** IF2: setup failures resolved by counted passes, per obligation. */
+  infra: { total: number; byObligation: Record<string,number> };
   grants: { total: number; perMergedNode: number | null };
   since: number | string; until: number | string | null; mergedNodes: number; merged: MergedMetric[];
   interruptions: { total: number; halts: number; answers: number; perMergedNode: number | null; /** MX1: driver halts by class */ byClass: Record<InterruptionClass, number> };
@@ -165,7 +167,7 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
   const actTargets: string[][] = [], decisionKeys = new Set<string>(), countedPlans = new Set<number>();
   interface Phase { submit?: Entry; measured?: Entry; accepted?: Entry }
   const phases = new Map<string, Phase>(), phaseSamples: { measure: (number | null)[]; review: (number | null)[]; mergeWait: (number | null)[] } = { measure:[], review:[], mergeWait:[] };
-  const leaseWaits: number[] = [];
+  const leaseWaits: number[] = [], infra: Metrics['infra'] = { total:0, byObligation:{} };
   const batchNodes = new Map<number,string[]>();
   for (const e of history) if (e.kind === 'resume' && e.batch !== undefined) {
     const nodes = batchNodes.get(e.batch) ?? []; if (!nodes.includes(e.node)) nodes.push(e.node); batchNodes.set(e.batch,nodes);
@@ -201,6 +203,9 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     }
     if (e.kind === 'halt') lastHalts.set(e.node,e.reason);
     if ((e.kind === 'obs' || e.kind === 'merge') && e.lease_wait_ms !== undefined && included(e)) leaseWaits.push(e.lease_wait_ms);
+    if (e.kind === 'obs' && e.infra !== undefined && included(e)) {
+      infra.total++; infra.byObligation[e.obligation] = (infra.byObligation[e.obligation] ?? 0) + 1;
+    }
     trackPhase(phases,e);
     if (e.kind === 'genesis' || e.kind === 'plan') {
       const p = nextPlan; if (!p) throw new OwedError(`Missing plan ${e.plan}`, 'internal');
@@ -258,7 +263,7 @@ export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<str
     parentActs:{total:parentActsTotal,perMergedNode:ratio(parentActsTotal,n),byClass,byNode,perMergedNodeAttributed:ratio(attributed,n),pending,unattributed,mergedOnly:{total:mergedOnly,perMergedNode:ratio(mergedOnly,n)}},
     decisions:decisionKeys.size,actsPerDecision:ratio(parentActsTotal,decisionKeys.size),
     latency:{phases:{measure:durations(phaseSamples.measure),review:durations(phaseSamples.review),mergeWait:durations(phaseSamples.mergeWait)},leaseWaitMs:durations(leaseWaits)},
-    reviews:{sameModel:sameModelReviews(history,included)},
+    reviews:{sameModel:sameModelReviews(history,included)},infra,
     grants:{total:grantsTotal,perMergedNode:ratio(grantsTotal,n)},
     interruptions:{total:halts.length+answers,halts:halts.length,answers,perMergedNode:ratio(halts.length+answers,n),byClass:interruptionsByClass},halts,
     haltReasons:{decision:top('decision'),'no-decision':top('no-decision')},
@@ -298,7 +303,7 @@ export function renderMetrics(m: Metrics): string {
     `Attributed parent acts per merged node: ${number(m.parentActs.perMergedNodeAttributed)}; pending ${number(m.parentActs.pending)}; unattributed ${number(m.parentActs.unattributed)}`,
     `Parent acts by node: ${Object.entries(m.parentActs.byNode).sort(([a],[b]) => a.localeCompare(b)).map(([id,v]) => `${id} ${number(v)}`).join(', ') || 'none'}`,
     `Reviews by the writer's model: ${m.reviews.sameModel}`,
-    `Grants: ${m.grants.total}; per merged node ${number(m.grants.perMergedNode)}`,
+    `Grants: ${m.grants.total}; per merged node ${number(m.grants.perMergedNode)}; Infra: ${m.infra.total}; by obligation: ${Object.entries(m.infra.byObligation).sort(([a],[b]) => a.localeCompare(b)).map(([id,count]) => `${id} ${count}`).join(', ') || 'none'}`,
     `Driver halts + answers per merged node (partial): ${number(m.interruptions.perMergedNode)} (${m.interruptions.total} total: ${m.interruptions.halts} halts, ${m.interruptions.answers} answers)`,
     `Halts: decision ${m.halts.filter(h => h.class === 'decision').length}, no-decision ${m.halts.filter(h => h.class === 'no-decision').length}`,
     `Halts by class (recorded text): ${Object.entries(m.interruptions.byClass).filter(([,c]) => c > 0).map(([cls,c]) => `${cls} ${c}`).join(', ') || 'none'}; state-based classes: owed report --counterfactual`,

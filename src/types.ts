@@ -188,6 +188,8 @@ export interface ObsEntry extends Base {
   quarantined?: string[];
   /** RO3: this observation consumed the one automatic invariant remeasure on its key. */
   auto_remeasure?: true;
+  /** IF2 (0.26): the immediately preceding same-key setup failure resolved by this counted pass. */
+  infra?: number;
   /** RO: unique configured literals matching every failure, for bounded replay provenance. */
   remeasure_match?: string[];
   /** MT4 (0.21): measured on a batch merge tree (members in order); never `merging`, never a block. */

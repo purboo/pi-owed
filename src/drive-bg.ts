@@ -457,6 +457,9 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   if (j.scope === 'repo' || (j.node === DRIFT_NODE && j.do === 'notify' && j.qid === undefined && !/\basks \(qid /.test(String(j.text ?? '')))) return `Needs you: ${text}`;
   if (typeof j.node !== 'string') return undefined;
   const node = oneLine(j.node), source = String(j.text ?? j.detail ?? text);
+  // IF3/IF5: preserve the setup remedy in halt wakes instead of treating it as a measurement dump.
+  const setup = source.match(/^(?:merge refused: )?setup failure \(no tests ran\): (.*?) — likely the environment;/)?.[1];
+  if (setup) return `Needs you: ${node} — setup failure (no tests ran): ${oneLine(setup)} — likely the environment; fix it, then owed decide ${node} --remeasure`;
   // QT5: an answered-but-still-asking line already reads `<node>: answered at #<seq> (HH:MM), still asking after <m>m: retry with <command>`.
   if (j.answerRetry && source.includes(': retry with owed answer ')) return `Needs you: ${oneLine(source)}`;
   // QT-R1 (2): the reported findings are the payload: the plain line, then the report tail the notice carries.
