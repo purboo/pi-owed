@@ -177,6 +177,33 @@ export function effectiveWritesOverlap(s: State, a: string, b: string): boolean 
   const aSyntax = writesSyntax(planForWrites(s,a)), bSyntax = writesSyntax(planForWrites(s,b));
   return writesOverlap(pa, pb, aSyntax, bSyntax) || ga.some(p => pb.some(w => matchesWrite(p, w, bSyntax)) || gb.includes(p)) || gb.some(p => pa.some(w => matchesWrite(p, w, aSyntax)));
 }
+/** WF2: timing only; the block still binds acceptance and merge and may be waived at any time. */
+export function heldFlaky(s: State, node: string, block: Block): boolean {
+  const c = s.nodes[node]?.candidate;
+  if (block.state !== 'flaky' || !c || block.key === c.keys[block.obligation]) return false;
+  const fail = entriesOf(s).find(e => e.seq === block.seq);
+  return fail?.kind === 'obs' && fail.merging === undefined && !counted(s,node,block.obligation,c.keys[block.obligation] ?? '').some(e => e.verdict === 'pass');
+}
+/** WF1: the attribution observation that made this execution block flaky. */
+export function flakyPass(s: State, b: Block, before = Infinity): ObsEntry | undefined {
+  return entriesOf(s).find((e): e is ObsEntry => e.kind === 'obs' && !!e.attribution && e.verdict === 'pass' && e.subject === b.node && e.obligation === b.obligation && e.key === b.key && e.seq > b.seq && e.seq < before);
+}
+export function heldFlakyText(s: State, node: string, b: Block): string {
+  return `waiting for ${b.obligation} on candidate ${s.nodes[node]?.candidate?.commit.slice(0,12)} before deciding flaky #${b.seq}`;
+}
+/** Shared diagnostic text, with no effect on keys, verdicts or block state. */
+export function flakyBlockText(s: State, b: Block): string {
+  const fail = entriesOf(s).find(e => e.seq === b.seq), pass = flakyPass(s,b), c = s.nodes[b.node]?.candidate;
+  if (fail?.kind !== 'obs' || !pass) return `flaky block #${b.seq} on ${b.obligation}`;
+  const names = fail.failed ?? fail.counts?.failed ?? [];
+  let text = `flaky block #${b.seq} on ${b.obligation}${fail.merging !== undefined ? ` (merge key ${b.key.slice(0,12)})` : ''}: ${fail.commit.slice(0,12)} failed #${fail.seq} (${names.slice(0,3).join(', ') || 'unknown failed tests'}${names.length > 3 ? `, +${names.length-3}` : ''}) → passed #${pass.seq} on the same key; a pass does not erase a failure: accept the risk (owed waive ${b.node} ${b.obligation} --accept-risk ${b.seq} --reason "…") or fix it`;
+  if (fail.merging === undefined && c && b.key !== c.keys[b.obligation]) {
+    const obs = counted(s,b.node,b.obligation,c.keys[b.obligation] ?? ''), latest = obs.findLast(e => e.verdict !== 'error');
+    const currentBlock = s.nodes[b.node]?.blocks.findLast(x => x.kind === 'exec' && active(x) && x.obligation === b.obligation && x.key === c.keys[b.obligation]);
+    text += `; current candidate ${c.commit.slice(0,12)} ${latest ? `${latest.verdict === 'pass' ? 'passed' : 'failed'} #${latest.seq}${latest.verdict === 'fail' && currentBlock ? ` (block #${currentBlock.seq})` : ''}` : 'not measured yet'}`;
+  }
+  return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => c === '\\' ? '\\\\' : `\\u${c.charCodeAt(0).toString(16).padStart(4,'0')}`);
+}
 /** Why the driver must leave an owner decision alone; shared by dispatch and its views. */
 export function ownerNeeded(s: State, node: string): string | undefined {
   const n = s.nodes[node];
@@ -186,13 +213,13 @@ export function ownerNeeded(s: State, node: string): string | undefined {
     const k = driveReviewerSlot(entries.find(e => e.seq === seq)?.by ?? '', node, n.slot?.attempt ?? 0);
     return !!n.slot?.open && s.plan.nodes.some(x => x.id === node) && k !== undefined && k <= Math.max(nodeReview(s, node).count, 1);
   };
-  const ownerBlock = n.blocks.filter(b => b.state === 'flaky' || (b.state === 'active' && b.kind === 'judgment' && (b.rank ?? 0) >= 2 && !((b.rank ?? 0) <= 2 && driverAuthored(b.seq))));
-  const text = (b: Block): string => `${b.state === 'flaky' ? 'flaky' : `rank ${b.rank} review`} block #${b.seq} on ${b.obligation} needs the owner`;
+  const ownerBlock = n.blocks.filter(b => !heldFlaky(s,node,b) && (b.state === 'flaky' || (b.state === 'active' && b.kind === 'judgment' && (b.rank ?? 0) >= 2 && !((b.rank ?? 0) <= 2 && driverAuthored(b.seq)))));
+  const text = (b: Block): string => b.state === 'flaky' && b.kind === 'exec' ? flakyBlockText(s,b) : `rank ${b.rank} review block #${b.seq} on ${b.obligation} needs the owner`;
   if (n.slot?.open && n.candidate) {
     for (const i of n.items) if (i.status === 'D') {
-      if (i.mark === '⊤') return `${i.obligation}: ${i.detail}`;
       const b = ownerBlock.find(b => b.obligation === i.obligation);
       if (b) return text(b);
+      if (i.mark === '⊤') return `${i.obligation}: ${i.detail}`;
       if (i.obligation === 'review' && nodeReview(s, node).min_rank > 2) return `review requires rank ${nodeReview(s, node).min_rank}: only the owner can record it`;
     }
     return undefined;
@@ -366,8 +393,9 @@ function item(s: State, subject: string, obligation: string, key: string, mergin
     out.evidence = [...new Set([...out.evidence, ...blocks.map(b => b.seq)])];
     const currentFailed = out.mark === '✘';
     if (out.mark !== '⊤') out.mark = '⛔';
-    out.discharger = out.mark === '⊤' || blocks.some(b => b.state === 'flaky' || (b.kind === 'judgment' && (b.rank ?? 0) >= 2)) ? 'owner' : blocks.some(b => b.kind === 'judgment') ? 'reviewer' : currentFailed ? 'writer' : 'executor';
-    out.detail = `${obligation} still blocked: ${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' flaky' : ''}`).join(', ')}`;
+    const actionable = blocks.filter(b => !heldFlaky(s,subject,b));
+    out.discharger = out.mark === '⊤' || actionable.some(b => b.state === 'flaky' || (b.kind === 'judgment' && (b.rank ?? 0) >= 2)) ? 'owner' : actionable.some(b => b.kind === 'judgment') ? 'reviewer' : currentFailed ? 'writer' : 'executor';
+    out.detail = actionable.length ? `${obligation} still blocked: ${actionable.map(b => b.state === 'flaky' && b.kind === 'exec' ? flakyBlockText(s,b) : `#${b.seq}`).join(', ')}` : blocks.map(b => heldFlakyText(s,subject,b)).join('; ');
   }
   if (obligation === 'writes') {
     const waiting = writesWaiting(s,subject);

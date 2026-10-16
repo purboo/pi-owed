@@ -290,7 +290,9 @@ test('pi delegated path (OWED_CONFIRM unset): owed_waive, owed_adopt, owner owed
       assert.notEqual(w.isError, true, text(w));
       e = (await entries(r.cwd)).at(-1)!;
       assert.ok(e.kind === 'waive' && e.by === 'owner:pi' && e.channel === 'delegated' && e.reason === 'generated file outside writes is fine', JSON.stringify(e));
-      assert.match(text(w), /\(delegated\)/);
+      assert.match(text(w), /^waived a\/writes #\d+: debt recorded\n/);
+      assert.match(text(w), /Details: owed why a --full/);
+      assert.equal((w.details as { channel: string }).channel, 'delegated');
       assert.match((await ops.why({ cwd: r.cwd, node: 'a' })).items.find(i => i.obligation === 'writes')!.detail, /^writes owner waived: generated file outside writes is fine \(delegated\)$/);
       const head = await commitAt(r.cwd, { 'hotfix.txt': 'h\n' });
       const ad = await call('owed_adopt', { note: 'hotfix reviewed by the main agent' });
