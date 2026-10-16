@@ -351,23 +351,23 @@ export function toRunView(rid: string, d: Json): RunView {
   const base = { rid, ...(typeof model === 'string' && model.trim() ? { model } : {}), ...(typeof d.wid === 'string' ? { wid: d.wid } : {}), ...(typeof d.wid === 'string' && d.wid && key !== undefined ? { to: `${d.wid}/${key}` } : {}), ...(typeof d.spec_digest === 'string' ? { spec_digest: d.spec_digest } : {}),
     ...(d.labels && typeof d.labels === 'object' ? { labels: d.labels as Record<string, string> } : {}) };
   const raw = str(d.state);
+  const calls = Array.isArray(d.calls) ? d.calls as Json[] : [];
+  const result = typeof d.result === 'string' ? d.result : calls.map(c => c.result ?? c.output).filter((v): v is string => typeof v === 'string').join('\n');
   if (raw === 'absent') return { ...base, state: 'absent' };
   if (raw === 'pending') return { ...base, state: 'queued' };
   // A rejected run never starts: it is final, like a sealed run that failed.
   if (raw === 'rejected') return { ...base, state: 'sealed', status: 'rejected', ...(typeof d.reason === 'string' ? { error: d.reason } : {}) };
   if (raw === 'pruned') {
     const p = (d.pruned ?? {}) as Json;
-    return { ...base, state: 'pruned', status: wfStatus(p.status) ?? 'unknown' };
+    return { ...base, state: 'pruned', status: wfStatus(p.status) ?? 'unknown', ...(result ? { result } : typeof p.result === 'string' && p.result ? { result: p.result } : {}) };
   }
   const state: RunState = raw === 'asking' || raw === 'sealed' ? raw : 'running';
-  const calls = Array.isArray(d.calls) ? d.calls as Json[] : [];
   const statuses = calls.map(c => c.status).filter((s): s is string => typeof s === 'string');
   const callStatus = statuses.length && statuses.length === calls.length ? statuses.find(s => s !== 'ok') ?? 'ok' : undefined;
   const status = state === 'sealed' ? callStatus ?? wfStatus(d.status) ?? 'unknown' : undefined;
   const error = typeof d.error === 'string' ? d.error : calls.map(c => c.error).find((e): e is string => typeof e === 'string');
   const questions = Array.isArray(d.questions) ? (d.questions as Json[]).map(q => ({ qid: str(q.qid), rev: Number(q.rev), question: str(q.text ?? q.question), ...(typeof q.to === 'string' ? { to: q.to } : {}) })) : undefined;
   const f = d.lastFence as Json | undefined;
-  const result = typeof d.result === 'string' ? d.result : calls.map(c => c.result ?? c.output).filter((v): v is string => typeof v === 'string').join('\n');
   return { ...base, state, ...(result ? { result } : {}), ...(status ? { status } : {}), ...(error ? { error } : {}), ...(questions?.length ? { questions } : {}),
     ...(f && typeof f === 'object' ? { lastFence: { reason: str(f.reason), at: Number(f.at), ...(typeof f.exec === 'string' ? { exec: f.exec } : {}) } } : {}) };
 }

@@ -49,7 +49,7 @@ const view = (rid: string, state: RunView['state'], extra: Partial<RunView> = {}
 const running = () => new Map([view(W(), 'running')]);
 const refused = (x: SendEntry) => new Map([[x.send, 'finished:unknown — use kind "follow-up" to continue it']]);
 function act(r: Rig, runs = running(), o: Partial<DriveOpts> = {}): Action | undefined {
-  const s = r.state(), opts: DriveOpts = { max: 1, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: r.blobs, ...o };
+  const s = r.state(), opts: DriveOpts = { max: 1, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: r.blobs, writerWork: new Map([['a', { head: 'a-new-work', dirty: false }]]), ...o };
   const mine = decide(s, s.plan, runs, opts).filter(a => a.node === 'a');
   assert.ok(mine.length <= 1, 'at most one action per node'); return mine[0];
 }
@@ -106,7 +106,7 @@ test('6 D15.1: rejected run stays fixed despite later resume or submit', () => {
   assert.ok(a?.do === 'halt');
   assert.equal(a.reason, `dsa rejected run ${W()}: unknown agent; ${rejectedFixed('a')}`);
   const sealed = act(r, new Map([view(W(), 'sealed', { status: 'rejected' })]));
-  assert.ok(sealed?.do === 'halt' && sealed.reason.endsWith(rejectedFixed('a')));
+  assert.ok(sealed?.do === 'halt' && sealed.reason.endsWith(`${rejectedFixed('a')}; writer gave no final text → owed decide a --text "<ruling>" --writer`));
 });
 
 /** In-process fake, as in fresh-act.test.ts: durable refusal replies survive new Driver instances. */

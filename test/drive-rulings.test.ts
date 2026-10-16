@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { sha256 } from '../src/canon.ts';
 import { askingText, decide, deliveredRulings, launchSpec, reviewerLaunch, rulingMessage, runName, writerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, runLabels, validateDraft } from '../src/reducer.ts';
-import { renderEntry } from '../src/views.ts';
+import { renderEntry, WRITER_DECISION } from '../src/views.ts';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
@@ -69,7 +69,7 @@ function rig() {
 type Rig = ReturnType<typeof rig>;
 const view = (rid: string, state: RunView['state'], extra: Partial<RunView> = {}): [string, RunView] => [rid, { rid, state, ...extra }];
 const runsOf = (...vs: [string, RunView][]) => new Map(vs);
-const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: r.blobs, ...o });
+const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(), rejected: new Map(), blobs: r.blobs, writerWork: new Map(Object.keys(r.state().nodes).map(id => [id, { head: `${id}-new-work`, dirty: false }])), ...o });
 /** The single action of `node` in a pass (D4: at most one per node per pass). */
 function act(r: Rig, runs: Map<string, RunView>, o: Partial<DriveOpts> = {}, node = 'a'): Action | undefined {
   const s = r.state(), mine = decide(s, s.plan, runs, optsOf(r, o)).filter(x => x.node === node);
@@ -77,7 +77,7 @@ function act(r: Rig, runs: Map<string, RunView>, o: Partial<DriveOpts> = {}, nod
   return mine[0];
 }
 const applied = (r: Rig) => new Set(r.entries.flatMap(e => e.kind === 'send' ? [e.send] : []));
-const WRITER_TAIL = 'Apply these rulings; they override your packet. If you already submitted, fix and submit again.';
+const WRITER_TAIL = `Apply these rulings; they override your packet. If you already submitted, fix and submit again.\n${WRITER_DECISION}`;
 
 // ---------- D22.2: writer ----------
 test('D22.2: a running writer gets every in-scope ruling after its dispatch as one steer (reason ruling, rulings = highest seq)', () => {
@@ -339,6 +339,9 @@ test('D22.3 executor: dsa rejecting a ruling steer (the call sealed meanwhile) i
     assert.equal(es.filter(e => e.kind === 'halt').length, 0, 'no halt');
     const ruling = sends(es).filter(x => x.reason === 'ruling');
     assert.equal(ruling.length, 1);
+    // WS1: leave actual work to submit; a stopped writer without it now halts instead of getting a submit nudge.
+    const slot = (await ops.readState(f)).state.nodes.k!.slot!;
+    await writeFile(join(slot.worktree, 'k.txt'), 'work left to submit\n');
     // Next passes: the sealed writer gets the submit follow-up; the rejected ruling send is neither re-sent nor replaced.
     const next = await f.once(dsa);
     es = await f.entries();

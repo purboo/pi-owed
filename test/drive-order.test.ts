@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { sha256 } from '../src/canon.ts';
 import * as drv from '../src/drive.ts';
+import * as views from '../src/views.ts';
 import { decide, reviewerLaunch, writerLaunch, type Action, type DriveOpts } from '../src/drive.ts';
 import * as run from '../src/drive-run.ts';
 import { Follower, classifyLine } from '../src/drive-bg.ts';
@@ -142,7 +143,8 @@ test('G3.2: plan change with a repairable block: one repair follow-up (rulings, 
   assert.ok(at(new RegExp(`^- #${b.seq} review by reviewer:drive-a-1-1 rank 1: handle empty input$`)) >= 0, a.message);
   assert.ok(at(new RegExp(`#${x.seq} `)) < at(new RegExp(`#${b.seq} `)), 'rulings first');
   assert.ok(at(/plan changed/) > at(new RegExp(`#${b.seq} `)), 'then why a new candidate is needed');
-  assert.match(lines.at(-1)!, /commit, and run `owed submit a`/);
+  assert.match(lines.at(-2)!, /commit, and run `owed submit a`/);
+  assert.equal(lines.at(-1), views.WRITER_DECISION);
   assert.deepEqual(NEW.drv.resubmitFollowUp && (NEW.drv.resubmitFollowUp as (s: State, n: string) => unknown)(r.state(), 'a'), { message: a.message, rulings: x.seq });
   r.record(a);
   // The writer runs the follow-up: no separate ruling steer (the repair carried it), no submit nudge.
@@ -165,7 +167,8 @@ test('G3.2: rebase with a repairable block: one repair carrying the rebase instr
   const a = act(r, runsOf(sealed(W())));
   assert.ok(a?.do === 'send' && a.reason === 'repair', JSON.stringify(a));
   assert.equal(a.rulings, 0);
-  assert.match(a.message, /rename it[\s\S]*Trunk moved[\s\S]*git rebase --onto s1 \$\(git merge-base HEAD s1\)[\s\S]*owed submit a`\.$/);
+  assert.match(a.message, /rename it[\s\S]*Trunk moved[\s\S]*git rebase --onto s1 \$\(git merge-base HEAD s1\)[\s\S]*owed submit a`\.\n/);
+  assert.ok(a.message.endsWith(views.WRITER_DECISION));
   assert.ok(!a.message.includes('plan changed'));
   // Repairs exhausted: halt instead.
   const e = act(r, runsOf(sealed(W())), { repairs: 0 });
@@ -359,7 +362,7 @@ test('G3.7: the rebase follow-up and the rebasing repair list the conflicting fi
   };
   const r = rebased(false), runs = runsOf(sealed(W()));
   const msg = (o: Partial<DriveOpts>) => { const a = act(r, runs, o); assert.ok(a?.do === 'send' && a.reason === 'rebase', JSON.stringify(a)); return a.message; };
-  assert.equal(msg({ conflicts: new Map([['a', ['a/x', 'a/y']]]) }), 'trunk moved; rebase your worktree onto main (s1): first commit your work, then in /repo/.owed/wt/a-1 run `git rebase --onto s1 $(git merge-base HEAD s1)` (files that conflict with your previous candidate: a/x, a/y), resolve conflicts within the allowed writes, rerun checks, commit, then `owed submit a`');
+  assert.equal(msg({ conflicts: new Map([['a', ['a/x', 'a/y']]]) }), 'trunk moved; rebase your worktree onto main (s1): first commit your work, then in /repo/.owed/wt/a-1 run `git rebase --onto s1 $(git merge-base HEAD s1)` (files that conflict with your previous candidate: a/x, a/y), resolve conflicts within the allowed writes, rerun checks, commit, then `owed submit a`\n' + views.WRITER_DECISION);
   assert.match(msg({ conflicts: new Map([['a', []]]) }), /`git rebase --onto s1 \$\(git merge-base HEAD s1\)` \(files that conflict with your previous candidate: none\), resolve/);
   assert.equal(msg({}), drv.rebaseMessage(r.state(), 'a'));
   assert.doesNotMatch(msg({ conflicts: new Map([['b', ['b/x']]]) }), /conflict with your previous candidate/, 'another node\'s list');

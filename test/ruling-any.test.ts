@@ -7,7 +7,7 @@ import { sha256 } from '../src/canon.ts';
 import { decide, type Action, type DriveOpts } from '../src/drive.ts';
 import * as planMod from '../src/plan.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
-import { briefView, receipt, renderBrief, renderReceipt, renderStatusFull as renderStatus, statusView } from '../src/views.ts';
+import { briefView, receipt, renderBrief, renderReceipt, renderStatusFull as renderStatus, statusView, WRITER_DECISION } from '../src/views.ts';
 import type { CandidateFacts, CheckSpec, Draft, Entry, NodeSpec, Plan, RunView, SendEntry, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli } from './helpers/surface.ts';
@@ -108,7 +108,7 @@ test('L3.1 #21: an owner-needed node (flaky block) with a sealed writer gets the
   assert.ok(isSend(fu, 'ruling') && fu.rid === W && fu.sendKind === 'follow-up' && fu.rulings === rule.seq, JSON.stringify(fu));
   assert.equal(fu.message, ['New parent rulings for a:', `#${star.seq} (*): general guidance`, `#${rule.seq} (a): make the qpoint test deterministic: sort before comparing`,
     'Flaky blocks of a (an attribution rerun of the failing content passed):', `- #${f.seq} check:unit: not ok 3 - qpoint order is nondeterministic`,
-    'Apply these rulings; they override your packet. Then commit and run `owed submit a`.'].join('\n'));
+    'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n'));
   r.record(fu);
   // Sent once: running or sealed again without a new candidate, the node still needs the owner and is notified.
   assert.equal(act(r, running())?.do, 'notify');
@@ -122,15 +122,15 @@ test('L3.1: row 7 (writer sealed non-ok) sends a due ruling follow-up first, the
   const r = started();
   const err = new Map([view(W, 'sealed', { status: 'error', error: 'model overloaded' })]);
   const h = act(r, err);
-  assert.ok(h?.do === 'halt' && h.reason === `writer run ${W} sealed error: model overloaded`, JSON.stringify(h));
+  assert.ok(h?.do === 'halt' && h.reason === `writer run ${W} sealed error: model overloaded; writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(h));
   r.halt(h);
   const rule = r.rule('retry with the smaller fixture');
   const fu = act(r, err);
   assert.ok(isSend(fu, 'ruling') && fu.rid === W && fu.rulings === rule.seq, JSON.stringify(fu));
-  assert.equal(fu.message, ['New parent rulings for a:', `#${rule.seq} (a): retry with the smaller fixture`, 'Apply these rulings; they override your packet. Then commit and run `owed submit a`.'].join('\n'));
+  assert.equal(fu.message, ['New parent rulings for a:', `#${rule.seq} (a): retry with the smaller fixture`, 'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n'));
   r.record(fu);
   const h2 = act(r, err);
-  assert.ok(h2?.do === 'halt' && h2.reason === `writer run ${W} sealed error: model overloaded`, JSON.stringify(h2));
+  assert.ok(h2?.do === 'halt' && h2.reason === `writer run ${W} sealed error: model overloaded; writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(h2));
 
   // A needs-parent review block on the latest candidate: D18 route (the ruling resolves the block; the repair carries it),
   // not a ruling follow-up, even when the writer sealed non-ok.
@@ -239,7 +239,7 @@ test('L3.1 review #914 nit 3: at the stalled point a candidate with a flaky bloc
   assert.equal(mine.length, 1);
   const w = mine[0];
   assert.ok(isSend(w, 'ruling') && w.rid === W && w.sendKind === 'follow-up' && w.rulings === rule.seq, JSON.stringify(w));
-  assert.ok(w.message.includes('Flaky blocks of a (an attribution rerun of the failing content passed):\n- #2 check:gone:') && w.message.endsWith('Then commit and run `owed submit a`.'), w.message);
+  assert.ok(w.message.includes('Flaky blocks of a (an attribution rerun of the failing content passed):\n- #2 check:gone:') && w.message.endsWith(`Then commit and run \`owed submit a\`.\n${WRITER_DECISION}`), w.message);
 });
 
 // ---------- L3.2 ----------
