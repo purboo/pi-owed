@@ -24,7 +24,7 @@ export async function lintPlanCost(cwd: string, plan: Plan, commit: string, entr
     const path = closure.find(p => matchesAny(p, check.reads));
     if (path) warnings.push(`check ${check.id} reads closure path ${path}: checks see the base version of closure files`);
   }
-  return [...new Set([...warnings, ...nearTimeoutWarnings(plan, entries)])];
+  return [...new Set([...warnings, ...nearTimeoutWarnings(plan, entries)])].map(w => `warning: ${w}`);
 }
 
 type Word = { value: string; literal: boolean; reserved: boolean; assignment: boolean };

@@ -291,6 +291,6 @@ test('L3.3: owed plan prints the loop warning after the result, as the check-les
     const j = await cli(r.cwd, ['plan', 'plan.json', '--json', '--as', 'owner:pi', '--note', 'back']);
     assert.equal(j.code, 0, j.stderr);
     // CO2's reads diagnostics coexist with L3.3; the loop warning must still disappear.
-    assert.deepEqual((JSON.parse(j.stdout) as { warnings: string[] }).warnings.filter(w => !w.startsWith('reads of ')), []);
+    assert.deepEqual((JSON.parse(j.stdout) as { warnings: string[] }).warnings.filter(w => !w.startsWith('warning: reads of ')), []);
   } finally { await r.cleanup(); }
 });

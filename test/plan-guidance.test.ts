@@ -91,7 +91,7 @@ const warnPlan = (): Spec => ({ version: 1, trunk: 'main', closure: [], invarian
 ] });
 const WARN = (id: string) => `warning: node ${id} has no checks: its acceptance rests on review alone`;
 // CO2 adds independent reads diagnostics; H2.2 still checks the complete check-less warning list and its order.
-const withoutCost = (lines: string[]) => lines.filter(l => !l.startsWith('reads of '));
+const withoutCost = (lines: string[]) => lines.filter(l => !l.startsWith('warning: reads of '));
 
 test('H2.2 check-less nodes: CLI init/plan print warnings after the result, JSON returns warnings; nothing refused or recorded for them', { timeout: 120_000 }, async () => {
   const r = await repo();
@@ -109,7 +109,7 @@ test('H2.2 check-less nodes: CLI init/plan print warnings after the result, JSON
     assert.equal(plan.code, 0, plan.stderr);
     const lines = plan.stdout.trimEnd().split('\n');
     assert.match(lines[0]!, /^Recorded plan #\d+ /);
-    assert.deepEqual(withoutCost(lines).slice(-2), [WARN('d'), WARN('e')]);
+    assert.deepEqual(lines.slice(-2), [WARN('d'), WARN('e')]);
     assert.ok(!plan.stdout.includes(WARN('b')));
     // JSON: warnings array; with no check-less node it is empty.
     const all = { ...next, nodes: (next.nodes as Spec[]).map(n => ({ ...n, checks: [check(`${n.id as string}-unit`)] })) };
@@ -148,7 +148,7 @@ test('H2.2 check-less nodes: owed_init ends with warnings; owed_plan retains war
     assert.notEqual(plan.isError, true, text(plan));
     assert.equal((plan.details as { kind: string }).kind, 'plan');
     assert.deepEqual(withoutCost((plan.details as { warnings: string[] }).warnings), [WARN('b'), WARN('d'), WARN('e')]);
-    assert.deepEqual(text(plan).split('\n').filter(l => l.startsWith('warning:')), [WARN('b'), WARN('d'), WARN('e')]);
+    assert.deepEqual(text(plan).split('\n').filter(l => l.startsWith('warning: node ')), [WARN('b'), WARN('d'), WARN('e')]);
     assert.ok(text(plan).indexOf(WARN('e')) < text(plan).indexOf('owed:'));
     assert.ok(text(plan).endsWith('Details: owed status · owed why <node>'));
     const all = { ...next, nodes: (next.nodes as Spec[]).map(n => ({ ...n, checks: [check(`${n.id as string}-unit`)] })) };
