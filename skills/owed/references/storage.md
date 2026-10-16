@@ -8,7 +8,7 @@ Repeating an identical latest review, candidate evidence, approve/block or waive
 
 Plan/edit/amend may retain invalid legacy writes entries at the original node or allowance position; new invalid entries still refuse and permission/downgrade checks still apply. New plan recording opts into syntax 2; runtime copies retain that dialect without changing plan JSON or its hash.
 
-Unlocked `Ledger.read` ignores a final fragment without newline. An incomplete final atomic decision group is also hidden as a write in flight: readers see the state before that group. Locked reads, verify and malformed complete lines still refuse. Other readers/stronger runner restrictions remain backlog; neither tolerance permits editing or accepting damaged ledger data.
+Unlocked `Ledger.read` ignores a final fragment without newline. An incomplete final atomic decision group is also hidden as a write in flight: readers see the state before that group. Counterfactual reporting uses the same decision-group-aware visibility. Locked reads, verify and malformed complete lines still refuse. Ledger directories are identified by realpath, so a symlink alias of the same ledger preserves lock ownership and strict locked-reader behavior. Other readers/stronger runner restrictions remain backlog; neither tolerance permits editing or accepting damaged ledger data.
 
 ## Trust and cleanup
 
