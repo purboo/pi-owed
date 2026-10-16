@@ -5,7 +5,7 @@ import { decide, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
 import { Dsa, DsaError, type RunResult, type SendResult } from '../src/dsa.ts';
 import { receipt, renderReceipt, renderStatusFull as renderStatus, statusView } from '../src/views.ts';
-import { Driver } from '../src/drive-run.ts';
+import { Driver, stateOf } from '../src/drive-run.ts';
 import { loopWarnings } from '../src/plan.ts';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -121,6 +121,7 @@ test('F4.3 (#31): a send that fails names node, kind, reason and target in its n
     const lines: string[] = [], json: string[] = [];
     const d = new Driver({ cwd: r.cwd, log: l => lines.push(l), dsa, session: null, handleSignals: false });
     await d.pass();                    // launches a's writer
+    await commitAt((await stateOf(r.cwd)).nodes.a!.slot!.worktree, { 'a.txt': 'work to submit\n' });
     const p = await d.pass();          // the writer sealed without a candidate: a submit follow-up, whose send fails
     const fail = p.actions.find(a => a.do === 'send');
     assert.ok(fail, lines.join('\n'));

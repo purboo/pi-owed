@@ -17,7 +17,7 @@ import { trunkParkNotices, sharedParkNotices } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
-import { oneLine, resumeCommands } from './views.ts';
+import { oneLine, resumeCommands, writerStopNeed } from './views.ts';
 import { startingSession } from './dsa.ts';
 
 /** The exit record a `--json` loop driver writes last (D17.2). */
@@ -477,6 +477,8 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   if (j.scope === 'repo' || (j.node === DRIFT_NODE && j.do === 'notify' && j.qid === undefined && !/\basks \(qid /.test(String(j.text ?? '')))) return `Needs you: ${text}`;
   if (typeof j.node !== 'string') return undefined;
   const node = oneLine(j.node), source = String(j.text ?? j.detail ?? text);
+  const stopped = j.do === 'halt' ? writerStopNeed(source, node) : undefined;
+  if (stopped) return `Needs you: ${node} — ${stopped.reason} → ${stopped.command}`;
   // IF3/IF5: preserve the setup remedy in halt wakes instead of treating it as a measurement dump.
   const setup = source.match(/^(?:merge refused: )?setup failure \(no tests ran\): (.*?) — likely the environment;/)?.[1];
   if (setup) return `Needs you: ${node} — setup failure (no tests ran): ${oneLine(setup)} — likely the environment; fix it, then owed decide ${node} --remeasure`;

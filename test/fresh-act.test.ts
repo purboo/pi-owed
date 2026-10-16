@@ -153,6 +153,7 @@ test('F1.1: a send decided on a stale state is not passed to dsa; the next pass 
   try {
     await f.pass(); await f.pass();
     const W = await f.rid('writer');
+    await commitAt((await stateOf(f.cwd)).nodes.a!.slot!.worktree, { 'a.txt': 'work to submit\n' });
     // The writer finishes without submitting; between the pass's load and its describe the parent records a ruling.
     f.dsa.before.set(W, async () => {
       await ops.rule({ cwd: f.cwd, as: parent, text: 'use sqlite', nodes: ['a'] });

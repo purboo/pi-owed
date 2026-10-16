@@ -10,7 +10,7 @@ import { sha256 } from '../src/canon.ts';
 import * as driveMod from '../src/drive.ts';
 import { decide, deliveredRulings, repairMessage, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
-import { renderEntry } from '../src/views.ts';
+import { renderEntry, WRITER_DECISION } from '../src/views.ts';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
@@ -78,7 +78,7 @@ function act(r: Rig, runs: Map<string, RunView>, o: Partial<DriveOpts> = {}, nod
   return mine[0];
 }
 const applied = (r: Rig) => new Set(r.entries.flatMap(e => e.kind === 'send' ? [e.send] : []));
-const WRITER_TAIL = 'Apply these rulings; they override your packet. If you already submitted, fix and submit again.';
+const WRITER_TAIL = `Apply these rulings; they override your packet. If you already submitted, fix and submit again.\n${WRITER_DECISION}`;
 const sealedOk = () => view(W(), 'sealed', { status: 'ok' });
 /** Dispatched, writer launched (from its action), candidate 1 failing check:unit: the next pass on a sealed writer is a repair. */
 function failing(): Rig {

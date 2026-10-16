@@ -36,7 +36,7 @@ import { callAt, decide, recentSetupFailures, rejectedHalt, stillAsking, wantsRe
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
-import { oneLine } from './views.ts';
+import { oneLine, writerStopNeed } from './views.ts';
 import type { Entry, Plan, Principal, RunView, SendEntry, State } from './types.ts';
 
 /**
@@ -540,9 +540,9 @@ export class Driver {
    * stored bytes `decide` may need for retries. `rejected`: the attempt's sends dsa decided rejected (every pass; cached
    * once terminal) and the runs and sends rejected in this process.
    */
-  private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]>; rebasePending: Map<string, RebasePending>; rebaseWork: Map<string, RebasePending> }> {
+  private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]>; rebasePending: Map<string, RebasePending>; rebaseWork: Map<string, RebasePending>; writerWork: Map<string, { head: string; dirty: boolean }> }> {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
-    const pendingBases = new Map<string, RebasePending>(), rebaseWork = new Map<string, RebasePending>();
+    const pendingBases = new Map<string, RebasePending>(), rebaseWork = new Map<string, RebasePending>(), writerWork = new Map<string, { head: string; dirty: boolean }>();
     // NT4: a halt is durable even when dsa's old request receipt or the driver log has been pruned.
     for (const e of entriesOf(s)) if (e.kind === 'halt' && e.by === DRIVER) {
       const refusal = e.reason.match(/^dsa rejected send (\S+)(?: \([^)]*\))?: (.*?); the attempt is not lost:/);
@@ -598,13 +598,20 @@ export class Driver {
         if (!halted(s, n.id)) await this.restartGen(ar.sends, r, ledger);
         runs.set(rid, this.current(r.view, r.gen));
       }
+      // WS1: inspect only an idle sealed writer without a candidate, outside ledger locks. Failed inspection is not
+      // evidence of work to submit; policy halts instead. Generation fencing above excludes stale sealed results.
+      const writer = ar.launches.find(l => l.role === 'writer'), w = writer && runs.get(writer.rid);
+      if (normal && !halted(s, n.id) && !n.candidate && w && (w.state === 'sealed' || w.state === 'pruned') && w.status === 'ok') {
+        try { writerWork.set(n.id, { head: await git.revParse(n.slot.worktree, 'HEAD'), dirty: !await git.isClean(n.slot.worktree) }); }
+        catch { /* decide reports that the worktree could not be inspected */ }
+      }
       // G3.7: the files the previous candidate conflicts on, only when row 8 sends a rebase instruction (review #680 b).
       const rb = n.slot.rebase;
       if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
     }
     // IF4: only the diagnostic window needs captured logs; never load historical setup blobs here.
     for (const e of recentSetupFailures(s,Date.now())) if (e.log) await blob(e.log);
-    return { runs, blobs, rejected, conflicts, rebasePending:pendingBases, rebaseWork };
+    return { runs, blobs, rejected, conflicts, rebasePending:pendingBases, rebaseWork, writerWork };
   }
 
   /**
@@ -668,10 +675,10 @@ export class Driver {
     if (mergeReady) this.measuring.get('\u0000trunk-refresh')?.abort?.abort('preempted');
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
-    const { runs, blobs, rejected, conflicts, rebasePending, rebaseWork } = await this.observe(s, measuring);
+    const { runs, blobs, rejected, conflicts, rebasePending, rebaseWork, writerWork } = await this.observe(s, measuring);
     const now = Date.now();
     this.recordAsking(stillAsking(s, runs, now));
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, measuring, now, noticed: this.facts.once });
+    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, writerWork, measuring, now, noticed: this.facts.once });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
@@ -1044,7 +1051,7 @@ export class Driver {
         // K6: attest and merge are started by `pass` (`start`), never executed inline.
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await this.rebaseSlot(s, a.node, since); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
-        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
+        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs, ...(writerStopNeed(a.reason, a.node) ? { text: a.reason } : {}) });
         case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.once !== undefined ? { once:a.once } : {}), ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
