@@ -513,7 +513,11 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   const shared = source.match(/check:[^;\n]+ block #\d+ also fails on trunk [^;\n]+/g);
   const flaky = source.match(/flaky block #\d+ on .*?(?:; current candidate [^;\n]+)?(?=; the driver leaves it alone|$)/)?.[0];
   const flakyLine = flaky?.includes(' on the same key; a pass does not erase a failure:') ? `Needs you: ${node} — ${flaky}` : undefined;
-  if (shared?.length || flakyLine) return [...[...new Set(shared ?? [])].map(h => `Needs you: ${node} — ${h}`), ...(flakyLine ? [flakyLine] : [])].join('\n');
+  if (shared?.length || flakyLine) {
+    const trunkRed = [...source.matchAll(/(trunk-red: [^;\n]+); merge-tree obs #\d+, trunk probe #\d+; this candidate is not shown to be the cause; (parent: fix trunk[^;\n]+)/g)]
+      .map(([,diagnosis,guidance]) => `Needs you: ${node} — ${diagnosis}; ${guidance}`);
+    return [...new Set(trunkRed), ...[...new Set(shared ?? [])].map(h => `Needs you: ${node} — ${h}`), ...(flakyLine ? [flakyLine] : [])].join('\n');
+  }
   const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
   const chosen = retry ?? source.match(/(?:answer: |(?:with|or):? )(owed [^;\n`]+?)(?= \| |;|\n|`|$)/)?.[1]?.trim();
   const asks = !j.answerRetry && j.qid !== undefined;

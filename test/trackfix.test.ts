@@ -180,6 +180,50 @@ test('TF2/WF1 #3052: shared trunk diagnosis precedes and retains the same-key fl
   } finally { await r.cleanup(); }
 });
 
+test('TF2/WF1 #3065: Follower keeps trunk-red guidance before the flaky pair despite an independent review block', async () => {
+  const r = await repo();
+  try {
+    const flag = join(r.root,'pass'); await commitAt(r.cwd,{impl:'base'});
+    const run = `if [ -e src/b ] && [ ! -e '${flag}' ]; then echo 'owed-counts {"pass":0,"fail":1,"failed":["case one"]}'; exit 1; else echo '# tests 1'; echo '# pass 1'; echo '# fail 0'; fi`;
+    const plan = {version:1,trunk:'main',lease:false,closure:[],invariants:[],nodes:[
+      {id:'a',writes:['impl'],checks:[{id:'unit',run,reads:['impl','src/'],min_tests:1}],review:{count:0,min_rank:1}},
+      {id:'b',writes:['src/b'],checks:[],review:{count:0,min_rank:1}}
+    ]};
+    await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify(plan)});
+    const a = await ops.dispatch({...r,as:parent,node:'a'});
+    await commitAt(a.worktree,{impl:'old candidate'});
+    await ops.submit({cwd:a.worktree,as:{role:'writer',id:'a#1'},node:'a'}); await ops.attest({...r,node:'a'});
+    const b = await ops.dispatch({...r,as:parent,node:'b'});
+    await commitAt(b.worktree,{'src/b':'trunk addition'});
+    await ops.submit({cwd:b.worktree,as:{role:'writer',id:'b#1'},node:'b'}); await ops.attest({...r,node:'b'});
+    await ops.merge({...r,as:parent,node:'b'}); await assert.rejects(ops.merge({...r,as:parent,node:'a'}));
+    const before = (await ops.readState(r)).state;
+    const fail = reducer.entriesOf(before).find((e):e is ObsEntry => e.kind === 'obs' && e.subject === 'a' && e.obligation === 'check:unit' && e.verdict === 'fail')!;
+    assert.ok(reducer.trunkRedOf(before,fail.seq));
+    await writeFile(flag,'pass'); await ops.attest({...r,node:'a'});
+    await ops.review({...r,node:'a',verdict:'block',rank:2,note:'independent review risk prevents all-trunk-red parking',as:{role:'reviewer',id:'isolated'}});
+    const launchState = (await ops.readState(r)).state, launch = writerLaunch(launchState,'a',reducer.projectId(launchState));
+    await ops.launch({...r,as:parent,node:'a',attempt:1,role:'writer',rid:launch.rid,spec:launch.spec,labels:launch.labels,rulings:launch.rulings});
+    const s = (await ops.readState(r)).state, block = s.nodes.a!.blocks.find(b => b.seq === fail.seq)!, pass = reducer.flakyPass(s,block)!;
+    assert.equal(block.state,'flaky'); assert.ok(pass); assert.equal(reducer.trunkParked(s,'a').length,0);
+    const actions = decide(s,s.plan,new Map([[launch.rid,{rid:launch.rid,state:'sealed' as const,status:'ok'}]]),{max:2,repairs:2,project:reducer.projectId(s),root:r.cwd,applied:new Set(),rejected:new Map(),now});
+    const need = actions.find(a => a.do === 'notify' && a.node === 'a'); assert.ok(need?.do === 'notify');
+    const pair = `failed #${fail.seq} (case one) → passed #${pass.seq} on the same key`;
+    assert.match(need.text,/trunk-red:/); assert.ok(need.text.includes(pair));
+    const log = join(r.root,'trunk-red-wake.jsonl'); await writeFile(log,JSON.stringify(need)+'\n');
+    const follower = new Follower({log,repo:r.cwd,pid:process.pid,from:0,deliver(){}});
+    let wake:string | undefined; try { wake = await follower.step(); } finally { follower.stop(); }
+    const lines = wake!.split('\n');
+    const diagnosis = need.text.match(/trunk-red: [^;]+/)![0], guidance = need.text.match(/parent: fix trunk[^;]+/)![0];
+    assert.equal(lines[0],`Needs you: a — ${diagnosis}; ${guidance}`,'trunk-red diagnosis and parent fix guidance lead the wake without receipt noise');
+    assert.ok(lines[1]!.startsWith(`Needs you: a — flaky block #${fail.seq} on check:unit`),wake);
+    assert.ok(lines[1]!.includes(pair),wake);
+    assert.match(lines[1]!,/a pass does not erase a failure/);
+    assert.deepEqual((await ops.readState(r)).state.nodes,s.nodes,'wake presentation does not change gate state');
+    assert.equal((await ops.verify(r)).ok,true);
+  } finally { await r.cleanup(); }
+});
+
 test('TF2: passing probes add no shared hint, absent fix candidates are named as missing', async () => {
   const r = await fixture();
   try {
