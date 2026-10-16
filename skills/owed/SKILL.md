@@ -14,16 +14,16 @@ The default `core` profile has seven direct tools:
 - `owed_why`: what a node still owes; `full:true` for evidence.
 - `owed_decide`: parent decision, answer and recovery.
 - `owed_drive`: one pass, or start/status/stop the background driver.
-- `owed_start`: preflight, init/update plan and start/reuse the driver.
+- `owed_start`: preflight, init/update plan and start/reuse the driver; `restart:true` drains it first.
 - `owed_submit`: submit from the writer's committed, clean slot.
-- `owed_review`: independent verdict on the candidate actually read.
+- `owed_review`: independent verdict on the candidate actually read; read rulings before `ack_rulings:"latest"`.
 
 Other tools remain registered but deferred: use `tool_search` when they are not declared, or the `owed <command>` CLI (`owed help`). At session start owed activates reachable `tool_search`, as the host's MCP extension does; if discovery cannot work it falls back to direct tools without removing active tools. `OWED_TOOLS=all` makes every tool direct and opts out of search activation.
 
 Write the plan, then `owed start --plan <file>` (later `owed start` rereads its recorded source). The driver runs and wakes you with `Needs you:` / `Done:` lines. Act with `owed decide <node> --text "<decision and why>"`, `owed answer`, or the command the line gives; the running driver continues. Use `owed why <node>` for outstanding work and `owed why <node> --full` for evidence. Finish only when owed shows the node merged.
 
 Main agent = parent and delegated owner: plans, decisions and acceptance; owner tools default to `owner:pi`, no dialog unless `OWED_CONFIRM=owner`.
-Writer: implement only the packet's scope, commit and submit in its slot worktree.
+Writer: implement only the packet's scope, commit and submit in its slot worktree. If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.
 Reviewer: independently inspect the actual candidate and evidence, record a verdict, never edit.
 
 ## Six hard rules

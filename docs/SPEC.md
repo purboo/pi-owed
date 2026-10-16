@@ -1,4 +1,4 @@
-# owed specification (0.25)
+# owed specification (0.26)
 
 owed is the acceptance ledger for a multi-agent task graph in one Git repository.
 "No receipt, not done": a node is complete only when owed shows it merged.
@@ -13,7 +13,69 @@ Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-workt
 rail §2.1.7) are rails against accidents and instructions, not security
 boundaries: a process can unset the variables or change directory.
 
-### Compatibility (0.20–0.25)
+### Compatibility (0.20–0.26)
+
+0.26 adds no ledger entry kind or plan key. The new optional ledger field is
+`obs.infra: <setup failure seq>` (§7.26). A qualifying counted pass resolves
+only the consecutive setup failures on its exact subject/obligation/key;
+field-free historical ledgers retain their states, keys and conflict rules.
+
+**0.25 reader behavior:** `v0.25.0:src/reducer.ts`'s `OBS_FIELDS` excludes
+`infra`; `newerEntry` refuses the entire ledger with code `version` as soon
+as an observation carries it. Its automatic-remeasure validation also refuses
+an existing `auto_remeasure: true` receipt authorized only by the new setup
+predicate, even if no `infra` pass follows: 0.25 accepts only configured
+`remeasure_on` or shared-failure eligibility. That refusal is an ordinary
+invalid-entry refusal, not an unknown-field error.
+
+**0.26 upgrade order:** upgrade every reader — CLI, every driver and every pi
+session loading owed, with drivers/sessions restarted — before the first 0.26
+writer records `obs.infra` or a setup-only automatic-remeasure receipt. These
+receipts are automatic, not opt-in plan policy: complete the reader upgrade
+before allowing any 0.26 executor measurement (`attest`, genesis/trunk
+measurement, merge or adopt). Upgrade before the first incompatible write,
+not just before merging. Do not remove fields or rewrite receipts for old readers.
+
+Other additions are runtime/results, not ledger fields:
+
+- `status.runtimeWarnings?: string[]` (§9.7): 0.25's `src/views.ts` does not
+  consume it and its status renderer ignores it. Existing warning arrays may
+  contain reads/timeout diagnostics; 0.25 array consumers retain those strings.
+- Metrics `infra: {total, byObligation}` (§9.4): 0.25's `src/metrics.ts`
+  ignores this result property and renders its old metrics. This does not make
+  it able to replay a ledger containing `obs.infra`.
+- Amendment previews/results add `covered: [{path, entry}]`; decisions add
+  optional per-node `covered`. An all-covered amendment omits `plan` and
+  `rule`, and an all-covered decision omits `plan` (§3, §8.3.1). In 0.25,
+  `src/ops.ts`/`src/views.ts` do not consume `covered`; the amendment renderer
+  and CLI assume `plan`/`rule` exist and cannot consume a 0.26 no-op result.
+  Upgrade result consumers too, rather than treating missing entries as writes.
+- The driver lock may carry optional `max`, the command-line override.
+  0.25's `src/drive-bg.ts`/`src/drive-run.ts` ignore that unknown lock property;
+  locks without it use the plan limit for current dispatch diagnostics (§9.8).
+- Ruling delivery adds optional `finished: [{node, writer}]` on `delivery`
+  (and answer `rulingDelivery`), describing known writer calls that are neither
+  running nor asking (§9.3). 0.25's `src/answer.ts` ignores this unknown result
+  property; its rule renderer shows only counts/failure/unknown-writer lines.
+  No ledger field is added. `RunView.result` already exists in 0.25's
+  `src/types.ts`; 0.26 also retains available final text for pruned runs, which
+  0.25's `src/dsa.ts` discards. Worktree inspections are runtime facts, not
+  replay inputs. Existing launch/send retries keep their recorded bytes;
+  upgrade/restart the driver for the stopped-writer policy (§12.5.4).
+- Graceful stops record `drive.lock.stop-request` (§12.8), not a ledger entry.
+  0.25's `src/drive-bg.ts` ignores this file and signals on every stop; use only
+  0.26 stop/restart clients for the at-most-once graceful-stop guarantee.
+
+`--restart`, `report --cost`, `--version`/`version` and `--full` on rebase or
+candidate attest need a 0.26 CLI; 0.25's `src/cli.ts` refuses those new options
+or command forms. Review `--ack-rulings latest` / `ack_rulings: "latest"`
+requires 0.26 CLI/extension input support: 0.25 expects a number, not the alias.
+0.26 records the computed number, which 0.25 can replay. The start tool's
+optional `restart` is an input flag, not a plan key: 0.25's `src/extension.ts`
+does not declare it and its start implementation cannot perform a restart.
+New ask/ready text, refusal recovery and unrelated-node batch-plan changes
+introduce no serialized gate/key metadata (§7.21, §9.8, §12.5.3).
+Concurrent adopts retain their individual total acquisition budgets (§8.4).
 
 0.25 adds no ledger entry kind, plan key, acceptance gate or measurement key.
 The only new optional ledger field is `genesis.path`: the plan source recorded
@@ -363,9 +425,16 @@ node. The formal model does not cover carry (Deferred).
 is `--plan` (relative to cwd), else the `path` of the latest plan entry (refused
 when that entry has none). It is refused when the file's plan differs from the
 ledger's current plan (`plan file has unrecorded edits`; a comment-only difference
-is no difference), for an unknown or merged node, an empty path list, a path
-without `+`, an empty note, and when every path is already in the node's writes;
-removing writes is not offered. The edit locates the node's `writes` list with the
+is no difference), for an unknown or merged node, an empty path list or note,
+or a removal (`-path`, which requires `owed plan`). Bare paths and `+path`
+both mean additions. Each is a writes scope, not merely a filename: a path
+is already covered only when equal to an existing write or provably contained
+by it under §3.7 (`w === p || writeCovers(w, p)`). For example, `src/lib`
+under `src/*` widens ownership: the filename match does not cover the prefix
+range below `src/lib`. Uncertain containment is a real widening. Covered
+paths are skipped with `already covered by <entry>`; an all-covered amendment
+returns `writes unchanged` without changing the file or recording any entry.
+For a real widening, the edit locates the node's `writes` list with the
 `yaml` Document API and changes only that list's source text (a flow list gets
 `, path` before its `]`, a block list one `- path` line per path at the same
 indentation; a node without writes gets a block list through the Document API,
@@ -822,7 +891,8 @@ identifying the offending entry. Plan set/edit/amend may retain an invalid
 legacy entry in the same node or allowance position; newly introduced invalid
 entries still refuse. Permission and downgrade checks still apply, and recording
 a new plan opts into syntax 2, including wildcard semantics. `amend --writes`
-retains comma-separated `+PATH` syntax. Historical plan parsing remains lenient.
+accepts comma-separated bare paths or `+PATH`; covered additions are no-ops
+(§3). Historical plan parsing remains lenient.
 
 Containment proves coverage only by equality or an enclosing literal prefix
 (including trailing `/**` equivalents). A glob can authorize a grant for an
@@ -983,7 +1053,7 @@ never part of a key.
 | `rebase` | parent/owner or the slot writer | `{node, attempt, base, from}` | moves the open slot from base `from` (the current slot base) to `base` (the current trunk, which must differ); the open candidate is invalidated; blocks keep binding the node |
 | `submit` | writer; executor (carry) | `{node, attempt, commit}`; carry: `+ carry` | candidate claim (speech). 0.10 (N1): a submit by `executor:owed` must have `carry` = the latest submit of the open attempt, with that submit's commit and base, while the slot is open, the node has no current candidate and the slot base is still that base; a writer submit never has `carry`. Needs owed ≥ 0.10.0 to replay |
 | `grant` | executor:owed only | `{node, attempt, commit, paths, allowance}` | 0.17 GR: sorted exact out-of-writes paths, candidate commit and current allowance plan seq; validated on every replay (§3.4), effective only for this attempt; owed 0.16 refuses this kind |
-| `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?, probe?: "trunk"}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate. `probe: "trunk"` (0.14, TR) measures that node's check on current trunk alone; subject = node, commit/base = trunk, no merging/attribution; diagnostic only, never satisfies or blocks an obligation |
+| `obs` | executor | `{subject, obligation, key, verdict, exit, counts?, log, durationMs, commit, base, attribution?, merging?, probe?: "trunk", infra?: number}` | trusted observation; `merging` = node being merged when `owed merge <node>` produced it (invariants and checks on the merge result, pass or fail); a node obs must name its own subject, and the node must have an open candidate. `probe: "trunk"` (0.14, TR) measures that node's check on current trunk alone; subject = node, commit/base = trunk, no merging/attribution; diagnostic only, never satisfies or blocks an obligation |
 | `review` | reviewer/owner | `{node, attempt, key, verdict: "ok"\|"block", rank, note, ack_rulings?: number, clears?: number[], needs?: "parent"}` | judgment observation on review/closure-review item; `needs: "parent"` only on a block (refused on ok): the fix needs a parent ruling (§12.5); on obligation `approve` (D23, §6.2 item 8) only by the owner (rank 3) |
 | `waive` | owner | `{node, obligation, key, reason, accept_risk?: number[]}` | waiver of one item; accept_risk cites block seqs it knowingly overrides |
 | `defer` | owner | `{node, items: {id, key}[], reason}` | deferral of invariant items for one merge (stays debt) |
@@ -1535,8 +1605,10 @@ reviewer-role delivery pending; existing reviewer runs still receive applicable
 rulings.
 
 ### 6.3 Status of an item
-- Executor verdicts on the same item join in the lattice ⊥ < pass, fail < ⊤
-  (pass and fail both present = ⊤). E ⟺ lattice value is `pass`.
+- Effective executor verdicts on the same item join in the lattice ⊥ < pass,
+  fail < ⊤ (pass and fail both present = ⊤). E ⟺ lattice value is `pass`.
+  Validated `infra` pairing excludes only its consecutive setup failures from
+  that pool (§7.26); behavioural failures still join normally.
 - Review items: E ⟺ required reviews `ok` on the current key (rank, count,
   recusal) and no active judgment block.
 - **Blocks (⛔ blocked)**: a `fail` obs or a `review block` on node n, obligation o
@@ -1545,7 +1617,9 @@ rulings.
     on the **same key k** with `attribution: true`. If that rerun fails, the
     failure is deterministic for the old content and the block clears. If it
     passes, key k is ⊤ and the block becomes **flaky**: only an owner `waive`
-    with `accept_risk` citing it clears it.
+    with `accept_risk` citing it clears it. Exception: a qualifying `infra`
+    receipt clears its consecutive zero-result setup blocks, even without
+    attribution, rather than making them flaky (§7.26).
   - **Superseded** execution block (0.8, L2, wais #20): when a `plan` entry is
     replayed, every active or flaky execution block on `check:<id>`, `red:<id>`
     or `strength:<id>` whose **check definition** differs between the plan of
@@ -1997,8 +2071,9 @@ separate failing observation or block. `why` and driver attest/merge reports
 show `noisy (2/3 passed)` using the number of executed runs, not the maximum N.
 
 **MS1 pooled repeat (0.20):** across observations on the same key, every run
-of every non-error observation is pooled (an observation without `runs` counts
-as one run). No window or cherry-picking: with repeat `{runs:N, need:K}`, the
+of every effective non-error observation is pooled (an observation without
+`runs` counts as one run). Validated setup failures resolved by `infra` are
+excluded; every executed run of the resolving pass must qualify (§7.26). No window or cherry-picking: with repeat `{runs:N, need:K}`, the
 item passes iff `passes*N >= K*total_runs`, otherwise fails, never ⊤. With
 several observations `why` shows `pooled <p>/<t> runs on this key (need <K>/<N>)`.
 Without repeat, pass+fail on one key remains the ⊤ owner conflict. This is a
@@ -2224,7 +2299,8 @@ call appends `reused #<seq> (same merge key, measured <age> ago); measure again:
 owed attest <node> --remeasure` (CLI), or `owed resume <node> --remeasure`
 (driver halt). Several reused seqs are comma-separated; age uses `45s`, `3m`,
 `2h5m`, `1d2h` style. A fresh pass without repeat still conflicts with an old
-fail; remeasure never silently clears risk.
+behavioural fail; only a validated counted setup pairing can exclude a
+zero-result failure (§7.26). Remeasure never silently clears behavioural risk.
 
 ### 7.15b Scheduled sweeps and automatic escapes (0.24, SW)
 
@@ -2331,7 +2407,7 @@ plan field still parses and keys. `owed-counts` is not TAP and cannot be
 excused. All template expansions are multi-line scripts/pipelines, not plain
 allowlisted runs: a quarantine on a template never excuses in 0.20.
 
-### 7.17 Known limitations and backlog (0.22–0.23)
+### 7.17 Known limitations and backlog (0.22–0.26)
 
 - `report --counterfactual` performs one read-only cold fold, costing about
   one full replay: expect tens of seconds on a roughly 14,000-entry ledger,
@@ -2383,8 +2459,9 @@ allowlisted runs: a quarantine on a template never excuses in 0.20.
   named slots close. Mixed refusal reasons do not receive automatic retries.
 - A batch refusal without a newly recorded failing observation is remembered
   only by the running driver; status may still propose that batch. A plan CAS
-  change during batch measurement discards its results and falls back to
-  individual merges. Batch members are not bisected (§7.21).
+  change to a member or global setting during batch measurement discards its
+  results and falls back to individual merges; unrelated node-only changes
+  are allowed after fact rechecking (§7.21). Batch members are not bisected (§7.21).
 - `remeasure_on` reacts to a measurement in the current operation, not cached
   failures. Manual remeasurement remains available. A crash or stale/aborted
   result before append leaves no completed automatic retry receipt (§7.20).
@@ -2402,8 +2479,11 @@ allowlisted runs: a quarantine on a template never excuses in 0.20.
   not a claimed safety check. Quarantine is not a sandbox/security boundary.
 - Unlocked ledger reads ignore a final torn line; 0.23 also hides an incomplete
   final decision group in normal state loads (§8.3.1). Ledger lock tracking
-  spans handles on the same ledger. Other reader paths still need separate
-  auditing; this is not a global torn-read guarantee.
+  spans handles on the same real ledger directory, including symlink aliases.
+  Counterfactual reporting also uses decision-group-aware visibility; locked
+  counterfactual loads and verification still refuse incomplete groups.
+  Other reader paths still need separate auditing; this is not a global
+  torn-read guarantee.
 - Pooled repeat is an intentional replay compatibility exception (§7 RC1),
   not an unchanged-replay promise for old multi-observation repeat ledgers.
 - Fix merges refresh current trunk/merge quarantine keys, not an open
@@ -2478,8 +2558,8 @@ plans can also receive new overlap-only wait observations.
 ### 7.20 Automatic invariant remeasurement (0.22, RO1–RO3)
 
 Invariant-only `remeasure_on: ["connection refused"]` is a list of non-empty,
-literal, case-sensitive substrings; an empty list disables the policy. It is
-scheduling policy, absent from measurement keys. Changing the list clears no
+literal, case-sensitive substrings; an empty list disables configured matching,
+not eligible shared (§7.24) or setup retries (§7.26). It is scheduling policy, absent from measurement keys. Changing the list clears no
 failure and does not reset the durable same-key budget.
 
 RO2: an eligible failing single-node merge-tree or trunk invariant measurement
@@ -2490,8 +2570,9 @@ authorize retry. With no parsed tests, matching uses the captured raw log,
 subject to the capture cap. Missing diagnostics or an incomplete capped failure
 list fails closed. Errors, timeouts and execution failures do not trigger it.
 
-Both observations remain evidence: `repeat` pools their runs; without repeat,
-pass plus fail remains an owner conflict. Refusal, halt and trunk details quote
+Both behavioural observations remain evidence: `repeat` pools their runs;
+without repeat, pass plus fail remains an owner conflict. The separate `infra`
+rule excludes only qualifying zero-result setup failures (§7.26). Refusal, halt and trunk details quote
 both votes and direct the owner to fix the invariant or defer debt for the
 specific node. A defer for one node neither resolves the trunk conflict nor
 authorizes adoption or another merge. Exact-key structured observations govern
@@ -2501,8 +2582,9 @@ into a pass. Manual remeasurement remains possible after the automatic budget.
 Optional `obs.remeasure_match` contains only unique configured literals after
 all failures match, bounded by that list; no raw matching diagnostics are added
 as ledger fields. `obs.auto_remeasure: true` marks the consumed retry. Replay
-requires the immediately preceding same-key eligible failure with matching
-provenance and refuses a second automatic marker. Normal stale-result, CAS,
+requires the immediately preceding same-key eligible failure (configured
+matching, shared or setup eligibility) and refuses a second automatic marker.
+A setup-only retry needs 0.26 readers even when `infra` is absent (Compatibility). Normal stale-result, CAS,
 abort and attribution rules remain intact; retry keeps the caller's lease and
 outer measurement lock, never the ledger append lock. Eligible measurements
 from merge, adopt, trunk/genesis refresh and explicit remeasurement use this
@@ -2537,7 +2619,15 @@ recording. Measure invariants and each member's node checks on final Mn, using
 Mn's closure/keys and quarantine with every member treated as merged. Reusable
 verdicts and genesis jobs follow their existing rules.
 
-On success, CAS checks plan, ledger trunk, member slots/candidates and trunk ref.
+On success, CAS checks ledger trunk, member slots/candidates and trunk ref.
+Every plan entry recorded during measurement is also checked: remove all
+non-member nodes and require canonical equality of the remaining plan before
+and after that entry. All global fields (invariants, closure/neutrality,
+setup/exec, allow, drive/merge policy and other settings) and every member
+field remain binding. Unrelated node-only changes may proceed; a relevant
+change, even one later reverted, refuses with the plan entry and changed part.
+After an unrelated plan change owed recomputes facts and runs the latest guard;
+an indirect fact change, including quarantine activation, still refuses.
 Under the short ledger lock, one merge entry per member is recorded in order,
 with prior M(i-1), commit Mi and facts against its prior. The trunk ref advances
 once T -> Mn; intermediate Mi never become trunk heads. Every member carries
@@ -2620,6 +2710,8 @@ authority. Old plans/argv wrappers replay unchanged; templates and grace require
 
 ### 7.23 Ledger lock scope (0.22, LK / LKR)
 
+Ledger directories use their realpath: a symbolic-link alias of the same
+ledger preserves lock ownership and strict locked-reader validation.
 Shared command and job runners refuse with an internal error before spawning
 inside an async context holding ledger `lock`, including wrapped commands and
 timeout diagnostics. Nested Ledger instances do not bypass the guard. Worktree
@@ -2746,8 +2838,75 @@ adjacent receipts append.
 Replay checks carry provenance and independent review eligibility; executor
 rebase submit must immediately follow the same open attempt's rebase, use its
 base and carry the executor's ancestor fact. Writer rebased markers and merge
-facts with either submit marker refuse. These facts use the existing trusted
-Git-facts boundary; no migration or new plan key is introduced.
+facts with either submit marker refuse. Recovery identifies the actual Git
+operation in progress: `git rebase --abort`, `git merge --abort`,
+`git cherry-pick --abort` or `git revert --abort`, then the rebase instruction.
+These facts use the existing trusted Git-facts boundary; no migration or new
+plan key is introduced.
+
+### 7.26 Setup failures and counted-pass resolution (0.26, IF)
+
+A **setup failure** is an executor `fail` on a counted `check:*` or `inv:*`
+that asserted no test result: tests absent or zero, no failed names (including
+count-level names), no nonzero pass/fail/skip counts, and no timeout or
+incomplete execution. Verdict `error` is excluded. For repeated observations
+every recorded run must meet that definition. Counted means the observation's
+recorded spec has `min_tests`, its parsed counts have a `format`, or an earlier
+executor observation of that subject/obligation was counted. The predicate
+comes from ledger facts, not the text of an error signature.
+
+Eligible single-node merge-tree and trunk invariant setup failures receive
+one automatic same-key remeasurement even with empty `remeasure_on`, sharing
+§7.20's durable budget, lease and operation locks. Node checks use attribution
+on their original key, including when that key is still the candidate's key.
+Batch observations and trunk probes do not use setup pairing or setup-only
+automatic retries. Unlike shared-only retries, setup retries can apply to
+`repeat`: no behavioural votes are being excused.
+
+The next executor measurement of the same subject/obligation/key can record
+optional `infra: <immediately preceding setup failure seq>` only when it is a
+counted pass: exit 0, positive test count meeting the failed run's original
+specification, fail 0, no failed names or timeout, and complete/count-valid
+execution when recorded. Every executed repeat run must qualify, and the
+number of runs must satisfy the original repeat specification. A later lower
+threshold cannot authorize resolution of the older failure.
+
+The reference is attached under the final ledger lock against latest state
+(or private ordered replay of drafts), never inferred from a stale measurement
+snapshot. Replay validates that reference and excludes from the effective evidence pool
+the maximal consecutive run of setup failures ending at it. A probe, batch,
+error, timeout or other measurement breaks that run. Earlier behavioural
+failures remain binding. Qualifying setup blocks clear rather than becoming
+flaky; the counted pass satisfies the obligation with no conflict, waiver,
+owner decision or debt from that setup sequence. Without `infra`, the old
+pass/fail and attribution rules remain unchanged. Soundness: the exact key
+fixes the measured content and command; a zero-result run asserted nothing
+about test behaviour, while the counted pass actually meets that specification.
+A deterministic candidate-caused setup break cannot resolve itself without
+such a pass. A failure that ran tests still conflicts with a same-key pass.
+
+Merge refusals and node-check halts inspect the latest measurement of each
+failing key. A current setup failure leads with `setup failure (no tests ran):
+<signature> — likely the environment; fix it, then owed decide <node>
+--remeasure`, not rebase advice. A later real failure takes the normal repair
+path. That decision also lets the driver retry a current candidate-check setup
+failure after attribution has cleared its block. Merge-refusal halts reach the
+follower as Needs-you wakes, retaining this remedy.
+
+Setup signatures use the first captured error-looking line (`Error`, `Cannot
+find`, `ENOENT`, `ERR_`, `not found`), or the last nonempty line, with volatile
+absolute paths, hex ids, numbers and timestamps normalized. Within the last
+30 minutes, the same signature on at least two subjects produces one repository
+notice per signature/trunk commit: `setup failure on <k> trees: <signature> —
+probably the environment, not the nodes (<nodes>); fix it, then owed decide
+<nodes> --remeasure`. Candidate and merge tree of one node count as one subject;
+trunk is a separate subject. Missing captured output cannot establish a shared
+signature. Notices/signatures are diagnostics, never proof or acceptance.
+
+`why --full` retains referenced setup failures labelled `infra`; the ledger
+retains the whole history. Metrics count infra pairing receipts per obligation,
+not every predecessor removed by a single receipt (§9.4). There is no new plan
+key or entry kind. Reader upgrade order is in Compatibility.
 
 ## 8. Operations (src/ops.ts) — the single API used by CLI and pi extension
 
@@ -3115,9 +3274,10 @@ while genesis items lack observations.
   the derived seq must match byte-exact in seq order: the largest complete
   prefix, never the max of isolated matches. Missing the earliest yields ack
   0; launch metadata alone is insufficient. Later rulings are never implicitly
-  acknowledged. Manual/invalid/missing packets retain omitted-ack debt behavior
-  (review may record, but cannot discharge applicable rulings). Explicit ack
-  takes precedence.
+  acknowledged. Explicit ack takes precedence. Before recording a review,
+  0.26 requires the watermark to reach the latest applicable ruling, whether
+  supplied or derived; inadequate/missing packet acknowledgment refuses
+  atomically (§9.2). Historical under-acknowledged reviews still replay.
 - **PO7 brief:** edit `set: ["brief=<text>"]` preserves unquoted multiline,
   colon-bearing and equals-containing text literally. Quoted/YAML block strings
   also work. Empty/whitespace-only values still refuse without file/ledger change.
@@ -3138,12 +3298,16 @@ and leaves the plan file unchanged. External delivery happens after the lock.
 If replacing an amended plan file fails after append, the decision remains
 recorded and the error identifies the saved plan and recovery action.
 
-- `--writes` uses amend's recorded plan source, comment/layout preservation,
-  allowance coverage and owner downgrade rules. Record pending plan-file edits
-  first. Every decided node must gain the same paths; already-complete or
-  differently partial additions refuse. Fully allowance-covered paths retain
-  amend's `not needed` refusal: edit task-needed files and let measurement grant
-  them instead. This amendment's ruling is the decision ruling, not an extra.
+- `--writes` accepts bare paths or `+path`, using amend's recorded plan source,
+  comment/layout preservation, scope-containment test, allowance coverage and
+  owner downgrade rules (§3). Record pending plan-file edits first. Drop
+  covered paths per node, then require equal additions for all named nodes;
+  a mismatch refuses naming each node's covered and added paths. If all paths
+  are covered, record the decision's ruling and requested defer/resume but no
+  plan entry or file replacement, reporting `writes unchanged`. Fully
+  allowance-covered real additions retain amend's `not needed` refusal: edit
+  task-needed files and let measurement grant them instead. This amendment's
+  ruling is the decision ruling, not an extra. `-path` still requires a plan update.
 - `--defer` requires owner authority and binds the named invariant to each
   candidate's current merge key, using TEXT as its reason. It precedes any
   `--writer` invalidation. It waives no check and changes no acceptance gate.
@@ -3164,8 +3328,11 @@ recorded and the error identifies the saved plan and recovery action.
   There is no automatic retry or implicit acknowledgment.
 
 Default output is one line, `decision #S for A,B: ruling #R`, with clauses only
-for performed writes, deferral, answers and resume, plus at most one delivery
-failure line. Legacy `rule`, `answer`, `amend`, `defer` and `resume` remain
+for requested/performed writes (including covered-path explanations and
+`writes unchanged`), deferral, answers and resume, plus at most one delivery
+failure line. Results expose `covered` per node and omit `plan` for a covered
+no-op; standalone amendment results also omit `rule` in that case.
+Legacy `rule`, `answer`, `amend`, `defer` and `resume` remain
 supported. Use resume alone for a retry with no new ruling; rule still supplies
 `*`/prospective policy, and edit supplies other plan changes or report requests.
 
@@ -3733,10 +3900,11 @@ when the trunk branch is checked out in a worktree other than the main worktree:
 clean).`; `--json` has `trunkWorktree: <path>`. Nothing is shown when the trunk
 is checked out in the main worktree or nowhere.
 
-### 9.2 Review guidance and conflict diagnostics (0.22, UX)
+### 9.2 Review guidance and conflict diagnostics (0.22, UX; 0.26, AK/WA)
 
-In the default 0.25 why card a clean empty conflict list is omitted; full
-why and status retain `none` (§9.6).
+Default why and status omit clean empty conflict lists; full why/status and
+JSON retain `none` or empty arrays respectively. Paths and `unknown; retry
+owed status` remain visible. Probes are context, never acceptance evidence.
 
 Active review blocks suggest a writer-action decision
 (`owed decide <node> --writer --text "<guidance>"`), repair and resubmission.
@@ -3755,13 +3923,33 @@ merge refusals name conflict files. Probes use
 immutable commit-pair results under the common Git directory's `owed/cache`.
 Invalid caches are recomputed. Probes neither measure checks nor grant acceptance.
 
-Reviews missing applicable ruling acknowledgment still record their verdict
-and warn with an exact candidate-pinned re-record command. It preserves verdict,
-rank, identity, obligation, note, model and needs-parent flag. `--ack-rulings`
-remains one numeric watermark, not a comma list. Complete driver-packet automatic
-acknowledgment remains unchanged. Optional response `warnings`, delivery `slots`
-and view `conflicts` (path arrays or null for unknown) are runtime diagnostics,
-not ledger evidence. No plan key, CLI flag or entry kind is added.
+Review acknowledgment validates under the append lock before recording. A
+watermark below the latest applicable ruling, or omission without a sufficient
+complete driver packet (§8.3 PO6), refuses with exit 2 and nothing appended:
+`ack-rulings must be at least <N> (the latest ruling for <node>); rerun with
+--ack-rulings <N> or --ack-rulings latest`. The CLI alias `--ack-rulings latest`
+and tool `ack_rulings: "latest"` record the computed number, never a string.
+Read those rulings before acknowledging them; the alias is not a waiver or
+implicit review. The watermark is one number, not a comma list. Historical
+reviews retain their old replay rules, including old missing-ack debt.
+Delivery `slots` and view `conflicts` are runtime data, not ledger evidence.
+No plan key or entry kind is added; input compatibility is in Compatibility.
+
+An unresolved needs-parent review appears in wakes, status and default why as
+`Needs you: <node> — review asks: <ask> → owed decide <node> --text "<ruling>"
+--writer`. The ask is the text after the first case-insensitive `needs parent`,
+`Parent decision needed:` or `BLOCK (needs parent):` marker; without one it
+uses the last sentence. Whitespace is flattened, escaped onto one line and
+bounded to 300 characters. Full receipts retain the review note and block
+facts. A parent decision guides repair but never clears the review block by itself.
+
+Trunk invariant conflict/red owner guidance names at most three failing tests
+plus `+N`, and uses the recorded plan source to add a repair node (`owed plan
+<recorded path>, or owed edit --node-new`); with no source it offers only the
+editor, never a made-up path. Recorded node defers stay visible. Existing
+trunk-park and invariant-red notices keep their full red text, waiting-node
+membership and remedy choices; queued membership is revalidated at delivery.
+The pre-initialization usage hint `owed init <plan.yaml>` remains valid.
 
 ### 9.3 Current work, local clocks and ruling receipts (0.23, LO)
 
@@ -3787,9 +3975,19 @@ CLI `owed rule` and pi `owed_rule` return
 `Recorded #S ruling (<nodes>); delivered <k>/<n>`. The denominator includes
 successful, pending and failed role deliveries. Each delivery failure or
 unknown writer adds one line directing the reader to `owed why <node>`.
-Known sealed calls stay pending. The default receipt omits ruling bodies,
-follow-ups, active-block quotes and status brief; JSON/tool details retain
-complete plain-string follow-ups, preserving literal newlines and backslashes.
+Known calls that are neither running nor asking remain pending. For each
+node with such a known writer, the receipt adds:
+`<node>: writer call <rid> has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if <node> is halted, run owed resume <node> (owed decide records and resumes in one step)`.
+`owed rule` never sends follow-ups itself. Use the printed resume action for a
+halted node, or `owed decide <node> --text "<ruling>" --writer` to record the
+decision and resume in one step. Delivery remains the driver's next eligible
+pass; a recorded ruling is not proof of immediate delivery. Runtime delivery
+results add optional `finished: [{node, writer}]`; unknown writers retain the
+separate forwarding hint.
+
+The default receipt omits ruling bodies, follow-up messages, active-block
+quotes and status brief; JSON/tool details retain complete plain-string
+follow-ups, preserving literal newlines and backslashes.
 The separate decide receipt is specified in §8.3.1.
 
 Why's `Ruling to forward` contains only in-scope rulings the open slot writer
@@ -3833,6 +4031,10 @@ its existing window and parent-act semantics and adds:
   driver selections. `drive.same_model: accepted` quiets the warning, never
   the count. Ordinary `owed report` and metrics both expose this field and
   print `Reviews by the writer's model: <n>`; approval entries are excluded.
+- `infra` (0.26, IF): `{total, byObligation}` counts observations carrying a
+  validated `infra` pairing receipt in the window. One receipt may resolve
+  several consecutive setup failures; it still counts once. This is not a
+  waiver or debt metric (§7.26). Text reports `Infra` beside grants.
 - `latency.leaseWaitMs`: summaries of recorded `lease_wait_ms` on obs/merge
   entries in the window (§7.14a), one sample per entry. Older ledgers have no
   samples. Text prints a machine-lease line only when samples exist.
@@ -3845,7 +4047,9 @@ with `--metrics`, and `--until` remains metrics-only. Neither report changes
 acceptance or records ledger acts. These options are CLI-only; `owed_report`
 continues to expose ordinary report with `since`.
 
-Counterfactual performs one validating cold fold of the ledger, classifying
+Counterfactual uses the decision-group-aware read path: an incomplete final
+decision group is hidden for unlocked readers, as in §8.3.1; locked loads and
+verification remain strict. It performs one validating cold fold, classifying
 each recorded driver halt using state immediately before it: `trunk-red`,
 `shared`, `fix-wait` when an accepted fix exists, otherwise `clean-rebase`,
 `unknown` or `unchanged`. Shared parking requires no failing merge-tree node
@@ -3882,7 +4086,7 @@ requirement fields are absent and existing review behavior is unchanged.
 Report/metrics `reviews.sameModel` is described in §9.4; it measures recorded
 model correlation, not independent reasoning or review quality.
 
-### 9.6 Outstanding-only why card (0.25, QT)
+### 9.6 Outstanding-only why card (0.25, QT; 0.26, AK)
 
 `owed why <node>` / `owed_why` starts with `<node>: <phase>; <n> outstanding`
 (or `nothing outstanding`; `<node>: merged` after merge). It lists unsatisfied
@@ -3894,28 +4098,114 @@ The in-flight measurement appears in the outcome; a merge/measure waiting
 line is shown only when it is not measuring. The complete `Ruling to forward:`
 block stays in the default card because forwarding it is a need. The derived
 `review <n> required, rank >= <r>: <cause>` remains for an unmerged node as
-context, not an outstanding item. The outstanding count counts displayed
-condition/item lines (including waits), not only actions for the parent.
+context, not an outstanding item. The count includes unsatisfied obligations,
+active blocks and current merge-check debt, plus a ready dispatch skip (§9.8);
+merge/measurement wait, hold, report, rebase and warning context do not add to
+it merely because a line is displayed. An accepted merge-waiting node may have
+nothing outstanding and still be waiting to merge.
+
+Default why and candidate receipt cards (including rebase and attest, and
+detailed dispatch receipts when rendered) show ΔO⁻ only for entries after the
+current attempt's dispatch or its latest resume, whichever is later. Older downgrades remain in `--full` and
+JSON; `owed rebase <node> --full` and `owed attest <node> --full` expose them.
+This is presentation filtering, not removal of obligations or audit history.
 
 `Details: owed why <node> --full` ends the card. `--full` (pi `full:true`)
 restores satisfied items, observations, logs/counts, driver runs, historical and
 superseded blocks, other ruling text, ΔO⁻, selected/used model lines,
-acknowledged warnings, backlog (`later`) marks and quarantine lifts. JSON is
-unchanged; submit/review/attest/waive and refusal receipt cards retain their
-existing detailed rendering. Trunk/invariant subjects never receive a node
+acknowledged warnings, backlog (`later`) marks and quarantine lifts. JSON retains its detailed history; submit/review/attest/waive and refusal
+receipt cards retain detailed evidence, with the same current-attempt ΔO⁻
+filter unless `--full` is requested. Trunk/invariant subjects never receive a node
 command: unmeasured trunk items suggest `owed attest --trunk`; red items use
 the status/decision view's plan-repair command. Quiet text never removes a need
 or the content needed to act on it (§12.8.3).
 
+### 9.7 Measurement cost and reads diagnostics (0.26, CO)
+
+`owed report --cost [--since <seq|ISO>] [--json]` reports checks and invariants
+by total measured machine time, with ties ordered by obligation id. Per row:
+execution observations, total/median/nearest-rank p90 `durationMs`, failures
+(including errors), setup failures separately, and total `lease_wait_ms`.
+JSON durations are milliseconds; text duration summaries are seconds and
+lease wait remains milliseconds. Checks sharing an id aggregate across nodes.
+One repeat observation is one row execution; its duration includes its runs.
+No measurement is inferred for missing observations.
+
+Invariant rows include measured merges versus all recorded merges in the
+window; a successful batch measurement counts for each member. Reused evidence
+from another tree and refused merges do not increase merge coverage. Prefix
+attribution compares consecutive distinct measured trunk keys, using captured
+`reads` and changed files grouped by their first two path segments. A prefix
+counts once per key transition; same-key retries add cost, not invalidations.
+The first in-window sample uses its preceding historical key. Refused merge
+trees consume time but are not trunk samples; landed merge/adopt trees are.
+JSON `invalidatingPrefixes` gives the top five prefixes and `measuredTrunkKeys`
+counts samples. If one prefix occurs in more than half of the highest-cost
+invariant's samples, advice says `narrow reads of <id>: <prefix> changed its
+key in <n> of <m> runs`. This is diagnostic advice, not proof of coverage.
+
+Plan admission warns when `reads` contains `**` or covers at least 90% of
+tracked trunk paths: `warning: reads of <id> cover <p>% of the repository:
+almost every change remeasures it (owed report --cost)`. A check intersecting
+closure warns `warning: check <id> reads closure path <p>: checks see the base
+version of closure files`. Intersections use tracked paths and explicit
+literal closure entries, not invented files for two unobserved globs. Lint
+warnings are deduplicated in a plan receipt and not ledger entries; unchanged
+start does not repeat cost lint. Edit previews may expose the same warnings.
+
+Default status warns when the latest executor trunk pass of an invariant took
+at least 80% of its configured timeout: `inv:<id> took <d> of timeout <t>; an
+automatic remeasure doubles a merge's wall time`. A successful merge-tree pass
+counts only once its tree lands; unlanded passes do not. A newly recorded plan
+repeats that diagnostic with the lint `warning: ` prefix. Status JSON adds
+`runtimeWarnings` only when such warnings exist; they are not outstanding work.
+
+Cost, metrics and counterfactual modes are mutually exclusive; `--until`
+remains metrics-only and `--since` is exclusive. Cost is CLI-only. Prefix
+attribution needs the measured Git commits to remain available; command/closure
+changes and files outside reads are not attributed to a reads prefix. Its
+setup-failure counts are report-only heuristics from stored counts, timeout
+and error evidence, not the reducer's validated resolution predicate (§7.26).
+In particular, cost uses obligation-wide counted history and timeout/exit-code
+heuristics, rather than the reducer's earlier same-subject history and strict
+per-run zero-result checks. Never use a cost classification to discharge a gate.
+No report, lint or runtime warning changes an acceptance gate or key.
+
+### 9.8 Ready dispatch explanations (0.26, WA)
+
+Default status and `owed why <node>` explain the same dispatch predicate as
+the driver, in dispatch order with same-pass capacity/writes reservations:
+`ready, not dispatched: writes overlap <other> (<path>[, ...]) → owed dispatch
+<node> --allow-overlap`, `ready, not dispatched: <k> of max <N> attempts open`,
+or the existing owner-needed reason. Removed nodes with open slots still
+consume capacity. Owner-needed ready nodes appear once under Needs you, not
+again as a ready line. These explanations change no replay state or JSON
+shape and are not a promise of a later dispatch.
+
+Current status ready lines and why use a live driver's recorded `--max`
+override when available, otherwise the plan's `drive.max`. Known limit:
+`statusView` callers outside the current summary/why read paths, and the
+status/brief summary itself outside those ready lines, use plan `drive.max`,
+not the live override.
+Older driver locks cannot expose an override they did not record. The unchanged
+same-model warning compares the models actually used; acknowledge deliberate
+same-model policy with `drive.same_model: accepted`, or route reviewers to a
+different model (§12.5.2).
+
 ## 10. CLI
+
+`owed --version` and `owed version` print `owed <package version>` without
+requiring a repository. They accept no other arguments or options and report
+the installed package, not a ledger's reader requirements.
 
 `owed help` is an alias of `owed --help`, listing commands and flags.
 `owed <command> [args] [--json]`; commands mirror §8:
-`start [--plan <file>] [--max N] [--stay]` (§10.2), `init <plan.yaml>`,
+`start [--plan <file>] [--max N] [--stay] [--restart]` (§10.2), `init <plan.yaml>`,
 `plan <plan.yaml> [--rev <commit-ish>]` (path relative to the cwd; with
 `--rev` the file is read from that commit, so a plan kept in trunk is the
 ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
-[--plan <file>]` (§3 Amend), `edit <node> --set path=yaml ... [--unset path ...]
+[--plan <file>]` (§3 Amend; bare paths mean `+path`, and already-covered paths
+are no-ops, as in §8.3.1), `edit <node> --set path=yaml ... [--unset path ...]
 [--node-new] [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
 --note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
 --note WHY` (§3 ED1/ED2),
@@ -3929,11 +4219,12 @@ role/question/run and rule seq, with other-role delivery results when present;
 `--json` retains the request id and delivery details in
 `{entry, request, delivery}`; a failed delivery refuses with the recorded rule
 seq and exact retry command), `dispatch <node> [--allow-overlap]`,
-`submit <node> [--commit X] [--model MODEL]`, `rebase <node> [--apply]` (manual:
+`submit <node> [--commit X] [--model MODEL]`, `rebase <node> [--apply] [--full]` (also
+accepts global `--json`, `--as role:id`, `--i-am-owner` and `--help`; manual:
 parent/owner or the slot writer inside its worktree; `--apply`: parent/owner
-executor rebase, §7.25), `attest <node> [--rerun | --remeasure [--all]]`,
+executor rebase, §7.25), `attest <node> [--rerun | --remeasure [--all]] [--full]`,
 `attest --trunk [--remeasure [--all]]`,
-`review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings] [--model MODEL]`
+`review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings N|latest] [--model MODEL]`
 (`--needs-parent` records `needs: "parent"`; refused with `--ok`),
 `waive <node> <obligation> --reason ... [--accept-risk 12,15]`
 (`review`, `waive`, `approve` and `evidence` also take `--candidate COMMIT`,
@@ -3944,7 +4235,7 @@ spelling `--reason`; not both), `resume <node[,node...]> [--after <node>] [--exp
 <dep>]`, then `<node> waits for <dep> (resume #<seq>); the driver acts again
 when <dep> merges`, or `<dep> is already merged: <node> resumes now`; `--json`
 the entry), `merge <node>`, `status [--full]`,
-`why <node> [--full]`, `report [--metrics [--until seq|ISO] | --counterfactual] [--since seq|ISO]` (§9.4), `brief [--since seq|ISO]`, `verify`,
+`why <node> [--full]`, `report [--metrics [--until seq|ISO] | --counterfactual | --cost] [--since seq|ISO]` (§9.4, §9.7), `brief [--since seq|ISO]`, `verify`,
 `sweep [--commit C] [--due] [--no-lease]` (§7.15b; `--due` requires
 `sweep.every`, a not-due call records nothing and exits 0),
 `adopt [--commit X] [--wait SECONDS] --note TEXT` (owner; off-ref fast-forward
@@ -4038,9 +4329,9 @@ worktree (`owed-run-*/tree` under the temp directory): `git worktree remove --fo
 - Signals: an `init` aborted after genesis was appended prints the incomplete line
   above before `Aborted: <signal>` (exit 130/143).
 
-### 10.2 Preflight and start (0.25, SF)
+### 10.2 Preflight and start (0.25, SF; 0.26, AK)
 
-`owed start [--plan <file>] [--max N] [--stay]` performs read-only preflight,
+`owed start [--plan <file>] [--max N] [--stay] [--restart]` performs read-only preflight,
 initializes a missing ledger, records a semantically changed plan and starts
 or reuses the detached driver. `--max` must be a positive safe integer; it and
 `--stay` apply only to a newly started driver, not to one already running.
@@ -4051,8 +4342,8 @@ parser and shell admission/lint, the declared trunk branch's initial commit,
 plan-update authority and the driver lock. No source is guessed: without a
 ledger, supply `--plan`; with one, omission rereads the latest recorded
 plan/genesis source. An explicit changed source becomes the future default.
-Canonical equality ignores formatting-only edits. Lint warnings each have
-their own line after the action line and remain in structured results.
+Canonical equality ignores formatting-only edits. Lint warnings are folded
+into the action line without suppressing them and remain in structured results.
 
 Fresh init is delegated `owner:pi`, with `measure:false`: start does not run
 `owed_init`'s session-owned background genesis attest; the driver's existing
@@ -4068,7 +4359,7 @@ preflight and remedy, without an init or plan entry.
 An unchanged plan with a live driver says `already running`, records nothing
 and preserves its log. Normal output has three lines: `start: initialized
 ledger|updated plan|plan unchanged`, `driver: started|already running|ended
-(...)`, and `Next: ...`; warnings are additional lines. Init/plan entries stay
+(...)`, and `Next: ...`; warnings share the action line. Init/plan entries stay
 durable if a subsequent driver launch fails: inspect `owed status` or
 `owed drive --status`, fix the launch and start again, not init again.
 JSON/tool results are `{initialized, updated, plan, warnings, driver}`;
@@ -4076,13 +4367,24 @@ JSON/tool results are `{initialized, updated, plan, warnings, driver}`;
 A standalone CLI has no pi session to wake; use pi for automatic session
 follow-ups or inspect driver status when needed.
 
+`--restart` / `owed_start {restart:true}` gracefully stops a live local driver,
+drains its current action and in-flight measurements, and waits for that
+process (pid and start time), not merely lock release, to exit before starting
+a replacement. The existing stop deadline is ten seconds. On timeout it
+refuses with exit 2 and the pid: `driver pid <P> is stopping after its current
+action and its in-flight measurements; repeating owed start --restart is safe;
+owed drive --stop --now stops it at once`. It never escalates automatically.
+A repeated graceful request only waits; §12.8's stop request prevents a second
+signal. Without a live driver restart is ordinary start; foreign-host locks
+still refuse. Preflight and actor restrictions are unchanged.
+
 ## 11. pi extension
 
 0.23 adds `owed_decide` (§8.3.1): `{nodes: ["A", "B"], text, writes?, defer?,
 resume?, after?, remeasure?, writer?, as?, cwd?}`. False `resume` preserves the
 halt; writes uses amendment authority and defer needs the owner. Delivery
 follows the atomic decision append. `owed_rule` uses §9.3's concise receipt.
-CLI `report --metrics`/`--counterfactual` and `rebase --apply` have no matching
+CLI `report --metrics`/`--counterfactual`/`--cost` and `rebase --apply` have no matching
 parameters on `owed_report` or `owed_rebase`; use the CLI for those options.
 
 0.20 surface parity: `owed_attest` adds optional booleans `remeasure` and `all`
@@ -4139,7 +4441,7 @@ repository. Most tools also take `as` (`role:id`).
 
 | tool | parameters (besides `cwd`) | operation |
 |---|---|---|
-| `owed_start` | `plan?`, `max?` (positive integer), `stay?` | preflight, delegated init or permitted plan update, start/reuse detached driver (§10.2); no `as` |
+| `owed_start` | `plan?`, `max?` (positive integer), `stay?`, `restart?` | preflight, delegated init or permitted plan update, start/reuse detached driver (§10.2); no `as` |
 | `owed_status` | `as`, `full?: boolean` | outcome and next actions; full keeps evidence and audit |
 | `owed_why` | `node`, `full?`, `as` | outstanding-only card; full restores all evidence/history (§9.6) |
 | `owed_report` | `since?`, `as` | report |
@@ -4149,7 +4451,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_submit` | `node`, `commit?`, `model?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
 | `owed_attest` | `node?`, `trunk?`, `rerun?`, `remeasure?`, `all?`, `lease?`, `as` | attest; trunk needs no node; all requires remeasure |
-| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?`, `model?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
+| `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?: number \| "latest"`, `model?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `lease?`, `as` | merge |
 | `owed_abandon` | `node`, `hold?: boolean`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner); hold prevents re-dispatch until resume |
 | `owed_resume` | `node` (string or non-empty string array), `after?`, `expect?`, `remeasure?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the node phase line and brief status |
@@ -4158,7 +4460,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
 | `owed_edit` | `node?` or `invariant?`, `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
-| `owed_amend` | `node`, `writes` (`+path` each), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
+| `owed_amend` | `node`, `writes` (bare paths or `+path`; covered paths are unchanged), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
 | `owed_init` | `plan` (path relative to `cwd`), `lease?`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | initialize the ledger (§11.1) |
 | `owed_waive` | `node`, `obligation`, `reason`, `accept_risk?`, `candidate?`, `as` | owner waiver; under the gate the dialog shows `Candidate: <commit> (submit #<seq>)`, `Base:`, `Changed files:` and only that candidate is waived (§8) |
@@ -4673,10 +4975,10 @@ included, so no repair carries an undecided contract — if any review block on
 the current candidate has `needs: 'parent'` and no ruling naming
 the node (`--nodes` includes it; a `*` ruling is general guidance and does not
 count) has a seq above the block's, the action is a halt needing `human`:
-`review block #<seq> <obligation> needs a parent ruling: <note>; record
-\`owed rule --nodes <node> "<decision>"\`; the writer gets the ruling with the
-next repair` (one clause per such block; with a repair already outstanding the
-ruling reaches the writer with the following repair or the re-review). No repair follow-up is sent and none is
+`review asks: <ask> → owed decide <node> --text "<ruling>" --writer`
+(one clause per such block; extraction and presentation are in §9.2).
+With a repair already outstanding the ruling reaches the writer with the
+following repair or the re-review. No repair follow-up is sent and none is
 counted. That node-named ruling also clears the halt (§12.3); the block is then
 repaired as usual, and every repair message lists, first (0.7; before 0.7 after
 the review notes), the rulings covering the node recorded after the dispatch (`Rulings since
@@ -4709,7 +5011,7 @@ its `Rulings since dispatch:` block. Before all of this (review #680), when an a
 that latest submit still awaits a parent ruling, row 8 halts with the
 needs-parent halt text (also when no block is repairable): a repair, rebase or
 submit follow-up would make the unruled block stale and let a re-review bypass
-the parent question. Without any such block row 8 is unchanged.
+the parent question. The remaining row-8 behavior follows §12.5.4.
 
 Rebase or resubmit in row 8 (0.10, N1.4, wais #1375). Without a current
 candidate, the `rebase` follow-up is sent only when the slot has a rebase and no
@@ -4998,8 +5300,10 @@ invalidate candidates. Prospective policy behavior is unchanged.
 
 Rule text receipts use §9.3's delivery counts and forwarding guidance. Rule
 results add optional `delivery: {delivered:string[], pending:number,
-failures:string[], slots?: {node, writer?, followUp}[]}`; answers
-add the same as `rulingDelivery`. Pending counts applicable non-running launches
+failures:string[], slots?: {node, writer?, followUp}[], finished?: {node, writer}[]}`;
+answers add the same as `rulingDelivery`. A known non-running/non-asking writer
+adds the recorded-but-not-sent-now receipt line; rule never starts its
+follow-up. Pending counts applicable non-running launches
 and required not-yet-dispatched roles, skipping merged nodes. Request id is
 `owed-rule-<seq>-<rid>-<sha256(exact message body)[0:12]>`: identical bytes
 are idempotent, changed bytes produce a new request, avoiding request-conflict
@@ -5025,7 +5329,7 @@ the SB1 refusal; it changes only the command text, never when a follow-up is due
 conflict, rerun/commit and `owed submit <node>` instructions. No new ledger
 field records this Git fact.
 
-### 12.5.3 Repair follow-ups (0.25, QT)
+### 12.5.3 Repair follow-ups (0.25, QT; 0.26, NT)
 
 A writer repair details only failures recorded since the latest non-refused
 repair follow-up to that writer's run: failing measured items include new test
@@ -5039,10 +5343,83 @@ commit and `owed submit <node>`; owed reruns checks itself. The message links
 `owed why <node> --full` rather than embedding the full card. Interrupted
 reviewers also use `--full` to inspect recorded review evidence.
 
-The driver's rejected-send map is runtime state: after restart a previously
-refused repair send may count as the previous message again. This is a text
-boundary limitation, not evidence reuse or permission to ignore a failure;
-the full receipt and all binding blocks remain available.
+The driver rebuilds refused sends after restart from retained halt reasons,
+current and once-rotated driver reports, and durable runner request receipts.
+A refused repair does not move the findings boundary; a delivered repair does.
+Recovery is bounded by retained evidence: if every refusal receipt is removed,
+old refusal cannot be inferred. All binding failures remain in the full receipt.
+
+### 12.5.4 Stopped writers and decision questions (0.26, WS)
+
+A successful sealed writer without a current candidate receives a submit
+reminder only when actual work remains. Outside ledger locks, after checking
+the current runner generation, the driver inspects worktree HEAD and dirtiness.
+In the ordinary row-8 path, the handed head is the latest submitted commit
+when it follows the latest rebase (including an executor-rebased submit),
+otherwise the current slot base. Clean HEAD equal to that head halts with
+`writer stopped without a candidate`; no submit reminder is sent. A different
+HEAD or dirty worktree can receive one submit reminder, then a halt if no
+candidate follows. Missing inspection facts halt conservatively with
+`cannot inspect writer worktree; no submit nudge sent`.
+
+A plan-invalidated candidate still receives its plan-changed resubmit message,
+even for the same clean commit; inspection does not suppress that route.
+Existing repair/ruling follow-up halts and the one-reminder bound remain.
+A writer interrupted with unknown tool outcomes retains the recovery route;
+a non-ok writer halt retains its status/error and any abandon guidance.
+The row-7 halt for a writer run sealed non-ok uses the same reply trailer
+as a clean-stop halt: `writer says: "<final paragraph>"` (or
+`writer gave no final text`) followed by
+`owed decide <node> --text "<ruling>" --writer`.
+
+Stopped-writer halts record the cause, then `writer says: "<final paragraph>"`
+and `→ owed decide <node> --text "<ruling>" --writer`. The quoted text is the
+last nonempty paragraph of the run's final reply (`RunView.result`), whitespace
+flattened to one line and bounded to 300 characters before JSON quoting/control
+escaping. A long paragraph ends in an ellipsis; missing text says
+`writer gave no final text`. Pruned runs retain a reply only while describe
+still supplies it. Wakes, default why and status Needs-you show that reply and
+the one decision command, keeping measurement/repair dumps in full evidence.
+The parser uses owed's own final trailer, so commands inside the writer's
+reply cannot replace the next action. The quote is context for the parent,
+never a candidate, measurement or acceptance receipt.
+
+Pending Git drift cannot leave a sealed writer silent after a rebase follow-up.
+The existing question, owner, report and unresolved-review priorities still
+apply. When that drift branch is reached and the writer is still running,
+wait; for a sealed writer, send a due named ruling follow-up before any
+stopped-writer halt. Otherwise inspect a **set of handed HEADs**: the last
+submitted commit, or the original dispatch base when there is no submit, plus
+`from` (pre-rebase slot base) of every later rebase of this attempt. This is
+not the last observed writer HEAD. A clean HEAD in that set halts immediately,
+naming the rebase follow-up and quoting the final reply. Missing inspection
+facts also halt. A HEAD outside the set or dirty worktree can get one additional
+submit reminder carrying the rebase instructions; sealing again without a
+candidate halts, naming the rebase and reminder. The bound is counted after
+the rebase follow-up and latest resume.
+
+After a pending-rebase halt, `owed decide <node> --text "<ruling>" --writer`
+records guidance and resumes. The next eligible pass delivers exactly one due
+ruling follow-up before halting again. If a ruling follow-up is later than
+both the rebase follow-up and latest resume, and the writer seals again
+without a new submit, the halt names that ruling follow-up instead. This
+check precedes HEAD/dirty inspection: even an unsubmitted commit outside the
+handed set, or dirty work left behind, cannot trigger another submit reminder.
+A refused ruling follow-up retains its rejection guidance. This is the same
+finished-ruling boundary as the ordinary writer-halt path; no send/halt loop
+or new ledger kind is introduced.
+
+Dispatch packets and writer follow-ups (rebase, repair, submit, plan-changed,
+ruling, interruption and report) carry this sentence:
+`If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.`
+Submit reminders also say:
+`If you stopped for a parent decision, do not submit: ask the question instead.`
+Actual runner questions keep the existing verbatim-question/answer flow;
+the driver never chooses an answer. Writer/reviewer messages stay English.
+Checks, reviews and merge gates are unchanged; old ledgers retain their replay
+states and keys, and recorded message retries keep their original bytes.
+Worktree facts can be unavailable, and pruned final replies may be lost;
+no new idle-watchdog guarantee for writing without a live call is added.
 
 ### 12.6 Review packet (D5)
 
@@ -5072,7 +5449,9 @@ lines themselves are unchanged). Before that line (0.6.1 H2.3) it says that
 `--ok` means the candidate meets the node's goal as its title and brief state
 it, not only that the writer's report or evidence is accurate, and that a
 candidate or report saying the goal is not met is a `--block` (`--needs-parent`
-when the goal itself is in question). The driver does not parse review notes.
+when the goal itself is in question). The driver extracts an ask from review
+notes for presentation (§9.2); the recorded verdict and needs-parent flag,
+not inferred prose, control acceptance and repair routing.
 `reviewRuns(state, node)` = `max(derived review count, 1 if closure-review is
 required else 0)` runs per candidate (§6.2a); with `k = n - reviewerBase(state, node)`,
 `reviewObligations(state, node, n)` = `review` while `1 ≤ k ≤ derived review count`,
@@ -5466,10 +5845,16 @@ polling.
   non-empty).
 - **Stop** (`owed drive --stop [--now]`, tool `action: "stop"`, `now`): no
   live lock → `no driver running` (exit 0, nothing created). Otherwise under
-  the `drive-detach` lock, so concurrent stops send one signal. A lock of another host, or one
-  without a process start time, refuses. Else SIGTERM to the lock's pid when
-  its start time still matches (never a reused pid); `--now` sends a second
-  SIGTERM 1 s later if the lock is still held (D14.8: stop at once). Waits up
+  the `drive-detach` lock, graceful stops (`owed start --restart`, `owed drive
+  --stop` without `--now`) signal each driver process (pid + start time) at
+  most once. Before signaling, owed atomically writes `drive.lock.stop-request`
+  under that lock, recording pid, start, host and token. A request for another
+  process is stale and replaced; repeated graceful stops only wait. A lock of
+  another host, or one without a process start time, refuses. SIGTERM targets
+  only the still-matching pid/start (never a reused pid). `--now` retains the
+  immediate-stop behavior: with no prior request it sends a second SIGTERM
+  1 s later if the lock is still held; with a prior request it sends the extra
+  SIGTERM immediately. Graceful requests never escalate to that path. Waits up
   to 10 s for the lock to be released: `stopped`, else `stopping: pid P exits
   after its current action and its in-flight measurements` (§12.7 Stopping).
   Exit 0.
@@ -5493,9 +5878,13 @@ polling.
   alone and is listed in the next message. All wake lines of one read form one
   `pi.sendMessage({customType: "owed-drive", display: true, content},
   {triggerTurn: true, deliverAs: "followUp"})`. Its plain summary replaces
-  raw node report text (§12.8.1, §12.8.3); it retains the
-  `owed drive (<repo>):` header, carried merges and wake lines, and when at
-  least one wake line is a halt, its actionable command (§12.8.3), then
+  raw node report text (§12.8.1, §12.8.3): Needs-you lines first, then carried
+  merges folded into `Done: <nodes>`, then `Driver continues (<n> in progress)`
+  or `Driver stopped: <reason>`, followed by `owed drive (<repo>):` and any
+  remaining payload/repeat lines. With at least one halt it adds exactly
+  `To clear a halt without an obligation: owed decide <node> --text "<decision>"
+  (add --after <node> to wait until that node merges; --no-resume keeps it halted)`.
+  A resolved-wake count, when present, precedes the last line,
   `Next: owed status / owed why <node>`. The plain needs replace the original
   raw node lines rather than echoing them. Identical wake lines within one read collapse.
   One wake per new fact (E3.1, replacing D17a.5's "every halt line wakes"):
@@ -5614,8 +6003,10 @@ plugin together. Snapshot/crash/label limits are in §7.17.
 Each ordinary need is `Needs you: <node> — <what is needed> → <one command>`,
 not the raw driver line. Every open question gets its own line, question text
 and answer command: one sole question may use `owed decide`; several require
-`owed answer` with selectors. Reported nodes give `review the reported
-findings → owed decide <node> --text "<decision>"`, followed by the report's
+`owed answer` with selectors. Each command is parsed from that question's own
+trailing answer clause; command-like `answer: owed ...;` inside the question
+remains question text and cannot replace its action.
+Reported nodes give `review the reported findings → owed decide <node> --text "<decision>"`, followed by the report's
 last 40 lines (at most 4000 characters). Repository notices, including shared
 failure, trunk red/drift and sweep notices, retain their full text and every
 line under Needs you; reducing them to one line would lose nodes or remedies.
