@@ -238,9 +238,12 @@ pre-rebase base; work outside that set can receive one reminder carrying the
 rebase instructions. Unavailable inspection facts halt conservatively.
 
 Stopped-writer wakes, default why and status quote `writer says: "<final
-paragraph>"` and offer `owed decide <node> --text "<ruling>" --writer`. The
+paragraph>"` (or `writer gave no final text`) and offer
+`owed decide <node> --text "<ruling>" --writer`. This also applies to the
+row-7 halt when a writer run seals non-ok, just as to a clean-stop halt;
+the recorded cause retains its status/error and any abandon guidance. The
 last nonempty paragraph becomes one line of at most 300 characters, ending
-with an ellipsis if truncated; missing text is explicit. Full evidence keeps
+with an ellipsis if truncated. Full evidence keeps
 the cause, run and failure details. Pruned replies depend on what the runner
 still retains. Real questions keep their existing answer flow.
 
