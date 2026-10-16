@@ -20,7 +20,7 @@ export function countNote(counts: Counts | undefined, minTests: number | undefin
   const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
   return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
 }
-export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void }
+export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; /** QS4: node checks measured on trunk or a merge tree (invariants already have subject trunk). */ quarantineFeedback?: boolean; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void }
 function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
   for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
@@ -298,12 +298,12 @@ async function timeoutProcessTree(pid: number | undefined): Promise<string> {
     });
   });
 }
-export interface CommandResult { code: number | null; error?: string; log: string; spawn?: boolean; measurementLog?: string }
+export interface CommandResult { code: number | null; error?: string; log: string; spawn?: boolean; measurementLog?: string; truncated?: boolean }
 /** Shared shell, environment, wrapper and process-group handling for measurements and slot setup. */
 export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abortGraceMs'>, run: string, cwd: string, timeout: number, capture: (data: Buffer) => void = () => {}, onTimeout?: string): Promise<CommandResult> {
   assertNoLedgerLock();
   return new Promise(resolve => {
-    let output = Buffer.alloc(0), error: string | undefined, spawnError = false;
+    let output = Buffer.alloc(0), error: string | undefined, spawnError = false, outputTruncated = false;
     const inherited: NodeJS.ProcessEnv = { ...process.env };
     // Nested test runners and dsa call identities must not leak into child commands; DSA_HOME is configuration.
     delete inherited.NODE_TEST_CONTEXT;
@@ -314,7 +314,7 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     const argv = wrapped ? ['bash', '-lc', expandWrap(wrap, cwd, timeout, run)] : [...(wrap ?? []), 'bash', '-lc', run];
     const p = spawn(argv[0]!, argv.slice(1), { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let measurementLog: string | undefined;
-    const collect = (b: Buffer) => { if (measurementLog !== undefined) return; capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) output = output.subarray(output.length - LIMIT); };
+    const collect = (b: Buffer) => { if (measurementLog !== undefined) return; capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) { outputTruncated = true; output = output.subarray(output.length - LIMIT); } };
     p.stdout.on('data', collect); p.stderr.on('data', collect);
     let escalation: NodeJS.Timeout | undefined;
     const kill = (sig: NodeJS.Signals = 'SIGKILL') => { if (p.pid) { try { process.kill(-p.pid, sig); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
@@ -370,7 +370,7 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
         capture(Buffer.from(appendix));
         output = Buffer.concat([output, Buffer.from(appendix)]);
       }
-      resolve({ code: measurementLog !== undefined ? null : code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(measurementLog !== undefined ? { measurementLog } : {}), ...(spawnError ? { spawn: true } : {}) });
+      resolve({ code: measurementLog !== undefined ? null : code, error: error ?? (signal ? `terminated by ${signal}` : undefined), log: output.toString(), ...(measurementLog !== undefined ? { measurementLog } : {}), ...(spawnError ? { spawn: true } : {}), ...(outputTruncated ? { truncated: true } : {}) });
     });
   });
 }
@@ -393,6 +393,68 @@ export function nodeTestRun(run: string): boolean {
   return tokens[i] === 'node' && tokens.slice(i + 1).includes('--test');
 }
 const CARGO_RUN = /(?:^|\s)cargo\s+(?:\+\S+\s+)?test\b/;
+/** QS3: the same shell-free token allowlist as nodeTestRun, with an optional Cargo toolchain. */
+export function cargoTestRun(run: string): boolean {
+  const tokens = run.split(' ').filter(t => t !== '');
+  if (!tokens.length || tokens.some(t => !/^[A-Za-z0-9_./=:@,+*?-]+$/.test(t))) return false;
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]!)) i++;
+  if (tokens[i++] !== 'cargo') return false;
+  if (/^\+.+/.test(tokens[i] ?? '')) i++;
+  return tokens[i++] === 'test' && tokens.slice(i).includes('--no-fail-fast');
+}
+/** QS3: completeness evidence, not a count/verdict replacement. Never parse indented diagnostic text as results. */
+export function cargoExcusable(log: string, counts: Counts | undefined): { reason?: string; failed: string[]; passed: string[] } {
+  const failed: string[] = [], passed: string[] = [], occurrences = new Map<string, Set<number>>();
+  const no = (reason: string) => ({ reason, failed, passed });
+  if (counts?.format !== 'cargo') return no('counts are not cargo');
+  let block: { n: number; pass: number; fail: number; skip: number } | undefined;
+  let blocks = 0, failedBlocks = 0, reruns = 0, targets: number | undefined;
+  let totalPass = 0, totalFail = 0, totalSkip = 0;
+  for (const line of log.split(/\r?\n/)) {
+    if (line.includes("process didn't exit successfully") && (!/\(exit status: 101\)\s*$/.test(line) || /signal:/.test(line))) return no('cargo process did not exit with status 101');
+    if (/^error(?:\[|:)/.test(line)) {
+      if (/^error: test failed, to rerun pass .+$/.test(line)) reruns++;
+      else {
+        const m = /^error: (\d+) targets failed:$/.exec(line);
+        if (!m || targets !== undefined) return no('cargo reported a non-test error');
+        targets = Number(m[1]);
+      }
+    }
+    const start = /^running (\d+) tests?$/.exec(line);
+    if (start) {
+      if (block) return no('cargo block has no test result');
+      blocks++; block = { n: Number(start[1]), pass: 0, fail: 0, skip: 0 }; continue;
+    }
+    const result = /^test (.+) \.\.\. (ok|FAILED|ignored(?:, .*)?)$/.exec(line);
+    if (result) {
+      if (!block) return no('cargo test result outside a block');
+      const name = result[1]!, status = result[2]!;
+      const seen = occurrences.get(name) ?? new Set<number>(); seen.add(blocks); occurrences.set(name, seen);
+      if (status === 'ok') { block.pass++; passed.push(name); }
+      else if (status === 'FAILED') { block.fail++; failed.push(name); }
+      else block.skip++;
+      continue;
+    }
+    if (/^test result:/.test(line)) {
+      if (!block) return no('cargo summary outside a block');
+      const summary = /^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored(?:;.*)?$/.exec(line);
+      if (!summary) return no('unrecognized cargo test result');
+      const p = Number(summary[2]), f = Number(summary[3]), s = Number(summary[4]);
+      if (block.pass + block.fail + block.skip !== block.n) return no(`cargo announced ${block.n} tests but ${block.pass + block.fail + block.skip} results`);
+      if (block.pass !== p || block.fail !== f || block.skip !== s || (summary[1] === 'FAILED') !== (f > 0)) return no('cargo results disagree with summary');
+      if (f) failedBlocks++;
+      totalPass += p; totalFail += f; totalSkip += s; block = undefined;
+    }
+  }
+  if (block) return no('cargo block has no test result');
+  if (!blocks) return no('no cargo test blocks');
+  if (reruns !== failedBlocks || (targets !== undefined && targets !== failedBlocks)) return no('cargo failed-target diagnostics disagree with summaries');
+  if (failed.length > 50) return no('more than 50 cargo failures');
+  if (new Set(failed).size !== failed.length || failed.some(name => occurrences.get(name)!.size !== 1)) return no('cargo failing names are not distinct within one block');
+  if (counts.pass !== totalPass || counts.fail !== totalFail || counts.skip !== totalSkip || counts.tests !== totalPass + totalFail + totalSkip) return no('cargo counts disagree with results');
+  return { failed, passed };
+}
 /** MS4 ruling c: TAP completeness: a column-0 plan `1..N` and exactly N column-0 results. */
 function tapComplete(log: string): string | undefined {
   const plan = [...log.matchAll(/^1\.\.(\d+)(?:\s+#.*)?\s*$/gm)];
@@ -402,8 +464,8 @@ function tapComplete(log: string): string | undefined {
 }
 /**
  * MS4 (fail-closed, parent rulings 10-15 01:0x and 01:5x): the quarantine entries that excuse a run, or why they do
- * not. All of: a plain `node --test` run (never cargo in 0.20); it completed with exit 1 (never a timeout, signal or
- * spawn error); TAP completeness proven (one plan `1..N`, N top-level results); every
+ * not. All of: a plain `node --test` or QS3 Cargo run; it completed with test-failure exit (never a timeout, signal or
+ * spawn error); native output proves completeness; every
  * failing name (fail = number of distinct names) exactly equals an active entry; and the remaining tests still meet
  * min_tests. `reason` is set only when entries were active and the run had failing names or a failing exit.
  */
@@ -413,13 +475,21 @@ export function quarantineExcuse(q: QuarantineEntry[], run: string, r: CommandRe
   const no = (reason: string) => ({ reason });
   if (r.error || r.spawn || r.code === null) return no(r.error ? `run did not complete (${r.error.split('\n')[0]})` : 'run did not complete');
   if (!names.length) return no('no failing test names');
-  if (CARGO_RUN.test(run)) return no('cargo runs are not excused in 0.20');
-  if (!nodeTestRun(run)) return no('not a known test runner');
-  if (r.code !== 1) return no(`exit ${r.code} is not a test failure`);
-  if (!counts || counts.format !== 'tap') return no('counts are not TAP');
-  const incomplete = tapComplete(r.log);
-  if (incomplete) return no(incomplete);
-  if (!counts.tests || counts.fail !== names.length) return no(`${counts.fail ?? 0} failing tests but ${names.length} failing names`);
+  if (CARGO_RUN.test(run)) {
+    if (!cargoTestRun(run)) return no('not a plain cargo test --no-fail-fast run');
+    if (r.code !== 101) return no(`exit ${r.code} is not a cargo test failure`);
+    if (r.truncated) return no('cargo output was truncated');
+    const cargo = cargoExcusable(r.log, counts);
+    if (cargo.reason) return no(cargo.reason);
+    if (failed.length !== cargo.failed.length || failed.some((name, i) => name !== cargo.failed[i])) return no('cargo failing names disagree with results');
+  } else {
+    if (!nodeTestRun(run)) return no('not a known test runner');
+    if (r.code !== 1) return no(`exit ${r.code} is not a test failure`);
+    if (!counts || counts.format !== 'tap') return no('counts are not TAP');
+    const incomplete = tapComplete(r.log);
+    if (incomplete) return no(incomplete);
+  }
+  if (!counts?.tests || counts.fail !== names.length) return no(`${counts?.fail ?? 0} failing tests but ${names.length} failing names`);
   const hit = names.map(n => q.find(e => e.test === n)), other = names.filter((_, i) => !hit[i]);
   if (other.length) return no(`${other.length} failing test${other.length > 1 ? 's are' : ' is'} not quarantined`);
   const left = counts.tests - names.length;
@@ -513,7 +583,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       const repeat = spec.repeat, runs = repeat?.runs ?? 1, need = repeat?.need ?? runs;
       if (repeat && (job.kind === 'red' || spec.red || spec.mutants)) throw new Error('repeat is not allowed on red or mutants checks');
       if (repeat) obs.runs = [];
-      const excusable = await excusableQuarantine(ctx, job), quarantined = new Map<string, string>(), notApplied = new Set<string>();
+      const excusable = await excusableQuarantine(ctx, job), quarantined = new Map<string, string>(), notApplied = new Set<string>(), quarantinePassed = new Set<string>();
       let passed = 0, allCompleted = true, allCountsOK = true;
       const failed = new Set<string>(), failureLogs: string[] = [];
       for (let index = 0; index < runs; index++) {
@@ -528,11 +598,17 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         const warnings: string[] = [];
         obs.counts = parseCounts(raw.measurementLog ?? raw.log, note => { warnings.push(note); protocolWarnings++; });
         const named = obs.counts?.format === 'owed' ? obs.counts.failed ?? [] : failingNames(raw.measurementLog ?? raw.log);
+        // QS4: display-only feedback from a complete native Cargo run; never infer green names from counts alone.
+        if (excusable.length && (job.subject === 'trunk' || ctx.quarantineFeedback) && cargoTestRun(spec.run) && !raw.error && !raw.spawn && !raw.truncated && (raw.code === 0 || raw.code === 101)) {
+          const cargo = cargoExcusable(raw.log, obs.counts);
+          if (!cargo.reason) for (const e of excusable) if (cargo.passed.includes(e.test)) quarantinePassed.add(e.test);
+        }
         // MS4: a completed run whose only failing tests are active quarantine names counts as if they had not run.
         const verdict = quarantineExcuse(excusable, spec.run, raw, obs.counts, named, spec.min_tests), excused = verdict.excused;
         if (verdict.reason) notApplied.add(verdict.reason);
         if (excused) { for (const e of excused) quarantined.set(e.test, e.fix); obs.counts = withoutQuarantined(obs.counts!, excused); }
         const runFailed = excused ? [] : named, result = excused ? { ...raw, code: 0 } : raw;
+        if (excused && cargoTestRun(spec.run)) obs.exit = 0;
         for (const name of runFailed) if (failed.size < 50) failed.add(name);
         if (runFailed.length) failureLogs.push(result.measurementLog ?? result.log);
         if (failed.size) obs.failed = [...failed];
@@ -598,6 +674,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         }
       }
       if (obs.noisy) obs.note = `${obs.note ? `${obs.note}; ` : ''}noisy (${passed}/${obs.runs!.length} passed)`;
+      if (quarantinePassed.size) obs.quarantine_passed = [...quarantinePassed].sort();
       if (quarantined.size) { obs.quarantined = [...quarantined.keys()]; obs.note = `${obs.note ? `${obs.note}; ` : ''}${quarantineNote(quarantined)}`; }
       if (notApplied.size) obs.note = `quarantine not applied: ${[...notApplied].join(', ')}${obs.note ? `; ${obs.note}` : ''}`;
     }
