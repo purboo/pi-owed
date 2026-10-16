@@ -225,6 +225,7 @@ test('N3: the edit keeps each list style: empty flow, quoted flow, block, and a 
     const count = (await entriesOf(r.cwd)).length;
     const edit = async (node: string, writes: string[]) => (await ops.amendPreview({ cwd: r.cwd, node, writes, note: 'n' })).next;
     assert.equal(await edit('d', ['+test/d', '+test/d 2']), text.replace('writes: [ ]', 'writes: [test/d, "test/d 2"]'));
+    assert.equal(await edit('e', ['+other/e2']), text.replace('writes: ["test/e"]', 'writes: ["test/e", "other/e2"]'), 'quoted flow append preserves quotes');
     assert.equal(await edit('e', ['+test/e2']), text, 'the existing literal prefix covers test/e2');
     assert.equal(await edit('b', ['+test/x', '+test/a*']), text.replace('      - test/b\n', '      - test/b\n      - test/x\n      - test/a*\n'));
     const c = await edit('c', ['+test/c']);

@@ -130,21 +130,67 @@ test('WA2: bare path widens amend, authority unchanged, and removal refuses with
   } finally {await r.cleanup();}
 });
 
-test('WA2: covered prefixes and concrete glob matches are no-op amendments, not extra permissions',async () => {
+test('WA2: contained prefixes and equal glob scopes are no-op amendments, not extra permissions',async () => {
   const r = await fixture([plain('a',['src/','test/*.ts']),plain('b')]);
   try {
     const before = await ops.readState(r), text = await readFile(r.file,'utf8');
-    const result = await cli(r.cwd,['amend','a','--writes','+src/x.ts,+test/a.ts,+src/','--note','already owned','--as','parent:test']);
+    const result = await cli(r.cwd,['amend','a','--writes','+src/x.ts,+test/*.ts,+src/','--note','already owned','--as','parent:test']);
     assert.equal(result.code,0,result.stderr);
     assert.match(result.stdout,/writes unchanged/);
     assert.match(result.stdout,/src\/x.ts already covered by src\//);
-    assert.match(result.stdout,/test\/a.ts already covered by test\/\*.ts/);
+    assert.match(result.stdout,/test\/\*.ts already covered by test\/\*.ts/);
     assert.equal((await ops.readState(r)).entries.length,before.entries.length);
     assert.equal(await readFile(r.file,'utf8'),text);
     // Matching the literal bytes of a glob is not proof that it covers an entire new scope.
     const preview = await ops.amendPreview({cwd:r.cwd,node:'a',writes:['test/**/*.ts'],note:'wider scope'});
     assert.deepEqual(preview.added,['test/**/*.ts']);
     assert.deepEqual(preview.present,[]);
+  } finally {await r.cleanup();}
+});
+
+test('WA-R1 N1: a filename glob match does not cover an added prefix and its descendants',async () => {
+  const r = await fixture([plain('a',['src/*']),plain('b',['src'])]);
+  try {
+    const before = await ops.readState(r), text = await readFile(r.file,'utf8');
+    const covered = await cli(r.cwd,['amend','b','--writes','src/lib','--note','contained prefix','--as','parent:test']);
+    assert.equal(covered.code,0,covered.stderr);
+    assert.match(covered.stdout,/src\/lib already covered by src/);
+    assert.match(covered.stdout,/writes unchanged/);
+    assert.equal((await ops.readState(r)).entries.length,before.entries.length);
+    assert.equal(await readFile(r.file,'utf8'),text);
+    const widened = await cli(r.cwd,['amend','a','--writes','src/lib','--note','include descendants','--as','owner:pi']);
+    assert.equal(widened.code,0,widened.stderr);
+    assert.match(widened.stdout,/Widened writes of a: \+src\/lib/);
+    assert.deepEqual((await ops.readState(r)).state.plan.nodes[0]!.writes,['src/*','src/lib']);
+    const d = await ops.dispatch({cwd:r.cwd,as:parent,node:'a'});
+    await commitAt(d.worktree,{'src/lib/x.ts':'export const x = 1;'});
+    await ops.submit({cwd:d.worktree,as:{role:'writer',id:'a#1'},node:'a'});
+    const measured = await ops.attest({cwd:r.cwd,node:'a'});
+    assert.equal(measured.receipt.items.find(i => i.obligation === 'writes')?.status,'E');
+    assert.equal(measured.receipt.outOfWrites,undefined);
+    assert.equal((await ops.verify(r)).ok,true);
+  } finally {await r.cleanup();}
+});
+
+test('WA-R1 N3: an owner-needed ready node has exactly one default status line',async () => {
+  const r = await fixture();
+  try {
+    await accept(r,'a');
+    const block = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'external'},node:'a',verdict:'block',rank:2,note:'owner must decide this risk'});
+    await ops.abandon({cwd:r.cwd,as:parent,node:'a',reason:'end this attempt'});
+    const {state,entries} = await ops.readState(r);
+    assert.equal(state.nodes.a!.phase,'ready');
+    assert.ok(!driveDecide(state,state.plan,new Map(),driveOpts).some(a => a.do === 'dispatch' && a.node === 'a'));
+    const status = await cli(r.cwd,['status']);
+    assert.equal(status.code,0,status.stderr);
+    assert.equal(status.stdout.split('\n').filter(l => /^\s*a:/.test(l)).length,1,status.stdout);
+    assert.match(status.stdout,new RegExp(`a: ready, not dispatched: rank 2 review block #${block.seq} on review needs the owner`));
+    assert.doesNotMatch(status.stdout,/a: ready to dispatch/);
+    for (const running of [false,true]) {
+      const text = renderStatus(statusView(state,entries,[],now,running));
+      assert.equal(text.split('\n').filter(l => /^\s*a:/.test(l)).length,1,text);
+      assert.match(text,/ready, not dispatched: rank 2 review block/);
+    }
   } finally {await r.cleanup();}
 });
 

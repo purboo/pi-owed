@@ -17,7 +17,7 @@ import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvar
 import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, reviewCarrySource, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
-import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, matchesWrite, writeCovers } from './writes.ts';
+import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, writeCovers } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { setupFailure, infraSource, observationsOf } from './reducer.ts';
@@ -840,9 +840,9 @@ async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<Amen
   const doc = parseDocument(read.plan);
   const nodes = doc.get('nodes'), item = isSeq(nodes) ? nodes.items.find(x => isMap(x) && x.get('id') === o.node) : undefined;
   if (!isMap(item)) throw new OwedError(`cannot edit ${read.path}: node ${o.node} is not a map in its nodes list`);
-  // Concrete paths use the writes check's matcher; a scope containing wildcards must prove containment, not just match as a filename.
+  // Every addition is a writes scope, not a filename: even a bare path owns its prefix range.
   const covered = paths.flatMap(path => {
-    const entry = spec.writes.find(w => w === path || (/[?*]/.test(path) ? writeCovers(w, path, writesSyntax(s.plan)) : matchesWrite(path, w, writesSyntax(s.plan))));
+    const entry = spec.writes.find(w => w === path || writeCovers(w, path, writesSyntax(s.plan)));
     return entry === undefined ? [] : [{ path, entry }];
   });
   const present = covered.map(c => c.path), added = paths.filter(p => !present.includes(p));
