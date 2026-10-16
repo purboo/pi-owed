@@ -342,11 +342,14 @@ test('LO3: pi owed_rule omits status/ruling/block quotes and keeps full raw foll
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 1, note: 'Private active-block quote' });
     const result = await tool(f.cwd)({ nodes: ['a'], text: ruling });
     const text = result.content.map(c => c.type === 'text' ? c.text : '').join('\n');
-    assert.match(text, /^Recorded #\d+ ruling \(a\); delivered 0\/2$/);
     const details = result.details as Awaited<ReturnType<typeof ops.rule>>;
+    // WS-R3: the finished writer call gets one receipt line naming it; the receipt otherwise stays compact.
+    const rid = details.delivery!.finished![0]!.writer, [head, ...rest] = text.split('\n');
+    assert.match(head!, /^Recorded #\d+ ruling \(a\); delivered 0\/2$/);
+    assert.deepEqual(rest, [`a: writer call ${rid} has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if a is halted, run owed resume a (owed decide records and resumes in one step)`]);
     assert.ok(details.delivery!.slots![0]!.followUp.includes(ruling));
     assert.ok(details.delivery!.slots![0]!.followUp.includes('Private active-block quote'));
-    assert.doesNotMatch(text, /Use this exact text|Details:|owed:|Active blocks|Private active-block quote/);
+    assert.doesNotMatch(text.replaceAll(rid, '<rid>'), /Use this exact text|Details:|owed:|Active blocks|Private active-block quote/);
   } finally { dsa.restore(); await f.cleanup(); }
 });
 

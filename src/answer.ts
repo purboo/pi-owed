@@ -11,7 +11,7 @@ import { ruleAnswers } from './reducer.ts';
 
 export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; dsa?: Pick<Dsa, 'describe' | 'send'> }
 export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; rulingDelivery?: RulingDelivery }
-export interface RulingDelivery { delivered: string[]; pending: number; failures: string[]; slots?: { node: string; writer?: string; followUp: string }[] }
+export interface RulingDelivery { delivered: string[]; pending: number; failures: string[]; slots?: { node: string; writer?: string; followUp: string }[]; finished?: { node: string; writer: string }[] }
 /** DR4: runtime receipt only. Notify once after committing the rule, with no ledger writes or retry loop. */
 export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick<Dsa, 'describe' | 'send'>, exclude?: string): Promise<RulingDelivery> {
   const { state } = await readState({ cwd }), dsa = client ?? new Dsa({ cwd, timeoutMs: 5000 });
@@ -37,7 +37,7 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
         const address = `${id}/${role}`;
         try {
           const view = await dsa.describe(launch.rid);
-          if (view.state !== 'running' && view.state !== 'asking') { result.pending++; continue; }
+          if (view.state !== 'running' && view.state !== 'asking') { result.pending++; if (launch.rid === writer?.rid) (result.finished ??= []).push({ node: id, writer: launch.rid }); continue; }
           const followUp = rulingFollowUp(state, id)?.message;
           const message = followUp?.includes(`#${entry.seq} `) || followUp?.includes(`#${entry.seq} (`) ? followUp : rulingMessage(id, 'writer', state.rules.filter(r => r.seq === entry.seq));
           const sent = await dsa.send(`owed-rule-${entry.seq}-${launch.rid}-${sha256(message).slice(0,12)}`, launch.rid, 'notify', message);
@@ -59,7 +59,9 @@ function rulingDeliveryWarnings(r: RulingDelivery): string[] {
     return `${oneLine(node)}: ${oneLine(f.slice(node.length).replace(/^\//, ''))}; owed why ${oneLine(node)} shows the ruling to forward`;
   });
   const unknown = (r.slots ?? []).filter(s => !s.writer).map(s => `${oneLine(s.node)}: writer call unknown; owed why ${oneLine(s.node)} shows the ruling to forward`);
-  return [...failures, ...unknown];
+  // WS-R3: a known writer call that has finished cannot take a notify; rule never sends follow-ups itself.
+  const finished = (r.finished ?? []).map(f => `${oneLine(f.node)}: writer call ${oneLine(f.writer)} has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if ${oneLine(f.node)} is halted, run owed resume ${oneLine(f.node)} (owed decide records and resumes in one step)`);
+  return [...failures, ...unknown, ...finished];
 }
 export function ruleText(r: RuleEntry & { delivery?: RulingDelivery }): string {
   const delivery = r.delivery ?? { delivered: [], pending: 0, failures: [] };

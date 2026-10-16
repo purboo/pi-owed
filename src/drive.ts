@@ -873,16 +873,25 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const message = slot.rebase ? rebaseMessage(s, id, opts.conflicts?.get(id), drift) : `${rebaseWorkText(drift)} In ${slot.worktree}, run \`owed submit ${id}\`.`;
     if (rebaseFollowupSent(s, id)) {
       if (!wSealed) return undefined;
+      // WS-R3: a due ruling (e.g. `owed decide <node> --writer` after one of these halts) is delivered before halting again.
+      const ruled = rulingFirst();
+      if (ruled) return ruled;
       const follow = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'rebase')!;
+      const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(follow.seq, resumed));
+      const driftHalt = (reason: string): Action => {
+        if (!rf) return stoppedHalt(reason);
+        const refused = opts.rejected.get(rf.send);
+        return stoppedHalt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${reason})`);
+      };
       const work = opts.writerWork?.get(id);
-      if (!work) return stoppedHalt(`cannot inspect writer worktree after rebase follow-up ${follow.send}; no submit nudge sent`);
+      if (!work) return driftHalt(`cannot inspect writer worktree after rebase follow-up ${follow.send}; no submit nudge sent`);
       // WS5/WS-R2: handed HEADs are the last submit (else dispatch base) plus every later rebase `from` of this attempt.
       const anchor = lastSubmit(s, id), entries = entriesOf(s), dispatched = entries.find(e => e.seq === slot.dispatchSeq);
       const handed = new Set<string>([anchor?.facts.commit ?? (dispatched?.kind === 'dispatch' ? dispatched.base : slot.base)]);
       for (const e of entries) if (e.kind === 'rebase' && e.node === id && e.attempt === attempt && e.seq > (anchor?.seq ?? slot.dispatchSeq)) handed.add(e.from);
       const nudge = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'submit' && x.seq > Math.max(follow.seq, resumed));
-      if (nudge) return stoppedHalt(`writer stopped after rebase follow-up ${follow.send} without submitting a candidate after follow-up ${nudge.send}`);
-      if (handed.has(work.head) && !work.dirty) return stoppedHalt(`writer stopped without a candidate after rebase follow-up ${follow.send}`);
+      if (nudge) return driftHalt(`writer stopped after rebase follow-up ${follow.send} without submitting a candidate after follow-up ${nudge.send}`);
+      if (handed.has(work.head) && !work.dirty) return driftHalt(`writer stopped without a candidate after rebase follow-up ${follow.send}`);
       const m = writerMsg(`${message}\n${submitMessage(id)}`);
       return send(writer, 'follow-up', 'submit', m.message, m.rulings);
     }

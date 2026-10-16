@@ -60,7 +60,8 @@ test('UX2: no running calls keeps verbatim follow-ups in details and only unknow
     const r = await ops.rule({ cwd: f.cwd, ...parent, nodes: ['a', 'b'], text: 'Use API v2', writer: true, dsa: sealed });
     assert.equal(r.delivery!.delivered.length, 0);
     const text = ruleText(r);
-    assert.equal(text, `Recorded #${r.seq} ruling (a, b); delivered 0/4\nb: writer call unknown; owed why b shows the ruling to forward`);
+    // WS-R3: writer a's known call has finished, so the receipt adds one line naming it.
+    assert.equal(text, `Recorded #${r.seq} ruling (a, b); delivered 0/4\nb: writer call unknown; owed why b shows the ruling to forward\na: writer call ${launch.rid} has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if a is halted, run owed resume a (owed decide records and resumes in one step)`);
     assert.deepEqual(r.delivery!.slots!.map(s => s.node), ['a', 'b']);
     for (const slot of r.delivery!.slots!) {
       assert.ok(!text.includes(slot.followUp));

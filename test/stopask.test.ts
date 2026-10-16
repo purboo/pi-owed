@@ -257,6 +257,49 @@ test('WS-R2: after S0→S1→S2 rebases, clean S0 or S1 halts without a nudge; a
   }
 });
 
+test('WS-R3: decide --writer after a WS5 halt delivers exactly one ruling follow-up; a later seal without work names it', async () => {
+  const f = await fixture();
+  try {
+    await f.rebase(false);
+    const follow = await f.send('rebase', rebaseMessage(await f.state(), 'a'));
+    await f.driver.pass();
+    const h1 = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h1?.kind === 'halt');
+    assert.ok(h1.reason.startsWith(`writer stopped without a candidate after rebase follow-up ${follow.send}`), h1.reason);
+    assert.equal(f.dsa.sent.length, 0);
+    const d = await ops.decide({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'Rebase onto the new trunk and keep the old API.', writer: true, dsa: f.dsa });
+    assert.equal(d.resumed, true);
+    await f.driver.pass();
+    assert.equal(f.dsa.sent.length, 1, 'the ruling reaches the sealed writer');
+    assert.ok(f.dsa.sent[0]!.includes('Rebase onto the new trunk and keep the old API.'), f.dsa.sent[0]);
+    const rf = (await f.state()).nodes.a!.runs[0]!.sends.findLast(x => x.reason === 'ruling' && x.sendKind === 'follow-up'); assert.ok(rf);
+    assert.equal((await f.entries()).filter(e => e.kind === 'halt' && e.seq > d.decision).length, 0, 'no halt before the ruling is delivered');
+    // The writer seals again with no new work.
+    await f.driver.pass();
+    await f.driver.pass();
+    const halts = (await f.entries()).filter(e => e.kind === 'halt' && e.seq > d.decision);
+    assert.equal(halts.length, 1);
+    const h2 = halts[0]!; assert.ok(h2.kind === 'halt');
+    assert.ok(h2.reason.includes(`finished ruling follow-up ${rf.send} without submitting a new candidate (writer stopped without a candidate after rebase follow-up ${follow.send})`), h2.reason);
+    assert.ok(h2.reason.endsWith(`→ ${command}`), h2.reason);
+    assert.equal(f.dsa.sent.length, 1, 'no further send');
+  } finally { await f.cleanup(); }
+});
+
+test('WS-R3: owed rule names a finished writer call: recorded, not sent now, driver delivers, resume if halted', async () => {
+  const f = await fixture();
+  try {
+    const rid = f.dsa.view.rid;
+    const out = (await import('../src/answer.ts')).ruleText(await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'Keep the old API.', dsa: f.dsa }));
+    const lines = out.split('\n').filter(l => l.startsWith('a: writer call'));
+    assert.deepEqual(lines, [`a: writer call ${rid} has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if a is halted, run owed resume a (owed decide records and resumes in one step)`]);
+    assert.equal(f.dsa.sent.length, 0, 'rule never sends follow-ups');
+    f.dsa.view = { rid, state: 'running' };
+    const live = (await import('../src/answer.ts')).ruleText(await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'Live guidance.', dsa: f.dsa }));
+    assert.doesNotMatch(live, /has finished/);
+    assert.equal(f.dsa.sent.length, 1, 'a running writer is notified as before');
+  } finally { await f.cleanup(); }
+});
+
 test('WS5: pending rebase with dirty work gets one bounded nudge; running and asking still wait', async () => {
   const f = await fixture();
   try {
