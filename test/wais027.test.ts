@@ -11,8 +11,8 @@ import { Ledger } from '../src/ledger.ts';
 import { clockTime } from '../src/clock.ts';
 import { decide as driveDecide, ownerNeeded, repairMessage } from '../src/drive.ts';
 import { Follower, revalidator } from '../src/drive-bg.ts';
-import { projectId, runId, runLabels, dispatchSkip } from '../src/reducer.ts';
-import { renderStatus, statusView, receipt, renderWhy } from '../src/views.ts';
+import { projectId, runId, runLabels, dispatchSkip, trunkRedOf, flakyPass } from '../src/reducer.ts';
+import { renderStatus, statusView, receipt, renderWhy, waiverText } from '../src/views.ts';
 import type { ObsEntry, RunView } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
@@ -24,10 +24,10 @@ const PASS = "echo '# tests 4'; echo '# pass 4'; echo '# fail 0'";
 const FAIL = `echo 'owed-counts {"pass":0,"fail":4,"failed":["case one","case two","case three","case four"]}'; exit 1`;
 const read = (r: {cwd:string}) => ops.readState(r);
 const checkObs = async (r: {cwd:string}) => (await read(r)).entries.filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'a' && e.obligation === 'check:unit');
-async function fixture(merge = false, attribute = true) {
+async function fixture(merge = false, attribute = true, trunkRed = false) {
   const r = await repo(), flag = join(r.root,'pass');
   await commitAt(r.cwd, {impl:'base'});
-  const run = merge ? `if [ -e src/b ] && grep -q candidate impl && [ ! -e '${flag}' ]; then ${FAIL}; else ${PASS}; fi` : `if [ -e '${flag}' ]; then ${PASS}; else ${FAIL}; fi`;
+  const run = merge ? `if [ -e src/b ]${trunkRed ? '' : ' && grep -q candidate impl'} && [ ! -e '${flag}' ]; then ${FAIL}; else ${PASS}; fi` : `if [ -e '${flag}' ]; then ${PASS}; else ${FAIL}; fi`;
   const plan = {version:1,trunk:'main',lease:false,closure:[],invariants:[],nodes:[
     {id:'a',writes:['impl'],checks:[{id:'unit',run,reads:['impl','src/'],min_tests:1}],review:{count:0,min_rank:1}},
     {id:'b',writes:['src/b'],checks:[],review:{count:0,min_rank:1}},
@@ -151,6 +151,71 @@ test('WF1/WF2: merge-key flaky need is immediate even with an unmeasured new can
     assert.match(text,new RegExp(`flaky block #${r.fail.seq} on check:unit \\(merge key ${r.fail.key.slice(0,12)}\\)`));
     assert.match(text,new RegExp(`failed #${r.fail.seq}.*passed #${r.pass.seq} on the same key`));
     assert.doesNotMatch(text,/current candidate/);
+  } finally {await r.cleanup();}
+});
+
+// R-wais027-1: reviewer probe 2, a trunk-red diagnosis must not hide the flaky attribution pair.
+test('WF1 repair: trunk-red flaky merge-check keeps its diagnosis first and its exact pair in why',async () => {
+  const r = await fixture(true,false,true);
+  try {
+    const before = await read(r);
+    assert.ok(trunkRedOf(before.state,r.fail.seq));
+    const activeCard = await ops.why({...r,node:'a'});
+    assert.match(activeCard.blocks.find(b => b.seq === r.fail.seq)!.clear,/^trunk-red:/);
+    assert.doesNotMatch(activeCard.blocks.find(b => b.seq === r.fail.seq)!.clear,/flaky block #/);
+    await writeFile(r.flag,'pass');
+    await ops.attest({cwd:r.cwd,node:'a'});
+    const {state} = await read(r), block = state.nodes.a!.blocks.find(b => b.seq === r.fail.seq)!;
+    assert.equal(block.state,'flaky');
+    assert.ok(trunkRedOf(state,r.fail.seq));
+    const pass = flakyPass(state,block)!;
+    assert.ok(pass);
+    const snapshot = structuredClone({blocks:state.nodes.a!.blocks,keys:state.nodes.a!.candidate!.keys,accepted:state.nodes.a!.accepted});
+    const card = await ops.why({...r,node:'a'}), clear = card.blocks.find(b => b.seq === r.fail.seq)!.clear;
+    assert.match(clear,/^trunk-red:/,'the trunk diagnosis retains precedence');
+    assert.ok(clear.includes(`flaky block #${r.fail.seq} on check:unit (merge key ${r.fail.key.slice(0,12)})`),clear);
+    assert.ok(clear.includes(`failed #${r.fail.seq}`) && clear.includes(`passed #${pass.seq} on the same key`),clear);
+    const why = renderWhy(card);
+    assert.ok(why.includes(clear),why);
+    assert.ok(why.indexOf('trunk-red:') < why.indexOf(`flaky block #${r.fail.seq}`),why);
+    const after = (await read(r)).state;
+    assert.deepEqual({blocks:after.nodes.a!.blocks,keys:after.nodes.a!.candidate!.keys,accepted:after.nodes.a!.accepted},snapshot,'rendering cannot change blocks, keys or acceptance');
+  } finally {await r.cleanup();}
+});
+
+// R-wais027-1: reviewer probe 3, satisfying evidence can be a review rather than an executor observation.
+test('WF3 repair: accepted old review risk names the satisfying review and omits missing evidence',async () => {
+  const r = await repo();
+  try {
+    await commitAt(r.cwd,{impl:'base'});
+    const plan = {version:1,trunk:'main',lease:false,closure:[],invariants:[],nodes:[{id:'a',writes:['impl'],checks:[],review:{count:1,min_rank:1}}]};
+    await ops.init({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify(plan)});
+    const a = await ops.dispatch({cwd:r.cwd,as:parent,node:'a'});
+    await commitAt(a.worktree,{impl:'old'});
+    await ops.submit({cwd:a.worktree,as:writer,node:'a',model:'test'});
+    await ops.attest({cwd:r.cwd,node:'a'});
+    const block = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'old'},node:'a',verdict:'block',rank:2,note:'old issue'});
+    await commitAt(a.worktree,{impl:'fixed'});
+    await ops.submit({cwd:a.worktree,as:writer,node:'a',model:'test'});
+    await ops.attest({cwd:r.cwd,node:'a'});
+    const ok = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'new'},node:'a',verdict:'ok',rank:1,note:'new candidate checked'});
+    const waiver = await ops.waive({cwd:r.cwd,as:owner,channel:'delegated',node:'a',obligation:'review',reason:'accept old review risk after new review',accept_risk:[block.seq]});
+    assert.equal(waiver.kind,'waive');
+    if (waiver.kind !== 'waive') throw new Error('expected waiver');
+    const {state} = await read(r), item = state.nodes.a!.items.find(i => i.obligation === 'review')!;
+    assert.equal(item.status,'E');
+    assert.deepEqual(item.evidence,[ok.seq]);
+    const snapshot = structuredClone({blocks:state.nodes.a!.blocks,keys:state.nodes.a!.candidate!.keys,accepted:state.nodes.a!.accepted});
+    const meaning = await ops.waiverMeaning({cwd:r.cwd,entry:waiver});
+    assert.doesNotMatch(meaning,/#undefined/);
+    assert.ok(meaning.includes(`in effect now: --accept-risk accepts #${block.seq}; review on the candidate key is satisfied by #${ok.seq}`),meaning);
+    assert.doesNotMatch(meaning,/waiver is not needed/);
+    const missingEvidence = Object.create(Object.getPrototypeOf(state),Object.getOwnPropertyDescriptors(state)) as typeof state;
+    missingEvidence.nodes = {...state.nodes,a:{...state.nodes.a!,items:state.nodes.a!.items.map(i => i === item ? {...i,evidence:[]} : i)}};
+    const noEvidence = waiverText(missingEvidence,waiver);
+    assert.doesNotMatch(noEvidence,/#undefined|on the candidate key is satisfied by/,'no claim when the displayed item has no satisfying evidence');
+    const after = (await read(r)).state;
+    assert.deepEqual({blocks:after.nodes.a!.blocks,keys:after.nodes.a!.candidate!.keys,accepted:after.nodes.a!.accepted},snapshot,'waiver text cannot change blocks, keys or acceptance');
   } finally {await r.cleanup();}
 });
 

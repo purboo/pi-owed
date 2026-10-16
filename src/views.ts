@@ -618,11 +618,12 @@ function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockN
  */
 export function waiverText(s: State, e: WaiveEntry): string {
   const n = s.nodes[e.node], c = n?.candidate, item = n?.items.find(i => i.obligation === e.obligation), o = e.obligation, k = e.key.slice(0, 12);
+  const satisfied = item?.status === 'E' && item.evidence.length ? `; ${o} on the candidate key is satisfied by ${item.evidence.map(seq => `#${seq}`).join(', ')}` : '';
   if (c && e.key !== c.keys[o] && (e.accept_risk ?? []).some(seq => { const x = entriesOf(s).find(x => x.seq === seq); return x?.kind === 'obs' && x.subject === e.node && x.merging === e.node && x.obligation === o && x.key === e.key; })) {
     return `waived ${e.node}/${o} on merge key ${k}: ${e.reason}; in effect now: --accept-risk accepts ${(e.accept_risk ?? []).map(seq => {
       const b = n?.blocks.find(b => b.seq === seq), pass = b && flakyPass(s,b,e.seq);
       return `#${seq}${pass ? ` (flaky: failed #${seq} → passed #${pass.seq} on the same key)` : ''}`;
-    }).join(', ')}${item?.status === 'E' ? `; ${o} on the candidate key is satisfied by #${observationsOf(s,e.node,o,c.keys[o] ?? '').findLast(x => x.verdict === 'pass' && x.probe === undefined && x.batch === undefined)?.seq}` : ''}; this waiver applies only to that key, not the candidate key ${c.keys[o]?.slice(0,12)}; changes to check definition, setup, exec, closure or reads change the key and require measurement again`;
+    }).join(', ')}${satisfied}; this waiver applies only to that key, not the candidate key ${c.keys[o]?.slice(0,12)}; changes to check definition, setup, exec, closure or reads change the key and require measurement again`;
   }
   const kind = o.includes(':') ? o.slice(0, o.indexOf(':')) : o, measured = ['check', 'strength', 'red', 'writes'].includes(kind);
   const scope = `owed counts ${o} as waived, not measured, for every candidate of ${e.node} whose ${o} key is ${k}${kind === 'rulings' ? '' : ', in this or a later attempt'}, while no unaccepted active block remains on ${o}; a later block suspends the waiver and clearing that block restores it`;
@@ -640,7 +641,7 @@ export function waiverText(s: State, e: WaiveEntry): string {
   const acceptedEffect = accepted.length ? `in effect now: --accept-risk accepts ${accepted.map(b => {
     const pass = flakyPass(s,b,e.seq);
     return `#${b.seq}${pass ? ` (flaky: failed #${b.seq} → passed #${pass.seq} on the same key)` : ''}`;
-  }).join(', ')}${item?.status === 'E' ? `; ${o} on the candidate key is satisfied by #${observationsOf(s,e.node,o,c?.keys[o] ?? '').findLast(x => x.verdict === 'pass' && x.probe === undefined && x.batch === undefined)?.seq}` : ''}` : undefined;
+  }).join(', ')}${satisfied}` : undefined;
   const effect = acceptedEffect ?? (item?.status === 'W' && item.evidence.includes(e.seq) ? 'in effect now'
     : !item ? `${o} is not an obligation of the current candidate`
     : item.status === 'E' ? `${o} is currently satisfied, so the waiver is not needed while it stays satisfied`
@@ -1108,9 +1109,9 @@ export function trunkRedHint(s: State, seq: number, key?: string): string | unde
 function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
   const trunkRed = trunkRedHint(s, b.seq, b.key);
-  if (trunkRed) return trunkRed;
-  if (heldFlaky(s,b.node,b)) return heldFlakyText(s,b.node,b);
-  if (b.state === 'flaky' && b.kind === 'exec') return `${flakyBlockText(s,b)}; ${flakyRuleHint(b.node)}`;
+  const flaky = b.state === 'flaky' && b.kind === 'exec' ? heldFlaky(s,b.node,b) ? heldFlakyText(s,b.node,b) : `${flakyBlockText(s,b)}; ${flakyRuleHint(b.node)}` : undefined;
+  if (trunkRed) return `${trunkRed}${flaky ? `; ${flaky}` : ''}`;
+  if (flaky) return flaky;
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && countsBlock(x)).map(x => x.seq);
   const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);
