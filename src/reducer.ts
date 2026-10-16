@@ -611,9 +611,12 @@ const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify
  * value of an enumerated field (ENUMS), or an unknown field on a ruling (a newer ruling flag).
  */
 export function newerEntry(e: Entry): OwedError | undefined {
-  const x = e as unknown as Record<string, unknown>, kind = x.kind;
-  const refuse = (what: string): OwedError => new OwedError(`ledger entry #${shown(x.seq)} (${what}) needs a newer owed than ${OWED_VERSION}: upgrade owed and restart pi sessions that load it`, 'version');
+  const malformed = ignorableError(e);
+  if (malformed) return new OwedError(`Entry #${e.seq} invalid: ${malformed}`);
+  const raw = e as unknown as Record<string, unknown>, kind = raw.kind;
+  const refuse = (what: string): OwedError => new OwedError(`ledger entry #${shown(raw.seq)} (${what}) needs a newer owed than ${OWED_VERSION}: upgrade owed and restart pi sessions that load it`, 'version');
   if (typeof kind !== 'string' || !KINDS.includes(kind)) return refuse(shown(kind));
+  const x = interpretedEntry(e) as unknown as Record<string, unknown>;
   if (x.channel !== undefined && !CHANNELS.includes(x.channel as string)) return refuse(`${kind} channel ${shown(x.channel)}`);
   for (const [field, known] of Object.entries(enums()[kind] ?? {})) if (x[field] !== undefined && !known.includes(x[field])) return refuse(`${kind} ${field} ${shown(x[field])}`);
   if (kind === 'rule') { const extra = Object.keys(x).find(k => x[k] !== undefined && !RULE_FIELDS.includes(k)); if (extra !== undefined) return refuse(`rule ${extra} ${shown(x[extra])}`); }
@@ -647,9 +650,10 @@ function fold(s: State, entries: Iterable<Entry>): void {
   for (const original of entries) {
     const newer = newerEntry(original);
     if (newer) throw newer;
-    const e = structuredClone(original);
+    let e = structuredClone(original);
     const errors = validateDraft(s, e);
     if (errors.length) throw new OwedError(`Entry #${e.seq} invalid: ${errors.join('; ')}`);
+    e = interpretedEntry(e);
     if (e.kind === 'genesis') {
       h.genesis = e;
       s.plan = recordedPlan(h, e); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
@@ -1589,6 +1593,9 @@ export function writesCovered(plan: Plan, node: string, entries: readonly string
 export function allowanceSeq(s: State): number | undefined { return context(s).allowSeq; }
 /** GR2: used both at append and every replay, before any grant can affect acceptance. */
 export function grantErrors(s: State, d: Omit<import('./types.ts').GrantEntry, 'seq' | 'ts' | 'prev' | 'hash'>): string[] {
+  const malformed = ignorableError(d);
+  if (malformed) return [malformed];
+  d = interpretedEntry(d);
   const errors: string[] = [], n = s.nodes[d.node], spec = nodeSpec(s, d.node);
   if (d.by !== 'executor:owed') errors.push('grant may only be written by executor:owed');
   if (!n?.slot?.open || n.slot.attempt !== d.attempt) errors.push('grant attempt must match the current open writer slot');
@@ -1648,6 +1655,9 @@ export function grantHint(s: State, id: string, paths = s.nodes[id]?.candidate?.
   return `hint: an allow rule {nodes: ${JSON.stringify([id])}, writes: ${JSON.stringify(dirs)}} would let owed grant these`;
 }
 export function validateDraft(s: State, d: Draft): string[] {
+  const malformed = ignorableError(d);
+  if (malformed) return [malformed];
+  d = interpretedEntry(d);
   const errors: string[] = [];
   errors.push(...batchOrderErrors(s, d), ...decisionErrors(s,d));
   const r = role(d.by);
@@ -2007,6 +2017,46 @@ function resumeBatchErrors(s: State, d: Extract<Draft,{kind:'resume'}>): string[
 const ENTRY_BASE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision'];
 /** The only kind-specific fields accepted on these entries; anything else is refused. */
 const STRICT_FIELDS: Record<'escape' | 'decoy-commit' | 'decoy-reveal' | 'adopt' | 'launch' | 'send' | 'halt' | 'evidence' | 'resume' | 'sweep', readonly string[]> = { sweep: ['commit', 'key', 'verdict', 'counts', 'log', 'failed', 'bisect', 'boundary'], resume: ['node', 'attempt', 'after', 'expect', 'note', 'release', 'batch', 'remeasure'], evidence: ['node', 'attempt', 'key', 'merge', 'id', 'files', 'note'], escape: ['node', 'merge', 'class', 'note', 'evidence', 'sweep'], 'decoy-commit': ['digest'], 'decoy-reveal': ['nonce', 'decoys'], adopt: ['trunk', 'prior', 'commit', 'state', 'changed', 'commits', 'note'], launch: ['node', 'attempt', 'role', 'rid', 'spec', 'labels', 'rulings'], send: ['node', 'attempt', 'rid', 'send', 'sendKind', 'message', 'reason', 'rulings'], halt: ['node', 'attempt', 'reason', 'needs'] };
+/** RC (0.27): fields interpreted on kinds that do not share the rule/obs/strict field checks. */
+const OTHER_FIELDS: Record<string, readonly string[]> = {
+  genesis: ['trunk', 'commit', 'plan', 'writes_syntax', 'state', 'path'],
+  refresh: ['commit', 'state'],
+  plan: ['prior', 'plan', 'writes_syntax', 'downgrades', 'rev', 'path', 'note'],
+  dispatch: ['node', 'attempt', 'base', 'branch', 'worktree', 'packet', 'rulings_seen', 'overlaps'],
+  submit: ['node', 'attempt', 'facts', 'carry', 'model'],
+  grant: ['node', 'attempt', 'commit', 'paths', 'allowance'],
+  review: ['node', 'attempt', 'obligation', 'key', 'verdict', 'rank', 'note', 'ack_rulings', 'needs', 'model'],
+  waive: ['node', 'obligation', 'key', 'reason', 'accept_risk', 'tracked_by'],
+  defer: ['node', 'items', 'reason', 'allowance'],
+  abandon: ['node', 'attempt', 'reason'],
+  hold: ['node', 'abandon', 'reason'],
+  rebase: ['node', 'attempt', 'base', 'from'],
+  merge: ['node', 'attempt', 'prior', 'commit', 'facts', 'state', 'batch', 'lease_wait_ms'],
+  note: ['text'],
+};
+/** One error for the entire list; absent metadata keeps historical validation unchanged. */
+function ignorableError(e: { ignorable?: unknown }): string | undefined {
+  const names = e.ignorable;
+  if (names === undefined) return undefined;
+  if (!Array.isArray(names) || !names.length || Array.from(names).some(n => typeof n !== 'string' || !n)) return 'ignorable must be a non-empty array of field names';
+  if (names.some((n, i) => i > 0 && names[i - 1] >= n)) return 'ignorable names must be sorted and unique';
+  if (names.some(n => ENTRY_BASE_FIELDS.includes(n) || n === 'ignorable')) return 'ignorable must not list base fields or itself';
+  const fields = e as Record<string, unknown>;
+  if (names.some(n => !Object.hasOwn(fields, n) || fields[n] === undefined)) return 'ignorable names must reference present fields with defined values';
+  return undefined;
+}
+/**
+ * Remove only unknown listed fields before any semantic read (including generic `node in entry` checks). Known
+ * fields still undergo ordinary validation and interpretation. Raw ledger bytes and their hashes are never changed.
+ */
+export function interpretedEntry<T extends Draft | Entry>(e: T): T {
+  if (e.ignorable === undefined) return e;
+  const fields = e.kind === 'rule' ? RULE_FIELDS : e.kind === 'obs' ? OBS_FIELDS : Object.hasOwn(STRICT_FIELDS, e.kind) ? STRICT_FIELDS[e.kind as keyof typeof STRICT_FIELDS] : Object.hasOwn(OTHER_FIELDS, e.kind) ? OTHER_FIELDS[e.kind]! : [];
+  const interpreted = { ...e } as T & Record<string, unknown>;
+  for (const name of e.ignorable) if (!ENTRY_BASE_FIELDS.includes(name) && !fields.includes(name)) delete interpreted[name];
+  delete interpreted.ignorable;
+  return interpreted;
+}
 /**
  * Validation of a D23 `evidence` entry: shape, role (owner/parent/reviewer), then the mode. With `merge` it is a receipt
  * of a merged node (merge = seq of its latest merge; no attempt/key; files may be empty). Otherwise it is evidence on
