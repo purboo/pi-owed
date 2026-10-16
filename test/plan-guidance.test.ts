@@ -90,6 +90,8 @@ const warnPlan = (): Spec => ({ version: 1, trunk: 'main', closure: [], invarian
   node('d', ['d/'], { checks: [] }),
 ] });
 const WARN = (id: string) => `warning: node ${id} has no checks: its acceptance rests on review alone`;
+// CO2 adds independent reads diagnostics; H2.2 still checks the complete check-less warning list and its order.
+const withoutCost = (lines: string[]) => lines.filter(l => !l.startsWith('warning: reads of '));
 
 test('H2.2 check-less nodes: CLI init/plan print warnings after the result, JSON returns warnings; nothing refused or recorded for them', { timeout: 120_000 }, async () => {
   const r = await repo();
@@ -97,7 +99,7 @@ test('H2.2 check-less nodes: CLI init/plan print warnings after the result, JSON
     await r.put('plan.json', JSON.stringify(warnPlan())); await r.commit();
     const init = await cli(r.cwd, ['init', 'plan.json']);
     assert.equal(init.code, 0, init.stderr);
-    assert.deepEqual(init.stdout.trimEnd().split('\n').slice(-2), [WARN('b'), WARN('d')], 'after the result, in plan order; c has evidence, a has a check');
+    assert.deepEqual(withoutCost(init.stdout.trimEnd().split('\n')).slice(-2), [WARN('b'), WARN('d')], 'after the result, in plan order; c has evidence, a has a check');
     assert.doesNotMatch(init.stdout, /node [ac] has no checks/);
     assert.deepEqual((await entries(r.cwd)).map(e => e.kind), ['genesis']);
     // plan (no downgrade: b gains a check, a new check-less node e is added).
@@ -115,10 +117,10 @@ test('H2.2 check-less nodes: CLI init/plan print warnings after the result, JSON
     const j = await cli(r.cwd, ['plan', 'all.json', '--json']);
     assert.equal(j.code, 0, j.stderr);
     const ej = JSON.parse(j.stdout) as { kind: string; warnings: string[] };
-    assert.equal(ej.kind, 'plan'); assert.deepEqual(ej.warnings, []);
+    assert.equal(ej.kind, 'plan'); assert.deepEqual(withoutCost(ej.warnings), []);
     const k = await cli(r.cwd, ['plan', 'back.json', '--json', '--as', 'owner:pi', '--note', 'drop the extra checks again']);
     assert.equal(k.code, 0, k.stderr);
-    assert.deepEqual((JSON.parse(k.stdout) as { warnings: string[] }).warnings, [WARN('d'), WARN('e')]);
+    assert.deepEqual(withoutCost((JSON.parse(k.stdout) as { warnings: string[] }).warnings), [WARN('d'), WARN('e')]);
     assert.deepEqual((await entries(r.cwd)).map(e => e.kind), ['genesis', 'plan', 'plan', 'plan'], 'the warnings record nothing');
     // init --json on a fresh repository.
     const r2 = await repo();
@@ -126,7 +128,7 @@ test('H2.2 check-less nodes: CLI init/plan print warnings after the result, JSON
       await r2.put('plan.json', JSON.stringify(warnPlan())); await r2.commit();
       const ij = await cli(r2.cwd, ['init', 'plan.json', '--json']);
       assert.equal(ij.code, 0, ij.stderr);
-      assert.deepEqual((JSON.parse(ij.stdout) as { warnings: string[] }).warnings, [WARN('b'), WARN('d')]);
+      assert.deepEqual(withoutCost((JSON.parse(ij.stdout) as { warnings: string[] }).warnings), [WARN('b'), WARN('d')]);
     } finally { await r2.cleanup(); }
   } finally { await r.cleanup(); }
 });
@@ -138,22 +140,22 @@ test('H2.2 check-less nodes: owed_init ends with warnings; owed_plan retains war
     const h = harness(r.cwd);
     const init = await h.call('init', { plan: 'plan.json' });
     assert.notEqual(init.isError, true, text(init));
-    assert.deepEqual((init.details as { warnings: string[] }).warnings, [WARN('b'), WARN('d')]);
-    assert.deepEqual(text(init).split('\n').slice(-2), [WARN('b'), WARN('d')]);
+    assert.deepEqual(withoutCost((init.details as { warnings: string[] }).warnings), [WARN('b'), WARN('d')]);
+    assert.deepEqual(withoutCost(text(init).split('\n')).slice(-2), [WARN('b'), WARN('d')]);
     const next = { ...warnPlan(), nodes: [...(warnPlan().nodes as Spec[]), node('e', ['e/'], { checks: [] })] };
     await r.put('next.json', JSON.stringify(next)); await r.commit();
     const plan = await h.call('plan', { plan: 'next.json' });
     assert.notEqual(plan.isError, true, text(plan));
     assert.equal((plan.details as { kind: string }).kind, 'plan');
-    assert.deepEqual((plan.details as { warnings: string[] }).warnings, [WARN('b'), WARN('d'), WARN('e')]);
-    assert.deepEqual(text(plan).split('\n').filter(l => l.startsWith('warning:')), [WARN('b'), WARN('d'), WARN('e')]);
+    assert.deepEqual(withoutCost((plan.details as { warnings: string[] }).warnings), [WARN('b'), WARN('d'), WARN('e')]);
+    assert.deepEqual(text(plan).split('\n').filter(l => l.startsWith('warning: node ')), [WARN('b'), WARN('d'), WARN('e')]);
     assert.ok(text(plan).indexOf(WARN('e')) < text(plan).indexOf('owed:'));
     assert.ok(text(plan).endsWith('Details: owed status · owed why <node>'));
     const all = { ...next, nodes: (next.nodes as Spec[]).map(n => ({ ...n, checks: [check(`${n.id as string}-unit`)] })) };
     await r.put('all.json', JSON.stringify(all)); await r.commit();
     const clean = await h.call('plan', { plan: 'all.json' });
     assert.notEqual(clean.isError, true, text(clean));
-    assert.deepEqual((clean.details as { warnings: string[] }).warnings, []);
+    assert.deepEqual(withoutCost((clean.details as { warnings: string[] }).warnings), []);
     assert.doesNotMatch(text(clean), /has no checks/);
   } finally { await r.cleanup(); }
 });
