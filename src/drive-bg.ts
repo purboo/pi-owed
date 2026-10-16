@@ -118,11 +118,16 @@ export const FROM_DSA_NOTE = 'note: started from inside a dsa call; if that call
  * first with no exit record or with an error record refuses with the log tail; one that has not taken the lock after
  * `waitMs` (30 s) is sent SIGTERM (pid and start time checked) and the start refuses with the log tail.
  */
-export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number; reuse?: boolean }): Promise<DriveStart> {
+export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number; reuse?: boolean; restart?: boolean }): Promise<DriveStart> {
   const ledger = await Ledger.open(o.cwd), dir = ledger.dir, repo = await git.mainRoot(o.cwd);
   if (!(await ledger.read()).length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   return ledger.withLock(async () => {
-    const log = logPath(dir), held = readLock(dir);
+    const log = logPath(dir);
+    if (o.restart && readLock(dir).state === 'live') {
+      const stopped = await stopHeld(dir, { waitExit: true });
+      if (stopped.state === 'stopping') throw new OwedError(`driver pid ${stopped.pid} did not exit within the stop wait; use owed drive --stop --now`, 'usage');
+    }
+    const held = readLock(dir);
     if (held.state === 'live' && o.reuse) return { pid:held.owner.pid, log, repo, alreadyRunning:true, ...(held.owner.start ? { start:held.owner.start } : {}), ...(held.owner.session ? { session:held.owner.session } : {}) };
     if (held.state === 'live') throw new OwedError(`a driver is running for this repository: ${describeOwner(held.owner)}; log ${log} (owed drive --status, owed drive --stop)`);
     if (held.state === 'foreign') throw new OwedError(`the driver lock ${lockPath(dir)} is held by pid ${held.owner.pid} on host ${held.owner.host} (since ${clockTime(held.owner.at)}); a lock of another host is never taken over: check that host, and if no driver runs there remove the lock by hand; log ${log}`);
@@ -287,7 +292,7 @@ export async function driveStop(o: { cwd: string; now?: boolean; waitMs?: number
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(() => stopHeld(ledger.dir, o), 'drive-detach');
 }
-async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number }): Promise<DriveStop> {
+async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number; waitExit?: boolean }): Promise<DriveStop> {
   const lock = readLock(dir);
   if (lock.state === 'none' || lock.state === 'stale') return { state: 'none' };
   const owner = lock.owner;
@@ -298,12 +303,13 @@ async function stopHeld(dir: string, o: { now?: boolean; waitMs?: number }): Pro
   process.kill(owner.pid, 'SIGTERM');
   const t0 = Date.now(), deadline = t0 + (o.waitMs ?? 10_000);
   let second = !o.now;
+  const stopped = (): boolean => o.waitExit ? !pidAlive(owner.pid, owner.start) : released(dir, owner) || procStart(owner.pid) !== owner.start;
   while (Date.now() < deadline) {
-    if (released(dir, owner) || procStart(owner.pid) !== owner.start) return { state: 'stopped', pid: owner.pid };
+    if (stopped()) return { state: 'stopped', pid: owner.pid };
     if (!second && Date.now() - t0 >= 1000) { second = true; if (same()) process.kill(owner.pid, 'SIGTERM'); }
     await sleep(100);
   }
-  return released(dir, owner) ? { state: 'stopped', pid: owner.pid } : { state: 'stopping', pid: owner.pid };
+  return stopped() ? { state: 'stopped', pid: owner.pid } : { state: 'stopping', pid: owner.pid };
 }
 export function renderDriveStop(r: DriveStop): string {
   return r.state === 'none' ? 'no driver running' : r.state === 'stopped' ? 'stopped' : `stopping: pid ${r.pid} exits after its current action and its in-flight measurements`;
@@ -478,6 +484,9 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
       ?? (asking.length > 1 && rid && qid ? `owed answer ${node} --rid ${rid} --qid ${qid} "<text>"` : `owed answer ${node} "<text>"`);
     return `Needs you: ${node} — decide ${question} → ${command}`;
   }).join('\n');
+  // AK1: the driver already extracted the review's ask. Keep it and its single ruling command.
+  const review = source.match(/review asks: (.*?)(?= → owed decide |$)/)?.[1];
+  if (review !== undefined) return `Needs you: ${node} — review asks: ${review.slice(0,300)} → owed decide ${node} --text "<ruling>" --writer`;
   const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
   const chosen = retry ?? source.match(/(?:answer: |(?:with|or):? )(owed [^;\n`]+?)(?= \| |;|\n|`|$)/)?.[1]?.trim();
   const asks = !j.answerRetry && j.qid !== undefined;

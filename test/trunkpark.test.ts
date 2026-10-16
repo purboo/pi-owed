@@ -207,6 +207,8 @@ test('TP2/P2: full once-key separates queued groups with identical truncated fai
       const redLines = delivered[0]!.split('\n').filter(l => l.includes('without any candidate'));
       assert.equal(redLines.length, 1, 'resolved d group must not borrow the remaining e group');
       assert.match(redLines[0]!, /waiting: b\./); assert.doesNotMatch(redLines[0]!, /waiting: a/);
+      const remaining = trunkParkNotices(await r.state());
+      assert.equal(remaining.length, 1); assert.deepEqual(remaining[0]!.nodes, ['b']); assert.ok(remaining[0]!.once.endsWith('\0e'));
     } finally { follower.stop(); }
   } finally { await r.cleanup(); }
 });
@@ -224,6 +226,7 @@ test('TP2: queued notice recomputes waiting nodes at pi delivery', async () => {
       await ops.abandon({ cwd: r.cwd, node: 'b', as: parent, reason: 'fixture removes one waiting node' }); busy = false;
       await follower.step();
       assert.equal(delivered.length, 1); assert.match(delivered[0]!, /waiting: a\./); assert.doesNotMatch(delivered[0]!, /waiting: a, b/);
+      assert.deepEqual(trunkParkNotices(await r.state())[0]!.nodes, ['a']);
     } finally { follower.stop(); }
   } finally { await r.cleanup(); }
 });

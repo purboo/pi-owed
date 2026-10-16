@@ -195,7 +195,7 @@ test('halt clearing: driver entries, notes and executor observations do not clea
     const attested = await ops.attest({ cwd: r.cwd, node: 'a' });
     assert.ok(attested.observations.length > 0);
     assert.equal(await isHalted(), h3.seq, 'executor observations do not clear');
-    await ops.review({ cwd: r.cwd, as: { role: 'reviewer', id: 'r1' }, node: 'a', verdict: 'block', rank: 1, note: 'needs work' });
+    await ops.review({ cwd: r.cwd, as: { role: 'reviewer', id: 'r1' }, node: 'a', verdict: 'block', rank: 1, note: 'needs work', ack_rulings: 'latest' });
     assert.equal(await isHalted(), undefined, 'a review clears');
     // A closed attempt is never halted; a new attempt is free. AH permits driver abandon only for its stale empty slots.
     await ops.halt({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, reason: 'fourth', needs: 'human' });
@@ -246,7 +246,7 @@ test('reviewPacket: exact commands, reviewer ids, ranks, closure-review, rulings
     const l1 = await ops.launch({ cwd: r.cwd, as: drive, node: 'a', attempt: 1, role: 'reviewer', rid: runId(p, 'a', 1, 'reviewer', 1), spec: '{"n":1}', labels: runLabels(p, 'a', 1, 'reviewer') });
     assert.equal(nextReviewerN((await load(r.cwd)).state, 'a'), 2);
     assert.ok(reviewPacket((await load(r.cwd)).state, 'a', 1).includes('--as reviewer:drive-a-1-1 '), 'the launched run still builds its packet for its candidate');
-    await ops.review({ cwd: r.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'block', rank: 1, note: 'fix it' });
+    await ops.review({ cwd: r.cwd, as: { role: 'reviewer', id: 'drive-a-1-1' }, node: 'a', verdict: 'block', rank: 1, note: 'fix it', ack_rulings: rule.seq });
     await submitA(r.cwd, a.worktree, { 'a/x.txt': '2\n', 'closure/c.txt': '0\n' });
     const s2 = (await load(r.cwd)).state, c2 = s2.nodes.a!.candidate!;
     assert.ok(c2.seq > l1.entry.seq);

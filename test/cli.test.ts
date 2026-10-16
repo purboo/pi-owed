@@ -46,7 +46,7 @@ test('CLI real processes: DAG, laundering, closure, writes, invariant defer, CAS
     assert.equal((await cli(r.cwd,['merge','b'])).code,1);
     const {git}=await import('../src/git.ts'); await git(b.worktree,['rm','outside.txt']);
     await commitAt(b.worktree,{'test/state.cjs':'module.exports=0;'}); await call(b.worktree,['submit','b']); await call(r.cwd,['attest','b'],1);
-    await call(r.cwd,['review','b','--obligation','closure-review','--ok','--rank','2','--as','reviewer:fresh']);
+    await call(r.cwd,['review','b','--obligation','closure-review','--ok','--rank','2','--as','reviewer:fresh','--ack-rulings','latest']);
     assert.equal((await call<ReceiptCard>(r.cwd,['why','b'])).accepted,true);
     const inv=await cli(r.cwd,['merge','b']); assert.equal(inv.code,1); assert.match(inv.stderr,/invariant unit/);
     await call(r.cwd,['defer','b','unit','--reason','repair later','--i-am-owner']);

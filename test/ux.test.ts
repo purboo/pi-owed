@@ -45,8 +45,8 @@ test('UX1: needs-parent block also gives a writer ruling as the next action', as
   try {
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 2, note: 'choose API', needs: 'parent' });
     const s = await ops.status(f);
-    assert.match(s.summary!.needs.find(n => n.node === 'a')!.command!, /^owed decide a --writer --text/);
-    assert.match(renderReceipt(await ops.why({ ...f, node: 'a' })), /owed decide a --writer --text/);
+    assert.equal(s.summary!.needs.find(n => n.node === 'a')!.command!, 'owed decide a --text "<ruling>" --writer');
+    assert.match(renderReceipt(await ops.why({ ...f, node: 'a' })), /review asks: choose API → owed decide a --text "<ruling>" --writer/);
   } finally { await f.cleanup(); }
 });
 
@@ -164,32 +164,26 @@ test('UX3: request metadata and unordered probes are deduplicated; why probes on
   }
 });
 
-test('UX4: explicit zero and omitted ack warn after recording; exact command preserves the verdict and note', async () => {
+test('UX4: explicit zero and omitted ack refuse before recording; latest preserves the verdict and note', async () => {
   const f = await fixture();
   try {
     const rule = await ops.rule({ cwd: f.cwd, ...parent, nodes: ['a'], text: 'Apply API v2', dsa: sealed });
     const args = ['review', 'a', '--ok', '--rank', '2', '--as', 'reviewer:independent', '--note', "quote ' and $ literal"];
     const first = await cli(f.cwd, [...args, '--ack-rulings', '0']);
-    assert.equal(first.code, 0, first.stderr);
-    assert.match(first.stdout, new RegExp(`Warning: review recorded without acknowledging applicable rulings #${rule.seq}`));
-    assert.match(first.stdout, new RegExp(`--ack-rulings ${rule.seq}`));
+    assert.equal(first.code, 2, first.stderr);
+    assert.ok(first.stderr.includes(`ack-rulings must be at least ${rule.seq}`));
     const { entries } = await ops.readState(f);
-    assert.equal(entries.filter(e => e.kind === 'review').length, 1);
-    const command = first.stdout.split('re-record: ')[1]!.trim();
-    assert.match(command, /--candidate [0-9a-f]{40}/);
-    assert.ok(command.includes("--note 'quote '\\'' and $ literal'"), command);
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const { fileURLToPath } = await import('node:url');
-    const bin = fileURLToPath(new URL('../bin/owed.js', import.meta.url));
-    await promisify(execFile)('bash', ['-c', command.replace(/^owed /, `'${process.execPath}' '${bin}' `)], { cwd: f.cwd, env: process.env });
+    assert.equal(entries.filter(e => e.kind === 'review').length, 0);
+    const latest = await cli(f.cwd, [...args, '--ack-rulings', 'latest', '--json']);
+    assert.equal(latest.code, 0, latest.stderr);
+    assert.equal(JSON.parse(latest.stdout).note, "quote ' and $ literal");
+    assert.equal(JSON.parse(latest.stdout).ack_rulings, rule.seq);
     const second = await cli(f.cwd, [...args, '--ack-rulings', String(rule.seq)]);
     assert.equal(second.code, 0, second.stderr); assert.doesNotMatch(second.stdout, /Warning: review recorded/);
     const omitted = await cli(f.cwd, [...args, '--json']);
-    assert.equal(omitted.code, 0, omitted.stderr);
-    assert.match(JSON.parse(omitted.stdout).warnings[0], /re-record: owed review a/);
-    const blocked = await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'blocker' }, node: 'a', verdict: 'block', rank: 2, note: 'choose API', needs: 'parent', ack_rulings: 0 });
-    assert.match((blocked as typeof blocked & { warnings: string[] }).warnings[0]!, /--block.*--needs-parent.*--ack-rulings/);
+    assert.equal(omitted.code, 2, omitted.stderr);
+    assert.match(omitted.stderr, /ack-rulings must be at least/);
+    await assert.rejects(ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'blocker' }, node: 'a', verdict: 'block', rank: 2, note: 'choose API', needs: 'parent', ack_rulings: 0 }), /ack-rulings must be at least/);
     assert.equal((await ops.verify(f)).ok, true);
   } finally { await f.cleanup(); }
 });
