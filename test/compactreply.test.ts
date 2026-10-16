@@ -107,6 +107,7 @@ test('CR2 plan and amend preserve carried candidates and act lines without progr
     const amended = await r.h.call('amend', { node: 'a', writes: ['+extra.txt'], note: 'Only the extra fixture file' });
     const a = amended.details as Awaited<ReturnType<typeof ops.amend>>;
     assert.ok(text(amended).startsWith(views.amendLines(a).join('\n')));
+    assert.ok(a.plan, 'a real widening records a plan');
     assert.equal(a.plan.by, 'owner:pi'); compact(text(amended)); assert.ok(text(amended).endsWith(detailsLine));
     const edited = await r.h.call('edit', { node: 'b', set: ['title=Updated'], note: 'Clarify the title' });
     const e = edited.details as ops.EditResult;
