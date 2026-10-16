@@ -6,7 +6,10 @@ import { isAbsolute, join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { parsePlan, planDowngrades, quarantineNames } from '../src/plan.ts';
-import { stateFacts, git } from '../src/git.ts';
+import { stateFacts, git, execKey } from '../src/git.ts';
+import { attestJobs, checkDefinition } from '../src/reducer.ts';
+import { canonical } from '../src/canon.ts';
+import { quarantineDebt } from '../src/views.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 import type { ObsEntry } from '../src/types.ts';
@@ -192,6 +195,65 @@ test('QS4: merge-tree TAP recovery is not reported from a candidate-only measure
     assert.deepEqual(m.quarantine_passed,['a flaky','z flaky']);
     assert.match((await cli(r.cwd,['report'])).stdout,/passed on the merge tree of work/);
   } finally {await r.cleanup();}
+});
+
+test('QS4 R2999: refused batch TAP recovery identifies the ordered merge tree, not trunk', async () => {
+  const r=await repo();
+  try {
+    await r.put('test/suite.test.cjs',tap); await r.put('src/a','0'); await r.put('src/b','0'); await r.commit();
+    await init(r.cwd,{...plain(),nodes:[{id:'fix',writes:['test/']},{id:'a',writes:['src/a']},{id:'b',writes:['src/b']}],invariants:[
+      {id:'unit',run,reads:['test/','src/'],quarantine:Q},
+      {id:'guard',run:'test "$(cat src/a)" = 0',reads:['src/']},
+    ]},true);
+    const trunk=(await ops.readState({cwd:r.cwd})).state.trunk.commit;
+    for(const id of ['b','a']) {
+      const d=await ops.dispatch({cwd:r.cwd,node:id,as:parent}); await commitAt(d.worktree,{[`src/${id}`]:'1'});
+      await ops.submit({cwd:d.worktree,node:id,as:{role:'writer',id:`${id}#1`}}); await ops.attest({cwd:r.cwd,node:id});
+    }
+    await assert.rejects(ops.mergeBatch({cwd:r.cwd,nodes:['b','a'],as:parent}),/batch merge of b, a refused.*invariant guard/);
+    const o=(await observations(r.cwd)).findLast(e=>e.obligation==='inv:unit'&&e.batch!==undefined)!;
+    assert.deepEqual(o.batch,['b','a']); assert.equal(o.merging,undefined); assert.deepEqual(o.quarantine_passed,['a flaky','z flaky']);
+    assert.notEqual(o.commit,trunk);
+    const s=(await ops.readState({cwd:r.cwd})).state;
+    assert.equal(s.trunk.commit,trunk); assert.equal(s.nodes.a!.merged,undefined); assert.equal(s.nodes.b!.merged,undefined);
+    for(const d of quarantineDebt(s)) assert.deepEqual(d.passed?.batch,['b','a']);
+    for(const command of ['status','report']) {
+      const output=(await cli(r.cwd,[command])).stdout;
+      assert.ok(output.includes(`quarantined a flaky passed on the merge tree of b, a (#${o.seq}); remove it from quarantine if it stays green (fix fix)`),output);
+      assert.doesNotMatch(output,/quarantined .*passed on trunk/);
+    }
+  } finally {await r.cleanup();}
+});
+
+test('QS1 R2999: referenced entries supersede a flaky block like own quarantine; no-set definitions stay identical', async () => {
+  for(const mode of ['shared','own'] as const) {
+    const r=await repo();
+    try {
+      const marker=join(r.root,'first-failure');
+      await r.put('test/suite.test.cjs',`const {test}=require('node:test');const fs=require('node:fs');test('flaky',()=>{if(!fs.existsSync(${JSON.stringify(marker)})){fs.writeFileSync(${JSON.stringify(marker)},'yes');throw new Error('first run fails')}});test('normal',()=>{});`);
+      await r.put('src/v','0'); await r.commit();
+      const p={...plain(),quarantine_sets:{shared:[] as {test:string;fix:string}[]},nodes:[{id:'fix',writes:['test/']},{id:'work',writes:['src/'],checks:[{id:'c',run,reads:['test/'],...(mode==='shared'?{quarantine_set:'shared'}:{})}]}]};
+      await init(r.cwd,p); await candidate(r.cwd); await ops.attest({cwd:r.cwd,node:'work',rerun:true});
+      const before=(await ops.readState({cwd:r.cwd})).state;
+      const failure=before.nodes.work!.blocks.find(b=>b.obligation==='check:c')!;
+      assert.equal(failure.state,'flaky'); assert.equal(before.nodes.work!.accepted,false);
+      const q=[{test:'flaky',fix:'fix'}];
+      const next=mode==='shared'?{...p,quarantine_sets:{shared:q}}:{...p,nodes:[p.nodes[0],{...p.nodes[1],checks:[{...p.nodes[1]!.checks![0],quarantine:q}]}]};
+      const update=await ops.planSet({cwd:r.cwd,plan:JSON.stringify(next),as:owner,channel:'delegated',note:'R2999 authorize exact flaky name'});
+      const amended=(await ops.readState({cwd:r.cwd})).state;
+      const block=amended.nodes.work!.blocks.find(b=>b.seq===failure.seq)!;
+      assert.equal(block.state,'superseded'); assert.equal(block.supersededBy,update.seq);
+      assert.equal(attestJobs(amended,'work').filter(j=>j.attribution).length,0);
+      assert.notEqual(checkDefinition(before.plan,'work','c'),checkDefinition(amended.plan,'work','c'));
+      await ops.attest({cwd:r.cwd,node:'work'});
+      assert.equal((await ops.readState({cwd:r.cwd})).state.nodes.work!.accepted,true);
+      const withoutSet=parsePlan(JSON.stringify({...p,nodes:[p.nodes[0],{...p.nodes[1],checks:[{id:'c',run,reads:['test/'],quarantine:q}]}]}));
+      const c=withoutSet.nodes.find(n=>n.id==='work')!.checks[0]!;
+      const previous=canonical({check:c,setup:withoutSet.setup,exec:execKey(withoutSet)});
+      assert.equal(checkDefinition(withoutSet,'work','c'),previous);
+      assert.equal(checkDefinition({...withoutSet,quarantine_sets:{shared:q}},'work','c'),previous);
+    } finally {await r.cleanup();}
+  }
 });
 
 test('QS2: timeout diagnostics do not inherit the file and timed-out jobs clean it up', async () => {
