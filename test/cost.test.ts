@@ -121,7 +121,7 @@ test('CO2: reads ** warns once per id at init and plan admission, without changi
     await r.put('src/a.ts', '0'); await r.commit();
     const p = plan(['**']); p.nodes[0]!.checks[0]!.reads = ['**'];
     const init = await ops.init({cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(p), measure: false});
-    const message = 'reads of inv:route cover 100% of the repository: almost every change remeasures it (owed report --cost)';
+    const message = 'warning: reads of inv:route cover 100% of the repository: almost every change remeasures it (owed report --cost)';
     assert.equal(init.warnings?.filter(x => x === message).length, 1);
     assert.ok(init.warnings?.includes(message.replace('inv:route', 'check:unit')));
     const path = join(r.root, 'plan.json'); await writeFile(path, JSON.stringify(p));
@@ -141,8 +141,8 @@ test('CO2: 90% tracked trunk coverage warns but 80% and untracked working-tree f
     const p = plan(Array.from({length: 9}, (_, i) => `f${i}`));
     p.nodes[0]!.checks[0]!.reads = ['f[0-8]'];
     const first = await ops.init({cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(p), measure: false});
-    assert.ok(first.warnings?.some(x => /^reads of inv:route cover 90%/.test(x)));
-    assert.ok(first.warnings?.some(x => /^reads of check:unit cover 90%/.test(x)));
+    assert.ok(first.warnings?.some(x => /^warning: reads of inv:route cover 90%/.test(x)));
+    assert.ok(first.warnings?.some(x => /^warning: reads of check:unit cover 90%/.test(x)));
     p.invariants[0]!.reads = ['f[0-7]']; p.nodes.forEach(n => n.checks[0]!.reads = ['f[0-7]']);
     const warnings: string[] = [];
     await ops.planSet({cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(p), note: 'narrow scope', shellWarnings: warnings});
@@ -158,9 +158,9 @@ test('CO2: closure read lint uses the existing glob matcher and names the base-v
     p.nodes[0]!.checks[0]!.reads = ['config/**']; p.nodes[1]!.checks[0]!.id = 'other'; p.nodes[1]!.checks[0]!.reads = ['config/*.txt'];
     p.nodes[2]!.checks[0]!.reads = ['config/*.json'];
     const r0 = await ops.init({cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(p), measure: false});
-    const message = 'check unit reads closure path config/locked.json: checks see the base version of closure files';
+    const message = 'warning: check unit reads closure path config/locked.json: checks see the base version of closure files';
     assert.equal(r0.warnings?.filter(w => w === message).length, 1);
-    assert.ok(!r0.warnings?.some(w => /^check other reads closure path/.test(w)));
+    assert.ok(!r0.warnings?.some(w => /^warning: check other reads closure path/.test(w)));
     assert.equal(r0.status.invariants[0]!.status, 'D', 'lint must not satisfy evidence');
   } finally { await r.cleanup(); }
 });

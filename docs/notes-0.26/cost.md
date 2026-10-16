@@ -4,7 +4,7 @@
 
 Invariant rows also show how many recorded merges measured that invariant rather than reused its key. Successful batch measurements count for each member merge. The invalidating-prefix list groups changed files by their first two path segments, restricted to the invariant's recorded `reads`, between consecutive distinct measured trunk keys. A prefix counts at most once per key transition; same-key retries do not add invalidations. A window retains the preceding historical key for its first comparison. Refused merge trees consume machine time but do not become trunk samples. The highest-cost invariant receives advice to narrow reads when one prefix occurs in more than half of its distinct measured trunk-key samples.
 
-Plan admission warns when a check or invariant reads `**` or at least 90% of tracked trunk files. Check reads overlapping `closure` also warn that checks see the base version of those files. Identical warning lines are emitted once in a plan record's receipt, not written into the ledger. An unchanged `owed start` does not repeat these cost warnings.
+Plan admission warns when a check or invariant reads `**` or at least 90% of tracked trunk files. Check reads overlapping `closure` also warn that checks see the base version of those files. Lint lines use the existing `warning: ` prefix. Identical warning lines are emitted once in a plan record's receipt, not written into the ledger. An unchanged `owed start` does not repeat these cost warnings.
 
 Default `owed status` warns when an invariant's latest executor trunk pass took at least 80% of its configured timeout. Successful merge-tree passes become trunk samples when their tree lands; unlanded passes do not. Plan lint repeats the warning when a plan is recorded. These warnings are diagnostic, not new obligations or debt.
 
@@ -19,5 +19,5 @@ Prefix attribution requires the measured Git commits to remain available. Change
 ## Changed existing tests
 
 - H2.2 CLI init/plan warning test: exclude the independent reads diagnostics when asserting check-less warning ordering and emptiness. All check-less warnings and ledger assertions remain required.
-- H2.2 Pi init/plan warning test: the same separation for tool warning arrays and text ordering, preserving the original check-less behavior assertions.
+- H2.2 Pi init/plan warning test: the same separation for tool warning arrays and text ordering, preserving the original check-less behavior assertions. The check-less-only text list selects `warning: node` so it remains distinct from cost lint.
 - L3.3 plan loop warning test: exclude the independent reads diagnostics from the empty-warning assertion after the loop is removed; the loop-warning placement and disappearance remain required.
