@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { readFile, writeFile, symlink } from 'node:fs/promises';
+import { readFile, writeFile, symlink, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -129,6 +129,35 @@ test('NT4: restart recovers refused repair sends from halts or the log, never hi
       assert.doesNotMatch(latest,/The missing failure path must be fixed\./);
     } finally {await r.cleanup();}
   }
+});
+
+test('NT4: a log-only refusal survives background-start log rotation',async()=>{
+  const r=await fixture();
+  try {
+    const s=(await ops.readState(r)).state, launch=writerLaunch(s,'a',projectId(s));
+    await ops.launch({cwd:r.cwd,as:driverActor,...launch});
+    await commitAt(r.slot.worktree,{'a.txt':'candidate\n'});
+    await ops.submit({cwd:r.slot.worktree,as:writer,node:'a'}); await ops.attest({cwd:r.cwd,node:'a'});
+    await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'independent'},node:'a',verdict:'block',rank:1,note:'The rotated-log finding still needs repair.'});
+    const refused=await ops.send({cwd:r.cwd,as:driverActor,node:'a',attempt:1,rid:launch.rid,sendKind:'follow-up',reason:'repair',message:'fix the rotated-log finding'});
+    const ledger=await Ledger.open(r.cwd), log=join(ledger.dir,'drive','log.jsonl');
+    mkdirSync(join(ledger.dir,'drive'),{recursive:true});
+    const report={do:'send',node:'a',send:refused.send,sendKind:'follow-up',reason:'repair',outcome:'rejected',detail:'sealed'};
+    await writeFile(log,`not JSON\n${JSON.stringify(report)}\n{"torn":`);
+    // Exactly driveStart's rotation: the sole refusal moves to the retained generation before a new log opens.
+    await rename(log,`${log}.1`); await writeFile(log,'{"event":"start"}\n');
+    assert.equal((await ledger.read()).some(e=>e.kind==='halt'),false,'no halt receipt to recover');
+    await ops.resume({cwd:r.cwd,as:parent,node:'a',note:'Continue after restart'});
+    const client=new Client(launch.rid);
+    assert.equal((await client.request(refused.send)).state,'absent','no durable dsa receipt to recover');
+    const driver=new Driver({cwd:r.cwd,once:true,json:true,dsa:client,log(){},handleSignals:false,session:null});
+    await driver.pass();
+    assert.equal(client.sends.length,1);
+    assert.notEqual(client.sends[0]!.id,refused.send,'rotation must not make a refused send retryable');
+    assert.equal(driver.facts.refused.get(refused.send),'sealed');
+    assert.match(client.sends[0]!.message,/Review blocks \(the reviewer's note\):[\s\S]*The rotated-log finding still needs repair\./);
+    assert.doesNotMatch(client.sends[0]!.message,/No new failures since my last message/);
+  } finally {await r.cleanup();}
 });
 
 test('NT5: question-body answer commands cannot hijack either per-question or sole-question wakes',async()=>{

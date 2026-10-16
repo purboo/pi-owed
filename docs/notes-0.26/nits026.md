@@ -16,7 +16,7 @@ No new plan keys, ledger kinds, optional ledger fields or principals are introdu
 
 ## Known limits
 
-Refusal recovery still requires a retained halt, driver report or durable runner request receipt. If all such evidence is removed, the driver cannot infer a past refusal. Version output reflects the installed package; it does not inspect a ledger's reader requirements.
+Refusal recovery reads the current driver log and one rotated generation, as well as retained halt reasons and durable runner request receipts. Older logs are not retained across further background starts. If all such evidence is removed, the driver cannot infer a past refusal. Version output reflects the installed package; it does not inspect a ledger's reader requirements.
 
 ## Changed existing tests
 
