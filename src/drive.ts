@@ -10,7 +10,7 @@ import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
-import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints, reviewAsk, reviewDecision } from './views.ts';
 import { nodeReview, ownerNeeded, dispatchSkip } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
@@ -1031,13 +1031,12 @@ export function manualHalt(s: State, node: string): { reason: string; needs: 'hu
 }
 
 /**
- * Halt reason for current review blocks that need a parent ruling (D18.3): per block `review block #<seq> <obligation>
- * needs a parent ruling: <note>`, then how to resolve it.
+ * AK1: a halt quotes each review's extracted ask and gives the single writer-ruling command.
  */
 export function needsRulingHalt(s: State, node: string, blocks: readonly Block[]): string {
   const entries = entriesOf(s);
-  const each = blocks.map(b => { const e = entries.find(x => x.seq === b.seq); return `review block #${b.seq} ${b.obligation} needs a parent ruling: ${oneLine(e?.kind === 'review' ? e.note ?? '' : '')}`; });
-  return `${each.join('; ')}; record \`owed decide ${node} --text "<decision>"\`; the writer gets the ruling with the next repair`;
+  const each = blocks.map(b => { const e = entries.find(x => x.seq === b.seq); return `review asks: ${reviewAsk(e?.kind === 'review' ? e.note ?? '' : '')}`; });
+  return `${each.join('; ')} → ${reviewDecision(node)}`;
 }
 
 /**

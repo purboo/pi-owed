@@ -205,10 +205,11 @@ test('PO6: review derives only the current driver launch ack; post-launch ruling
     const review = JSON.parse((await call(r.cwd,['review','a','--ok','--rank','1','--as',who,'--note','packet read','--json'])).stdout);
     assert.equal(review.ack_rulings,ruling.seq); assert.equal((await ops.why({cwd:r.cwd,node:'a'})).accepted,true);
     const later = await ops.rule({cwd:r.cwd,as:parent,nodes:['a'],text:'after launch'});
-    const again = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'old packet'});
-    assert.ok(again.kind === 'review'); assert.equal(again.ack_rulings,ruling.seq); assert.equal((await ops.why({cwd:r.cwd,node:'a'})).accepted,false);
-    const manual = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'manual'},node:'a',verdict:'ok',rank:1,note:'manual'});
-    assert.ok(manual.kind === 'review'); assert.equal(manual.ack_rulings,undefined);
+    const before = await entries(r.cwd);
+    await assert.rejects(ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'old packet'}), /ack-rulings must be at least/);
+    assert.equal((await ops.why({cwd:r.cwd,node:'a'})).accepted,false);
+    await assert.rejects(ops.review({cwd:r.cwd,as:{role:'reviewer',id:'manual'},node:'a',verdict:'ok',rank:1,note:'manual'}), /ack-rulings must be at least/);
+    assert.deepEqual(await entries(r.cwd), before);
     await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'explicit',ack_rulings:later.seq}); assert.equal((await ops.why({cwd:r.cwd,node:'a'})).accepted,true);
   } finally { await r.cleanup(); }
 });
@@ -223,8 +224,9 @@ test('PO6: missing earliest ruling with the latest present cannot derive an ackn
     const spec = JSON.parse(action.spec) as {task:string}; spec.task = spec.task.replace(`- #${ruling.seq} ${ruling.kind === 'rule' ? ruling.text : ''}\n`,'');
     assert.ok(spec.task.includes(`- #${latest.seq} latest is still in the packet\n`));
     await ops.launch({cwd:r.cwd,as:{role:'parent',id:'drive'},node:'a',attempt:1,role:'reviewer',rid:action.rid,spec:JSON.stringify(spec),labels:action.labels,rulings:latest.seq});
-    const review = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'metadata is not a packet'});
-    assert.ok(review.kind === 'review'); assert.equal(review.ack_rulings,0);
+    const before = await entries(r.cwd);
+    await assert.rejects(ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'metadata is not a packet'}), /ack-rulings must be at least/);
+    assert.deepEqual(await entries(r.cwd), before);
     assert.equal((await ops.why({cwd:r.cwd,node:'a'})).items.find(i => i.obligation === 'rulings')!.status,'D');
   } finally { await r.cleanup(); }
 });
@@ -239,8 +241,9 @@ test('PO6: a missing middle ruling caps the derived ack at the complete earlier 
     const state = (await ops.readState({cwd:r.cwd})).state, action = reviewerLaunch(state,'a',1,projectId(state),r.cwd);
     const spec = JSON.parse(action.spec) as {task:string}; spec.task = spec.task.replace(`- #${middle.seq} middle\n`,'');
     await ops.launch({cwd:r.cwd,as:{role:'parent',id:'drive'},node:'a',attempt:1,role:'reviewer',rid:action.rid,spec:JSON.stringify(spec),labels:action.labels,rulings:action.rulings});
-    const review = await ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'incomplete packet'});
-    assert.ok(review.kind === 'review'); assert.equal(review.ack_rulings,first.seq);
+    const before = await entries(r.cwd);
+    await assert.rejects(ops.review({cwd:r.cwd,as:{role:'reviewer',id:'drive-a-1-1'},node:'a',verdict:'ok',rank:1,note:'incomplete packet'}), /ack-rulings must be at least/);
+    assert.deepEqual(await entries(r.cwd), before);
     assert.equal((await ops.why({cwd:r.cwd,node:'a'})).items.find(i => i.obligation === 'rulings')!.status,'D');
   } finally { await r.cleanup(); }
 });

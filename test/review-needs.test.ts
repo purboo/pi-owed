@@ -62,7 +62,7 @@ function blocked(o: { needs?: boolean; note?: string; before?: (r: Rig) => void 
   return { r, block };
 }
 const why = (s: State): string => renderReceipt(receipt(s, entriesOf(s), 'a'));
-const haltReason = (seq: number, note = 'brief says X, plan says Y: which one?') => `review block #${seq} review needs a parent ruling: ${note}; record \`owed decide a --text "<decision>"\`; the writer gets the ruling with the next repair`;
+const haltReason = (_seq: number, note = 'brief says X, plan says Y: which one?') => `review asks: ${note} → owed decide a --text "<ruling>" --writer`;
 
 test('reducer: a block with needs parent is copied to the Block; ok + needs is refused; old entries carry no needs', () => {
   const { r, block } = blocked();
@@ -132,7 +132,7 @@ test('a ruling recorded before the block does not resolve it; rulings before dis
   assert.equal(parentRuling(s2, s2.nodes.a!.blocks.find(b => b.seq === b2.seq)!), undefined);
   const runs2 = new Map(runs); runs2.set(runId(P, 'a', 1, 'reviewer', 2), { rid: runId(P, 'a', 1, 'reviewer', 2), state: 'sealed', status: 'ok' });
   const h = decide(s2, s2.plan, runs2, optsOf(two.r)).find(x => x.node === 'a');
-  assert.ok(h?.do === 'halt' && h.reason === `review block #${b2.seq} review needs a parent ruling: still ambiguous; record \`owed decide a --text "<decision>"\`; the writer gets the ruling with the next repair`, JSON.stringify(h));
+  assert.ok(h?.do === 'halt' && h.reason === `review asks: still ambiguous → owed decide a --text "<ruling>" --writer`, JSON.stringify(h));
   // Repair message rulings: only those after the dispatch.
   const ruled = blocked({ before: x => x.rule('before dispatch') });
   const rule = ruled.r.rule('the decision');
@@ -149,7 +149,7 @@ test('a * ruling after the block leaves the halt and the block unresolved', () =
   assert.equal(halted(s, 'a')?.seq, h.seq, 'a * ruling does not clear the halt (D3)');
   assert.equal(parentRuling(s, s.nodes.a!.blocks[0]!), undefined);
   assert.equal(act(r), undefined);
-  assert.match(why(s), new RegExp(`⛔ blocked #${block.seq} review \\(needs a parent ruling\\): a parent records owed decide a --writer --text "<decision>"`));
+  assert.ok(why(s).includes('Needs you: a — review asks: brief says X, plan says Y: which one? → owed decide a --text "<ruling>" --writer'));
   // A ruling naming only another node does not clear it either.
   r.rule('for c only', ['c']);
   assert.equal(halted(r.state(), 'a')?.seq, h.seq);
@@ -158,13 +158,13 @@ test('a * ruling after the block leaves the halt and the block unresolved', () =
 test('views: why and status show "needs a parent ruling" until a node ruling, then "ruled #seq"', () => {
   const { r, block } = blocked();
   const s = r.state();
-  assert.ok(why(s).split('\n').some(l => l.startsWith(`⛔ blocked #${block.seq} review (needs a parent ruling): `)), why(s));
+  assert.ok(why(s).split('\n').some(l => l.startsWith('Needs you: a — review asks: brief says X, plan says Y: which one? → ')), why(s));
   const status = renderStatus(statusView(s, [...r.entries]));
-  assert.ok(status.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${block.seq} review (needs a parent ruling): brief says X, plan says Y: which one?; record owed decide a --writer --text "<decision>"`), status);
+  assert.ok(status.includes(`Needs you: a — review asks: brief says X, plan says Y: which one? → owed decide a --text "<ruling>" --writer`), status);
   // A driver halt with the same words is listed under Halted (driver).
   r.halt(act(r) as Extract<Action, { do: 'halt' }>);
   const halt = renderStatus(statusView(r.state(), [...r.entries]));
-  assert.match(halt, /Halted \(driver\):\n⏸ a: halted by driver #\d+ \(attempt 1\), needs the parent \(the main agent acts; owed lists the command\): review block #\d+ review needs a parent ruling: /);
+  assert.match(halt, /Halted \(driver\):\n⏸ a: halted by driver #\d+ \(attempt 1\), needs the parent \(the main agent acts; owed lists the command\): review asks: /);
   const rule = r.rule('decision');
   const after = r.state();
   assert.ok(why(after).includes(`⛔ blocked #${block.seq} review (ruled #${rule.seq}): `), why(after));
@@ -259,15 +259,15 @@ test('CLI: review --block --needs-parent records needs; --ok --needs-parent is r
     assert.equal(b.code, 0, b.stderr);
     const e = await last(r.cwd);
     assert.ok(e.kind === 'review' && e.verdict === 'block' && e.needs === 'parent', JSON.stringify(e));
-    assert.match(b.stdout, new RegExp(`⛔ blocked #${e.seq} review \\(needs a parent ruling\\)`));
+    assert.ok(b.stdout.includes('Needs you: a — review asks: which API? → owed decide a --text "<ruling>" --writer'));
     const plain = await cli(r.cwd, ['review', 'a', '--block', '--rank', '1', '--note', 'typo', '--as', 'reviewer:r2']);
     assert.equal(plain.code, 0, plain.stderr);
     assert.equal('needs' in (await last(r.cwd)), false);
     const st = await cli(r.cwd, ['status', '--full']);
-    assert.ok(st.stdout.includes(`Blocked (needs a parent ruling):\n⛔ a: blocked #${e.seq} review (needs a parent ruling): which API?; record owed decide a --writer --text "<decision>"`), st.stdout);
+    assert.ok(st.stdout.includes(`Needs you: a — review asks: which API? → owed decide a --text "<ruling>" --writer`), st.stdout);
     assert.equal((await cli(r.cwd, ['rule', 'general', '--nodes', '*'])).code, 0);
     assert.match((await cli(r.cwd, ['why', 'a', '--full'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(needs a parent ruling\\)`));
-    assert.match((await cli(r.cwd, ['why', 'a'])).stdout, /^⛔ review blocked \(needs a parent ruling\): which API\? → /m, 'QT-R1: the default card keeps the needs-parent mark');
+    assert.match((await cli(r.cwd, ['why', 'a'])).stdout, /^Needs you: a — review asks: which API\? → owed decide a --text "<ruling>" --writer/m, 'AK1: the default card keeps the ask and ruling command');
     assert.equal((await cli(r.cwd, ['rule', 'use the v2 API', '--nodes', 'a'])).code, 0);
     const rule = await last(r.cwd);
     assert.match((await cli(r.cwd, ['why', 'a', '--full'])).stdout, new RegExp(`⛔ blocked #${e.seq} review \\(ruled #${rule.seq}\\)`));
@@ -287,7 +287,7 @@ test('pi tool owed_review: needs_parent reaches the entry; false or absent recor
     assert.notEqual(res.isError, true, JSON.stringify(res));
     const e = await last(r.cwd);
     assert.ok(e.kind === 'review' && e.needs === 'parent' && e.by === 'reviewer:t1', JSON.stringify(e));
-    assert.match(res.content.map(c => c.text ?? '').join('\n'), /\(needs a parent ruling\)/);
+    assert.match(res.content.map(c => c.text ?? '').join('\n'), /Needs you: a — review asks: needs a product decision → owed decide a --text "<ruling>" --writer/);
     await call({ node: 'a', as: 'reviewer:t2', verdict: 'block', rank: 1, note: 'fixable', needs_parent: false });
     assert.equal('needs' in (await last(r.cwd)), false);
     const refused = await call({ node: 'a', as: 'reviewer:t3', verdict: 'ok', rank: 1, note: 'x', needs_parent: true });

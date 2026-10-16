@@ -10,7 +10,7 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText, slotGitInProgress, slotGitOperation, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
-import { planReceipt, renderEntry, withActHistory, mergedLine, receiptItem } from './views.ts';
+import { planReceipt, renderEntry, withActHistory, withPresentationState, mergedLine, receiptItem } from './views.ts';
 import * as git from './git.ts';
 import { driveConfig, quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
@@ -679,7 +679,7 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
 /** SF2: start never invents a plan or silently approves a downgrade (ruling #2550). */
 export interface StartResult { initialized: boolean; updated: boolean; plan: string; warnings: string[]; driver: DriveStart }
 function startRefusal(check: string, why: string, fix: string): never { throw new OwedError(`start preflight ${check} failed: ${oneLine(why)}; ${fix}`, 'usage'); }
-export async function start(o: Context & { plan?: string; max?: number; stay?: boolean; signal?: AbortSignal }): Promise<StartResult> {
+export async function start(o: Context & { plan?: string; max?: number; stay?: boolean; restart?: boolean; signal?: AbortSignal }): Promise<StartResult> {
   if (o.max !== undefined && (!Number.isSafeInteger(o.max) || o.max < 1)) startRefusal('max', 'expected a positive integer', 'use owed start --max <N>');
   const refusal = subagentRefusal('parent');
   if (refusal) startRefusal('identity', refusal, 'run owed start from the main agent');
@@ -717,14 +717,14 @@ export async function start(o: Context & { plan?: string; max?: number; stay?: b
   if (fresh) await init({ cwd:o.cwd, as:{role:'owner', id:'pi'}, channel:'delegated', plan:read.plan, path:read.path, commit:trunk.stdout.trim(), measure:false, signal:o.signal });
   else if (changed) await planSet({ cwd:o.cwd, as:{role:'parent', id:'pi'}, ...read });
   checkAbort(o.signal);
-  const driver = await driveStart({ cwd:o.cwd, max:o.max, stay:o.stay, reuse:true });
+  const driver = await driveStart({ cwd:o.cwd, max:o.max, stay:o.stay, reuse:true, restart:o.restart });
   return { initialized:fresh, updated:changed, plan:read.path, warnings, driver };
 }
-/** SF2: one action line, one driver line and one next step; each lint warning on its own line after the action (SF6). */
+/** AK6/SF2: one action line (including lint warnings), one driver line and one next step. */
 export function startText(r: StartResult): string {
   const action = r.initialized ? 'initialized ledger' : r.updated ? 'updated plan' : 'plan unchanged';
   const driver = r.driver.alreadyRunning ? 'already running' : r.driver.exited ? `ended (${r.driver.exited.reason}, exit ${r.driver.exited.code})` : 'started';
-  return [`start: ${action}`, ...r.warnings.map(oneLine), `driver: ${driver}`, r.driver.exited ? 'Next: owed status shows what remains; use owed start --stay to wait for new work.' : 'Next: wait for driver wake-ups; use owed status for progress and owed decide for decisions.'].join('\n');
+  return [`start: ${action}${r.warnings.length ? `; ${r.warnings.map(oneLine).join('; ')}` : ''}`, `driver: ${driver}`, r.driver.exited ? 'Next: owed status shows what remains; use owed start --stay to wait for new work.' : 'Next: wait for driver wake-ups; use owed status for progress and owed decide for decisions.'].join('\n');
 }
 /** N1 (23:4x): a carry `owed plan` skipped (facts not computable or validation refused it); the candidate stays invalidated. */
 export interface NotCarried { node: string; reason: string }
@@ -1404,20 +1404,15 @@ export const attestBusyText = (node: string, owner: LockOwner): string => `attes
  * either refuses at append time when the open candidate differs. `from`: further working directories of the calling
  * process for the writer-worktree rail (G2.1; o.cwd and process.cwd() are always checked).
  */
-export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<RecordedAct & { warnings?: string[] }> {
+export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number|'latest'; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<RecordedAct & { warnings?: string[] }> {
   const given = candidateArg(o.named), ledger = await Ledger.open(o.cwd);
   const modelState = (await readState(o)).state;
   const measuredModel = await recordedModel(o.cwd,modelState,o.node,by(o),o.model);
-  let warning: string | undefined;
-  const entry = await mutateAct(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); const ack = o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString());
-    const missing = applicableRules(s,o.node).filter(r => r.seq > (ack ?? -1));
-    if (missing.length) {
-      const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
-      const top = Math.max(...applicableRules(s,o.node).map(r => r.seq));
-      warning = `Warning: review recorded without acknowledging applicable rulings ${missing.map(r => `#${r.seq}`).join(', ')}; re-record: owed review ${o.node} --${o.verdict} --rank ${o.rank} --as ${quote(by(o))} --candidate ${n.candidate!.commit} --obligation ${obligation} --note ${quote(o.note)}${o.needs ? ' --needs-parent' : ''}${model ? ` --model ${quote(model)}` : ''} --ack-rulings ${top}`;
-    }
+  const entry = await mutateAct(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); const required = Math.max(0, ...applicableRules(s,o.node).map(r => r.seq));
+    const ack = o.ack_rulings === 'latest' ? required : o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString());
+    if (required > 0 && (ack === undefined || ack < required)) throw new OwedError(`ack-rulings must be at least ${required} (the latest ruling for ${o.node}); rerun with --ack-rulings ${required} or --ack-rulings latest`, 'usage');
     return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:ack,...(model !== undefined ? { model } : {}),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
-  return { ...entry, ...(warning && entry.alreadyRecorded === undefined ? { warnings: [warning] } : {}) };
+  return entry;
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
 export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<RecordedAct> {
@@ -2215,11 +2210,11 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
   if (o.node === 'trunk' && !state.nodes.trunk) {
     const reds = trunkInvariantReds(state);
-    return { node:'trunk', phase:'merged', accepted:state.invariants.every(i => i.status !== 'D'), items:state.invariants.map(i => ({ ...receiptItem(i,entries), ...templateReceiptRun(state,i), detail:reds.find(r => r.obligation === i.obligation)?.text ?? i.detail })), blocks:[], untested:[], ownerFlags:[], downgrades:[] };
+    return withPresentationState({ node:'trunk', phase:'merged', accepted:state.invariants.every(i => i.status !== 'D'), items:state.invariants.map(i => ({ ...receiptItem(i,entries), ...templateReceiptRun(state,i), detail:reds.find(r => r.obligation === i.obligation)?.text ?? i.detail })), blocks:[], untested:[], ownerFlags:[], downgrades:[] }, state);
   }
   if (o.node.startsWith('inv:') || (!state.nodes[o.node] && state.plan.invariants.some(i => i.id === o.node))) {
     const id = invariantId(state.plan,o.node), item = state.invariants.find(i => i.obligation === `inv:${id}`)!;
-    return { node: `inv:${id}`, phase: 'merged', accepted: item.status !== 'D', items: [{ ...receiptItem(item,entries), ...templateReceiptRun(state,item) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] };
+    return withPresentationState({ node: `inv:${id}`, phase: 'merged', accepted: item.status !== 'D', items: [{ ...receiptItem(item,entries), ...templateReceiptRun(state,item) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] }, state);
   }
   const view = reduceFrom(state,[],lookup); await applyReports(ledger,view);
   node(view,o.node);
