@@ -392,7 +392,7 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   if (s.plan.risk !== undefined) view.reviewRequirements = Object.fromEntries(Object.values(s.nodes).filter(n => n.candidate && n.slot?.open).map(n => [n.id, nodeReview(s, n.id)]));
   if (currentDefers.length) view.deferred = currentDefers;
   { const batch = mergeBatchPlan(s, mergeBatchSize(s.plan)); if (batch.length) view.mergeBatch = batch; }
-  setReadyText(view, [...readyDispatchSkips(s, dispatchMax)].map(([id, skip]) => `${id}: ${dispatchSkipText(s, id, skip)}`));
+  setReadyText(view, [...readyDispatchSkips(s, dispatchMax)].filter(([, skip]) => skip.kind !== 'owner').map(([id, skip]) => `${id}: ${dispatchSkipText(s, id, skip)}`));
   view.summary = summaryView(s, entries, view, now, driverRunning, currentDefers);
   return view;
 }
@@ -442,6 +442,8 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     if (/^cannot re-(?:launch|send)/.test(reason)) return 'stored run request is unavailable';
     return plain(reason).replace(/\s+to:"[^"]*"/g, '');
   };
+  const ownerReady = new Map([...readyDispatchSkips(s, driveConfig(s.plan).max)].filter(([, skip]) => skip.kind === 'owner'));
+  for (const [id, skip] of ownerReady) add(id, dispatchSkipText(s, id, skip), '');
   for (const b of v.needsRuling ?? []) add(b.node, `needs a parent ruling: ${b.note}`, `owed decide ${b.node} --writer --text "<decision>"`);
   for (const h of v.halted) {
     if (v.needsRuling?.some(b => b.node === h.node)) continue;
@@ -453,7 +455,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
   for (const red of trunkParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
   for (const red of sharedParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
   for (const i of Object.values(v.pending).flat()) {
-    if (trunkParked(s, i.subject).length) continue;
+    if (trunkParked(s, i.subject).length || ownerReady.has(i.subject)) continue;
     if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
     if (i.obligation === 'driver-halt' || i.obligation === 'dispatch' || v.needsRuling?.some(b => b.node === i.subject && b.obligation === i.obligation)) continue;
     if (i.obligation === 'approve' && waitingFor(s, i.subject)) continue;
@@ -473,7 +475,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     add(i.subject, reason, command);
   }
   if (!driverRunning) for (const id of v.ready) {
-    if (v.later?.includes(id) || v.overlaps[id]) continue;
+    if (v.later?.includes(id) || v.overlaps[id] || ownerReady.has(id)) continue;
     add(id, 'ready to dispatch', `owed dispatch ${id}`);
   }
   const at = (seq?: number): number => {
