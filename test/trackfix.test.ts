@@ -202,7 +202,7 @@ test('TF3: debt tracks a fix, why names the waived debt, and fix merge settles o
     await r.measure(); const failed = (await r.obs()).find(e => e.obligation === 'check:runtime')!;
     assert.equal((await r.waive('fix',failed.seq)).code,0);
     const e = (await r.ledger.read()).findLast((e):e is WaiveEntry => e.kind === 'waive')!; assert.equal(e.tracked_by,'fix');
-    const before = await r.state(), debt = 'a/check:runtime: waived — tracked by fix: trunk race tracked';
+    const before = await r.state(), debt = `a/check:runtime: waived — tracked by fix: trunk race tracked (block #${failed.seq})`;
     const entries = await r.ledger.read(), untracked = entries.map(e => { if (e.kind !== 'waive') return e; const {tracked_by,...old} = e; return old; });
     const oldState = reducer.reduce(untracked,sha => reducer.planAt(before,entries.find(e => (e.kind === 'plan' || e.kind === 'genesis') && e.plan === sha)!.seq + 1));
     assert.deepEqual(before,oldState,'tracked_by does not change replay state or gates');
@@ -302,6 +302,107 @@ test('TF1: default selection probes every blocked check, while --check selects o
     assert.match(out.stdout,/trunk probe check:second/);
     await r.setMode('pass'); assert.equal((await r.probe(['--check','second'])).code,0);
     assert.deepEqual((await r.obs()).filter(e => e.probe === 'trunk').map(e => e.obligation),['check:runtime','check:second','check:second']);
+  } finally { await r.cleanup(); }
+});
+
+async function sameKeyDebts() {
+  const r = await fixture();
+  try {
+    await r.measure();
+    const first = (await r.obs()).findLast(e => e.obligation === 'check:runtime' && e.verdict === 'fail' && !e.probe)!;
+    assert.equal((await r.waive('fix',first.seq)).code,0);
+    const w1 = (await r.ledger.read()).findLast((e):e is WaiveEntry => e.kind === 'waive')!;
+    const rerun = await cli(r.cwd,['attest','a','--rerun']); assert.equal(rerun.code,1,rerun.stderr);
+    const second = (await r.obs()).findLast(e => e.obligation === 'check:runtime' && e.verdict === 'fail' && !e.probe)!;
+    assert.ok(second.seq > first.seq); assert.equal(second.key,first.key);
+    assert.equal((await r.waive('fix2',second.seq)).code,0);
+    const w2 = (await r.ledger.read()).findLast((e):e is WaiveEntry => e.kind === 'waive')!;
+    const debts = async () => (await ops.status(r)).summary!.debt.filter(d => d.startsWith('a/check:runtime: waived — '));
+    return {...r,first,second,w1,w2,debts};
+  } catch(e) { await r.cleanup(); throw e; }
+}
+
+test('TF3 #3000: same-key failures keep separate debt; merging fix2 does not settle fix1', async () => {
+  const r = await sameKeyDebts();
+  try {
+    const before = await r.state();
+    const f = await ops.dispatch({...r,node:'fix2',as:parent});
+    await commitAt(f.worktree,{other:'repair'});
+    await ops.submit({cwd:f.worktree,node:'fix2',as:{role:'writer',id:'fix2#1'}});
+    await ops.attest({...r,node:'fix2'});
+    const merged = await ops.merge({...r,node:'fix2',as:parent});
+    const after = await r.state();
+    assert.deepEqual(after.nodes.a,before.nodes.a,'debt settlement changes no node gate state');
+    const expected = `a/check:runtime: waived — tracked by fix: trunk race tracked (block #${r.first.seq})`;
+    assert.deepEqual(await r.debts(),[expected]);
+    assert.deepEqual((await ops.brief(r)).summary!.debt.filter(d => d.startsWith('a/check:runtime: waived — ')),[expected]);
+    assert.match(views.renderStatus(await ops.status(r)),/tracked by fix:/);
+    assert.match(views.renderBrief(await ops.brief(r)),/tracked by fix:/);
+    for (const full of [views.renderStatus(await ops.status(r),{full:true}),views.renderReport(await ops.report(r))]) {
+      assert.match(full,new RegExp(`tracked by fix:.*block #${r.first.seq}`));
+      assert.match(full,new RegExp(`settled by fix2 \\(merge #${merged.entry.seq}\\).*block #${r.second.seq}`));
+    }
+    assert.match(views.renderWhy(await ops.why({...r,node:'fix'})),new RegExp(`tracks waived debt: a/check:runtime #${r.w1.seq}`));
+    assert.match(views.renderWhy(await ops.why({...r,node:'fix2'})),new RegExp(`tracks waived debt: a/check:runtime #${r.w2.seq}`));
+    assert.equal((await ops.verify(r)).ok,true);
+  } finally { await r.cleanup(); }
+});
+
+test('TF3 #3000: re-waiving one failure replaces only its tracker, not a different failure', async () => {
+  const r = await sameKeyDebts();
+  try {
+    assert.equal((await r.debts()).length,2,'same-key failures with identical reasons are distinct debts');
+    const before = await r.state();
+    assert.equal((await r.waive('fix',r.second.seq)).code,0);
+    const latest = (await r.ledger.read()).findLast((e):e is WaiveEntry => e.kind === 'waive')!;
+    const debts = await r.debts(); assert.equal(debts.length,2);
+    assert.ok(debts.every(d => d.includes('tracked by fix:')));
+    const after = await r.state();
+    assert.deepEqual(after.nodes.a!.blocks,before.nodes.a!.blocks,'tracker reassignment changes no blocks');
+    assert.equal(after.nodes.a!.accepted,before.nodes.a!.accepted);
+    assert.deepEqual(after.nodes.a!.items.map(({evidence,...item}) => item),before.nodes.a!.items.map(({evidence,...item}) => item),'only the latest waiver receipt seq changes, not gate status');
+    const why = views.renderWhy(await ops.why({...r,node:'fix'}));
+    assert.match(why,new RegExp(`tracks waived debt: a/check:runtime #${r.w1.seq}`));
+    assert.match(why,new RegExp(`tracks waived debt: a/check:runtime #${latest.seq}`));
+    assert.doesNotMatch(views.renderWhy(await ops.why({...r,node:'fix2'})),/tracks waived debt/);
+    await r.mergeFix(); assert.deepEqual(await r.debts(),[]);
+  } finally { await r.cleanup(); }
+});
+
+test('TF3 #3000: each unmerged tracker leaving the plan preserves only its own debt label', async () => {
+  const r = await sameKeyDebts();
+  try {
+    await ops.planSet({...r,as:owner,channel:'delegated',note:'remove first debt tracker',plan:JSON.stringify({...r.plan,nodes:r.plan.nodes.filter(n => n.id !== 'fix')})});
+    let debts = await r.debts(); assert.equal(debts.length,2);
+    assert.ok(debts.some(d => d.includes('(tracker fix left the plan)') && d.includes(`block #${r.first.seq}`)));
+    assert.ok(debts.some(d => d.includes('tracked by fix2:') && d.includes(`block #${r.second.seq}`)));
+    assert.match(views.renderWhy(await ops.why({...r,node:'fix'})),new RegExp(`tracks waived debt: a/check:runtime #${r.w1.seq}`));
+    await ops.planSet({...r,as:owner,channel:'delegated',note:'remove second debt tracker',plan:JSON.stringify({...r.plan,nodes:r.plan.nodes.filter(n => n.id === 'a')})});
+    debts = await r.debts(); assert.equal(debts.length,2);
+    assert.ok(debts.some(d => d.includes('(tracker fix left the plan)')));
+    assert.ok(debts.some(d => d.includes('(tracker fix2 left the plan)')));
+    assert.equal((await ops.brief(r)).summary!.debt.filter(d => d.includes(': waived — ')).length,2);
+    assert.equal((await ops.verify(r)).ok,true);
+  } finally { await r.cleanup(); }
+});
+
+test('TF3 #3000: a multi-risk waiver preserves one line per failure even with identical trackers and reasons', async () => {
+  const r = await fixture();
+  try {
+    await r.measure(); const first = (await r.obs()).find(e => e.obligation === 'check:runtime')!;
+    await r.setMode('pass'); await r.measure();
+    await r.setMode('fail'); const out = await cli(r.cwd,['attest','a','--rerun']); assert.equal(out.code,1,out.stderr);
+    const second = (await r.obs()).findLast(e => e.obligation === 'check:runtime' && e.verdict === 'fail')!;
+    assert.ok(second.seq > first.seq); assert.equal(first.key,second.key);
+    const w = await ops.waive({...r,node:'a',obligation:'check:runtime',accept_risk:[first.seq,second.seq],tracked_by:'fix',reason:'both failures',as:owner,channel:'delegated'});
+    const debts = (await ops.status(r)).summary!.debt.filter(d => d.includes(': waived — '));
+    assert.equal(debts.length,2); assert.ok(debts.some(d => d.includes(`block #${first.seq}`))); assert.ok(debts.some(d => d.includes(`block #${second.seq}`)));
+    assert.equal(views.trackedWaivers(await r.state()).filter(e => e.seq === w.seq).length,2);
+    const why = views.renderWhy(await ops.why({...r,node:'fix'}));
+    assert.ok(why.includes(`tracks waived debt: a/check:runtime #${w.seq} (block #${first.seq})`));
+    assert.ok(why.includes(`tracks waived debt: a/check:runtime #${w.seq} (block #${second.seq})`));
+    assert.equal((await ops.brief(r)).summary!.debt.filter(d => d.includes(': waived — ')).length,2);
+    const before = await r.state(); views.renderReport(await ops.report(r)); assert.deepEqual(await r.state(),before);
   } finally { await r.cleanup(); }
 });
 
