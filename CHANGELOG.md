@@ -13,10 +13,11 @@ Compatibility).
 - **A small tool surface (SF1).** pi declares seven core tools directly:
   `owed_status`, `owed_why`, `owed_decide`, `owed_drive`, `owed_start`,
   `owed_submit` and `owed_review`. Every other owed tool stays registered as
-  deferred and is found with the host's `tool_search`; if the host has no
-  active tool search at session start, owed registers them directly instead,
-  so no tool becomes unreachable. `OWED_TOOLS=all` declares every tool
-  directly (SPEC §11.2).
+  deferred and is found with the host's `tool_search`. At session start owed
+  activates `tool_search` when the host offers it; when discovery is
+  unavailable or cannot be activated, owed registers the deferred tools
+  directly instead, so no tool becomes unreachable. `OWED_TOOLS=all` declares
+  every tool directly (SPEC §11.2).
 - **One start command (SF2).** `owed start [--plan <file>] [--max N]
   [--stay]` / `owed_start` runs a read-only preflight (Git identity, trunk
   ref, plan parse and lint, driver lock), initializes a missing ledger as the
@@ -58,7 +59,8 @@ Compatibility).
   `skills/owed/references/*.md`. The README opens with what, why, a
   quickstart with `owed start`, the current version and the delegated owner
   default; the rest is reorganized under reference headings. Release notes
-  for 0.20–0.25 are folded into SPEC.
+  for 0.20–0.25 are folded into SPEC (Compatibility (0.20–0.25) and the
+  sections cited above; the skill is described in §11).
 
 ## 0.24.0
 
