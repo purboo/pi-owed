@@ -10,7 +10,7 @@ import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
-import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
 import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
@@ -243,6 +243,7 @@ export function repairFollowUp(s: State, node: string, rejected?: ReadonlyMap<st
   // K5.2: the rulings come first.
   return { rulings: carried([...scoped, ...quoted]), message: [...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
     `owed found problems with your candidate of ${node}.`,
+    ...n.blocks.filter(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky')).flatMap(b => { const hint = trunkRedHint(s,b.seq,b.key) ?? sharedCheckHint(s,b); return hint ? [`${hint}; the failure also occurs on trunk; ask the parent instead of changing code outside your writes.`] : []; }),
     ...(failed.lines.length ? ['Failures new since my last message:', ...failed.lines] : []),
     ...(notes.length ? ['Review blocks (the reviewer\'s note):', ...notes] : []),
     ...(!failed.lines.length && !notes.length ? ['No new failures since my last message.'] : []),
@@ -416,11 +417,13 @@ function blockLines(s: State, node: string): string[] {
   const line = (b: Block): string => {
     const e = entries.find(x => x.seq === b.seq);
     const note = e?.kind === 'review' ? e.note ?? '' : e?.kind === 'obs' ? e.note ?? `exit ${e.exit}` : '';
+    const diagnosis = trunkRedHint(s,b.seq,b.key) ?? sharedCheckHint(s,b);
+    if (diagnosis) return `- ${diagnosis}${b.state === 'flaky' ? `; ${flakyBlockText(s,b)}` : ''}${note ? ` — note: ${oneLine(note)}` : ''}`;
     return `- #${b.seq} ${b.obligation}${b.kind === 'judgment' ? ` by ${e?.by ?? '?'} rank ${b.rank}` : ''}: ${oneLine(note)}`;
   };
   const notes = blocks.map(line), flaky = n.blocks.filter(b => b.state === 'flaky' && !heldFlaky(s,node,b)).map(b => {
     const e = entries.find(x => x.seq === b.seq);
-    return e?.kind === 'obs' ? `- ${flakyBlockText(s,b)}${e.note ? ` — note: ${oneLine(e.note)}` : ''}` : line(b);
+    return trunkRedHint(s,b.seq,b.key) || sharedCheckHint(s,b) ? line(b) : e?.kind === 'obs' ? `- ${flakyBlockText(s,b)}${e.note ? ` — note: ${oneLine(e.note)}` : ''}` : line(b);
   });
   return [...(notes.length ? [`Active blocks on your candidate ${c!.commit} (submit #${c!.seq}):`, ...notes] : []),
     ...(flaky.length ? [`Flaky blocks of ${node} (an attribution rerun of the failing content passed):`, ...flaky] : [])];
@@ -531,7 +534,10 @@ export function driverSlot(s: State, node: string, by: string): number | undefin
 /** D25.6: the commands that resolve an owner decision on `node`, as one clause addressed to the main agent. */
 const resolveText = (s: State, node: string): string => { const c = ownerCommands(s, node); return c.length ? `; the main agent resolves it with: ${c.join(' | ')}` : `; the main agent decides: owed why ${node}`; };
 // The reason's own trailing `needs the owner` (ownerNeeded) is dropped: the prefix already says it.
-const ownerNotify = (s: State, node: string, reason: string): Action => ({ do: 'notify', node, text: `${node}: needs the owner (the main agent decides; owed lists the command): ${oneLine(reason.replace(/ needs the owner$/, ''))}; the driver leaves it alone${resolveText(s, node)}` });
+const ownerNotify = (s: State, node: string, reason: string): Action => {
+  const diagnoses = s.nodes[node]!.blocks.filter(b => b.state === 'active' || b.state === 'flaky').flatMap(b => trunkRedHint(s,b.seq,b.key) ?? sharedCheckHint(s,b) ?? []);
+  return { do:'notify', node, text:`${node}: needs the owner (the main agent decides; owed lists the command): ${[...diagnoses,oneLine(reason.replace(/ needs the owner$/, ''))].join('; ')}; the driver leaves it alone${resolveText(s,node)}` };
+};
 
 // ---------- decide ----------
 /** FL3: bounded writer report, raw text rather than a flattened log tail. */
