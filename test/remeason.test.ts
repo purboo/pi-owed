@@ -254,9 +254,12 @@ test('RO ruling #2165: anonymous needle after char 220 and earlier than last 20 
     const needle = failure.includes('connection; refused') ? 'connection; refused' : 'browser fixture timed out';
     const r = await fixture({failure,needles:[needle]});
     try {
-      await r.candidate(); await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}));
+      await r.candidate();
+      if (failure.includes('connection; refused')) await assert.rejects(ops.merge({cwd:r.cwd,node:'a',as:parent}));
+      else await ops.merge({cwd:r.cwd,node:'a',as:parent}); // IF2: anonymous zero-result setup + counted pass resolves.
       const obs = (await r.obs()).filter(e => e.merging === 'a');
       assert.deepEqual(obs.map(e => e.verdict),['fail','pass']);
+      assert.equal(obs[1]!.infra,failure.includes('connection; refused') ? undefined : obs[0]!.seq);
       assert.deepEqual(obs[0]!.remeasure_match,[needle]);
       assert.equal((await ops.verify({cwd:r.cwd})).ok,true);
     } finally { await r.cleanup(); }

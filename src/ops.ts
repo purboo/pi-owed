@@ -10,7 +10,7 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText, slotGitInProgress, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
-import { planReceipt, renderEntry, withActHistory, mergedLine } from './views.ts';
+import { planReceipt, renderEntry, withActHistory, mergedLine, receiptItem } from './views.ts';
 import * as git from './git.ts';
 import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
@@ -20,6 +20,8 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, ty
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
+import { setupFailure, infraSource } from './reducer.ts';
+import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
@@ -91,7 +93,14 @@ export function subagentRefusal(role: string, env: NodeJS.ProcessEnv = process.e
 export const DRIVER_CLAIM = "parent:drive is the driver's identity: only owed drive records as it; it cannot be claimed with --as or as";
 /** D25.4: `OWED_CONFIRM=owner` restores the owner confirmation (pi dialog / TTY prompt); otherwise owner acts are delegated. */
 export function confirmGate(env: NodeJS.ProcessEnv = process.env): boolean { return env.OWED_CONFIRM?.trim() === 'owner'; }
-function guard(s: State, d: Draft): void { const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('; ')); }
+/** IF2: attach under the final ledger lock/private ordered replay, never from a stale measurement snapshot. */
+function tagInfra(s: State, d: Draft): void {
+  if (d.kind === 'obs') {
+    delete d.infra;
+    const seq = infraSource(s,d); if (seq !== undefined) d.infra = seq;
+  }
+}
+function guard(s: State, d: Draft): void { tagInfra(s,d); const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('; ')); }
 /**
  * N4: parsed plans by `<owed dir>\0<blob sha>`, for the life of the process. Blobs are content-addressed and immutable,
  * so an entry never needs invalidation; plans are deep-frozen because every load shares them (the reducer clones what
@@ -432,9 +441,9 @@ async function automaticInvariantRemeasure(cwd: string, ledger: Ledger, snapshot
   if (latest.planSha !== snapshot.planSha || latest.trunk.commit !== snapshot.trunk.commit) return;
   if (entriesOf(latest).some(e => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === job.obligation && e.key === job.key && e.auto_remeasure)) return;
   const ro2 = needles.length > 0 && !!first.remeasure_match?.length && first.remeasure_match.every(n => needles.includes(n));
-  // FS2: a shared failure gets the same single same-key retry by default, even without remeasure_on.
-  // Ruling #2458: never for `repeat` invariants (pooling extra runs would loosen the K-of-N gate).
-  if (!ro2 && (job.spec?.repeat || !sharedDraft(latest,first))) return;
+  // FS2/IF1: shared and setup failures get one same-key retry even without remeasure_on.
+  // Shared-only retries exclude repeat; IF2 removes only zero-result setup runs, never behavioural votes.
+  if (!ro2 && !setupFailure(latest,first) && (job.spec?.repeat || !sharedDraft(latest,first))) return;
   checkAbort(signal);
   const retry = await runJob({cwd,ledger,plan:snapshot.plan,signal},job);
   const { remeasure_match: _match, ...plain } = retry as Extract<Draft,{kind:'obs'}>;
@@ -1352,7 +1361,10 @@ async function remeasureMerge(o: MeasurementContext & { node: string; all?: bool
     const latest = await load(ledger); nodeStable(state,latest,o.node);
     const moved = latest.state.planSha !== state.planSha || !!await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
     const kept: Draft[] = [];
-    if (!moved) for (const d of observations) if (!validateDraft(prospective(latest,kept),d).length) kept.push(d);
+    if (!moved) for (const d of observations) {
+      const current = prospective(latest,kept); tagInfra(current,d);
+      if (!validateDraft(current,d).length) kept.push(d);
+    }
     const superseded = observations.filter(d => !kept.includes(d)).flatMap(d => d.kind === 'obs' ? [{ subject:d.subject, obligation:d.obligation, key:d.key }] : []);
     return { recorded:kept.length ? await ledger.append(kept) : [], superseded, remeasured:jobs.map(j => j.obligation) };
   },undefined,o.signal);
@@ -1680,7 +1692,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
         const automatic = automaticRemeasureHints(current,g?.invItems ?? [],o.node);
         const reused = reusedHint(o.node,failedObs.filter(e => e.subject === 'trunk' && e.seq <= latest.state.seq && !automatic.keys.has(e.key)),Date.now(),by(o) === DRIVER);
         // FS1: the shared remedy is the first sentence; FS3: the bound names itself.
-        const first = lead[0]?.startsWith(SHARED_LEAD) ? [...lead, ...automatic.lines] : [...automatic.lines, ...lead], bound = sharedBoundText(current,o.node);
+        const first = lead[0]?.startsWith(SHARED_LEAD) || lead[0]?.startsWith('setup failure (no tests ran):') ? [...lead, ...automatic.lines] : [...automatic.lines, ...lead], bound = sharedBoundText(current,o.node);
         const text = [...first, ...new Set(trunkRed), ...failures, ...reasons, ...deferBoundHints(current,o.node,g?.invItems ?? []), ...slotBaseRed, ...mergeFailureHints(current,o.node,failedObs), ...(reused ? [reused] : []), ...(bound ? [bound] : [])].join('; ');
         const parks = !missed.length && g ? parkedRefusal(current,o.node,reasons,g) : [];
         throw parks.length ? new SharedRefusal(text,parks) : new OwedError(text);
@@ -1845,7 +1857,14 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
 /** AT1: the first words of the merge-tree break lead (the driver keeps it first in its halt text). */
 export const MERGE_TREE_BREAK = 'merge tree does not pass ';
 async function mergeTreeBreakLead(cwd: string, s: State, node: string, commits: string[], reused: readonly ObsEntry[] = []): Promise<string[]> {
-  const shared = sharedLead(s,node,[...entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'trunk' && e.merging === node && e.batch === undefined && e.verdict === 'fail' && commits.includes(e.commit)), ...reused]);
+  const fails = [...entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === node && e.batch === undefined && e.verdict === 'fail' && commits.includes(e.commit)), ...reused];
+  const resolved = new Set(entriesOf(s).flatMap(e => e.kind === 'obs' && e.infra !== undefined ? [e.infra] : []));
+  const setup = fails.find(e => !resolved.has(e.seq) && setupFailure(s,e));
+  if (setup) {
+    const ledger = await Ledger.open(cwd), log = setup.log ? await ledger.getBlob(setup.log).then(b => b.toString()).catch(() => '') : '';
+    return [setupHint(setupSignature(log || setup.note || ''),node)];
+  }
+  const shared = sharedLead(s,node,fails);
   if (shared) return [shared];
   const breaks = [...new Set(commits)].flatMap(c => mergeTreeBreaks(s,node,c)), base = s.nodes[node]?.slot?.base;
   if (!breaks.length || !base || base === s.trunk.commit) return [];
@@ -1917,7 +1936,9 @@ function mergeCurrent(latest: Awaited<ReturnType<typeof load>>, id: string, m: {
     if (obs.kind !== 'obs') continue;
     const jobs = obs.merging !== undefined ? (nodeJobs ? mergeJobs(current,id,m) : []) : genesisJobs(current);
     const automaticPair = obs.auto_remeasure && kept.some(first => first.kind === 'obs' && first.verdict === 'fail' && sameJob(first,obs) && first.merging === obs.merging);
-    if ((!automaticPair && !jobs.some(j => sameJob(j,obs))) || validateDraft(current,obs).length) continue;
+    if (!automaticPair && !jobs.some(j => sameJob(j,obs))) continue;
+    tagInfra(current,obs);
+    if (validateDraft(current,obs).length) continue;
     const entry = {...obs,seq:current.seq+1,ts:new Date().toISOString(),prev:current.head} as Entry;
     // G1.3: folded onto a private copy of the loaded state.
     entry.hash=entryHash(entry); current = own ? extendState(current,[entry]) : reduceFrom(current,[entry],latest.lookup); own = true; kept.push(obs);
@@ -2153,11 +2174,11 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
   if (o.node === 'trunk' && !state.nodes.trunk) {
     const reds = trunkInvariantReds(state);
-    return { node:'trunk', phase:'merged', accepted:state.invariants.every(i => i.status !== 'D'), items:state.invariants.map(i => ({ ...i, ...templateReceiptRun(state,i), detail:reds.find(r => r.obligation === i.obligation)?.text ?? i.detail, observations:entries.filter(e => i.evidence.includes(e.seq)) })), blocks:[], untested:[], ownerFlags:[], downgrades:[] };
+    return { node:'trunk', phase:'merged', accepted:state.invariants.every(i => i.status !== 'D'), items:state.invariants.map(i => ({ ...receiptItem(i,entries), ...templateReceiptRun(state,i), detail:reds.find(r => r.obligation === i.obligation)?.text ?? i.detail })), blocks:[], untested:[], ownerFlags:[], downgrades:[] };
   }
   if (o.node.startsWith('inv:') || (!state.nodes[o.node] && state.plan.invariants.some(i => i.id === o.node))) {
     const id = invariantId(state.plan,o.node), item = state.invariants.find(i => i.obligation === `inv:${id}`)!;
-    return { node: `inv:${id}`, phase: 'merged', accepted: item.status !== 'D', items: [{ ...item, ...templateReceiptRun(state,item), observations: entries.filter(e => item.evidence.includes(e.seq)) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] };
+    return { node: `inv:${id}`, phase: 'merged', accepted: item.status !== 'D', items: [{ ...receiptItem(item,entries), ...templateReceiptRun(state,item) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] };
   }
   const view = reduceFrom(state,[],lookup); await applyReports(ledger,view);
   node(view,o.node);
