@@ -32,7 +32,7 @@ import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, re
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
 import { mergeBatchPlan, sharedParked, sharedParkKey, sharedPhase } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
-import { callAt, decide, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
+import { callAt, decide, recentSetupFailures, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
@@ -586,6 +586,8 @@ export class Driver {
       const rb = n.slot.rebase;
       if (rb?.previous && wantsRebaseConflicts(s, n.id, runs)) { const x = await rebaseConflicts(this.root!, rb.base, rb.previous.commit); if (x) conflicts.set(n.id, x); }
     }
+    // IF4: only the diagnostic window needs captured logs; never load historical setup blobs here.
+    for (const e of recentSetupFailures(s,Date.now())) if (e.log) await blob(e.log);
     return { runs, blobs, rejected, conflicts, rebasePending:pendingBases, rebaseWork };
   }
 
@@ -1172,7 +1174,7 @@ export class Driver {
           return [report('retry', `merge refused (${e.message}); retry next pass`), ...(d ? [driftReport(now, d)] : [])];
         }
         // AT1: a merge-tree break lead stays the first sentence of the halt (and so of the Needs-you line).
-        await this.halt(node, attempt, e.message.startsWith(ops.MERGE_TREE_BREAK) || e.message.startsWith(ops.SHARED_LEAD) ? e.message : `merge refused: ${e.message}`);
+        await this.halt(node, attempt, e.message.startsWith(ops.MERGE_TREE_BREAK) || e.message.startsWith(ops.SHARED_LEAD) || e.message.startsWith('setup failure (no tests ran):') ? e.message : `merge refused: ${e.message}`);
         return [report('refused', `${e.message}; halted (${NEEDS_PARENT})`)];
       };
     }

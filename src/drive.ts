@@ -8,7 +8,8 @@ import { clockTime } from './clock.ts';
 import { driveConfig } from './plan.ts';
 import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting, writesWaitCycle } from './reducer.ts';
-import { priorCandidateBlock, ruleAnswers } from './reducer.ts';
+import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
+import { setupSignature, setupHint } from './remeasure-on.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
 import { nodeReview } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
@@ -101,6 +102,35 @@ export interface DriveOpts {
   now?: number;
   /** QN1: runtime notice keys already printed by this driver, so another overdue question can be reported. */
   noticed?: ReadonlySet<string>;
+}
+
+/** IF-R1: bounded tail shared by diagnostic policy and blob loading. */
+export function recentSetupFailures(s: State, now: number): ObsEntry[] {
+  const entries = entriesOf(s), found: ObsEntry[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!, at = Date.parse(e.ts);
+    if (Number.isFinite(at) && now - at > 30 * 60_000) break;
+    if (!Number.isFinite(at) || at > now || e.kind !== 'obs' || e.by !== 'executor:owed') continue;
+    if (setupFailure(s,e)) found.push(e);
+  }
+  return found;
+}
+/** IF4: one diagnostic per normalized signature and trunk; no measurement or ledger state is changed. */
+export function setupNotices(s: State, blobs: ReadonlyMap<string,string> | undefined, now: number | undefined): { once: string; text: string }[] {
+  if (now === undefined || !blobs) return [];
+  const groups = new Map<string,{ subjects:Set<string>; nodes:Set<string> }>();
+  for (const e of recentSetupFailures(s,now)) {
+    if (!e.log || !blobs.has(e.log)) continue;
+    const signature = setupSignature(blobs.get(e.log)!);
+    const group = groups.get(signature) ?? { subjects:new Set<string>(), nodes:new Set<string>() };
+    const subject = e.merging ?? e.subject;
+    group.subjects.add(subject); group.nodes.add(subject);
+    groups.set(signature,group);
+  }
+  return [...groups].filter(([,g]) => g.subjects.size >= 2).sort(([a],[b]) => a.localeCompare(b)).map(([signature,g]) => {
+    const nodes = [...g.nodes].sort().join(',');
+    return { once:`setup\u0000${signature}\u0000${s.trunk.commit}`, text:`setup failure on ${g.subjects.size} trees: ${signature} — probably the environment, not the nodes (${nodes}); fix it, then owed decide ${nodes} --remeasure` };
+  });
 }
 
 // ---------- spec bytes, tasks and messages (pure, deterministic) ----------
@@ -580,6 +610,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   }
   for (const red of trunkParkNotices(s)) if (!opts.noticed?.has(red.once)) out.push({ do: 'notify', node: red.obligation, scope: 'repo', text: red.text, once: red.once });
   for (const red of sharedParkNotices(s)) if (!opts.noticed?.has(red.once)) out.push({ do: 'notify', node: red.obligation, scope: 'repo', text: red.text, once: red.once });
+  for (const notice of setupNotices(s,opts.blobs,opts.now)) if (!opts.noticed?.has(notice.once)) out.push({ do:'notify', node:'trunk', scope:'repo', ...notice });
   for (const red of trunkInvariantReds(s)) out.push({ do:'notify', node:red.obligation, scope:'repo', invariantRed:{obligation:red.obligation,key:red.key}, text:red.text, once:`inv-red\u0000${red.obligation}\u0000${red.key}` });
   return orderMergeActions(s, out);
 }
@@ -906,7 +937,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Rows 9-10: measured obligations without a verdict on the candidate's keys, and attribution reruns of blocks from
     // earlier content (a failure of the current content is a repair, not an attest): attest, unless `error` twice.
     // F2.2: an environment error (note `environment: `) does not count toward the two errors; it makes the attest wait.
-    const jobs = attestJobs(s, id).filter(j => !(j.attribution && j.key === c.keys[j.obligation])).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed && !isEnvironment(o)) }));
+    const jobs = attestJobs(s, id).filter(j => !(j.attribution && j.key === c.keys[j.obligation]) || observationsOf(s,j.subject,j.obligation,j.key).some(o => setupFailure(s,o))).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed && !isEnvironment(o)) }));
     if (jobs.some(x => x.errors.length < 2)) {
       const wait = opts.now === undefined ? undefined : environmentWait(s, jobs.map(x => x.j), resumed);
       if (wait && wait.until > opts.now!) return { do: 'notify', node: id, text: environmentText(id, wait), once: `environment\u0000${id}\u0000${wait.streak}` };
@@ -933,6 +964,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Row 11: a measured block: an obligation of the candidate failed (✘), or an active execution block binds it.
     const measured = n.items.filter(i => (i.mark === '✘' || n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation)) && !(waitingWrites && i.obligation === 'writes'));
     if (measured.length) {
+      const setup = measured.map(i => observationsOf(s,id,i.obligation,i.key).at(-1)).find(o => o !== undefined && setupFailure(s,o));
+      if (setup) return halt(setupHint(setupSignature(opts.blobs?.get(setup.log ?? '') ?? setup.note ?? ''),id));
       // K5.3: the same count below min_tests twice: the threshold may be the plan's mistake; the parent decides.
       const hint = thresholdHint(s, id, measured.map(i => i.obligation));
       if (hint) return halt(hint);

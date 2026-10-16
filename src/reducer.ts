@@ -95,8 +95,11 @@ const waivedFail = (s: State, e: ObsEntry): boolean => e.verdict === 'fail' && e
 /** The observations that count for an item: exclude diagnostic probes and waived merge-key fails (F3). */
 const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => {
   const obs = observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e) && grantPassReusable(s,e) && batchCounts(s, e));
+  // IF2: only an explicitly validated receipt removes a setup failure from behavioural votes.
+  const resolved = resolvedSetupFailures(s, observations(s,subject,obligation,key));
+  const votes = obs.filter(e => !resolved.has(e.seq));
   // WG5 supersedes an earlier overlap-only failure; ordinary failures keep their conflict semantics.
-  return obligation === 'writes' ? obs.filter((e,i) => !e.waits_on || i === obs.length - 1) : obs;
+  return obligation === 'writes' ? votes.filter((e,i) => !e.waits_on || i === votes.length - 1) : votes;
 };
 /**
  * MT4 / ruling #2110: which batch observations count. `undefined`: state views (an obs of a batch that merged counts,
@@ -205,6 +208,48 @@ function knownRedItem(s: State, obligation: string, failures: ObsEntry[], mergin
 function execSpec(s: State, subject: string, obligation: string): CheckSpec | undefined {
   const id = obligation.slice(obligation.indexOf(':') + 1);
   return subject === 'trunk' ? (obligation.startsWith('inv:') ? s.plan.invariants.find(i => i.id === id) : undefined) : obligation.startsWith('check:') ? nodeSpec(s, subject)?.checks.find(c => c.id === id) : undefined;
+}
+/** IF: a setup failure asserted no test result; classify from ledger facts, never a display signature. */
+export function setupFailure(s: State, o: Pick<ObsEntry, 'subject' | 'obligation' | 'verdict' | 'counts' | 'failed' | 'note' | 'runs' | 'execution'> & { seq?: number }): boolean {
+  if (!/^(check|inv):/.test(o.obligation) || o.verdict !== 'fail') return false;
+  const noTests = (r: Pick<ObsEntry, 'verdict' | 'counts' | 'failed' | 'note' | 'execution'>): boolean => r.verdict === 'fail' && r.execution?.completed !== false &&
+    (r.counts?.tests === undefined || r.counts.tests === 0) && !r.failed?.length && !r.counts?.failed?.length &&
+    !(r.counts?.fail ?? 0) && !(r.counts?.pass ?? 0) && !(r.counts?.skip ?? 0) && !/^timeout after /i.test(r.note ?? '');
+  if (!noTests(o) || o.runs?.some(r => !noTests(r))) return false;
+  const plan = o.seq === undefined ? s.plan : obsPlan(context(s),o.seq) ?? s.plan;
+  const id = o.obligation.slice(o.obligation.indexOf(':') + 1);
+  const spec = o.obligation.startsWith('inv:') ? plan.invariants.find(i => i.id === id) : plan.nodes.find(n => n.id === o.subject)?.checks.find(c => c.id === id);
+  return !!spec && (spec.min_tests !== undefined || !!o.counts?.format || context(s).entries.some(e => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === o.subject && e.obligation === o.obligation && (o.seq === undefined || e.seq < o.seq) && (e.counts?.tests ?? 0) > 0));
+}
+/** IF-R1: resolve only the consecutive zero-result suffix named by a validated infra receipt.
+ * Input includes every executor measurement of one exact key, including errors and diagnostic measurements.
+ */
+function resolvedSetupFailures(s: State, obs: readonly ObsEntry[], receipt?: number): Set<number> {
+  const resolved = new Set<number>();
+  for (let i = 0; i < obs.length; i++) {
+    const pass = obs[i]!;
+    if (pass.infra === undefined || receipt !== undefined && pass.seq !== receipt) continue;
+    for (let j = i - 1; j >= 0; j--) {
+      const fail = obs[j]!;
+      if ((j === i - 1 && fail.seq !== pass.infra) || fail.probe !== undefined || fail.batch !== undefined || !setupFailure(s,fail)) break;
+      resolved.add(fail.seq);
+    }
+  }
+  return resolved;
+}
+/** IF2: counted pass on the exact key, immediately after a setup failure. Undefined is always conservative. */
+export function infraSource(s: State, d: Extract<Draft, { kind: 'obs' }>): number | undefined {
+  if (d.by !== 'executor:owed' || d.verdict !== 'pass' || d.probe !== undefined || d.batch !== undefined) return;
+  const first = observations(s,d.subject,d.obligation,d.key).at(-1);
+  if (!first || first.probe !== undefined || first.batch !== undefined || !setupFailure(s,first)) return;
+  // Attribution may measure an old key: its spec is the law of the failed run, not a later lowered threshold.
+  const plan = obsPlan(context(s),first.seq) ?? s.plan;
+  const spec = d.obligation.startsWith('inv:') ? plan.invariants.find(i => `inv:${i.id}` === d.obligation) : plan.nodes.find(n => n.id === d.subject)?.checks.find(c => `check:${c.id}` === d.obligation);
+  const pass = (r: Pick<ObsEntry, 'verdict' | 'exit' | 'counts' | 'failed' | 'execution' | 'note'>): boolean => r.verdict === 'pass' && r.exit === 0 && !/^timeout after /i.test(r.note ?? '') &&
+    Number.isSafeInteger(r.counts?.tests) && (r.counts?.tests ?? 0) > 0 && (r.counts?.tests ?? 0) >= (spec?.min_tests ?? 0) &&
+    r.counts?.fail === 0 && !r.failed?.length && !r.counts?.failed?.length && (!r.execution || r.execution.completed && r.execution.countOK);
+  if (!spec || !pass(d) || d.runs?.some(r => !pass(r)) || (spec.repeat && (!d.runs?.length || d.runs.length < (spec.repeat.need ?? spec.repeat.runs) || d.runs.length > spec.repeat.runs))) return;
+  return first.seq;
 }
 /**
  * MS1 (parent ruling 10-15): with `repeat {runs: N, need: K}`, every run of every non-error observation on one key is
@@ -516,7 +561,7 @@ function decisionErrors(s: State, d: Draft): string[] {
 /** G1.5: the fields a ruling may carry; another one is a ruling flag of a newer owed. */
 const RULE_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'decision', 'text', 'nodes', 'writer', 'prospective', 'answer', 'answers', 'supersedes'];
 /** RC1–RC3: from 0.13, future observation fields must not be silently replayed by verdict alone. */
-const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'grant_refused', 'waits_on', 'auto_remeasure', 'remeasure_match', 'batch', 'lease_wait_ms'];
+const OBS_FIELDS: readonly string[] = ['kind', 'by', 'channel', 'seq', 'ts', 'prev', 'hash', 'subject', 'obligation', 'key', 'verdict', 'exit', 'counts', 'log', 'durationMs', 'commit', 'base', 'attribution', 'merging', 'probe', 'note', 'runs', 'noisy', 'failed', 'execution', 'signatures', 'quarantined', 'grant_refused', 'waits_on', 'auto_remeasure', 'infra', 'remeasure_match', 'batch', 'lease_wait_ms'];
 const shown = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v) ?? String(v);
 /**
  * G1.5 (0.12): the refusal of a replayed entry this owed cannot interpret, or undefined: an unknown `kind`, an unknown
@@ -636,12 +681,17 @@ function fold(s: State, entries: Iterable<Entry>): void {
       }
       const n = s.nodes[e.subject];
       if (n && e.probe === undefined) {
+        const resolved = resolvedSetupFailures(s, [...observations(s,e.subject,e.obligation,e.key),e],e.seq);
         const matches = n.blocks.filter(b => b.kind === 'exec' && underlying(h, b) === 'active' && b.obligation === e.obligation && b.key === e.key);
         if (e.attribution && e.verdict !== 'error') for (const b of matches) {
           // L2: an attribution rerun of a superseded block (recorded before 0.8, or by hand) leaves it superseded.
-          if (b.state === 'superseded') { h.shadow.set(b.seq, e.verdict === 'fail' ? 'cleared' : 'flaky'); continue; }
-          b.state = e.verdict === 'fail' ? 'cleared' : 'flaky';
+          if (b.state === 'superseded') { h.shadow.set(b.seq, e.verdict === 'fail' || resolved.has(b.seq) ? 'cleared' : 'flaky'); continue; }
+          b.state = e.verdict === 'fail' || resolved.has(b.seq) ? 'cleared' : 'flaky';
           if (b.state === 'cleared') b.clearedBy = e.seq;
+        }
+        if (e.infra !== undefined) for (const b of n.blocks.filter(b => resolved.has(b.seq) && b.kind === 'exec')) {
+          if (b.state === 'superseded') h.shadow.set(b.seq, 'cleared');
+          else { b.state = 'cleared'; b.clearedBy = e.seq; }
         }
         // WG5: a later writes verdict supersedes only overlap-only execution blocks.
         if (e.obligation === 'writes' && e.verdict !== 'error' && !e.attribution) for (const b of n.blocks.filter(b => b.kind === 'exec' && underlying(h,b) === 'active' && b.obligation === 'writes')) {
@@ -1679,8 +1729,10 @@ export function validateDraft(s: State, d: Draft): string[] {
         const ro2 = !!first?.remeasure_match?.length && needles.length > 0 && first.remeasure_match.every(text => needles.includes(text));
         // FS2: or the preceding failure is shared (recomputed from the ledger); its retry carries no remeasure_match.
         const shared = !ro2 && !!first && d.remeasure_match === undefined && !s.plan.invariants.find(i => `inv:${i.id}` === d.obligation)?.repeat && !!sharedFailure(s, first, first.merging);
-        if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || (!ro2 && !shared)) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on or be shared');
+        const setup = !!first && first.batch === undefined && d.batch === undefined && setupFailure(s,first);
+        if (!first || first.verdict !== 'fail' || first.auto_remeasure || first.probe || first.attribution || (!ro2 && !shared && !setup)) errors.push('obs auto_remeasure requires the preceding same-key failure to match remeasure_on, be shared or be a setup failure');
       }
+      if (d.infra !== undefined && (!Number.isSafeInteger(d.infra) || d.infra !== infraSource(s,d))) errors.push('obs infra requires the immediately preceding executor setup failure of the same subject, obligation and key and a counted pass satisfying the spec');
       errors.push(...batchObsErrors(d));
       errors.push(...leaseWaitErrors(d));
       if (d.quarantined !== undefined && (!Array.isArray(d.quarantined) || !d.quarantined.length || d.quarantined.some(x => typeof x !== 'string' || !x))) errors.push('obs quarantined must be a non-empty array of test names');
@@ -2001,7 +2053,10 @@ export function attestJobs(s: State, id: string): AttestJob[] {
     const key = n.candidate.keys[o];
     const retry = o === 'writes' ? writesWaiting(s,id) : undefined;
     const due = retry && retry.waits_on!.every(owner => !s.nodes[owner]?.slot?.open);
-    if (!key || hasVerdict(s, id, o, key) && !due) continue;
+    // IF3: the advertised decide --remeasure also retries a current-key setup failure whose attribution cleared its block.
+    const resume = resumeOf(s,id), last = key && observations(s,id,o,key).at(-1);
+    const setupRetry = resume?.remeasure && last && last.seq < resume.seq && setupFailure(s,last);
+    if (!key || hasVerdict(s, id, o, key) && !due && !setupRetry) continue;
     const j = job(nodeSpec(s, id), id, o, key, n.candidate.commit, n.slot.base, s.plan);
     if (j) jobs.push(quarantinedJob(s, j));
   }
@@ -2035,7 +2090,11 @@ export function genesisJobs(s: State): AttestJob[] {
 export function genesisProgress(s: State): { ids: string[]; observed: string[]; failed: string[]; pending: string[] } {
   const g = context(s).genesis;
   const ids = g ? s.plan.invariants.filter(i => !!g.state.invKeys[i.id]).map(i => i.id) : [];
-  const at = (id: string) => observations(s, 'trunk', `inv:${id}`, g!.state.invKeys[id]!);
+  const at = (id: string) => {
+    const obs = observations(s, 'trunk', `inv:${id}`, g!.state.invKeys[id]!);
+    const resolved = resolvedSetupFailures(s,obs);
+    return obs.filter(e => !resolved.has(e.seq));
+  };
   const observed = ids.filter(id => at(id).some(e => e.verdict !== 'error'));
   return { ids, observed, failed: observed.filter(id => at(id).some(e => e.verdict === 'fail')), pending: ids.filter(id => !observed.includes(id)) };
 }

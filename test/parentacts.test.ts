@@ -128,8 +128,9 @@ test('parentacts: only known_red changes are trunk plans; resume uses last recor
 test('parentacts: legacy fields retain exact 0.16 values and input is immutable', () => {
   const f = fixture(); f.merged();
   const originals = JSON.stringify(f.entries), laws = JSON.stringify([...f.plans]);
-  // MX1 (0.23) adds decisions, actsPerDecision, latency and interruptions.byClass; the 0.16 fields keep their values.
-  const {parentActs,grants,reviews,decisions:_decisions,actsPerDecision:_perDecision,latency:_latency,...legacy} = computeMetrics(f.entries,f.plans);
+  // MX1/IF2 add metrics fields; the 0.16 fields keep their exact values.
+  const {parentActs,grants,reviews,infra,decisions:_decisions,actsPerDecision:_perDecision,latency:_latency,...legacy} = computeMetrics(f.entries,f.plans);
+  assert.deepEqual(infra,{total:0,byObligation:{}});
   legacy.interruptions = {...legacy.interruptions,byClass:undefined!};
   assert.deepEqual(legacy,{
     since:-1,until:null,mergedNodes:1,
