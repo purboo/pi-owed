@@ -40,7 +40,7 @@ Reviewer: independently inspect the actual candidate and evidence, record a verd
 - [Parent and owner acts](references/parent.md): read for plans, decisions/answers, allowances, approvals, hotfixes or recovery.
 - [Writers and reviewers](references/writer-reviewer.md): read before writing, submitting, rebasing or independently reviewing a node.
 - [Driver and output](references/driver.md): read for driver controls, wakes, why/status/brief, models, batches or idle behavior.
-- [Evidence and debt](references/evidence.md): read for checks, red/strength, invariants, shared failures, waivers/defers, sweeps or metrics.
+- [Evidence and debt](references/evidence.md): read for checks, native/script quarantine, trunk probes, flaky evidence, tracked waivers/defers, sweeps or metrics.
 - [Execution environment](references/environment.md): read for wrappers, leases, timeouts, measurement trees or build caches.
-- [Trust and storage](references/storage.md): read for safe retries, ledger verification, caches or cleanup.
+- [Trust and storage](references/storage.md): read for safe retries, ignorable display fields, ledger verification, caches or cleanup.
 - [Compatibility](references/compatibility.md): read before upgrades, mixed readers or enabling fields older versions cannot interpret.

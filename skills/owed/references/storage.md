@@ -10,6 +10,12 @@ Plan/edit/amend may retain invalid legacy writes entries at the original node or
 
 Unlocked `Ledger.read` ignores a final fragment without newline. An incomplete final atomic decision group is also hidden as a write in flight: readers see the state before that group. Counterfactual reporting uses the same decision-group-aware visibility. Locked reads, verify and malformed complete lines still refuse. Ledger directories are identified by realpath, so a symlink alias of the same ledger preserves lock ownership and strict locked-reader behavior. Other readers/stronger runner restrictions remain backlog; neither tolerance permits editing or accepting damaged ledger data.
 
+## Optional entry display fields
+
+An entry may carry `ignorable`: a non-empty sorted unique list of its own present fields with defined values, never a base field (`kind`, `by`, `channel`, `seq`, `ts`, `prev`, `hash`, `decision`) or `ignorable` itself. Malformed lists produce one invalid-entry error. Readers honour every listed field, not a registry whitelist: unknown listed fields are excluded before validation, reduction and diagnostic node scans, while known fields remain interpreted and validated. Unknown unlisted fields retain existing behavior; unknown kinds/channels/enumerated values remain refused even when listed. Only top-level entry fields qualify, not nested shapes or plan keys.
+
+`IGNORABLE` controls only what this owed writes, marking present `waive.tracked_by` and `obs.quarantine_passed` after validation and before hashing. The marker is not act content and changes no evidence key or acceptance fact; marked entries have different hashes. Historical unmarked entries keep their states/keys, raw full/JSON display may retain unknown metadata, and readers before 0.27 still refuse the marker where they refuse unknown fields. Upgrade all readers before the first marked write; see [compatibility](compatibility.md).
+
 ## Trust and cleanup
 
 The ledger is shared through the Git common directory. Principal names and subagent environment rails are workflow assertions, not authenticated security identities; same-user shell access can bypass them. Hash verification detects accidental edits, not a malicious rewrite of the chain. Derived plan caches and snapshots are disposable, never acceptance receipts; `owed verify` checks the hash chain and complete replay.
