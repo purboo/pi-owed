@@ -8,13 +8,15 @@ Dispatch packets and writer follow-ups explicitly require a question to the pare
 
 A pending rebase no longer hides a writer that has already received the rebase follow-up and then stops. A sealed writer at the unchanged clean pre-rebase head halts immediately, naming the follow-up and its final reply. Work left behind gets one additional reminder with the rebase instructions, then halts if no candidate is submitted. Missing worktree facts halt without a reminder. Running writers still wait and asking writers keep their question flow. The handed head is a set: the last submitted commit (or the dispatch base), plus the pre-rebase base of every later rebase of the attempt; a clean worktree at any of them counts as no new work.
 
-These pending-rebase halts deliver a due ruling first. After `owed decide <node> --text "<ruling>" --writer` records the ruling and resumes, the next pass sends exactly one ruling follow-up to the sealed writer. If the writer stops again without a candidate, the halt names that ruling follow-up and nothing more is sent.
+These pending-rebase halts deliver a due ruling first. After `owed decide <node> --text "<ruling>" --writer` records the ruling and resumes, the next pass sends exactly one ruling follow-up to the sealed writer. If the writer stops again without a candidate, the halt names that ruling follow-up and nothing more is sent. This takes precedence over worktree inspection and submit reminders, including when an unsubmitted clean commit is outside the handed set or uncommitted work remains.
 
 When `owed rule` finds that a node's known writer call has finished (neither running nor asking), its receipt adds one line naming the node and call. The line says the ruling was recorded but not sent now, that the driver delivers it on its next pass, and that a halted node needs `owed resume <node>` (`owed decide` records and resumes in one step). `owed rule` itself still never sends follow-ups.
 
 No new plan keys or ledger entry kinds are introduced, and check, review and merge gates are unchanged. Old ledgers replay to identical states and recorded message retries retain their original bytes. An unreadable worktree halts conservatively instead of prompting a submit. Final text cannot be recovered when a pruned run no longer supplies it. Existing repair and ruling follow-up rules remain in force.
 
 ## Changed existing tests
+
+WS-R4 adds an unaligned-commit regression without changing existing tests.
 
 - Row 6 interrupted text and row 18 fenced text: retain recovery instructions and assert the new question boundary.
 - Row 7 sealed writer failures and D15.1/SR4 rejected-run recovery: retain failure and abandon evidence, adding missing-final-text and writer-decision guidance.

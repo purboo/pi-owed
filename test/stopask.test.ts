@@ -13,7 +13,7 @@ import { Ledger } from '../src/ledger.ts';
 import { projectId } from '../src/reducer.ts';
 import { clockTime } from '../src/clock.ts';
 import { rebasePending } from '../src/rebase-view.ts';
-import { git, revParse } from '../src/git.ts';
+import { git, isClean, revParse } from '../src/git.ts';
 import type { RunView, SendReason } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
@@ -282,6 +282,55 @@ test('WS-R3: decide --writer after a WS5 halt delivers exactly one ruling follow
     assert.ok(h2.reason.includes(`finished ruling follow-up ${rf.send} without submitting a new candidate (writer stopped without a candidate after rebase follow-up ${follow.send})`), h2.reason);
     assert.ok(h2.reason.endsWith(`→ ${command}`), h2.reason);
     assert.equal(f.dsa.sent.length, 1, 'no further send');
+  } finally { await f.cleanup(); }
+});
+
+test('WS-R4: an unsubmitted unaligned commit gets no second nudge after a ruling follow-up', async () => {
+  const f = await fixture();
+  try {
+    const dispatchBase = await revParse(f.slot.worktree, 'HEAD');
+    const rb = await f.rebase(false);
+    assert.equal(rb.from, dispatchBase);
+    await commitAt(f.slot.worktree, { 'a.txt': 'unaligned work\n' });
+    const c = await revParse(f.slot.worktree, 'HEAD');
+    assert.notEqual(c, dispatchBase, 'C is outside the handed set');
+    assert.equal(await isClean(f.slot.worktree), true);
+    assert.equal((await f.entries()).some(e => e.kind === 'submit'), false, 'no lastSubmit');
+    const follow = await f.send('rebase', rebaseMessage(await f.state(), 'a'));
+    await f.driver.pass();
+    let sends = (await f.state()).nodes.a!.runs[0]!.sends;
+    const nudge = sends.findLast(x => x.reason === 'submit'); assert.ok(nudge);
+    assert.equal(f.dsa.sent.length, 1, 'C gets one submit nudge');
+    await f.driver.pass();
+    const h1 = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h1?.kind === 'halt');
+    assert.ok(h1.reason.includes(`without submitting a candidate after follow-up ${nudge.send}`), h1.reason);
+    const text = 'Keep C, rebase it onto the new trunk, then submit.';
+    const d = await ops.decide({ cwd: f.cwd, as: parent, nodes: ['a'], text, writer: true, dsa: f.dsa });
+    assert.equal(d.resumed, true);
+    await f.driver.pass();
+    sends = (await f.state()).nodes.a!.runs[0]!.sends;
+    const rulings = sends.filter(x => x.reason === 'ruling' && x.sendKind === 'follow-up');
+    assert.equal(rulings.length, 1);
+    const rf = rulings[0]!;
+    assert.ok(rf.seq > Math.max(follow.seq, d.decision));
+    assert.equal(f.dsa.sent.length, 2, 'exactly one ruling follow-up');
+    assert.ok(f.dsa.sent[1]!.includes(text));
+    const rid = f.dsa.view.rid;
+    f.dsa.view = { rid, state: 'running' };
+    await f.driver.pass();
+    assert.equal(f.dsa.sent.length, 2);
+    f.dsa.view = { rid, state: 'sealed', status: 'ok', result: 'Still at C; need help.' };
+    assert.equal(await revParse(f.slot.worktree, 'HEAD'), c);
+    assert.equal(await isClean(f.slot.worktree), true);
+    assert.equal((await f.entries()).some(e => e.kind === 'submit'), false);
+    await f.driver.pass();
+    await f.driver.pass();
+    const halts = (await f.entries()).filter(e => e.kind === 'halt' && e.seq > d.decision);
+    assert.equal(halts.length, 1, 'seal after the ruling halts once');
+    const h2 = halts[0]!; assert.ok(h2.kind === 'halt');
+    assert.ok(h2.reason.includes(`finished ruling follow-up ${rf.send} without submitting a new candidate (writer stopped without a candidate after rebase follow-up ${follow.send})`), h2.reason);
+    assert.equal(f.dsa.sent.length, 2, 'zero further sends');
+    assert.equal((await f.state()).nodes.a!.runs[0]!.sends.filter(x => x.reason === 'submit').length, 1, 'no second nudge');
   } finally { await f.cleanup(); }
 });
 
