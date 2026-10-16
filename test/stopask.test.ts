@@ -57,7 +57,6 @@ async function fixture(review = 0) {
     await ops.adopt({ cwd: r.cwd, as: { role: 'owner', id: 'pi' }, channel: 'delegated', note: 'fixture moves trunk' });
     const rb = await ops.rebase({ cwd: r.cwd, as: parent, node: 'a' });
     if (apply) await git(slot.worktree, ['rebase', '--onto', rb.base, rb.from]);
-    assert.ok(rb.packet.includes(sentence), 'manual rebase packet includes the writer boundary');
     return rb;
   }
   return { ...r, slot, state, dsa, log, follower, driver, entries, send, rebase };
@@ -233,6 +232,31 @@ test('WS5: sealed writer at the clean pre-rebase head halts with final text inst
   } finally { await f.cleanup(); }
 });
 
+test('WS-R2: after S0→S1→S2 rebases, clean S0 or S1 halts without a nudge; a commit on S2 gets one', async () => {
+  for (const at of ['S0', 'S1', 'S2+commit'] as const) {
+    const f = await fixture();
+    try {
+      const s0 = await revParse(f.slot.worktree, 'HEAD');
+      const r1 = await f.rebase(false), r2 = await f.rebase(false);
+      assert.deepEqual([r1.from, r1.base, r2.from], [s0, r2.from, r1.base]);
+      const follow = await f.send('rebase', rebaseMessage(await f.state(), 'a'));
+      if (at === 'S1') await git(f.slot.worktree, ['reset', '--hard', r1.base]);
+      if (at === 'S2+commit') { await git(f.slot.worktree, ['reset', '--hard', r2.base]); await commitAt(f.slot.worktree, { 'a.txt': 'new work\n' }); }
+      await f.driver.pass();
+      if (at === 'S2+commit') {
+        assert.equal(f.dsa.sent.length, 1, at);
+        await f.driver.pass();
+        assert.equal(f.dsa.sent.length, 1, `${at}: one nudge, then halt`);
+        assert.ok((await f.entries()).some(e => e.kind === 'halt'), at);
+      } else {
+        assert.equal(f.dsa.sent.length, 0, `${at}: no nudge`);
+        const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt', at);
+        assert.equal(h.reason, `writer stopped without a candidate after rebase follow-up ${follow.send}; ${says('Need the parent to choose the API.')} → ${command}`);
+      }
+    } finally { await f.cleanup(); }
+  }
+});
+
 test('WS5: pending rebase with dirty work gets one bounded nudge; running and asking still wait', async () => {
   const f = await fixture();
   try {
@@ -283,7 +307,7 @@ test('WS3/WS4: dispatch packet and every follow-up carry decision guidance; dsa 
     await commitAt(f.slot.worktree, { 'a.txt': 'candidate\n' });
     await ops.submit({ cwd: f.slot.worktree, as: writer, node: 'a' });
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 1, note: 'fix API' });
-    await f.rebase();
+    assert.ok((await f.rebase()).packet.includes(sentence), 'manual rebase packet includes the writer boundary');
     await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'Use API v2' });
     const current = await f.state();
     const messages = [submitMessage('a'), planChangedMessage('a', 99, ['brief']), rebaseMessage(current, 'a'), repairFollowUp(current, 'a').message, resubmitFollowUp(current, 'a').message, rulingFollowUp(current, 'a')!.message, rulingMessage('a', 'writer', current.rules)];
