@@ -1,5 +1,146 @@
 # Changelog
 
+## 0.27.0
+
+No new ledger entry kind and no gate weakened. New plan keys
+(`quarantine_sets`, `quarantine_set`) and optional entry fields
+(`obs.quarantine_passed`, `waive.tracked_by`, `ignorable`) need an upgrade
+order: **upgrade every reader (CLI, drivers, every pi session loading owed)
+to 0.27 and restart it before any 0.27 executor measures** (attest,
+genesis/trunk, merge, adopt or a trunk probe) and before a plan with a
+quarantine set or a tracked waiver is recorded. 0.26 refuses
+`obs.quarantine_passed` and refuses `ignorable` where it refuses unknown
+fields; it silently ignores `quarantine_sets`/`quarantine_set` (so a 0.26
+executor would measure without the shared names) and ignores
+`waive.tracked_by`. Ledgers and plans without these additions replay with
+identical states and keys (SPEC Compatibility).
+
+- **A flaky block says what is known.** A flaky exec block names
+  its pair wherever it is shown (status, wake, `owed why`, waive hint, repair
+  text): the commit, the failing observation and its tests, the same-key
+  rerun that passed, and that a pass does not erase a failure, with the
+  `--accept-risk` command. A candidate block on an older key also says how
+  the current candidate did on that obligation. Until the current candidate
+  has a counted executor pass on its own key, such a block is held: status
+  shows `waiting for <obl> on candidate <commit12> before deciding flaky #<F>`;
+  no owner request or driver repair is raised for that held block. Error-only
+  measurements keep the hold; a counted pass exposes the original risk, and
+  a current failure takes the normal repair path while the older flake stays
+  held. Same-key and merge-key flakes remain immediately actionable. The
+  block still counts for acceptance and merge, and an owner waiver is
+  accepted at any time (SPEC §7.15a, §9.9).
+- **`owed waive` leads with its effect.** The first line is
+  `waived <node>/<obl> #<seq>: debt recorded` (with accepted block risk when
+  present), then what the waiver does now, then the compact `owed why` card;
+  `--full` (tool: `full: true`) restores the full receipt after the first two
+  lines. A waiver that accepts a counting block, merge keys included, says
+  `in effect now: --accept-risk accepts #<B>`; it no longer says
+  "the waiver is not needed" when the candidate key happens to pass (SPEC
+  §9.9).
+- **Quieter plan admission.** `owed plan` and `owed edit` check
+  admission for invariants and checks only when they are new or their
+  `run`, `reads` or `timeout_s` changed. A check's closure warning recurs when
+  its reads or the closure changes; near-timeout warnings recur only when
+  their text changed. General check-less and loop warnings keep their own
+  rules. A fresh init lints everything and `owed report --cost` stays the
+  full view (SPEC §9.7).
+- **`--remeasure` says what will be remeasured.** `owed decide …
+  --remeasure` and `owed resume <node> --remeasure` name each invariant whose
+  latest merge-tree observation failed and its merge key, or say that trunk
+  or the candidate moved and the next merge builds a new merge tree (SPEC
+  §12.5).
+- **Trunk probes on demand.** `owed attest <node> --probe-trunk
+  [--check <id>] [--runs <n>]` runs node checks on the current trunk commit
+  as trunk-probe observations under the machine lease and node attest lock.
+  It requires an open slot with a candidate. Without `--check` it probes
+  every check with an active or flaky exec block; `--runs` (1–10, default 1)
+  runs sequentially per check and stops that check at its first non-pass.
+  Existing same-key probes do not skip an explicit run. Probes never change
+  blocks, candidate keys, verdicts or counts; a probe can mark a merge-tree
+  check block trunk-red or clear that mark, as the merge-time probe does,
+  without clearing the failed merge check. Red/mutants checks and checks
+  whose tests are new in the candidate are refused. Probe mode cannot combine
+  with `--rerun`, `--remeasure`, `--trunk`, `--genesis` or `--all`. Exit 0 all
+  passed, 1 a non-pass or moved plan/candidate/slot/trunk CAS (nothing recorded
+  for that run), 2 usage, 75 Busy (SPEC §7.27).
+- **Failures that are not this node's.** When complete test-only failure
+  evidence also exists in trunk probes of the same node check definition and
+  closure, before or after the node's failure, with matching signatures (or
+  no signature on either side), the block reads
+  `<obl> block #<B> also fails on trunk <sha12> without <node>`, with the
+  `owed waive … --tracked-by <fix>` command or `(add a fix node first)`;
+  the writer is told to ask the parent instead of changing code outside its
+  writes. Invariant matching keeps its earlier-observation rule. Combined
+  diagnoses (needs, wake, `why`, waive hint, repair text) give trunk-red
+  precedence over shared-check attribution, with its parent guidance
+  (including the `owed waive … --accept-risk` alternative); the applicable
+  diagnosis retains the full flaky same-key pair (SPEC §9.9, §8.3.3).
+- **Tracked waivers.** `owed waive … --tracked-by <fix>` (tool:
+  `tracked_by`) links the debt to another unmerged node of the current plan;
+  missing, merged and self trackers are refused. Debt reads
+  `waived — tracked by <fix>`; once `<fix>` merges, default status, brief and
+  summary omit it and `--full`/`owed report` show `settled by <fix> (merge
+  #<seq>)`; `owed why <fix>` lists the debt it tracks. A tracker that leaves
+  the plan unmerged shows the debt again. Re-waiving the same failure
+  replaces its tracker; different failures keep separate debt lines.
+  Presentation only: the waiver and its gate effect are unchanged, and the
+  text never says the flake is gone (SPEC §9.9, §10–11).
+- **Shared quarantine lists.** Plan top level
+  `quarantine_sets: { <name>: [{test, fix, note?}] }`; a check or invariant
+  sets `quarantine_set: <name>`, alongside its own `quarantine`. Adding an
+  entry, changing its fix or adding or changing a reference is an owner-only
+  downgrade; removal is free. Checks without a set keep their keys. Eligible
+  check/invariant jobs whose keys commit to active quarantine names get
+  `OWED_QUARANTINE_FILE`, a private per-run file of the sorted names outside
+  the measured tree, removed afterward, so scripted runs can skip the same
+  list instead of a hand-kept skip file. Delivery alone excuses nothing and
+  never rewrites exit status; a run with no native protocol says
+  `quarantine file: <n> names (owed excused nothing)`. Native Node/Cargo
+  failures refused excusal, including Cargo-shaped scripts, keep
+  `quarantine not applied: <reason>`. Names containing CR/LF cannot be
+  delivered; all other runs owed starts have the variable removed from their
+  environment. A container wrapper must make the host file visible itself.
+  With sets defined, a new or changed check or invariant that runs `cargo
+  test` or `node --test` with neither `quarantine` nor `quarantine_set` gets
+  an admission warning (SPEC §3.6, §7.16, §9.7).
+- **Native Cargo quarantine.** A plain `cargo [+toolchain] test …
+  --no-fail-fast` run, with optional leading environment assignments and only
+  allowlisted tokens, can be excused when it completes with exit 101 and no
+  timeout, signal, spawn error or truncated output. Counts must be Cargo,
+  not mixed; every announced test block needs exactly its announced result
+  count and one matching summary. Only test-failure rerun and target-count
+  error lines are allowed, and their counts must match failed blocks; every
+  reported unsuccessful process exit must be 101. Failing names must be
+  distinct, occur in exactly one block, agree with counts and all be active
+  quarantine names; remaining tests must still meet `min_tests`. Excusal
+  excludes quarantined failures from test/failure counts and records exit 0
+  for Cargo; native TAP excusal retains its observed exit 1. Ineligible failures stay
+  unexcused with `quarantine not applied: <reason>`. Known limits:
+  `-q`/`--format terse` and more than 50 failures are not excused (SPEC §7.16).
+- **Quarantined tests that pass again.** Complete trunk and merge-tree runs
+  recognized natively record which active quarantine names passed; status
+  debt shows `quarantined <test> passed on trunk <sha12> (#<seq>)` or identifies
+  the merge tree of the node (or batch members), with a hint to remove it if
+  it stays green. Explicit `--probe-trunk` runs use the same scope;
+  candidate-only passes do not record recovery feedback. No effect on
+  verdicts, keys or counts (SPEC §7.16).
+- **Display-only fields no longer force readers first.** An entry may
+  list display-only fields in `ignorable`; a 0.27 reader treats listed unknown
+  fields as known without interpreting them, while known listed fields are
+  still interpreted and validated. This owed lists `waive.tracked_by` and
+  `obs.quarantine_passed`. Unlisted unknown fields keep existing refusal rules;
+  unknown kinds, channels and enumerated values remain refused. The marker
+  does not cover plan keys or nested receipt fields. Readers before 0.27
+  still refuse `ignorable` where they refuse unknown fields (SPEC §5).
+- **Long parent commands without a waiting agent.** The driver reference
+  describes running a long command outside the driver (a manual attest or a
+  full suite) as a pi-durable-subagents ≥ 1.0.45 command call: no model, no
+  slot, a wake on exit. Owner and parent acts such as a manual merge are
+  still refused inside it.
+- **Docs.** `owed rebase <node>` without `--apply` records the slot-base
+  move and prints the writer's `git rebase --onto` command; the docs now say
+  so.
+
 ## 0.26.0
 
 No new ledger entry kind, plan key or gate, and no gate weakened. One new
