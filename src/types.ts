@@ -136,7 +136,7 @@ export interface ExecutionResult { completed: boolean; countOK: boolean }
 /** RC1: one command run, before repeat decides the observation's verdict. Errors stop measurement, never count as votes. */
 export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[]; execution?: ExecutionResult }
 
-interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel; /** DC2: first entry seq of one atomic decision. */ decision?: number }
+interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel; /** DC2: first entry seq of one atomic decision. */ decision?: number; /** RC (0.27): sorted unique present display fields unknown readers may ignore; never base fields. */ ignorable?: string[] }
 export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; writes_syntax?: 2; state: StateFacts; /** SF2: source file of the initial plan, for start without --plan. */ path?: string }
 /** IR1: current-plan facts on the ledger trunk; refresh changes invariant keys, never the trunk commit/seq. */
 export interface RefreshEntry extends Base { kind: 'refresh'; commit: string; state: StateFacts }
