@@ -140,7 +140,7 @@ export function actNodes(e: Entry, prev?: Plan, next?: Plan): string[] {
 }
 
 /** MT: pure ledger computation; plans are the recorded blobs, never current Git or dsa state. */
-export function computeMetrics(entries: readonly Entry[], plans: ReadonlyMap<string, Plan>, window: MetricsWindow = {}): Metrics {
+export function computeMetrics(entries: readonly Entry[], plans: { get(sha: string): Plan | undefined }, window: MetricsWindow = {}): Metrics {
   const since = metricsBound(window.since,'since') ?? -1, until = metricsBound(window.until,'until');
   if (until !== undefined && typeof since === typeof until && (typeof since === 'number' ? since > (until as number) : Date.parse(since) > Date.parse(until as string))) {
     throw new OwedError('since must not be later than until', 'usage');

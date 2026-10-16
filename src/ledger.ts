@@ -1,5 +1,5 @@
 import { mkdir, readFile, open, rm, link, rename, writeFile, stat, readdir, realpath } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { serialize, deserialize } from 'node:v8';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -251,6 +251,16 @@ export class Ledger {
       await writeFile(temp, JSON.stringify({ v: PLAN_CACHE_VERSION, sha, plan }));
       await rename(temp, join(dir, `${sha}.json`));
     } catch { await rm(temp, { force: true }).catch(() => undefined); }
+  }
+  /** PM1: synchronous atomic publication; no pending promise keeps a parsed plan alive during replay. Never throws. */
+  writePlanCacheSync(sha: string, plan: unknown): void {
+    if (!/^[a-f0-9]{64}$/.test(sha)) return;
+    const dir = join(this.dir, 'cache', 'plans'), temp = join(dir, `.${sha}.${randomUUID()}.tmp`);
+    try {
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(temp, JSON.stringify({ v: PLAN_CACHE_VERSION, sha, plan }));
+      renameSync(temp, join(dir, `${sha}.json`));
+    } catch { try { rmSync(temp, { force: true }); } catch { /* cache cleanup is best effort too */ } }
   }
   /**
    * The raw cache entry of `sha` for `owed verify`: `missing` (no file), `corrupt` (unreadable, or not JSON), else its

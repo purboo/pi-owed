@@ -25,12 +25,27 @@ interface Indexes {
   /** transitive dependents per node id of the current plan (recomputed when the plan changes) */ dependents: Map<string, number>;
 }
 /**
- * G1 (0.12): `planObjs` = the plan object the state keeps per genesis/plan sha (`own` of the lookup's plan, resolved once
- * per replay; undefined = not resolved yet, after `unpackState`: resolved through `plans` on first use); `obsPlans` names the plan in force at each executor observation by its sha. Neither holds a plan by
- * value elsewhere, so a packed state (`packState`) carries plan shas only and every plan object is shared or re-resolved.
+ * PM3: `planObjs` keeps every recorded sha, but only four deep-frozen historical values plus the current plan.
+ * Undefined values resolve through `plans` on first use. Mutable inputs are owned clones and never evicted.
+ * `obsPlans` names the law at each executor observation; snapshots continue to carry only plan shas.
  */
 interface History extends Indexes { /** GR: only present after the first grant; keeps grant-free snapshots unchanged. */ grants?: Map<string, import('./types.ts').GrantEntry[]>; /** IR lineage exists only after a refresh or an inherited trunk-red merge. */ invRed?: Map<string, { key: string; seq: number; kind: 'refresh' | 'merge'; node?: string }>; entries: Entry[]; plans: PlanLookup; planObjs: Map<string, Plan | undefined>; genesis?: Extract<Entry, { kind: 'genesis' }>; obsPlans: Map<number, string>; mergeCatches: Set<number>; /** L2: the state a superseded block would have without supersede (validation of later entries only) */ shadow: Map<number, Block['state']>; /** seq of the genesis/plan entry that last changed `allow` (D21) */ allowSeq?: number }
 type ReplayState = State & { [history]: History };
+/** PM3: runtime-only metadata, never serialized or compared as replay facts. */
+interface PlanRuntime { current: string; frozen: Set<string> }
+const planRuntime = new WeakMap<History, PlanRuntime>();
+type PlanLaw = Extract<Entry, { kind: 'genesis' | 'plan' }>;
+interface PlanIndex { laws: PlanLaw[]; ordered: boolean }
+const planIndexes = new WeakMap<History, PlanIndex>();
+function planIndex(h: History): PlanIndex {
+  let index = planIndexes.get(h);
+  if (!index) {
+    const laws = h.entries.filter((e): e is PlanLaw => e.kind === 'genesis' || e.kind === 'plan');
+    index = { laws, ordered: laws.every((e,i) => i === 0 || laws[i-1]!.seq <= e.seq) };
+    planIndexes.set(h,index);
+  }
+  return index;
+}
 function context(state: State): History {
   const value = (state as ReplayState)[history];
   if (!value) throw new OwedError('State lacks replay metadata; use the state returned by reduce', 'internal');
@@ -66,6 +81,12 @@ const push = <K, V>(m: Map<K, V[]>, k: K, v: V): void => { const l = m.get(k); i
 const observations = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => [...listed(context(s).obs, itemKey(subject, obligation, key))];
 /** N4: appends a replayed entry to the history and its indexes. */
 function record(h: History, e: Entry): void {
+  // Build before appending so the lazy old-snapshot path does not duplicate this entry.
+  if (e.kind === 'genesis' || e.kind === 'plan') {
+    const index = planIndex(h), last = index.laws.at(-1);
+    if (last && last.seq > e.seq) index.ordered = false;
+    index.laws.push(e);
+  }
   h.entries.push(e); push(h.bySeq, e.seq, e);
   if (e.kind === 'obs' && e.by === 'executor:owed') push(h.obs, itemKey(e.subject, e.obligation, e.key), e);
   else if (e.kind === 'review') push(h.reviews, e.node, e);
@@ -481,12 +502,40 @@ function refreshAcceptedSince(n: NodeState, seq: number): void {
  * N4: the plan object the state keeps: a lookup's deep-frozen plan (ops' plan cache) is shared, since nothing can change
  * it; any other is cloned as before, so a caller's later change cannot reach the state.
  */
-const own = (p: Plan): Plan => Object.isFrozen(p) && Object.isFrozen(p.nodes) ? p : structuredClone(p);
-/** G1: the plan object of sha `sha` the state keeps (resolved through the lookup once per replay, then shared). */
+const own = (p: Plan): Plan => isDeepFrozen(p) ? p : structuredClone(p);
+const deeplyFrozen = new WeakSet<object>();
+function isDeepFrozen(v: unknown): boolean {
+  if (!v || typeof v !== 'object' || deeplyFrozen.has(v)) return true;
+  if (!Object.isFrozen(v) || !Object.values(v).every(isDeepFrozen)) return false;
+  deeplyFrozen.add(v); return true;
+}
+function trimPlans(h: History): void {
+  const r = planRuntime.get(h)!;
+  let historical = r.frozen.size - Number(r.frozen.has(r.current));
+  for (const sha of r.frozen) {
+    if (historical <= 4) break;
+    if (sha === r.current) continue;
+    h.planObjs.set(sha,undefined); r.frozen.delete(sha); historical--;
+  }
+}
+function currentPlan(h: History, sha: string): void {
+  planRuntime.get(h)!.current = sha; trimPlans(h);
+}
+/** PM3: owned mutable values stay pinned; frozen values refresh bounded historical recency. */
 function lawPlan(h: History, sha: string): Plan {
   let p = h.planObjs.get(sha);
-  if (!p) { p = own(h.plans(sha)); h.planObjs.set(sha, p); }
+  const r = planRuntime.get(h)!;
+  if (!p) {
+    p = own(h.plans(sha)); h.planObjs.set(sha, p);
+    if (isDeepFrozen(p)) r.frozen.add(sha);
+  }
+  if (r.frozen.has(sha)) { r.frozen.delete(sha); r.frozen.add(sha); }
+  trimPlans(h);
   return p;
+}
+/** @internal Defined values retained by a state (mutable clones deliberately are not bounded). */
+export function retainedPlanValues(s: State): number {
+  return [...context(s).planObjs.values()].filter(p => p !== undefined).length;
 }
 function recordedPlan(h: History, e: Pick<import('./types.ts').PlanEntry, 'plan' | 'writes_syntax'>): Plan {
   return withWritesSyntax(lawPlan(h,e.plan),e.writes_syntax ?? 1);
@@ -496,6 +545,7 @@ const obsPlan = (h: History, seq: number): Plan | undefined => { const sha = h.o
 function blank(plans: PlanLookup): State {
   const s: State = { seq: -1, head: ZERO, genesisDone: false, trunk: { name: '', commit: '', tree: '', invKeys: {}, seq: -1 }, planSha: '', plan: blankPlan(), nodes: Object.create(null) as Record<string, NodeState>, invariants: [], rules: [], downgrades: [], deferred: [], escapes: [], decoys: [], decoyCommits: [], adoptions: [] };
   const h: History = { entries: [], plans, planObjs: new Map(), obsPlans: new Map(), mergeCatches: new Set(), shadow: new Map(), bySeq: new Map(), obs: new Map(), reviews: new Map(), evidence: new Map(), waives: new Map(), launches: new Map(), dependents: new Map() };
+  planRuntime.set(h,{ current:'', frozen:new Set() });
   Object.defineProperty(s, history, { value: h });
   return s;
 }
@@ -679,13 +729,16 @@ function fold(s: State, entries: Iterable<Entry>): void {
   for (const original of entries) {
     const newer = newerEntry(original);
     if (newer) throw newer;
+    // Resolve each recorded law at its fold boundary, rather than preloading all plans. Preserve blob/cache errors
+    // before validateDraft's informational "Cannot read new plan" fallback for prospective drafts.
+    if (original.kind === 'genesis' || original.kind === 'plan') lawPlan(h,original.plan);
     let e = structuredClone(original);
     const errors = validateDraft(s, e);
     if (errors.length) throw new OwedError(`Entry #${e.seq} invalid: ${errors.join('; ')}`);
     e = interpretedEntry(e);
     if (e.kind === 'genesis') {
       h.genesis = e;
-      s.plan = recordedPlan(h, e); s.planSha = e.plan; h.dependents = dependentCounts(s.plan);
+      s.plan = recordedPlan(h, e); s.planSha = e.plan; currentPlan(h,e.plan); h.dependents = dependentCounts(s.plan);
       s.trunk = { name: e.trunk, ...e.state, seq: e.seq };
       if (s.plan.allow !== undefined) h.allowSeq = e.seq;
     } else if (e.kind === 'refresh') {
@@ -704,7 +757,7 @@ function fold(s: State, entries: Iterable<Entry>): void {
       for (const n of Object.values(s.nodes)) if (n.candidate && n.slot?.open && invalidates(s.plan, next, n.id)) n.candidate = undefined;
       const allowChanged = canonical(s.plan.allow) !== canonical(next.allow) || writesAllowChanged(s.plan,next);
       supersede(s, h, e.seq, next);
-      s.plan = next; s.planSha = e.plan; h.dependents = dependentCounts(next);
+      s.plan = next; s.planSha = e.plan; currentPlan(h,e.plan); h.dependents = dependentCounts(next);
       const items = [...e.downgrades, ...detected.filter(d => !e.downgrades.some(x => x.node === d.node && x.what === d.what))];
       // A parent's downgrades were accepted only because the prior plan's allowances cover them (D21.3).
       if (items.length) s.downgrades.push({ seq: e.seq, by: e.by, items, ...(role(e.by) !== 'owner' && h.allowSeq !== undefined ? { allowance: h.allowSeq } : {}), ...(e.channel === 'delegated' ? { channel: 'delegated' as const } : {}) });
@@ -849,6 +902,8 @@ export function unpackState(p: PackedState, plans: PlanLookup, planOf: (sha: str
   const planObjs = new Map(p.plans.map(sha => [sha, planOf(sha)] as const)), s = p.state;
   Object.setPrototypeOf(s.nodes, null);
   const h: History = { ...p.history, plans, planObjs };
+  planRuntime.set(h,{ current:s.planSha, frozen:new Set([...planObjs].filter(([,plan]) => plan && isDeepFrozen(plan)).map(([sha]) => sha)) });
+  trimPlans(h);
   if (s.planSha) {
     const law = h.entries.findLast(e => e.kind === 'genesis' || e.kind === 'plan')! as import('./types.ts').PlanEntry | import('./types.ts').GenesisEntry;
     s.plan = recordedPlan(h,law);
@@ -858,17 +913,26 @@ export function unpackState(p: PackedState, plans: PlanLookup, planOf: (sha: str
 }
 /** G1: a deep copy of `s` with its replay metadata (one structured clone); deep-frozen plans stay shared. */
 export function copyState(s: State, plans?: PlanLookup): State {
-  const h = context(s);
-  return unpackState(structuredClone(packState(s)), plans ?? h.plans, sha => { const p = h.planObjs.get(sha); return p && own(p); });
+  const h = context(s), prior = h.plans, known = new Set(h.planObjs.keys());
+  // An evicted base law still belongs to the base lookup; `plans` may only know the newly folded laws.
+  const lookup = plans ? (sha: string): Plan => known.has(sha) ? prior(sha) : plans(sha) : prior;
+  return unpackState(structuredClone(packState(s)), lookup, sha => { const p = h.planObjs.get(sha); return p && own(p); });
 }
 /** G1: the replay metadata of `s` without its plan lookup function, every plan resolved (for equivalence checks). */
 export function replayMeta(s: State): Omit<History, 'plans'> {
-  const h = context(s);
-  for (const [sha, p] of h.planObjs) if (!p) lawPlan(h, sha);
-  const { plans: _plans, ...rest } = h; return rest;
+  const h = context(s), resolved = new Map<string, Plan>();
+  for (const sha of h.planObjs.keys()) resolved.set(sha,lawPlan(h,sha));
+  const { plans: _plans, planObjs: _objects, ...rest } = h; return { ...rest, planObjs:resolved };
 }
-/** G1.1: whether two states are equal as replays: the states and their replay metadata deep-strict-equal. */
-export function sameReplay(a: State, b: State): boolean { return isDeepStrictEqual(a, b) && isDeepStrictEqual(replayMeta(a), replayMeta(b)); }
+/** G1.1/PM3: compare semantic metadata and one plan pair at a time, independent of resident LRU values. */
+export function sameReplay(a: State, b: State): boolean {
+  if (!isDeepStrictEqual(a,b)) return false;
+  const ah = context(a), bh = context(b);
+  const { plans: _ap, planObjs: ao, ...am } = ah, { plans: _bp, planObjs: bo, ...bm } = bh;
+  if (!isDeepStrictEqual(am,bm) || !isDeepStrictEqual([...ao.keys()],[...bo.keys()])) return false;
+  for (const sha of ao.keys()) if (!isDeepStrictEqual(lawPlan(ah,sha),lawPlan(bh,sha))) return false;
+  return true;
+}
 
 /**
  * Whether a plan change from `prev` to `next` invalidates an open candidate of node `id`: its node spec (without `type`
@@ -1288,9 +1352,18 @@ export function entriesOf(s: State): readonly Entry[] { return context(s).entrie
 export function observationsOf(s: State, subject: string, obligation: string, key: string): ObsEntry[] { return observations(s, subject, obligation, key).filter(e => e.probe === undefined); }
 /** The plan in force just before entry `seq` (the latest genesis/plan entry below it), e.g. the plan a dispatch packet was built from. */
 export function planAt(s: State, seq: number): Plan {
-  const law = context(s).entries.findLast(e => e.seq < seq && (e.kind === 'genesis' || e.kind === 'plan'));
-  if (!law || (law.kind !== 'genesis' && law.kind !== 'plan')) throw new OwedError(`No plan is in force before #${seq}`, 'internal');
-  return recordedPlan(context(s),law);
+  const h = context(s), index = planIndex(h);
+  let law: PlanLaw | undefined;
+  if (index.ordered) {
+    let lo = 0, hi = index.laws.length;
+    while (lo < hi) { const mid = (lo+hi) >>> 1; if (index.laws[mid]!.seq < seq) lo = mid+1; else hi = mid; }
+    law = index.laws[lo-1];
+  } else {
+    // Replay permits duplicate/out-of-order seqs: preserve the last matching entry in ledger order, not max(seq).
+    law = index.laws.findLast(e => e.seq < seq);
+  }
+  if (!law) throw new OwedError(`No plan is in force before #${seq}`, 'internal');
+  return recordedPlan(h,law);
 }
 /**
  * The ruling that resolves a needs-parent review block (D18 as amended): the first ruling naming the block's node
