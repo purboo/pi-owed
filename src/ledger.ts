@@ -18,6 +18,8 @@ import type { Entry, Draft } from './types.ts';
  * written by another release (whose parsePlan may differ) is ignored.
  */
 export const PLAN_CACHE_VERSION = `plan-cache/1 owed/${OWED_VERSION}`;
+/** RC (0.27): the display-only fields this writer marks after draft validation, before hashing. */
+export const IGNORABLE: Record<string, readonly string[]> = { waive: ['tracked_by'], obs: ['quarantine_passed'] };
 /** G1.4 (0.12): the format id of the disk snapshot `snapshot/state.v8`. */
 export const SNAPSHOT_FORMAT = 'owed-snapshot/1';
 /**
@@ -205,6 +207,9 @@ export class Ledger {
     let prev = old.at(-1)?.hash ?? ZERO;
     for (const draft of drafts) {
       const e = { ...draft, seq: old.length + entries.length, ts: new Date().toISOString(), prev } as Entry;
+      const fields = e as unknown as Record<string, unknown>;
+      const marked = (IGNORABLE[e.kind] ?? []).filter(name => Object.hasOwn(fields, name) && fields[name] !== undefined);
+      if (marked.length) e.ignorable = [...new Set([...(e.ignorable ?? []), ...marked])].sort();
       e.hash = entryHash(e); prev = e.hash; entries.push(e);
     }
     if (entries.length) {

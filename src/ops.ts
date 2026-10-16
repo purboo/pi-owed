@@ -16,7 +16,7 @@ import { driveConfig, quarantineNames, parsePlan, planDowngrades, worktreesConfi
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, reviewCarrySource, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
-import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
+import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, interpretedEntry, newerEntry, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, writeCovers } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
@@ -153,7 +153,9 @@ async function load(ledger: Ledger, extra: string[] = []) {
     p = cachedPlanSync(ledger, sha); plans.set(sha, p); return p;
   };
   const need = async (from: number): Promise<void> => { for (const sha of new Set([...planShas(entries.slice(from)), ...extra])) if (!plans.has(sha)) plans.set(sha, await cachedPlan(ledger, sha)); };
-  return { entries, lookup, state: await replay(ledger,entries,lookup,need,control,epoch) };
+  const state = await replay(ledger,entries,lookup,need,control,epoch);
+  // RC: diagnostics and CAS/node scans consume the same semantic entries as the reducer, never unknown fields.
+  return { entries:entries.map(interpretedEntry), lookup, state };
 }
 /**
  * G1.3 (0.12): the in-process replay cache, per ledger dir (at most MEMO_DIRS, least recently used dropped): a
@@ -2374,7 +2376,8 @@ export async function reportCounterfactual(o: Context & { since?: number | strin
   const plans = new Map<string, Plan>();
   for (const sha of planShas(entries)) plans.set(sha, planCache.get(`${ledger.dir}\0${sha}`) ?? deepFreeze((await ledger.readPlanCache(sha) as Plan | undefined) ?? parsePlan((await ledger.getBlob(sha)).toString())));
   const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
-  return counterfactual(o.cwd,entries,lookup,since,o.progress);
+  for (const e of entries) { const newer = newerEntry(e); if (newer) throw newer; }
+  return counterfactual(o.cwd,entries.map(interpretedEntry),lookup,since,o.progress);
 }
 
 export async function report(o: Context & {since?:number|string}): Promise<Report> {
