@@ -4,6 +4,28 @@ import { parse } from 'yaml';
 import { OwedError } from './errors.ts';
 import type { Plan } from './types.ts';
 import { expandWrap } from './exec-wrap.ts';
+import { git } from './git.ts';
+import { matchesAny } from './plan.ts';
+import { nearTimeoutWarnings } from './cost.ts';
+import type { Entry } from './types.ts';
+
+/** CO2/CO3: admission diagnostics only, once per recorded plan; tracked paths come from the pinned trunk. */
+export async function lintPlanCost(cwd: string, plan: Plan, commit: string, entries: readonly Entry[] = []): Promise<string[]> {
+  const paths = (await git(cwd, ['ls-tree', '-rz', '--name-only', commit])).stdout.split('\0').filter(Boolean), warnings: string[] = [];
+  const coverage = (id: string, reads: string[]) => {
+    const n = paths.filter(p => matchesAny(p, reads)).length;
+    const percent = paths.length ? n * 100 / paths.length : reads.includes('**') ? 100 : 0;
+    if (reads.includes('**') || percent >= 90) warnings.push(`reads of ${id} cover ${Math.round(percent * 10) / 10}% of the repository: almost every change remeasures it (owed report --cost)`);
+  };
+  for (const inv of plan.invariants) coverage(`inv:${inv.id}`, inv.reads);
+  const closure = [...new Set([...paths.filter(p => matchesAny(p, plan.closure)), ...plan.closure.filter(p => !/[?*\[\]{}]/.test(p))])].sort();
+  for (const node of plan.nodes) for (const check of node.checks) {
+    coverage(`check:${check.id}`, check.reads);
+    const path = closure.find(p => matchesAny(p, check.reads));
+    if (path) warnings.push(`check ${check.id} reads closure path ${path}: checks see the base version of closure files`);
+  }
+  return [...new Set([...warnings, ...nearTimeoutWarnings(plan, entries)])];
+}
 
 type Word = { value: string; literal: boolean; reserved: boolean; assignment: boolean };
 /** PL1: read shell words, not shell expansions. Quoted data is never treated as a command. */
