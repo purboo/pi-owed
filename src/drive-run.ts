@@ -519,15 +519,17 @@ export class Driver {
         const saved = JSON.parse(await readFile(join(this.ledger.dir, 'drive', 'waiting.json'), 'utf8')) as Record<string, { reason: string; since: string; attempt: number; candidate?: number }>;
         for (const [id, w] of Object.entries(saved)) if (typeof w.reason === 'string' && Number.isFinite(Date.parse(w.since)) && Number.isSafeInteger(w.attempt)) this.mergeWaiting.set(id, w);
       } catch { /* missing/corrupt private cache */ }
-      // NT4: terminal send refusals also live in the driver log (steers/notices need not have a halt).
-      try {
-        for (const line of (await readFile(join(this.ledger.dir,'drive','log.jsonl'),'utf8')).split('\n')) {
-          try {
-            const r = JSON.parse(line) as Partial<ActionReport>;
-            if (r.do === 'send' && typeof r.send === 'string' && (r.outcome === 'rejected' || r.outcome === 'conflict' && r.reason === 'ruling' && r.sendKind === 'notify')) this.facts.refused.set(r.send,r.detail ?? r.outcome);
-          } catch { /* torn or non-JSON log line is not a receipt */ }
-        }
-      } catch { /* missing optional driver log; halt reasons and dsa still recover refusals */ }
+      // NT4: background start rotates the prior log once; recover older reports before current ones.
+      for (const file of ['log.jsonl.1','log.jsonl']) {
+        try {
+          for (const line of (await readFile(join(this.ledger.dir,'drive',file),'utf8')).split('\n')) {
+            try {
+              const r = JSON.parse(line) as Partial<ActionReport>;
+              if (r.do === 'send' && typeof r.send === 'string' && (r.outcome === 'rejected' || r.outcome === 'conflict' && r.reason === 'ruling' && r.sendKind === 'notify')) this.facts.refused.set(r.send,r.detail ?? r.outcome);
+            } catch { /* torn or non-JSON log line is not a receipt */ }
+          }
+        } catch { /* missing optional driver log; halt reasons and dsa still recover refusals */ }
+      }
     }
     return this.ledger;
   }
