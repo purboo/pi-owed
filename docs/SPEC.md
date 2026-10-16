@@ -1,18 +1,51 @@
-# owed MVP specification (parent-pinned, v0.1)
+# owed specification (0.25)
 
-owed is the acceptance ledger for a multi-agent task graph in one git repository.
-"No receipt, not done": a node counts as done only when every obligation on its
-current candidate is observed by a trusted executor or an authorized reviewer,
-or is visibly waived by the owner. The design follows `pi-dag/ARCHITECTURE.md`
-(a3) and `formal/a4/CONTRACT.md` (a4.1 rulings). This MVP implements the M0–M2
-subset. Threat model: same OS user; owed prevents mistakes, laziness and
+owed is the acceptance ledger for a multi-agent task graph in one Git repository.
+"No receipt, not done": a node is complete only when owed shows it merged.
+Candidate acceptance requires every node obligation to be evidenced by a trusted
+executor or authorized reviewer, or visibly waived by the owner; merging also
+requires the prospective merge guard (§6.4). The design follows
+`pi-dag/ARCHITECTURE.md` (a3) and `formal/a4/CONTRACT.md` (a4.1 rulings).
+Threat model: same OS user; owed prevents mistakes, laziness and
 reward-hacking shortcuts by agents using the normal tools. It does not resist a
 process that edits the ledger file directly; it detects such edits (hash chain).
 Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-worktree
 rail §2.1.7) are rails against accidents and instructions, not security
 boundaries: a process can unset the variables or change directory.
 
-### Compatibility (0.20–0.24)
+### Compatibility (0.20–0.25)
+
+0.25 adds no ledger entry kind, plan key, acceptance gate or measurement key.
+The only new optional ledger field is `genesis.path`: the plan source recorded
+by `owed start` (§10.2), repository-relative when inside the repository and
+absolute otherwise. Historical genesis entries without it replay unchanged;
+an omitted-plan start whose latest genesis/plan has no source requires
+`owed start --plan <file>`.
+
+**0.24 reader behavior:** `v0.24.0:src/reducer.ts` does not reject unknown
+fields on genesis and does not consume `path`; it ignores this field while
+retaining the same state and keys. Its `src/types.ts` has no genesis `path`
+member; ordinary `plan.path` already exists. No upgrade-before-write order is
+required for `genesis.path`. Older executors cannot initiate `owed start`:
+upgrade the CLI/pi extension to use that command, and restart pi to load it.
+
+Runtime/result additions are `StartResult` fields `initialized`, `updated`,
+`plan` (source path), `warnings` and `driver`; the driver's result may carry
+optional `alreadyRunning`. These are not ledger fields. A 0.24 driver-start
+consumer (`src/drive-bg.ts`, `DriveStart`) has no `alreadyRunning` branch and
+ignores that unknown result property; it cannot request start's reuse behavior,
+and its own `drive --detach` still refuses a live driver. Start is a new result,
+not a changed 0.24 response schema. Batch results may carry optional
+`deferred` counts/items per member, for the current merge key only (§8.3.4).
+The 0.24 batch result consumer (`src/cli.ts`, `batchMergeText`, and
+`src/ops.ts`, `BatchMergeResult`) does not consume that property: it ignores
+it and retains its old text; it is never replayed. QT adds presentation/runtime
+state only: JSON receipt fields are unchanged, while the existing omitted
+`drive.answer_grace_s` default changes from 900 to 600 seconds (§12.8.4).
+An explicitly recorded value retains its meaning; a 0.24 driver with no value
+uses 900 seconds. Upgrade/restart the driver to obtain the new wake timing.
+No measurement or acceptance evidence is affected. Tool exposure is host
+registration metadata, not ledger data (§11.2).
 
 0.24 adds no ledger entry kind. New optional plan keys are `sweep.every`
 (§3.9, §7.15b), `risk` and `closure_neutral` (§3.8). New optional ledger
@@ -3229,6 +3262,25 @@ uncertain successful act is safe only while the candidate and that principal's
 latest act remain unchanged. Driver actions and recovery retries are distinct
 from these idempotent judgments (§12.5).
 
+### 8.3.4 Merge success text (0.25, QT)
+
+CLI single and batch merges, and the pi single-merge tool, print
+`<node> merged (<commit12>); measured <n>, waived <n>, debt <n>`.
+Measured counts evidenced `check`, `red`, `strength`, `writes` and invariant
+obligations; reviews and manual evidence are not measured tests. Waived counts
+W items. Debt counts only deferred obligations on this merge's keys, never
+historical defers on older keys. A single merge retains its deferred-debt and
+unguarded-paths lines and lease annotation. A batch prints one merged line per
+member with that member's commit, any conflict dropouts, then
+`Batch of <n>: <nodes>` and its lease annotation.
+
+No entry sequence or full trunk hash is echoed in this success summary.
+The post-commit receipt read is best-effort: failure shortens the line to
+`<node> merged (<commit12>)` without turning a completed merge into a refusal.
+A caller that supplies no current-key debt count omits the debt field rather
+than estimating from the ledger's historical defers. This changes text/results,
+not the merge guard or ledger entries.
+
 ### 8.4 Adopt waiting and operation activity (0.22, AW)
 
 `owed adopt --wait SECONDS` / `owed_adopt {wait: seconds}` sets one total
@@ -3261,6 +3313,10 @@ adopt priority; old readers ignore these runtime fields.
 ## 9. Views
 
 ### Current presentation (0.20, NY1–NY7 / MS5 / DR2–DR3)
+
+The detailed receipt descriptions below apply to `owed why --full`, JSON and
+operation receipt cards. The default why command uses §9.6's outstanding-only
+card; it does not embed those detailed receipts in writer repairs (§12.5.3).
 
 - **NY1:** a recorded repair follow-up or newer submit after a review block
   shows `repairing (block #<seq>)`. Its review item leaves Needs you **only**
@@ -3332,7 +3388,8 @@ adopt priority; old readers ignore these runtime fields.
   Under its item line, every `fail` observation with a note shows it: a line
   `  note #<seq>:` then each line of the note as recorded, indented four
   spaces (so the last output lines of a failed command, §7.2, reach `owed
-  why`/`owed_why` and the driver's repair message, which embeds the card).
+  why --full`/`owed_why {full:true}`; new failures also reach the writer's
+  repair follow-up (§12.5.3)).
   A `rulings` item satisfied while no ruling is in scope for the node reads
   "no rulings apply" (not "acknowledged"/"satisfied"); its status is unchanged.
   When the plan has `exec` (§3.2), the line after the node header is
@@ -3360,8 +3417,8 @@ adopt priority; old readers ignore these runtime fields.
   owed submit <node>, then owed attest <node> (skip this when owed drive is
   running: the driver attests) (the attribution rerun on the original content
   clears the block)` (0.7, K1.3: a writer's attest beside a running driver only
-  finds the node's attest lock busy). The driver's repair message embeds the card
-  and so carries the same clause.
+  finds the node's attest lock busy). Writer repairs instead tell the writer
+  to submit and let the driver rerun checks (§12.5.3).
 - **Superseded blocks** (0.8, L2.3; §6.3) stay visible but never as active
   blocks. `why` lists each superseded block of the node as `⊘ #<seq> superseded
   by plan #<p> (check <id> definition changed)`, or `(check <id> removed)` when
@@ -3678,6 +3735,9 @@ is checked out in the main worktree or nowhere.
 
 ### 9.2 Review guidance and conflict diagnostics (0.22, UX)
 
+In the default 0.25 why card a clean empty conflict list is omitted; full
+why and status retain `none` (§9.6).
+
 Active review blocks suggest a writer-action decision
 (`owed decide <node> --writer --text "<guidance>"`), repair and resubmission.
 Rank-3 owner review appears only as an explicitly labelled override; reviewer
@@ -3822,9 +3882,36 @@ requirement fields are absent and existing review behavior is unchanged.
 Report/metrics `reviews.sameModel` is described in §9.4; it measures recorded
 model correlation, not independent reasoning or review quality.
 
+### 9.6 Outstanding-only why card (0.25, QT)
+
+`owed why <node>` / `owed_why` starts with `<node>: <phase>; <n> outstanding`
+(or `nothing outstanding`; `<node>: merged` after merge). It lists unsatisfied
+obligations, active blocks and conditions with their reasons and next actions:
+halt (including needs-parent/owner), hold, dependency/continuation wait, parked
+writer report awaiting the parent, pending rebase, merge conflicts and
+out-of-writes paths. Unacknowledged model warnings remain visible.
+The in-flight measurement appears in the outcome; a merge/measure waiting
+line is shown only when it is not measuring. The complete `Ruling to forward:`
+block stays in the default card because forwarding it is a need. The derived
+`review <n> required, rank >= <r>: <cause>` remains for an unmerged node as
+context, not an outstanding item. The outstanding count counts displayed
+condition/item lines (including waits), not only actions for the parent.
+
+`Details: owed why <node> --full` ends the card. `--full` (pi `full:true`)
+restores satisfied items, observations, logs/counts, driver runs, historical and
+superseded blocks, other ruling text, ΔO⁻, selected/used model lines,
+acknowledged warnings, backlog (`later`) marks and quarantine lifts. JSON is
+unchanged; submit/review/attest/waive and refusal receipt cards retain their
+existing detailed rendering. Trunk/invariant subjects never receive a node
+command: unmeasured trunk items suggest `owed attest --trunk`; red items use
+the status/decision view's plan-repair command. Quiet text never removes a need
+or the content needed to act on it (§12.8.3).
+
 ## 10. CLI
 
-`owed <command> [args] [--json]`; commands mirror §8: `init <plan.yaml>`,
+`owed help` is an alias of `owed --help`, listing commands and flags.
+`owed <command> [args] [--json]`; commands mirror §8:
+`start [--plan <file>] [--max N] [--stay]` (§10.2), `init <plan.yaml>`,
 `plan <plan.yaml> [--rev <commit-ish>]` (path relative to the cwd; with
 `--rev` the file is read from that commit, so a plan kept in trunk is the
 ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
@@ -3883,7 +3970,8 @@ recording (and before any prompt) it prints to stderr `Approve node <node>: cand
 `evidence <node> <id> [--file PATH]... --note TEXT [--as role:id]` (D23: default
 `parent:cli`; `--file` may repeat, paths relative to the cwd, hashed when
 recorded; stored repository-relative when inside the repository, else absolute;
-an owner `--as` prompts like other owner commands).
+an owner `--as` is delegated by default and prompts only under
+`OWED_CONFIRM=owner`).
 `--as role:id` sets the principal (default `parent:cli`; `submit` and `rebase`
 default to the slot's writer when run inside its worktree). Owner commands are
 delegated (D25, §2.1: `channel: delegated`, no prompt, TTY or not); `--i-am-owner`
@@ -3950,6 +4038,44 @@ worktree (`owed-run-*/tree` under the temp directory): `git worktree remove --fo
 - Signals: an `init` aborted after genesis was appended prints the incomplete line
   above before `Aborted: <signal>` (exit 130/143).
 
+### 10.2 Preflight and start (0.25, SF)
+
+`owed start [--plan <file>] [--max N] [--stay]` performs read-only preflight,
+initializes a missing ledger, records a semantically changed plan and starts
+or reuses the detached driver. `--max` must be a positive safe integer; it and
+`--stay` apply only to a newly started driver, not to one already running.
+Start takes neither `--as` nor `--i-am-owner`; subagent starts refuse.
+
+Preflight verifies a Git worktree, author and committer identity, the plan's
+parser and shell admission/lint, the declared trunk branch's initial commit,
+plan-update authority and the driver lock. No source is guessed: without a
+ledger, supply `--plan`; with one, omission rereads the latest recorded
+plan/genesis source. An explicit changed source becomes the future default.
+Canonical equality ignores formatting-only edits. Lint warnings each have
+their own line after the action line and remain in structured results.
+
+Fresh init is delegated `owner:pi`, with `measure:false`: start does not run
+`owed_init`'s session-owned background genesis attest; the driver's existing
+attest/merge lifecycle measures genesis. Changed plans use existing parent
+permissions and candidate carries. Uncovered downgrades refuse with
+`owed plan <file> --note "<why>"` as the explicit owner decision (use
+`--as owner:pi` for that delegated CLI act), then start again; allowance-covered downgrades retain their accounting. Under
+`OWED_CONFIRM=owner`, fresh start refuses with `owed init <file>` as the fix,
+never opens a blocking dialog. Missing sources, invalid plans/commands,
+identity/ref failures and foreign driver locks refuse naming the failed
+preflight and remedy, without an init or plan entry.
+
+An unchanged plan with a live driver says `already running`, records nothing
+and preserves its log. Normal output has three lines: `start: initialized
+ledger|updated plan|plan unchanged`, `driver: started|already running|ended
+(...)`, and `Next: ...`; warnings are additional lines. Init/plan entries stay
+durable if a subsequent driver launch fails: inspect `owed status` or
+`owed drive --status`, fix the launch and start again, not init again.
+JSON/tool results are `{initialized, updated, plan, warnings, driver}`;
+`driver` retains its normal start fields and optional `alreadyRunning`.
+A standalone CLI has no pi session to wake; use pi for automatic session
+follow-ups or inspect driver status when needed.
+
 ## 11. pi extension
 
 0.23 adds `owed_decide` (§8.3.1): `{nodes: ["A", "B"], text, writes?, defer?,
@@ -4006,19 +4132,20 @@ its modules. This prevents a crashed old session from silently switching to new
 code. A same-process extension reload shares the original worker; after an upgrade,
 restart pi to load the new version.
 
-Tools (exposure direct). Every tool takes an optional `cwd`: an absolute path
+Tools (profiles and discovery are §11.2). Every tool takes an optional `cwd`: an absolute path
 inside the target repository (the session directory when omitted; a relative
 or missing path is an error), so a session started elsewhere can drive any
 repository. Most tools also take `as` (`role:id`).
 
 | tool | parameters (besides `cwd`) | operation |
 |---|---|---|
+| `owed_start` | `plan?`, `max?` (positive integer), `stay?` | preflight, delegated init or permitted plan update, start/reuse detached driver (§10.2); no `as` |
 | `owed_status` | `as`, `full?: boolean` | outcome and next actions; full keeps evidence and audit |
-| `owed_why` | `node`, `full?`, `as` | receipt card; full restores weak-confirmation history |
+| `owed_why` | `node`, `full?`, `as` | outstanding-only card; full restores all evidence/history (§9.6) |
 | `owed_report` | `since?`, `as` | report |
 | `owed_brief` | `since?` | brief |
 | `owed_verify` | — | hash chain + replay |
-| `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; returns the packet plus a ready-to-use `subagents` call spec (agent `worker`, cwd = slot worktree, isolation `none`, task = packet) |
+| `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; prints packet once and references it in text arguments; structured `subagents` retains full task (agent `worker`, cwd = slot worktree, isolation `none`, task = packet) |
 | `owed_submit` | `node`, `commit?`, `model?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
 | `owed_attest` | `node?`, `trunk?`, `rerun?`, `remeasure?`, `all?`, `lease?`, `as` | attest; trunk needs no node; all requires remeasure |
@@ -4076,9 +4203,9 @@ U+007F–U+009F), U+2028/U+2029 and bidi controls (U+202A–U+202E, U+2066–U+2
 written as `\uXXXX`, then the closing
 `Confirmation will be recorded as pi-confirm.` line — so free text cannot fake
 the Repository/Identity lines of the dialog. The ledger keeps the exact text. Command `/owed` shows
-status. A skill (`skills/owed/SKILL.md`) explains the loop: status → dispatch →
-run worker with dsa → submit → attest → review (fresh reviewer, not the writer)
-→ merge, and the rules agents must not break.
+status. The skill (`skills/owed/SKILL.md`) explains start → driver wakes →
+decide/answer → merged, the roles and hard rules; its topic references explain
+manual dispatch, submission, measurements and independent review.
 
 ### 11.1 `owed_init` (D24)
 
@@ -4102,6 +4229,32 @@ missing <ids>` (or `stopped (<error>)`, with the `owed attest --genesis` hint
 when items are missing). After `session_shutdown` aborted it no message is sent.
 `owed_plan` adds `Warning: genesis attest pending for <ids>` as the first line
 (details `warning`) while genesis items lack observations.
+
+### 11.2 Tool profiles, discovery and dispatch (0.25, SF)
+
+Every owed tool stays registered. The default `core` profile declares exactly
+seven direct tools: `owed_status`, `owed_why`, `owed_decide`, `owed_drive`,
+`owed_start`, `owed_submit` and `owed_review`. Every other tool is registered
+at load with `exposure: 'deferred'`, without a load-time host probe or later
+re-publishing as deferred. `OWED_TOOLS=all` declares every tool directly and
+opts out of owed's discovery activation. Descriptions of core tools explain
+that other operations are `owed_*` tools (load with `tool_search` when not
+declared) or the `owed <command>` CLI (`owed help`).
+
+On `session_start`, as the host's MCP extension does, owed checks whether the
+host reports exposure and a registered `tool_search` declares `reachesTools`.
+It activates that search if inactive by adding it to the active set, never
+removing any tool. If search is absent or does not become active, owed
+re-registers deferred tools as direct, so they cannot become unreachable.
+Hosts unaware of exposure ignore the field and treat tools as direct. No pi
+version is assumed. This check runs at session start, not continuously: later
+manual deactivation of search can make deferred tools unreachable until the
+next session start; hosts without session hooks cannot run this repair.
+
+`owed_dispatch` prints its complete packet once. Rendered subagents arguments
+refer to `<the complete packet above>`; structured `subagents.task` retains
+the full executable task, slot `cwd` and `isolation: none`. Pass the structured
+arguments to the runner, not the text placeholder.
 
 ## 12. Driver
 
@@ -4872,6 +5025,25 @@ the SB1 refusal; it changes only the command text, never when a follow-up is due
 conflict, rerun/commit and `owed submit <node>` instructions. No new ledger
 field records this Git fact.
 
+### 12.5.3 Repair follow-ups (0.25, QT)
+
+A writer repair details only failures recorded since the latest non-refused
+repair follow-up to that writer's run: failing measured items include new test
+names/notes, and new active review blocks include the reviewer's note.
+Ruling steers, report/rebase/interrupted follow-ups and refused sends do not
+move this boundary; before the first repair, every failure is new. Earlier
+obligations still failing are named together as `Still failing from before`;
+when none are new it says `No new failures since my last message.`
+Rulings since dispatch still come first. The next step is to fix in the slot,
+commit and `owed submit <node>`; owed reruns checks itself. The message links
+`owed why <node> --full` rather than embedding the full card. Interrupted
+reviewers also use `--full` to inspect recorded review evidence.
+
+The driver's rejected-send map is runtime state: after restart a previously
+refused repair send may count as the previous message again. This is a text
+boundary limitation, not evidence reuse or permission to ignore a failure;
+the full receipt and all binding blocks remain available.
+
 ### 12.6 Review packet (D5)
 
 `reviewPacket(state, node, n)` (`src/views.ts`, pure) is the task of the
@@ -5320,14 +5492,12 @@ polling.
   applied, attest, busy and pending are quiet; `merge` `merged` does not wake
   alone and is listed in the next message. All wake lines of one read form one
   `pi.sendMessage({customType: "owed-drive", display: true, content},
-  {triggerTurn: true, deliverAs: "followUp"})`. In 0.20 its plain summary
-  is de-duplicated with the original report (§12.8.1, NY4); it retains the
+  {triggerTurn: true, deliverAs: "followUp"})`. Its plain summary replaces
+  raw node report text (§12.8.1, §12.8.3); it retains the
   `owed drive (<repo>):` header, carried merges and wake lines, and when at
-  least one wake line is a halt the line `To clear a halt without an
-  obligation: owed resume <node> --note "<why>" (add --after <node> to wait
-  until that node merges); owed rule gives the writer and reviewers guidance
-  they must acknowledge`, then `Next: owed
-  status / owed why <node>`. Identical wake lines within one read collapse.
+  least one wake line is a halt, its actionable command (§12.8.3), then
+  `Next: owed status / owed why <node>`. The plain needs replace the original
+  raw node lines rather than echoing them. Identical wake lines within one read collapse.
   One wake per new fact (E3.1, replacing D17a.5's "every halt line wakes"):
   the driver adds to every node-scoped wake line (halt, notify, describe
   failure, outcomes rejected/conflict/refused/error) `facts`, the node's fact
@@ -5369,12 +5539,13 @@ polling.
   resume`, with runtime outcome `answered` (quiet, no ledger write or wake).
   Delivery revalidation also drops question wakes covered by an answer rule,
   even if dsa still reports `asking` or describe fails.
-  `drive.answer_grace_s` is an optional non-negative integer in seconds,
-  default 900 (0 means immediately); it is not part of any obligation key.
-  If the covered question stays open for that long after the rule's ledger
-  timestamp, the driver wakes once per `(rid, qid)` in that driver run:
-  `<node>: answer #<seq> recorded <age>s ago but run <rid> still shows question
-  <qid>; retry delivery: <answerRetry command>`. The command retries the
+  `drive.answer_grace_s` is an optional integer in seconds (0..900),
+  default 600 (0 means immediately); it is not part of any obligation key.
+  The answer-grace wake and answered-but-asking presentation share this grace
+  (§12.8.4). If the covered question stays open for that long after the rule's
+  ledger timestamp, the driver wakes once per `(rid, qid)` in that driver run:
+  `<node>: answered at #<seq> (HH:MM), still asking after <m>m: retry with
+  <answerRetry command>`. The command retries the
   original answer bytes and request, without recording another rule. This
   runtime notify carries `answerRetry: true`; delivery checks that its question
   is still open but does not drop it merely because it was answered.
@@ -5395,11 +5566,10 @@ polling.
   `Needs you: <node> — <decision in words> → <one command>`, followed by
   `Done: <merged nodes>` when present, then `Driver continues (<n> in progress)`
   or `Driver stopped: <reason>`. `inProgress` on action log lines counts open
-  slots and supplies the status count. In 0.20 (NY4), the original question/
-  reason and commands appear once, prefixed `Needs you: `; the repeating
-  `Details:` block is removed. Distinct questions, report header, seqs, run ids,
-  dsa addresses, keys, leases, repeat counters, halt hint and resolved-wake
-  count are retained without duplicating the question/reason.
+  slots and supplies the status count. The current plain renderer (§12.8.3)
+  keeps each question/reason and its command once, without a repeating
+  `Details:` block or raw node lines. Identifiers remain when required by an
+  action; the report payload, repository notices and resolved-wake count stay.
   `Next: owed status / owed why <node>` is always last. These fields
   are runtime log metadata only, not ledger data; JSON tool outputs retain
   their existing fields.
@@ -5438,6 +5608,41 @@ not repeat an old delivered period; rejected delivery releases its claim.
 No ledger kind or measurement key changes. Absent watchdog keys preserve old
 plan shape; older versions reject the new drive key. Upgrade CLI, driver and
 plugin together. Snapshot/crash/label limits are in §7.17.
+
+### 12.8.3 Plain wake lines (0.25, QT)
+
+Each ordinary need is `Needs you: <node> — <what is needed> → <one command>`,
+not the raw driver line. Every open question gets its own line, question text
+and answer command: one sole question may use `owed decide`; several require
+`owed answer` with selectors. Reported nodes give `review the reported
+findings → owed decide <node> --text "<decision>"`, followed by the report's
+last 40 lines (at most 4000 characters). Repository notices, including shared
+failure, trunk red/drift and sweep notices, retain their full text and every
+line under Needs you; reducing them to one line would lose nodes or remedies.
+Quiet text never drops a need or the content needed to act on it.
+
+Carried merges collapse to `Done: <nodes>`. Needs come before driver
+continues/stopped state and `Next:` stays last. Raw driver lines and detailed
+receipts remain inspectable with driver status/logs and `owed why --full`;
+seq/key/lease/candidate identifiers are not echoed in ordinary need summaries
+unless needed in a command or an actionable condition. Done lines do not
+replace the per-node merge receipt (§8.3.4).
+
+### 12.8.4 Answered but still asking (0.25, QT)
+
+After the same `drive.answer_grace_s` as QN1 (default 600 seconds, ten minutes;
+a plan may choose another integer from 0 through 900), a ledger-answered
+question still open at the runner reads `<node>: answered at #<seq> (HH:MM),
+still asking after <m>m: retry with owed answer <node> --rid <rid> --qid <qid>
+--rev <rev> -- <text>`. The exact retry retains the original
+bytes/revision/request; it is not a new unanswered question or decision.
+Clock text is local.
+
+The wake and Needs-you line use this wording. `owed status` obtains its line
+from the driver's runtime cache and shows it only while a driver runs; it
+vanishes when the run resumes or the slot closes. It adds no ledger entry or
+receipt JSON field. Without a running driver, inspect the runner/answer
+receipt directly; absence of this status line is not proof of delivery.
 
 ### 12.9 Live wakes, staying driver and ready hint (0.6.1, H1)
 
