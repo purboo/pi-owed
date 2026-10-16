@@ -122,9 +122,9 @@ export function knownRedDebt(s: State): { knownRed?: KnownRedDebt[]; lapsedKnown
 export const knownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} known red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}`;
 export const lapsedKnownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} lapsed known_red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}; removable: owed edit --invariant ${d.invariant} --set known_red='<remaining active entries>' --note "remove lapsed entries"`;
 /** MS5: one debt line per active quarantine entry: invariants `<inv>/<test>`, node checks `<node>/<check>/<test>`. */
-export interface QuarantineDebt { where: string; test: string; fix: string; note?: string; passed?: { seq: number; commit: string; merging?: string } }
+export interface QuarantineDebt { where: string; test: string; fix: string; note?: string; passed?: { seq: number; commit: string; merging?: string; batch?: string[] } }
 export function quarantineDebt(s: State, fix?: string): QuarantineDebt[] {
-  const observations = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && (e.subject === 'trunk' || e.merging !== undefined || e.probe === 'trunk'));
+  const observations = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && (e.subject === 'trunk' || e.merging !== undefined || e.batch !== undefined || e.probe === 'trunk'));
   const of = (where: string, subject: string, obligation: string, spec: CheckSpec): QuarantineDebt[] => {
     const latest = observations.findLast(e => {
       if (e.subject !== subject || e.obligation !== obligation) return false;
@@ -133,12 +133,12 @@ export function quarantineDebt(s: State, fix?: string): QuarantineDebt[] {
       return !!active?.length && (e.quarantine_passed !== undefined || (e.counts?.format === 'tap' && nodeTestRun(original!.run) && e.execution?.completed === true));
     });
     return activeQuarantineOf(s, spec).filter(e => fix === undefined || e.fix === fix).map(e => ({ where, test:e.test, fix:e.fix, ...(e.note ? { note:e.note } : {}),
-      ...(latest?.quarantine_passed?.includes(e.test) ? { passed:{seq:latest.seq, commit:latest.commit, ...(latest.merging ? {merging:latest.merging} : {})} } : {}) }));
+      ...(latest?.quarantine_passed?.includes(e.test) ? { passed:{seq:latest.seq, commit:latest.commit, ...(latest.merging ? {merging:latest.merging} : {}), ...(latest.batch ? {batch:[...latest.batch]} : {})} } : {}) }));
   };
   return [...s.plan.invariants.flatMap(i => of(i.id, 'trunk', `inv:${i.id}`, i)), ...s.plan.nodes.filter(n => !s.nodes[n.id]?.merged).flatMap(n => n.checks.flatMap(c => of(`${n.id}/${c.id}`, n.id, `check:${c.id}`, c)))];
 }
 export const quarantineText = (d: QuarantineDebt): string => d.passed
-  ? `quarantined ${oneLine(d.test)} passed on ${d.passed.merging ? `the merge tree of ${oneLine(d.passed.merging)}` : `trunk ${d.passed.commit.slice(0,12)}`} (#${d.passed.seq}); remove it from quarantine if it stays green (fix ${oneLine(d.fix)})`
+  ? `quarantined ${oneLine(d.test)} passed on ${d.passed.merging !== undefined || d.passed.batch !== undefined ? `the merge tree of ${oneLine(d.passed.merging ?? d.passed.batch!.join(', '))}` : `trunk ${d.passed.commit.slice(0,12)}`} (#${d.passed.seq}); remove it from quarantine if it stays green (fix ${oneLine(d.fix)})`
   : `quarantine ${oneLine(d.where)}/${oneLine(d.test)} until ${oneLine(d.fix)} merges`;
 /** MS5: `owed why <fix>`: the quarantine entries its merge lifts. */
 export const liftsText = (node: string, ds: QuarantineDebt[]): string => `merging ${node} lifts quarantine: ${ds.map(d => `${oneLine(d.where)}/${oneLine(d.test)}`).join(', ')}`;

@@ -906,7 +906,7 @@ export function specChanges(prev: Plan, next: Plan, id: string): string[] {
  */
 export function checkDefinition(plan: Plan, node: string, id: string): string | undefined {
   const c = plan.nodes.find(x => x.id === node)?.checks.find(x => x.id === id);
-  return c ? canonical({ check: c, setup: plan.setup, exec: execKey(plan) }) : undefined;
+  return c ? canonical({ check: c, setup: plan.setup, exec: execKey(plan), ...(c.quarantine_set !== undefined ? { quarantine_set:plan.quarantine_sets?.[c.quarantine_set] } : {}) }) : undefined;
 }
 /** The check id of an execution obligation `check:<id>`, `red:<id>` or `strength:<id>`; undefined for others. */
 export function checkOf(obligation: string): string | undefined { return /^(?:check|red|strength):(.+)$/.exec(obligation)?.[1]; }
