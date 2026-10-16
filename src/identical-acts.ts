@@ -15,10 +15,7 @@ export function actContent(e: Draft, rules?: readonly Pick<RuleEntry, 'seq' | 'n
   if (e.kind === 'review') return canonical({ key:e.key, verdict:e.verdict, rank:e.rank, note:e.note ?? '', needs:e.needs,
     ack:rules ? rules.filter(r => r.seq <= (e.ack_rulings ?? -1) && (r.nodes === '*' || r.nodes.includes(e.node))).map(r => r.seq) : e.ack_rulings ?? -1 });
   if (e.kind === 'evidence') return canonical({ key:e.key, note:e.note, files:set(e.files) });
-  if (e.kind === 'waive') {
-    const tracked_by = (e as Draft & { tracked_by?: string }).tracked_by;
-    return canonical({ key:e.key, reason:e.reason, accept_risk:set(e.accept_risk ?? []), ...(tracked_by !== undefined ? { tracked_by } : {}) });
-  }
+  if (e.kind === 'waive') return canonical({ key:e.key, reason:e.reason, accept_risk:set(e.accept_risk ?? []), ...(e.tracked_by !== undefined ? {tracked_by:e.tracked_by} : {}) });
   return '';
 }
 

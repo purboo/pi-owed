@@ -18,7 +18,7 @@ import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, s
 import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, interpretedEntry, newerEntry, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, writeCovers } from './writes.ts';
-import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
+import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trackedRiskRetry, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { setupFailure, infraSource, observationsOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
@@ -37,7 +37,7 @@ import { counterfactual, type Counterfactual } from './counterfactual.ts';
 import { actScope, actContent, type RecordedAct } from './identical-acts.ts';
 import { OwedError } from './errors.ts';
 import { assertNoLedgerLock } from './lock-context.ts';
-import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText, WRITER_DECISION } from './views.ts';
+import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, trackedWaivers, trackedDebtText, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText, WRITER_DECISION } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -1342,6 +1342,58 @@ export async function submit(o: Actor & { node: string; commit?: string; model?:
   await addReviewCarry(o.cwd,state,o.node,facts);
   return ledger.withLock(async () => { const current = (await load(ledger)).state; stable(state,current,o.node); const d: Draft = { kind:'submit', by:by(o), node:o.node, attempt:n.slot!.attempt, facts, ...(model !== undefined ? { model } : {}) }; guard(current,d); return (await ledger.append([d]))[0]!; });
 }
+export interface TrunkProbeResult { node: string; trunk: string; checks: { obligation: string; observations: Entry[] }[]; receipt: ReceiptCard }
+/** TF1: diagnostic node checks on trunk, serialized with attest; each completed run has its own append-time CAS. */
+export async function attestProbeTrunk(o: MeasurementContext & { node: string; check?: string; runs?: number }): Promise<TrunkProbeResult> {
+  const runs = o.runs ?? 1;
+  if (!Number.isInteger(runs) || runs < 1 || runs > 10) throw new OwedError('--runs must be an integer from 1 to 10','usage');
+  checkAbort(o.signal);
+  if (!measurementScope()) return leased(o, signal => attestProbeTrunk({ ...o, signal }));
+  const ledger = await Ledger.open(o.cwd);
+  return ledger.withLock(async () => {
+    const { state } = await load(ledger), n = state.nodes[o.node];
+    if (!n?.slot?.open || !n.candidate || !state.plan.nodes.some(n => n.id === o.node)) throw new OwedError(`trunk probe requires an open slot with a candidate for ${o.node}`,'usage');
+    const specs = state.plan.nodes.find(n => n.id === o.node)!.checks;
+    const selected = o.check !== undefined ? specs.filter(c => c.id === o.check) : specs.filter(c => n.blocks.some(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky') && b.obligation === `check:${c.id}`));
+    if (!selected.length) throw new OwedError(o.check !== undefined ? `no check ${o.check} of ${o.node}` : `no check of ${o.node} has an active or flaky exec block; name one with --check`,'usage');
+    for (const spec of selected) {
+      if (spec.red || spec.mutants?.length) throw new OwedError(`check:${spec.id}: trunk probes refuse red/mutants checks`,'usage');
+      if (await newCheckTests(o.cwd,n,spec)) throw new OwedError(`check:${spec.id} tests are new in the candidate; trunk cannot run them`,'usage');
+    }
+    const checks: TrunkProbeResult['checks'] = [];
+    for (const spec of selected) {
+      const obligation = `check:${spec.id}`, observations: Entry[] = [];
+      const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit,stateQuarantine(state));
+      checks.push({ obligation, observations });
+      for (let i = 0; i < runs; i++) {
+        checkAbort(o.signal);
+        const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
+        if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}; nothing recorded for this run`);
+        const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal},quarantinedJob(state,{kind:'check',subject:o.node,obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit}));
+        checkAbort(o.signal);
+        const entry = await ledger.withLock(async () => {
+          const latest = (await load(ledger)).state;
+          stable(state,latest,o.node);
+          const moved = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
+          if (moved) throw new OwedError(`trunk changed (CAS): ${driftText(moved)}; nothing recorded for this run`);
+          const draft: Draft = { ...obs, probe:'trunk' };
+          guard(latest,draft);
+          return (await ledger.append([draft]))[0]!;
+        },undefined,o.signal);
+        observations.push(entry);
+        if (obs.verdict !== 'pass') break;
+      }
+    }
+    return { node:o.node, trunk:state.trunk.commit, checks, receipt:await why(o) };
+  },attestLock(o.node),o.signal,{busy:owner => attestBusyText(o.node,owner),activity:`trunk probe ${o.node}`});
+}
+export function trunkProbeText(r: TrunkProbeResult): string {
+  return r.checks.map(c => {
+    const failed = c.observations.findIndex(e => e.kind === 'obs' && e.verdict !== 'pass'), e = c.observations[failed];
+    const outcome = failed < 0 ? `${c.observations.length} run(s), all passed` : `run ${failed + 1} failed: ${e?.kind === 'obs' ? e.failed?.join(', ') || e.note || e.verdict : 'unknown failed tests'}`;
+    return `trunk probe ${c.obligation} on ${r.trunk.slice(0,12)}: ${outcome} (${c.observations.map(e => `#${e.seq}`).join(', ')})`;
+  }).join('\n');
+}
 export async function attest(o: MeasurementContext & { node: string; rerun?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestResult> {
   checkAbort(o.signal);
   if (!measurementScope()) return leased(o, signal => attest({ ...o, signal }));
@@ -1417,21 +1469,24 @@ export async function review(o: Actor & { node: string; verdict:'ok'|'block'; ra
   return entry;
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
-export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; channel:Channel; named?: string; pin?: CandidatePin }): Promise<RecordedAct> {
+export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; tracked_by?:string; channel:Channel; named?: string; pin?: CandidatePin }): Promise<RecordedAct> {
   const given = candidateArg(o.named);
   return mutateAct(o,async s => {
     node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin);
+    if (o.tracked_by !== undefined && (typeof o.tracked_by !== 'string' || !s.plan.nodes.some(n => n.id === o.tracked_by) || s.nodes[o.tracked_by]?.merged || o.tracked_by === o.node)) throw new OwedError('tracked_by must name an unmerged node of the current plan other than the waived node','usage');
+    const tracked = o.tracked_by !== undefined ? {tracked_by:o.tracked_by} : {};
     const n = candidate(s,o.node);
     const inactive = (o.accept_risk ?? []).filter(seq => !activeRisk(s,o.node,o.obligation,seq));
     let key = n.candidate!.keys[o.obligation] ?? '';
-    if (inactive.length && o.as.role === 'owner') {
+    const trackingOnly = trackedRiskRetry(s,{kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key,reason:o.reason,accept_risk:o.accept_risk,...tracked});
+    if (inactive.length && o.as.role === 'owner' && !trackingOnly) {
       const refused = (): never => { throw new OwedError('accept_risk must reference active blocks for this obligation'); };
       if (inactive.some(seq => {
         const e = entriesOf(s).find(e => e.seq === seq);
         return e?.kind !== 'obs' || !mergeRisk(s,o.node,o.obligation,seq,e.key);
       })) {
         // A candidate-key retry may cite risks it already consumed. Merge risks below must first recompute their key.
-        const repeated = identicalAct(s,{ kind:'waive', by:by(o), channel:o.channel, node:o.node, obligation:o.obligation, key, reason:o.reason, accept_risk:o.accept_risk });
+        const repeated = identicalAct(s,{ kind:'waive', by:by(o), channel:o.channel, node:o.node, obligation:o.obligation, key, reason:o.reason, accept_risk:o.accept_risk, ...tracked });
         return repeated ?? refused();
       }
       const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
@@ -1445,7 +1500,7 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
       const after = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
       if (after) throw new OwedError(`trunk changed (CAS): ${driftText(after)}`);
     }
-    return {kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key,reason:o.reason,accept_risk:o.accept_risk};
+    return {kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key,reason:o.reason,accept_risk:o.accept_risk,...tracked};
   });
 }
 /** K2.3: what the recorded waiver `entry` means, from the ledger state right after it (a later entry cannot relabel it; see views.waiverText). */
@@ -2388,7 +2443,7 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const items = [...Object.values(state.nodes).flatMap(n => n.items),...state.invariants];
   const receipts = entries.filter((e): e is EvidenceEntry => e.kind === 'evidence' && e.merge !== undefined && included(e));
   const superseded = supersededOf(state,Object.values(state.nodes)).filter(b => included({seq:b.supersededBy}));
-  return withActHistory({reviews:{sameModel:sameModelReviews(entries,included)},...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(quarantineDebt(state).length ? {quarantine:quarantineDebt(state).map(quarantineText)} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })},entries);
+  return withActHistory({...(trackedWaivers(state).length ? {trackedDebt:trackedWaivers(state).map(e => trackedDebtText(state,e))} : {}),reviews:{sameModel:sameModelReviews(entries,included)},...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(quarantineDebt(state).length ? {quarantine:quarantineDebt(state).map(quarantineText)} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })},entries);
 }
 /**
  * Verifies the hash chain and replays the ledger. N4: never reads the plan caches; every plan is parsed from its YAML

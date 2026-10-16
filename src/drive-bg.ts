@@ -510,8 +510,10 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   // AK1: the driver already extracted the review's ask. Keep it and its single ruling command.
   const review = source.match(/review asks: (.*?)(?= → owed decide |$)/)?.[1];
   if (review !== undefined) return `Needs you: ${node} — review asks: ${review.slice(0,300)} → owed decide ${node} --text "<ruling>" --writer`;
+  const shared = source.match(/check:[^;\n]+ block #\d+ also fails on trunk [^;\n]+/g);
   const flaky = source.match(/flaky block #\d+ on .*?(?:; current candidate [^;\n]+)?(?=; the driver leaves it alone|$)/)?.[0];
-  if (flaky?.includes(' on the same key; a pass does not erase a failure:')) return `Needs you: ${node} — ${flaky}`;
+  const flakyLine = flaky?.includes(' on the same key; a pass does not erase a failure:') ? `Needs you: ${node} — ${flaky}` : undefined;
+  if (shared?.length || flakyLine) return [...[...new Set(shared ?? [])].map(h => `Needs you: ${node} — ${h}`), ...(flakyLine ? [flakyLine] : [])].join('\n');
   const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
   const chosen = retry ?? source.match(/(?:answer: |(?:with|or):? )(owed [^;\n`]+?)(?= \| |;|\n|`|$)/)?.[1]?.trim();
   const asks = !j.answerRetry && j.qid !== undefined;
