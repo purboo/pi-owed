@@ -259,3 +259,42 @@ test('AK6: a graceful stop timeout refuses with the pid and force-stop hint, wit
     assert.equal((await driveStatus(r)).pid, f.child.pid); assert.equal(f.child.exitCode, null);
   } finally { await f.cleanup(); await r.cleanup(); }
 });
+
+// AK-R4: graceful stops send one SIGTERM per driver process (pid + start time); --now may add the second.
+const terms = async (trace: string): Promise<number> => {
+  try { return (await readFile(trace, 'utf8')).split('\n').filter(l => l === 'TERM').length; }
+  catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw e; }
+};
+test('AK-R4: a restart that timed out, restarted again, signals the driver once', { timeout: 90_000 }, async () => {
+  const r = await startFixture(), f = await fakeDriver(r, true);
+  try {
+    for (let i = 0; i < 2; i++) {
+      const out = await call(r.cwd, ['start', '--restart', '--stay'], 2);
+      assert.ok(out.stderr.trim().split('\n').length <= 3, out.stderr);
+      assert.ok(out.stderr.includes(`driver pid ${f.child.pid} is stopping after its current action and its in-flight measurements; repeating owed start --restart is safe; owed drive --stop --now stops it at once`), out.stderr);
+    }
+    assert.equal(await terms(f.trace), 1);
+    assert.equal(f.child.exitCode, null, 'never a hard stop');
+  } finally { await f.cleanup(); await r.cleanup(); }
+});
+test('AK-R4: --stop twice signals once; --stop then --stop --now sends the second signal', { timeout: 60_000 }, async () => {
+  const r = await startFixture(), f = await fakeDriver(r, true);
+  try {
+    for (let i = 0; i < 2; i++) assert.equal((await driveStop({ cwd: r.cwd, waitMs: 300 })).state, 'stopping');
+    assert.equal(await terms(f.trace), 1);
+    assert.equal((await driveStop({ cwd: r.cwd, now: true, waitMs: 300 })).state, 'stopping');
+    assert.equal(await terms(f.trace), 2, '--now still sends the second signal');
+  } finally { await f.cleanup(); await r.cleanup(); }
+});
+test('AK-R4: a stop request of another process (same pid, other start time) is replaced: that process gets its own single signal', { timeout: 60_000 }, async () => {
+  const r = await startFixture(), f = await fakeDriver(r, true);
+  try {
+    const request = `${lockPath(r.ledger.dir)}.stop-request`;
+    await writeFile(request, JSON.stringify({ pid: f.child.pid, start: 'an-earlier-process', host: JSON.parse(await readFile(lockPath(r.ledger.dir), 'utf8')).host }));
+    assert.equal((await driveStop({ cwd: r.cwd, waitMs: 300 })).state, 'stopping');
+    assert.equal(await terms(f.trace), 1, 'the earlier process request does not suppress this one');
+    assert.equal(JSON.parse(await readFile(request, 'utf8')).start, procStart(f.child.pid!));
+    assert.equal((await driveStop({ cwd: r.cwd, waitMs: 300 })).state, 'stopping');
+    assert.equal(await terms(f.trace), 1);
+  } finally { await f.cleanup(); await r.cleanup(); }
+});
