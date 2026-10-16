@@ -13,7 +13,7 @@ import { clockTime } from './clock.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
 import { answeredQuestion } from './drive.ts';
-import { trunkParkNotices, sharedParkNotices } from './reducer.ts';
+import { trunkParkNotices, sharedParkNotices, heldFlaky } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
@@ -356,7 +356,9 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
     ? { obligation:red.obligation, key:red.key } : undefined;
   const drift = !invariantRed && j.do === 'notify' && j.node === DRIFT_NODE && j.scope === 'repo';
   const node = typeof j.node === 'string' && j.scope !== 'repo' && !drift ? j.node : undefined;
+  const flaky = j.do === 'notify' ? String(j.text ?? '').match(/flaky block #(\d+) on /)?.[1] : undefined;
   const check: WakeCheck = {
+    ...(flaky !== undefined && node !== undefined ? {node,flaky:Number(flaky)} : {}),
     ...(invariantRed ? { invariantRed } : {}),
     ...(drift ? { drift: true as const, ...(typeof j.facts === 'number' ? { facts: j.facts } : {}) } : {}),
     ...(node !== undefined && typeof j.facts === 'number' ? { node, facts: j.facts } : {}),
@@ -375,7 +377,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
  * (the ledger trunk seq), and `rid`/`qid`/`rev` (an asking notify's first open question). Terminal lines and other lines
  * without a fact mark or question carry none and are never dropped.
  */
-export interface WakeCheck { node?: string; facts?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
+export interface WakeCheck { node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
 export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
 /**
@@ -395,6 +397,11 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
     const dsa = (): Dsa => o.dsa ?? new Dsa({ timeoutMs: 10_000 });
     let client: Dsa | undefined;
     return Promise.all(checks.map(async c => {
+      if (c.node !== undefined && c.flaky !== undefined) {
+        state ??= stateOf(o.cwd).catch(() => undefined);
+        const s = await state, block = s?.nodes[c.node]?.blocks.find(b => b.seq === c.flaky);
+        if (s && block && heldFlaky(s,c.node,block)) return false;
+      }
       if (c.invariantRed) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;
@@ -503,6 +510,8 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   // AK1: the driver already extracted the review's ask. Keep it and its single ruling command.
   const review = source.match(/review asks: (.*?)(?= → owed decide |$)/)?.[1];
   if (review !== undefined) return `Needs you: ${node} — review asks: ${review.slice(0,300)} → owed decide ${node} --text "<ruling>" --writer`;
+  const flaky = source.match(/flaky block #\d+ on .*?(?:; current candidate [^;\n]+)?(?=; the driver leaves it alone|$)/)?.[0];
+  if (flaky?.includes(' on the same key; a pass does not erase a failure:')) return `Needs you: ${node} — ${flaky}`;
   const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
   const chosen = retry ?? source.match(/(?:answer: |(?:with|or):? )(owed [^;\n`]+?)(?= \| |;|\n|`|$)/)?.[1]?.trim();
   const asks = !j.answerRetry && j.qid !== undefined;

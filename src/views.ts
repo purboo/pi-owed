@@ -1,6 +1,6 @@
 import { actRuns, collapsedActLines, alreadyRecordedText, type RecordedAct } from './identical-acts.ts';
 import { reviewRequirementText, type ReviewRequirement } from './risk.ts';
-import { nodeReview, readyDispatchSkips, type DispatchSkip } from './reducer.ts';
+import { nodeReview, readyDispatchSkips, ownerNeeded, heldFlaky, heldFlakyText, flakyBlockText, flakyPass, type DispatchSkip } from './reducer.ts';
 import type { AdoptionView, AttemptRuns, Block, CheckSpec, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, SlotRebase, State } from './types.ts';
 import { mergeWaitSuffix } from './adopt-wait.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
@@ -452,19 +452,9 @@ export function repairingBlock(s: State, node: string): Block | undefined {
   if (!block) return undefined;
   return (n.candidate?.seq !== undefined && n.candidate.seq > block.seq || n.runs.find(r => r.attempt === slot.attempt)?.sends.some(x => x.reason === 'repair' && x.seq > block.seq)) ? block : undefined;
 }
-/** NY1 parent ruling: mirror drive.ownerNeeded's predicate without a views -> drive import cycle. */
+/** NY1/WF2: share the driver's owner predicate without a views -> drive import cycle. */
 function repairNeedsOwner(s: State, node: string): boolean {
-  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
-  if (!n) return false;
-  const ownerBlocks = n.blocks.filter(b => {
-    if (b.state === 'flaky') return true;
-    if (b.state !== 'active' || b.kind !== 'judgment' || (b.rank ?? 0) < 2) return false;
-    const by = entriesOf(s).find(e => e.seq === b.seq)?.by ?? '';
-    const k = n.slot?.open && spec ? driveReviewerSlot(by, node, n.slot.attempt) : undefined;
-    return !((b.rank ?? 0) <= 2 && k !== undefined && k <= Math.max(nodeReview(s, node).count, 1));
-  });
-  if (!n.slot?.open || !n.candidate) return ownerBlocks.length > 0;
-  return n.items.some(i => i.status === 'D' && (i.mark === '⊤' || ownerBlocks.some(b => b.obligation === i.obligation) || i.obligation === 'review' && nodeReview(s, node).min_rank > 2));
+  return ownerNeeded(s,node) !== undefined;
 }
 /** NY5: derive the receipt from the exact recorded prior/next plans, not the current board. */
 export function planReceipt(e: Entry, prior: Plan, next: Plan): string {
@@ -524,7 +514,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     const reason = i.obligation === 'approve' ? 'awaiting owner approval'
       : reviewObligation(i.obligation) ? i.mark === '⊤' ? `${i.obligation} needs an owner decision` : i.mark === '⛔' ? `${i.obligation} blocked: guidance needed` : `awaiting ${i.obligation}`
       : i.obligation.startsWith('evidence:') ? `awaiting manual evidence: ${i.obligation.slice(9)}`
-      : `${i.obligation}: ${i.subject === 'trunk' && i.mark === '⊤' && i.detail.includes('automatic same-key remeasure:') ? i.detail : plain(i.detail)}`;
+      : `${i.obligation}: ${i.detail.includes('flaky block #') || i.subject === 'trunk' && i.mark === '⊤' && i.detail.includes('automatic same-key remeasure:') ? i.detail : plain(i.detail)}`;
     add(i.subject, reason, command);
   }
   if (!driverRunning) for (const id of v.ready) {
@@ -549,6 +539,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     const repair = repairingBlock(s, n.id);
     if (deps.length && s.plan.nodes.find(spec => spec.id === n.id)?.approve === 'owner') phase = `waiting for ${deps.join(', ')} (owner approval after)`;
     else if (repair) phase = `repairing (block #${repair.seq})`;
+    else if (n.blocks.some(b => heldFlaky(s,n.id,b) && n.items.some(i => i.obligation === b.obligation && i.discharger === 'executor'))) phase = n.blocks.filter(b => heldFlaky(s,n.id,b) && n.items.some(i => i.obligation === b.obligation && i.discharger === 'executor')).map(b => heldFlakyText(s,n.id,b)).join('; ');
     if (n.phase === 'blocked' && !deps.length) phase = `waiting for ${(s.plan.nodes.find(x => x.id === n.id)?.deps ?? []).filter(id => !s.nodes[id]?.merged).join(', ')}`;
     return { node: n.id, phase, ageMs: at((n.accepted ? n.acceptedSince : undefined) ?? n.slot?.dispatchSeq ?? n.held ?? entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq) };
   });
@@ -611,10 +602,10 @@ function blockNote(s: State, b: Block): string | undefined {
 const withNote = (note: string | undefined): { note?: string } => note === undefined ? {} : { note };
 /** A pending item with the notes of the exec blocks that hold it (status, K2.2). */
 function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockNote[]; hint?: string } {
-  const n = s.nodes[i.subject], held = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && countsBlock(b) && i.evidence.includes(b.seq));
+  const n = s.nodes[i.subject], held = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && countsBlock(b) && !heldFlaky(s,i.subject,b) && i.evidence.includes(b.seq));
   const notes = held.flatMap(b => { const note = blockNote(s, b); return note === undefined ? [] : [{ seq: b.seq, note }]; });
   // 0.8 (L3.2): an item held by a flaky block also offers a ruling, next to the waiver.
-  const hint = held.some(b => b.state === 'flaky') ? `owner accepts the risk: ${waiveCommand(i.subject, i.obligation, held.map(b => b.seq), candidateFlag(s, i.subject))}; ${flakyRuleHint(i.subject)}` : undefined;
+  const hint = held.some(b => b.state === 'flaky') ? `${held.filter(b => b.state === 'flaky').map(b => flakyBlockText(s,b)).join('; ')}; ${flakyRuleHint(i.subject)}` : undefined;
   return notes.length || hint ? { ...i, ...(notes.length ? { blockNotes: notes } : {}), ...(hint ? { hint } : {}) } : i;
 }
 /**
@@ -627,8 +618,12 @@ function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockN
  */
 export function waiverText(s: State, e: WaiveEntry): string {
   const n = s.nodes[e.node], c = n?.candidate, item = n?.items.find(i => i.obligation === e.obligation), o = e.obligation, k = e.key.slice(0, 12);
+  const satisfied = item?.status === 'E' && item.evidence.length ? `; ${o} on the candidate key is satisfied by ${item.evidence.map(seq => `#${seq}`).join(', ')}` : '';
   if (c && e.key !== c.keys[o] && (e.accept_risk ?? []).some(seq => { const x = entriesOf(s).find(x => x.seq === seq); return x?.kind === 'obs' && x.subject === e.node && x.merging === e.node && x.obligation === o && x.key === e.key; })) {
-    return `waived ${e.node}/${o} on merge key ${k}: ${e.reason}; accepted risks ${(e.accept_risk ?? []).map(seq => `#${seq}`).join(', ')}; this waiver applies only to that key, not the candidate key ${c.keys[o]?.slice(0,12)}; changes to check definition, setup, exec, closure or reads change the key and require measurement again`;
+    return `waived ${e.node}/${o} on merge key ${k}: ${e.reason}; in effect now: --accept-risk accepts ${(e.accept_risk ?? []).map(seq => {
+      const b = n?.blocks.find(b => b.seq === seq), pass = b && flakyPass(s,b,e.seq);
+      return `#${seq}${pass ? ` (flaky: failed #${seq} → passed #${pass.seq} on the same key)` : ''}`;
+    }).join(', ')}${satisfied}; this waiver applies only to that key, not the candidate key ${c.keys[o]?.slice(0,12)}; changes to check definition, setup, exec, closure or reads change the key and require measurement again`;
   }
   const kind = o.includes(':') ? o.slice(0, o.indexOf(':')) : o, measured = ['check', 'strength', 'red', 'writes'].includes(kind);
   const scope = `owed counts ${o} as waived, not measured, for every candidate of ${e.node} whose ${o} key is ${k}${kind === 'rulings' ? '' : ', in this or a later attempt'}, while no unaccepted active block remains on ${o}; a later block suspends the waiver and clearing that block restores it`;
@@ -642,11 +637,16 @@ export function waiverText(s: State, e: WaiveEntry): string {
   const blockClear = (b: Block): string => b.kind === 'exec'
     ? `an attribution rerun (owed attest) that confirms the failure clears #${b.seq}${b.state === 'flaky' ? ` (#${b.seq} is flaky: its rerun passed, so only a waiver with --accept-risk ${b.seq} accepts it)` : '; if the rerun passes, #' + b.seq + ' stays as a flaky block that only a waiver with --accept-risk accepts'}`
     : `an ok review that clears #${b.seq}`;
-  const effect = item?.status === 'W' && item.evidence.includes(e.seq) ? 'in effect now'
+  const accepted = (n?.blocks ?? []).filter(b => b.obligation === o && (e.accept_risk ?? []).includes(b.seq) && b.clearedBy === e.seq);
+  const acceptedEffect = accepted.length ? `in effect now: --accept-risk accepts ${accepted.map(b => {
+    const pass = flakyPass(s,b,e.seq);
+    return `#${b.seq}${pass ? ` (flaky: failed #${b.seq} → passed #${pass.seq} on the same key)` : ''}`;
+  }).join(', ')}${satisfied}` : undefined;
+  const effect = acceptedEffect ?? (item?.status === 'W' && item.evidence.includes(e.seq) ? 'in effect now'
     : !item ? `${o} is not an obligation of the current candidate`
     : item.status === 'E' ? `${o} is currently satisfied, so the waiver is not needed while it stays satisfied`
     : unaccepted.length ? `not in effect yet: active ${unaccepted.length === 1 ? 'block' : 'blocks'} ${unaccepted.map(b => `#${b.seq}`).join(', ')} ${unaccepted.length === 1 ? 'is' : 'are'} not accepted; it takes effect as soon as no unaccepted active block remains on ${o}, for example after ${unaccepted.map(blockClear).join(', and ')}; --accept-risk accepts the current flaky or active blocks at once`
-    : `not in effect: ${item.detail}`;
+    : `not in effect: ${item.detail}`);
   const unmeasured = measured && !observationsOf(s, e.node, o, e.key).some(x => x.verdict !== 'error') ? '; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail adds a block that suspends the waiver until it clears' : '';
   const flaky = (e.accept_risk ?? []).filter(seq => { const b = n?.blocks.find(x => x.seq === seq); return !!b && b.kind === 'exec' && wasFlaky(s, b, e.seq); });
   return `waived ${o} for candidate #${c?.seq ?? '?'} ${c?.commit.slice(0, 12) ?? '?'} (key ${k}): ${effect}; ${scope}; ${again}${unmeasured}${flaky.map(seq => `; the flaky block #${seq} stays recorded as accepted risk`).join('')}${acceptedText(s, e, !!unmeasured)}`;
@@ -664,7 +664,10 @@ function acceptedText(s: State, e: WaiveEntry, unmeasured: boolean): string {
     + merge.map(x => `; #${x.seq} failed on merge key ${x.key.slice(0, 12)}: that fail no longer counts there, so a pass there satisfies owed merge, and owed merge measures the key again when it has no other verdict`).join('');
 }
 /** An exec block that an attribution rerun passed (flaky) before entry `before`, as the reducer marks it. */
-const wasFlaky = (s: State, b: Block, before: number): boolean => entriesOf(s).some(x => x.kind === 'obs' && x.attribution && x.verdict === 'pass' && x.subject === b.node && x.obligation === b.obligation && x.key === b.key && x.seq > b.seq && x.seq < before);
+const wasFlaky = (s: State, b: Block, before: number): boolean => flakyPass(s,b,before) !== undefined;
+export function waiverRecordedText(e: WaiveEntry): string {
+  return `waived ${e.node}/${e.obligation} #${e.seq}: debt recorded${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(seq => `#${seq}`).join(', ')})` : ''}`;
+}
 /** K2.3: a waived item reads `<subject>/<obligation> waived (not measured for this candidate) by <who>: <reason>`. */
 function waivedText(i: ItemView & { observations?: Entry[] }): string {
   const obs = i.observations ?? [], w = obs.findLast(e => e.kind === 'waive');
@@ -775,10 +778,10 @@ export function mergedLine(v: ReceiptCard, commit: string, debt?: number): strin
  * measured items with their notes, and active review blocks; `earlier` names the obligations still failing from before.
  */
 export function newFailures(v: ReceiptCard, since: number): { lines: string[]; earlier: string[] } {
-  const lines: string[] = [], earlier: string[] = [];
+  const lines: string[] = [], earlier: string[] = [], s = presentationStates.get(v);
   for (const i of v.items) {
-    if (i.status !== 'D' || (i.mark !== '✘' && !v.blocks.some(b => b.obligation === i.obligation && b.kind === 'exec'))) continue;
-    const fails = i.observations.filter(e => e.kind === 'obs' && e.verdict === 'fail');
+    if (i.status !== 'D' || (i.mark !== '✘' && !v.blocks.some(b => b.obligation === i.obligation && b.kind === 'exec' && !(s && heldFlaky(s,v.node,b))))) continue;
+    const fails = i.observations.filter(e => e.kind === 'obs' && e.verdict === 'fail' && !(s && s.nodes[v.node]?.blocks.some(b => b.seq === e.seq && heldFlaky(s,v.node,b))));
     if (!fails.some(e => e.seq > since)) { earlier.push(i.obligation); continue; }
     const fresh = fails.filter(e => e.seq > since), names = [...new Set(fresh.flatMap(e => e.kind === 'obs' ? e.failed ?? [] : []))];
     lines.push(`- ${i.obligation}: ${oneLine(i.detail)}${names.length ? `; failed tests: ${names.map(oneLine).join(', ')}` : ''}${failNotes(fresh)}`);
@@ -968,17 +971,17 @@ export const evidenceCommand = (node: string, id: string, as: string, candidate?
 export function ownerCommands(s: State, node: string): string[] {
   const n = s.nodes[node];
   if (!n) return [];
-  const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && countsBlock(b)).map(b => b.seq);
+  const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && countsBlock(b) && !heldFlaky(s,node,b)).map(b => b.seq);
   const live = !!(n.slot?.open && n.candidate);
   if (!live && (n.merged || n.phase === 'removed') && !n.slot?.open) return [];
-  const items = live ? n.items.filter(i => i.status === 'D') : [];
+  const items = live ? n.items.filter(i => i.status === 'D' && !(i.discharger === 'executor' && n.blocks.some(b => b.obligation === i.obligation && heldFlaky(s,node,b)))) : [];
   const later = live ? '' : 'after the writer submits a candidate: ';
   const out = n.slot?.open ? [] : [n.held !== undefined ? `owed decide ${node} --text "<decision>" (held by abandon #${n.held})` : `owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
   const flag = candidateFlag(s, node);
   out.push(...items.map(i => i.discharger === 'owner' ? decisionCommand(s, i, false) : waiveCommand(node, i.obligation, blocks(i.obligation), flag)));
-  for (const b of n.blocks.filter(b => countsBlock(b) && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
+  for (const b of n.blocks.filter(b => countsBlock(b) && !heldFlaky(s,node,b) && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
   // 0.8 (L3.2): once, after the waivers, when a flaky block is among them.
-  if (n.blocks.some(b => b.state === 'flaky')) out.push(flakyRuleHint(node));
+  if (n.blocks.some(b => b.state === 'flaky' && !heldFlaky(s,node,b))) out.push(flakyRuleHint(node));
   if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
   return [...new Set(out)];
 }
@@ -995,7 +998,7 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
   const flag = candidateFlag(s, i.subject);
   if (i.obligation === 'approve') return `owed approve ${i.subject}${flag} [--note TEXT] (owner)`;
   if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), ownerAs(), candidate12(s, i.subject));
-  const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && countsBlock(b)) ?? [];
+  const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && countsBlock(b) && !heldFlaky(s,i.subject,b)) ?? [];
   if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) {
     const review = `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}${flag}`;
     return blocks.length ? `owed decide ${i.subject} --writer --text "<guidance>"; writer repairs and submits again; override only: ${review} (overrides a valid block: state the accepted risk)` : review;
@@ -1106,7 +1109,9 @@ export function trunkRedHint(s: State, seq: number, key?: string): string | unde
 function clearHint(s: State, entries: readonly Entry[], b: Block): string {
   const n = s.nodes[b.node];
   const trunkRed = trunkRedHint(s, b.seq, b.key);
-  if (trunkRed) return trunkRed;
+  const flaky = b.state === 'flaky' && b.kind === 'exec' ? heldFlaky(s,b.node,b) ? heldFlakyText(s,b.node,b) : `${flakyBlockText(s,b)}; ${flakyRuleHint(b.node)}` : undefined;
+  if (trunkRed) return `${trunkRed}${flaky ? `; ${flaky}` : ''}`;
+  if (flaky) return flaky;
   if (n && !n.slot?.open) return dispatchHint(n);
   const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && countsBlock(x)).map(x => x.seq);
   const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);

@@ -7,7 +7,7 @@ import * as cur from '../../src/reducer.ts';
 import * as curViews from '../../src/views.ts';
 import * as base from '../fixtures/reducer-0.10-base.ts';
 import * as baseViews from '../fixtures/views-0.10-base.ts';
-import type { CandidateFacts, Draft, Entry, NodeSpec, Plan, State } from '../../src/types.ts';
+import type { Block, CandidateFacts, Draft, Entry, ItemView, NodeSpec, Plan, State } from '../../src/types.ts';
 
 type R = typeof base; type V = typeof baseViews;
 export const BASE = { r: base as R, v: baseViews as V };
@@ -47,8 +47,82 @@ function reviewEpochView(s: State, entries: Entry[], id: string): State {
   return view;
 }
 
+/** WF1/WF2: adapt only specified item diagnostics; all keys, evidence, votes and block states remain exact. */
+function wfItem(s: State, i: ItemView): ItemView {
+  let n = s.nodes[i.subject];
+  if (n?.phase === 'removed') {
+    // Removal leaves the item's last live diagnostic in place; later obs change blocks, not removed-node items.
+    const es = [...BASE.r.entriesOf(s)];
+    const removal = es.findLast(e => e.kind === 'plan' && BASE.r.planAt(s,e.seq).nodes.some(n => n.id === i.subject) && !BASE.r.planAt(s,e.seq+1).nodes.some(n => n.id === i.subject));
+    if (removal) {
+      const plans = new Map(es.filter(e => e.kind === 'genesis' || e.kind === 'plan').map(e => [e.kind === 'genesis' || e.kind === 'plan' ? e.plan : '', BASE.r.planAt(s,e.seq+1)]));
+      s = BASE.r.reduce(es.filter(e => e.seq < removal.seq),sha => plans.get(sha)!);
+      n = s.nodes[i.subject];
+    }
+  }
+  const blocks = n?.blocks.filter(b => b.obligation === i.obligation && (b.state === 'active' || b.state === 'flaky')) ?? [];
+  if (!blocks.some(b => b.state === 'flaky') || i.status !== 'D' || !i.detail.startsWith(`${i.obligation} still blocked:`)) return i;
+  const actionable = blocks.filter(b => !wfHeld(s,b));
+  const failed = BASE.r.observationsOf(s,i.subject,i.obligation,i.key).some(e => e.verdict === 'fail');
+  return {...i, discharger:i.mark === '⊤' || actionable.some(b => b.state === 'flaky' || b.kind === 'judgment' && (b.rank ?? 0) >= 2) ? 'owner' : actionable.some(b => b.kind === 'judgment') ? 'reviewer' : failed ? 'writer' : 'executor',
+    detail:actionable.length ? `${i.obligation} still blocked: ${actionable.map(b => b.state === 'flaky' && b.kind === 'exec' ? wfBlockText(s,b) : `#${b.seq}`).join(', ')}` : blocks.map(b => wfHeldText(s,b)).join('; ')};
+}
+function wfHeld(s: State, b: Block): boolean {
+  const n = s.nodes[b.node], f = BASE.r.entriesOf(s).find(e => e.seq === b.seq), key = n?.candidate?.keys[b.obligation];
+  return b.state === 'flaky' && !!n?.candidate && b.key !== key && f?.kind === 'obs' && f.merging === undefined && !BASE.r.observationsOf(s,b.node,b.obligation,key ?? '').some(e => e.verdict === 'pass' && e.probe === undefined && e.batch === undefined);
+}
+function wfHeldText(s: State, b: Block): string { return `waiting for ${b.obligation} on candidate ${s.nodes[b.node]?.candidate?.commit.slice(0,12)} before deciding flaky #${b.seq}`; }
+function wfBlockText(s: State, b: Block): string {
+  const entries = BASE.r.entriesOf(s), f = entries.find(e => e.seq === b.seq), p = entries.find(e => e.kind === 'obs' && e.attribution && e.verdict === 'pass' && e.subject === b.node && e.obligation === b.obligation && e.key === b.key && e.seq > b.seq), c = s.nodes[b.node]?.candidate;
+  if (f?.kind !== 'obs' || !p) return `flaky block #${b.seq} on ${b.obligation}`;
+  const names = f.failed ?? f.counts?.failed ?? [];
+  let text = `flaky block #${b.seq} on ${b.obligation}${f.merging !== undefined ? ` (merge key ${b.key.slice(0,12)})` : ''}: ${f.commit.slice(0,12)} failed #${f.seq} (${names.slice(0,3).join(', ') || 'unknown failed tests'}${names.length > 3 ? `, +${names.length-3}` : ''}) → passed #${p.seq} on the same key; a pass does not erase a failure: accept the risk (owed waive ${b.node} ${b.obligation} --accept-risk ${b.seq} --reason "…") or fix it`;
+  if (f.merging === undefined && c && b.key !== c.keys[b.obligation]) {
+    const last = BASE.r.observationsOf(s,b.node,b.obligation,c.keys[b.obligation] ?? '').findLast(e => e.verdict !== 'error' && e.probe === undefined && e.batch === undefined), block = s.nodes[b.node]?.blocks.findLast(x => x.kind === 'exec' && (x.state === 'active' || x.state === 'flaky') && x.obligation === b.obligation && x.key === c.keys[b.obligation]);
+    text += `; current candidate ${c.commit.slice(0,12)} ${last ? `${last.verdict === 'pass' ? 'passed' : 'failed'} #${last.seq}${last.verdict === 'fail' && block ? ` (block #${block.seq})` : ''}` : 'not measured yet'}`;
+  }
+  return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,c => c === '\\' ? '\\\\' : `\\u${c.charCodeAt(0).toString(16).padStart(4,'0')}`);
+}
+function wfReasons(s: State, text: string): string {
+  for (const n of Object.values(s.nodes)) for (const i of n.items) {
+    const blocks = n.blocks.filter(b => b.obligation === i.obligation && (b.state === 'active' || b.state === 'flaky'));
+    if (!blocks.some(b => b.state === 'flaky')) continue;
+    const old = `${i.obligation} still blocked: ${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' flaky' : ''}`).join(', ')}`;
+    text = text.replaceAll(old,wfItem(s,i).detail);
+  }
+  return text;
+}
+function wfRendered(s: State, text: string): string {
+  for (const n of Object.values(s.nodes)) {
+    const card = BASE.v.receipt(s,[...BASE.r.entriesOf(s)],n.id);
+    for (const b of card.blocks) if (b.kind === 'exec' && b.state === 'flaky') {
+      const next = wfHeld(s,b) ? wfHeldText(s,b) : `${wfBlockText(s,b)}; ${baseViews.flakyRuleHint(n.id)}`;
+      text = text.replaceAll(`blocked #${b.seq} ${b.obligation}: ${b.clear}`,`blocked #${b.seq} ${b.obligation}: ${next}`)
+        .replaceAll(`failing obs #${b.seq} → ${b.clear}`,`failing obs #${b.seq} → ${next}`)
+        .replaceAll(`failing obs #${b.seq} (flaky: a rerun passed) → ${b.clear}`,`failing obs #${b.seq} (flaky: a rerun passed) → ${next}`);
+    }
+  }
+  return text;
+}
+function wfItems(s: State, value: unknown): unknown {
+  if (typeof value === 'string') return wfReasons(s,value);
+  if (Array.isArray(value)) return value.map(v => wfItems(s,v));
+  if (value && typeof value === 'object') {
+    if ('subject' in value && 'obligation' in value && 'status' in value && 'evidence' in value) return wfItem(s,value as ItemView);
+    return Object.fromEntries(Object.entries(value).map(([k,v]) => [k,wfItems(s,v)]));
+  }
+  return value;
+}
+/** Adapt the frozen state's presentation fields, preserving its non-enumerable history. */
+function wfState(s: State): State {
+  const out = Object.create(Object.getPrototypeOf(s),Object.getOwnPropertyDescriptors(s)) as State;
+  out.nodes = Object.fromEntries(Object.entries(s.nodes).map(([id,n]) => [id,{...n,items:n.items.map(i => wfItem(s,i))}]));
+  return out;
+}
+
 /** Canonical JSON of the state and of the queries and views on it. */
 export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string {
+  if (m === BASE) s = wfState(s);
   const { r, v } = m, ids = Object.keys(s.nodes).sort(), out: Record<string, unknown> = { state: { ...s, nodes: Object.fromEntries(ids.map(id => {
     // MO1 adds only derived acceptance tenure; historical acceptance flags, keys and all other fields still compare.
     const { acceptedSince: _acceptedSince, ...node } = s.nodes[id]!; return [id, node];
@@ -59,7 +133,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   out.adoptGuard = attempt(() => r.adoptGuard(s, { commit: 'adopted', tree: 'adopted-tree', invKeys: { ...s.trunk.invKeys } }));
   out.planAt = attempt(() => r.planAt(s, s.seq + 1)); out.entries = r.entriesOf(s).length;
   // QT1 intentionally changes only the rendered human halt wording, never the ledger value or acceptance state.
-  const rendered = (text: string): string => (m === BASE ? text.replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
+  const rendered = (text: string): string => (m === BASE ? wfRendered(s,text).replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
     'halted by driver #$1 (attempt $2), needs the parent (the main agent acts; owed lists the command):') : text)
     // DC4 changes recovery command suggestions only; never normalize ledger/state/keys.
     .replace(/owed decide (\S+) --writer --text "<guidance>"/g, 'owed rule --nodes $1 --writer "<guidance>"')
@@ -84,6 +158,15 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       const waiting = ids.flatMap(node => { const w = wait(node); return w ? [{node,...w}] : []; });
       if (waiting.length) status.waiting = waiting;
       status.pending['parent+writer'] = status.pending['parent+writer']!.filter(i => i.obligation !== 'submit' || !wait(i.subject));
+      for (const items of Object.values(status.pending)) for (const i of items) {
+        const blocks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && i.evidence.includes(b.seq) && (b.state === 'active' || b.state === 'flaky')) ?? [];
+        if (!blocks.some(b => b.state === 'flaky')) continue;
+        const shown = blocks.filter(b => !wfHeld(s,b));
+        const flakes = shown.filter(b => b.state === 'flaky');
+        if (flakes.length) i.hint = `${flakes.map(b => wfBlockText(s,b)).join('; ')}; ${baseViews.flakyRuleHint(i.subject)}`;
+        else delete i.hint;
+        if (i.blockNotes) i.blockNotes = i.blockNotes.filter(note => shown.some(b => b.seq === note.seq));
+      }
     }
     let text = m === CUR ? curViews.renderStatusFull(status as curViews.StatusView).replace(/^Merge queue:.*\n/gm, '') : v.renderStatus(status);
     if (m === BASE) for (const node of ids) {
@@ -114,7 +197,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
     q.reviewerBase = r.reviewerBase(reviewState, id);
     q.observations = n.items.map(i => r.observationsOf(s, i.subject, i.obligation, i.key).map(e => e.seq));
     q.blocks = n.blocks.map(b => [r.parentRuling(s, b)?.seq, r.awaitingRuling(s, b)]);
-    if (n.candidate) q.mergeGuard = attempt(() => r.mergeGuard(s, id, { facts: { ...n.candidate!, base: s.trunk.commit }, state: { commit: n.candidate!.commit, tree: n.candidate!.tree, invKeys: { ...s.trunk.invKeys } } }));
+    if (n.candidate) q.mergeGuard = attempt(() => { const guard = r.mergeGuard(s, id, { facts: { ...n.candidate!, base: s.trunk.commit }, state: { commit: n.candidate!.commit, tree: n.candidate!.tree, invKeys: { ...s.trunk.invKeys } } }); return m === BASE ? wfItems(s,guard) : guard; });
     q.receipt = attempt(() => {
       const card = v.receipt(s,prefix,id);
       // RR3: only satisfied review receipt presentation adopts latest qualifying evidence per principal.
@@ -138,7 +221,9 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       // NY6: full preserves the frozen receipt's weak-confirmation provenance.
       return rendered(m === CUR ? curViews.renderReceipt(card as curViews.ReceiptCard,{full:true}) : v.renderReceipt(card));
     });
-    q.owner = attempt(() => v.ownerCommands(s, id).map(command => rendered(m === BASE ? command.replace(/owed plan <plan\.yaml> \(add a node that repairs (inv:[^;]+); invariants cannot be waived, only a measured pass on a later merge clears this debt\)/g, (_all, obligation: string) => curViews.trunkDecision(s,obligation,undefined,prefix)) : command)));
+    const ownerState = m === BASE ? Object.create(Object.getPrototypeOf(s),Object.getOwnPropertyDescriptors(s)) as State : s;
+    if (m === BASE) ownerState.nodes = {...s.nodes,[id]:{...n,blocks:n.blocks.filter(b => !wfHeld(s,b)),items:n.items.filter(i => !(i.discharger === 'executor' && n.blocks.some(b => b.obligation === i.obligation && wfHeld(s,b))))}};
+    q.owner = attempt(() => v.ownerCommands(ownerState, id).map(command => rendered(m === BASE ? command.replace(/owed plan <plan\.yaml> \(add a node that repairs (inv:[^;]+); invariants cannot be waived, only a measured pass on a later merge clears this debt\)/g, (_all, obligation: string) => curViews.trunkDecision(s,obligation,undefined,prefix)) : command)));
     if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(reviewState, id));
     out[`node:${id}`] = q;
   }
@@ -184,6 +269,11 @@ export function intendedChange(s: State, d: Draft, base: unknown, cur: unknown):
     }
   }
   if (d.kind === 'abandon' && s.nodes[d.node]?.phase === 'removed') expected = expected.filter(x => x !== `Node ${d.node} does not exist`);
+  // WF1/WF2 alter only the obligation detail inside otherwise identical refusal arrays.
+  for (const n of Object.values(s.nodes)) for (const i of n.items) {
+    const next = wfItem(s,i);
+    if (next.detail !== i.detail) expected = expected.map(x => typeof x === 'string' ? x.replace(`${i.obligation} unsatisfied:${i.detail}`,`${i.obligation} unsatisfied:${next.detail}`) : x);
+  }
   return canonical(expected) === canonical(withoutGrantHints(cur));
 }
 /**
