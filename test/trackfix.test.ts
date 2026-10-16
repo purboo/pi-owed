@@ -203,7 +203,12 @@ test('TF3: debt tracks a fix, why names the waived debt, and fix merge settles o
     assert.equal((await r.waive('fix',failed.seq)).code,0);
     const e = (await r.ledger.read()).findLast((e):e is WaiveEntry => e.kind === 'waive')!; assert.equal(e.tracked_by,'fix');
     const before = await r.state(), debt = `a/check:runtime: waived — tracked by fix: trunk race tracked (block #${failed.seq})`;
-    const entries = await r.ledger.read(), untracked = entries.map(e => { if (e.kind !== 'waive') return e; const {tracked_by,...old} = e; return old; });
+    const entries = await r.ledger.read(), untracked = entries.map(e => {
+      if (e.kind !== 'waive') return e;
+      const {tracked_by,ignorable,...old} = e;
+      const remaining = ignorable?.filter(name => name !== 'tracked_by');
+      return remaining?.length ? {...old,ignorable:remaining} : old;
+    });
     const oldState = reducer.reduce(untracked,sha => reducer.planAt(before,entries.find(e => (e.kind === 'plan' || e.kind === 'genesis') && e.plan === sha)!.seq + 1));
     assert.deepEqual(before,oldState,'tracked_by does not change replay state or gates');
     assert.ok((await ops.status(r)).summary!.debt.includes(debt)); assert.ok((await ops.brief(r)).summary!.debt.includes(debt));
