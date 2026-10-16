@@ -205,7 +205,7 @@ export interface ObsEntry extends Base {
 }
 /** `needs: 'parent'` (block only, D18): the reviewer says the fix needs a parent ruling (ambiguous/contradictory brief or plan, a product or contract decision); absent = the writer can fix it. */
 export interface ReviewEntry extends Base { kind: 'review'; node: string; attempt: number; obligation: 'review' | 'closure-review' | 'approve'; key: string; verdict: 'ok' | 'block'; rank: number; note?: string; ack_rulings?: number; needs?: 'parent'; model?: string }
-export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[] }
+export interface WaiveEntry extends Base { kind: 'waive'; node: string; obligation: string; key: string; reason: string; accept_risk?: number[]; tracked_by?: string }
 export interface DeferEntry extends Base { kind: 'defer'; node: string; items: { id: string; key: string }[]; reason: string; /** FS6 (0.23): only on an `executor:owed` defer: seq of the plan whose `allow` defer rule covers it; older owed refuses it. */ allowance?: number }
 export interface AbandonEntry extends Base { kind: 'abandon'; node: string; attempt: number; reason: string }
 /** AH: appended atomically after the abandon it names; older owed refuses this new kind. */

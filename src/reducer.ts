@@ -2,6 +2,7 @@ import { riskDowngrades, reviewRequirement, reviewRequirementText } from './risk
 import { matchesWrite, writeCovers, writeOverlaps, writesSyntax, withWritesSyntax, writesKeySyntax, writesAllowChanged, type WritesSyntax } from './writes.ts';
 import { matchesGlob } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { actContent } from './identical-acts.ts';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
 import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades, quarantineDowngrades, activeQuarantine, quarantineNames, type QuarantineNames, matchesAny } from './plan.ts';
@@ -933,6 +934,13 @@ export function mergeRisk(s: State, node: string, obligation: string, seq: numbe
   return e?.by === 'executor:owed' && e.probe === undefined && e.verdict === 'fail' && e.subject === node && e.merging === node && e.obligation === obligation && e.key === key && obligation.startsWith('check:') && id && old && checkDefinition(old, node, id) === checkDefinition(s.plan, node, id) && canonical(old.closure) === canonical(s.plan.closure) ? e : undefined;
 }
 
+/** TF3: changing only a tracker may re-record already accepted risks, never a new risk or gate decision. */
+export function trackedRiskRetry(s: State, d: Extract<Draft,{kind:'waive'}>): boolean {
+  if (d.tracked_by === undefined || !d.accept_risk?.length) return false;
+  const c = s.nodes[d.node]?.candidate;
+  if (!c) return false;
+  return listed(context(s).waives,d.node).some(w => w.seq > c.seq && w.by === d.by && w.obligation === d.obligation && actContent({...w,tracked_by:undefined}) === actContent({...d,tracked_by:undefined}) && d.accept_risk!.every(seq => s.nodes[d.node]?.blocks.some(b => b.seq === seq && b.state === 'cleared' && b.clearedBy === w.seq)));
+}
 /** TR2/3: match valid failure evidence by check key; its base may predate an unrelated trunk move. */
 export function trunkRedOf(s: State, seq: number, key?: string): { merge: ObsEntry; probe: ObsEntry } | undefined {
   const e = listed(context(s).bySeq, seq).find((x): x is ObsEntry => x.kind === 'obs');
@@ -1014,7 +1022,10 @@ export interface SharedFailure { names: string[]; trunk: ObsEntry[]; nameOnly: b
  */
 function measuredWithout(s: State, o: ObsEntry, t: ObsEntry, node: string | undefined): boolean {
   if (t.batch !== undefined || t.attribution) return false;
-  if (!o.obligation.startsWith('inv:')) return t.probe === 'trunk' && t.subject === o.subject;
+  if (!o.obligation.startsWith('inv:')) {
+    const old = obsPlan(context(s),o.seq), probePlan = obsPlan(context(s),t.seq), id = o.obligation.slice(6);
+    return t.probe === 'trunk' && t.subject === o.subject && !!old && !!probePlan && checkDefinition(old,o.subject,id) === checkDefinition(probePlan,o.subject,id) && canonical(old.closure) === canonical(probePlan.closure);
+  }
   if (t.subject !== 'trunk' || t.probe !== undefined) return false;
   if (t.merging === undefined) return true;
   const merged = node === undefined ? undefined : s.nodes[node]?.merged;
@@ -1022,7 +1033,8 @@ function measuredWithout(s: State, o: ObsEntry, t: ObsEntry, node: string | unde
 }
 /**
  * FS: failing observation `o` is shared when it is a complete, test-only failure and every failed name also failed
- * (test-only) in an earlier observation measured without `node`'s candidate within the AT4 window, with the same
+ * (test-only) in an observation measured without `node`'s candidate within the AT4 window, with the same
+ * definition for node checks (their trunk probes may follow O); invariants still require earlier evidence and the same
  * recorded signature. Name-only matches (no signature on either side) count unless `strict` (FS6). Diagnostic only.
  */
 export function sharedFailure(s: State, o: ObsEntry, node: string | undefined = o.merging, strict = false): SharedFailure | undefined {
@@ -1035,7 +1047,7 @@ export function sharedFailure(s: State, o: ObsEntry, node: string | undefined = 
     let found: ObsEntry | undefined;
     for (let i = entries.length - 1; i >= 0 && entries[i]!.seq >= o.seq - SHARED_WINDOW; i--) {
       const e = entries[i]!;
-      if (e.seq >= o.seq || e.kind !== 'obs' || e.by !== 'executor:owed' || e.obligation !== o.obligation || e.verdict !== 'fail') continue;
+      if ((e.seq >= o.seq && !o.obligation.startsWith('check:')) || e.seq === o.seq || e.kind !== 'obs' || e.by !== 'executor:owed' || e.obligation !== o.obligation || e.verdict !== 'fail') continue;
       if (e.failed?.includes(name) && e.signatures?.[name] === sig && testOnlyFailure(e) && measuredWithout(s, o, e, node)) { found = e; break; }
     }
     if (!found) return undefined;
@@ -1839,7 +1851,8 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('owner'); current(d.obligation, mergeKeyRisk ? n?.candidate?.keys[d.obligation] ?? '' : d.key);
       if (d.obligation.startsWith('inv:') || d.node === 'trunk') errors.push('invariant can never be waived');
       if (!d.reason.trim()) errors.push('waive requires a reason');
-      if (d.accept_risk?.some(seq => activeRisk(s, d.node, d.obligation, seq) ? !!mergeKeyRisk && n?.blocks.find(b => b.seq === seq)?.key !== d.key : !mergeRisk(s, d.node, d.obligation, seq, d.key))) errors.push('accept_risk must reference active blocks for this obligation');
+      if (d.tracked_by !== undefined && (typeof d.tracked_by !== 'string' || !s.plan.nodes.some(n => n.id === d.tracked_by))) errors.push('waive tracked_by must name a node of the current plan');
+      if (!trackedRiskRetry(s,d) && d.accept_risk?.some(seq => activeRisk(s, d.node, d.obligation, seq) ? !!mergeKeyRisk && n?.blocks.find(b => b.seq === seq)?.key !== d.key : !mergeRisk(s, d.node, d.obligation, seq, d.key))) errors.push('accept_risk must reference active blocks for this obligation');
       break;
     }
     case 'defer':
