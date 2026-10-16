@@ -28,7 +28,8 @@ import { driveStatus, readLock, driveStart, type DriveStart } from './drive-bg.t
 import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
-import { lintPlanShell } from './planlint.ts';
+import { lintPlanShell, lintPlanCost } from './planlint.ts';
+import { costReport, type CostReport } from './cost.ts';
 import { computeMetrics, sameModelReviews, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { counterfactual, type Counterfactual } from './counterfactual.ts';
 import { actScope, actContent, type RecordedAct } from './identical-acts.ts';
@@ -570,6 +571,7 @@ export async function init(o: Actor & { plan: string; channel: Channel; signal?:
   const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit,quarantineNames(p.plan,() => false));
   if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
+  warnings.push(...await lintPlanCost(o.cwd,p.plan,commit));
   const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, writes_syntax:2, state:facts, ...(o.path !== undefined ? { path:o.path } : {}) }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
   const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
   let error: string | undefined, lease: string | undefined;
@@ -697,6 +699,7 @@ export async function start(o: Context & { plan?: string; max?: number; stay?: b
     const gaps = uncoveredDowngrades(state.plan, b.plan, planDowngrades(state.plan, b.plan));
     if (gaps.length) startRefusal('plan downgrade', gaps.map(g => `${g.node}: ${g.what}`).join('; '), `record an explicit owner decision with owed plan ${JSON.stringify(source)} --note "<why>", then run owed start`);
   }
+  if (fresh || changed) warnings.push(...await lintPlanCost(o.cwd,b.plan,trunk.stdout.trim(),entries));
   if (fresh && confirmGate()) startRefusal('owner confirmation', 'OWED_CONFIRM=owner requires an explicit init', `run owed init ${JSON.stringify(source)}, then run owed start --plan ${JSON.stringify(source)}`);
   const status = await driveStatus(o);
   if (status.foreign) startRefusal('driver lock', `held on host ${status.host}; not checked from here`, 'check the driver on that host with owed drive --status before starting here');
@@ -723,7 +726,7 @@ export async function planSet(o: Actor & { plan: string; rev?: string; path?: st
     const hygiene = writesSyntaxErrors(b.plan,before.plan);
     if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
     const priorText = (await ledger.getBlob(before.planSha)).toString();
-    const warnings = lintPlanShell(b.plan,before.plan,o.plan,priorText);
+    const warnings = [...lintPlanShell(b.plan,before.plan,o.plan,priorText), ...await lintPlanCost(o.cwd,b.plan,before.trunk.commit,(await load(ledger)).entries)];
     const p = { plan:b.plan, sha:await ledger.putBlob(b.data) };
     return ledger.withLock(async () => { const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); return entry; });
   });
@@ -912,7 +915,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next,true,s.plan).plan;
-  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString())] };
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString()), ...await lintPlanCost(o.cwd,plan,s.trunk.commit,entries)] };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
 export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
@@ -2293,6 +2296,11 @@ export async function recordReport(ledger: Ledger, node: string, resume: number)
     const temp = join(dir,`.reports.${randomUUID()}.tmp`);
     try { await writeFile(temp,JSON.stringify(reports)); await rename(temp,file); } finally { await unlink(temp).catch(() => undefined); }
   });
+}
+/** CO: read-only ledger statistics with pinned measured-commit diffs. */
+export async function reportCost(o: Context & { since?: number | string }): Promise<CostReport> {
+  const {state,entries,lookup} = await load(await Ledger.open(o.cwd)); inited(state);
+  return costReport(o.cwd,entries,lookup,o.since);
 }
 /** MT: ledger entries and recorded plan blobs only; no repository or run-state query. */
 export async function reportMetrics(o: Context & MetricsWindow): Promise<Metrics> {

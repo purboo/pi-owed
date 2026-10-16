@@ -21,6 +21,7 @@ import { observationsOf } from './reducer.ts';
 import type { WaiveEntry } from './types.ts';
 import type { InFlight } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
+import { nearTimeoutWarnings } from './cost.ts';
 
 /** LO2: display current driver work without changing the ledger phase or acceptance. */
 export const measurementText = (m: InFlight): string => `${m.do === 'merge' ? 'merging' : 'measuring'} (since ${clockTime(m.since)})`;
@@ -102,6 +103,8 @@ export const liftsText = (node: string, ds: QuarantineDebt[]): string => `mergin
 /** NT3: presentation-only defer scope; unverified debt has not had its merge key rechecked. */
 export type DeferredView = State['deferred'][number] & { unverified?: 'drift' | 'conflict' };
 export interface StatusView {
+  /** CO3: runtime diagnostics only, never an outstanding obligation. */
+  runtimeWarnings?: string[];
   reviewRequirements?: Record<string, ReviewRequirement>;
   conflicts?: Record<string, Record<string, string[] | null>>;
   rebasePending?: Record<string, RebasePending>;
@@ -367,6 +370,8 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   const held = Object.values(s.nodes).filter(n => n.phase === 'held').map(n => ({ node:n.id, abandon:n.held! }));
   const trunkRed = trunkInvariantReds(s);
   const view: StatusView = { ...knownRedDebt(s), ...(trunkRed.length ? { trunkRed } : {}), ...(held.length ? { held } : {}), ...(reported.length ? { reported } : {}), ...(later.length ? { later } : {}), ...(superseded.length ? { superseded } : {}), ...(carried.length ? { carried } : {}), trunk: s.trunk, nodes: s.nodes, mergeQueue: mergeQueue(s), groups, ready, pending, invariants: s.invariants, ownerFlags:entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'), overlaps, halted: halts, ...(waiting.length ? { waiting } : {}), launches, ...(needsRuling.length ? { needsRuling } : {}), ...genesisStatus(s) };
+  const runtimeWarnings = nearTimeoutWarnings(s.plan,entries);
+  if (runtimeWarnings.length) view.runtimeWarnings = runtimeWarnings;
   if (s.plan.risk !== undefined) view.reviewRequirements = Object.fromEntries(Object.values(s.nodes).filter(n => n.candidate && n.slot?.open).map(n => [n.id, nodeReview(s, n.id)]));
   if (currentDefers.length) view.deferred = currentDefers;
   { const batch = mergeBatchPlan(s, mergeBatchSize(s.plan)); if (batch.length) view.mergeBatch = batch; }
@@ -715,7 +720,7 @@ export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}):
 export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
   if (options.full) return renderStatusFull(v);
   const summary = v.summary ?? { merged: v.groups.merged?.length ?? 0, needs: [], progress: [], debt: [] };
-  return [...summaryHead(v.trunk, v.invariants, summary), ...sweepRedLine(v),
+  return [...summaryHead(v.trunk, v.invariants, summary), ...sweepRedLine(v), ...(v.runtimeWarnings ?? []),
     ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts).map(line => `${id}: ${line}`)),
     ...(summary.progress.length ? [`In progress (${summary.progress.length}):`, ...summary.progress.map(p => `  ${p.node}: ${p.phase} (${age(p.ageMs)})${v.reviewRequirements?.[p.node] ? `; ${oneLine(reviewRequirementText(v.reviewRequirements[p.node]!))}` : ''}`)] : []),
     ...(summary.debt.length ? ['Debt:', ...summary.debt.map(d => `  ${d}`)] : []),
