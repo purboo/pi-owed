@@ -6,6 +6,7 @@ import * as ops from '../src/ops.ts';
 import * as replay from '../src/reducer.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Driver, DRIVE_PRINCIPAL } from '../src/drive-run.ts';
+import * as drivePolicy from '../src/drive.ts';
 import { decide } from '../src/drive.ts';
 import { Follower } from '../src/drive-bg.ts';
 import { Dsa } from '../src/dsa.ts';
@@ -17,7 +18,10 @@ import { repo } from './helpers/repo.ts';
 import { commitAt, cli } from './helpers/surface.ts';
 
 const owner = { role:'owner', id:'pi' } as const, parent = { role:'parent', id:'main' } as const;
-class SealedDsa extends Dsa { override async inspect(rid: string) { return { view:{ rid, state:'sealed' as const, status:'ok' } }; } }
+class SealedDsa extends Dsa {
+  override async inspect(rid: string) { return { view:{ rid, state:'sealed' as const, status:'ok' } }; }
+  override async send() { return { outcome:'applied' as const,spec_digest:'fixture' }; }
+}
 const PASS = 'ok 1 - measured\n1..1\n# tests 1\n# pass 1\n# fail 0\n';
 const NAMED = "not ok 1 - regression\n  ---\n  error: 'broken behaviour'\n  ...\n1..1\n# tests 1\n# pass 0\n# fail 1\n";
 async function fixture(schedule: string[], options: { checks?:boolean; nodes?:string[]; min?:number; repeat?:object; needles?:string[]; counted?:boolean } = {}) {
@@ -95,6 +99,14 @@ test('IF1/IF3/IF5: deterministic setup failure consumes one retry, halts rather 
     assert.equal(delivered.length,1);
     assert.match(delivered[0]!,/Needs you: a — setup failure \(no tests ran\): .*likely the environment.*owed decide a --remeasure/);
   } finally { await r.cleanup(); }
+  const named = await fixture(['pass','setup','named']);
+  try {
+    await named.accept();
+    const error = await refused(ops.merge({cwd:named.cwd,node:'a',as:parent}));
+    const votes = (await named.obs()).filter(o => o.merging === 'a');
+    assert.equal(votes.length,2); assert.deepEqual(votes[1]!.failed,['regression']);
+    assert.doesNotMatch(error.message,/^setup failure \(no tests ran\):/);
+  } finally { await named.cleanup(); }
 });
 
 test('IF2: failed-name + counted pass remains conflict; an independent setup pair alone resolves', { timeout:180_000 }, async () => {
@@ -136,7 +148,7 @@ test('IF2 replay: forged infra, wrong subject/key/obligation, intervening measur
       assert.throws(() => replay.reduce([...prefix,forged],look),/infra|invalid/,JSON.stringify(change));
     }
     const intervening = { ...first,seq:pass.seq,verdict:'error',auto_remeasure:undefined } as ObsEntry;
-    assert.throws(() => replay.reduce([...prefix,intervening,{...pass,seq:pass.seq + 1}],look),/infra|auto_remeasure/);
+    assert.throws(() => replay.reduce([...prefix,intervening,{...pass,auto_remeasure:undefined,seq:pass.seq + 1}],look),/obs infra requires the immediately preceding executor setup failure/);
     assert.equal((await ops.verify({ cwd:r.cwd })).ok,true);
   } finally { await r.cleanup(); }
 });
@@ -181,10 +193,20 @@ test('IF1/IF2: driver reruns a node-check setup failure on its current key, clea
     assert.match((await failed.state()).nodes.a!.halt!.reason,/^setup failure \(no tests ran\): .*owed decide a --remeasure/);
     assert.equal((await failed.obs()).length,2);
     await ops.decide({cwd:failed.cwd,nodes:'a',text:'environment fixed',remeasure:true,as:owner,channel:'delegated',dsa:{describe:async rid => ({rid,state:'sealed',status:'ok'}),send:async () => ({outcome:'applied',spec_digest:'fixture'})}});
-    await d.pass(); assert.equal((await failed.state()).nodes.a!.accepted,false,'the older unpaired setup failure still blocks');
+    await d.pass();
+    assert.ok((await failed.state()).nodes.a!.blocks.every(b => b.state === 'cleared'));
     assert.equal((await failed.obs()).at(-1)!.infra,(await failed.obs())[1]!.seq);
-    assert.equal((await failed.state()).nodes.a!.items.find(i => i.obligation === 'check:x')!.mark,'⊤');
+    assert.equal((await failed.state()).nodes.a!.items.find(i => i.obligation === 'check:x')!.status,'E');
   } finally { await failed.cleanup(); }
+  const named = await fixture(['setup','named'],{checks:true});
+  try {
+    await named.submit(); await ops.attest({cwd:named.cwd,node:'a'});
+    const d = await named.driver(); await d.pass(); await d.pass();
+    assert.deepEqual((await named.obs()).map(o => [o.verdict,o.failed ?? []]),[['fail',[]],['fail',['regression']]]);
+    const entries = await named.ledger.read();
+    assert.ok(entries.some(e => e.kind === 'send' && e.reason === 'repair'));
+    assert.ok(!entries.some(e => e.kind === 'halt'));
+  } finally { await named.cleanup(); }
 });
 
 test('IF4: same normalized signature across two nodes yields one repository notice within 30 minutes, never a pass', { timeout:180_000 }, async () => {
@@ -201,9 +223,62 @@ test('IF4: same normalized signature across two nodes yields one repository noti
     assert.equal(decide(s,s.plan,new Map(),{...opts,noticed:new Set([notice.once!])}).filter(a => a.do === 'notify' && a.once?.startsWith('setup\0')).length,0);
     assert.equal(decide(s,s.plan,new Map(),{...opts,now:now + 30*60_000 + 1}).filter(a => a.do === 'notify' && a.once?.startsWith('setup\0')).length,0);
     for (const id of ['a','b']) assert.equal(s.nodes[id]!.accepted,false);
+    // IF-R1 N4: candidate + merge observations of a are one subject, not two trees.
+    const {entries,look} = await r.lookup();
+    const onlyA = entries.filter(e => e.kind !== 'obs' || e.subject !== 'b').map(e => e.kind === 'obs' && e.subject === 'a' && e.attribution ? {...e,attribution:undefined,merging:'a'} as Entry : e);
+    const one = replay.reduce(onlyA,look);
+    assert.equal(drivePolicy.setupNotices(one,blobs,now).length,0);
+    // IF-R1 N3: the scan stops at the old boundary; no historical observation/log is inspected.
+    const cutoff = now + 31*60_000;
+    const old = replay.reduce(entries,look), history = replay.entriesOf(old);
+    const oldest = history.find(e => e.kind === 'obs')!;
+    Object.defineProperty(oldest,'ts',{get:() => { throw new Error('historical setup observation inspected'); }});
+    assert.deepEqual(drivePolicy.recentSetupFailures(old,cutoff),[]);
+    const d = await r.driver();
+    await (d.d as unknown as {init():Promise<unknown>}).init();
+    const loaded:string[] = [], originalGet = Ledger.prototype.getBlob;
+    Ledger.prototype.getBlob = async function(sha: string) { loaded.push(sha); return originalGet.call(this,sha); };
+    try {
+      const expired = replay.reduce(entries.map(e => ({...e,ts:'2000-01-01T00:00:00Z'})),look);
+      await (d.d as unknown as {observe(s: typeof expired,m: ReadonlySet<string>):Promise<unknown>}).observe(expired,new Set());
+      for (const o of await r.obs()) if (o.log) assert.ok(!loaded.includes(o.log),'expired setup log was loaded');
+    } finally { Ledger.prototype.getBlob = originalGet; }
     const log = join(r.root,'notice.jsonl'); await writeFile(log,JSON.stringify({...notice,outcome:'notify'}) + '\n');
     const f = new Follower({repo:r.cwd,log,pid:process.pid,from:0,deliver:() => {}}); try { assert.match((await f.step())!,/Needs you: .*setup failure on 2 trees/); } finally { f.stop(); }
   } finally { await r.cleanup(); }
+});
+
+test('IF-R1: counted remeasure resolves consecutive setup failures, but never crosses a counted failure', {timeout:180_000}, async () => {
+  const r = await fixture(['pass','setup','setup','pass']);
+  try {
+    await r.accept(); await refused(ops.merge({cwd:r.cwd,node:'a',as:parent}));
+    assert.equal((await r.obs()).filter(o => o.merging === 'a').length,2);
+    await ops.attest({cwd:r.cwd,node:'a',remeasure:true});
+    await ops.merge({cwd:r.cwd,node:'a',as:parent});
+    assert.equal((await r.state()).invariants[0]!.status,'E');
+    assert.ok(!(await r.ledger.read()).some(e => ['waive','defer'].includes(e.kind)));
+    const {entries,look} = await r.lookup();
+    assert.equal(replay.sameReplay(await r.state(),replay.reduce(entries,look)),true);
+  } finally { await r.cleanup(); }
+  const broken = await fixture(['pass','setup','named','setup','setup','pass']);
+  try {
+    await broken.accept(); await refused(ops.merge({cwd:broken.cwd,node:'a',as:parent}));
+    await ops.attest({cwd:broken.cwd,node:'a',remeasure:true});
+    await ops.attest({cwd:broken.cwd,node:'a',remeasure:true});
+    await ops.attest({cwd:broken.cwd,node:'a',remeasure:true});
+    await refused(ops.merge({cwd:broken.cwd,node:'a',as:parent}));
+    const all = await broken.obs(), key = all.find(o => o.merging === 'a')!.key, votes = all.filter(o => o.key === key);
+    assert.deepEqual(votes.map(o => o.verdict),['fail','fail','fail','fail','pass']);
+    assert.equal(votes.at(-1)!.infra,votes.at(-2)!.seq);
+    const {entries,look} = await broken.lookup();
+    const state = replay.reduce(entries,look);
+    const item = replay.mergeGuard(state,'a',{facts:state.nodes.a!.candidate!,state:{...state.trunk,commit:votes.at(-1)!.commit,invKeys:{x:key}}}).invItems[0]!;
+    assert.equal(item.mark,'⊤');
+    assert.ok(item.evidence.includes(votes[0]!.seq),'setup before the counted failure still binds');
+    assert.ok(item.evidence.includes(votes[1]!.seq),'counted failure still binds');
+    assert.ok(!item.evidence.includes(votes[2]!.seq));
+    assert.ok(!item.evidence.includes(votes[3]!.seq));
+  } finally { await broken.cleanup(); }
 });
 
 test('IF counted spec: prior counted observation enables a no-min_tests setup retry; repeat passes must meet every run count', { timeout:180_000 }, async () => {

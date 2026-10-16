@@ -20,7 +20,7 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, ty
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
-import { setupFailure, infraSource } from './reducer.ts';
+import { setupFailure, infraSource, observationsOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
@@ -1858,8 +1858,7 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
 export const MERGE_TREE_BREAK = 'merge tree does not pass ';
 async function mergeTreeBreakLead(cwd: string, s: State, node: string, commits: string[], reused: readonly ObsEntry[] = []): Promise<string[]> {
   const fails = [...entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === node && e.batch === undefined && e.verdict === 'fail' && commits.includes(e.commit)), ...reused];
-  const resolved = new Set(entriesOf(s).flatMap(e => e.kind === 'obs' && e.infra !== undefined ? [e.infra] : []));
-  const setup = fails.find(e => !resolved.has(e.seq) && setupFailure(s,e));
+  const setup = fails.find(e => observationsOf(s,e.subject,e.obligation,e.key).at(-1)?.seq === e.seq && setupFailure(s,e));
   if (setup) {
     const ledger = await Ledger.open(cwd), log = setup.log ? await ledger.getBlob(setup.log).then(b => b.toString()).catch(() => '') : '';
     return [setupHint(setupSignature(log || setup.note || ''),node)];

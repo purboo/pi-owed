@@ -96,7 +96,7 @@ const waivedFail = (s: State, e: ObsEntry): boolean => e.verdict === 'fail' && e
 const counted = (s: State, subject: string, obligation: string, key: string): ObsEntry[] => {
   const obs = observations(s, subject, obligation, key).filter(e => e.probe === undefined && !waivedFail(s, e) && grantPassReusable(s,e) && batchCounts(s, e));
   // IF2: only an explicitly validated receipt removes a setup failure from behavioural votes.
-  const resolved = new Set(obs.flatMap(e => e.infra === undefined ? [] : [e.infra]));
+  const resolved = resolvedSetupFailures(s, observations(s,subject,obligation,key));
   const votes = obs.filter(e => !resolved.has(e.seq));
   // WG5 supersedes an earlier overlap-only failure; ordinary failures keep their conflict semantics.
   return obligation === 'writes' ? votes.filter((e,i) => !e.waits_on || i === votes.length - 1) : votes;
@@ -220,6 +220,22 @@ export function setupFailure(s: State, o: Pick<ObsEntry, 'subject' | 'obligation
   const id = o.obligation.slice(o.obligation.indexOf(':') + 1);
   const spec = o.obligation.startsWith('inv:') ? plan.invariants.find(i => i.id === id) : plan.nodes.find(n => n.id === o.subject)?.checks.find(c => c.id === id);
   return !!spec && (spec.min_tests !== undefined || !!o.counts?.format || context(s).entries.some(e => e.kind === 'obs' && e.by === 'executor:owed' && e.subject === o.subject && e.obligation === o.obligation && (o.seq === undefined || e.seq < o.seq) && (e.counts?.tests ?? 0) > 0));
+}
+/** IF-R1: resolve only the consecutive zero-result suffix named by a validated infra receipt.
+ * Input includes every executor measurement of one exact key, including errors and diagnostic measurements.
+ */
+function resolvedSetupFailures(s: State, obs: readonly ObsEntry[], receipt?: number): Set<number> {
+  const resolved = new Set<number>();
+  for (let i = 0; i < obs.length; i++) {
+    const pass = obs[i]!;
+    if (pass.infra === undefined || receipt !== undefined && pass.seq !== receipt) continue;
+    for (let j = i - 1; j >= 0; j--) {
+      const fail = obs[j]!;
+      if ((j === i - 1 && fail.seq !== pass.infra) || fail.probe !== undefined || fail.batch !== undefined || !setupFailure(s,fail)) break;
+      resolved.add(fail.seq);
+    }
+  }
+  return resolved;
 }
 /** IF2: counted pass on the exact key, immediately after a setup failure. Undefined is always conservative. */
 export function infraSource(s: State, d: Extract<Draft, { kind: 'obs' }>): number | undefined {
@@ -665,14 +681,15 @@ function fold(s: State, entries: Iterable<Entry>): void {
       }
       const n = s.nodes[e.subject];
       if (n && e.probe === undefined) {
+        const resolved = resolvedSetupFailures(s, [...observations(s,e.subject,e.obligation,e.key),e],e.seq);
         const matches = n.blocks.filter(b => b.kind === 'exec' && underlying(h, b) === 'active' && b.obligation === e.obligation && b.key === e.key);
         if (e.attribution && e.verdict !== 'error') for (const b of matches) {
           // L2: an attribution rerun of a superseded block (recorded before 0.8, or by hand) leaves it superseded.
-          if (b.state === 'superseded') { h.shadow.set(b.seq, e.verdict === 'fail' || e.infra === b.seq ? 'cleared' : 'flaky'); continue; }
-          b.state = e.verdict === 'fail' || e.infra === b.seq ? 'cleared' : 'flaky';
+          if (b.state === 'superseded') { h.shadow.set(b.seq, e.verdict === 'fail' || resolved.has(b.seq) ? 'cleared' : 'flaky'); continue; }
+          b.state = e.verdict === 'fail' || resolved.has(b.seq) ? 'cleared' : 'flaky';
           if (b.state === 'cleared') b.clearedBy = e.seq;
         }
-        if (e.infra !== undefined) for (const b of n.blocks.filter(b => b.seq === e.infra && b.kind === 'exec')) {
+        if (e.infra !== undefined) for (const b of n.blocks.filter(b => resolved.has(b.seq) && b.kind === 'exec')) {
           if (b.state === 'superseded') h.shadow.set(b.seq, 'cleared');
           else { b.state = 'cleared'; b.clearedBy = e.seq; }
         }
@@ -2075,7 +2092,7 @@ export function genesisProgress(s: State): { ids: string[]; observed: string[]; 
   const ids = g ? s.plan.invariants.filter(i => !!g.state.invKeys[i.id]).map(i => i.id) : [];
   const at = (id: string) => {
     const obs = observations(s, 'trunk', `inv:${id}`, g!.state.invKeys[id]!);
-    const resolved = new Set(obs.flatMap(e => e.infra === undefined ? [] : [e.infra]));
+    const resolved = resolvedSetupFailures(s,obs);
     return obs.filter(e => !resolved.has(e.seq));
   };
   const observed = ids.filter(id => at(id).some(e => e.verdict !== 'error'));

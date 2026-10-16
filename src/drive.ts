@@ -104,18 +104,28 @@ export interface DriveOpts {
   noticed?: ReadonlySet<string>;
 }
 
+/** IF-R1: bounded tail shared by diagnostic policy and blob loading. */
+export function recentSetupFailures(s: State, now: number): ObsEntry[] {
+  const entries = entriesOf(s), found: ObsEntry[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!, at = Date.parse(e.ts);
+    if (Number.isFinite(at) && now - at > 30 * 60_000) break;
+    if (!Number.isFinite(at) || at > now || e.kind !== 'obs' || e.by !== 'executor:owed') continue;
+    if (setupFailure(s,e)) found.push(e);
+  }
+  return found;
+}
 /** IF4: one diagnostic per normalized signature and trunk; no measurement or ledger state is changed. */
 export function setupNotices(s: State, blobs: ReadonlyMap<string,string> | undefined, now: number | undefined): { once: string; text: string }[] {
   if (now === undefined || !blobs) return [];
   const groups = new Map<string,{ subjects:Set<string>; nodes:Set<string> }>();
-  for (const e of entriesOf(s)) {
-    if (e.kind !== 'obs' || e.by !== 'executor:owed') continue;
-    const at = Date.parse(e.ts);
-    if (!Number.isFinite(at) || at > now || now - at > 30 * 60_000 || !e.log || !blobs.has(e.log) || !setupFailure(s,e)) continue;
+  for (const e of recentSetupFailures(s,now)) {
+    if (!e.log || !blobs.has(e.log)) continue;
     const signature = setupSignature(blobs.get(e.log)!);
     const group = groups.get(signature) ?? { subjects:new Set<string>(), nodes:new Set<string>() };
-    group.subjects.add(e.batch ? `batch:${e.batch.join(',')}` : e.merging ? `merge:${e.merging}` : e.subject);
-    group.nodes.add(e.merging ?? e.subject); groups.set(signature,group);
+    const subject = e.merging ?? e.subject;
+    group.subjects.add(subject); group.nodes.add(subject);
+    groups.set(signature,group);
   }
   return [...groups].filter(([,g]) => g.subjects.size >= 2).sort(([a],[b]) => a.localeCompare(b)).map(([signature,g]) => {
     const nodes = [...g.nodes].sort().join(',');
@@ -954,7 +964,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // Row 11: a measured block: an obligation of the candidate failed (✘), or an active execution block binds it.
     const measured = n.items.filter(i => (i.mark === '✘' || n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === i.obligation)) && !(waitingWrites && i.obligation === 'writes'));
     if (measured.length) {
-      const setup = measured.flatMap(i => observationsOf(s,id,i.obligation,i.key)).findLast(o => setupFailure(s,o));
+      const setup = measured.map(i => observationsOf(s,id,i.obligation,i.key).at(-1)).find(o => o !== undefined && setupFailure(s,o));
       if (setup) return halt(setupHint(setupSignature(opts.blobs?.get(setup.log ?? '') ?? setup.note ?? ''),id));
       // K5.3: the same count below min_tests twice: the threshold may be the plan's mistake; the parent decides.
       const hint = thresholdHint(s, id, measured.map(i => i.obligation));
