@@ -1,7 +1,7 @@
 // QS1/QS2/QS4/QS5: public plan/measurement/CLI behavior on real Git repositories.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { access, readFile } from 'node:fs/promises';
+import { access, chmod, readFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -157,6 +157,26 @@ test('QS2: opaque scripted failures keep their exit and explain file delivery in
     const why=await cli(r.cwd,['why','work','--full']);
     assert.match(why.stdout,/quarantine file: 2 names \(owed excused nothing\)/);
     assert.doesNotMatch(why.stdout,/quarantine not applied: not a known test runner/);
+  } finally {await r.cleanup();}
+});
+
+test('QS2 R-qsets-2: Cargo-shaped native refusal keeps its reason despite own-name file delivery', async () => {
+  const r=await repo();
+  try {
+    await r.put('tools/cargo',`#!${process.execPath}
+const fs=require('node:fs'); const p=process.env.OWED_QUARANTINE_FILE;
+console.log('file-evidence '+JSON.stringify({path:p??null,content:p?fs.readFileSync(p,'utf8'):null}));
+console.log('running 2 tests\\ntest a flaky ... FAILED\\ntest normal ... ok\\n\\ntest result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\\nerror: test failed, to rerun pass --lib');
+process.exit(101);`);
+    await chmod(join(r.cwd,'tools/cargo'),0o755); await r.commit();
+    await init(r.cwd,{...plain(),invariants:[{id:'unit',run:'PATH=./tools:/usr/bin:/bin cargo test',reads:['tools/'],quarantine:Q}]},true);
+    const o=(await observations(r.cwd)).findLast(o=>o.obligation==='inv:unit')!;
+    const file=await evidence(r.cwd,o);
+    assert.ok(file.path,'active own names must be delivered to the Cargo-shaped run');
+    assert.equal(file.content,'a flaky\nz flaky\n'); await assert.rejects(access(file.path));
+    assert.equal(o.verdict,'fail'); assert.equal(o.exit,101); assert.equal(o.quarantined,undefined);
+    assert.match(o.note??'',/quarantine not applied: not a plain cargo test --no-fail-fast run/);
+    assert.doesNotMatch(o.note??'',/quarantine file:/);
   } finally {await r.cleanup();}
 });
 

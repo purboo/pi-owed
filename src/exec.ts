@@ -637,7 +637,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         }
         // MS4: a completed run whose only failing tests are active quarantine names counts as if they had not run.
         const verdict = quarantineExcuse(excusable, spec.run, raw, obs.counts, named, spec.min_tests), excused = verdict.excused;
-        if (quarantineFile && !excused && !nodeTestRun(spec.run)) fileNotes.add(`quarantine file: ${excusable.length} names (owed excused nothing)`);
+        if (quarantineFile && !excused && !nodeTestRun(spec.run) && !CARGO_RUN.test(spec.run)) fileNotes.add(`quarantine file: ${excusable.length} names (owed excused nothing)`);
         else if (verdict.reason) notApplied.add(verdict.reason);
         if (excusable.length && (job.subject === 'trunk' || job.merging !== undefined || job.probe === 'trunk')) {
           for (const name of tapQuarantinePassed(excusable, spec.run, raw, obs.counts)) recovered.add(name);
