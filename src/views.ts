@@ -1,6 +1,6 @@
 import { actRuns, collapsedActLines, alreadyRecordedText, type RecordedAct } from './identical-acts.ts';
 import { reviewRequirementText, type ReviewRequirement } from './risk.ts';
-import { nodeReview } from './reducer.ts';
+import { nodeReview, readyDispatchSkips, type DispatchSkip } from './reducer.ts';
 import type { AdoptionView, AttemptRuns, Block, CheckSpec, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, SlotRebase, State } from './types.ts';
 import { mergeWaitSuffix } from './adopt-wait.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
@@ -26,6 +26,17 @@ import { nearTimeoutWarnings } from './cost.ts';
 /** LO2: display current driver work without changing the ledger phase or acceptance. */
 export const measurementText = (m: InFlight): string => `${m.do === 'merge' ? 'merging' : 'measuring'} (since ${clockTime(m.since)})`;
 
+// Text-only diagnostics: JSON and ledger/replay state stay unchanged.
+const readyText = new WeakMap<object, string[]>();
+const readyLines = (v: object): string[] => readyText.get(v) ?? [];
+const setReadyText = (v: object, lines: string[]): void => { readyText.set(v, lines); };
+function dispatchSkipText(s: State, node: string, skip: DispatchSkip): string {
+  const prefix = 'ready, not dispatched: ';
+  if (skip.kind === 'max') return `${prefix}${skip.open} of max ${skip.max} attempts open`;
+  if (skip.kind === 'overlap') return `${prefix}writes overlap ${skip.others.map(o => `${oneLine(o.node)} (${o.paths.map(oneLine).join(', ')})`).join(', ')} → owed dispatch ${node} --allow-overlap`;
+  if (skip.kind === 'owner') return `${prefix}${oneLine(skip.reason)}${ownerCommands(s, node).length ? ` → ${ownerCommands(s, node).join(' | ')}` : ` → owed why ${node} --full`}`;
+  return `${prefix}node is no longer in the plan`;
+}
 export interface ReceiptCard {
   reviewRequirement?: ReviewRequirement;
   conflicts?: Record<string, string[] | null>;
@@ -234,9 +245,9 @@ export const carryLine = (e: Entry): string => e.kind === 'submit' ? `Carried ${
 /** N1 (23:4x): the line `owed plan` prints for a carry it skipped. */
 export const notCarriedLine = (x: { node: string; reason: string }): string => `Not carried ${x.node}: ${x.reason}; the writer submits again`;
 /** N3: what `owed amend` and owed_amend print: the plan entry, carries, the rule and the file written. */
-export const amendLines = (r: { node: string; path: string; added: string[]; present: string[]; plan: Entry; rule: Entry; carried: Entry[]; notCarried: { node: string; reason: string }[] }): string[] => [
-  renderEntry(r.plan), ...r.carried.map(carryLine), ...r.notCarried.map(notCarriedLine), renderEntry(r.rule),
-  `Widened writes of ${r.node}: ${r.added.map(p => `+${p}`).join(', ')}${r.present.length ? ` (already in writes: ${r.present.join(', ')})` : ''}; wrote ${r.path}`,
+export const amendLines = (r: import('./ops.ts').AmendResult): string[] => [
+  ...(r.plan ? [renderEntry(r.plan)] : []), ...r.carried.map(carryLine), ...r.notCarried.map(notCarriedLine), ...(r.rule ? [renderEntry(r.rule)] : []),
+  `${r.added.length ? `Widened writes of ${r.node}: ${r.added.map(p => `+${p}`).join(', ')}; wrote ${r.path}` : `${r.node}: writes unchanged`}${r.covered.map(c => `; ${c.path} already covered by ${c.entry}`).join('')}`,
 ];
 /** L2: a superseded execution block with its audit line. */
 export type SupersededBlock = Block & { supersededBy: number; text: string };
@@ -289,11 +300,11 @@ export function templateReceiptRun(s: State, item: ItemView): { run?: string } {
   const spec = item.obligation.startsWith('inv:') ? s.plan.invariants.find(c => `inv:${c.id}` === item.obligation) : s.plan.nodes.find(n => n.id === item.subject)?.checks.find(c => `check:${c.id}` === item.obligation || `red:${c.id}` === item.obligation);
   return spec && isCheckTemplateRun(spec.run) ? { run: spec.run } : {};
 }
-export function receipt(s: State, entries: readonly Entry[], node: string, mergeChecks: ItemView[] = []): ReceiptCard {
+export function receipt(s: State, entries: readonly Entry[], node: string, mergeChecks: ItemView[] = [], dispatchMax = driveConfig(s.plan).max): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   const outOfWrites = outsideWrites(s, node), superseded = supersededOf(s, [n]);
-  return withActHistory({ node, phase: n.phase, accepted: n.accepted,
+  const card = withActHistory({ node, phase: n.phase, accepted: n.accepted,
     ...(s.plan.risk !== undefined && n.candidate ? { reviewRequirement: nodeReview(s, node) } : {}),
     items: n.items.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })),
     ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })) } : {}),
@@ -317,6 +328,11 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
     ...(carriedOf(n) ? { carried: carriedOf(n) } : {}),
     ...(n.candidate?.carry ? {reviewCarried:reviewCarryText(n.candidate)} : {}),
     ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) }, entries);
+  if (n.phase === 'ready') {
+    const skip = readyDispatchSkips(s, dispatchMax).get(node);
+    if (skip) setReadyText(card, [dispatchSkipText(s, node, skip)]);
+  }
+  return card;
 }
 /** One line naming the plan's wrapper argv and env names (D20.5); argv words with blanks or quotes are JSON-quoted. */
 export function execText(plan: Plan): string {
@@ -349,7 +365,7 @@ function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
 export const allowanceLabel = (d: { by: string; allowance?: number; items?: { what: string }[] }): string => d.allowance === undefined ? '' : d.by === 'executor:owed' ? `${d.items?.some(i => /^inv:\S+ deferred: /.test(i.what)) ? 'deferred' : 'granted'} by owed under allowance (plan #${d.allowance})` : `by ${d.by} under allowance (plan #${d.allowance})`;
-export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key)): StatusView {
+export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key), dispatchMax = driveConfig(s.plan).max): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
     (groups[n.phase] ??= []).push(n.id);
@@ -376,6 +392,7 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   if (s.plan.risk !== undefined) view.reviewRequirements = Object.fromEntries(Object.values(s.nodes).filter(n => n.candidate && n.slot?.open).map(n => [n.id, nodeReview(s, n.id)]));
   if (currentDefers.length) view.deferred = currentDefers;
   { const batch = mergeBatchPlan(s, mergeBatchSize(s.plan)); if (batch.length) view.mergeBatch = batch; }
+  setReadyText(view, [...readyDispatchSkips(s, dispatchMax)].filter(([, skip]) => skip.kind !== 'owner').map(([id, skip]) => `${id}: ${dispatchSkipText(s, id, skip)}`));
   view.summary = summaryView(s, entries, view, now, driverRunning, currentDefers);
   return view;
 }
@@ -425,6 +442,8 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     if (/^cannot re-(?:launch|send)/.test(reason)) return 'stored run request is unavailable';
     return plain(reason).replace(/\s+to:"[^"]*"/g, '');
   };
+  const ownerReady = new Map([...readyDispatchSkips(s, driveConfig(s.plan).max)].filter(([, skip]) => skip.kind === 'owner'));
+  for (const [id, skip] of ownerReady) add(id, dispatchSkipText(s, id, skip), '');
   for (const b of v.needsRuling ?? []) add(b.node, `needs a parent ruling: ${b.note}`, `owed decide ${b.node} --writer --text "<decision>"`);
   for (const h of v.halted) {
     if (v.needsRuling?.some(b => b.node === h.node)) continue;
@@ -436,7 +455,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
   for (const red of trunkParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
   for (const red of sharedParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
   for (const i of Object.values(v.pending).flat()) {
-    if (trunkParked(s, i.subject).length) continue;
+    if (trunkParked(s, i.subject).length || ownerReady.has(i.subject)) continue;
     if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
     if (i.obligation === 'driver-halt' || i.obligation === 'dispatch' || v.needsRuling?.some(b => b.node === i.subject && b.obligation === i.obligation)) continue;
     if (i.obligation === 'approve' && waitingFor(s, i.subject)) continue;
@@ -456,7 +475,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     add(i.subject, reason, command);
   }
   if (!driverRunning) for (const id of v.ready) {
-    if (v.later?.includes(id) || v.overlaps[id]) continue;
+    if (v.later?.includes(id) || v.overlaps[id] || ownerReady.has(id)) continue;
     add(id, 'ready to dispatch', `owed dispatch ${id}`);
   }
   const at = (seq?: number): number => {
@@ -684,8 +703,8 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
   ];
   // risk (0.24): the derived review requirement says what review would satisfy the node; context, not outstanding.
   const context = [...(v.reviewRequirement && v.phase !== 'merged' ? [oneLine(reviewRequirementText(v.reviewRequirement))] : [])];
-  const open = lines.filter(l => !l.startsWith('Warning: ')).length;
-  const outcome = v.phase === 'merged' ? 'merged' : `${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
+  const open = lines.filter(l => !l.startsWith('Warning: ')).length + readyLines(v).length;
+  const outcome = v.phase === 'merged' ? 'merged' : `${v.measuring ? measurementText(v.measuring) : readyLines(v)[0] ?? phaseNames[v.phase]}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
   return [`${v.node}: ${outcome}`, ...lines, ...context, `Details: owed why ${v.node} --full`].join('\n');
 }
 /** QT4: the obligations owed measures (checks, strength, red, writes, invariants). */
@@ -711,7 +730,7 @@ export function newFailures(v: ReceiptCard, since: number): { lines: string[]; e
   }
   return { lines, earlier };
 }
-const conflictLines = (conflicts: Record<string, string[] | null> | undefined): string[] => Object.entries(conflicts ?? {}).map(([target, paths]) => `conflicts with ${target}: ${paths === null ? 'unknown; retry owed status' : paths.map(oneLine).join(', ') || 'none'}`);
+const conflictLines = (conflicts: Record<string, string[] | null> | undefined, full = true): string[] => Object.entries(conflicts ?? {}).filter(([, paths]) => full || paths === null || paths.length > 0).map(([target, paths]) => `conflicts with ${target}: ${paths === null ? 'unknown; retry owed status' : paths.map(oneLine).join(', ') || 'none'}`);
 export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}): string {
   const history = actHistories.get(v) ?? v.items.flatMap(i => i.observations);
   const runs = actRuns(history,history.filter(e => e.kind === 'rule'));
@@ -723,7 +742,8 @@ export function renderStatus(v: StatusView, options: { full?: boolean } = {}): s
   if (options.full) return renderStatusFull(v);
   const summary = v.summary ?? { merged: v.groups.merged?.length ?? 0, needs: [], progress: [], debt: [] };
   return [...summaryHead(v.trunk, v.invariants, summary), ...sweepRedLine(v), ...(v.runtimeWarnings ?? []),
-    ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts).map(line => `${id}: ${line}`)),
+    ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts, false).map(line => `${id}: ${line}`)),
+    ...readyLines(v),
     ...(summary.progress.length ? [`In progress (${summary.progress.length}):`, ...summary.progress.map(p => `  ${p.node}: ${p.phase} (${age(p.ageMs)})${v.reviewRequirements?.[p.node] ? `; ${oneLine(reviewRequirementText(v.reviewRequirements[p.node]!))}` : ''}`)] : []),
     ...(summary.debt.length ? ['Debt:', ...summary.debt.map(d => `  ${d}`)] : []),
     'Details: owed status --full · owed why <node>'].join('\n');
