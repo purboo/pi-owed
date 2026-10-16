@@ -10,7 +10,7 @@ import { Ledger } from '../src/ledger.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 import { repo } from './helpers/repo.ts';
 import { decide, repairFollowUp, writerLaunch } from '../src/drive.ts';
-import { classifyLine } from '../src/drive-bg.ts';
+import { classifyLine, Follower } from '../src/drive-bg.ts';
 import { clockTime } from '../src/clock.ts';
 import owed from '../src/extension.ts';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -143,6 +143,40 @@ test('TF2: a probe after an active or flaky failure adds shared text to needs, w
     await r.setMode('pass'); assert.equal((await r.probe(['--check','runtime'])).code,0);
     // FS keeps failure history; a pass itself adds no shared evidence and never clears this flaky block.
     assert.equal((await r.state()).nodes.a!.blocks.find(b => b.seq === failure.seq)!.state,'flaky');
+  } finally { await r.cleanup(); }
+});
+
+test('TF2/WF1 #3052: shared trunk diagnosis precedes and retains the same-key flaky pair', async () => {
+  const r = await fixture();
+  try {
+    await r.measure(); const fail = (await r.obs()).find(e => e.obligation === 'check:runtime')!;
+    assert.equal((await r.probe()).code,1);
+    await r.setMode('pass'); await r.measure();
+    const launch = writerLaunch(await r.state(),'a',reducer.projectId(await r.state()));
+    await ops.launch({...r,as:parent,node:'a',attempt:1,role:'writer',rid:launch.rid,spec:launch.spec,labels:launch.labels,rulings:launch.rulings});
+    const s = await r.state(), block = s.nodes.a!.blocks.find(b => b.seq === fail.seq)!;
+    assert.equal(block.state,'flaky'); assert.ok(reducer.sharedFailure(s,fail,'a'));
+    const pass = reducer.flakyPass(s,block)!;
+    const shared = `check:runtime block #${fail.seq} also fails on trunk`, flaky = `flaky block #${fail.seq} on check:runtime`;
+    const pair = `failed #${fail.seq} (shared race) → passed #${pass.seq} on the same key`;
+    const check = (text:string) => {
+      assert.ok(text.includes(shared),text); assert.ok(text.includes(flaky),text); assert.ok(text.includes(pair),text);
+      assert.ok(text.indexOf(shared) < text.indexOf(flaky),text);
+    };
+    const card = await ops.why({...r,node:'a'}), status = await ops.status(r);
+    check(card.blocks.find(b => b.seq === fail.seq)!.clear);
+    check(status.pending.owner!.find(i => i.obligation === 'check:runtime')!.hint!);
+    check(status.summary!.needs.find(n => n.node === 'a')!.reason);
+    check(repairFollowUp(s,'a').message);
+    const log = join(r.root,'combined-wake.jsonl');
+    const actions = decide(s,s.plan,new Map([[launch.rid,{rid:launch.rid,state:'sealed' as const,status:'ok'}]]),{max:1,repairs:2,project:'test',root:r.cwd,applied:new Set(),rejected:new Map(),now});
+    const need = actions.find(a => a.do === 'notify' && a.node === 'a'); assert.ok(need?.do === 'notify');
+    check(need.text);
+    await writeFile(log,JSON.stringify(need)+'\n');
+    const follower = new Follower({log,repo:r.cwd,pid:process.pid,from:0,deliver(){}});
+    try { check((await follower.step())!); } finally { follower.stop(); }
+    const after = await r.state();
+    assert.deepEqual(after.nodes,s.nodes,'diagnostic rendering never changes blocks, obligations, keys or acceptance');
   } finally { await r.cleanup(); }
 });
 

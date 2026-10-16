@@ -495,7 +495,10 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
     return plain(reason).replace(/\s+to:"[^"]*"/g, '');
   };
   const ownerReady = new Map([...readyDispatchSkips(s, driveConfig(s.plan).max)].filter(([, skip]) => skip.kind === 'owner'));
-  for (const [id, skip] of ownerReady) add(id, dispatchSkipText(s, id, skip), '');
+  for (const [id, skip] of ownerReady) {
+    const diagnoses = s.nodes[id]?.blocks.filter(countsBlock).flatMap(b => trunkRedHint(s,b.seq,b.key) ?? sharedCheckHint(s,b) ?? []) ?? [];
+    add(id, [...diagnoses,dispatchSkipText(s,id,skip)].join('; '), '');
+  }
   for (const b of v.needsRuling ?? []) {
     const command = reviewDecision(b.node);
     if (!needs.some(n => n.node === b.node && n.command === command)) needs.push({ node:b.node, reason:`review asks: ${reviewAsk(b.note)}`, command });
