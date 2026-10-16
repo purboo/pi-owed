@@ -11,7 +11,7 @@ import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices,
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
-import { nodeReview, ownerNeeded, dispatchSkip } from './reducer.ts';
+import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
@@ -238,6 +238,7 @@ export function repairFollowUp(s: State, node: string, rejected?: ReadonlyMap<st
   });
   const scoped = rulingsInScope(s, node).filter(r => r.seq > n.slot!.dispatchSeq && deliversRule(r, writerRid(s, node))), rulings = scoped.map(r => `- #${r.seq} ${r.text}`);
   const failed = newFailures(receipt(s, entries, node), since);
+  failed.lines.push(...n.blocks.filter(b => b.state === 'flaky' && !heldFlaky(s,node,b)).map(b => `- ${flakyBlockText(s,b)}`));
   const earlier = [...new Set([...failed.earlier, ...active.filter(b => b.seq <= since).map(b => b.obligation)])];
   // K5.2: the rulings come first.
   return { rulings: carried([...scoped, ...quoted]), message: [...(rulings.length ? ['Rulings since dispatch:', ...rulings] : []),
@@ -417,7 +418,10 @@ function blockLines(s: State, node: string): string[] {
     const note = e?.kind === 'review' ? e.note ?? '' : e?.kind === 'obs' ? e.note ?? `exit ${e.exit}` : '';
     return `- #${b.seq} ${b.obligation}${b.kind === 'judgment' ? ` by ${e?.by ?? '?'} rank ${b.rank}` : ''}: ${oneLine(note)}`;
   };
-  const notes = blocks.map(line), flaky = n.blocks.filter(b => b.state === 'flaky').map(line);
+  const notes = blocks.map(line), flaky = n.blocks.filter(b => b.state === 'flaky' && !heldFlaky(s,node,b)).map(b => {
+    const e = entries.find(x => x.seq === b.seq);
+    return e?.kind === 'obs' ? `- ${flakyBlockText(s,b)}${e.note ? ` — note: ${oneLine(e.note)}` : ''}` : line(b);
+  });
   return [...(notes.length ? [`Active blocks on your candidate ${c!.commit} (submit #${c!.seq}):`, ...notes] : []),
     ...(flaky.length ? [`Flaky blocks of ${node} (an attribution rerun of the failing content passed):`, ...flaky] : [])];
 }
@@ -793,7 +797,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Ruling #1431: with only rulings debt and no review obligation, even a non-ok sealed writer gets one
   // ruling follow-up, then we wait for resubmit. Unaddressable runs/sends have already followed rows 3-4.
   const pending = n.items.filter(i => i.status === 'D');
-  if (c && pending.length === 1 && pending[0]!.obligation === 'rulings' && !n.items.some(i => i.obligation === 'review' || i.obligation === 'closure-review') && !n.blocks.some(b => b.state === 'active' || b.state === 'flaky')) {
+  if (c && pending.length === 1 && pending[0]!.obligation === 'rulings' && !n.items.some(i => i.obligation === 'review' || i.obligation === 'closure-review') && !n.blocks.some(b => (b.state === 'active' || b.state === 'flaky') && !heldFlaky(s,id,b))) {
     const seen = Math.max(slot.rulings_seen, ...ar.sends.filter(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up').map(x => x.rulings ?? -1));
     const rules = rulingsInScope(s, id).filter(r => r.seq > seen);
     if (rules.length) return send(writer, 'follow-up', 'ruling', [`New parent rulings for ${id}:`, ...rulingLines(rules), `Apply these rulings to candidate ${c.commit} (submit #${c.seq}), then run \`owed submit ${id}\` (the same commit may be submitted again). This candidate has no review obligation; resubmitting records the delivered rulings as seen.`].join('\n'), carried(rules));
@@ -1035,7 +1039,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     if (wSealed && !reviewing) {
       const items = n.items.filter(i => i.status !== 'E').map(i => `${i.obligation} ${i.mark} ${i.detail}`);
       const blocks = n.blocks.filter(b => b.state === 'active').map(b => blockText(s, c, b));
-      const dirty = n.items.some(i => i.mark === '✘') || n.blocks.some(b => b.state === 'flaky' || (b.state === 'active' && b.key === c.keys[b.obligation]));
+      const dirty = n.items.some(i => i.mark === '✘') || n.blocks.some(b => !heldFlaky(s,id,b) && (b.state === 'flaky' || (b.state === 'active' && b.key === c.keys[b.obligation])));
       const rulingsOwed = n.items.some(i => i.obligation === 'rulings' && i.status === 'D');
       return (dirty ? rulingFirst() : rulingsOwed ? reviewerRuling(s, n, ar, reviewers, opts) : undefined) ?? halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}${resolveText(s, id)}`, 'owner');
     }
@@ -1053,7 +1057,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
  */
 export function manualHalt(s: State, node: string): { reason: string; needs: 'human' | 'owner' } | undefined {
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
-  if (!n?.candidate || !spec || n.blocks.some(b => b.state === 'active' || b.state === 'flaky')) return undefined;
+  if (!n?.candidate || !spec || n.blocks.some(b => (b.state === 'active' || b.state === 'flaky') && !heldFlaky(s,node,b))) return undefined;
   const pending = n.items.filter(i => i.status === 'D');
   if (!pending.length || !pending.every(i => i.obligation === 'approve' || i.obligation.startsWith('evidence:'))) return undefined;
   const parts = pending.map(i => {

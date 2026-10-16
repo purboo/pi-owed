@@ -2,29 +2,37 @@ import { spawnSync } from 'node:child_process';
 import { basename } from 'node:path';
 import { parse } from 'yaml';
 import { OwedError } from './errors.ts';
-import type { Plan } from './types.ts';
+import type { Plan, CheckSpec } from './types.ts';
+import { canonical } from './canon.ts';
 import { expandWrap } from './exec-wrap.ts';
 import { git } from './git.ts';
 import { matchesAny } from './plan.ts';
 import { nearTimeoutWarnings } from './cost.ts';
 import type { Entry } from './types.ts';
 
-/** CO2/CO3: admission diagnostics only, once per recorded plan; tracked paths come from the pinned trunk. */
-export async function lintPlanCost(cwd: string, plan: Plan, commit: string, entries: readonly Entry[] = []): Promise<string[]> {
+/** WF4: stable check identity, and only measurement-affecting admission fields. */
+export function planCheckChanged(next: CheckSpec, prior?: CheckSpec): boolean {
+  return !prior || next.run !== prior.run || canonical(next.reads) !== canonical(prior.reads) || next.timeout_s !== prior.timeout_s;
+}
+/** CO2/CO3: admission diagnostics only; a report still shows all measured cost. */
+export async function lintPlanCost(cwd: string, plan: Plan, commit: string, entries: readonly Entry[] = [], prior?: Plan): Promise<string[]> {
   const paths = (await git(cwd, ['ls-tree', '-rz', '--name-only', commit])).stdout.split('\0').filter(Boolean), warnings: string[] = [];
   const coverage = (id: string, reads: string[]) => {
     const n = paths.filter(p => matchesAny(p, reads)).length;
     const percent = paths.length ? n * 100 / paths.length : reads.includes('**') ? 100 : 0;
     if (reads.includes('**') || percent >= 90) warnings.push(`reads of ${id} cover ${Math.round(percent * 10) / 10}% of the repository: almost every change remeasures it (owed report --cost)`);
   };
-  for (const inv of plan.invariants) coverage(`inv:${inv.id}`, inv.reads);
+  for (const inv of plan.invariants) if (planCheckChanged(inv,prior?.invariants.find(i => i.id === inv.id))) coverage(`inv:${inv.id}`, inv.reads);
   const closure = [...new Set([...paths.filter(p => matchesAny(p, plan.closure)), ...plan.closure.filter(p => !/[?*\[\]{}]/.test(p))])].sort();
   for (const node of plan.nodes) for (const check of node.checks) {
-    coverage(`check:${check.id}`, check.reads);
-    const path = closure.find(p => matchesAny(p, check.reads));
+    const old = prior?.nodes.find(n => n.id === node.id)?.checks.find(c => c.id === check.id);
+    if (planCheckChanged(check,old)) coverage(`check:${check.id}`, check.reads);
+    const path = !old || canonical(old.reads) !== canonical(check.reads) || canonical(prior?.closure) !== canonical(plan.closure) ? closure.find(p => matchesAny(p, check.reads)) : undefined;
     if (path) warnings.push(`check ${check.id} reads closure path ${path}: checks see the base version of closure files`);
   }
-  return [...new Set([...warnings, ...nearTimeoutWarnings(plan, entries)])].map(w => `warning: ${w}`);
+  const law = entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis');
+  const previous = new Set(prior ? nearTimeoutWarnings(prior,law ? entries.filter(e => e.seq < law.seq) : []) : []);
+  return [...new Set([...warnings, ...nearTimeoutWarnings(plan, entries).filter(w => !previous.has(w))])].map(w => `warning: ${w}`);
 }
 
 type Word = { value: string; literal: boolean; reserved: boolean; assignment: boolean };
@@ -122,7 +130,11 @@ function planRuns(plan: Plan, text?: string): Map<string, string> {
 export function lintPlanShell(next: Plan, prior?: Plan, text?: string, priorText?: string): string[] {
   const old = prior ? planRuns(prior,priorText) : new Map<string, string>();
   for (const [label, run] of planRuns(next, text)) {
-    if (old.get(label) === run) continue;
+    const inv = next.invariants.find(i => label === `inv:${i.id}/run`);
+    const node = next.nodes.find(n => n.checks.some(c => label === `${n.id}/${c.id}`));
+    const check = node?.checks.find(c => label === `${node.id}/${c.id}`);
+    const changed = inv ? planCheckChanged(inv,prior?.invariants.find(i => i.id === inv.id)) : check ? planCheckChanged(check,prior?.nodes.find(n => n.id === node!.id)?.checks.find(c => c.id === check.id)) : false;
+    if (old.get(label) === run && !changed) continue;
     const pending = [run], seen = new Set<string>();
     while (pending.length) {
       const script = pending.pop()!; if (seen.has(script)) continue; seen.add(script);

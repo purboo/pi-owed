@@ -709,7 +709,7 @@ export async function start(o: Context & { plan?: string; max?: number; stay?: b
     const gaps = uncoveredDowngrades(state.plan, b.plan, planDowngrades(state.plan, b.plan));
     if (gaps.length) startRefusal('plan downgrade', gaps.map(g => `${g.node}: ${g.what}`).join('; '), `record an explicit owner decision with owed plan ${JSON.stringify(source)} --note "<why>", then run owed start`);
   }
-  if (fresh || changed) warnings.push(...await lintPlanCost(o.cwd,b.plan,trunk.stdout.trim(),entries));
+  if (fresh || changed) warnings.push(...await lintPlanCost(o.cwd,b.plan,trunk.stdout.trim(),entries,fresh ? undefined : state.plan));
   if (fresh && confirmGate()) startRefusal('owner confirmation', 'OWED_CONFIRM=owner requires an explicit init', `run owed init ${JSON.stringify(source)}, then run owed start --plan ${JSON.stringify(source)}`);
   const status = await driveStatus(o);
   if (status.foreign) startRefusal('driver lock', `held on host ${status.host}; not checked from here`, 'check the driver on that host with owed drive --status before starting here');
@@ -736,7 +736,7 @@ export async function planSet(o: Actor & { plan: string; rev?: string; path?: st
     const hygiene = writesSyntaxErrors(b.plan,before.plan);
     if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
     const priorText = (await ledger.getBlob(before.planSha)).toString();
-    const warnings = [...lintPlanShell(b.plan,before.plan,o.plan,priorText), ...await lintPlanCost(o.cwd,b.plan,before.trunk.commit,(await load(ledger)).entries)];
+    const warnings = [...lintPlanShell(b.plan,before.plan,o.plan,priorText), ...await lintPlanCost(o.cwd,b.plan,before.trunk.commit,(await load(ledger)).entries,before.plan)];
     const p = { plan:b.plan, sha:await ledger.putBlob(b.data) };
     return ledger.withLock(async () => { const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); return entry; });
   });
@@ -936,7 +936,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next,true,s.plan).plan;
-  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString()), ...await lintPlanCost(o.cwd,plan,s.trunk.commit,entries)] };
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString()), ...await lintPlanCost(o.cwd,plan,s.trunk.commit,entries,s.plan)] };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
 export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
@@ -979,7 +979,7 @@ export { answer } from './answer.ts';
 
 // ---------- DC: one decision, one append; effects only after the lock ----------
 export type DecideArgs = Actor & { nodes: string | string[]; text: string; writes?: string[]; defer?: string; resume?: boolean; after?: string | string[]; remeasure?: boolean; writer?: boolean; dsa?: Pick<Dsa,'describe'|'send'> };
-export interface DecideResult { decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; covered?: Record<string, AmendEdit['covered']>; deferred?: string; answered: number; resumed: boolean; deliveryFailures: string[] }
+export interface DecideResult { decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; covered?: Record<string, AmendEdit['covered']>; deferred?: string; answered: number; resumed: boolean; deliveryFailures: string[]; remeasure?: string[] }
 function decideNodes(nodes: string | string[]): string[] {
   const ids = [...new Set((Array.isArray(nodes) ? nodes : typeof nodes === 'string' ? nodes.split(',') : []).map(x => typeof x === 'string' ? x.trim() : ''))];
   if (!ids.length || ids.some(x => !x || x === '*')) throw new OwedError('decide needs a non-empty list of named nodes','usage');
@@ -1082,7 +1082,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     const appendedErrors = decisionTailErrors(replayed(prepared,entries));
     if (appendedErrors.length) throw new OwedError(appendedErrors.join('; '));
     if (temp && amend) { try { await rename(temp,amend.file); } catch (e) { throw new OwedError(`decision #${first} recorded; recorded plan in ${temp}: move it over ${amend.file} (${(e as Error).message})`,'internal'); } }
-    return { decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {added:amend.added,covered:amend.perNode,...(stored ? {plan:entries[0]!} : {})} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),answered:answers.length,resumed,deliveryFailures:[] } as DecideResult;
+    return { decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {added:amend.added,covered:amend.perNode,...(stored ? {plan:entries[0]!} : {})} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),answered:answers.length,resumed,deliveryFailures:[],...(o.remeasure ? {remeasure:ids.flatMap(id => remeasureQueuedText(final,id))} : {}) } as DecideResult;
   });
   const { deliverRuling, deliverAnswer, answerRetry } = await import('./answer.ts');
   const delivery = await deliverRuling(o.cwd,result.rule,client);
@@ -1094,7 +1094,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   return result;
 }
 export function decideText(r: DecideResult): string {
-  return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; writes ${r.added!.map(p => `+${p}`).join(',')} (plan #${r.plan.seq})` : r.added !== undefined ? '; writes unchanged' : ''}${Object.entries(r.covered ?? {}).flatMap(([node, covered]) => covered.map(c => `; ${node}: ${c.path} already covered by ${c.entry}`)).join('')}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
+  return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; writes ${r.added!.map(p => `+${p}`).join(',')} (plan #${r.plan.seq})` : r.added !== undefined ? '; writes unchanged' : ''}${Object.entries(r.covered ?? {}).flatMap(([node, covered]) => covered.map(c => `; ${node}: ${c.path} already covered by ${c.entry}`)).join('')}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.remeasure?.length ? `\n${r.remeasure.join('\n')}` : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
 }
 
 /** AN2: record once under the ledger lock; retries use the original entry and bytes. */
@@ -2487,7 +2487,26 @@ function resumeDraft(o: ResumeArgs, s: State): Extract<Draft, { kind:'resume' }>
   const after = o.after === undefined ? undefined : typeof o.after === 'string' && !o.after.includes(',') ? o.after : [...new Set(afterNodes(o.after).flatMap(x => x.split(',')).map(x => x.trim()))];
   return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(after !== undefined ? { after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}), ...(o.remeasure ? { remeasure:true as const } : {}) };
 }
-export interface ResumeResult { entry: Entry; merged?: boolean; entries?: Entry[] }
+/** WF5: recorded facts only; the next merge computes its prospective tree. */
+export function remeasureQueuedText(s: State, node: string): string[] {
+  const es = entriesOf(s), candidate = s.nodes[node]?.candidate;
+  const failures = s.plan.invariants.flatMap(inv => {
+    const latest = es.findLast((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.merging === node && e.obligation === `inv:${inv.id}` && e.probe === undefined);
+    return latest?.verdict === 'fail' ? [latest] : [];
+  });
+  const lines = failures.length ? failures.map(f => s.trunk.seq < f.seq && candidate && candidate.seq < f.seq
+    ? `remeasure queued: ${f.obligation} on merge key ${f.key.slice(0,12)}`
+    : `${f.obligation}: trunk moved to ${s.trunk.commit.slice(0,12)} (or the candidate changed) since #${f.seq}: the next merge builds a new merge tree; ${f.obligation} is remeasured there if its key is still ${f.key.slice(0,12)}, otherwise measured as usual`)
+    : [`remeasure queued: no merge-tree invariant of ${node} failed on its current key (the next merge measures as usual)`];
+  for (const b of s.nodes[node]?.blocks ?? []) {
+    const f = es.find(e => e.seq === b.seq);
+    if (b.kind !== 'exec' || !b.obligation.startsWith('check:') || f?.kind !== 'obs' || f.merging !== node || (b.state !== 'active' && b.state !== 'flaky')) continue;
+    lines.push(b.state === 'active' ? `${b.obligation}: the next merge reruns it on merge key ${b.key.slice(0,12)} as an attribution rerun`
+      : `${b.obligation}: flaky block #${b.seq} on merge key ${b.key.slice(0,12)} already has an attribution pass; --remeasure measures invariants only; accept the block risk or fix it before merging`);
+  }
+  return lines;
+}
+export interface ResumeResult { entry: Entry; merged?: boolean; entries?: Entry[]; remeasure?: string[] }
 /** PO2: validate the whole batch under one ledger lock before any append. */
 export async function resume(o: Omit<ResumeArgs,'node'> & { node: string | string[] }): Promise<ResumeResult> {
   const ids = Array.isArray(o.node) ? o.node : o.node.split(',');
@@ -2506,7 +2525,7 @@ export async function resume(o: Omit<ResumeArgs,'node'> & { node: string | strin
       merged = !!after.length && after.every(dep => !!state.nodes[dep]?.merged);
     }
     const entries = await ledger.append(drafts);
-    return { entry:entries[0]!, ...(merged ? { merged:true } : {}), ...(nodes.length > 1 ? { entries } : {}) };
+    return { entry:entries[0]!, ...(merged ? { merged:true } : {}), ...(nodes.length > 1 ? { entries } : {}), ...(o.remeasure ? {remeasure:nodes.flatMap(id => remeasureQueuedText(latest.state,id))} : {}) };
   });
 }
 /** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. `since`: as for launch (F1). */

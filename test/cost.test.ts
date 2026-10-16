@@ -144,7 +144,7 @@ test('CO1: a batch changing invariant reads on every member counts all three mea
   } finally { await r.cleanup(); }
 });
 
-test('CO2: reads ** warns once per id at init and plan admission, without changing ledger kinds', async () => {
+test('CO2/WF4: reads ** warns at init but unchanged plan admission is quiet, without changing ledger kinds', async () => {
   const r = await repo();
   try {
     await r.put('src/a.ts', '0'); await r.commit();
@@ -155,9 +155,9 @@ test('CO2: reads ** warns once per id at init and plan admission, without changi
     assert.ok(init.warnings?.includes(message.replace('inv:route', 'check:unit')));
     const path = join(r.root, 'plan.json'); await writeFile(path, JSON.stringify(p));
     const plain = await run(r.cwd, ['plan', path, '--as', 'owner:pi', '--note', 'same plan']);
-    assert.equal(plain.split('\n').filter(x => x === message).length, 1);
+    assert.equal(plain.split('\n').filter(x => x === message).length, 0);
     const json = JSON.parse(await run(r.cwd, ['plan', path, '--as', 'owner:pi', '--note', 'same plan', '--json']));
-    assert.equal(json.warnings.filter((x: string) => x === message).length, 1);
+    assert.equal((json.warnings ?? []).filter((x: string) => x === message).length, 0);
     assert.deepEqual((await (await Ledger.open(r.cwd)).read()).map(e => e.kind), ['genesis', 'plan', 'plan']);
   } finally { await r.cleanup(); }
 });
