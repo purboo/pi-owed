@@ -328,7 +328,14 @@ for (const leftover of [false,true]) test(`ER2: ${leftover ? 'crash leftover' : 
     assert.equal(first.actions.some(a=>a.do==='rebase'),false); assert.equal(dsa.messages.length,1);
     if (leftover) assert.match(dsa.messages[0]!,/in progress; run `git rebase --abort`/);
     else {assert.match(dsa.messages[0]!,new RegExp(`HEAD differs from last submitted candidate ${r.oldCommit.slice(0,12)}; keep:.*git log ${rb.base}\\.\\.HEAD.*owed submit a.*reset:.*git reset --hard ${r.oldCommit}`)); assert.equal((await ops.status({cwd:r.cwd})).rebasePending,undefined);}
-    const second = await driver.pass(); assert.equal(second.actions.some(a=>a.do==='send'||a.do==='rebase'),false); assert.equal(dsa.messages.length,1);
+    const second = await driver.pass();
+    if (leftover) { assert.equal(second.actions.some(a=>a.do==='send'||a.do==='rebase'),false); assert.equal(dsa.messages.length,1); assert.ok(second.actions.some(a=>a.do==='halt'),JSON.stringify(second.actions)); }
+    else {
+      // WS5: the aligned but unsubmitted HEAD differs from the handed candidate, so one extra nudge is allowed.
+      assert.ok(second.actions.some(a=>a.do==='send'&&a.reason==='submit'),JSON.stringify(second.actions)); assert.equal(dsa.messages.length,2);
+      const third = await driver.pass(); assert.ok(third.actions.some(a=>a.do==='halt'),JSON.stringify(third.actions));
+      assert.equal(third.actions.some(a=>a.do==='send'||a.do==='rebase'),false); assert.equal(dsa.messages.length,2);
+    }
     assert.equal((await r.ledger.read()).filter(e=>e.kind==='submit'&&e.by==='executor:owed').length,0);
     if (path) await rm(path,{recursive:true});
   } finally {await r.cleanup();}

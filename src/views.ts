@@ -23,6 +23,24 @@ import type { InFlight } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { nearTimeoutWarnings } from './cost.ts';
 
+/** WS3: every writer packet and follow-up preserves the question path instead of requesting a known-red submit. */
+export const WRITER_DECISION = 'If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.';
+export const writerDecisionCommand = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
+/** WS2: quote only the final non-empty paragraph, flattened and bounded before JSON quoting. */
+export function writerReply(result?: string): string {
+  const paragraph = result?.trim().split(/\r?\n\s*\r?\n/).filter(p => p.trim()).at(-1)?.replace(/\s+/g, ' ').trim();
+  if (!paragraph) return 'writer gave no final text';
+  const text = paragraph.length > 300 ? `${paragraph.slice(0, 299)}…` : paragraph;
+  return `writer says: ${JSON.stringify(text).replace(/[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}`;
+}
+/** WS2: parse only owed's own trailer; writer text cannot choose a different next command. */
+export function writerStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
+  const command = writerDecisionCommand(node), suffix = ` → ${command}`;
+  if (!text.endsWith(suffix)) return undefined;
+  const match = /(?:^|; )(writer says: "(?:[^"\\]|\\.)*"|writer gave no final text)$/.exec(text.slice(0, -suffix.length));
+  return match ? { reason: match[1]!, command } : undefined;
+}
+
 /** LO2: display current driver work without changing the ledger phase or acceptance. */
 export const measurementText = (m: InFlight): string => `${m.do === 'merge' ? 'merging' : 'measuring'} (since ${clockTime(m.since)})`;
 
@@ -480,6 +498,8 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
   }
   for (const h of v.halted) {
     if (v.needsRuling?.some(b => b.node === h.node)) continue;
+    const stopped = writerStopNeed(h.reason, h.node);
+    if (stopped) { needs.push({ node: h.node, reason: stopped.reason, command: stopped.command }); continue; }
     const command = h.reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim()
       ?? (h.needs === 'owner' ? ownerCommands(s, h.node)[0] : undefined)
       ?? `owed decide ${h.node} --text "<why>"`;
@@ -719,11 +739,12 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
     return e?.kind === 'review' && e.note ? e.note : recorded?.kind === 'review' ? recorded.note : b.note;
   };
   const command = (reason: string): string | undefined => reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim();
+  const stopped = v.halt && writerStopNeed(v.halt.reason, v.node);
   const lines = [
     ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []),
     ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []),
     ...(v.held !== undefined ? [`held by abandon; release with owed decide ${v.node} --text "<decision>"`] : []),
-    ...(v.halt && !v.blocks.some(b => b.ruling === 'needed') ? [`⏸ halted (attempt ${v.halt.attempt}), ${v.halt.needs === 'owner' ? NEEDS_OWNER_TEXT : NEEDS_PARENT_TEXT}: ${oneLine(v.halt.reason)}${command(v.halt.reason) ? '' : ` → ${resumeCommands(v.node)}`}`] : []),
+    ...(v.halt && !v.blocks.some(b => b.ruling === 'needed') ? [`⏸ halted (attempt ${v.halt.attempt}), ${v.halt.needs === 'owner' ? NEEDS_OWNER_TEXT : NEEDS_PARENT_TEXT}: ${stopped ? `${stopped.reason} → ${stopped.command}` : `${oneLine(v.halt.reason)}${command(v.halt.reason) ? '' : ` → ${resumeCommands(v.node)}`}`}`] : []),
     ...(v.reported !== undefined ? [`reported (resume #${v.reported}): parked with the writer's report, waiting for the parent → owed decide ${v.node} --text "<decision>"`] : []),
     ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when they merge`] : []),
     ...v.items.filter(i => i.status === 'D' && !(blocked.has(i.obligation) && i.mark === '⛔')).map(i => `${i.mark} ${i.obligation}: ${oneLine(i.detail)} → ${itemNext(v.node, i, presentationStates.get(v))}`),
@@ -1226,7 +1247,7 @@ export const DRIVER_ATTESTS = 'the driver measures your candidate; do not run ow
 /** K1.3: the clause after every `owed attest <node>` owed suggests to a writer. */
 export const SKIP_ATTEST = '(skip this when owed drive is running: the driver attests)';
 function dispatchLines(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[]): string[] {
-  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`];
+  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', WRITER_DECISION, `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`];
 }
 
 // ---------- driver review packet (SPEC §12, D5) ----------

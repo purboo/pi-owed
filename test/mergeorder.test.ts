@@ -57,7 +57,7 @@ function rig(plan = planOf()) {
       return add({ kind: 'plan', by: 'owner:pi', channel: 'delegated', prior: current.planSha, plan: sha, downgrades: [], note: 'fixture change' });
     },
     actions(extra: Partial<policy.DriveOpts> = {}) {
-      return policy.decide(current, current.plan, runs, { max: 3, repairs: 2, project, root: '/repo', applied: new Set(), rejected: new Map(), ...extra });
+      return policy.decide(current, current.plan, runs, { max: 3, repairs: 2, project, root: '/repo', applied: new Set(), rejected: new Map(), writerWork: new Map(Object.keys(current.nodes).map(id => [id, { head: `${id}-new-work`, dirty: false }])), ...extra });
     },
     merges(extra: Partial<policy.DriveOpts> = {}) { return r.actions(extra).filter(a => a.do === 'merge').map(a => a.node); },
   };

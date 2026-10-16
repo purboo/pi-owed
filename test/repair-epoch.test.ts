@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sha256 } from '../src/canon.ts';
 import * as driveMod from '../src/drive.ts';
-import { SKIP_ATTEST } from '../src/views.ts';
+import { SKIP_ATTEST, WRITER_DECISION } from '../src/views.ts';
 import { decide, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
 import type { CandidateFacts, CheckSpec, Counts, Draft, Entry, NodeSpec, Plan, RunView, SendEntry, State } from '../src/types.ts';
@@ -71,7 +71,7 @@ type Rig = ReturnType<typeof rig>;
 const view = (rid: string, state: RunView['state'], extra: Partial<RunView> = {}): [string, RunView] => [rid, { rid, state, ...extra }];
 const sealed = (...more: [string, RunView][]) => new Map([view(W, 'sealed', { status: 'ok' }), ...more]);
 const running = (...more: [string, RunView][]) => new Map([view(W, 'running'), ...more]);
-const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(r.entries.flatMap(e => e.kind === 'send' ? [e.send] : [])), rejected: new Map(), blobs: r.blobs, ...o });
+const optsOf = (r: Rig, o: Partial<DriveOpts> = {}): DriveOpts => ({ max: 4, repairs: 2, project: P, root: '/repo', applied: new Set(r.entries.flatMap(e => e.kind === 'send' ? [e.send] : [])), rejected: new Map(), blobs: r.blobs, writerWork: new Map([['a', { head: 'a-new-work', dirty: false }]]), ...o });
 function act(r: Rig, runs: Map<string, RunView> = sealed(), o: Partial<DriveOpts> = {}): Action | undefined {
   const s = r.state(), mine = decide(s, s.plan, runs, optsOf(r, o)).filter(x => x.node === 'a');
   assert.ok(mine.length <= 1, `at most one action per node: ${JSON.stringify(mine)}`);
@@ -101,7 +101,7 @@ test('K5 FLAKY-COLDPLAY: repair, plan fix of min_tests + ruling, block #403, pla
   const h1 = act(r);
   assert.ok(h1?.do === 'halt' && h1.reason.startsWith(`writer run ${W} finished repair follow-up`), JSON.stringify(h1));
   const under = r.entries.findLast(e => e.kind === 'obs' && e.verdict === 'fail')!;
-  assert.ok(h1.reason.endsWith(`; #${under.seq} check:repeat: ${NOTE})`), h1.reason);
+  assert.ok(h1.reason.endsWith(`; #${under.seq} check:repeat: ${NOTE}); writer gave no final text → owed decide a --text "<ruling>" --writer`), h1.reason);
   r.halt(h1);
   // #394/#395: the owner fixes min_tests, the parent rules.
   const v24 = r.plan({ ...flaky, checks: [check({ id: 'repeat', min_tests: 100 })] });
@@ -139,7 +139,7 @@ test('K5.1: repairs exhausted names the epoch; a brief change restarts the budge
   fail(); r.record(act(r)); fail(); r.record(act(r)); fail();
   const ex = act(r);
   assert.ok(ex?.do === 'halt', JSON.stringify(ex));
-  assert.match(ex.reason, /^repairs exhausted \(2 of 2 since dispatch\): measured block check:unit \[#\d+\]; #\d+ check:unit: boom$/);
+  assert.match(ex.reason, /^repairs exhausted \(2 of 2 since dispatch\): measured block check:unit \[#\d+\]; #\d+ check:unit: boom; writer gave no final text → owed decide a --text "<ruling>" --writer$/);
   // A `*` ruling is general guidance: no new budget, no follow-up.
   const star = r.rule('general guidance', '*');
   assert.equal(act(r)?.do, 'halt');
@@ -181,7 +181,7 @@ test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node
   assert.deepEqual(f, { do: 'send', node: 'a', attempt: 1, rid: W, sendKind: 'follow-up', reason: 'ruling', rulings: rule.seq, message: [
     'New parent rulings for a:', `#${rule.seq} (a): the brief was wrong: writes now include cli/wais.mjs`,
     `Active blocks on your candidate ac1 (submit #${r.state().nodes.a!.candidate!.seq}):`, `- #${fail.seq} check:unit: not ok 7 - registry scan`,
-    'Apply these rulings; they override your packet. Then commit and run `owed submit a`.'].join('\n') });
+    'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n') });
   assert.ok(attestAdvice(f.message), 'K1.3: no bare owed attest');
   const sent = r.record(f) as SendEntry;
   // Not a repair: the budget is untouched; the writer works on it.
@@ -190,7 +190,7 @@ test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node
   // The writer finishes it without submitting: halt as today, naming the ruling follow-up.
   const again = act(r);
   assert.ok(again?.do === 'halt' && again.needs === 'human', JSON.stringify(again));
-  assert.equal(again.reason, `writer run ${W} finished ruling follow-up ${sent.send} without submitting a new candidate (measured block check:unit [#${fail.seq}]; #${fail.seq} check:unit: not ok 7 - registry scan)`);
+  assert.equal(again.reason, `writer run ${W} finished ruling follow-up ${sent.send} without submitting a new candidate (measured block check:unit [#${fail.seq}]; #${fail.seq} check:unit: not ok 7 - registry scan); writer gave no final text → owed decide a --text "<ruling>" --writer`);
   // A rejected ruling follow-up (dsa refused it) halts like any other send.
   const rej = act(r, sealed(), { rejected: new Map([[sent.send, 'call pruned']]), applied: new Set(r.entries.flatMap(e => e.kind === 'send' && e.send !== sent.send ? [e.send] : [])) });
   assert.ok(rej?.do === 'halt' && rej.reason.startsWith(`dsa rejected send ${sent.send}: call pruned`), JSON.stringify(rej));
@@ -234,7 +234,7 @@ test('K5.2: a ruling after the halt for finished-without-submit (no candidate) �
   assert.ok(isSend(sub, 'submit'), JSON.stringify(sub));
   const nudge = r.record(sub) as SendEntry;
   const h = act(r);
-  assert.ok(h?.do === 'halt' && h.reason === `writer run ${W} finished without submitting a candidate after follow-up ${nudge.send}`, JSON.stringify(h));
+  assert.ok(h?.do === 'halt' && h.reason === `writer run ${W} finished without submitting a candidate after follow-up ${nudge.send}; writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(h));
   // A * ruling does not clear the halt, and without the halt it would not trigger a follow-up either.
   const star = r.rule('general', '*');
   assert.deepEqual(act(r), h, 'the same halt');
@@ -243,11 +243,11 @@ test('K5.2: a ruling after the halt for finished-without-submit (no candidate) �
   const rule = r.rule('the parent fixed the brief: only a/x');
   const f = act(r);
   assert.ok(isSend(f, 'ruling') && f.sendKind === 'follow-up' && f.rid === W && f.rulings === rule.seq, JSON.stringify(f));
-  assert.equal(f.message, ['New parent rulings for a:', `#${star.seq} (*): general`, `#${rule.seq} (a): the parent fixed the brief: only a/x`, 'Apply these rulings; they override your packet. Then commit and run `owed submit a`.'].join('\n'));
+  assert.equal(f.message, ['New parent rulings for a:', `#${star.seq} (*): general`, `#${rule.seq} (a): the parent fixed the brief: only a/x`, 'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n'));
   const sent = r.record(f) as SendEntry;
   assert.equal(act(r, running()), undefined);
   const again = act(r);
-  assert.ok(again?.do === 'halt' && again.reason === `writer run ${W} finished ruling follow-up ${sent.send} without submitting a new candidate (no candidate after follow-up ${nudge.send})`, JSON.stringify(again));
+  assert.ok(again?.do === 'halt' && again.reason === `writer run ${W} finished ruling follow-up ${sent.send} without submitting a new candidate (no candidate after follow-up ${nudge.send}); writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(again));
 });
 
 // ---------- K5.3: the threshold hint ----------
@@ -297,7 +297,7 @@ test('K5.4: each cited observation is one line of at most 200 characters', () =>
   r.record(act(r));
   const h = act(r);
   assert.ok(h?.do === 'halt', JSON.stringify(h));
-  const cited = h.reason.slice(h.reason.indexOf(`; #${o.seq} `) + 2, -1);
+  const cited = h.reason.slice(h.reason.indexOf(`; #${o.seq} `) + 2, h.reason.indexOf('); writer gave no final text'));
   assert.ok(cited.startsWith(`#${o.seq} check:unit: line one\\nline two xxx`), cited);
   assert.equal(cited.length, 200);
   assert.ok(cited.endsWith('…') && !h.reason.includes('\n'));

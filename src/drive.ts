@@ -10,7 +10,7 @@ import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
-import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints, reviewAsk, reviewDecision } from './views.ts';
+import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
 import { nodeReview, ownerNeeded, dispatchSkip } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
@@ -58,6 +58,8 @@ export interface MergeRefusal {
  */
 export interface DriveOpts {
   rebasePending?: ReadonlyMap<string, RebasePending>;
+  /** WS1: actual sealed-writer worktree facts; absent means inspection failed, never evidence to send submit. */
+  writerWork?: ReadonlyMap<string, { head: string; dirty: boolean }>;
   /** SB2: per rebased slot, the actual rebase command from HEAD (also when HEAD is aligned); text only, never a trigger. */
   rebaseWork?: ReadonlyMap<string, RebasePending>;
   /** Concurrent open attempts below which the driver dispatches ready nodes. */
@@ -172,10 +174,11 @@ export function reviewerLaunch(s: State, node: string, n: number, project: strin
   const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan, node).reviewer;
   return { do: 'launch', node, attempt: slot.attempt, role: 'reviewer', n, rid: runId(project, node, slot.attempt, 'reviewer', n), spec: launchSpec({ ...agent, cwd: root, task: reviewPacket(s, node, n), name: runName(node, slot.attempt, 'reviewer', n) }), labels: runLabels(project, node, slot.attempt, 'reviewer'), rulings: carried(rulingsInScope(s, node)) };
 }
-export const WRITER_INTERRUPTED = 'You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.';
-export const submitMessage = (node: string): string => `commit your work and run \`owed submit ${node}\``;
+const writerMessage = (text: string): string => text.includes(WRITER_DECISION) ? text : `${text}\n${WRITER_DECISION}`;
+export const WRITER_INTERRUPTED = writerMessage('You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.');
+export const submitMessage = (node: string): string => writerMessage(`commit your work and run \`owed submit ${node}\`. If you stopped for a parent decision, do not submit: ask the question instead.`);
 /** N1.4: the submit follow-up after plan entry `plan` invalidated the latest submit of the attempt (`fields` changed). */
-export const planChangedMessage = (node: string, plan: number, fields: readonly string[]): string => `plan #${plan} changed this node's spec (${fields.join(', ') || 'spec'}); resubmit (re-run checks if needed, then \`owed submit ${node}\`)`;
+export const planChangedMessage = (node: string, plan: number, fields: readonly string[]): string => writerMessage(`plan #${plan} changed this node's spec (${fields.join(', ') || 'spec'}); resubmit (re-run checks if needed, then \`owed submit ${node}\`)`);
 /**
  * N1.4: the first plan entry after submit `after` that invalidated a candidate of `node` (its spec, setup, exec or
  * closure changed), with the changed fields (`specChanges`); undefined when none did.
@@ -208,7 +211,7 @@ export const reviewerInterrupted = (node: string): string => `You were interrupt
 export const rejectedFixed = (node: string): string => `this attempt's request is fixed; fix the cause (plan, agent, model), then \`owed abandon ${node}\` to start a new attempt`;
 /** SR4: a rejected send can be superseded without losing the attempt; rejected runs keep D15.1. */
 export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${what === 'run' ? rejectedFixed(node) : `the attempt is not lost: continue the run (e.g. a dsa follow-up), then \`owed decide ${node} --text "<retry run>"\`; a later resume, submit or send to this run supersedes this send; or \`owed abandon ${node}\``}`;
-export const fencedMessage = (reason: string): string => `Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`;
+export const fencedMessage = (reason: string): string => writerMessage(`Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`);
 /**
  * Repair follow-up: what to do, the notes of active review blocks (a needs-parent block quotes the ruling that resolved
  * it, which may predate the dispatch when the block came from an earlier attempt), the rulings covering the node recorded after the attempt's dispatch (D18.4).
@@ -243,7 +246,7 @@ export function repairFollowUp(s: State, node: string, rejected?: ReadonlyMap<st
     ...(notes.length ? ['Review blocks (the reviewer\'s note):', ...notes] : []),
     ...(!failed.lines.length && !notes.length ? ['No new failures since my last message.'] : []),
     ...(earlier.length ? [`Still failing from before: ${earlier.join(', ')}.`] : []),
-    `Next: fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself. Everything else: \`owed why ${node} --full\`.`].join('\n') };
+    `Next: fix them in your worktree, commit, and run \`owed submit ${node}\`; owed reruns the checks itself. Everything else: \`owed why ${node} --full\`.`, WRITER_DECISION].join('\n') };
 }
 /** G3.7: the conflicting-files clause of a rebase instruction; empty when the list is unknown. */
 const conflictText = (conflicts?: readonly string[]): string => conflicts ? ` (files that conflict with your previous candidate: ${conflicts.length ? conflicts.join(', ') : 'none'})` : '';
@@ -253,8 +256,8 @@ const conflictText = (conflicts?: readonly string[]): string => conflicts ? ` (f
  */
 export function rebaseMessage(s: State, node: string, conflicts?: readonly string[], work?: RebasePending): string {
   const slot = s.nodes[node]!.slot!, r = slot.rebase!;
-  if (executorRebased(s,node)) return `owed rebased your worktree onto ${r.base.slice(0,12)} (clean); continue from HEAD`;
-  return `${work?.recovery ? `${work.recovery}\n` : ''}trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${r.base} $(git merge-base HEAD ${r.base})`}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``;
+  if (executorRebased(s,node)) return writerMessage(`owed rebased your worktree onto ${r.base.slice(0,12)} (clean); continue from HEAD`);
+  return writerMessage(`${work?.recovery ? `${work.recovery}\n` : ''}trunk moved; rebase your worktree onto ${s.trunk.name} (${r.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${r.base} $(git merge-base HEAD ${r.base})`}\`${conflictText(conflicts)}, resolve conflicts within the allowed writes, rerun checks, commit, then \`owed submit ${node}\``);
 }
 /** ER2: latest successful automatic rebase, unless a subsequent rebase changed the slot again. */
 function executorRebased(s: State, node: string): boolean {
@@ -321,7 +324,7 @@ export function resubmitFollowUp(s: State, node: string, conflicts?: readonly st
     ...(rb && work?.recovery ? [work.recovery] : []),
     rb ? `Trunk moved, so owed needs a new candidate: rebase your worktree onto ${s.trunk.name} (${rb.base}): first commit your work, then in ${slot.worktree} run \`${work?.command ?? `git rebase --onto ${rb.base} $(git merge-base HEAD ${rb.base})`}\`${conflictText(conflicts)} and resolve conflicts within the allowed writes.`
       : 'The plan changed since that candidate, so owed needs a new candidate; owed reruns the checks itself.',
-    `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`].join('\n') };
+    `Fix the blocks in your worktree, commit, and run \`owed submit ${node}\`.`, WRITER_DECISION].join('\n') };
 }
 
 // ---------- repair budget, ruling follow-up, threshold hint (0.7, K5) ----------
@@ -399,7 +402,7 @@ export function rulingFollowUp(s: State, node: string, refused?: Refused): { mes
   const rules = undelivered(s, node, ar, writer, refused);
   if (!rules.some(r => r.nodes !== '*')) return undefined;
   return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rulingLines(rules),
-    ...blockLines(s, node), `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`].join('\n') };
+    ...blockLines(s, node), `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`, WRITER_DECISION].join('\n') };
 }
 /**
  * The block lines of a writer ruling message (`rulingFollowUp`, and the re-send after a resume, G3.5 0.12): the active
@@ -643,6 +646,7 @@ export function answeredQuestion(s: State, rid: string, qid: string, rev?: numbe
 function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpts, n: NodeState): Action | undefined {
   const id = n.id, slot = n.slot!, attempt = slot.attempt, c = n.candidate;
   const halt = (reason: string, needs: 'human' | 'owner' = 'human'): Action => ({ do: 'halt', node: id, attempt, reason, needs });
+  const stoppedHalt = (reason: string): Action => halt(`${reason}; ${writerReply(writerView?.result)} → ${writerDecisionCommand(id)}`);
   // 0.8 (L1.3): the first writer follow-up after a resume starts with the resume line (`resumeLine`).
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => {
     const line = l.role === 'writer' && sendKind === 'follow-up' ? resumeLine(s, id, l.rid) : undefined;
@@ -651,10 +655,11 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const rules = undelivered(s, id, ar, l, opts.rejected);
       const rebase = firstRebaseFollowUp
         ? rebaseMessage(s,id,opts.conflicts?.get(id),opts.rebasePending?.get(id) ?? opts.rebaseWork?.get(id)).replace(`, rerun checks, commit, then \`owed submit ${id}\``, '') : undefined;
-      return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: [line, ...rules.map(r => `Ruling #${r.seq}: ${r.text}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n'), rulings: carried(rules) };
+      return { do: 'send', node: id, attempt, rid: l.rid, sendKind, reason: 'report', message: writerMessage([line, ...rules.map(r => `Ruling #${r.seq}: ${r.text}`), ...(rebase ? [rebase] : []), REPORT_MESSAGE].join('\n')), rulings: carried(rules) };
     }
     const rebased = l.role === 'writer' && sendKind === 'follow-up' && reason !== 'rebase' && firstRebaseFollowUp && executorRebased(s,id) ? rebaseMessage(s,id) : undefined;
     message = rebased ? `${rebased}\n${message}` : message;
+    if (l.role === 'writer') message = writerMessage(message);
     return { do: 'send', node: id, attempt, rid: l.rid, sendKind, message: line ? `${line}\n${message}` : message, reason, ...(rulings !== undefined ? { rulings } : {}) };
   };
   // Row 5: a run asking: notify (question, answer address); the driver never answers.
@@ -801,7 +806,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const f = rulingFollowUp(s, id, opts.rejected);
       if (f) return send(writer, 'follow-up', 'ruling', f.message, f.rulings);
       const sent = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up' && x.seq > writerRule.seq);
-      if (sent && sent.seq > resumed) return halt(`writer run ${at(writer)} finished ruling follow-up ${sent.send} without submitting a new candidate (writer ruling #${writerRule.seq})`);
+      if (sent && sent.seq > resumed) return stoppedHalt(`writer run ${at(writer)} finished ruling follow-up ${sent.send} without submitting a new candidate (writer ruling #${writerRule.seq})`);
       // A resume after that follow-up starts a new wait: deliver the writer rulings again instead of repeating the halt.
       if (sent) {
         const rules = s.rules.filter(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last!.seq && deliversRule(r, writer.rid));
@@ -837,9 +842,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const f = rulingSend();
     if (f) return f;
     const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(after, lastSubmit(s, id)?.seq ?? -1, resumed));
-    if (!rf) return halt(reason);
+    if (!rf) return stoppedHalt(reason);
     const refused = opts.rejected.get(rf.send);
-    return halt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
+    return stoppedHalt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
   };
   /**
    * 0.8 (L3.1, wais #21): the ruling follow-up before a halt whatever its cause (owner-needed, row 7, the stalled halt
@@ -860,13 +865,37 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
   // Row 7: writer sealed non-ok (0.8, L3.1: a due ruling follow-up first).
-  if (wSealed && wStatus !== 'ok') return rulingFirst() ?? halt(`writer run ${at(writer)} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
+  if (wSealed && wStatus !== 'ok') return rulingFirst() ?? stoppedHalt(`writer run ${at(writer)} sealed ${wStatus}${w.error ? `: ${w.error}` : ''}${wStatus === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
   const drift = opts.rebasePending?.get(id);
   if (drift && !reportPending && !(drift.recovery && resubmitBlocks(s,id).length)) {
     const unruled = submitBlocks(s, id).filter(b => awaitingRuling(s, b));
     if (unruled.length) return halt(needsRulingHalt(s, id, unruled));
-    if (rebaseFollowupSent(s, id)) return undefined;
     const message = slot.rebase ? rebaseMessage(s, id, opts.conflicts?.get(id), drift) : `${rebaseWorkText(drift)} In ${slot.worktree}, run \`owed submit ${id}\`.`;
+    if (rebaseFollowupSent(s, id)) {
+      if (!wSealed) return undefined;
+      // WS-R3: a due ruling (e.g. `owed decide <node> --writer` after one of these halts) is delivered before halting again.
+      const ruled = rulingFirst();
+      if (ruled) return ruled;
+      const follow = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'rebase')!;
+      const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(follow.seq, resumed));
+      const driftHalt = (reason: string): Action => {
+        if (!rf) return stoppedHalt(reason);
+        const refused = opts.rejected.get(rf.send);
+        return stoppedHalt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${reason})`);
+      };
+      if (rf) return driftHalt(`writer stopped without a candidate after rebase follow-up ${follow.send}`);
+      const work = opts.writerWork?.get(id);
+      if (!work) return driftHalt(`cannot inspect writer worktree after rebase follow-up ${follow.send}; no submit nudge sent`);
+      // WS5/WS-R2: handed HEADs are the last submit (else dispatch base) plus every later rebase `from` of this attempt.
+      const anchor = lastSubmit(s, id), entries = entriesOf(s), dispatched = entries.find(e => e.seq === slot.dispatchSeq);
+      const handed = new Set<string>([anchor?.facts.commit ?? (dispatched?.kind === 'dispatch' ? dispatched.base : slot.base)]);
+      for (const e of entries) if (e.kind === 'rebase' && e.node === id && e.attempt === attempt && e.seq > (anchor?.seq ?? slot.dispatchSeq)) handed.add(e.from);
+      const nudge = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'submit' && x.seq > Math.max(follow.seq, resumed));
+      if (nudge) return driftHalt(`writer stopped after rebase follow-up ${follow.send} without submitting a candidate after follow-up ${nudge.send}`);
+      if (handed.has(work.head) && !work.dirty) return driftHalt(`writer stopped without a candidate after rebase follow-up ${follow.send}`);
+      const m = writerMsg(`${message}\n${submitMessage(id)}`);
+      return send(writer, 'follow-up', 'submit', m.message, m.rulings);
+    }
     const m = writerMsg(message);
     return send(writer, 'follow-up', 'rebase', m.message, m.rulings);
   }
@@ -895,6 +924,13 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const changed = !rebased && last ? planInvalidated(s, id, last.seq) : undefined;
     const since = Math.max(rb?.seq ?? slot.dispatchSeq, resumed, changed?.plan ?? -1), nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     if (nudge) return writerHalt(`writer run ${at(writer)} finished without submitting a candidate after follow-up ${nudge.send}`, `no candidate after follow-up ${nudge.send}`, nudge.seq);
+    if (!changed) {
+      const work = opts.writerWork?.get(id);
+      // Last handed HEAD: latest submit if after the rebase (including executor's result), otherwise the slot base.
+      const handed = last && (!rb || last.seq > rb.seq) ? last.facts.commit : slot.base;
+      if (!work) return stoppedHalt('cannot inspect writer worktree; no submit nudge sent');
+      if (work.head === handed && !work.dirty) return writerHalt('writer stopped without a candidate', 'no work left to submit', since);
+    }
     const m = writerMsg(changed ? planChangedMessage(id, changed.plan, changed.fields) : submitMessage(id));
     return send(writer, 'follow-up', 'submit', m.message, m.rulings);
   }
@@ -1100,7 +1136,7 @@ function prospectiveNotice(s: State, n: NodeState, ar: AttemptRuns, runs: Readon
     }
     const seen = Math.max(-1, ...notices.map(x => x.rulings ?? -1)), pending = rules.filter(r => r.seq > seen);
     if (!pending.length) continue;
-    return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'notify', reason: 'ruling', rulings: carried(pending), message: [`Prospective policy for future attempts of ${n.id}:`, ...rulingLines(pending), 'This attempt predates the policy; no change or acknowledgment is required.'].join('\n') };
+    return { do: 'send', node: n.id, attempt: n.slot!.attempt, rid: l.rid, sendKind: 'notify', reason: 'ruling', rulings: carried(pending), message: [`Prospective policy for future attempts of ${n.id}:`, ...rulingLines(pending), 'This attempt predates the policy; no change or acknowledgment is required.', ...(l.role === 'writer' ? [WRITER_DECISION] : [])].join('\n') };
   }
   return undefined;
 }
@@ -1121,7 +1157,7 @@ function rulingLines(rules: readonly Rule[]): string[] {
 export function rulingMessage(node: string, role: RunRole, rules: readonly Rule[]): string {
   const top = Math.max(...rules.map(r => r.seq));
   return [`New parent rulings for ${node}:`, ...rulingLines(rules),
-    role === 'writer' ? 'Apply these rulings; they override your packet. If you already submitted, fix and submit again.' : `Judge the candidate against these rulings and record your review with --ack-rulings ${top}.`].join('\n');
+    role === 'writer' ? 'Apply these rulings; they override your packet. If you already submitted, fix and submit again.' : `Judge the candidate against these rulings and record your review with --ack-rulings ${top}.`, ...(role === 'writer' ? [WRITER_DECISION] : [])].join('\n');
 }
 /**
  * The ruling steer of the node's attempt (D22.2/D22.2a), or undefined: the first `running` driver run (writer, then
