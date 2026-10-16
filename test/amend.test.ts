@@ -92,7 +92,7 @@ test('N3: amend edits the file (comments and flow kept) and records plan, carry 
     assert.deepEqual(rule.nodes, ['a']);
     assert.equal(rule.text, `writes of a widened by plan #${plan.seq}: +test/extra.txt. Limit: only the fixture file`);
     assert.match(res.stdout, new RegExp(`Carried a: candidate ${sub.facts.commit.slice(0, 12)}`));
-    assert.match(res.stdout, /Widened writes of a: \+test\/extra\.txt \(already in writes: test\/a\); wrote /);
+    assert.match(res.stdout, /Widened writes of a: \+test\/extra\.txt; wrote .*; test\/a already covered by test\/a/);
     const recorded = parsePlan((await (await Ledger.open(r.cwd)).getBlob(plan.plan)).toString());
     assert.deepEqual(recorded.nodes.find(n => n.id === 'a')?.writes, ['test/a', 'test/extra.txt']);
     let card = await ops.why({ cwd: r.cwd, node: 'a' });
@@ -153,12 +153,10 @@ test('N3: refusals record nothing and leave the file unchanged', { timeout: 120_
     const cases: [string[], number, RegExp][] = [
       [['amend', 'nope', '--writes', '+test/x', '--note', 'n'], 1, /Node nope does not exist/],
       [['amend', 'a', '--note', 'n'], 2, /at least one path to add/],
-      [['amend', 'a', '--writes', 'test/x', '--note', 'n'], 2, /must start with \+/],
-      [['amend', 'a', '--writes', '+test/x,test/y', '--note', 'n'], 2, /must start with \+/],
+      [['amend', 'a', '--writes', '-test/x', '--note', 'n'], 2, /removing writes needs owed plan/],
       [['amend', 'a', '--writes', '+', '--note', 'n'], 2, /empty path after \+/],
       [['amend', 'a', '--writes', '+test/x'], 2, /non-empty note/],
       [['amend', 'a', '--writes', '+test/x', '--note', '  '], 2, /non-empty note/],
-      [['amend', 'a', '--writes', '+test/a', '--note', 'n'], 1, /already include test\/a; nothing to amend/],
     ];
     for (const [args, code, re] of cases) {
       const res = await cli(r.cwd, [...args, ...as]);
@@ -227,7 +225,7 @@ test('N3: the edit keeps each list style: empty flow, quoted flow, block, and a 
     const count = (await entriesOf(r.cwd)).length;
     const edit = async (node: string, writes: string[]) => (await ops.amendPreview({ cwd: r.cwd, node, writes, note: 'n' })).next;
     assert.equal(await edit('d', ['+test/d', '+test/d 2']), text.replace('writes: [ ]', 'writes: [test/d, "test/d 2"]'));
-    assert.equal(await edit('e', ['+test/e2']), text.replace('writes: ["test/e"]', 'writes: ["test/e", "test/e2"]'));
+    assert.equal(await edit('e', ['+test/e2']), text, 'the existing literal prefix covers test/e2');
     assert.equal(await edit('b', ['+test/x', '+test/a*']), text.replace('      - test/b\n', '      - test/b\n      - test/x\n      - test/a*\n'));
     const c = await edit('c', ['+test/c']);
     assert.match(c, /- id: c +# no writes yet\n {4}deps: \[ ?a ?\]\n {4}writes:\n {6}- test\/c\n/);
@@ -262,6 +260,7 @@ test('N3 (00:3x): amend retries like owed plan: the trunk moves once, amend succ
     assert.deepEqual(es.map(e => e.kind), ['adopt', 'plan', 'submit', 'rule'], 'the adopt, then exactly one plan, carry and rule');
     assert.ok(es[2]?.kind === 'submit' && es[2].carry === sub.seq);
     assert.ok(es[3]?.kind === 'rule' && es[3].text === `writes of a widened by plan #${es[1]!.seq}: +test/extra.txt. Limit: limit`);
+    assert.ok(res.plan, 'a real widening records a plan');
     assert.equal(res.plan.seq, es[1]!.seq);
     assert.equal(await readFile(file, 'utf8'), PLAN.replace('writes: [test/a]', 'writes: [test/a, test/extra.txt]'), 'the path is added once');
     assert.deepEqual((await readdir(r.root)).filter(f => f.includes('owed-amend')), [], 'no temporary file left');

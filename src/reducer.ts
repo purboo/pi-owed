@@ -177,6 +177,49 @@ export function effectiveWritesOverlap(s: State, a: string, b: string): boolean 
   const aSyntax = writesSyntax(planForWrites(s,a)), bSyntax = writesSyntax(planForWrites(s,b));
   return writesOverlap(pa, pb, aSyntax, bSyntax) || ga.some(p => pb.some(w => matchesWrite(p, w, bSyntax)) || gb.includes(p)) || gb.some(p => pa.some(w => matchesWrite(p, w, aSyntax)));
 }
+/** Why the driver must leave an owner decision alone; shared by dispatch and its views. */
+export function ownerNeeded(s: State, node: string): string | undefined {
+  const n = s.nodes[node];
+  if (!n) return undefined;
+  const entries = entriesOf(s);
+  const driverAuthored = (seq: number): boolean => {
+    const k = driveReviewerSlot(entries.find(e => e.seq === seq)?.by ?? '', node, n.slot?.attempt ?? 0);
+    return !!n.slot?.open && s.plan.nodes.some(x => x.id === node) && k !== undefined && k <= Math.max(nodeReview(s, node).count, 1);
+  };
+  const ownerBlock = n.blocks.filter(b => b.state === 'flaky' || (b.state === 'active' && b.kind === 'judgment' && (b.rank ?? 0) >= 2 && !((b.rank ?? 0) <= 2 && driverAuthored(b.seq))));
+  const text = (b: Block): string => `${b.state === 'flaky' ? 'flaky' : `rank ${b.rank} review`} block #${b.seq} on ${b.obligation} needs the owner`;
+  if (n.slot?.open && n.candidate) {
+    for (const i of n.items) if (i.status === 'D') {
+      if (i.mark === '⊤') return `${i.obligation}: ${i.detail}`;
+      const b = ownerBlock.find(b => b.obligation === i.obligation);
+      if (b) return text(b);
+      if (i.obligation === 'review' && nodeReview(s, node).min_rank > 2) return `review requires rank ${nodeReview(s, node).min_rank}: only the owner can record it`;
+    }
+    return undefined;
+  }
+  return ownerBlock.length ? text(ownerBlock[0]!) : undefined;
+}
+export type DispatchSkip = { kind: 'owner'; reason: string } | { kind: 'max'; open: number; max: number } | { kind: 'overlap'; others: { node: string; paths: string[] }[] } | { kind: 'removed' };
+/** WA1: the dispatch loop's skip predicate, including slots removed from the plan and same-pass dispatches. */
+export function dispatchSkip(s: State, id: string, max: number, taken = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').map(n => n.id)): DispatchSkip | undefined {
+  const owner = ownerNeeded(s, id);
+  if (owner) return { kind: 'owner', reason: owner };
+  const open = taken.length + Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'removed').length;
+  if (open >= max) return { kind: 'max', open, max };
+  if (!s.plan.nodes.some(n => n.id === id)) return { kind: 'removed' };
+  const others = [...new Set([...overlapping(s, id), ...taken.filter(other => effectiveWritesOverlap(s, id, other))])].sort();
+  if (others.length) return { kind: 'overlap', others: others.map(node => ({ node, paths: effectiveWrites(s, id).filter(p => effectiveWrites(s, node).some(q => writeOverlaps(p, q, writesSyntax(planForWrites(s, id)), writesSyntax(planForWrites(s, node))))) })) };
+  return undefined;
+}
+/** WA1: view the same pass in dispatch order, reserving capacity and writes for preceding ready nodes. */
+export function readyDispatchSkips(s: State, max: number): Map<string, DispatchSkip> {
+  const taken = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').map(n => n.id), skips = new Map<string, DispatchSkip>();
+  for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a, b) => b.dependents - a.dependents || a.id.localeCompare(b.id))) {
+    const skip = dispatchSkip(s, n.id, max, taken);
+    if (skip) skips.set(n.id, skip); else taken.push(n.id);
+  }
+  return skips;
+}
 /** Detail of a satisfied `rulings` item when no ruling is in scope for the node (shown as "no rulings apply"). */
 export const NO_RULINGS = 'no ruling is in scope for this node';
 /** KR2: a merging fix node cannot use its own exemptions, even before its merge is recorded. */
