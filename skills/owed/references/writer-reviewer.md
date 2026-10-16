@@ -1,0 +1,45 @@
+# Writers and reviewers
+
+Read this topic when the corresponding action or failure is relevant. Return to the [core](../SKILL.md) for the loop and hard rules.
+
+## Use the dispatched slot
+
+Every `owed_*` tool takes an optional `cwd`: the absolute path of a directory inside the target repository (default: the session's working directory). A session started elsewhere passes `cwd` on every call to drive another repository; relative paths such as `owed_plan`'s `plan` and `owed_decoy`'s `file` resolve against it. To submit as the slot writer, pass the slot worktree as `cwd`.
+
+Use `owed_status` (CLI `owed status`) to inspect ready nodes and pending queues. Dependencies must have merge records before dispatch; a verbal claim of completion is not a receipt.
+
+The parent uses `owed_dispatch` to dispatch a ready node. The packet prints once; rendered arguments refer to it, while structured `subagents.task` contains the complete task. Pass its `subagents` object to subagents/dsa: `agent: worker`, `cwd` must be the slot worktree, `isolation: none`, and `task` must contain the complete packet. owed has already created an isolated worktree; do not add another isolation layer.
+
+Writers modify only the packet's writes scope, commit their work, and keep the worktree clean. Run `owed submit <node>` or `owed_submit` inside that worktree. A parent submitting on behalf of a writer must explicitly use the slot's `writer:<node>#<attempt>` identity.
+
+Slot setup: dispatch runs `slot_setup` (string), else `setup`, in the new worktree with measurement shell/env/wrapper and a 600 s timeout; `slot_setup: false` skips. Success adds a `Setup: ran … (exit 0)` packet line; tracked setup changes refuse with paths and rollback, while new untracked/not-ignored outputs get deduplicated anchored literal common excludes. Owed verifies they disappear from `git status --porcelain -z --untracked-files=all` (including directory descendants) before reporting `(exit 0; excluded: /a, /b)`, so `git add -A` cannot commit setup artifacts. Tracked `.gitignore` negations (e.g. `!/artifact`) override common excludes: still-visible outputs refuse with one-line escaped names and guidance to ignore setup outputs in the repository or change `slot_setup`. Rollback removes only this dispatch's appended exclude bytes, retains pre-existing rules, removes worktree/branch and records nothing; owed never edits tracked ignore files. Newline/carriage-return output paths refuse with escaped names and rollback. Failure shows exit/timeout and 20 output lines, rolls back and records nothing. `slot_setup` changes no key/candidate; rebase does not rerun it.
+
+Large candidates: review hashing streams the diff with stable UTF-8 decoding semantics; buffered Git output above 256 MiB refuses normally. Optional top-level `limits: {file_mib?, diff_mib?}` sets positive finite MiB limits on the largest changed blob and summed changed blob sizes; submit lists up to five largest files and records nothing on refusal. Limits change no keys or already submitted candidates.
+
+Worktree layout (plan `worktrees: {root, branch}`, node `type`): slots may live outside the repository and branches follow a template such as `"{type}/{node}-{attempt}"`. Always use the `worktree` and `branch` that `owed_dispatch` returns (the `owed_dispatch` result details and the CLI `owed dispatch` text carry both, the packet's `Working directory` is the worktree, and `owed status --json` has them under `nodes.<id>.slot`; the status and why texts do not show them); never derive them from `.owed/wt` or `owed/<node>/<attempt>`. Changing `worktrees` or `type` is not a downgrade and affects only later dispatches. If `owed_status` says `Trunk <name> is checked out at <path>; merges fast-forward it there (keep it clean).`, do not write in that worktree; when a merge refuses with `trunk worktree <path> has uncommitted changes`, the parent inspects and preserves them before retrying. Do not add new commits directly to trunk. Use an off-trunk hotfix and owed adoption for new work; detaching a trunk worktree is an explicit parent/owner layout recovery, never a writer's bypass.
+
+## Independent review and contract questions
+
+Exact clean-rebase trees carry independent OK reviews, never measurements or waivers; later rulings still need acknowledgment. The driver applies a rebase only to a clean candidate HEAD with a recorded, sealed current writer and no newer writer intent. Parent/owner CLI `owed rebase A --apply` is explicit; without a recorded writer it asserts none is active. Conflicts roll back to the writer route; inspect crash leftovers instead of resetting blindly. The pi rebase tool remains manual.
+
+For review blocks use the suggested writer-action decision and repair; owner review is an explicitly labelled override. Concise rule receipts give delivery counts and direct failed/unknown deliveries to `owed why`; JSON/tool details keep full follow-ups. Delivery never acknowledges a ruling. Missing review ruling ack warns with a candidate-pinned re-record command; `--ack-rulings` is one numeric watermark, not a comma list.
+
+Read status/why conflict files against trunk/other candidates as cached Git diagnostics: `none` is clean, `unknown; retry owed status` means no result. Conflict probes grant no acceptance; rebase refusals name files.
+
+On `rebase pending`, commit work first, then use owed's computed `git rebase --onto <base> <upstream>` command; never guess upstream or stash per packet.
+
+Set submit/review `model` / `--model` to actual used model when known; why reports unknown and matching/selected-model mismatch warnings without changing gates.
+
+Omitted review ack derives only a byte-exact complete prefix of applicable pre-launch rulings in the current driver reviewer packet; later/missing rulings still owe ack.
+
+Start a fresh, independent reviewer with the current diff, packet, receipt card, and failure evidence. The reviewer must not have been a writer for any attempt of the node. Use `owed_review` with an independent `reviewer:id`, rank, verdict, and note. Non-neutral closure changes require `closure-review` at rank 2 or higher; use the candidate's derived requirement for ordinary review. Read new rulings and acknowledge their seq with `ack_rulings`. If the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, the reviewer blocks with `needs_parent: true` (CLI `--block --needs-parent`) and states the decision needed; it does not push a guess onto the writer. The parent answers with `owed_decide {nodes:["<node>"], writer:true, text:"<decision>"}` / `owed decide <node> --writer --text "<decision>"` (a `*` ruling does not resolve it); `owed drive` halts on such a block until that ruling exists, then sends the writer a repair that quotes it. After fixing a plan mistake (the brief, writes, a check threshold), or to let a halted writer continue, use `owed decide <node> --text "<decision>"`: it records the named ruling and resumes as needed, gives the attempt a fresh repair budget, and the driver delivers it to the writer (the next repair or follow-up carries it). A driver halt `check <X>: <n> tests ran and passed twice, below min_tests <m>` means the threshold may be the plan's mistake: fix the plan, or rule that the writer adds tests; if the content is acceptable as is, that is the owner's waive, not a ruling.
+
+The parent inspects receipts and actual changes, then uses `owed_merge`. It checks the merge tree, invariants, and trunk CAS; neither review ok nor an accepted candidate replaces the merge guard. After merging, use `owed_report` to report evidence, waivers, and remaining debt.
+
+Do not edit closure files to make checks pass; the executor pins the check closure from base. Necessary non-neutral closure changes must receive closure-review acceptance. Owner-declared JSON `closure_neutral` can exempt only a proved neutral change; full-file measurement hashes remain and tests still must not be weakened.
+
+Do not self-review, disguise a writer as an independent reviewer under another name, or fabricate executor evidence.
+
+Reviewers never edit the candidate. Inspect normal and relevant failure paths, record only evidence you actually checked, and pin `--candidate <commit12>` to the commit read. Existing-test changes need the contract's or a ruling's authority; list every such change in the task notes. A reviewer's OK means the title/brief goal is met, not merely that the report looks plausible.
+
+A judgment block at rank r may only be cleared by an ok from the original reviewer at rank at least r, or another reviewer at a higher rank. Another reviewer at the same rank cannot clear it. Owner waivers must also reference `accept_risk`.
