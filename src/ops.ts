@@ -1656,7 +1656,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       if (fresh) { slotBaseRed.push(fresh); continue; }
       const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit,stateQuarantine(state));
       if (entriesOf(state).some(e => e.kind === 'obs' && e.probe === 'trunk' && e.subject === o.node && e.obligation === i.obligation && e.key === key && e.commit === state.trunk.commit && e.verdict !== 'error')) continue;
-      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true}, quarantinedJob(state,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit}));
+      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true}, quarantinedJob(state,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'}));
       probes.push({...obs,probe:'trunk'});
     }
     if (o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
