@@ -7,11 +7,12 @@ import { answerRetry } from './answer.ts';
 import { clockTime } from './clock.ts';
 import { driveConfig } from './plan.ts';
 import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
-import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, effectiveWritesOverlap, overlapping, writesWaiting, writesWaitCycle } from './reducer.ts';
+import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
 import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, mergeFailureHints } from './views.ts';
-import { nodeReview } from './reducer.ts';
+import { nodeReview, ownerNeeded, dispatchSkip } from './reducer.ts';
+export { ownerNeeded } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
 /** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
@@ -520,32 +521,6 @@ export function driverSlot(s: State, node: string, by: string): number | undefin
 }
 
 // ---------- owner-needed ----------
-/**
- * Why the node needs an owner decision the driver must not touch (D4), or undefined. Owner blocks: a flaky block, or an
- * active review block of rank >= 2 — except one authored by a driver reviewer (`driverSlot`: `reviewer:drive-<node>-
- * <attempt>-<k>`, k in range) of the node's current open attempt, which the driver repairs (its slot reviewer re-reviews at the block's rank;
- * rank 3 is owner-only and never driver-authored). With an open candidate: an item with conflicting observations (⊤),
- * an item with an owner block, or a review the plan requires at rank > 2 (a closure-review merely awaiting a rank-2
- * review is reviewer work). Otherwise: an owner block still active on the node (a new attempt cannot clear it).
- */
-export function ownerNeeded(s: State, node: string): string | undefined {
-  const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
-  if (!n) return undefined;
-  const entries = entriesOf(s);
-  const driverAuthored = (seq: number): boolean => driverSlot(s, node, entries.find(e => e.seq === seq)?.by ?? '') !== undefined;
-  const ownerBlock = n.blocks.filter(b => b.state === 'flaky' || (b.state === 'active' && b.kind === 'judgment' && (b.rank ?? 0) >= 2 && !((b.rank ?? 0) <= 2 && driverAuthored(b.seq))));
-  const text = (b: (typeof ownerBlock)[number]): string => `${b.state === 'flaky' ? 'flaky' : `rank ${b.rank} review`} block #${b.seq} on ${b.obligation} needs the owner`;
-  if (n.slot?.open && n.candidate) {
-    for (const i of n.items) if (i.status === 'D') {
-      if (i.mark === '⊤') return `${i.obligation}: ${i.detail}`;
-      const b = ownerBlock.find(b => b.obligation === i.obligation);
-      if (b) return text(b);
-      if (i.obligation === 'review' && nodeReview(s, node).min_rank > 2) return `review requires rank ${nodeReview(s, node).min_rank}: only the owner can record it`;
-    }
-    return undefined;
-  }
-  return ownerBlock.length ? text(ownerBlock[0]!) : undefined;
-}
 /** D25.6: the commands that resolve an owner decision on `node`, as one clause addressed to the main agent. */
 const resolveText = (s: State, node: string): string => { const c = ownerCommands(s, node); return c.length ? `; the main agent resolves it with: ${c.join(' | ')}` : `; the main agent decides: owed why ${node}`; };
 // The reason's own trailing `needs the owner` (ownerNeeded) is dropped: the prefix already says it.
@@ -599,12 +574,10 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   }
   // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
   const taken = open.map(n => n.id);
-  // G3.6 (0.12, review #1089): a removed node's open slot (its writer may still run) counts toward `max` until abandoned.
-  const removedOpen = Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'removed').length;
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
-    const owner = ownerNeeded(s, n.id);
-    if (owner) { out.push(ownerNotify(s, n.id, owner)); continue; }
-    if (taken.length + removedOpen >= opts.max || !plan.nodes.some(x => x.id === n.id) || (overlapping(s,n.id).length > 0 || taken.some(id => effectiveWritesOverlap(s,n.id,id)))) continue;
+    const skip = dispatchSkip(s, n.id, opts.max, taken);
+    if (skip?.kind === 'owner') out.push(ownerNotify(s, n.id, skip.reason));
+    if (skip) continue;
     out.push({ do: 'dispatch', node: n.id });
     taken.push(n.id);
   }

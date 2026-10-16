@@ -12,12 +12,12 @@ import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from 
 import { rebasePending, rebasePendingText, slotGitInProgress, slotGitOperation, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
 import { planReceipt, renderEntry, withActHistory, mergedLine, receiptItem } from './views.ts';
 import * as git from './git.ts';
-import { quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
+import { driveConfig, quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, reviewCarrySource, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, type PackedState } from './reducer.ts';
-import { writesEntryError, writesSyntaxErrors, withWritesSyntax } from './writes.ts';
+import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, matchesWrite, writeCovers } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
 import { setupFailure, infraSource, observationsOf } from './reducer.ts';
@@ -795,19 +795,20 @@ export interface AmendEdit {
   prior: Plan; plan: Plan;
   /** paths appended to the node's writes, and given paths that were already there (skipped) */
   added: string[]; present: string[];
+  covered: { path: string; entry: string }[];
   /** the ledger plan sha the edit starts from */
   planSha: string;
 }
-export interface AmendResult { node: string; file: string; path: string; added: string[]; present: string[]; plan: Entry; rule: Entry; carried: SubmitEntry[]; notCarried: NotCarried[] }
+export interface AmendResult { node: string; file: string; path: string; added: string[]; present: string[]; covered: AmendEdit['covered']; plan?: Entry; rule?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[] }
 type AmendArgs = Context & { node: string; writes: string[]; note: string; plan?: string };
-/** N3.4: the paths of `+<path>` arguments, duplicates dropped; refuses an empty list, a path without `+` and an empty path. */
+/** WA2: bare paths and +paths widen writes; removal and empty paths are refused. */
 export function amendPaths(writes: string[]): string[] {
   if (!Array.isArray(writes) || !writes.length) throw new OwedError('amend needs at least one path to add: --writes +<path>[,+<path>...]','usage');
   const out: string[] = [];
   for (const w of writes) {
     const t = typeof w === 'string' ? w.trim() : '';
-    if (!t.startsWith('+')) throw new OwedError(`amend only widens writes: each path must start with + (got ${JSON.stringify(w)}); removing writes needs owed plan`,'usage');
-    const p = t.slice(1).trim();
+    if (t.startsWith('-')) throw new OwedError(`amend only widens writes (got ${JSON.stringify(w)}); removing writes needs owed plan`,'usage');
+    const p = (t.startsWith('+') ? t.slice(1) : t).trim();
     if (!p) throw new OwedError('amend: empty path after +','usage');
     const error = writesEntryError(p);
     if (error) throw new OwedError(error,'usage');
@@ -839,14 +840,18 @@ async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<Amen
   const doc = parseDocument(read.plan);
   const nodes = doc.get('nodes'), item = isSeq(nodes) ? nodes.items.find(x => isMap(x) && x.get('id') === o.node) : undefined;
   if (!isMap(item)) throw new OwedError(`cannot edit ${read.path}: node ${o.node} is not a map in its nodes list`);
-  const added = paths.filter(p => !spec.writes.includes(p)), present = paths.filter(p => spec.writes.includes(p));
-  if (!added.length) throw new OwedError(`writes of ${o.node} already include ${present.join(', ')}; nothing to amend`);
-  if (writesCovered(s.plan,o.node,added)) throw new OwedError(`not needed: ${added.join(', ')} are covered by allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}); owed grants them at measurement; tell the writer to edit them`);
-  const next = spliceWrites(read.plan,doc,item,added);
+  // Concrete paths use the writes check's matcher; a scope containing wildcards must prove containment, not just match as a filename.
+  const covered = paths.flatMap(path => {
+    const entry = spec.writes.find(w => w === path || (/[?*]/.test(path) ? writeCovers(w, path, writesSyntax(s.plan)) : matchesWrite(path, w, writesSyntax(s.plan))));
+    return entry === undefined ? [] : [{ path, entry }];
+  });
+  const present = covered.map(c => c.path), added = paths.filter(p => !present.includes(p));
+  if (added.length && writesCovered(s.plan,o.node,added)) throw new OwedError(`not needed: ${added.join(', ')} are covered by allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}); owed grants them at measurement; tell the writer to edit them`);
+  const next = added.length ? spliceWrites(read.plan,doc,item,added) : read.plan;
   if (next === undefined) throw new OwedError(`cannot edit ${read.path}: writes of node ${o.node} is not a list`);
-  const plan = planBlob(next,true,s.plan).plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
+  const plan = added.length ? planBlob(next,true,s.plan).plan : s.plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
   if (canonical(plan) !== canonical(expect)) throw new OwedError(`cannot edit ${read.path}: the edited file would change more than the writes of ${o.node}`,'internal');
-  return { node:o.node, file:await realpath(resolve(o.cwd,source)), path:read.path, text:read.plan, next, prior:s.plan, plan, added, present, planSha:s.planSha };
+  return { node:o.node, file:await realpath(resolve(o.cwd,source)), path:read.path, text:read.plan, next, prior:s.plan, plan, added, present, covered, planSha:s.planSha };
 }
 /** A path as a YAML scalar: plain when that is unambiguous (also inside a flow list), else double-quoted (JSON). */
 const yamlPath = (p: string): string => /^[A-Za-z0-9_./][A-Za-z0-9_./*-]*$/.test(p) ? p : JSON.stringify(p);
@@ -890,7 +895,13 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
   // N2 (00:3x): retried like owed plan; each attempt re-reads the ledger and the file (amendEdit), and a failed attempt
   // removes its temporary file before the refusal leaves the lock.
   return retryCas(ledger, async before => {
-  const { entries } = await load(ledger), e = await amendEdit(o,entries,before), p = await storePlan(ledger,e.next,before.plan);
+  const { entries } = await load(ledger), e = await amendEdit(o,entries,before);
+  if (!e.added.length) return ledger.withLock(async () => {
+    stable(before, (await load(ledger)).state);
+    if (await readFile(e.file,'utf8') !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while amending; nothing recorded`);
+    return { node:o.node, file:e.file, path:e.path, added:[], present:e.present, covered:e.covered, carried:[], notCarried:[] };
+  });
+  const p = await storePlan(ledger,e.next,before.plan);
   const limit = o.note.trim(), widened = e.added.map(x => `+${x}`).join(', '), notCarried: NotCarried[] = [];
   return ledger.withLock(async () => {
     const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:`amend ${o.node}: writes ${widened}. Limit: ${limit}`, notCarried },ledger,p,before);
@@ -908,7 +919,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
     const plan = appended[0]!, ruled = appended.at(-1)!;
     try { await rename(temp,e.file); }
     catch (x) { throw new OwedError(`plan #${plan.seq} and rule #${ruled.seq} were recorded, but ${e.path} could not be replaced (${(x as NodeJS.ErrnoException).code ?? String(x)}): the file still holds the prior plan; the recorded plan is in ${temp}: move it over ${e.file}`,'internal'); }
-    return { node:o.node, file:e.file, path:e.path, added:e.added, present:e.present, plan, rule:ruled, carried:appended.slice(1,-1).filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried };
+    return { node:o.node, file:e.file, path:e.path, added:e.added, present:e.present, covered:e.covered, plan, rule:ruled, carried:appended.slice(1,-1).filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried };
   });  });
 }
 // ---------- ED: atomic node/check/invariant plan edits ----------
@@ -968,25 +979,26 @@ export { answer } from './answer.ts';
 
 // ---------- DC: one decision, one append; effects only after the lock ----------
 export type DecideArgs = Actor & { nodes: string | string[]; text: string; writes?: string[]; defer?: string; resume?: boolean; after?: string | string[]; remeasure?: boolean; writer?: boolean; dsa?: Pick<Dsa,'describe'|'send'> };
-export interface DecideResult { decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; deferred?: string; answered: number; resumed: boolean; deliveryFailures: string[] }
+export interface DecideResult { decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; covered?: Record<string, AmendEdit['covered']>; deferred?: string; answered: number; resumed: boolean; deliveryFailures: string[] }
 function decideNodes(nodes: string | string[]): string[] {
   const ids = [...new Set((Array.isArray(nodes) ? nodes : typeof nodes === 'string' ? nodes.split(',') : []).map(x => typeof x === 'string' ? x.trim() : ''))];
   if (!ids.length || ids.some(x => !x || x === '*')) throw new OwedError('decide needs a non-empty list of named nodes','usage');
   return ids;
 }
-async function decideAmend(o: DecideArgs, ids: string[], entries: Entry[], s: State): Promise<AmendEdit> {
+async function decideAmend(o: DecideArgs, ids: string[], entries: Entry[], s: State): Promise<AmendEdit & { perNode: Record<string, AmendEdit['covered']> }> {
   const edits = await Promise.all(ids.map(node => amendEdit({ cwd:o.cwd, node, writes:o.writes!, note:o.text },entries,s)));
   const first = edits[0]!, added = first.added;
-  if (edits.some(e => canonical(e.added) !== canonical(added))) throw new OwedError('decide writes must add the same paths to every named node; split nodes with partially present paths','usage');
+  if (edits.some(e => canonical(e.added) !== canonical(added))) throw new OwedError(`decide writes must add the same paths to every named node; split nodes with partially present paths: ${edits.map(e => `${e.node}: covered [${e.covered.map(c => `${c.path} already covered by ${c.entry}`).join(', ')}]; added [${e.added.join(', ')}]`).join('; ')}`,'usage');
   let next = first.text;
   for (const e of edits) {
+    if (!added.length) continue;
     const doc = parseDocument(next), nodes = doc.get('nodes'), item = isSeq(nodes) ? nodes.items.find(x => isMap(x) && x.get('id') === e.node) : undefined;
     if (!isMap(item)) throw new OwedError(`cannot edit writes of ${e.node}`);
     const changed = spliceWrites(next,doc,item,added);
     if (changed === undefined) throw new OwedError(`cannot edit writes of ${e.node}`);
     next = changed;
   }
-  return { ...first, next, plan:planBlob(next,true,s.plan).plan };
+  return { ...first, next, plan:added.length ? planBlob(next,true,s.plan).plan : s.plan, perNode:Object.fromEntries(edits.map(e => [e.node,e.covered])) };
 }
 /** Authority preview only: no file or ledger effect. */
 export async function decidePreview(o: Omit<DecideArgs,'as'>): Promise<{ prior:Plan; plan:Plan }> {
@@ -1005,7 +1017,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   const before = await load(ledger), s = before.state;
   for (const id of ids) { node(s,id); if (s.nodes[id]!.merged) throw new OwedError(`Node ${id} is merged; decide names unfinished nodes`); }
   const amend = o.writes !== undefined ? await decideAmend(o,ids,before.entries,s) : undefined;
-  const stored = amend ? await storePlan(ledger,amend.next,s.plan) : undefined;
+  const stored = amend?.added.length ? await storePlan(ledger,amend.next,s.plan) : undefined;
   const answers: import('./types.ts').DecisionAnswer[] = [];
   for (const id of ids) {
     const n = s.nodes[id]!, launches = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
@@ -1059,7 +1071,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     // Replay every draft before any durable or plan-file write.
     const final = replayed(prepared,drafts), errors = decisionTailErrors(final); if (errors.length) throw new OwedError(errors.join('; '));
     let temp: string | undefined;
-    if (amend) {
+    if (amend && stored) {
       if (await readFile(amend.file,'utf8') !== amend.text) throw new OwedError('plan file has unrecorded edits; nothing recorded');
       temp = join(dirname(amend.file),`.${basename(amend.file)}.owed-decide-${randomUUID()}.tmp`);
       try { await writeFile(temp,amend.next); await chmod(temp,(await stat(amend.file)).mode & 0o7777); }
@@ -1070,7 +1082,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     const appendedErrors = decisionTailErrors(replayed(prepared,entries));
     if (appendedErrors.length) throw new OwedError(appendedErrors.join('; '));
     if (temp && amend) { try { await rename(temp,amend.file); } catch (e) { throw new OwedError(`decision #${first} recorded; recorded plan in ${temp}: move it over ${amend.file} (${(e as Error).message})`,'internal'); } }
-    return { decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {plan:entries[0]!,added:amend.added} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),answered:answers.length,resumed,deliveryFailures:[] } as DecideResult;
+    return { decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {added:amend.added,covered:amend.perNode,...(stored ? {plan:entries[0]!} : {})} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),answered:answers.length,resumed,deliveryFailures:[] } as DecideResult;
   });
   const { deliverRuling, deliverAnswer, answerRetry } = await import('./answer.ts');
   const delivery = await deliverRuling(o.cwd,result.rule,client);
@@ -1082,7 +1094,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   return result;
 }
 export function decideText(r: DecideResult): string {
-  return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; writes ${r.added!.map(p => `+${p}`).join(',')} (plan #${r.plan.seq})` : ''}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
+  return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; writes ${r.added!.map(p => `+${p}`).join(',')} (plan #${r.plan.seq})` : r.added !== undefined ? '; writes unchanged' : ''}${Object.entries(r.covered ?? {}).flatMap(([node, covered]) => covered.map(c => `; ${node}: ${c.path} already covered by ${c.entry}`)).join('')}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
 }
 
 /** AN2: record once under the ledger lock; retries use the original entry and bytes. */
@@ -1788,6 +1800,17 @@ function incompleteBatchText(s: State): string | undefined {
   const missing = b.members.slice(b.members.indexOf(open.node) + 1);
   return `batch merge of ${b.members.join(', ')} is incomplete after #${open.seq} (${open.node}); missing: ${missing.join(', ')}; restore refs/heads/${s.trunk.name} to ${b.final} (e.g. from the reflog: git update-ref refs/heads/${s.trunk.name} ${b.final}), then any owed write completes the batch; if trunk history no longer contains the batch commits, the ledger tail and trunk disagree and need manual repair`;
 }
+/** WA4: retain every global plan field and every member field; ignore only non-member node specs. */
+function batchPlanChanges(prev: Plan, next: Plan, members: string[]): string[] {
+  const project = (p: Plan) => ({ ...p, nodes:p.nodes.filter(n => members.includes(n.id)) });
+  const a = project(prev), b = project(next);
+  const changes = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => canonical(a[k as keyof Plan]) !== canonical(b[k as keyof Plan]));
+  return changes.flatMap(k => k !== 'nodes' ? [k] : members.flatMap(id => {
+    const x = a.nodes.find(n => n.id === id), y = b.nodes.find(n => n.id === id);
+    if (!x || !y) return [`nodes.${id}`];
+    return [...new Set([...Object.keys(x), ...Object.keys(y)])].filter(f => canonical(x[f as keyof NodeSpec]) !== canonical(y[f as keyof NodeSpec])).map(f => `nodes.${id}.${f}`);
+  })).concat(changes.includes('nodes') && canonical(a.nodes.map(n => n.id)) !== canonical(b.nodes.map(n => n.id)) ? ['nodes order'] : [], writesSyntax(prev) !== writesSyntax(next) ? ['writes syntax'] : []);
+}
 /** MT3: errors of appending the member merge `drafts` in order after `current` (each judged on the state after the previous). */
 function batchGuard(latest: Awaited<ReturnType<typeof load>>, current: State, drafts: Draft[], deferred?: Record<string, ItemView[]>): string[] {
   let s = current, own = false;
@@ -1836,9 +1859,21 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
     return ledger.withLock(async () => {
       // MT3: CAS on the plan, the ledger trunk, every member's slot and candidate, and the trunk ref.
       const latest = await load(ledger);
-      if (latest.state.planSha !== state.planSha) throw new OwedError('Plan, candidate or trunk changed; retry');
+      // Check every intervening plan, not just the final blob: a transient relevant change may invalidate receipts.
+      for (const e of latest.entries) if (e.kind === 'plan' && e.seq > state.seq) {
+        const changes = batchPlanChanges(planAt(latest.state,e.seq),planAt(latest.state,e.seq+1),members);
+        if (changes.length) throw new OwedError(`batch merge refused: plan #${e.seq} changed ${changes.join(', ')}; retry`);
+      }
       for (const id of members) nodeStable(state,latest,id);
       { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
+      if (latest.state.planSha !== state.planSha) {
+        // Non-member specs can still affect quarantine activation. Recompute facts and refuse any difference.
+        const now = await batchFacts(o.cwd,latest.state,chain);
+        if (canonical(now) !== canonical(facts)) {
+          const e = latest.entries.findLast(e => e.kind === 'plan' && e.seq > state.seq);
+          throw new OwedError(`batch merge refused: plan #${e?.seq ?? '?'} changed measured facts (including active quarantine); retry`);
+        }
+      }
       const current = prospective(latest,observations);
       if (o.signal?.aborted) { if (observations.length) await ledger.append(observations); throw aborted(); }
       const drafts: Draft[] = chain.map((c, i) => ({ kind:'merge', by:'executor:owed', node:c.id, attempt:state.nodes[c.id]!.slot!.attempt, prior:c.prior, commit:c.commit, facts:facts[i]!.facts, state:facts[i]!.state, batch:{ final, state:batchState, keys, members }, ...leaseWaitField() }));
@@ -2064,7 +2099,8 @@ export async function status(o: Context): Promise<StatusView> {
   view.conflicts = await candidateConflicts(o.cwd,state);
   const trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
   if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
-  return {...view,...(trunkWorktree ? {trunkWorktree} : {})};
+  if (trunkWorktree) view.trunkWorktree = trunkWorktree;
+  return view;
 }
 /** NT3: retain only recorded defers for this open attempt and invariants still in the plan. */
 function unverifiedDefers(state: State, id: string, defers: State['deferred'], unverified: 'drift' | 'conflict'): DeferredView[] {
@@ -2093,7 +2129,8 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
     currentDefers.push(...defers.filter(d => guard.invItems.some(i => i.key === d.key && i.obligation === `inv:${d.id}` && i.mark === '⏸' && i.evidence.includes(d.seq))));
   }
   const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
-  const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers);
+  const max = driverRunning && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(state.plan).max;
+  const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers,max);
   const red=await sweepRed(cwd,entries,state.trunk.commit);
   if (red) view.sweepRed=red;
   await applyMergeWaiting(cwd, dir, state, view);
@@ -2108,7 +2145,8 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   }
   if (Object.keys(pendingBases).length) view.rebasePending = pendingBases;
   if (drift && view.summary) view.summary.needs.unshift({ node:'trunk', reason:driftText(drift), command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : 'owed why trunk' });
-  return {...view,...(drift ? {drift} : {})};
+  if (drift) view.drift = drift;
+  return view;
 }
 /** Read-only merge diagnostics: Git supplies the current key; probes alone never create an item. */
 async function currentTrunkRedChecks(cwd: string, s: State, id: string): Promise<ItemView[]> {
@@ -2186,7 +2224,9 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const view = reduceFrom(state,[],lookup); await applyReports(ledger,view);
   node(view,o.node);
   const mergeChecks = await currentTrunkRedChecks(o.cwd,view,o.node);
-  const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks));
+  const lock = readLock(ledger.dir), running = lock.state === 'live' || lock.state === 'foreign';
+  const max = running && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(view.plan).max;
+  const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks),max);
   card.conflicts = (await candidateConflicts(o.cwd,view,o.node))[o.node];
   const pending = await rebasePending(view, o.node);
   if (pending) card.rebasePending = pending;
