@@ -62,8 +62,9 @@ export async function costReport(cwd: string, entries: readonly Entry[], lookup:
       if (e.verdict === 'fail' || e.verdict === 'error') { if (setupFailure(e, spec, counted)) row.setupFailures++; else row.failures++; }
       if (id.startsWith('inv:')) {
         const set = measured.get(id) ?? new Set<number>(); measured.set(id, set);
-        for (const m of recentMerges) if (m.seq > e.seq && m.state.invKeys[id.slice(4)] === e.key &&
-          (e.merging === m.node && e.commit === m.commit || e.batch?.includes(m.node) && e.commit === m.batch?.final)) set.add(m.seq);
+        for (const m of recentMerges) if (m.seq > e.seq &&
+          (e.merging === m.node && e.commit === m.commit && m.state.invKeys[id.slice(4)] === e.key ||
+           e.batch?.includes(m.node) && e.commit === m.batch?.final && m.batch.state.invKeys[id.slice(4)] === e.key)) set.add(m.seq);
       }
     }
     if (!id.startsWith('inv:') || e.subject !== 'trunk' || e.by !== 'executor:owed' || (e.merging || e.batch) && !landed.has(e.commit)) continue;

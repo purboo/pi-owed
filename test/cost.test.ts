@@ -115,6 +115,35 @@ test('CO1: real ops merges distinguish a freshly measured invariant from a reuse
   } finally { await r.cleanup(); }
 });
 
+test('CO1: a batch changing invariant reads on every member counts all three measured merges', async () => {
+  const r = await repo();
+  try {
+    await r.put('README', 'batch'); await r.commit();
+    const p = plan();
+    for (const node of p.nodes) node.writes = [`src/${node.id}.ts`];
+    for (const spec of [...p.invariants, ...p.nodes.flatMap(n => n.checks)]) spec.run = `printf 'owed-counts {"pass":1,"fail":0}\\n'`;
+    await ops.init({cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(p), lease: false});
+    for (const node of p.nodes) {
+      const slot = await ops.dispatch({cwd: r.cwd, as: {role: 'parent', id: 'pi'}, node: node.id});
+      await commitAt(slot.worktree, {[`src/${node.id}.ts`]: node.id});
+      await ops.submit({cwd: slot.worktree, as: {role: 'writer', id: `${node.id}#1`}, node: node.id});
+      assert.equal((await ops.attest({cwd: r.cwd, node: node.id, lease: false})).accepted, true);
+    }
+    await ops.mergeBatch({cwd: r.cwd, as: owner, channel: 'delegated', nodes: ['a', 'b', 'c'], lease: false});
+    const entries = await (await Ledger.open(r.cwd)).read();
+    const merges = entries.filter(e => e.kind === 'merge');
+    assert.equal(merges.length, 3);
+    assert.equal(new Set(merges.map(m => m.state.invKeys.route)).size, 3, 'every intermediate tree changes the invariant key');
+    for (const m of merges) assert.equal(m.batch?.state.invKeys.route, merges[2]!.state.invKeys.route);
+    const result = JSON.parse(await run(r.cwd, ['report', '--cost', '--json']));
+    const inv = result.obligations.find((x: {id: string}) => x.id === 'inv:route');
+    assert.deepEqual(inv.merges, {measured: 3, total: 3});
+    assert.equal(inv.runs, 2, 'genesis and one final-tree batch measurement');
+    assert.match(await run(r.cwd, ['report', '--cost']), /inv:route:.*measured on 3 of 3 merges/);
+    assert.equal((await ops.verify({cwd: r.cwd})).ok, true);
+  } finally { await r.cleanup(); }
+});
+
 test('CO2: reads ** warns once per id at init and plan admission, without changing ledger kinds', async () => {
   const r = await repo();
   try {
