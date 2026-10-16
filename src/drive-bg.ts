@@ -514,8 +514,8 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   const flaky = source.match(/flaky block #\d+ on .*?(?:; current candidate [^;\n]+)?(?=; the driver leaves it alone|$)/)?.[0];
   const flakyLine = flaky?.includes(' on the same key; a pass does not erase a failure:') ? `Needs you: ${node} — ${flaky}` : undefined;
   if (shared?.length || flakyLine) {
-    const trunkRed = [...source.matchAll(/(trunk-red: [^;\n]+); merge-tree obs #\d+, trunk probe #\d+; this candidate is not shown to be the cause; (parent: fix trunk[^;\n]+)/g)]
-      .map(([,diagnosis,guidance]) => `Needs you: ${node} — ${diagnosis}; ${guidance}`);
+    const trunkRed = [...source.matchAll(/(trunk-red: [^;\n]+); merge-tree obs #\d+, trunk probe #\d+; this candidate is not shown to be the cause; (parent: fix trunk[^;\n]+)(?:; (or owed waive [^;\n]+))?/g)]
+      .map(([,diagnosis,guidance,waive]) => `Needs you: ${node} — ${diagnosis}; ${guidance}${waive ? `; ${waive}` : ''}`);
     return [...new Set(trunkRed), ...[...new Set(shared ?? [])].map(h => `Needs you: ${node} — ${h}`), ...(flakyLine ? [flakyLine] : [])].join('\n');
   }
   const retry = j.answerRetry ? source.split('retry delivery: ')[1] : undefined;
