@@ -876,11 +876,13 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const follow = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'rebase')!;
       const work = opts.writerWork?.get(id);
       if (!work) return stoppedHalt(`cannot inspect writer worktree after rebase follow-up ${follow.send}; no submit nudge sent`);
-      // WS5: pending rebase means the handed HEAD is still the previous candidate or pre-rebase base, not the new base.
-      const handed = lastSubmit(s, id)?.facts.commit ?? slot.rebase?.from ?? slot.base;
+      // WS5/WS-R2: handed HEADs are the last submit (else dispatch base) plus every later rebase `from` of this attempt.
+      const anchor = lastSubmit(s, id), entries = entriesOf(s), dispatched = entries.find(e => e.seq === slot.dispatchSeq);
+      const handed = new Set<string>([anchor?.facts.commit ?? (dispatched?.kind === 'dispatch' ? dispatched.base : slot.base)]);
+      for (const e of entries) if (e.kind === 'rebase' && e.node === id && e.attempt === attempt && e.seq > (anchor?.seq ?? slot.dispatchSeq)) handed.add(e.from);
       const nudge = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'submit' && x.seq > Math.max(follow.seq, resumed));
       if (nudge) return stoppedHalt(`writer stopped after rebase follow-up ${follow.send} without submitting a candidate after follow-up ${nudge.send}`);
-      if (work.head === handed && !work.dirty) return stoppedHalt(`writer stopped without a candidate after rebase follow-up ${follow.send}`);
+      if (handed.has(work.head) && !work.dirty) return stoppedHalt(`writer stopped without a candidate after rebase follow-up ${follow.send}`);
       const m = writerMsg(`${message}\n${submitMessage(id)}`);
       return send(writer, 'follow-up', 'submit', m.message, m.rulings);
     }
