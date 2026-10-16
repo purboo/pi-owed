@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.25.0
+
+No new ledger entry kind, plan key or gate, and no gate weakened. The only new
+optional ledger field is `genesis.path` (the plan source recorded by `owed
+start`); owed 0.24 ignores it, so no upgrade-before-write order is needed.
+The omitted `drive.answer_grace_s` default changes from 900 to 600 seconds;
+a recorded value keeps its meaning. Restart pi to load the new tool profile
+and the CLI/driver to get `owed start` and the quiet wake text (SPEC
+Compatibility).
+
+- **A small tool surface (SF1).** pi declares seven core tools directly:
+  `owed_status`, `owed_why`, `owed_decide`, `owed_drive`, `owed_start`,
+  `owed_submit` and `owed_review`. Every other owed tool stays registered as
+  deferred and is found with the host's `tool_search`; if the host has no
+  active tool search at session start, owed registers them directly instead,
+  so no tool becomes unreachable. `OWED_TOOLS=all` declares every tool
+  directly (SPEC §11.2).
+- **One start command (SF2).** `owed start [--plan <file>] [--max N]
+  [--stay]` / `owed_start` runs a read-only preflight (Git identity, trunk
+  ref, plan parse and lint, driver lock), initializes a missing ledger as the
+  delegated owner, records a changed plan and starts the background driver.
+  It prints three lines (what it did, the driver state, `Next:`), plus one
+  line per lint warning. A second start with an unchanged plan and a running
+  driver says `already running` and records nothing. Refusals name the failed
+  preflight and its fix; under `OWED_CONFIRM=owner` a fresh start refuses with
+  `owed init <file>` instead of opening a dialog (SPEC §10.2).
+- **Dispatch prints its packet once (SF3).** The subagents arguments refer to
+  the packet above; the structured `subagents.task` still carries the full
+  task (SPEC §11.2).
+- **Wakes say what is needed (QT1).** Each need is one line, `Needs you:
+  <node> — <what> → <one command>`; every open question keeps its own line
+  and answer command; repository notices (shared failure, trunk red or drift,
+  sweeps) keep their full text. Merges collapse to `Done: <nodes>`. Raw driver
+  lines stay in the driver log and `owed why --full` (SPEC §12.8.3).
+- **A why card with only what is outstanding (QT2).** `owed why <node>`
+  shows the outcome, then one line per unsatisfied obligation or active block
+  with its reason and next command, plus the ruling to forward, the measuring
+  and merge-waiting lines and the risk-derived review requirement.
+  Observations, history, superseded entries, ruling texts and ΔO⁻ appear with
+  `--full`; JSON is unchanged (SPEC §9.6).
+- **Repair follow-ups list only new failures (QT3).** A follow-up to a
+  writer names the failures new since the last message and the next step, and
+  points to `owed why <node> --full` for the rest (SPEC §12.5.3).
+- **Merge receipts in one line (QT4).** Single and batch merges print
+  `<node> merged (<commit12>); measured <n>, waived <n>, debt <n>`, one line
+  per batch member; debt counts only deferred obligations on this merge's key
+  (SPEC §8.3.4).
+- **Answered but still asking (QT5).** A question whose answer was recorded
+  at least `drive.answer_grace_s` (default now 600 s) earlier while the runner
+  still lists it as open reads `<node>: answered at #<seq> (HH:MM), still
+  asking after <m>m: retry with owed answer …` with the exact retry, not a new
+  question. `owed status` shows it only while a driver runs (SPEC §12.8.4).
+- **Docs rewritten around the loop.** The owed skill core is under 5 KB: what
+  owed is, the core tools, the start → wait for the wake → decide → merged
+  loop, the three roles and six hard rules; everything else moved to
+  `skills/owed/references/*.md`. The README opens with what, why, a
+  quickstart with `owed start`, the current version and the delegated owner
+  default; the rest is reorganized under reference headings. Release notes
+  for 0.20–0.25 are folded into SPEC.
+
 ## 0.24.0
 
 No new ledger entry kind and no gate weakened. New optional plan keys:
