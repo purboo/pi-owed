@@ -795,7 +795,14 @@ invalidates a candidate.
   run, not the sum of the runs (only cargo "test result:" lines are added up)`.
   That is the actual rule of `parseCounts` (§7): each later TAP `# tests`/`#
   pass`/`# fail` line (else the last `1..N` plan), `Tests:` summary or pytest
-  summary line replaces the earlier one;
+  terminal summary replaces the earlier one. Pytest summaries are bounded by
+  `=` runs or end in `in <seconds>s` (optionally ` (<h:mm:ss>)`); the body is
+  only comma-separated `<n> <word>` items (`passed`, `failed`, `skipped`,
+  `error`, `errors`, `xfailed`, `xpassed`, `deselected`, `warning`, `warnings`,
+  `rerun`), with warnings, reruns and deselected excluded from test counts.
+  Zero-test forms are line-anchored (optional leading whitespace and `=` runs):
+  pytest `no tests ran` (optionally `in <seconds>s`) or `collected 0 items`,
+  and jest `No tests found` at the start of a line; free-text mentions do not count;
   cargo `test result:` lines are summed. Nothing is refused or recorded.
   In 0.10 (N2), both warning kinds skip nodes merged in the current ledger on
   `owed plan`; invariant warnings remain. `owed init` warnings are unchanged.
