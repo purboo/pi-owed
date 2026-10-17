@@ -257,8 +257,9 @@ test('L1.5: why and status suggest owed resume for a halt; the wake message with
   r.record(act(r)); r.halt(act(r));
   const s = r.state();
   const why = renderReceipt(receipt(s, r.entries, 'a'));
-  assert.match(why, /\n⏸ halted by driver #\d+ .*; cleared by any later action .*; to clear it without an obligation: owed decide a --text "<decision>" \(add --after <node> to wait until that node merges; --no-resume keeps it halted\)/);
-  assert.match(renderStatus(statusView(s, r.entries)), /\nHalted \(driver\):\n⏸ a: halted by driver #\d+ [^\n]*\n {2}to clear it without an obligation: owed decide <node> --text "<decision>"/);
+  assert.match(why, /^a: writer gave no final text → owed decide a --text "<ruling>" --writer/);
+  assert.match(why, /\n {2}or: owed resume a/);
+  assert.match(renderStatus(statusView(s, r.entries)), /a: writer gave no final text → owed decide a --text "<ruling>" --writer/);
   assert.equal(renderEntry(r.resume({ after: 'b', note: 'n' })), `Recorded #${r.entries.length - 1} parent:main resumed a after b`);
   assert.equal(renderEntry(r.resume({ by: 'owner:pi' })).replace(/#\d+/, '#N'), 'Recorded #N owner:pi resumed a');
   assert.equal(reportText({ event: 'waiting', node: 'a', after: 'b', resume: 7 }), 'waiting: a waits for b (resume #7)');

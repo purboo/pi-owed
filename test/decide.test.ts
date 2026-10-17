@@ -244,7 +244,7 @@ test('DC2: strict multi-answer fields, target scope, sort, exclusivity and histo
 test('DC3/DC4: tool schema and execution, Needs-you command, asking notices and quiet durable answers',async()=>{
   const f=await fixture();
   try {await f.slot();await f.halt();const tools=new Map<string,ToolDefinition>();owed({registerTool(t:ToolDefinition){tools.set(t.name,t);},registerCommand(){},on(){}} as unknown as ExtensionAPI);const tool=tools.get('owed_decide');assert.ok(tool);assert.ok('nodes' in (tool.parameters as {properties:object}).properties);
-    const status=await ops.status(f);assert.match(renderStatus(status),/owed decide a --text/);
+    const status=await ops.status(f);assert.match(renderStatus(status),/a: driver halted: check failed; after resume the driver continues from the current state → owed resume a/);assert.doesNotMatch(renderStatus(status),/owed decide a --text/);
     const result=await tool.execute('test',{nodes:['a'],text:'Keep the interface',cwd:f.cwd},undefined,undefined,{cwd:f.cwd,hasUI:false} as Parameters<ToolDefinition['execute']>[4]);assert.equal(result.isError,undefined);assert.equal(result.content.length,1);assert.ok(result.content[0]?.type==='text');assert.match(result.content[0].text,/^decision #/);assert.equal(result.content[0].text.split('\n').length,1);
     const l=await f.launch();f.dsa.ask(l.rid);assert.match(askingText('a',l,f.dsa.views.get(l.rid)!),/owed decide a --text/);
     await ops.decide(f.options);const s=(await ops.readState(f)).state;assert.ok(answeredQuestion(s,l.rid,'q1',1));const actions=driveDecide(s,s.plan,f.dsa.views,{max:1,repairs:2,project:projectId(s),root:f.cwd,applied:new Set(),rejected:new Map()});assert.ok(actions.some(a=>a.do==='notify'&&a.quiet));

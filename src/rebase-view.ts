@@ -4,6 +4,8 @@ import { lstat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { git, isAncestor } from './git.ts';
 
+/** WS3: shared packet text is initialized independently of the views/needs/ops cycle. */
+export const WRITER_DECISION = 'If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.';
 export interface RebasePending { head: string; base: string; upstream: string; command: string; recovery?: string }
 export type SlotGitOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
 /** Porcelain can be clean while an interrupted Git operation still owns the worktree. */

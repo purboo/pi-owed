@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { sha256 } from '../src/canon.ts';
 import { runJob } from '../src/exec.ts';
 import * as exec from '../src/exec.ts';
 const { errorGroups } = exec;
@@ -62,7 +63,7 @@ test('FG1: unfinished old cargo panic cannot consume the next panic header', () 
   const good = { message: 'real cause', location: 'src/good.rs:9', names: ['module::good'] };
   for (const text of [log, log.replace(/\n/g, '\r\n'), log.replace("'unfinished\n", "'unfinished:\n")]) {
     assert.deepEqual(errorGroups(text, ['module::good']), [good]);
-    assert.deepEqual(errorGroups(text, ['worker', 'module::good']), [good, { message: '(no error text)', names: ['worker'] }]);
+    assert.deepEqual(errorGroups(text, ['worker', 'module::good']), [good, { message: `no error text: the \`not ok\` block of this name in log ${sha256(text).slice(0,12)} has no error field`, missingError: 'field', names: ['worker'] }]);
   }
 });
 
@@ -72,7 +73,7 @@ test('FG1: unfinished old cargo panic stops at failed-test and stdout record bou
     assert.deepEqual(errorGroups(log, ['module::good']), [{ message: 'real cause', location: 'src/good.rs:9', names: ['module::good'] }]);
     assert.deepEqual(errorGroups(log, ['worker', 'module::good']), [
       { message: 'real cause', location: 'src/good.rs:9', names: ['module::good'] },
-      { message: '(no error text)', names: ['worker'] },
+      { message: `no error text: the \`not ok\` block of this name in log ${sha256(log).slice(0,12)} has no error field`, missingError: 'field', names: ['worker'] },
     ]);
   }
 });
@@ -90,7 +91,7 @@ test('FG1: subtestsFailed parents are dropped only when another failing point ha
   const parent = tap('suite', "'1 subtest failed'", undefined, 'subtestsFailed');
   assert.deepEqual(errorGroups(tap('child', "'real cause'") + parent, ['suite', 'child']), [{ message: 'real cause', names: ['child'] }]);
   assert.deepEqual(errorGroups(parent + tap('child'), ['suite', 'child']), [
-    { message: '1 subtest failed', names: ['suite'] }, { message: '(no error text)', names: ['child'] },
+    { message: '1 subtest failed', names: ['suite'] }, { message: `no error text: the \`not ok\` block of this name in log ${sha256(parent + tap('child')).slice(0,12)} has no error field`, missingError: 'field', names: ['child'] },
   ]);
 });
 
@@ -101,8 +102,9 @@ test('FG1: frequency then appearance, location disagreement, missing errors and 
   assert.deepEqual(groups[0], { message: 'shared', names: ['one', 'two'] });
   assert.equal(groups[1]!.message, `${'a'.repeat(159)}…`);
   assert.equal(groups[1]!.message.length, 160);
-  assert.deepEqual(groups.slice(2), [{ message: 'tie', names: ['three'] }, { message: '(no error text)', names: ['missing'] }]);
-  assert.deepEqual(errorGroups('not ok 1 - malformed\n  ---\n  error: [\n  ...\n', ['malformed']), [{ message: '(no error text)', names: ['malformed'] }]);
+  assert.deepEqual(groups.slice(2), [{ message: 'tie', names: ['three'] }, { message: `no error text: log ${sha256(log).slice(0,12)} has no \`not ok\`/panic line named exactly as this failed test`, missingError: 'name', names: ['missing'] }]);
+  const malformed = 'not ok 1 - malformed\n  ---\n  error: [\n  ...\n';
+  assert.deepEqual(errorGroups(malformed, ['malformed']), [{ message: `no error text: the \`not ok\` block of this name in log ${sha256(malformed).slice(0,12)} has no error field`, missingError: 'field', names: ['malformed'] }]);
 });
 
 test('FG1: mixed cargo/TAP CRLF logs retain first-appearance order', () => {
@@ -145,7 +147,7 @@ test('FG2/SG4: parsed failed names without error text do not display passing tai
   const log = tap('first') + 'test module::second ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored;\n' + summary(1);
   await measure([log], obs => {
     assert.equal(obs.verdict, 'fail');
-    assert.equal(obs.note, 'failed tests: first: (no error text) | module::second: (no error text)');
+    assert.equal(obs.note, `failed tests: first: no error text: the \`not ok\` block of this name in log ${obs.log!.slice(0,12)} has no error field | module::second: no error text: log ${obs.log!.slice(0,12)} has no \`not ok\`/panic line named exactly as this failed test`);
     assert.deepEqual(obs.failed, ['first', 'module::second']);
   });
 });

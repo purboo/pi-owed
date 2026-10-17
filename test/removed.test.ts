@@ -185,7 +185,7 @@ test('F4.2 (#33c): resume refuses while a needs-parent review block awaits a rul
     const n0 = await count();
     for (const after of [undefined, 'b']) {
       await assert.rejects(ops.resume({ cwd: r.cwd, as: parent, channel: 'flag', node: 'a', ...(after ? { after } : {}) }), (e: Error) => {
-        assert.match(e.message, new RegExp(`resume refused: a needs a parent ruling \\(review block #${block.seq} review\\).*owed rule --nodes a "<decision>"`));
+        assert.match(e.message, new RegExp(`resume refused: a needs a parent ruling \\(review block #${block.seq} review\\).*review asks: which contract\\? → owed decide a --text "<ruling>" --writer`));
         return true;
       });
     }

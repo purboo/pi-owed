@@ -261,10 +261,10 @@ test('K1.3: an exec block tells the writer to skip owed attest while owed drive 
     await ops.attest({ cwd: r.cwd, node: 'a' });
     const card = await ops.why({ cwd: r.cwd, node: 'a' }), block = card.blocks.find(b => b.kind === 'exec');
     assert.ok(block, 'an exec block');
-    assert.match(block.clear, /then owed attest a \(skip this when owed drive is running: the driver attests\)/);
-    assert.match(views.renderReceipt(card), /owed attest a \(skip this when owed drive is running: the driver attests\)/);
+    assert.match(block.clear, /writer fixes and runs owed submit a, then owed attest a \(the attribution rerun on the original content clears the block\)/);
+    assert.match(views.renderReceipt(card), /owed attest a \(the attribution rerun on the original content clears the block\)/);
     const brief = await ops.brief({ cwd: r.cwd });
-    assert.match(brief.rejected.find(b => b.node === 'a')!.clear, /\(skip this when owed drive is running: the driver attests\)/);
+    assert.match(brief.rejected.find(b => b.node === 'a')!.clear, /\(the attribution rerun on the original content clears the block\)/);
   } finally { await r.cleanup(); }
 });
 

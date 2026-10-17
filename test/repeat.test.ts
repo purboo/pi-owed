@@ -57,7 +57,7 @@ test('RC3/SG4 #1274: a red_expect mismatch quotes failing names without a summar
     const run = "for n in $(seq 1 30); do echo \"line $n\"; done; echo 'not ok 1 - unrelated failing test'; echo '# tests 1'; echo '# pass 0'; echo '# fail 1'; exit 1";
     const obs = await f.run(run, { red_expect: 'expected failure only' }, 'red');
     assert.equal(obs.verdict, 'fail'); assert.deepEqual(obs.failed, ['unrelated failing test']);
-    assert.equal(obs.note, 'failed tests: unrelated failing test: (no error text)');
+    assert.equal(obs.note, `failed tests: unrelated failing test: no error text: the \`not ok\` block of this name in log ${obs.log!.slice(0,12)} has no error field`);
     assert.doesNotMatch(obs.note!, /last output:/); assert.equal(obs.note!.split('\n').length, 1);
     assert.doesNotMatch(obs.note!, /\n  line 1\n/);
     const pass = await f.run(run, { red_expect: 'unrelated failing test' }, 'red');
@@ -80,7 +80,7 @@ test('RC3/SG4 #1274: reused failed invariant keeps failure quotes on second merg
     await ops.launch({ cwd: r.cwd, as: DRIVE_PRINCIPAL, node: 'a', attempt: 1, role: 'writer', rid, spec: '{}', labels: runLabels(project, 'a', 1, 'writer') });
     for (let attempt = 0; attempt < 2; attempt++) {
       await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), e => {
-        assert.ok(e instanceof Error); assert.match(e.message, /failed tests: reused merge gate: \(no error text\)/); assert.doesNotMatch(e.message, /last output:|stored diagnostic tail/); return true;
+        assert.ok(e instanceof Error); assert.match(e.message, /failed tests: reused merge gate: no error text: log [0-9a-f]{12} has no `not ok`\/panic line named exactly as this failed test/); assert.doesNotMatch(e.message, /last output:|stored diagnostic tail/); return true;
       });
     }
     const countFailed = async () => (await ledger.read()).filter(e => e.kind === 'obs' && e.merging === 'a' && e.obligation === 'inv:x').length;
@@ -92,7 +92,7 @@ test('RC3/SG4 #1274: reused failed invariant keeps failure quotes on second merg
     const report = (await driver.pass()).actions.find(a => a.do === 'merge');
     assert.equal(report?.outcome, 'refused'); assert.match(report?.detail ?? '', /failed tests: reused merge gate/); assert.doesNotMatch(report?.detail ?? '', /last output:|stored diagnostic tail/);
     const halt = (await ledger.read()).findLast(e => e.kind === 'halt');
-    assert.ok(halt?.kind === 'halt'); assert.match(halt.reason, /failed tests: reused merge gate: \(no error text\)/); assert.doesNotMatch(halt.reason, /last output:|stored diagnostic tail/);
+    assert.ok(halt?.kind === 'halt'); assert.match(halt.reason, /failed tests: reused merge gate: no error text: log [0-9a-f]{12} has no `not ok`\/panic line named exactly as this failed test/); assert.doesNotMatch(halt.reason, /last output:|stored diagnostic tail/);
     assert.equal(await countFailed(), 1); assert.equal((await ops.status({ cwd: r.cwd })).trunk.commit, base);
   } finally { await r.cleanup(); }
 });
@@ -220,7 +220,7 @@ test('RC3/SG4: failed notes, why, repair and halt retain names with at most thre
     add({ ...obs, key: facts.keys['check:x'] });
     add({ ...obs, obligation: 'writes', key: facts.keys.writes, verdict: 'pass', note: undefined, failed: undefined });
     const s = reduce(es, () => f.plan), why = renderReceipt(receipt(s, entriesOf(s), 'a')), repair = repairMessage(s, 'a');
-    assert.match(obs.note!, /latency gate 2: \(no error text\) \(\+47 more\)$/);
+    assert.match(obs.note!, /latency gate 2: no error text: log [0-9a-f]{12} has no `not ok`\/panic line named exactly as this failed test \(\+47 more\)$/);
     assert.doesNotMatch(obs.note!, /latency gate 3:|last output:/);
     for (const text of [why, repair]) { assert.ok(text.includes('latency gate 49')); assert.ok(text.includes('failed tests:')); assert.doesNotMatch(text, /last output:/); }
     const opts: DriveOpts = { max: 1, repairs: 0, project: 'project', root: f.cwd, applied: new Set(), rejected: new Map(), blobs: new Map() };
@@ -306,7 +306,7 @@ test('RC1/RC3: failed merge invariant retains all run receipts and leads the ref
     await commitAt(d.worktree, { 'src/value': 'new' });
     await ops.submit({ cwd: d.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
     await ops.attest({ cwd: r.cwd, node: 'a' });
-    await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), /inv:x: failed tests: merge timing gate: \(no error text\)/);
+    await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), /inv:x: failed tests: merge timing gate: no error text: log [0-9a-f]{12} has no `not ok`\/panic line named exactly as this failed test/);
     const entries = await (await Ledger.open(r.cwd)).read(), obs = entries.findLast((e): e is ObsEntry => e.kind === 'obs' && e.obligation === 'inv:x' && e.merging === 'a');
     assert.equal(obs?.verdict, 'fail'); assert.deepEqual(obs?.runs?.map(r => r.verdict), ['fail', 'fail']);
     assert.equal((await ops.status({ cwd: r.cwd })).trunk.commit, base); assert.equal(entries.filter(e => e.kind === 'merge').length, 0);

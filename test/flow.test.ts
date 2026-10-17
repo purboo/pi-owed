@@ -163,7 +163,8 @@ test('dispatch refuses overlapping writes of an open slot unless --allow-overlap
     assert.equal('overlaps' in b.entry, false, 'disjoint writes record nothing');
     const c = await call<{ entry: Entry }>(r.cwd, ['dispatch', 'c', '--allow-overlap']);
     assert.ok(c.entry.kind === 'dispatch'); assert.deepEqual(c.entry.overlaps, ['a']);
-    assert.match((await cli(r.cwd, ['why', 'c'])).stdout, /c: dispatched/);
+    assert.match((await cli(r.cwd, ['why', 'c'])).stdout, /^c: writing;/);
+    assert.equal((await call<{ phase: string }>(r.cwd, ['why', 'c'])).phase, 'dispatched');
   } finally { await r.cleanup(); }
 });
 

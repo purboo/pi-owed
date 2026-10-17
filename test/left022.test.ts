@@ -129,7 +129,7 @@ for (const what of ['merge', 'attest'] as const) test(`LO2: own ${what} start cl
     assert.equal(view.mergeWaiting?.a, undefined);
     for (const args of [['status'], ['status', '--full'], ['why', 'a']]) {
       const out = await cli(f.cwd, args); assert.equal(out.code, 0, out.stderr);
-      assert.match(out.stdout, new RegExp(`a: ${phase} \\(since `));
+      assert.match(out.stdout, what === 'attest' && args[0] === 'why' ? /a: measuring check:slow since \d\d:\d\d \(attest pid \d+\)/ : new RegExp(`a: ${phase} \\(since `));
       assert.doesNotMatch(out.stdout, /a: .*waiting for|a: .*machine lease busy/);
     }
   } finally { await writeFile(gate, ''); driver?.abort.abort(); await driver?.settle(); await f.cleanup(); }
