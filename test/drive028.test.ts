@@ -119,6 +119,36 @@ test('DR1/C7: repository trunk-red wake uses repoNeeds without trunk decide/rule
   } finally { await f.done(); }
 });
 
+test('DR2/R-028-53: same-obligation park groups stay isolated with and without a hook', async () => {
+  const check = (last: string) => ({ id:'runtime', reads:['seed'], run:`if grep -q broken seed; then echo 'owed-counts {"pass":0,"fail":4,"failed":["a","b","c","${last}"]}'; exit 1; else echo 'owed-counts {"pass":4,"fail":0}'; fi` });
+  const f=await fixture({checks:[check('d')]},[node('b',{checks:[check('e')]})]);
+  try {
+    await f.submit();await measure(f);
+    const b=await ops.dispatch({cwd:f.cwd,as:parent,node:'b'});
+    await commitAt(b.worktree,{'b.txt':'candidate'});await ops.submit({cwd:b.worktree,as:{role:'writer',id:'b#1'},node:'b'});await ops.attest({cwd:f.cwd,node:'b',lease:false});
+    await commitAt(f.cwd,{seed:'broken'});await ops.adopt({cwd:f.cwd,as:owner,channel:'delegated',note:'park both groups'});
+    for (const id of ['a','b']) await assert.rejects(ops.merge({cwd:f.cwd,as:parent,node:id,lease:false}),/trunk-red:/);
+    await f.driver.pass();
+    const wakes=f.lines.filter(l => l.do === 'notify' && l.scope === 'repo' && l.once?.startsWith('trunk-red\u0000'));
+    assert.equal(wakes.length,2);assert.notEqual(wakes[0]!.text,wakes[1]!.text);
+    const ns=repoNeeds(await f.state());assert.equal(ns.length,2);
+    for (const [i,wake] of wakes.entries()) {
+      assert.deepEqual(wake.need,ns[i]);assert.equal(wake.text,`trunk: ${rendered(ns[i]!)}`);
+      assert.match(wake.text!,new RegExp(`waiting: ${i === 0 ? 'a' : 'b'}\\.`));
+      assert.doesNotMatch(wake.text!,new RegExp(`waiting: ${i === 0 ? 'b' : 'a'}\\.`));
+    }
+    for (const hook of [false,true]) {
+      const follower=new Follower({log:f.log,repo:f.cwd,pid:process.pid,from:0,busy:() => false,...(hook ? {revalidate:revalidator({cwd:f.cwd,dsa:f.dsa})} : {}),deliver(){}});
+      try {
+        const message=(await follower.step())!;assert.ok(message);
+        const red=message.split('\n').filter(l => l.startsWith('Needs you: trunk —'));
+        assert.equal(red.length,2,`hook=${hook}: ${message}`);
+        for (const n of ns) assert.equal(red.filter(l => l === `Needs you: trunk — ${rendered(n)}`).length,1);
+      } finally {follower.stop();}
+    }
+  } finally {await f.done();}
+});
+
 test('DR1/C5: failed merge-tree wake renders its current owner waiver with active risk pin', async () => {
   const run=`if [ ! -f a.txt ] || grep -q fixture seed; then printf '# tests 1\n# pass 1\n# fail 0\n'; else printf 'not ok 1 - moved seed with candidate\n# tests 1\n# pass 0\n# fail 1\n'; exit 1; fi`;
   const f=await fixture({checks:[{id:'stress',run,reads:['seed','a.txt']}]});

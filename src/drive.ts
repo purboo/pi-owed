@@ -11,7 +11,7 @@ import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices,
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
 import { dispatchPacket, oneLine, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
-import { needs } from './needs.ts';
+import { needs, repoNeeds } from './needs.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
@@ -539,6 +539,12 @@ export function driverSlot(s: State, node: string, by: string): number | undefin
 // ---------- owner-needed ----------
 /** C1: render the authority's answer, one line and command per obligation. */
 export const needText = (n: Need): string => `${n.text}${n.command ? ` → ${n.command}` : ' (no single command)'}`;
+/** R-028-53: needs.ts:151 preserves parks first, in trunkParkNotices/sharedParkNotices order. */
+export function parkNeeds(s: State, once?: string): Need[] | undefined {
+  const parks = [...trunkParkNotices(s), ...sharedParkNotices(s)], i = parks.findIndex(p => p.once === once);
+  if (i < 0) return undefined;
+  const ns = repoNeeds(s); return [ns[i]!, ...ns.slice(parks.length)];
+}
 const needLines = (s: State, node: string, rt?: Runtime): string => needs(s, node, rt).map(n => `${node}: ${needText(n)}`).join('\n');
 const isOwnerNeed = (n: Need): boolean => n.actor === 'owner' || (n.obligation !== undefined && n.kind !== 'rule');
 const ownerNotify = (s: State, node: string, rt?: Runtime): Action | undefined => {

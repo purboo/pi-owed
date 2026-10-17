@@ -32,7 +32,7 @@ import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, re
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
 import { mergeBatchPlan, sharedParked, sharedParkKey, sharedPhase } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
-import { callAt, decide, needText, recentSetupFailures, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
+import { callAt, decide, needText, parkNeeds, recentSetupFailures, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
 import { needs, repoNeeds, needId, activity } from './needs.ts';
 import { assembleRuntime } from './activity.ts';
 import type { Need, Runtime } from './needs-types.ts';
@@ -959,7 +959,7 @@ export class Driver {
     if (!s) { r.need = null; return; }
     rt ??= await assembleRuntime({ cwd: this.o.cwd, state: s, driverRunning: true });
     const ns = r.do === 'notify' && r.outcome === 'describe-failed' ? []
-      : r.scope === 'repo' && r.node !== DRIFT_NODE && !r.once?.startsWith('setup\u0000') ? repoNeeds(s, rt)
+      : r.scope === 'repo' && r.node !== DRIFT_NODE && !r.once?.startsWith('setup\u0000') ? parkNeeds(s, r.once) ?? repoNeeds(s, rt)
       : needs(s, r.node, rt).filter(n => r.do !== 'notify' || !r.rid || (n.rid === r.rid && n.qid === r.qid));
     const primary = ns[0];
     r.need = primary ?? null;

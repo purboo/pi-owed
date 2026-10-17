@@ -48,6 +48,16 @@ Comparative evidence required by R-028-50:
 - Candidate: `/tmp/owed-ipc/logs/drive28-parentops-candidate-212230.log`, `/tmp/owed-ipc/logs/drive28-parentops-candidate-212256.log`, `/tmp/owed-ipc/logs/drive28-parentops-candidate-212321.log`.
 - Base: `/tmp/owed-ipc/logs/drive28-parentops-base-212346.log`, `/tmp/owed-ipc/logs/drive28-parentops-base-212412.log`, `/tmp/owed-ipc/logs/drive28-parentops-base-212437.log`.
 
+## Parked notice delivery (R-028-52 and R-028-53)
+
+Repository park groups share an obligation but are identified by their full `once`, not their need identity. Rendering every repository need in every notice had made distinct groups’ text identical, so collection discarded the second group before delivery. Filtering by need identity could not distinguish them either.
+
+`parkNeeds` selects the named group plus non-park repository needs, following the existing repository need order. Driver wakes, delivery-time refresh and optional hook validation share that scope. A resolved group is dropped; a surviving group never renders another group’s waiting nodes. Refresh remains independent of the hook and reuses the existing state read; synchronous `tick()` and other follower paths are unchanged.
+
+The new regression covers two live groups with the same obligation through both hookless and hooked followers. Each group’s red line is delivered exactly once and each notice excludes the other group’s waiting node. Existing tests are unmodified for these corrections.
+
+Final net source growth against the slot base is +79 lines: `answer.ts` +1, `drive.ts` +9, `drive-run.ts` +29 and `drive-bg.ts` +40. This stays within the parent’s expanded leaf budget; release-wide subtraction remains the prune gate.
+
 ## Compatibility and limits
 
 The historical prose parser remains only for logs without a `need` field. New diagnostic rows explicitly use a null need. Membership gaps remain visible as diagnostics; the driver does not invent new needs to fill them. Prompt review service during unrelated halts remains outside this release.
