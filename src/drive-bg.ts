@@ -12,7 +12,10 @@ import { OwedError } from './errors.ts';
 import { clockTime } from './clock.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
-import { answeredQuestion } from './drive.ts';
+import { answeredQuestion, needText, parkNeeds } from './drive.ts';
+import { needs, repoNeeds, needId } from './needs.ts';
+import { assembleRuntime } from './activity.ts';
+import type { Need, Runtime } from './needs-types.ts';
 import { trunkParkNotices, sharedParkNotices, heldFlaky } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import type { State } from './types.ts';
@@ -356,8 +359,10 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
     ? { obligation:red.obligation, key:red.key } : undefined;
   const drift = !invariantRed && j.do === 'notify' && j.node === DRIFT_NODE && j.scope === 'repo';
   const node = typeof j.node === 'string' && j.scope !== 'repo' && !drift ? j.node : undefined;
-  const flaky = j.do === 'notify' ? String(j.text ?? '').match(/flaky block #(\d+) on /)?.[1] : undefined;
+  const structured = j.need && typeof j.need === 'object' && typeof j.needId === 'string' ? j.need as Need : undefined;
+  const flaky = !('need' in j) && j.do === 'notify' ? String(j.text ?? '').match(/flaky block #(\d+) on /)?.[1] : undefined;
   const check: WakeCheck = {
+    ...(structured ? { need: structured, needId: j.needId as string, otherNeeds: j.otherNeeds as Need[] | undefined, ...(j.scope === 'repo' ? { scope: 'repo' as const, ...(typeof j.once === 'string' && /^(trunk-red|trunk|shared)\u0000/.test(j.once) ? { once: j.once } : {}) } : {}) } : {}),
     ...(flaky !== undefined && node !== undefined ? {node,flaky:Number(flaky)} : {}),
     ...(invariantRed ? { invariantRed } : {}),
     ...(drift ? { drift: true as const, ...(typeof j.facts === 'number' ? { facts: j.facts } : {}) } : {}),
@@ -365,7 +370,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
     ...(j.answerRetry === true ? { answerRetry: true as const } : {}),
     ...(j.do === 'notify' && typeof j.rid === 'string' && typeof j.qid === 'string' && typeof j.rev === 'number' ? { rid: j.rid, qid: j.qid, rev: j.rev } : {}),
   };
-  const checked = { ...(check.node !== undefined || check.qid !== undefined || check.drift || check.invariantRed ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
+  const checked = { ...(check.need !== undefined || check.node !== undefined || check.qid !== undefined || check.drift || check.invariantRed ? { check } : {}), ...(j.do === 'halt' ? { halt: true as const } : {}) };
   // E3.1: a node-scoped wake with a fact mark is compared per node by its text without the repeat suffix.
   // G3.4b: keyed by `reportKey`, so the repo-level drift notify and a plan node named `trunk` keep separate records.
   if (typeof j.node === 'string' && typeof j.facts === 'number') return { kind: 'wake', text, fact: { node: j.node, key: reportKey(j), base: reportText({ ...j, repeat: undefined }), facts: j.facts }, ...checked };
@@ -377,7 +382,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
  * (the ledger trunk seq), and `rid`/`qid`/`rev` (an asking notify's first open question). Terminal lines and other lines
  * without a fact mark or question carry none and are never dropped.
  */
-export interface WakeCheck { node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
+export interface WakeCheck { once?: string; scope?: 'repo'; need?: Need; needId?: string; otherNeeds?: Need[]; currentNeeds?: Need[]; node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
 export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
 /**
@@ -393,16 +398,39 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
   return async checks => {
     let state: Promise<State | undefined> | undefined;
     let trunk: Promise<string | undefined> | undefined;
+    let runtime: Promise<Runtime> | undefined;
     const views = new Map<string, Promise<{ qid: string; rev: number }[] | undefined>>();
     const dsa = (): Dsa => o.dsa ?? new Dsa({ timeoutMs: 10_000 });
     let client: Dsa | undefined;
     return Promise.all(checks.map(async c => {
+      if (c.need) {
+        delete c.currentNeeds;
+        state ??= stateOf(o.cwd).catch(() => undefined);
+        const s = await state;
+        if (s) {
+          if (c.once) { c.currentNeeds = parkNeeds(s, c.once); return c.currentNeeds !== undefined; }
+          runtime ??= assembleRuntime({ cwd: o.cwd, state: s, driverRunning: true });
+          const rt = await runtime, ids = new Set([c.needId!, ...(c.otherNeeds ?? []).map(needId)]);
+          const current = c.scope === 'repo' ? repoNeeds(s, rt) : needs(s, c.need.node, rt);
+          c.currentNeeds = current.filter(n => ids.has(needId(n)));
+          if (!c.currentNeeds.length) return false;
+        }
+        // An asking cache is runtime evidence; verify each recorded answer against the host without dropping siblings.
+        const current = c.currentNeeds ?? [c.need, ...(c.otherNeeds ?? [])], closed = new Set<string>();
+        await Promise.all(current.filter(n => n.kind === 'answer' && n.rid && n.qid).map(async n => {
+          if (!views.has(n.rid!)) { client ??= dsa(); views.set(n.rid!, client.describe(n.rid!).then(v => (v.questions ?? []).map(q => ({ qid: q.qid, rev: q.rev })), () => undefined)); }
+          const open = await views.get(n.rid!)!;
+          if (open && !open.some(q => q.qid === n.qid && q.rev === n.rev)) closed.add(needId(n));
+        }));
+        c.currentNeeds = current.filter(n => !closed.has(needId(n)));
+        return c.currentNeeds.length > 0; // Legacy qid/fact checks must not drop surviving siblings.
+      }
       if (c.node !== undefined && c.flaky !== undefined) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state, block = s?.nodes[c.node]?.blocks.find(b => b.seq === c.flaky);
         if (s && block && heldFlaky(s,c.node,block)) return false;
       }
-      if (c.invariantRed) {
+      if (!c.need && c.invariantRed) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;
         if (s) {
@@ -419,7 +447,7 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
           if (await trunk === s.trunk.commit) return false;
         }
       }
-      if (!c.answerRetry && c.node !== undefined && c.facts !== undefined) {
+      if (!c.need && !c.answerRetry && c.node !== undefined && c.facts !== undefined) {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;
         if (s?.nodes[c.node] && factMark(s, c.node) > c.facts) return false;
@@ -648,17 +676,22 @@ export class Follower {
     const needs = new Map<string, string>(), done: string[] = [], merged = new Set<PendingLine>();
     for (const p of lines) {
       if (p.json?.do === 'merge' && p.json.outcome === 'merged' && typeof p.json.node === 'string') { done.push(p.json.node); merged.add(p); }
-      if (p.wake && p.json) { const need = plainNeed(p.json, p.text); if (need) needs.set(p.text, need); }
+      if (p.wake && p.json) {
+        const text = 'need' in p.json
+          ? p.json.need ? (p.check?.currentNeeds ?? [p.json.need as Need, ...(p.json.otherNeeds as Need[] ?? [])]).map(n => `Needs you: ${n.node} — ${needText(n)}`).join('\n') : undefined
+          : plainNeed(p.json, p.text);
+        if (text) needs.set(p.text, text);
+      }
     }
     const terminal = lines.findLast(p => p.wake && p.terminal);
     const reason = terminal?.json?.event === 'exit' ? String(terminal.json.error ?? terminal.json.reason ?? 'exited') : terminal?.json ? terminal.terminal?.event : terminal?.text;
     const status = terminal ? `Driver stopped: ${oneLine(reason!)}` : `Driver continues (${this.inProgress} in progress)`;
     return [...needs.values(), ...(done.length ? [`Done: ${[...new Set(done)].join(', ')}`] : []), status,
       `owed drive (${this.o.repo}):`, ...lines.filter(p => !needs.has(p.text) && !merged.has(p) && !(p.wake && p.terminal)).map(p => p.text),
-      ...(lines.some(p => p.wake && p.halt) ? [haltHintText] : []), ...(resolved ? [resolvedText(resolved)] : []),
+      ...(lines.some(p => p.wake && p.halt && p.json && !('need' in p.json)) ? [haltHintText] : []), ...(resolved ? [resolvedText(resolved)] : []),
       'Next: owed status / owed why <node>'].join('\n');
   }
-  /** One poll without the pi hooks (CLI-era behavior, D17.7); returns the message delivered, if any. */
+  /** Synchronous CLI-era polling; only pi hooks revalidate before delivery. */
   tick(): string | undefined {
     if (this.stopped) return undefined;
     this.collect();
@@ -695,7 +728,14 @@ export class Follower {
       if (s) for (const p of parked) {
         const red = [...trunkParkNotices(s), ...sharedParkNotices(s)].find(r => r.once === p.json!.once);
         if (!red) resolvedPark.add(p);
-        else { p.json!.text = red.text; p.text = reportText(p.json!); }
+        else {
+          if (p.check?.need) {
+            p.check.currentNeeds = parkNeeds(s, p.json!.once as string);
+            if (!p.check.currentNeeds) { resolvedPark.add(p); continue; }
+            p.json!.text = p.check.currentNeeds.map(n => `${n.node}: ${needText(n)}`).join('\n');
+          } else p.json!.text = red.text;
+          p.text = reportText(p.json!);
+        }
       }
     }
     const wakes = batch.filter(p => p.wake && p.check);

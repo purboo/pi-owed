@@ -230,14 +230,20 @@ test('IR repair P2: trunk-red notice survives classifyLine/revalidator and reach
     const s=await r.state();
     assert.deepEqual(classified.check.invariantRed,{obligation:'inv:suite',key:s.trunk.invKeys.suite});
     assert.notEqual(JSON.parse(line).node,'trunk');
-    assert.deepEqual(await revalidator({cwd:r.cwd})([{...classified.check,invariantRed:{obligation:'inv:suite',key:'stale-key'}}]),[false]);
+    const { repoNeeds, needId } = await import('../src/needs.ts');
+    assert.equal(classified.check.needId,needId(repoNeeds(s).find(n => needId(n) === classified.check!.needId)!));
+    assert.deepEqual(await revalidator({cwd:r.cwd})([{...classified.check,invariantRed:{obligation:'inv:suite',key:'stale-key'}}]),[true]);
+    const stale = { ...classified.check.need!, key:'stale-key' };
+    assert.deepEqual(await revalidator({cwd:r.cwd})([{...classified.check,need:stale,needId:needId(stale)}]),[false],'a missing needId drops the wake');
     const log=join(r.root,'follower-log'), delivered:string[]=[]; await writeFile(log,`${line}\n`);
     const f=new Follower({log,repo:r.cwd,pid:process.pid,from:0,busy:()=>false,revalidate:revalidator({cwd:r.cwd}),deliver:content=>delivered.push(content)});
     try { await f.step(); assert.equal(delivered.length,1); assert.match(delivered[0]!,/red on trunk since refresh/); }
     finally { f.stop(); }
     const current=(await r.entries()).findLast((e):e is ObsEntry=>e.kind==='obs' && e.obligation==='inv:suite')!;
     await r.ledger.withLock(()=>r.ledger.append([{kind:'obs',by:'executor:owed',subject:'trunk',obligation:current.obligation,key:current.key,commit:current.commit,base:current.base,verdict:'pass',exit:0,durationMs:0}]));
-    assert.deepEqual(await revalidator({cwd:r.cwd})([classified.check]),[false],'a now non-red item drops the old red notice');
+    assert.deepEqual(await revalidator({cwd:r.cwd})([classified.check]),[true],'the same needId remains as a conflict need');
+    assert.match(classified.check.currentNeeds![0]!.text,/conflicting pass and fail/);
+    assert.doesNotMatch(classified.check.currentNeeds![0]!.text,/red on trunk since refresh/);
     await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',note:'fixture removes resolved invariant',plan:JSON.stringify({...r.current,invariants:[],nodes:[]})});
     assert.deepEqual(await revalidator({cwd:r.cwd})([classified.check]),[false],'a removed invariant no longer wakes pi');
   } finally { await r.cleanup(); }

@@ -551,6 +551,7 @@ test('manualHalt: the approve and evidence commands carry --candidate <commit12>
   r.pass();
   const h = drv.manualHalt(r.state(), 'a');
   assert.ok(h, JSON.stringify(r.state().nodes.a!.items));
-  assert.equal(h.reason, `awaiting owner approval of candidate ${long.slice(0, 12)}: owed approve a --candidate ${long.slice(0, 12)} [--note TEXT] (owner); awaiting manual evidence evidence:ui (looked at the page) by reviewer: owed evidence a ui --file <path> --note "<what was checked>" --as reviewer:<id> --candidate ${long.slice(0, 12)} or --as owner:pi`);
+  assert.equal(h.reason, `awaiting owner approval of candidate ${long.slice(0,12)}; awaiting manual evidence evidence:ui (looked at the page) by reviewer`);
+  assert.doesNotMatch(h.reason,/owed approve|owed evidence/);
   assert.equal(h.needs, 'owner');
 });

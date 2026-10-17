@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { sha256 } from '../src/canon.ts';
-import { decide, repairEpoch, submitMessage, type Action, type DriveOpts } from '../src/drive.ts';
+import { decide, rebaseMessage, repairEpoch, submitMessage, type Action, type DriveOpts } from '../src/drive.ts';
 import { reduce, resumeOf, runId, validateDraft, waitingFor } from '../src/reducer.ts';
 import { Dsa, toRunView, type RunResult } from '../src/dsa.ts';
 import { renderEntry, renderReceipt, renderStatusFull as renderStatus, receipt, statusView } from '../src/views.ts';
@@ -210,12 +210,14 @@ test('L1.2/L1.3 (#17): resume --after b makes a wait (no action but asking notic
   const w2 = r.resume({ after: 'b', note: 'wait for b after all' });
   assert.deepEqual(waitingFor(r.state(), 'a'), { after: 'b', resume: w2.seq });
   assert.equal(act(r), undefined);
-  // b merges: the wait ends and the driver uses its normal rows; the first writer follow-up names the merge.
+  // b merges: the first writer follow-up (the DR7 rebase follow-up) names the merge.
   r.mergeB();
   assert.equal(waitingFor(r.state(), 'a'), undefined);
+  assert.deepEqual(act(r), { do: 'rebase', node: 'a' });
+  r.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, from: 's0', base: MERGED });
   const woke = act(r);
-  assert.ok(isSend(woke, 'submit'), JSON.stringify(woke));
-  assert.equal(woke.message, `The parent resumed this node (#${w2.seq}) after b merged at ${MERGED.slice(0, 12)}: wait for b after all\n${submitMessage('a')}`);
+  assert.ok(isSend(woke, 'rebase'), JSON.stringify(woke));
+  assert.equal(woke.message, `The parent resumed this node (#${w2.seq}) after b merged at ${MERGED.slice(0, 12)}: wait for b after all\n${rebaseMessage(r.state(),'a')}`);
   // An abandon ends a wait as well.
   const r2 = started();
   r2.resume({ after: 'b' });

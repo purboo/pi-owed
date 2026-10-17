@@ -232,7 +232,7 @@ test('H1.1b two open questions: the first answered drops the held line; the next
     const m = await fo.step();
     assert.ok(m);
     assert.doesNotMatch(m, /: one /, 'the line of the answered first question is dropped');
-    assert.ok(second.qid); assert.match(m, /^Needs you: \S+ — decide two → owed decide \S+ --text "<text>"$/m);
+    assert.ok(second.qid); assert.equal(second.need,null); assert.match(m, /asks \(qid .*\): two —/); assert.doesNotMatch(m,/Needs you:/);
     assert.match(m, /\n\(1 wake\(s\) resolved before delivery\)\nNext: owed status \/ owed why <node>$/);
     fo.stop();
   } finally { await f.done(); }

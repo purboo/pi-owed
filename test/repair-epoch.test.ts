@@ -181,7 +181,7 @@ test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node
   assert.deepEqual(f, { do: 'send', node: 'a', attempt: 1, rid: W, sendKind: 'follow-up', reason: 'ruling', rulings: rule.seq, message: [
     'New parent rulings for a:', `#${rule.seq} (a): the brief was wrong: writes now include cli/app.mjs`,
     `Active blocks on your candidate ac1 (submit #${r.state().nodes.a!.candidate!.seq}):`, `- #${fail.seq} check:unit: not ok 7 - registry scan`,
-    'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n') });
+    'Apply these rulings. If they need a change from you, commit and run owed submit a; if they need none, reply "no change: <why>" and stop.', WRITER_DECISION].join('\n') });
   assert.ok(attestAdvice(f.message), 'K1.3: no bare owed attest');
   const sent = r.record(f) as SendEntry;
   // Not a repair: the budget is untouched; the writer works on it.
@@ -190,7 +190,7 @@ test('K5 QA-REGISTRY: halt for finished-without-submit, a ruling naming the node
   // The writer finishes it without submitting: halt as today, naming the ruling follow-up.
   const again = act(r);
   assert.ok(again?.do === 'halt' && again.needs === 'human', JSON.stringify(again));
-  assert.equal(again.reason, `writer run ${W} finished ruling follow-up ${sent.send} without submitting a new candidate (measured block check:unit [#${fail.seq}]; #${fail.seq} check:unit: not ok 7 - registry scan); writer gave no final text → owed decide a --text "<ruling>" --writer`);
+  assert.equal(again.reason, `writer run ${W} finished repair follow-up ${(r.entries.find(e => e.kind === 'send' && e.reason === 'repair') as SendEntry).send} without submitting a new candidate (measured block check:unit [#${fail.seq}]; #${fail.seq} check:unit: not ok 7 - registry scan); writer gave no final text → owed decide a --text "<ruling>" --writer`);
   // A rejected ruling follow-up (dsa refused it) halts like any other send.
   const rej = act(r, sealed(), { rejected: new Map([[sent.send, 'call pruned']]), applied: new Set(r.entries.flatMap(e => e.kind === 'send' && e.send !== sent.send ? [e.send] : [])) });
   assert.ok(rej?.do === 'halt' && rej.reason.startsWith(`dsa rejected send ${sent.send}: call pruned`), JSON.stringify(rej));
@@ -243,11 +243,11 @@ test('K5.2: a ruling after the halt for finished-without-submit (no candidate) �
   const rule = r.rule('the parent fixed the brief: only a/x');
   const f = act(r);
   assert.ok(isSend(f, 'ruling') && f.sendKind === 'follow-up' && f.rid === W && f.rulings === rule.seq, JSON.stringify(f));
-  assert.equal(f.message, ['New parent rulings for a:', `#${star.seq} (*): general`, `#${rule.seq} (a): the parent fixed the brief: only a/x`, 'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n'));
+  assert.equal(f.message, ['New parent rulings for a:', `#${star.seq} (*): general`, `#${rule.seq} (a): the parent fixed the brief: only a/x`, 'Apply these rulings. If they need a change from you, commit and run owed submit a; if they need none, reply "no change: <why>" and stop.', WRITER_DECISION].join('\n'));
   const sent = r.record(f) as SendEntry;
   assert.equal(act(r, running()), undefined);
   const again = act(r);
-  assert.ok(again?.do === 'halt' && again.reason === `writer run ${W} finished ruling follow-up ${sent.send} without submitting a new candidate (no candidate after follow-up ${nudge.send}); writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(again));
+  assert.ok(again?.do === 'halt' && again.reason === `writer run ${W} finished without submitting a candidate after follow-up ${nudge.send}; writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(again));
 });
 
 // ---------- K5.3: the threshold hint ----------
