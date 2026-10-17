@@ -154,6 +154,8 @@ async function load(ledger: Ledger, extra: string[] = []) {
     if (!known.has(sha)) throw new OwedError(`Missing plan ${sha}`, 'internal');
     return cachedPlanSync(ledger, sha);
   };
+  // Prospective laws must be readable before any append; only extra is eager, never the full history.
+  for (const sha of new Set(extra)) cachedPlanSync(ledger,sha);
   const state = await replay(ledger,entries,lookup,control,epoch);
   // RC: diagnostics and CAS/node scans consume the same semantic entries as the reducer, never unknown fields.
   return { entries:entries.map(interpretedEntry), lookup, state };

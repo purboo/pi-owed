@@ -13,6 +13,7 @@ import * as ops from '../src/ops.ts';
 import * as R from '../src/reducer.ts';
 import { Ledger, PLAN_CACHE_VERSION, entryHash } from '../src/ledger.ts';
 import type { Draft, Entry, Plan, State, ObsEntry } from '../src/types.ts';
+import { repo } from './helpers/repo.ts';
 
 const commit = '1'.repeat(40), key = '2'.repeat(64);
 function freeze<T>(v: T): T {
@@ -297,5 +298,62 @@ test('PM1-PM2: missing, corrupt and foreign cache paths stay fail-closed; unknow
     const versionError = (e: unknown) => e instanceof OwedError && e.code === 'version' && /needs a newer owed/.test(e.message);
     await assert.rejects(ops.readState({cwd:t.root}),versionError); await assert.rejects(ops.reportMetrics({cwd:t.root}),versionError);
     assert.throws(() => computeMetrics(f.entries,{get:() => undefined}),/Missing plan/);
+  } finally { await t.cleanup(); }
+});
+
+const extraPlan = (title: string) => JSON.stringify({version:1,trunk:'main',closure:[],invariants:[],nodes:[
+  {id:'worker',title,writes:['src/'],checks:[],review:{count:0,min_rank:1}},
+]});
+const rawENOENT = (e: unknown) => e instanceof Error && !(e instanceof OwedError) && (e as NodeJS.ErrnoException).code === 'ENOENT';
+
+for (const operation of ['init','planSet'] as const) test(`PM repair F1: ${operation} resolves missing extra before append and preserves raw ENOENT`, async () => {
+  const t = await repo(), putBlob = Ledger.prototype.putBlob;
+  ops.forgetReplays(); ops.forgetPlanCache();
+  try {
+    await t.commit();
+    const actor = {cwd:t.cwd,as:{role:'owner' as const,id:'test'},channel:'flag' as const};
+    if (operation === 'planSet') await ops.init({...actor,measure:false,plan:extraPlan('initial')});
+    const ledger = await Ledger.open(t.cwd), before = await ledger.read();
+    Ledger.prototype.putBlob = async function(data) {
+      const sha = await putBlob.call(this,data);
+      await rm(join(this.dir,'blobs',sha));
+      return sha;
+    };
+    if (operation === 'init') await assert.rejects(ops.init({...actor,measure:false,plan:extraPlan('new')}),rawENOENT);
+    else await assert.rejects(ops.planSet({...actor,plan:extraPlan('new')}),rawENOENT);
+    assert.deepEqual(await ledger.read(),before,'missing extra must not append even a genesis entry');
+    assert.equal(before.length,operation === 'init' ? 0 : 1);
+  } finally {
+    Ledger.prototype.putBlob = putBlob;
+    ops.forgetReplays(); ops.forgetPlanCache(); await t.cleanup();
+  }
+});
+
+test('PM repair F2: sameReplay compares plan key sets independently of insertion order', () => {
+  const f = fixture(12), lookup = (sha: string) => freeze(f.lookup(sha)), s = R.reduce(f.entries,lookup);
+  const packed = structuredClone(R.packState(s)); packed.plans.reverse();
+  const reordered = R.unpackState(packed,lookup);
+  assert.deepEqual(reordered,s,'public state is unchanged');
+  assert.notDeepEqual(R.packState(reordered).plans,R.packState(s).plans,'key insertion order actually differs');
+  assert.equal(R.sameReplay(s,reordered),true);
+  assert.equal(R.sameReplay(reordered,s),true);
+  bounded(s); bounded(reordered);
+});
+
+test('PM repair F2: verify preserves a snapshot with reordered plan keys', async () => {
+  const t = await sandbox(), f = fixture(12), dir = t.use();
+  try {
+    await writeLedger(dir,f);
+    const s = R.reduce(f.entries,sha => freeze(f.lookup(sha))), packed = structuredClone(R.packState(s));
+    packed.plans.reverse();
+    const ledger = await Ledger.open(t.root), payload = serialize(packed);
+    await ledger.writeSnapshot(s.seq,s.head,payload);
+    const result = await ops.verify({cwd:t.root});
+    assert.equal(result.ok,true,result.error);
+    assert.equal(result.snapshotMismatch,undefined,'key order alone must not invalidate a snapshot');
+    const snapshot = await ledger.readSnapshot();
+    assert.ok(snapshot,'verify must keep the valid snapshot');
+    assert.equal(snapshot.seq,s.seq); assert.equal(snapshot.hash,s.head);
+    assert.deepEqual(snapshot.payload,payload,'snapshot bytes are not deleted or rewritten');
   } finally { await t.cleanup(); }
 });
