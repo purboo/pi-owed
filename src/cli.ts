@@ -26,6 +26,65 @@ const HELP = `owed — multi-agent acceptance ledger\nUsage: owed <command> [arg
 const values = new Set(['max','as','commit','nodes','rank','note','ack-rulings','obligation','reason','accept-risk','since','until','merge','class','evidence','rev','file','candidate','after','writes','plan','set','unset','invariant','rule','expect','qid','rid','model','wait','text','defer','check','runs','tracked-by']);
 const flags = new Set(['version','full','json','metrics','cost','i-am-owner','rerun','ok','block','needs-parent','help','dry-run','allow-overlap','once','detach','status','stop','now','genesis','trunk','stay','writer','no-lease','node-new','resume','hold','prospective','remeasure','all','no-resume','apply','counterfactual','due','restart','probe-trunk']);
 function usage(message:string): never { throw new OwedError(message,'usage'); }
+/** Parse the CLI grammar without I/O; execution and exported validation share this parser. */
+function parseArgv(argv: string[]) {
+    const args:string[] = [], opts = new Map<string,string|boolean>(), files:string[] = [], sets:string[] = [], unsets:string[] = [], writes:string[] = [];
+    for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (a === '--' && args[0] === 'answer') { args.push(...argv.slice(i+1)); break; } if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key) && !['file','set','unset'].includes(key) && !(key === 'writes' && args[0] === 'decide')) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); if (key === 'file') files.push(v); if (key === 'set') sets.push(v); if (key === 'unset') unsets.push(v); if (key === 'writes') { writes.push(...v.split(',')); if (args[0] === 'decide') while (argv[i+1]?.startsWith('+')) writes.push(...argv[++i]!.split(',')); } } }
+  return { args, opts, files, sets, unsets, writes };
+}
+/** NE-CLI: validate commands, flags, positional shape and required values without executing an act. */
+export function validateArgv(argv: string[]): void {
+  const { args, opts } = parseArgv(argv);
+  if (opts.has('help') || (args[0] === 'help' && args.length === 1)) return;
+  if (opts.has('version') || args[0] === 'version') {
+    if (args.length !== (opts.has('version') ? 0 : 1) || opts.size !== (opts.has('version') ? 1 : 0)) usage('version takes no arguments or other options');
+    return;
+  }
+  const cmd = args.shift(); if (!cmd) usage(HELP);
+    const allowed:Record<string,string[]> = { start:['plan','max','stay','restart'],decide:['text','writes','defer','resume','no-resume','after','remeasure','writer'],init:['no-lease'],plan:['rev','note'],amend:['writes','note','plan'],answer:['qid','rid','rev'],edit:['set','unset','invariant','node-new','rule','writer','resume','after','expect','note','dry-run','plan'],rule:['nodes','writer','prospective'],dispatch:['allow-overlap'],submit:['commit','model'],rebase:['apply','full'],attest:['rerun','genesis','trunk','no-lease','remeasure','all','full','probe-trunk','check','runs'],review:['ok','block','needs-parent','rank','note','ack-rulings','obligation','candidate','model'],waive:['reason','accept-risk','candidate','full','tracked-by'],defer:['reason'],abandon:['note','reason','hold'],resume:['after','expect','note','remeasure'],merge:['no-lease'],sweep:['commit','no-lease','due'],status:['full'],idle:[],why:['full'],report:['since','metrics','until','counterfactual','cost'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[],gc:['dry-run'],adopt:['commit','note','no-lease','wait'],approve:['note','block','candidate'],evidence:['file','note','candidate'],drive:['once','max','detach','status','stop','now','stay'] };
+    if (!allowed[cmd]) usage(`Unknown command ${cmd}`);
+    for (const k of opts.keys()) if (!['json','as','i-am-owner'].includes(k) && !allowed[cmd]!.includes(k)) usage(`${cmd} does not support --${k}`);
+    const count = cmd === 'edit' && opts.has('invariant') ? 0 : cmd === 'attest' && (opts.has('genesis') || opts.has('trunk')) ? 0 : cmd === 'waive' || cmd === 'answer' || cmd === 'defer' || cmd === 'decoy' || cmd === 'evidence' ? 2 : ['start','status','idle','report','brief','verify','gc','adopt','drive','sweep'].includes(cmd) ? 0 : 1;
+    if(args.length < count || (cmd !== 'defer' && args.length !== count)) usage(`${cmd} wrong number of arguments`);
+    if(cmd === 'decoy' && !['commit','reveal','digest'].includes(args[0]!)) usage('decoy requires commit <digest>, reveal <file.json> or digest <file.json>');
+  const value = (key: string, required = false): string | undefined => {
+    const v = opts.get(key); if (required && (typeof v !== 'string' || !v.trim())) usage(`Required: --${key}`);
+    return typeof v === 'string' ? v : undefined;
+  };
+  const integer = (key: string, required = false): number | undefined => {
+    const v = value(key, required); if (v === undefined) return;
+    if (!/^\d+$/.test(v)) usage(`--${key} must be a nonnegative integer`);
+    return Number(v);
+  };
+  const wait = opts.has('wait') ? Number(value('wait', true)) : undefined;
+  if (cmd === 'adopt') adoptWaitMs(wait);
+  if (cmd === 'adopt' || cmd === 'evidence') value('note', true);
+  ops.candidateArg(value('candidate'));
+    if(cmd === 'report' && opts.has('until') && !opts.has('metrics')) usage('--until requires report --metrics');
+    if(cmd === 'report' && ['counterfactual','metrics','cost'].filter(k => opts.has(k)).length > 1) usage('report takes --metrics, --counterfactual or --cost, not more than one');
+    if(cmd === 'attest' && (opts.has('genesis') || opts.has('trunk')) && opts.has('rerun')) usage('attest --genesis/--trunk does not take --rerun');
+    if(cmd === 'attest' && opts.has('genesis') && opts.has('trunk')) usage('attest takes --genesis or --trunk, not both');
+    if(cmd === 'attest' && opts.has('remeasure') && (opts.has('rerun') || opts.has('genesis'))) usage('attest --remeasure does not take --rerun or --genesis');
+    if(cmd === 'attest' && opts.has('all') && !opts.has('remeasure')) usage('attest --all requires --remeasure');
+    if(cmd === 'attest' && opts.has('probe-trunk') && ['rerun','remeasure','trunk','genesis','all'].some(k => opts.has(k))) usage('attest --probe-trunk does not combine with --rerun/--remeasure/--trunk/--genesis/--all');
+    if(cmd === 'attest' && (opts.has('check') || opts.has('runs')) && !opts.has('probe-trunk')) usage('--check/--runs require --probe-trunk');
+  if (cmd === 'start') {
+    if (opts.has('as') || opts.has('i-am-owner')) usage('start uses delegated owner init and existing plan permissions; it takes no --as or --i-am-owner');
+    integer('max');
+    return;
+  }
+  if (cmd === 'drive') {
+    if (opts.has('as') || opts.has('i-am-owner')) usage('drive always acts as parent:drive');
+    const modes = ['once','detach','status','stop'].filter(k => opts.has(k));
+    if (modes.length > 1) usage(`drive: ${modes.map(k => `--${k}`).join(' and ')} cannot be combined`);
+    if (opts.has('now') && !opts.has('stop')) usage('--now is only valid with --stop');
+    if (opts.has('stay') && ['once','status','stop'].some(k => opts.has(k))) usage('--stay is only valid with --detach or the loop');
+    if (opts.has('max') && ['status','stop'].some(k => opts.has(k))) usage('--max is only valid with --detach, --once or the loop');
+    const max = integer('max'); if (max !== undefined && max < 1) usage('--max must be at least 1');
+    return;
+  }
+  if (opts.has('as') && !/^(owner|parent|writer|reviewer|executor):(.+)$/.test(value('as')!)) usage('--as must be role:id');
+}
 /** Terminal I/O of the CLI; tests inject `ask` (the owner's answer to the TTY prompt) and capture output. */
 export interface CliIo { ask?: (question: string) => Promise<string>; log: (text: string) => void; error: (text: string) => void }
 const terminal: CliIo = { log: text => console.log(text), error: text => console.error(text) };
@@ -40,48 +99,25 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
   const abort = new AbortController(), got: { signal?: NodeJS.Signals; at?: number; unhandle?: () => void } = {};
   let command: string | undefined;
   try {
-    const args:string[] = [], opts = new Map<string,string|boolean>(), files:string[] = [], sets:string[] = [], unsets:string[] = [], writes:string[] = [];
-    for (let i=0;i<argv.length;i++) { const a=argv[i]!; if (a === '--' && args[0] === 'answer') { args.push(...argv.slice(i+1)); break; } if (!a.startsWith('--')) { args.push(a); continue; } const [key,...rest]=a.slice(2).split('='); if (!key || (!values.has(key) && !flags.has(key))) usage(`Unknown option ${a}`); if (opts.has(key) && !['file','set','unset'].includes(key) && !(key === 'writes' && args[0] === 'decide')) usage(`Duplicate option --${key}`); if (flags.has(key)) { if(rest.length) usage(`${a} does not accept a value`); opts.set(key,true); } else { const v=rest.length ? rest.join('=') : argv[++i]; if(v === undefined || v.startsWith('--')) usage(`--${key} requires a value`); opts.set(key,v); if (key === 'file') files.push(v); if (key === 'set') sets.push(v); if (key === 'unset') unsets.push(v); if (key === 'writes') { writes.push(...v.split(',')); if (args[0] === 'decide') while (argv[i+1]?.startsWith('+')) writes.push(...argv[++i]!.split(',')); } } }
+    validateArgv(argv);
+    const { args, opts, files, sets, unsets, writes } = parseArgv(argv);
     if (opts.has('help') || (args[0] === 'help' && args.length === 1)) { io.log(HELP); return 0; }
     if (opts.has('version') || args[0] === 'version') {
       if (args.length !== (opts.has('version') ? 0 : 1) || opts.size !== (opts.has('version') ? 1 : 0)) usage('version takes no arguments or other options');
       io.log(`owed ${OWED_VERSION}`); return 0;
     }
     const cmd=args.shift(); command=cmd; if(!cmd) usage(HELP);
-    const allowed:Record<string,string[]> = { start:['plan','max','stay','restart'],decide:['text','writes','defer','resume','no-resume','after','remeasure','writer'],init:['no-lease'],plan:['rev','note'],amend:['writes','note','plan'],answer:['qid','rid','rev'],edit:['set','unset','invariant','node-new','rule','writer','resume','after','expect','note','dry-run','plan'],rule:['nodes','writer','prospective'],dispatch:['allow-overlap'],submit:['commit','model'],rebase:['apply','full'],attest:['rerun','genesis','trunk','no-lease','remeasure','all','full','probe-trunk','check','runs'],review:['ok','block','needs-parent','rank','note','ack-rulings','obligation','candidate','model'],waive:['reason','accept-risk','candidate','full','tracked-by'],defer:['reason'],abandon:['note','reason','hold'],resume:['after','expect','note','remeasure'],merge:['no-lease'],sweep:['commit','no-lease','due'],status:['full'],idle:[],why:['full'],report:['since','metrics','until','counterfactual','cost'],brief:['since'],verify:[],escape:['merge','class','note','evidence'],decoy:[],gc:['dry-run'],adopt:['commit','note','no-lease','wait'],approve:['note','block','candidate'],evidence:['file','note','candidate'],drive:['once','max','detach','status','stop','now','stay'] };
-    if (!allowed[cmd]) usage(`Unknown command ${cmd}`);
-    for (const k of opts.keys()) if (!['json','as','i-am-owner'].includes(k) && !allowed[cmd]!.includes(k)) usage(`${cmd} does not support --${k}`);
-    const count = cmd === 'edit' && opts.has('invariant') ? 0 : cmd === 'attest' && (opts.has('genesis') || opts.has('trunk')) ? 0 : cmd === 'waive' || cmd === 'answer' || cmd === 'defer' || cmd === 'decoy' || cmd === 'evidence' ? 2 : ['start','status','idle','report','brief','verify','gc','adopt','drive','sweep'].includes(cmd) ? 0 : 1;
-    if(args.length < count || (cmd !== 'defer' && args.length !== count)) usage(`${cmd} wrong number of arguments`);
-    if(cmd === 'decoy' && !['commit','reveal','digest'].includes(args[0]!)) usage('decoy requires commit <digest>, reveal <file.json> or digest <file.json>');
     const value = (key:string,required=false):string|undefined => { const v=opts.get(key); if(required && (typeof v !== 'string' || !v.trim())) usage(`Required: --${key}`); return typeof v === 'string' ? v : undefined; };
     const integer=(key:string,required=false):number|undefined => { const v=value(key,required); if(v === undefined) return undefined; if(!/^\d+$/.test(v)) usage(`--${key} must be a nonnegative integer`); return Number(v); };
     const wait = opts.has('wait') ? Number(value('wait',true)) : undefined;
-    if (cmd === 'adopt') adoptWaitMs(wait);
-    if(cmd === 'adopt' || cmd === 'evidence') value('note',true);
     // G1: the candidate the caller judged; checked under the ledger lock when the act is appended.
     const named=ops.candidateArg(value('candidate'));
-    if(cmd === 'report' && opts.has('until') && !opts.has('metrics')) usage('--until requires report --metrics');
-    if(cmd === 'report' && ['counterfactual','metrics','cost'].filter(k => opts.has(k)).length > 1) usage('report takes --metrics, --counterfactual or --cost, not more than one');
-    if(cmd === 'attest' && (opts.has('genesis') || opts.has('trunk')) && opts.has('rerun')) usage('attest --genesis/--trunk does not take --rerun');
-    if(cmd === 'attest' && opts.has('genesis') && opts.has('trunk')) usage('attest takes --genesis or --trunk, not both');
-    if(cmd === 'attest' && opts.has('remeasure') && (opts.has('rerun') || opts.has('genesis'))) usage('attest --remeasure does not take --rerun or --genesis');
-    if(cmd === 'attest' && opts.has('all') && !opts.has('remeasure')) usage('attest --all requires --remeasure');
-    if(cmd === 'attest' && opts.has('probe-trunk') && ['rerun','remeasure','trunk','genesis','all'].some(k => opts.has(k))) usage('attest --probe-trunk does not combine with --rerun/--remeasure/--trunk/--genesis/--all');
-    if(cmd === 'attest' && (opts.has('check') || opts.has('runs')) && !opts.has('probe-trunk')) usage('--check/--runs require --probe-trunk');
     if(cmd === 'start') {
-      if(opts.has('as') || opts.has('i-am-owner')) usage('start uses delegated owner init and existing plan permissions; it takes no --as or --i-am-owner');
       const r=await ops.start({cwd:process.cwd(),plan:value('plan'),max:integer('max'),stay:opts.has('stay'),restart:opts.has('restart'),signal:abort.signal});
       io.log(opts.has('json') ? JSON.stringify(r) : ops.startText(r)); return 0;
     }
     if(cmd === 'drive') {
-      if(opts.has('as') || opts.has('i-am-owner')) usage('drive always acts as parent:drive');
-      const modes=['once','detach','status','stop'].filter(k => opts.has(k));
-      if(modes.length > 1) usage(`drive: ${modes.map(k => `--${k}`).join(' and ')} cannot be combined`);
-      if(opts.has('now') && !opts.has('stop')) usage('--now is only valid with --stop');
-      if(opts.has('stay') && (opts.has('once') || opts.has('status') || opts.has('stop'))) usage('--stay is only valid with --detach or the loop');
-      if(opts.has('max') && (opts.has('status') || opts.has('stop'))) usage('--max is only valid with --detach, --once or the loop');
-      const max=integer('max'); if(max !== undefined && max < 1) usage('--max must be at least 1');
+      const max=integer('max');
       const json=opts.has('json');
       const stay=opts.has('stay');
       if(opts.has('detach')) { const r=await driveStart({cwd:process.cwd(),max,...(stay ? {stay} : {})}); io.log(json ? JSON.stringify(r) : renderDriveStart(r)); return 0; }
