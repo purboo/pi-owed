@@ -319,11 +319,12 @@ test('status, why and report show halts and live launches', async () => {
     assert.equal(lines[halted + 1], `⏸ a: halted by driver #${ha.seq} (attempt 1), needs the parent (the main agent acts; owed lists the command): writer run failed`);
     assert.ok(!lines.slice(halted).some(l => l.startsWith('⏸ b:')), 'needs-owner halts are not in the driver section');
     const owner = lines.indexOf('Pending owner:');
-    assert.match(lines[owner + 1]!, new RegExp(`^⏸ halted b — driver halted attempt 1 \\(#${hb.seq}\\): request conflict; cleared by`));
+    assert.equal(lines[owner + 1], '⏸ halted b — driver halted: request conflict; after resume the driver continues from the current state → owed resume b');
     assert.ok(lines.includes('Driver runs (open attempts):'));
     assert.ok(lines.includes(`a attempt 1: #${ha.seq - 1} writer ${rid}`), text);
     const why = renderReceipt(await ops.why({ cwd: r.cwd, node: 'a' }));
-    assert.match(why, new RegExp(`⏸ halted by driver #${ha.seq} \\(attempt 1\\), needs the parent \\(the main agent acts; owed lists the command\\): writer run failed; cleared by any later action`));
+    assert.match(why, new RegExp(`⏸ halted by driver #${ha.seq} \\(attempt 1\\), needs the parent \\(the main agent acts; owed lists the command\\): writer run failed`));
+    assert.match(why, /a: driver halted: writer run failed; after resume the driver continues from the current state → owed resume a/);
     assert.match(why, new RegExp(`Driver launch #${ha.seq - 1} writer ${rid} \\(spec ${sha256('{}').slice(0, 12)}\\)`));
     const card = await ops.why({ cwd: r.cwd, node: 'a' });
     assert.equal(card.halt?.seq, ha.seq);

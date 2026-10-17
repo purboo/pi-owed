@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import * as run from '../src/drive-run.ts';
 import { Follower } from '../src/drive-bg.ts';
 import { procStart } from '../src/drive-run.ts';
+import { needs } from '../src/needs.ts';
 import { reduce } from '../src/reducer.ts';
 import { briefView, ownerCommands, receipt, renderBrief, renderReceipt } from '../src/views.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -142,13 +143,24 @@ test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --
   r.add({ kind: 'obs', by: 'executor:owed', subject: 'a', obligation: 'writes', key: 'w1', verdict: 'pass', exit: 0, durationMs: 1, commit: 'c1', base: 's0' });
   r.add({ kind: 'review', by: 'reviewer:r2', node: 'a', attempt: 1, obligation: 'review', key: 'rv1', verdict: 'block', rank: 2, note: 'no' });
   const s = r.state(), brief = briefView(s, r.entries, -1, 0);
-  assert.equal(brief.decisions.find(x => x.node === 'a')!.command, 'owed decide a --writer --text "<guidance>"; writer repairs and submits again; override only: owed review a --ok --rank 3 --as owner:cli --candidate c1 (overrides a valid block: state the accepted risk)');
-  const text = `${renderBrief(brief)}\n${ownerCommands(s, 'a').join('\n')}`;
-  assert.doesNotMatch(text, /owner:human/, text);
-  assert.deepEqual([...new Set([...text.matchAll(/--as (\S+)/g)].map(x => x[1]))], ['owner:cli'], text);
-  // Under the confirmation gate the role a command states is owner:human (ruling #559 nit).
+  assert.equal(brief.decisions.find(x => x.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
+  assert.equal(needs(s, 'a')[0]!.alternatives![0], 'owed review a --ok --rank 3 --candidate c1 --note "<note>" --ack-rulings latest --as owner:<id>');
+  assert.deepEqual(Object.keys(brief.summary!.needs.find(n => n.node === 'a')!).sort(), ['command', 'node', 'reason']);
+  const briefText = renderBrief(brief), legacy = ownerCommands(s, 'a').join('\n');
+  assert.doesNotMatch(briefText, /owner:human/, briefText);
+  assert.deepEqual([...briefText.matchAll(/--as (\S+)/g)].map(x => x[1]), [], briefText);
+  assert.doesNotMatch(legacy, /owner:human/, legacy);
+  assert.deepEqual([...new Set([...legacy.matchAll(/--as (\S+)/g)].map(x => x[1]))], ['owner:cli'], legacy);
+  // Needs use a role placeholder independently of the legacy confirmation gate.
   const prior = process.env.OWED_CONFIRM; process.env.OWED_CONFIRM = 'owner';
-  try { assert.equal(briefView(s, r.entries, -1, 0).decisions.find(x => x.node === 'a')!.command, 'owed decide a --writer --text "<guidance>"; writer repairs and submits again; override only: owed review a --ok --rank 3 --as owner:human --candidate c1 (overrides a valid block: state the accepted risk)'); }
+  try {
+    const confirmed = briefView(s, r.entries, -1, 0);
+    assert.equal(confirmed.decisions.find(x => x.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
+    assert.deepEqual(confirmed.summary!.needs, brief.summary!.needs);
+    const confirmedText = renderBrief(confirmed);
+    assert.equal(confirmedText, briefText); assert.doesNotMatch(confirmedText, /owner:human/);
+    assert.deepEqual([...new Set([...ownerCommands(s, 'a').join('\n').matchAll(/--as (\S+)/g)].map(x => x[1]))], ['owner:human']);
+  }
   finally { if (prior === undefined) delete process.env.OWED_CONFIRM; else process.env.OWED_CONFIRM = prior; }
   // Halt rows of the views use the D25.6 wording (ruling #559 nit).
   r.add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason: 'stalled: x', needs: 'owner' });

@@ -101,11 +101,14 @@ test('AT1/AT2: a merge-tree break leads the refusal, halt and Needs-you with reb
       assert.ok(stderr.startsWith(LEAD), retry.stderr);
       assert.ok(stderr.indexOf(LEAD) < stderr.indexOf('not yet accepted'), retry.stderr);
       assert.doesNotMatch(retry.stderr, /trunk-red|owed waive|owed sweep/);
+      const failed = (await observations(r.cwd)).find(e => e.merging === 'a' && e.obligation === 'check:own')!;
+      const current = (await stateOf(r.cwd)).nodes.a!.candidate!;
+      const waiver = `owed waive a check:own --candidate ${current.commit.slice(0,12)} --accept-risk ${failed.seq} --reason "<reason>" --as owner:<id>`;
       if (tests) {
-        // Needs-you leads with the break and suggests the rebase.
+        // C5: status renders the check's owner need; R-028-51 keeps refusal text as recorded evidence.
         const status = views.renderStatus(await ops.status({ cwd: r.cwd }));
-        assert.ok(status.includes('  a: driver halted: merge tree does not pass inv:build (trunk passes) → owed rebase a'), status);
-        assert.doesNotMatch(status, /owed waive|owed sweep|owed adopt/);
+        assert.ok(status.split('\n').some(line => line.startsWith('  a: check:own:') && line.endsWith(`→ ${waiver}`)), status);
+        assert.doesNotMatch(status, /owed sweep|owed adopt/);
       }
     } finally { await r.cleanup(); }
   }

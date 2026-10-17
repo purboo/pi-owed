@@ -10,7 +10,7 @@ import * as ops from '../src/ops.ts';
 import * as git from '../src/git.ts';
 import { Ledger } from '../src/ledger.ts';
 import { parsePlan } from '../src/plan.ts';
-import { reduce } from '../src/reducer.ts';
+import { reduce, entriesOf } from '../src/reducer.ts';
 import { briefView, renderBrief, renderStatus, statusView } from '../src/views.ts';
 import type { Entry, ItemView, NodeState, Plan } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
@@ -23,7 +23,7 @@ function fixture() {
   const plan: Plan = { version:1, trunk:'main', closure:[], invariants:[], nodes:[] };
   const entries = [{kind:'genesis', by:'owner:human', channel:'flag', plan:'p', trunk:'main', commit:'abcdef0123456789', state:{commit:'abcdef0123456789', tree:'t', invKeys:{}}, seq:0, ts:new Date(now - 300_000).toISOString(), prev:'x', hash:'h'}] as Entry[];
   const s = reduce(entries, () => plan);
-  return {s, entries};
+  return {s, entries: entriesOf(s) as Entry[]};
 }
 const item = (subject:string, obligation:string, discharger:ItemView['discharger'], detail='awaiting observation', status:ItemView['status']='D'): ItemView => ({subject, obligation, discharger, detail, status, mark:status === 'W' ? '⚠' : '⊥', key:'key', evidence:[]});
 function addNode(f:ReturnType<typeof fixture>, id:string, phase:NodeState['phase'], items:ItemView[] = []) {
@@ -58,8 +58,8 @@ test('SQ1 default status shows outcome, each phase and only current parent/owner
   const v=statusView(f.s,f.entries,[],now), text=renderStatus(v);
   assert.match(text,/^owed: 1 merged · 10 in progress · 5 need you · trunk main abcdef012345 ✘ invariants \(0\/1\)\nNeeds you \(5\):/);
   for (const [id,phase] of [['writer','writing'],['measure','measuring'],['review','reviewing'],['waiting','waiting for writer'],['held','held'],['accepted','accepted (merge pending)']]) assert.ok(text.includes(`${id}: ${phase} (5m)`),text);
-  assert.match(text,/Needs you: ruling — review asks: choose the public response → owed decide ruling --text "<ruling>" --writer/);
-  assert.match(text,/halt: driver halted: repair budget exhausted → owed decide halt --text/);
+  assert.match(text,/ruling: review asks: choose the public response → owed decide ruling --text "<ruling>" --writer/);
+  assert.match(text,/halt: driver halted: repair budget exhausted; after resume the driver continues from the current state → owed resume halt/);
   assert.match(text,/owner: awaiting owner approval → owed approve owner --candidate candidate/);
   assert.match(text,/ready: ready to dispatch → owed dispatch ready/);
   assert.match(text,/Debt:\n[\s\S]*inv:health: trunk-red: existing failure[\s\S]*waived\/check:unit: waived[\s\S]*owner\/inv:health: owner defer/);
@@ -213,8 +213,7 @@ test('SQ ruling #1562 trunk-red invariants use curated Needs you text once in st
     for (const text of [renderStatus(status),renderBrief(brief)]) {
       const needs=text.split('\nDebt:')[0]!.split('\nBrief (since')[0]!;
       for (const red of status.trunkRed! as { obligation:string; text:string }[]) {
-        const line:string=`  trunk: ${red.text}`;
-        assert.equal(needs.split('\n').filter(l=>l===line).length,1,`${red.obligation} curated line appears once`);
+        assert.equal(needs.split('\n').filter(l=>l.startsWith('  trunk: no single command: ') && l.includes(red.text) && l.endsWith('(no single command)')).length,1,`${red.obligation} curated line appears once`);
       }
       assert.doesNotMatch(needs,/trunk: inv:(one|two): .*→ owed plan/);
     }

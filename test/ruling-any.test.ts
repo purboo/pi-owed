@@ -248,7 +248,8 @@ test('L3.2: flaky hints offer a ruling next to the waiver (why, status, brief, t
   const s = r.state();
   const why = renderReceipt(receipt(s, r.entries, 'a'));
   const blockLine = why.split('\n').find(l => l.startsWith(`⛔ blocked #${f.seq} check:unit`));
-  assert.ok(blockLine?.includes(`accept the risk (owed waive a check:unit`) && blockLine.includes(`; ${RULE_HINT}`), why);
+  assert.ok(blockLine?.includes('→ owed waive a check:unit --candidate') && blockLine.includes(`--accept-risk ${f.seq}`) && blockLine.includes('--reason "<reason>" --as owner:<id>'), why);
+  assert.doesNotMatch(blockLine!, /owed rule --nodes a/);
   const status = renderStatus(statusView(s, r.entries));
   const owed = status.split('\n').find(l => l.includes(`flaky block #${f.seq}`));
   assert.ok(owed?.includes(`owed waive a check:unit`) && owed.includes('passed #') && owed.includes('on the same key'), status);

@@ -62,7 +62,8 @@ for (const [kind, marker] of [['plain', 'needs parent'], ['decision', 'pArEnT dE
       const wake = follow.f.tick()!; assert.ok(wake.split('\n').includes(expected), wake);
       for (const args of [['why', 'a'], ['status']]) {
         const text = (await call(r.cwd, args)).stdout;
-        assert.ok(text.split('\n').includes(expected), text); assert.doesNotMatch(text, /Introduction with no decision|The patch looks clean/);
+        const surface = args[0] === 'status' ? `  a: review asks: ${ask} → owed decide a --text "<ruling>" --writer` : `a: review asks: ${ask} → owed decide a --text "<ruling>" --writer`;
+        assert.ok(text.split('\n').some(line => line.startsWith(surface)), text); assert.doesNotMatch(text, /Introduction with no decision|The patch looks clean/);
       }
       const { state, entries } = await ops.readState(r);
       const plans = new Map<string, ReturnType<typeof parsePlan>>();
@@ -99,11 +100,11 @@ for (const deferred of [false, true]) test(`AK2: trunk owner conflict uses real 
       const key = (await ops.readState(r)).state.trunk.invKeys.suite!;
       deferSeq = (await ops.defer({ cwd: r.cwd, as: owner, channel: 'delegated', node: 'a', items: [{ id: 'suite', key }], reason: 'owner accepts this node defer' })).seq;
     }
-    const need = 'fix one, two, three, +1: add a repair node (owed plan plan.json, or owed edit --node-new) — clears on the next trunk key';
+    const need = 'fix one, two, three, +1: add a repair node with the recorded plan; clears on the next trunk key';
     for (const args of [['status'], ['why', 'trunk'], ['why', 'inv:suite']]) {
       const text = (await call(r.cwd, args)).stdout;
-      assert.ok(text.includes(need), text); assert.doesNotMatch(text, /<plan.yaml>/);
-      if (deferred) assert.ok(text.includes(`deferred for a #${deferSeq}`), text);
+      assert.ok(text.includes(need), text); assert.match(text, /no single command:/); assert.doesNotMatch(text, /<plan.yaml>/);
+      if (deferred) assert.ok((await r.ledger.read()).some(e => e.kind === 'defer' && e.seq === deferSeq));
     }
     assert.equal((await ops.readState(r)).state.invariants[0]!.status, 'D', 'the conflict/deferred debt stays outstanding');
   } finally { await r.cleanup(); }
@@ -116,7 +117,7 @@ test('AK2: the trunk invariant why command without a recorded path offers edit, 
     await ops.planSet({ cwd: r.cwd, as: parent, plan: JSON.stringify(next) });
     await ops.attestTrunk({ cwd: r.cwd, lease: false });
     const text = (await call(r.cwd, ['why','inv:suite'])).stdout;
-    assert.match(text, /fix broken: add a repair node \(owed edit --node-new\) — clears on the next trunk key/);
+    assert.match(text, /fix broken: add a repair node with the recorded plan; clears on the next trunk key/);
     assert.doesNotMatch(text, /<plan.yaml>/);
   } finally { await r.cleanup(); }
 });

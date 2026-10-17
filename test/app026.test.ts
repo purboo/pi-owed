@@ -184,7 +184,8 @@ test('WA-R1 N3: an owner-needed ready node has exactly one default status line',
     const status = await cli(r.cwd,['status']);
     assert.equal(status.code,0,status.stderr);
     assert.equal(status.stdout.split('\n').filter(l => /^\s*a:/.test(l)).length,1,status.stdout);
-    assert.match(status.stdout,new RegExp(`a: ready, not dispatched: rank 2 review block #${block.seq} on review needs the owner`));
+    assert.match(status.stdout,/a: no single command: ready, not dispatched: rank 2 review block on review needs the owner; a current candidate is required to resolve its old blocks \(no single command\)/);
+    assert.equal(state.nodes.a!.blocks.find(b => b.seq === block.seq)!.state, 'active');
     assert.doesNotMatch(status.stdout,/a: ready to dispatch/);
     for (const running of [false,true]) {
       const text = renderStatus(statusView(state,entries,[],now,running));

@@ -1,4 +1,5 @@
 import { matchesWrite, writesSyntax } from './writes.ts';
+import { sha256 } from './canon.ts';
 import { spawn } from 'node:child_process';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -139,7 +140,7 @@ export function zeroTestFallbackSignature(log: string): string | undefined {
   return `${source.format} fallback counted line "${tokens.join('')}"`;
 }
 /** FG: display-only errors; failed names and measurement verdicts remain unchanged. */
-export interface ErrorGroup { message: string; location?: string; names: string[]; expected?: string; actual?: string; signatureLocation?: string }
+export interface ErrorGroup { missingError?: 'name' | 'field'; message: string; location?: string; names: string[]; expected?: string; actual?: string; signatureLocation?: string }
 const stripAnsi = (text: string): string => text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '');
 function errorMessage(text: string, bounded = true): string {
   const line = stripAnsi(text).replace(/\s+/g, ' ').replace(/;/g, ',').trim();
@@ -172,6 +173,11 @@ function testStackLocation(stack: unknown, cwd?: string): string | undefined {
 /** SG1: YAML scalars and structured assertion values, masked and bounded independently. */
 function assertionValue(value: unknown): string {
   return errorSignature(typeof value === 'string' ? value : JSON.stringify(value) ?? String(value)).replace(/\s+/g, ' ').slice(0, 120);
+}
+export function noErrorText(log: string, reason: 'name' | 'field'): string {
+  const hash = sha256(log).slice(0, 12);
+  return reason === 'name' ? `no error text: log ${hash} has no \`not ok\`/panic line named exactly as this failed test`
+    : `no error text: the \`not ok\` block of this name in log ${hash} has no error field`;
 }
 /** Pure extraction with an explicit run directory for executor-only path shortening. */
 function groupsAt(log: string, failed: readonly string[], cwd?: string, signature = false, full = false): { groups: ErrorGroup[]; hasError: boolean } {
@@ -247,15 +253,17 @@ function groupsAt(log: string, failed: readonly string[], cwd?: string, signatur
     if (point.parent && hasChildError) continue;
     if (!picked.has(point.name) || (!picked.get(point.name)!.message && point.message)) picked.set(point.name, point);
   }
+  const matched = new Set([...points.map(p => p.name), ...panicHeaders.flatMap(h => /^thread '([^']+)'/.exec(h[0])?.[1] ?? [])]);
   const parents = new Set(points.filter(p => p.parent && hasChildError).map(p => p.name));
   for (const name of failed) if (!picked.has(name) && !parents.has(name)) picked.set(name, { name, at: clean.length });
   const groups = new Map<string, ErrorGroup>();
   for (const point of picked.values()) {
-    const message = point.message ?? '(no error text)', group = groups.get(message);
+    const missingError = point.message ? undefined : matched.has(point.name) ? 'field' as const : 'name' as const;
+    const message = point.message ?? noErrorText(log, missingError!), group = groups.get(message);
     if (group) {
       group.names.push(point.name);
       if (group.location !== point.location) delete group.location;
-    } else groups.set(message, { message, ...(point.location ? { location: point.location } : {}), ...(point.signatureLocation ? { signatureLocation: point.signatureLocation } : {}), ...(point.expected !== undefined ? { expected: point.expected } : {}), ...(point.actual !== undefined ? { actual: point.actual } : {}), names: [point.name] });
+    } else groups.set(message, { message, ...(missingError ? { missingError } : {}), ...(point.location ? { location: point.location } : {}), ...(point.signatureLocation ? { signatureLocation: point.signatureLocation } : {}), ...(point.expected !== undefined ? { expected: point.expected } : {}), ...(point.actual !== undefined ? { actual: point.actual } : {}), names: [point.name] });
   }
   return { groups: [...groups.values()].sort((a, b) => b.names.length - a.names.length), hasError: [...picked.values()].some(p => !!p.message) };
 }
@@ -769,6 +777,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   if (fileNotes.size) obs.note = `${[...fileNotes].join('; ')}${obs.note ? `; ${obs.note}` : ''}`;
   if (protocolWarnings && !obs.note?.includes('malformed owed-counts')) obs.note = `${obs.note ? `${obs.note}; ` : ''}${protocolWarnings} malformed owed-counts line(s) ignored`;
   obs.log = await ctx.ledger.putBlob(truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes);
+  if (obs.note) obs.note = obs.note.replace(/log [0-9a-f]{12}(?= has no `not ok`\/panic line| has no error field)/g, `log ${obs.log.slice(0, 12)}`);
   if (job.kind === 'inv' && obs.verdict === 'fail') {
     const matched = remeasureMatches(obs,measurementBytes.toString(),ctx.plan.invariants.find(i => i.id === job.spec?.id)?.remeasure_on ?? []);
     if (matched.length) obs.remeasure_match = matched;

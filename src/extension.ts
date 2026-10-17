@@ -24,7 +24,7 @@ import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
 import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
 import { parentOverlapWarnings } from './parentops.ts';
-import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief, waiverRecordedText } from './views.ts';
+import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief, waiverRecordedText, measuredPendingText } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
 
 const as = Type.Optional(Type.String({ pattern: '^(owner|parent|writer|reviewer|executor):.+$', description: 'Principal role:id; parent defaults to parent:pi.' }));
@@ -200,7 +200,7 @@ export default function owed(pi: ExtensionAPI): void {
   tool('rebase', 'Move the open slot of a node onto the current trunk (parent/owner, or the slot writer inferred from cwd); returns the rebase packet. The open candidate is invalidated; the writer rebases the same worktree and submits again.', Type.Object({ node, as, cwd }), async (p, ctx, dir, signal) => {
     const who = p.as ?? await slotWriter(dir, p.node);
     const r = await ops.rebase({ ...await actor(ctx, dir, who, `Rebase the open slot of node ${oneLine(p.node)} onto trunk`, {}, signal), node: p.node });
-    return result(r, `${renderEntry(r.entry)}\n${r.packet}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
+    return result(r, `${r.packet}\n${renderEntry(r.entry)}\n${renderReceipt(await ops.why({ cwd: dir, node: p.node }))}`);
   });
   tool('attest', 'Have the owed executor measure the candidate and rerun attribution for old failures; trunk: true (no node) refreshes current-plan trunk invariant keys and measures them. as does not change executor identity.', Type.Object({ node: Type.Optional(node), trunk: Type.Optional(Type.Boolean()), rerun: Type.Optional(Type.Boolean()), remeasure: Type.Optional(Type.Boolean({ description: 'Measure again, on the same key, the merge-tree (node) or trunk (trunk: true) invariants whose latest observation failed.' })), all: Type.Optional(Type.Boolean({ description: 'With remeasure: measure every invariant again, not only failed ones.' })), lease: Type.Optional(Type.Boolean({ description: 'False skips the shared machine lease (default on).' })), as, cwd }), async (p, _ctx, dir, signal) => {
     if (p.trunk) {
@@ -211,7 +211,7 @@ export default function owed(pi: ExtensionAPI): void {
     if (!p.node) throw new OwedError('attest requires a node or trunk: true', 'usage');
     if (p.remeasure && p.rerun) throw new OwedError('attest remeasure does not take rerun', 'usage');
     if (p.all && !p.remeasure) throw new OwedError('attest all requires remeasure', 'usage');
-    const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal, lease: p.lease, ...(p.remeasure ? { remeasure:true, all:!!p.all } : {}) }); return result(r, `${r.remeasured ? `${ops.remeasureText(p.node,r.remeasured,r.observations)}\n` : ''}${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}${leaseText(r)}`);
+    const r = await ops.attest({ cwd: dir, node: p.node, rerun: p.rerun, signal, lease: p.lease, ...(p.remeasure ? { remeasure:true, all:!!p.all } : {}) }); return result(r, `${!r.accepted && !r.observations.some(e => e.kind === 'obs' && e.verdict === 'fail') ? `${measuredPendingText(r.receipt)}\n` : ''}${r.remeasured ? `${ops.remeasureText(p.node,r.remeasured,r.observations)}\n` : ''}${renderReceipt(r.receipt)}${ops.supersededText(r.superseded)}${leaseText(r)}`);
   });
   tool('review', 'Independent review; omitted ack_rulings derives only from the current driver reviewer launch packet. Explicitly specify reviewer:id (or owner:id: the main agent acts as owner (owner:pi, channel delegated, D25); a UI dialog only under OWED_CONFIRM=owner). Self-review is forbidden. needs_parent (block only): the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision; the driver halts for a parent ruling instead of sending the writer a repair. model records the actual model used, otherwise the recorded dsa launch is inspected.', Type.Object({ node, model: Type.Optional(Type.String({ minLength: 1 })), as, verdict: Type.Union([Type.Literal('ok'), Type.Literal('block')]), rank: Type.Integer({ minimum: 1, maximum: 3 }), note: Type.String(), ack_rulings: Type.Optional(Type.Union([Type.Integer({ minimum: 0 }), Type.Literal('latest')])), obligation: Type.Optional(Type.Union([Type.Literal('review'), Type.Literal('closure-review')])), needs_parent: Type.Optional(Type.Boolean()), candidate: candidateParam, cwd }), async (p, ctx, dir, signal) => {
     if (!p.as || !['reviewer', 'owner'].includes(principal(p.as).role)) throw new OwedError('review requires an explicit reviewer:id or owner:id');

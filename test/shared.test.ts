@@ -99,7 +99,7 @@ test('FS1-FS4: shared failure on another merge tree parks two nodes without halt
     assert.equal(notices[0]!.text, `shared failure: inv:x ${NAME} fails without any candidate; waiting: a, c. owed retries after trunk moves. To merge now: owed decide a,c --defer inv:x (or an allow defer rule); to fix: a node whose brief names the test.`);
     assert.ok(!actions.some(x => x.do === 'merge'));
     const status = await ops.status({ cwd: r.cwd });
-    assert.equal(status.summary!.needs.filter(n => n.node === 'trunk' && n.reason.startsWith('shared failure:') && n.command === '').length, 1);
+    assert.equal(status.summary!.needs.filter(n => n.node === 'trunk' && n.reason.startsWith('no single command: shared failure:') && n.command === '').length, 1);
     assert.match(renderStatus(status), new RegExp(`waiting: shared failure \\(inv:x ${NAME}\\)`));
     const brief = await ops.brief({ cwd: r.cwd });
     assert.ok(JSON.stringify(brief).includes('shared failure: inv:x'));
@@ -207,7 +207,7 @@ test('FS3(b): a trunk-key conflict from the merge guard\'s trunk refresh parks t
       assert.ok(notices[0]!.do === 'notify');
       assert.equal(notices[0]!.once, `trunk\0inv:x\0${NAME}\0${s.trunk.commit}`);
       assert.equal(notices[0]!.text, `trunk red: inv:x ${NAME} fails on trunk ${s.trunk.commit.slice(0, 12)} (#${fail.seq}, pass #${pass.seq}: owner conflict); waiting: a, c. owed retries after trunk moves. To merge now: owed decide a,c --defer inv:x (or an allow defer rule); to fix: a node whose brief names the test.`);
-      const needs = (await ops.status({ cwd: r.cwd })).summary!.needs.filter(x => x.node === 'trunk' && x.reason.startsWith('trunk red: inv:x'));
+      const needs = (await ops.status({ cwd: r.cwd })).summary!.needs.filter(x => x.node === 'trunk' && x.reason.startsWith('no single command: trunk red: inv:x'));
       assert.equal(needs.length, 1); assert.equal(needs[0]!.command, '');
       const drv = await r.driver(['a', 'c']);
       // Ruling #2485 (2): the notify the driver actually emits for the trunk-red park wakes the next session.
