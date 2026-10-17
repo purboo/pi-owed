@@ -190,8 +190,10 @@ test('G1.3: ownerCommands, the brief and the review packet carry --candidate <co
       assert.ok(cmds.some(c => c.startsWith('owed waive a review ') && c.endsWith(` --candidate ${c12}`)), cmds.join('\n'));
       const brief = await ops.brief({ cwd: r.cwd });
       assert.ok(brief.decisions.length && brief.decisions.every(d => d.command.includes(`--candidate ${c12}`)), JSON.stringify(brief.decisions));
+      assert.ok(!brief.decisions.some(d => d.obligation === 'review'), 'routine reviewer work is not an owner decision');
       const why = renderReceipt(await ops.why({ cwd: r.cwd, node: 'a' }));
-      assert.match(why, new RegExp(`or owner: owed waive a review --reason "<why the risk is acceptable>" --accept-risk \\d+ --candidate ${c12}`), why);
+      assert.match(why, /an ok review of a\/review on the current candidate by the original reviewer reviewer:r1 with rank >= 1, or by any reviewer with rank > 1, clears it/, why);
+      assert.doesNotMatch(why, /or owner: owed waive a review/);
       const packet = reviewPacket(st, 'a', 1).split('\n');
       assert.ok(packet.includes(`  owed review a --as reviewer:drive-a-1-1 --ok|--block --rank 2 --candidate ${c12} --note "..."`), packet.join('\n'));
       assert.ok(packet.some(l => l.includes(`--candidate ${c12}`) && /re-read owed why a and review the new candidate/.test(l)), packet.join('\n'));

@@ -483,10 +483,10 @@ const outOfParity = [
 
 async function parity(id: string, s: State) {
   const { needs, repoNeeds, activity } = await api();
-  const baseline = [false, true].map(driverRunning => setOf(statusView(s, [...entriesOf(s)], [], now, driverRunning).summary!.needs));
+  const rendered = [false, true].map(driverRunning => setOf(statusView(s, [...entriesOf(s)], [], now, driverRunning).summary!.needs));
   const actual = [false, true].map(driverRunning => setOf([...Object.keys(s.nodes).flatMap(id => needs(s, id, { driverRunning })), ...repoNeeds(s)]));
   const row = parityTable[id]; assert.ok(row, `missing frozen baseline ${id}`);
-  assert.deepEqual(baseline, row.baseline, `${id}: unchanged baseline selector`);
+  assert.deepEqual(rendered, row.expected ?? row.baseline, `${id}: VW1 renders the frozen expected needs (${row.correction ?? 'parity'})`);
   assert.deepEqual(actual, row.expected ?? row.baseline, `${id}: ${row.correction ?? 'parity'}`);
   for (const p of statusView(s, [...entriesOf(s)], [], now, true).summary!.progress) assert.equal(activity(s, p.node)?.text, p.phase, id);
   if (id === 'SQ1' || id === 'SQ3') return; // Original display-only fixture uses a non-hex 'candidate'; behavioral fixtures validate real pins.

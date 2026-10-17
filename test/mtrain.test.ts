@@ -161,7 +161,7 @@ test('MT1: overlapping writes, closure-touching and owner-approval members are n
     const nodes = [node('a', { writes: ['shared/', 'a.txt'] }), node('b', { writes: ['shared/x', 'b.txt'] }), node('c'), node('d', { approve: 'owner' }), node('e', { writes: ['ci/', 'e.txt'] })];
     await setup(r, { ...planOf([inv(r)], nodes, 4), closure: ['ci/'] }, ['a', 'b', 'c']);
     await accept(r, 'd', undefined, false);
-    await assert.rejects(ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['d', 'c'] }), /^OwedError: batch merge refused: d needs owner approval; merge it alone: owed merge d$/);
+    await assert.rejects(ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['d', 'c'] }), /^OwedError: batch merge refused: d needs owner approval; awaiting owner approval → owed approve d --candidate [0-9a-f]{12} --note "<note>" --as owner:<id>$/);
     await ops.approve({ cwd: r.cwd, as: owner, channel: 'flag', node: 'd' });
     await accept(r, 'e', { 'e.txt': 'e', 'ci/x': 'x' }, false);
     await ops.review({ cwd: r.cwd, as: owner, channel: 'flag', node: 'e', verdict: 'ok', rank: 3, note: 'closure ok', obligation: 'closure-review' });
@@ -173,7 +173,7 @@ test('MT1: overlapping writes, closure-touching and owner-approval members are n
     assert.equal(reducer.mergeBatchPlan(s, 2, ['a', 'c', 'd']).join(), 'a,c', 'at most merge_batch members');
     assert.equal(reducer.mergeBatchPlan(s, 4, ['e', 'a', 'c']).join(), '', 'a head that cannot be batched merges alone first');
     await assert.rejects(ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['a', 'b'] }), /^OwedError: batch merge refused: writes of a and b overlap; merge them one at a time$/);
-    await assert.rejects(ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['a', 'e'] }), /^OwedError: batch merge refused: e touches the closure; merge it alone: owed merge e$/);
+    await assert.rejects(ops.mergeBatch({ cwd: r.cwd, as: parent, nodes: ['a', 'e'] }), /^OwedError: batch merge refused: e touches the closure; accepted \(merge pending\)$/);
   } finally { await r.cleanup(); }
 });
 

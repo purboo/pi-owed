@@ -8,14 +8,14 @@ import type { TrunkDrift } from './git.ts';
 import { matchesGlob } from 'node:path';
 import { matchesAny, driveConfig, isCheckTemplateRun, activeQuarantine } from './plan.ts';
 import { mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, driveReviewerSlot, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
-import { sharedParked, sharedParkNotices, sharedPhase } from './reducer.ts';
-import { sharedFailure, fixCandidates, sharedNames, genesisProgress, trunkInvariantReds, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, activeKnownRed, knownRedPlanSeq, activeQuarantineOf } from './reducer.ts';
+import { genesisProgress, trunkInvariantReds, activeKnownRed, knownRedPlanSeq, activeQuarantineOf } from './reducer.ts';
 import { canonical } from './canon.ts';
 import { mergeBatchPlan } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
 /** MT6: the planned batch after the merge queue (`; batch of N: A, B`). */
 const batchPlanText = (b: string[] | undefined): string => b?.length ? `; batch of ${b.length}: ${b.join(', ')}` : '';
-import { rebasePendingText, type RebasePending } from './rebase-view.ts';
+import { rebasePendingText, WRITER_DECISION, type RebasePending } from './rebase-view.ts';
+export { WRITER_DECISION } from './rebase-view.ts';
 import { OwedError } from './errors.ts';
 import { observationsOf } from './reducer.ts';
 import type { WaiveEntry } from './types.ts';
@@ -23,9 +23,9 @@ import type { InFlight } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { nearTimeoutWarnings } from './cost.ts';
 import { nodeTestRun } from './exec.ts';
+export { trunkRedHint, sharedCheckHint } from './needs.ts';
+import { needs, repoNeeds, activity, itemLine, trunkRedHint, sharedCheckHint, type Need, type Runtime } from './needs.ts';
 
-/** WS3: every writer packet and follow-up preserves the question path instead of requesting a known-red submit. */
-export const WRITER_DECISION = 'If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.';
 export const writerDecisionCommand = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
 /** WS2: quote only the final non-empty paragraph, flattened and bounded before JSON quoting. */
 export function writerReply(result?: string): string {
@@ -53,7 +53,7 @@ function dispatchSkipText(s: State, node: string, skip: DispatchSkip): string {
   const prefix = 'ready, not dispatched: ';
   if (skip.kind === 'max') return `${prefix}${skip.open} of max ${skip.max} attempts open`;
   if (skip.kind === 'overlap') return `${prefix}writes overlap ${skip.others.map(o => `${oneLine(o.node)} (${o.paths.map(oneLine).join(', ')})`).join(', ')} → owed dispatch ${node} --allow-overlap`;
-  if (skip.kind === 'owner') return `${prefix}${oneLine(skip.reason)}${ownerCommands(s, node).length ? ` → ${ownerCommands(s, node).join(' | ')}` : ` → owed why ${node} --full`}`;
+  if (skip.kind === 'owner') return `${prefix}${nodeNext(s, node)}`;
   return `${prefix}node is no longer in the plan`;
 }
 export interface ReceiptCard {
@@ -195,7 +195,7 @@ export interface StatusView {
 }
 export interface SummaryView {
   merged: number;
-  needs: { node: string; reason: string; command: string }[];
+  needs: { node: string; reason: string; command: string; alternatives?: string[] }[];
   progress: { node: string; phase: string; ageMs: number }[];
   debt: string[];
 }
@@ -302,7 +302,34 @@ export function supersededOf(s: State, nodes: readonly NodeState[]): SupersededB
 const actHistories = new WeakMap<object, readonly Entry[]>();
 // AK: presentation context is not serialized; evidence and JSON retain the complete history.
 const presentationStates = new WeakMap<object, State>();
-export function withPresentationState<T extends object>(view: T, state: State): T { presentationStates.set(view,state); return view; }
+const presentationRuntime = new WeakMap<object, Runtime>();
+export function withPresentationState<T extends object>(view: T, state: State, rt?: Runtime): T {
+  presentationStates.set(view, state);
+  if (rt) presentationRuntime.set(view, rt);
+  return view;
+}
+/** Render the authority's answer without choosing a remedy. */
+export const needText = (n: Need): string => `${n.text}${n.command ? ` → ${n.command}` : ' (no single command)'}`;
+export function nodeNext(s: State, node: string, rt?: Runtime): string {
+  return (node === 'trunk' ? repoNeeds(s, rt) : needs(s, node, rt)).map(needText).join('\n') || activity(s, node, rt)?.text || '';
+}
+function cardNeeds(v: ReceiptCard): Need[] {
+  const s = presentationStates.get(v), rt = presentationRuntime.get(v);
+  if (!s) return [];
+  return v.node === 'trunk' || v.node.startsWith('inv:')
+    ? repoNeeds(s, rt).filter(n => v.node === 'trunk' || n.obligation === v.node)
+    : needs(s, v.node, rt);
+}
+function cardActivity(v: ReceiptCard): string | undefined {
+  const s = presentationStates.get(v);
+  if (v.measuring && !presentationRuntime.get(v)?.measuring?.some(m => m.node === v.node)) return measurementText(v.measuring);
+  return s ? activity(s, v.node, presentationRuntime.get(v))?.text : undefined;
+}
+const cardItemLine = (v: ReceiptCard, i: ItemView): string => {
+  const s = presentationStates.get(v);
+  return s ? itemLine(s, i.subject, i.obligation, presentationRuntime.get(v)) : oneLine(i.detail);
+};
+export const measuredPendingText = (v: ReceiptCard): string => `measured; not accepted yet: ${cardNeeds(v)[0]?.text ?? cardActivity(v) ?? v.items.filter(i => i.status === 'D').map(i => cardItemLine(v, i)).join('; ')}`;
 function currentDowngrades(v: ReceiptCard): State['downgrades'] {
   const s = presentationStates.get(v), slot = s?.nodes[v.node]?.slot;
   if (!s || !slot) return [];
@@ -362,7 +389,7 @@ export function templateReceiptRun(s: State, item: ItemView): { run?: string } {
   const spec = item.obligation.startsWith('inv:') ? s.plan.invariants.find(c => `inv:${c.id}` === item.obligation) : s.plan.nodes.find(n => n.id === item.subject)?.checks.find(c => `check:${c.id}` === item.obligation || `red:${c.id}` === item.obligation);
   return spec && isCheckTemplateRun(spec.run) ? { run: spec.run } : {};
 }
-export function receipt(s: State, entries: readonly Entry[], node: string, mergeChecks: ItemView[] = [], dispatchMax = driveConfig(s.plan).max): ReceiptCard {
+export function receipt(s: State, entries: readonly Entry[], node: string, mergeChecks: ItemView[] = [], dispatchMax = driveConfig(s.plan).max, rt?: Runtime): ReceiptCard {
   const n = s.nodes[node]!;
   const checks = (s.plan.nodes.find(x => x.id === node)?.checks ?? []).filter(c => n.items.some(i => i.obligation === `check:${c.id}` && i.status === 'E'));
   const outOfWrites = outsideWrites(s, node), superseded = supersededOf(s, [n]);
@@ -370,7 +397,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
     ...(s.plan.risk !== undefined && n.candidate ? { reviewRequirement: nodeReview(s, node) } : {}),
     items: n.items.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })),
     ...(mergeChecks.length ? { mergeChecks: mergeChecks.map(i => ({ ...receiptItem(i, entries), ...templateReceiptRun(s, i) })) } : {}),
-    blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: mergeBlockClearHint(s, entries, b), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
+    blocks: n.blocks.filter(b => countsBlock(b)).map(b => ({ ...b, clear: mergeBlockClearHint(s, entries, b, rt), ...(currentNeeds(s, b) ? { ruling: parentRuling(s, b)?.seq ?? ('needed' as const) } : {}), ...withNote(blockNote(s, b)) })),
     ...(superseded.length ? { superseded } : {}),
     untested: (n.candidate?.changed ?? []).filter(p => !checks.some(c => matchesAny(p, c.reads))),
     ownerFlags: entries.filter(e => e.by.startsWith('owner:') && e.channel === 'flag'),
@@ -389,7 +416,7 @@ export function receipt(s: State, entries: readonly Entry[], node: string, merge
     ...(n.slot?.open && n.runs.some(r => r.attempt === n.slot!.attempt) ? { runs: n.runs.find(r => r.attempt === n.slot!.attempt) } : {}),
     ...(carriedOf(n) ? { carried: carriedOf(n) } : {}),
     ...(n.candidate?.carry ? {reviewCarried:reviewCarryText(n.candidate)} : {}),
-    ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) }, entries), s);
+    ...(n.slot?.open && n.slot.rebase ? { rebase: { ...n.slot.rebase, ...(n.slot.rebase.previous ? { rangeDiff: `git range-diff ${n.slot.rebase.previous.base}..${n.slot.rebase.previous.commit} ${n.slot.base}..${n.candidate?.commit ?? '<new commit>'}` } : {}) } } : {}) }, entries), s, rt);
   if (n.phase === 'ready') {
     const skip = readyDispatchSkips(s, dispatchMax).get(node);
     if (skip) setReadyText(card, [dispatchSkipText(s, node, skip)]);
@@ -427,18 +454,18 @@ function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
 export const allowanceLabel = (d: { by: string; allowance?: number; items?: { what: string }[] }): string => d.allowance === undefined ? '' : d.by === 'executor:owed' ? `${d.items?.some(i => /^inv:\S+ deferred: /.test(i.what)) ? 'deferred' : 'granted'} by owed under allowance (plan #${d.allowance})` : `by ${d.by} under allowance (plan #${d.allowance})`;
-export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key), dispatchMax = driveConfig(s.plan).max): StatusView {
+export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key), dispatchMax = driveConfig(s.plan).max, rt: Runtime = { driverRunning }): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
     (groups[n.phase] ??= []).push(n.id);
     if (!waitingFor(s,n.id) && reportedOf(s,n.id) === undefined && !s.plan.nodes.find(x => x.id === n.id)?.later && (n.phase === 'ready' || n.phase === 'dispatched')) pending['parent+writer']!.push({subject:n.id,obligation:n.phase === 'ready' ? 'dispatch' : 'submit',key:'',status:'D',mark:'⊥',discharger:n.phase === 'ready' ? 'parent' : 'writer',evidence:[],detail:n.phase === 'ready' ? 'parent can dispatch work' : 'writer must submit a candidate'});
   }
-  for (const i of [...Object.values(s.nodes).filter(n => !n.merged && n.phase !== 'removed').flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(withBlockNotes(s, i));
+  for (const i of [...Object.values(s.nodes).filter(n => !n.merged && n.phase !== 'removed').flatMap(n => n.items), ...s.invariants]) if (i.status === 'D') pending[i.discharger === 'writer' || i.discharger === 'parent' ? 'parent+writer' : i.discharger ?? 'executor']!.push(withBlockNotes(s, i, rt));
   pending['parent+writer']!.push(...mergeChecks);
   const ready = Object.values(s.nodes).filter(n => n.phase === 'ready').sort((a,b) => b.dependents - a.dependents || a.id.localeCompare(b.id)).map(n => n.id), overlaps: Record<string, string[]> = {};
   for (const id of ready) { const o = overlapping(s, id); if (o.length) overlaps[id] = o; }
   const halts = Object.keys(s.nodes).flatMap(id => halted(s, id) ?? []), launches: Record<string, LaunchEntry[]> = {};
-  for (const h of halts) if (h.needs === 'owner') pending.owner!.push({ subject: h.node, obligation: 'driver-halt', key: '', status: 'D', mark: '⏸', discharger: 'owner', evidence: [h.seq], detail: `driver halted attempt ${h.attempt} (#${h.seq}): ${oneLine(h.reason)}` });
+  for (const h of halts) if (h.needs === 'owner') pending.owner!.push({ subject: h.node, obligation: 'driver-halt', key: '', status: 'D', mark: '⏸', discharger: 'owner', evidence: [h.seq], detail: nodeNext(s, h.node, rt) });
   for (const n of Object.values(s.nodes)) { const runs = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt) : undefined; if (runs?.launches.length) launches[n.id] = runs.launches; }
   const all = entries.length ? entries : entriesOf(s), needsRuling = Object.values(s.nodes).filter(n => n.slot?.open).flatMap(n => n.blocks.filter(b => currentNeeds(s, b) && awaitingRuling(s, b)).map(b => { const e = all.find(x => x.seq === b.seq); return { ...b, note: e?.kind === 'review' ? e.note ?? '' : '' }; }));
   const waiting = Object.keys(s.nodes).sort().flatMap(id => { const w = waitingFor(s, id); return w ? [{ node: id, ...w }] : []; });
@@ -455,7 +482,8 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   if (currentDefers.length) view.deferred = currentDefers;
   { const batch = mergeBatchPlan(s, mergeBatchSize(s.plan)); if (batch.length) view.mergeBatch = batch; }
   setReadyText(view, [...readyDispatchSkips(s, dispatchMax)].filter(([, skip]) => skip.kind !== 'owner').map(([id, skip]) => `${id}: ${dispatchSkipText(s, id, skip)}`));
-  view.summary = summaryView(s, entries, view, now, driverRunning, currentDefers);
+  view.summary = summaryView(s, entries, view, now, rt, currentDefers);
+  presentationRuntime.set(view.summary, rt);
   return withPresentationState(view,s);
 }
 /** NY1: a recorded repair after a review block, or a newer submit, is pending replacement evidence. */
@@ -479,91 +507,19 @@ export function planReceipt(e: Entry, prior: Plan, next: Plan): string {
   return `Recorded plan #${e.seq} (v${next.version} : +${added.length} nodes [${added.join(', ')}], -${removed.length}, ~${changed.length} changed; downgrades: ${e.downgrades.map(d => `${d.node}: ${d.what}`).join('; ') || 'none'})`;
 }
 /** SQ: derive presentation only; no ledger state, keys or acceptance rules change. */
-function summaryView(s: State, entries: Entry[], v: StatusView, now: number, driverRunning: boolean, currentDefers: DeferredView[]): SummaryView {
-  const needs: SummaryView['needs'] = [], debt: string[] = [];
-  const add = (node: string, reason: string, command: string) => {
-    if (!needs.some(n => n.node === node && n.command === command)) needs.push({ node, reason: oneLine(reason), command });
-  };
-  const plain = (text: string): string => text.replace(/#[0-9]+\s*/g, '').split(';')[0]!.trim();
-  const haltReason = (reason: string): string => {
-    if (reason.startsWith('review-missing:')) return 'reviewer finished without recording the required review';
-    if (/^writer run .*finished .*without submitting/.test(reason)) return 'writer finished without submitting a candidate';
-    const sealed = /^writer run .* sealed (\S+)(.*)$/.exec(reason);
-    if (sealed) return `writer stopped: ${sealed[1]}${plain(sealed[2]!)}`;
-    if (reason.startsWith('dsa rejected')) return `run request rejected${reason.includes(':') ? `: ${plain(reason.slice(reason.indexOf(':') + 1))}` : ''}`;
-    if (/^cannot re-(?:launch|send)/.test(reason)) return 'stored run request is unavailable';
-    return plain(reason).replace(/\s+to:"[^"]*"/g, '');
-  };
-  const ownerReady = new Map([...readyDispatchSkips(s, driveConfig(s.plan).max)].filter(([, skip]) => skip.kind === 'owner'));
-  for (const [id, skip] of ownerReady) {
-    const diagnoses = s.nodes[id]?.blocks.filter(countsBlock).flatMap(b => trunkRedHint(s,b.seq,b.key) ?? sharedCheckHint(s,b) ?? []) ?? [];
-    add(id, [...diagnoses,dispatchSkipText(s,id,skip)].join('; '), '');
-  }
-  for (const b of v.needsRuling ?? []) {
-    const command = reviewDecision(b.node);
-    if (!needs.some(n => n.node === b.node && n.command === command)) needs.push({ node:b.node, reason:`review asks: ${reviewAsk(b.note)}`, command });
-  }
-  for (const h of v.halted) {
-    if (v.needsRuling?.some(b => b.node === h.node)) continue;
-    const stopped = writerStopNeed(h.reason, h.node);
-    if (stopped) { needs.push({ node: h.node, reason: stopped.reason, command: stopped.command }); continue; }
-    const command = h.reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim()
-      ?? (h.needs === 'owner' ? ownerCommands(s, h.node)[0] : undefined)
-      ?? `owed decide ${h.node} --text "<why>"`;
-    add(h.node, `driver halted: ${haltReason(h.reason)}`, command);
-  }
-  for (const red of trunkParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
-  for (const red of sharedParkNotices(s)) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
-  for (const i of Object.values(v.pending).flat()) {
-    if (trunkParked(s, i.subject).length || ownerReady.has(i.subject)) continue;
-    const sharedChecks = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && countsBlock(b)).flatMap(b => {
-      const shared = sharedCheckHint(s,b);
-      return shared ? [`${shared}${b.state === 'flaky' && !heldFlaky(s,i.subject,b) ? `; ${flakyBlockText(s,b)}` : ''}`] : [];
-    }) ?? [];
-    if (sharedChecks.length && i.discharger === 'writer') { add(i.subject,sharedChecks.join('; '),decisionCommand(s,i,false)); continue; }
-    if (i.discharger !== 'owner' && i.discharger !== 'parent') continue;
-    if (i.obligation === 'driver-halt' || i.obligation === 'dispatch' || v.needsRuling?.some(b => b.node === i.subject && b.obligation === i.obligation)) continue;
-    if (i.obligation === 'approve' && waitingFor(s, i.subject)) continue;
-    if (reviewObligation(i.obligation) && repairingBlock(s, i.subject) && !repairNeedsOwner(s, i.subject)) continue;
-    const red = i.subject === 'trunk' ? v.trunkRed?.find(r => r.obligation === i.obligation && r.key === i.key) : undefined;
-    if (red) {
-      if (!needs.some(n => n.node === 'trunk' && n.reason === oneLine(red.text) && n.command === '')) needs.push({ node: 'trunk', reason: oneLine(red.text), command: '' });
-      continue;
-    }
-    const command = i.subject === 'trunk' ? trunkDecision(s,i.obligation) : i.discharger === 'owner'
-      ? (reviewObligation(i.obligation) ? decisionCommand(s, i, false) : decisionCommand(s, i, false).split(';')[0]!)
-      : `owed why ${i.subject}`;
-    const reason = i.obligation === 'approve' ? 'awaiting owner approval'
-      : reviewObligation(i.obligation) ? i.mark === '⊤' ? `${i.obligation} needs an owner decision` : i.mark === '⛔' ? `${i.obligation} blocked: guidance needed` : `awaiting ${i.obligation}`
-      : i.obligation.startsWith('evidence:') ? `awaiting manual evidence: ${i.obligation.slice(9)}`
-      : `${i.obligation}: ${i.detail.includes('flaky block #') || i.subject === 'trunk' && i.mark === '⊤' && i.detail.includes('automatic same-key remeasure:') ? i.detail : plain(i.detail)}`;
-    add(i.subject, sharedChecks.length ? sharedChecks.join('; ') : reason, command);
-  }
-  if (!driverRunning) for (const id of v.ready) {
-    if (v.later?.includes(id) || v.overlaps[id] || ownerReady.has(id)) continue;
-    add(id, 'ready to dispatch', `owed dispatch ${id}`);
-  }
+function summaryView(s: State, entries: Entry[], v: StatusView, now: number, rt: Runtime, currentDefers: DeferredView[]): SummaryView {
+  const debt: string[] = [];
+  const ns = [...Object.keys(s.nodes).flatMap(id => needs(s, id, rt)), ...repoNeeds(s, rt)];
+  // Stable sorting across nodes keeps needs()'s answer/halt/obligation order within each node.
+  ns.sort((a,b) => (s.nodes[b.node]?.dependents ?? 0) - (s.nodes[a.node]?.dependents ?? 0) || a.node.localeCompare(b.node));
+  const selected: SummaryView['needs'] = ns.map(n => ({ node: n.node, reason: n.text, command: n.command ?? '', ...(n.alternatives?.length ? { alternatives: n.alternatives } : {}) }));
   const at = (seq?: number): number => {
     const ts = entries.find(e => e.seq === seq)?.ts;
     return ts && Number.isFinite(Date.parse(ts)) ? Math.max(0, now - Date.parse(ts)) : 0;
   };
-  const progress = Object.values(v.nodes).filter(n => !n.merged && !v.later?.includes(n.id) && (n.slot?.open || n.phase === 'blocked' || n.phase === 'held')).map(n => {
-    const w = v.waiting?.find(w => w.node === n.id);
-    const deps = [...new Set([...(w?.deps ?? []), ...(w?.after?.split(', ') ?? [])])].filter(Boolean);
-    const parked = trunkParked(s, n.id);
-    const shared = parked.length || v.halted.some(h => h.node === n.id) ? [] : sharedParked(s, n.id);
-    let phase = parked.length ? `waiting: trunk-red (${[...new Set(parked.map(r => r.merge.obligation))].join(', ')} on trunk ${s.trunk.commit.slice(0, 12)})` : shared.length ? sharedPhase(s, shared) : deps.length ? `waiting for ${deps.join(', ')}`
-      : n.phase === 'held' || v.halted.some(h => h.node === n.id) || v.needsRuling?.some(b => b.node === n.id) || v.reported?.some(r => r.node === n.id) ? 'held'
-      : n.accepted ? 'accepted (merge pending)'
-      : !n.candidate || n.phase === 'dispatched' || n.items.some(i => i.status === 'D' && i.discharger === 'writer') ? 'writing'
-      : n.items.some(i => i.status === 'D' && i.discharger === 'executor') ? 'measuring'
-      : n.items.some(i => i.status === 'D' && i.discharger === 'reviewer') ? 'reviewing' : 'held';
-    const repair = repairingBlock(s, n.id);
-    if (deps.length && s.plan.nodes.find(spec => spec.id === n.id)?.approve === 'owner') phase = `waiting for ${deps.join(', ')} (owner approval after)`;
-    else if (repair) phase = `repairing (block #${repair.seq})`;
-    else if (n.blocks.some(b => heldFlaky(s,n.id,b) && n.items.some(i => i.obligation === b.obligation && i.discharger === 'executor'))) phase = n.blocks.filter(b => heldFlaky(s,n.id,b) && n.items.some(i => i.obligation === b.obligation && i.discharger === 'executor')).map(b => heldFlakyText(s,n.id,b)).join('; ');
-    if (n.phase === 'blocked' && !deps.length) phase = `waiting for ${(s.plan.nodes.find(x => x.id === n.id)?.deps ?? []).filter(id => !s.nodes[id]?.merged).join(', ')}`;
-    return { node: n.id, phase, ageMs: at((n.accepted ? n.acceptedSince : undefined) ?? n.slot?.dispatchSeq ?? n.held ?? entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq) };
+  const progress = Object.values(s.nodes).flatMap(n => {
+    const a = activity(s, n.id, rt);
+    return a ? [{ node: n.id, phase: a.text, ageMs: at((n.accepted ? n.acceptedSince : undefined) ?? n.slot?.dispatchSeq ?? n.held ?? entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq) }] : [];
   });
   for (const spec of s.plan.invariants) {
     const active = ((spec as typeof spec & { known_red?: { test:string; fix:string }[] }).known_red ?? []).filter(r => s.plan.nodes.some(n => n.id === r.fix) && !s.nodes[r.fix]?.merged);
@@ -577,8 +533,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, dri
   debt.push(...trackedWaivers(s).filter(e => !s.nodes[e.tracked_by!]?.merged).map(e => trackedDebtText(s,e)));
   for (const d of currentDefers) debt.push(deferredText(d));
   for (const q of quarantineDebt(s)) debt.push(quarantineText(q));
-  needs.sort((a,b) => (s.nodes[b.node]?.dependents ?? 0) - (s.nodes[a.node]?.dependents ?? 0) || a.node.localeCompare(b.node) || a.command.localeCompare(b.command));
-  return { merged: Object.values(v.nodes).filter(n => n.merged).length, needs, progress, debt: [...new Set(debt)] };
+  return { merged: Object.values(v.nodes).filter(n => n.merged).length, needs: selected, progress, debt: [...new Set(debt)] };
 }
 function deferredText(d: DeferredView): string {
   const suffix = d.unverified === 'drift' ? ' (not rechecked: trunk moved)' : d.unverified === 'conflict' ? ' (not rechecked: merge conflicts)' : '';
@@ -602,7 +557,7 @@ const noise = (e: Entry): string => e.kind === 'obs' && e.noisy && e.runs ? ` no
 const strength = (e: Entry): string => e.kind === 'obs' && e.obligation.startsWith('strength:') && e.counts ? ` strength ${e.counts.pass ?? 0}/${e.counts.tests ?? 0}` : '';
 function itemText(i: ItemView & { observations?: Entry[]; blockNotes?: BlockNote[]; hint?: string; run?: string }): string {
   if (i.run !== undefined) { const { run, ...plain } = i; return `${itemText(plain)}\n  run: ${run}`; }
-  if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}; ${haltClear(i.subject)}`;
+  if (i.obligation === 'driver-halt') return `${i.mark} halted ${i.subject} — ${i.detail}`;
   if (i.status === 'W' && i.subject === 'trunk' && i.obligation.startsWith('inv:')) return `${i.mark} ${i.detail}`;
   if (i.status === 'W') return waivedText(i);
   if (isManual(i.obligation)) return manualText(i);
@@ -627,13 +582,10 @@ function blockNote(s: State, b: Block): string | undefined {
 }
 const withNote = (note: string | undefined): { note?: string } => note === undefined ? {} : { note };
 /** A pending item with the notes of the exec blocks that hold it (status, K2.2). */
-function withBlockNotes(s: State, i: ItemView): ItemView & { blockNotes?: BlockNote[]; hint?: string } {
+function withBlockNotes(s: State, i: ItemView, rt?: Runtime): ItemView & { blockNotes?: BlockNote[]; hint?: string } {
   const n = s.nodes[i.subject], held = (n?.blocks ?? []).filter(b => b.obligation === i.obligation && countsBlock(b) && !heldFlaky(s,i.subject,b) && i.evidence.includes(b.seq));
   const notes = held.flatMap(b => { const note = blockNote(s, b); return note === undefined ? [] : [{ seq: b.seq, note }]; });
-  // 0.8 (L3.2): an item held by a flaky block also offers a ruling, next to the waiver.
-  const shared = held.flatMap(b => sharedCheckHint(s,b) ?? []);
-  const flaky = held.some(b => b.state === 'flaky') ? `${held.filter(b => b.state === 'flaky').map(b => flakyBlockText(s,b)).join('; ')}; ${flakyRuleHint(i.subject)}` : undefined;
-  const hint = shared.length ? `${shared.join('; ')}${flaky ? `; ${flaky}` : ''}` : flaky;
+  const hint = held.some(b => b.state === 'flaky' || sharedCheckHint(s, b)) ? itemLine(s, i.subject, i.obligation, rt) : undefined;
   return notes.length || hint ? { ...i, ...(notes.length ? { blockNotes: notes } : {}), ...(hint ? { hint } : {}) } : i;
 }
 /**
@@ -719,15 +671,13 @@ function manualText(i: ItemView & { observations?: Entry[] }): string {
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
 /** DC4: one decision gives acknowledged guidance and releases the halt; no-resume preserves it. */
-export const resumeCommands = (node = '<node>'): string => `owed decide ${node} --text "<decision>" (add --after <node> to wait until that node merges; --no-resume keeps it halted)`;
+export function resumeCommands(node = '<node>'): string { return `owed decide ${node} --text "<decision>" (add --after <node> to wait until that node merges; --no-resume keeps it halted)`; }
 /**
  * 0.8 (L3.2, app #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
  * check or test itself must change, a ruling sends the writer to fix it.
  */
 export const flakyRuleHint = (node: string): string => `or owed decide ${node} --writer --text "<what the writer must change>" when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;
 export const resumeHint = (node = '<node>'): string => `to clear it without an obligation: ${resumeCommands(node)}`;
-/** How a driver halt is cleared (SPEC §12, D3), with the resume hint (0.8, L1.5). */
-const haltClear = (node: string): string => `cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, resume, a ruling naming it), or a new attempt; ${resumeHint(node)}`;
 /** 0.8 (L1.5): `waiting for <dep> (resume #<seq>)`. */
 export const waitingLine = (w: Waiting): string => [w.deps?.length ? `waiting (deps: ${w.deps.join(', ')})` : '', w.after ? `waiting for ${w.after} (resume #${w.resume})` : ''].filter(Boolean).join('; ');
 /** D25.6 (review ruling #559): an owner halt reads `needs the owner (the main agent decides; owed lists the command)`. */
@@ -737,8 +687,6 @@ const haltText = (h: HaltEntry): string => `halted by driver #${h.seq} (attempt 
 const launchText = (l: LaunchEntry): string => `#${l.seq} ${l.role} ${l.rid}`;
 /** ` (needs a parent ruling)` / ` (ruled #<seq>)` after a current-candidate needs-parent block (D18.5, D18b.4); empty otherwise. */
 const rulingMark = (b: { ruling?: 'needed' | number }): string => b.ruling === undefined ? '' : b.ruling === 'needed' ? ' (needs a parent ruling)' : ` (ruled #${b.ruling})`;
-/** Status line of an active needs-parent block without a ruling (D18.5). */
-const needsRulingText = (b: Block & { note: string }): string => reviewNeed(b.node,b.note);
 function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
 }
@@ -770,17 +718,20 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
     const recorded = actHistories.get(v)?.find(e => e.seq === b.seq);
     return e?.kind === 'review' && e.note ? e.note : recorded?.kind === 'review' ? recorded.note : b.note;
   };
-  const command = (reason: string): string | undefined => reason.match(/\b(owed [^`;\n]+)/)?.[1]?.trim();
-  const stopped = v.halt && writerStopNeed(v.halt.reason, v.node);
+  const ns = cardNeeds(v);
+  const alternatives = ns.flatMap(n => (n.alternatives ?? []).map(c => `  or: ${c}`));
   const lines = [
     ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []),
     ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []),
-    ...(v.held !== undefined ? [`held by abandon; release with owed decide ${v.node} --text "<decision>"`] : []),
-    ...(v.halt && !v.blocks.some(b => b.ruling === 'needed') ? [`⏸ halted (attempt ${v.halt.attempt}), ${v.halt.needs === 'owner' ? NEEDS_OWNER_TEXT : NEEDS_PARENT_TEXT}: ${stopped ? `${stopped.reason} → ${stopped.command}` : `${oneLine(v.halt.reason)}${command(v.halt.reason) ? '' : ` → ${resumeCommands(v.node)}`}`}`] : []),
-    ...(v.reported !== undefined ? [`reported (resume #${v.reported}): parked with the writer's report, waiting for the parent → owed decide ${v.node} --text "<decision>"`] : []),
+    ...(v.held !== undefined ? [`held by abandon #${v.held}`] : []),
+    ...(v.halt ? [`⏸ halted (attempt ${v.halt.attempt})`] : []),
+    ...(v.reported !== undefined ? [`reported (resume #${v.reported}): parked with the writer's report, waiting for the parent`] : []),
     ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when they merge`] : []),
-    ...v.items.filter(i => i.status === 'D' && !(blocked.has(i.obligation) && i.mark === '⛔')).map(i => `${i.mark} ${i.obligation}: ${oneLine(i.detail)} → ${itemNext(v.node, i, presentationStates.get(v))}`),
-    ...v.blocks.map(b => { if (b.ruling === 'needed') return reviewNeed(v.node,review(b) ?? ''); const note = review(b), why = note ? shortNote(note) : undefined; return `⛔ ${b.obligation} blocked${rulingMark(b)}${why ? `: ${why}` : ''} → ${oneLine(b.clear)}`; }),
+    ...readyLines(v),
+    ...v.items.filter(i => i.status === 'D').map(i => `${i.mark} ${i.obligation}: ${cardItemLine(v, i)}`),
+    ...v.blocks.map(b => { if (b.ruling === 'needed') return `⛔ ${b.obligation} block #${b.seq}${rulingMark(b)}; ${b.clear}`; const note = review(b); return `⛔ ${b.obligation} block #${b.seq}${rulingMark(b)}${note ? `: ${shortNote(note)}` : ''}; ${b.clear}`; }),
+    ...ns.slice(1).map(n => `Next: ${needText(n)}`),
+    ...alternatives,
     ...(v.mergeChecks ?? []).filter(i => i.status === 'D').map(i => `${i.mark} merge check ${i.obligation}: ${oneLine(i.detail)} → owed why ${v.node} --full`),
     ...(v.outOfWrites ? outOfWritesText(v.outOfWrites).split('\n') : []),
     ...(v.modelWarnings ?? []).filter((w): w is string => typeof w === 'string').map(w => `Warning: ${w}`),
@@ -792,7 +743,7 @@ export function renderWhy(v: ReceiptCard, options: { full?: boolean } = {}): str
   const context = [...(v.reviewRequirement && v.phase !== 'merged' ? [oneLine(reviewRequirementText(v.reviewRequirement))] : [])];
   context.push(...downgradeLines(currentDowngrades(v)));
   const open = v.items.filter(i => i.status === 'D' && !(blocked.has(i.obligation) && i.mark === '⛔')).length + v.blocks.length + (v.mergeChecks ?? []).filter(i => i.status === 'D').length + readyLines(v).length;
-  const outcome = v.phase === 'merged' ? 'merged' : `${v.measuring ? measurementText(v.measuring) : readyLines(v)[0] ?? phaseNames[v.phase]}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
+  const outcome = v.phase === 'merged' && v.accepted ? 'merged' : `${ns[0] ? needText(ns[0]) : cardActivity(v) ?? (v.measuring ? measurementText(v.measuring) : readyLines(v)[0] ?? (v.phase === 'merged' ? 'obligations outstanding' : phaseNames[v.phase]))}${v.accepted && v.phase !== 'accepted' ? ' (accepted)' : ''}; ${open ? `${open} outstanding` : 'nothing outstanding'}`;
   const s = presentationStates.get(v);
   const tracks = s ? trackedWaivers(s).filter(e => e.tracked_by === v.node).map(trackedWhyText) : [];
   return [`${v.node}: ${outcome}`, ...lines, ...tracks, ...context, `Details: owed why ${v.node} --full`].join('\n');
@@ -822,7 +773,7 @@ export function newFailures(v: ReceiptCard, since: number): { lines: string[]; e
 }
 const conflictLines = (conflicts: Record<string, string[] | null> | undefined, full = true): string[] => Object.entries(conflicts ?? {}).filter(([, paths]) => full || paths === null || paths.length > 0).map(([target, paths]) => `conflicts with ${target}: ${paths === null ? 'unknown; retry owed status' : paths.map(oneLine).join(', ') || 'none'}`);
 export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}): string {
-  const history = actHistories.get(v) ?? v.items.flatMap(i => i.observations);
+  const history = actHistories.get(v) ?? v.items.flatMap(i => i.observations), ns = cardNeeds(v);
   const runs = actRuns(history,history.filter(e => e.kind === 'rule'));
   const textItem = (i: ReceiptCard['items'][number]) => itemText(textReceiptItem(i,runs));
   const downgrades = options.full ? v.downgrades : currentDowngrades(v);
@@ -830,10 +781,9 @@ export function renderReceipt(v: ReceiptCard, options: { full?: boolean } = {}):
   const blockText = (b: ReceiptCard['blocks'][number]): string => {
     const e = history.find(e => e.seq === b.seq);
     const note = e?.kind === 'review' ? e.note ?? '' : b.note ?? '';
-    const detail = `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}`;
-    return b.ruling === 'needed' ? `${reviewNeed(v.node,note)}${options.full ? `\n${detail}\nReview note: ${oneLine(note)}` : ''}` : detail;
+    return `⛔ blocked #${b.seq} ${b.obligation}${rulingMark(b)}: ${b.clear}${b.note ? ` — note: ${b.note}` : ''}${b.ruling === 'needed' && options.full && e?.kind === 'review' && note ? `\nReview note: ${oneLine(note)}` : ''}`;
   };
-  return [`${v.node}: ${v.measuring ? measurementText(v.measuring) : phaseNames[v.phase]}`, ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}; release with owed decide ${v.node} --text "<decision>"`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.reviewRequirement ? [oneLine(reviewRequirementText(v.reviewRequirement))] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}; ${haltClear(v.node)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(textItem), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(textItem)] : []), ...v.blocks.map(blockText), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, ...(options.full ? [`Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`] : []), ...downgradeLines(options.full ? downgrades.filter(d => d.allowance !== undefined) : downgrades), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(presentationStates.get(v) ? trackedWaivers(presentationStates.get(v)!).filter(e => e.tracked_by === v.node).map(trackedWhyText) : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
+  return [`${v.node}: ${ns[0] ? needText(ns[0]) : cardActivity(v) ?? (v.phase === 'merged' && !v.accepted ? 'obligations outstanding' : v.measuring ? measurementText(v.measuring) : phaseNames[v.phase])}`, ...ns.slice(1).map(n => `Next: ${needText(n)}`), ...ns.flatMap(n => (n.alternatives ?? []).map(c => `  or: ${c}`)), ...(v.mergeWaiting && !v.measuring ? [mergeWaitingText(v.mergeWaiting, v.accepted ? 'merge' : 'measure')] : []), ...(v.rebasePending ? [rebasePendingText(v.rebasePending)] : []), ...(v.held !== undefined ? [`held by abandon #${v.held}`] : []), ...(v.exec ? [v.exec] : []), ...(v.drive ? [v.drive] : []), ...(v.reviewRequirement ? [oneLine(reviewRequirementText(v.reviewRequirement))] : []), ...(v.models ? [v.models] : []), ...(v.modelWarnings ?? []).filter(w => options.full || typeof w === 'string').map(w => `Warning: ${typeof w === 'string' ? w : `${w.message} (acknowledged)`}`), ...(v.reviewCarried ? [v.reviewCarried] : []), ...(v.carried ? [`↻ ${carriedText(v.carried)}`] : []), ...(v.halt ? [`⏸ ${haltText(v.halt)}`] : []), ...(v.reported !== undefined ? [`reported (resume #${v.reported})`] : []), ...(v.later ? ['backlog (later)'] : []), ...(v.waiting ? [`⏳ ${waitingLine(v.waiting)}; the driver acts again when ${waitingNodes.join(', ')} ${waitingNodes.length > 1 ? 'merge' : 'merges'} or after another resume`] : []), ...(v.runs ? runsText(v.runs) : []), ...v.items.map(i => `${textItem(i)}${i.status === 'D' ? `\n  next: ${cardItemLine(v, i)}` : ''}`), ...(v.mergeChecks?.length ? ['Merge checks:', ...v.mergeChecks.map(textItem)] : []), ...v.blocks.map(blockText), ...(v.superseded ?? []).map(b => `⊘ ${b.text}`), ...(v.outOfWrites ? [outOfWritesText(v.outOfWrites)] : []), ...(v.grantedWrites ?? []).map(grantedWritesText), ...conflictLines(v.conflicts), `Untested changes: ${v.untested.join(', ') || 'none'}`, ...(options.full ? [`Untested obligations ΔO⁻: ${JSON.stringify(v.downgrades)}`] : []), ...downgradeLines(options.full ? downgrades.filter(d => d.allowance !== undefined) : downgrades), ...(options.full ? [`owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`] : []), ...(v.receipts ?? []).map(receiptText), ...(v.lifts?.length ? [liftsText(v.node, v.lifts)] : []), ...(presentationStates.get(v) ? trackedWaivers(presentationStates.get(v)!).filter(e => e.tracked_by === v.node).map(trackedWhyText) : []), ...(v.rulingFollowUp ? ['Ruling to forward:', v.rulingFollowUp] : []), ...(v.rebase ? [`Rebased #${v.rebase.seq}: slot base ${v.rebase.from.slice(0, 12)} → ${v.rebase.base.slice(0, 12)}`, ...(v.rebase.previous ? [`Previously reviewed patch: ${v.rebase.previous.base}..${v.rebase.previous.commit} (submit #${v.rebase.previous.submit})`, `Re-review only the resolution: ${v.rebase.rangeDiff}`] : [])] : [])].join('\n');
 }
 export function renderStatus(v: StatusView, options: { full?: boolean } = {}): string {
   if (options.full) return renderStatusFull(v);
@@ -855,13 +805,13 @@ export function renderStatusBrief(v: StatusView): string {
 function summaryHead(trunk: StatusView['trunk'], invariants: ItemView[], summary: SummaryView): string[] {
   const ok = invariants.filter(i => i.status !== 'D').length;
   return [`owed: ${summary.merged} merged · ${summary.progress.length} in progress · ${summary.needs.length} need you · trunk ${trunk.name} ${trunk.commit.slice(0, 12)} ${ok === invariants.length ? '✔' : '✘'} invariants (${ok}/${invariants.length})`,
-    ...(summary.needs.length ? [`Needs you (${summary.needs.length}):`, ...summary.needs.map(n => n.reason.startsWith('review asks:') ? `Needs you: ${n.node} — ${n.reason} → ${n.command}` : `  ${n.node}: ${n.reason}${n.command ? ` → ${n.command}` : ''}`)] : ['Needs you: none'])];
+    ...(summary.needs.length ? [`Needs you (${summary.needs.length}):`, ...summary.needs.map(n => `  ${n.node}: ${n.reason}${n.command ? ` → ${n.command}` : ' (no single command)'}`)] : ['Needs you: none'])];
 }
 const sweepRedLine = (v: StatusView): string[] => v.sweepRed ? [`trunk: sweep red since #${v.sweepRed.seq} (${v.sweepRed.names.slice(0,5).map(oneLine).join(', ') || 'unknown'})`] : [];
 /** SQ2: preserve the 0.14 renderer plus trunk invariant-red diagnostics. */
 export function renderStatusFull(v: StatusView): string {
   const s = presentationStates.get(v), tracked = s ? trackedWaivers(s).map(e => trackedDebtText(s,e)) : [];
-  return [...tracked,`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...sweepRedLine(v), ...Object.entries(v.reviewRequirements ?? {}).map(([id, r]) => `${id}: ${oneLine(reviewRequirementText(r))}`), ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts).map(line => `${id}: ${line}`)), ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, `Merge queue: ${v.mergeQueue.join(', ') || 'none'}${batchPlanText(v.mergeBatch)}`, ...Object.entries(v.measuring ?? {}).map(([id, m]) => `${id}: ${measurementText(m)}`), ...Object.entries(v.rebasePending ?? {}).map(([id,r]) => `${id}: ${rebasePendingText(r)}`), ...Object.entries(v.mergeWaiting ?? {}).map(([id, w]) => `${id}: ${mergeWaitingText(w)}`), ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.held?.length ? v.held.map(h => `${h.node}: held by abandon #${h.abandon}; release with owed resume ${h.node}`) : []), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`), `  ${resumeHint()}`] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(needsRulingText)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(i => itemText({ ...i, detail:v.trunkRed?.find(r => r.obligation === i.obligation)?.text ?? i.detail })), ...(v.knownRed?.length ? ['Known-red debt:', ...v.knownRed.map(knownRedText)] : []), ...(v.lapsedKnownRed?.length ? ['Lapsed known-red entries:', ...v.lapsedKnownRed.map(lapsedKnownRedText)] : []), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
+  return [...tracked,`Trunk ${v.trunk.name} ${v.trunk.commit}`, ...((v.summary?.needs.length ?? 0) ? summaryHead(v.trunk, v.invariants, v.summary!).slice(1) : []), ...sweepRedLine(v), ...Object.entries(v.reviewRequirements ?? {}).map(([id, r]) => `${id}: ${oneLine(reviewRequirementText(r))}`), ...Object.entries(v.conflicts ?? {}).flatMap(([id, conflicts]) => conflictLines(conflicts).map(line => `${id}: ${line}`)), ...(v.trunkWorktree ? [trunkWorktreeText(v.trunk.name, v.trunkWorktree)] : []), ...(v.drift ? [`⚠ ${driftText(v.drift)}`] : []), ...(v.genesis ? [genesisLine(v.genesis)] : []), `Ready (by dependent count): ${v.ready.map(id => v.overlaps?.[id] ? `${id} (writes overlap open slot of ${v.overlaps[id]!.join(', ')})` : id).join(', ') || 'none'}`, `Merge queue: ${v.mergeQueue.join(', ') || 'none'}${batchPlanText(v.mergeBatch)}`, ...Object.entries(v.measuring ?? {}).map(([id, m]) => `${id}: ${measurementText(m)}`), ...Object.entries(v.rebasePending ?? {}).map(([id,r]) => `${id}: ${rebasePendingText(r)}`), ...Object.entries(v.mergeWaiting ?? {}).map(([id, w]) => `${id}: ${mergeWaitingText(w)}`), ...Object.entries(v.groups).map(([k,ns]) => `${phaseNames[k]}: ${ns.join(', ')}`), ...(v.summary?.progress.length ? ['In progress:', ...v.summary.progress.map(p => `${p.node}: ${p.phase}`)] : []), ...(v.held?.length ? v.held.map(h => `${h.node}: held by abandon #${h.abandon}`) : []), ...(v.later?.length ? [`Backlog (later): ${v.later.join(', ')}`] : []), ...(v.reported?.length ? [`Reported: ${v.reported.map(r => `${r.node}: reported (resume #${r.resume})`).join(', ')}`] : []), ...Object.entries(v.pending).map(([k,is]) => `Pending ${k}:\n${is.map(itemText).join('\n') || 'none'}`), ...(v.halted?.some(h => h.needs !== 'owner') ? ['Halted (driver):', ...v.halted.filter(h => h.needs !== 'owner').map(h => `⏸ ${h.node}: ${haltText(h)}`)] : []), ...(v.waiting?.length ? ['Waiting (resume):', ...v.waiting.map(w => `⏳ ${w.node}: ${waitingLine(w)}`)] : []), ...(v.needsRuling?.length ? ['Blocked (needs a parent ruling):', ...v.needsRuling.map(b => `${b.node}: review block #${b.seq} needs a parent ruling`)] : []), ...(v.carried?.length ? ['Carried candidates (a plan change kept them):', ...v.carried.map(c => `↻ ${c.node}: ${carriedText(c)}`)] : []), ...(v.superseded?.length ? ['Superseded blocks (not active; the plan changed their check):', ...v.superseded.map(b => `⊘ ${b.node}: ${b.text}`)] : []), ...(v.launches && Object.keys(v.launches).length ? ['Driver runs (open attempts):', ...Object.entries(v.launches).flatMap(([id, ls]) => ls.map(l => `${id} attempt ${l.attempt}: ${launchText(l)}`))] : []), 'Trunk invariants:', ...v.invariants.map(i => itemText({ ...i, detail:v.trunkRed?.find(r => r.obligation === i.obligation)?.text ?? i.detail })), ...(v.knownRed?.length ? ['Known-red debt:', ...v.knownRed.map(knownRedText)] : []), ...(v.lapsedKnownRed?.length ? ['Lapsed known-red entries:', ...v.lapsedKnownRed.map(lapsedKnownRedText)] : []), `owner flag weak confirmation: ${v.ownerFlags.map(e => `#${e.seq} ${e.kind}`).join(', ') || 'none'}`].join('\n');
 }
 /** TF3/#3000: each waived failure keeps its own latest tracker; no-risk waivers retain their scope identity. */
 export interface TrackedWaiverDebt extends WaiveEntry { trackedRisk?: number }
@@ -881,16 +831,6 @@ export function trackedDebtText(s: State, e: TrackedWaiverDebt): string {
   const fix = e.tracked_by!, merged = s.nodes[fix]?.merged;
   const tracking = merged ? `settled by ${fix} (merge #${merged.seq})` : s.plan.nodes.some(n => n.id === fix) ? `tracked by ${fix}` : `(tracker ${fix} left the plan)`;
   return `${e.node}/${e.obligation}: waived — ${tracking}: ${oneLine(e.reason)}${e.trackedRisk === undefined ? '' : ` (block #${e.trackedRisk})`}`;
-}
-/** TF2: current trunk-red wins; other complete shared node-check failures retain their unchanged gates. */
-export function sharedCheckHint(s: State, b: Pick<Block,'seq'|'key'>): string | undefined {
-  if (trunkRedHint(s,b.seq,b.key)) return undefined;
-  const e = entriesOf(s).find(e => e.seq === b.seq);
-  if (e?.kind !== 'obs' || e.probe !== undefined || !e.obligation.startsWith('check:')) return undefined;
-  const r = sharedFailure(s,e,e.subject);
-  if (!r) return undefined;
-  const fix = fixCandidates(s,e.subject,r.names)[0]?.id;
-  return [...new Map(r.trunk.map(p => [p.seq,p])).values()].map(probe => `${e.obligation} block #${b.seq} also fails on trunk ${probe.commit.slice(0,12)} without ${e.subject} (probe #${probe.seq}: ${sharedNames(r.names.filter(n => probe.failed?.includes(n)))}): not this node's change → owed waive ${e.subject} ${e.obligation} --accept-risk ${b.seq} --tracked-by ${fix ?? '<fix>'} --reason "<why>"${fix ? '' : ' (add a fix node first)'}`).join('; ');
 }
 const statusNames: Record<string,string> = { E: 'evidenced', W: 'waived', D: 'owed' };
 function entryLine(e: Entry): string {
@@ -1071,6 +1011,10 @@ function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
   // 0.8 (L3.2): a flaky block also offers a ruling (`ownerCommands` adds it once itself).
   return `${waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag)}${flakyHint && blocks.some(b => b.state === 'flaky') ? `; ${flakyRuleHint(i.subject)}` : ''}`;
 }
+function mergeBlockClearHint(s: State, entries: readonly Entry[], b: Block, rt?: Runtime): string {
+  const e = entries.find(e => e.seq === b.seq);
+  return [itemLine(s, b.node, b.obligation, rt), ...(e?.kind === 'obs' && e.merging === b.node ? mergeFailureHints(s, b.node, [e]) : [])].join('; ');
+}
 /** FH: advisory text only; inspect at most the last 5000 entries and cite at most three other-tree failures. */
 /**
  * MS3: the merge guard refused on failing merge-key invariant observations measured before this call (`reused`): say
@@ -1154,18 +1098,6 @@ function intermittentLine(s: State, history: readonly Entry[], node: string, fai
   if (!older.length || !failures.some(f => sig(f) !== undefined) || older.some(e => failures.some(f => sig(f) === sig(e)))) return undefined;
   return `same test failed on older trees (different error): ${oneLine(name)} (${older.slice(0, 3).map(e => `#${e.seq}`).join(', ')})`;
 }
-/** FH: retain the normal block remedy and append the same merge-failure diagnostics as the refusal. */
-function mergeBlockClearHint(s: State, entries: readonly Entry[], b: Block): string {
-  const e = entries.find(x => x.seq === b.seq);
-  const hints = e?.kind === 'obs' && e.merging === b.node ? mergeFailureHints(s, b.node, [e]) : [];
-  return [clearHint(s, entries, b), ...hints].join('; ');
-}
-/** TR: parent choices; the failing merge observation is the waiver risk, never the probe. */
-export function trunkRedHint(s: State, seq: number, key?: string): string | undefined {
-  const r = trunkRedOf(s, seq, key);
-  if (!r) return undefined;
-  return `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}; this candidate is not shown to be the cause; parent: fix trunk with a fixing node${s.plan.sweep ? `, or owed sweep --commit ${s.trunk.commit} for its bisect/escape proposal` : ''}; or owed waive ${r.merge.subject} ${r.merge.obligation} --accept-risk ${r.merge.seq}`;
-}
 /**
  * How to clear a non-cleared block. A judgment block is described in words: printing a
  * ready-to-run review command with `--as` of the original reviewer would invite another
@@ -1199,9 +1131,11 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
   const included = (e: Entry): boolean => typeof since === 'number' ? e.seq > since : Date.parse(e.ts) > Date.parse(since);
   const ts = (seq: number): string => entries.find(e => e.seq === seq)?.ts ?? '';
   const nodes = Object.values(s.nodes), open = nodes.filter(n => !n.merged);
-  const decisions = [...open.flatMap(n => n.items), ...s.invariants].filter(i => i.status === 'D' && i.discharger === 'owner')
-    .map(i => ({ node: i.subject, obligation: i.obligation, key: i.key, mark: i.mark, detail: i.detail, blockedDownstream: s.nodes[i.subject]?.dependents ?? 0, command: decisionCommand(s, i) }))
-    .sort((a, b) => b.blockedDownstream - a.blockedDownstream || a.node.localeCompare(b.node) || a.obligation.localeCompare(b.obligation));
+  const rt = summary && presentationRuntime.get(summary) || { driverRunning };
+  const decisions = [...Object.keys(s.nodes).flatMap(id => needs(s, id, rt)), ...repoNeeds(s, rt)].filter(n => n.obligation).map(n => {
+    const i = (n.node === 'trunk' ? s.invariants : s.nodes[n.node]?.items)?.find(i => i.obligation === n.obligation);
+    return { node: n.node, obligation: n.obligation!, key: n.key ?? '', mark: i?.mark ?? '⊥', detail: n.text, blockedDownstream: s.nodes[n.node]?.dependents ?? 0, command: n.command ?? '' };
+  }).sort((a, b) => b.blockedDownstream - a.blockedDownstream || a.node.localeCompare(b.node) || a.obligation.localeCompare(b.obligation));
   const merged = entries.filter((e): e is Extract<Entry, { kind: 'merge' }> => e.kind === 'merge' && included(e) && !!s.nodes[e.node]).map(e => {
     const card = receipt(s, entries, e.node);
     const measuredItems = card.items.filter(i => i.status === 'E' && !reviewObligation(i.obligation) && i.obligation !== 'rulings' && !isManual(i.obligation)).map(i => i.obligation);
@@ -1214,7 +1148,7 @@ export function briefView(s: State, entries: Entry[], since: number | string = -
       measuredItems, waivedItems, untestedChanges: card.untested, reviewers, ...(manualItems.length ? { manualItems } : {}) };
   });
   const rejected = open.flatMap(n => n.blocks.filter(b => countsBlock(b))).map(b => ({ seq: b.seq, node: b.node, obligation: b.obligation, kind: b.kind, state: b.state,
-    ...(b.kind === 'exec' ? { failingObs: b.seq } : { reviewer: entries.find(e => e.seq === b.seq)?.by, rank: b.rank }), clear: clearHint(s, entries, b) }));
+    ...(b.kind === 'exec' ? { failingObs: b.seq } : { reviewer: entries.find(e => e.seq === b.seq)?.by, rank: b.rank }), clear: itemLine(s, b.node, b.obligation, rt) }));
   const inProgress = nodes.filter(n => (n.phase === 'dispatched' || n.phase === 'submitted') && n.slot).map(n => {
     const at = ts(n.slot!.dispatchSeq), sub = n.phase === 'submitted' && n.candidate ? ts(n.candidate.seq) : undefined;
     return { node: n.id, phase: n.phase as BriefProgress['phase'], attempt: n.slot!.attempt, dispatchSeq: n.slot!.dispatchSeq, dispatchedAt: at, ageMs: Math.max(0, now - Date.parse(at)),

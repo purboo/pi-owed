@@ -97,7 +97,7 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     const v = await brief();
     // (1) owner decisions sorted by blocked downstream nodes (plan order is d before b), each with a discharging command.
     assert.deepEqual(v.decisions.map(d => [d.node, d.obligation, d.blockedDownstream]), [['b', 'closure-review', 1], ['d', 'closure-review', 0]]);
-    assert.match(v.decisions[0]!.command, /^owed decide b --writer --text "<guidance>"; writer repairs and submits again; override only: owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12} \(overrides a valid block: state the accepted risk\)$/);
+    assert.equal(v.decisions[0]!.command, 'owed decide b --text "<ruling>" --writer');
     // (2) merged: a waived check is counted as waived and never as measured.
     assert.equal(v.merged.length, 1);
     const m = v.merged[0]!;
@@ -112,8 +112,7 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     assert.equal(v.rejected.length, 2);
     assert.equal(exec.obligation, 'check:e'); assert.equal(exec.failingObs, eFail);
     assert.equal(judgment.kind, 'judgment'); assert.equal(judgment.reviewer, 'reviewer:r2'); assert.equal(judgment.rank, 2); assert.equal(judgment.failingObs, undefined);
-    assert.match(judgment.clear, /original reviewer reviewer:r2 with rank >= 2, or by any reviewer with rank > 2/); assert.doesNotMatch(judgment.clear, /--as reviewer:/);
-    assert.match(judgment.clear, new RegExp(`--accept-risk ${judgment.seq}`));
+    assert.match(judgment.clear, /closure-review blocked: guidance needed → owed decide b --text "<ruling>" --writer/); assert.doesNotMatch(judgment.clear, /check:e|--as reviewer:/);
     // (4) dispatched/submitted nodes with age; accepted h is not in progress.
     assert.deepEqual(v.inProgress.map(p => `${p.node}:${p.phase}`).sort(), ['b:submitted', 'd:submitted', 'e:submitted', 'f:dispatched']);
     for (const p of v.inProgress) { assert.ok(p.ageMs >= 0 && p.ageMs < 600_000, `${p.node} age`); assert.equal(p.submitAgeMs !== undefined, p.phase === 'submitted'); }
@@ -125,7 +124,7 @@ test('owed brief sections: decisions by downstream impact, merged counts never s
     assert.ok(order.every(i => i >= 0), text);
     assert.deepEqual([...order].sort((x, y) => x - y), order, 'sections in order');
     const lines = text.split('\n');
-    assert.match(lines.find(l => l.includes('b: closure-review blocked: guidance needed'))!, /→ owed decide b --writer --text "<guidance>"; writer repairs and submits again; override only: owed review b --obligation closure-review --ok --rank 3 --as owner:cli --candidate [0-9a-f]{12} \(overrides a valid block: state the accepted risk\)$/);
+    assert.match(lines.find(l => l.includes('b: closure-review blocked: guidance needed'))!, /→ owed decide b --text "<ruling>" --writer$/);
     assert.ok(lines.findIndex(l => l.includes('b: closure-review blocked: guidance needed')) < lines.findIndex(l => l.includes('d: awaiting closure-review')));
     assert.match(lines.find(l => /^ {2}a #\d+ → /.test(l))!, /: 1 measured, 1 waived \(check:a\), 1 reviewed, 1 untested change; reviewers: reviewer:r1$/);
     assert.match(text, new RegExp(`e/check:e failing obs #${eFail} → `));
@@ -148,9 +147,12 @@ test('owed brief --since filters only merges by seq or ISO time, and the printed
     // Guidance does not discharge the block; choose the explicitly labelled owner override and record the risk.
     const guidance = await json<{seq:number}>(r.cwd, ['rule', 'accept the reviewed closure boundary', '--nodes', 'b']);
     assert.ok((await brief()).rejected.some(b => b.node === 'b'));
-    const command = (await brief()).decisions[0]!.command.split('override only: ')[1]!.split(' (overrides')[0]!.split(' ');
+    const current = await json<{summary:{needs:{node:string;alternatives?:string[]}[]}}>(r.cwd, ['brief']);
+    const alternative = current.summary.needs.find(n => n.node === 'b')!.alternatives![0]!;
+    assert.match(alternative, /^owed review b --obligation closure-review --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>$/);
+    const command = alternative.split(' ').map(word => word === 'owner:<id>' ? 'owner:cli' : word === '"<note>"' ? 'accept the closure risk after guidance' : word);
     assert.equal(command.shift(), 'owed');
-    await run(r.cwd, [...command, '--note', 'accept the closure risk after guidance', '--ack-rulings', String(guidance.seq), '--i-am-owner']);
+    await run(r.cwd, [...command, '--i-am-owner']);
     const after = await brief();
     assert.deepEqual(after.decisions.map(d => d.node), ['d']);
     assert.ok(!after.rejected.some(b => b.node === 'b'), 'owner rank-3 review clears the rank-2 judgment block');

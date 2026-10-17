@@ -46,20 +46,22 @@ test('judgment block hints describe in words who can clear them and never print 
   const hints = [brief.rejected.find(b => b.seq === block)!.clear, card.blocks.find(b => b.seq === block)!.clear];
   for (const hint of hints) {
     assert.deepEqual(asFlags(hint), [], `hint must not carry --as: ${hint}`);
-    assert.match(hint, /original reviewer reviewer:r2 with rank >= 2/);
-    assert.match(hint, /any reviewer with rank > 2/);
-    assert.match(hint, new RegExp(`owed waive a review --reason "[^"]+" --accept-risk ${block}`), 'owner waive command is kept');
+    assert.match(hint, /^review blocked: guidance needed → owed decide a --text "<ruling>" --writer$/);
   }
   // The only --as anywhere in the rendered views is the owner's own (owner-channel gated) decision command.
   const text = `${renderBrief(brief)}\n${renderReceipt(card)}`;
-  assert.deepEqual([...new Set(asFlags(text))], ['owner:cli'], text);
-  assert.equal(brief.decisions.find(d => d.node === 'a')!.command, `owed decide a --writer --text "<guidance>"; writer repairs and submits again; override only: owed review a --ok --rank 3 --as owner:cli --candidate ${s.nodes.a!.candidate!.commit.slice(0, 12)} (overrides a valid block: state the accepted risk)`);
+  assert.deepEqual([...new Set(asFlags(text))], ['owner:<id>'], text);
+  assert.equal(brief.decisions.find(d => d.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
+  assert.match(brief.summary!.needs.find(n => n.node === 'a')!.alternatives![0]!, /^owed review a --ok --rank 3 --candidate c-a --note "<note>" --ack-rulings latest --as owner:<id>$/);
+  // A different reviewer at the same rank still cannot clear the block.
+  r.review('a', 'ok', 2, 'reviewer:peer');
+  assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === block)!.state, 'active');
   // The words match the semantics: the original reviewer at the same rank clears the block.
   r.review('a', 'ok', 2, 'reviewer:r2');
   assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === block)!.state, 'cleared');
 });
 
-test('a node without an open slot gets "owed dispatch <node>" hints, never submit/attest of the old candidate', () => {
+test('blocks with no current obligation carry no remedy for an old candidate', () => {
   const r = rig();
   r.dispatch('a'); const f = r.submit('a');
   const exec = r.obs('a', 'check:ca', f.keys['check:ca']!, 'fail', f.commit, f.base);
@@ -69,16 +71,17 @@ test('a node without an open slot gets "owed dispatch <node>" hints, never submi
   const brief = briefView(s, r.entries, -1, 0), card = receipt(s, r.entries, 'a');
   assert.deepEqual(brief.rejected.map(b => b.seq).sort(), [exec, judgment].sort());
   for (const hint of [...brief.rejected.map(b => b.clear), ...card.blocks.map(b => b.clear)]) {
-    assert.match(hint, /^owed dispatch a\b/, hint);
+    assert.equal(hint, '', hint);
     assert.doesNotMatch(hint, /owed (submit|attest|review|waive)|--as /, hint);
   }
-  assert.match(renderBrief(brief), /a\/check:ca failing obs #\d+ → owed dispatch a/);
+  assert.doesNotMatch(renderBrief(brief), /a\/check:ca failing obs #\d+ → owed (?:submit|attest|review|waive)/);
   // Once a new attempt is open the hints address that attempt again.
   r.dispatch('a', 2);
   s = r.state();
   const reopened = briefView(s, r.entries, -1, 0).rejected;
-  assert.match(reopened.find(b => b.seq === exec)!.clear, /owed submit a, then owed attest a/);
-  assert.match(reopened.find(b => b.seq === judgment)!.clear, /^after the writer submits a candidate/);
+  assert.equal(reopened.find(b => b.seq === exec)!.clear, '');
+  assert.equal(reopened.find(b => b.seq === judgment)!.clear, '');
+  assert.equal(s.nodes.a!.accepted, false);
 });
 
 test('rulings item reads "no rulings apply" when no ruling is in scope, with unchanged status', () => {

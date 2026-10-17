@@ -5,6 +5,7 @@ import { canonical, H } from '../../src/canon.ts';
 import { entryHash } from '../../src/ledger.ts';
 import * as cur from '../../src/reducer.ts';
 import * as curViews from '../../src/views.ts';
+import * as curNeeds from '../../src/needs.ts';
 import * as base from '../fixtures/reducer-0.10-base.ts';
 import * as baseViews from '../fixtures/views-0.10-base.ts';
 import type { Block, CandidateFacts, Draft, Entry, ItemView, NodeSpec, Plan, State } from '../../src/types.ts';
@@ -120,6 +121,61 @@ function wfState(s: State): State {
   return out;
 }
 
+/** R-028-45 / VW1–2: only complete needs/activity sections may be removed on both sides. */
+function withoutVwStatus(text: string, view: curViews.StatusView): string {
+  if (view.summary?.needs.length) {
+    const section = curViews.renderStatusBrief(view).split('\n').slice(1, 2 + view.summary.needs.length).join('\n');
+    text = text.replace(`\n${section}\n`, '\n');
+  }
+  if (view.summary?.progress.length) {
+    const section = ['In progress:', ...view.summary.progress.map(p => `${p.node}: ${p.phase}`)].join('\n');
+    text = text.replace(`\n${section}\n`, '\n');
+  }
+  return text;
+}
+/** VW1/C4: the old brief's complete Needs-your-decision section is the same permitted needs projection. */
+function withoutVwDecisions(text: string, brief: ReturnType<V['briefView']>): string {
+  const heading = brief.decisions.length ? `Needs your decision (${brief.decisions.length}):` : 'Needs your decision: none';
+  const next = brief.merged.length ? `Merged (${brief.merged.length}):` : 'Merged: none';
+  const start = text.indexOf(`${heading}\n`), end = text.indexOf(`${next}\n`, start);
+  return start >= 0 && end > start ? text.slice(0, start) + text.slice(end) : text;
+}
+/** The exact inserted fragment of two renders differing only in one item/block. No prose patterns are erased. */
+function inserted(withPart: string, withoutPart: string): string {
+  let start = 0, end = 0;
+  while (start < withoutPart.length && withPart[start] === withoutPart[start]) start++;
+  while (end < withoutPart.length - start && withPart.at(-1 - end) === withoutPart.at(-1 - end)) end++;
+  return withPart.slice(start, end ? -end : undefined);
+}
+/** VW2/N4/N5/C4: replace only exact legacy receipt fragments with the current rendering of the same facts. */
+function vwReceipt(text: string, card: ReturnType<V['receipt']>, modern: curViews.ReceiptCard, s: State, entries: Entry[]): string {
+  const render = (patch: Partial<curViews.ReceiptCard>) => curViews.renderReceipt(curViews.withActHistory(curViews.withPresentationState({ ...modern, ...patch }, s), entries), { full: true });
+  const current = render({}), oldLead = text.split('\n')[0]!;
+  const lead = current.split('\n');
+  let end = 1;
+  while (lead[end]?.startsWith('Next: ') || lead[end]?.startsWith('  or: ')) end++;
+  // VW2: primary need or recorded activity, including blocked-by-dependencies -> waiting-for activity.
+  text = text.replace(oldLead, lead.slice(0, end).join('\n'));
+  for (const i of card.items.filter(i => i.status === 'D')) {
+    // VW2: append only this item's itemLine; the evidence/body is still the frozen renderer's output.
+    const old = inserted(BASE.v.renderReceipt({ ...card, items: [i], blocks: [] }), BASE.v.renderReceipt({ ...card, items: [], blocks: [] }));
+    if (old) text = text.replace(old, `${old.endsWith('\n') ? old.slice(0, -1) : old}\n  next: ${curNeeds.itemLine(s, i.subject, i.obligation)}\n`);
+  }
+  for (const b of card.blocks) {
+    // VW2/C3/C4 and R-028-44: only the exact block fragment changes to itemLine plus its retained diagnostics.
+    const old = inserted(BASE.v.renderReceipt({ ...card, items: [], blocks: [b] }), BASE.v.renderReceipt({ ...card, items: [], blocks: [] }));
+    const next = modern.blocks.find(x => x.seq === b.seq);
+    if (old && next) text = text.replace(old, inserted(render({ items: [], blocks: [next] }), render({ items: [], blocks: [] })));
+  }
+  if (card.halt) {
+    // N5: the recorded halt evidence stays; its old generic resolving-command suffix goes away.
+    const old = text.split('\n').find(l => l.startsWith(`⏸ halted by driver #${card.halt!.seq} `));
+    const next = current.split('\n').find(l => l.startsWith(`⏸ halted by driver #${card.halt!.seq} `));
+    if (old && next) text = text.replace(old, next);
+  }
+  return text;
+}
+
 /** Canonical JSON of the state and of the queries and views on it. */
 export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string {
   if (m === BASE) s = wfState(s);
@@ -128,6 +184,18 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
     const { acceptedSince: _acceptedSince, ...node } = s.nodes[id]!; return [id, node];
   })) } };
   const prefix = entries.slice(0, s.seq + 1);
+  let display: State | undefined;
+  const vwState = (): State => {
+    if (m !== BASE) return s;
+    if (display) return display;
+    // VW adapters need current query indexes, never current replay facts. Copy only non-enumerable history
+    // from the identical prefix; keep the frozen state's enumerable facts (which are compared above) untouched.
+    const plans = new Map(prefix.filter(e => e.kind === 'genesis' || e.kind === 'plan').map(e => [e.kind === 'genesis' || e.kind === 'plan' ? e.plan : '', BASE.r.planAt(s, e.seq + 1)]));
+    const indexed = cur.reduce(prefix, sha => plans.get(sha)!);
+    display = Object.create(Object.getPrototypeOf(s), Object.getOwnPropertyDescriptors(s)) as State;
+    for (const key of Object.getOwnPropertySymbols(indexed)) if (key.description === 'owed.reducer.history') Object.defineProperty(display, key, Object.getOwnPropertyDescriptor(indexed, key)!);
+    return display;
+  };
   out.genesisJobs = attempt(() => r.genesisJobs(s)); out.genesisProgress = attempt(() => r.genesisProgress(s));
   out.allowanceSeq = r.allowanceSeq(s); out.projectId = attempt(() => r.projectId(s));
   out.adoptGuard = attempt(() => r.adoptGuard(s, { commit: 'adopted', tree: 'adopted-tree', invKeys: { ...s.trunk.invKeys } }));
@@ -173,7 +241,27 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       const w = wait(node);
       if (w?.deps?.length) text = text.replace(`⏳ ${node}: waiting for ${w.after} (resume #${w.resume})`,`⏳ ${node}: ${curViews.waitingLine(w)}`);
     }
-    return rendered(text);
+    if (m === BASE) {
+      const current = curViews.statusView(vwState(), prefix);
+      // VW2/C4: retain each pending item's frozen evidence and replace only its exact block hint.
+      for (const [role, items] of Object.entries(status.pending)) for (const i of items) {
+        const next = current.pending[role]?.find(x => x.subject === i.subject && x.obligation === i.obligation) as ItemView & { hint?: string } | undefined;
+        if (i.hint && next) text = text.replace(i.hint, next.hint ?? '');
+        if (i.obligation === 'driver-halt' && next) {
+          // VW5/N5: the owner halt's resolving text comes from needs, not the recorded reason or generic tail.
+          const old = `⏸ halted ${i.subject} — ${i.detail}; cleared by any later action on the node by a principal other than parent:drive (submit, review, rebase, abandon, waive, resume, a ruling naming it), or a new attempt; ${baseViews.resumeHint(i.subject)}`;
+          text = text.replace(old, `⏸ halted ${i.subject} — ${next.detail}`);
+        }
+      }
+      // VW5/N5: remove only the frozen renderer's exact standalone generic recovery suggestion.
+      text = text.replace(`\n  ${baseViews.resumeHint()}\n`, '\n');
+      for (const b of status.needsRuling ?? []) {
+        const old = `⛔ ${b.node}: blocked #${b.seq} ${b.obligation} (needs a parent ruling): ${baseViews.oneLine(b.note)}; record owed rule --nodes ${b.node} "<decision>"`;
+        text = text.replace(old, `${b.node}: review block #${b.seq} needs a parent ruling`);
+      }
+      return rendered(withoutVwStatus(text, current));
+    }
+    return rendered(withoutVwStatus(text, status as curViews.StatusView));
   });
   out.brief = attempt(() => {
     const brief = v.briefView(s,prefix,-1,Date.UTC(2027,0,1));
@@ -185,7 +273,11 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
     }
     // SQ changes only the default prefix; compare the retained morning sections against the frozen renderer.
     if (m === CUR) delete (brief as curViews.Brief).summary;
-    return rendered(v.renderBrief(brief));
+    if (m === BASE) for (const b of brief.rejected) {
+      // VW2/C3/C4: brief block clearance is exactly itemLine, without historical merge diagnostics.
+      b.clear = curNeeds.itemLine(vwState(), b.node, b.obligation);
+    }
+    return rendered(withoutVwDecisions(v.renderBrief(brief), brief));
   });
   out.escapes = attempt(() => v.escapeSummary(s));
   for (const id of ids) {
@@ -216,10 +308,10 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
         const at = lines.findIndex(l => !l.startsWith('Exec:') && !l.startsWith('Drive:') && !l.startsWith('↻') && !l.startsWith('⏸') && lines.indexOf(l) > 0);
         const nodes = [...new Set([...(w.deps ?? []), ...(w.after ? w.after.split(', ') : [])])];
         lines.splice(at < 0 ? 1 : at,0,`⏳ ${curViews.waitingLine(w)}; the driver acts again when ${nodes.join(', ')} ${nodes.length > 1 ? 'merge' : 'merges'} or after another resume`);
-        return rendered(lines.join('\n'));
+        return rendered(vwReceipt(lines.join('\n'), card, curViews.receipt(vwState(), prefix, id), vwState(), prefix));
       }
       // NY6: full preserves the frozen receipt's weak-confirmation provenance.
-      return rendered(m === CUR ? curViews.renderReceipt(card as curViews.ReceiptCard,{full:true}) : v.renderReceipt(card));
+      return rendered(m === CUR ? curViews.renderReceipt(card as curViews.ReceiptCard,{full:true}) : vwReceipt(v.renderReceipt(card), card, curViews.receipt(vwState(), prefix, id), vwState(), prefix));
     });
     const ownerState = m === BASE ? Object.create(Object.getPrototypeOf(s),Object.getOwnPropertyDescriptors(s)) as State : s;
     if (m === BASE) ownerState.nodes = {...s.nodes,[id]:{...n,blocks:n.blocks.filter(b => !wfHeld(s,b)),items:n.items.filter(i => !(i.discharger === 'executor' && n.blocks.some(b => b.obligation === i.obligation && wfHeld(s,b))))}};
