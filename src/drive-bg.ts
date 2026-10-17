@@ -690,12 +690,11 @@ export class Follower {
       ...(lines.some(p => p.wake && p.halt && p.json && !('need' in p.json)) ? [haltHintText] : []), ...(resolved ? [resolvedText(resolved)] : []),
       'Next: owed status / owed why <node>'].join('\n');
   }
-  /** Legacy synchronous polling; structured wakes take the asynchronous revalidation path. */
+  /** Synchronous CLI-era polling; only pi hooks revalidate before delivery. */
   tick(): string | undefined {
     if (this.stopped) return undefined;
     this.collect();
     this.terminals();
-    if (this.pending.some(p => p.wake && p.check?.need)) { void this.step().catch(() => undefined); return undefined; }
     if (!this.pending.some(p => p.wake)) return undefined;
     const message = this.message(this.pending);
     try { this.o.deliver(message); } catch { return undefined; }   // kept: retried next tick
@@ -733,10 +732,7 @@ export class Follower {
     }
     const wakes = batch.filter(p => p.wake && p.check);
     let keep: boolean[] = wakes.map(() => true);
-    if (wakes.length) {
-      const validate = this.o.revalidate ?? revalidator({ cwd: this.o.repo });
-      try { keep = await validate(wakes.map(p => p.check!)); } catch { /* keep all on failed reads */ }
-    }
+    if (wakes.length && this.o.revalidate) { try { keep = await this.o.revalidate(wakes.map(p => p.check!)); } catch { /* keep all */ } }
     if (this.stopped || this.o.busy?.()) return undefined;
     const dropped = new Set([...resolvedPark, ...wakes.filter((_, i) => keep[i] === false)]);
     // Nothing reads while a step runs (one step at a time); anything appended after the snapshot stays pending.
