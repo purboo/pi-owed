@@ -8,6 +8,8 @@ import type { Channel, LaunchEntry, Principal, RuleEntry, RunQuestion, State } f
 import { nodeReview } from './reducer.ts';
 import { oneLine } from './views.ts';
 import { ruleAnswers } from './reducer.ts';
+import { answerRetry } from './needs.ts';
+export { answerRetry } from './needs.ts';
 
 export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; dsa?: Pick<Dsa, 'describe' | 'send'> }
 export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; rulingDelivery?: RulingDelivery }
@@ -70,14 +72,6 @@ export function ruleText(r: RuleEntry & { delivery?: RulingDelivery }): string {
   return [`Recorded #${r.seq} ruling (${nodes}); delivered ${delivery.delivered.length}/${delivery.delivered.length + delivery.pending + delivery.failures.length}`, ...rulingDeliveryWarnings(delivery)].join('\n');
 }
 type Question = { launch: LaunchEntry; question: RunQuestion };
-const shell = (s: string): string => /[\r\n]/.test(s) ? `$'${s.replaceAll('\\','\\\\').replaceAll("'","\\'").replaceAll('\n','\\n').replaceAll('\r','\\r')}'` : `'${s.replaceAll("'", "'\\''")}'`;
-export const answerRetry = (node: string, entry: RuleEntry, ref?: import('./types.ts').AnswerRef): string => {
-  const a = ref ?? entry.answers?.find(a => a.node === node) ?? entry.answer!;
-  // The prefix's exact length avoids treating punctuation in a qid as answer text.
-  const role = entry.text.startsWith('Answer to writer question ') ? 'writer' : 'reviewer';
-  const text = entry.answers ? entry.text : entry.text.slice(`Answer to ${role} question ${a.qid}: `.length);
-  return `owed answer ${shell(node)} --rid ${shell(a.rid)} --qid ${shell(a.qid)} --rev ${a.rev} -- ${shell(text)}`;
-};
 /** AR2: only use history after inspecting the current attempt for an open question. */
 function recorded(entries: RuleEntry[], o: AnswerOptions, current: LaunchEntry[]): RuleEntry | undefined {
   if (o.qid === undefined) return undefined;

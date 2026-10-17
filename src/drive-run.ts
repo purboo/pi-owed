@@ -42,19 +42,8 @@ import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
 import type { Entry, Plan, Principal, RunView, SendEntry, State } from './types.ts';
 
-/**
- * Trunk drift (review ruling #559, option c): the trunk ref no longer equals the ledger trunk. It is a repository fact,
- * not a node fact: never a ledger halt. The text of the repo-level owner notify: a fast-forward is adopted, anything
- * else (rewound, rewritten, missing) is restored.
- */
-export function driftNotice(name: string, d: git.TrunkDrift): string {
-  const ledger = d.ledger.slice(0, 12), ref = d.commit ? d.commit.slice(0, 12) : 'missing';
-  // G3.4c: the ledger's trunk commit is gone, so neither update-ref nor adopt (it checks a fast-forward from it) works yet.
-  if (d.relation === 'ledger-missing') return `trunk ${name}: the ledger's trunk commit ${ledger} is absent from the repository, so git update-ref cannot restore it and owed adopt cannot check a fast-forward from it; bring the commit back (git fetch <remote> ${d.ledger} from any remote or clone that has it), then restore trunk (git update-ref refs/heads/${name} ${d.ledger} ${d.commit ?? '""'}) or adopt the current ref (owed adopt --commit ${ref} --note "<why>")`;
-  return d.relation === 'ahead'
-    ? `trunk ${name} moved outside owed (${ledger} → ${ref}); the main agent resolves it with: owed adopt --note "<why>"`
-    : `trunk ${name} was rewound or rewritten (${ledger} → ${ref}); restore it: git update-ref refs/heads/${name} ${d.ledger} ${d.commit ?? '""'}`;
-}
+import { driftNotice, idleWaitText } from './needs.ts';
+export { driftNotice, idleWaitText } from './needs.ts';
 /**
  * The node name of the repo-level drift notify. A plan node may also be named `trunk`: the drift report carries
  * `scope: 'repo'`, and its print and wake records are keyed apart from the node's (`reportKey`, G3.4b).
@@ -389,7 +378,6 @@ export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
 export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full' | 'sweep-due'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
 /** FL4: counts are disjoint for parked nodes; open counts every open slot. */
 export interface IdleCounts { ready: number; open: number; waiting: number; reported: number; later: number }
-export const idleWaitText = (c: IdleCounts): string => `idle: ${c.ready} ready, ${c.open} open, ${c.waiting} waiting, ${c.reported} reported, ${c.later} later; staying until the ledger changes (owed drive --stop ends it)`;
 /** FL4: deterministic timer decision; the loop owns the clock and lifecycle. */
 export const idleRewakeDue = (now: number, last: number, minutes: number): boolean => minutes > 0 && now - last >= minutes * 60_000;
 /** 0.8 (L1.5): text of a `waiting` loop event. */

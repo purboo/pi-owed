@@ -6,6 +6,7 @@ import * as ops from '../src/ops.ts';
 import * as git from '../src/git.ts';
 import * as reducer from '../src/reducer.ts';
 import * as views from '../src/views.ts';
+import { needs } from '../src/needs.ts';
 import { Ledger } from '../src/ledger.ts';
 import { cli, commitAt } from './helpers/surface.ts';
 import { repo } from './helpers/repo.ts';
@@ -124,7 +125,7 @@ test('TF2: a probe after an active or flaky failure adds shared text to needs, w
     assert.equal((await r.probe()).code,1);
     let s = await r.state(), probe = (await r.obs()).findLast(e => e.probe === 'trunk')!;
     assert.ok(probe.seq > failure.seq); assert.ok(reducer.sharedFailure(s,failure,'a'));
-    assert.match(views.ownerCommands(s,'a').join('\n'),/--tracked-by fix/);
+    assert.match(needs(s,'a').map(n => n.command).join('\n'),/--tracked-by fix/); // R-028-59(5): same tracked remedy, authoritative API.
     const expected = new RegExp(`check:runtime block #${failure.seq} also fails on trunk ${r.trunk.slice(0,12)} without a \\(probe #${probe.seq}: shared race\\)`);
     for (const text of [views.renderStatus(await ops.status(r),{full:true}),views.renderWhy(await ops.why({...r,node:'a'})),repairFollowUp(s,'a').message]) {
       assert.match(text,expected); assert.match(text,/--tracked-by fix/);
