@@ -2,7 +2,7 @@
 
 An owner waiver with a nonempty `--accept-risk` list now records the prospective merge key when every cited risk is a failing merge-result observation of the same node and obligation, and every citation matches the current merge key. This applies to both active and previously accepted merge risks. Trunk CAS remains checked on the merge-key path.
 
-If an all-active merge-risk list contains a stale key, or the merge tree conflicts, the existing candidate-key path remains available. It clears the cited block without claiming the current merge key is covered. Lists containing inactive risks retain their existing provenance checks and refusals.
+If an all-active merge-risk list contains a stale key, or the merge tree conflicts, the existing candidate-key path remains available. Owed builds and compares against the recorded ledger trunk before checking trunk-ref drift: a stale key or conflict falls back without a CAS check, including when the trunk ref has unadopted changes. It clears the cited block without claiming the current merge key is covered, and the receipt names the candidate key. A full merge-key match still requires CAS before recording. Lists containing inactive risks retain the existing CAS-before-build and CAS-before-recording order, provenance checks and refusals.
 
 Mixed candidate and merge citations retain the candidate-key behavior. A merge-key waiver does not accept a different failing or unmeasured candidate key, and does not clear an uncited block. An independently satisfied candidate can merge using the covered merge key without measuring that key again. A changed key requires its own evidence; an unchanged key may reuse the waiver.
 
@@ -28,4 +28,4 @@ The stale active-key regression in `test/trunkred.test.ts:284` remains unchanged
 
 ## Interpretation
 
-Following R-028-23, receipt scope is attached to the returned act only. It is neither persisted nor inferred later from a newer candidate. R-028-26 narrows merge-key selection so stale active blocks remain clearable through the existing candidate-key path.
+Following R-028-23, receipt scope is attached to the returned act only. It is neither persisted nor inferred later from a newer candidate. R-028-26 narrows merge-key selection so stale active blocks remain clearable through the existing candidate-key path. R-028-28 preserves that fallback even with unadopted trunk-ref drift by applying CAS only after a complete all-active key match.

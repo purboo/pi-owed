@@ -170,10 +170,22 @@ test('WK1: stale active merge risks retain candidate fallback; CAS and inactive-
   try {
     await commitAt(stale.cwd,{trunk:'new prospective merge key'});
     await ops.adopt({...stale,as:owner,channel:'delegated',note:'fixture active stale key'});
-    const act = await stale.waive();
-    assert.equal((act as WaiveEntry).key,(await stale.state()).nodes.a!.candidate!.keys[obligation]);
+    const s = await stale.state(), built = await git.buildMerge(stale.cwd,s.trunk.commit,s.nodes.a!.candidate!.commit,'fixture stale key');
+    assert.ok(!('conflicts' in built));
+    const facts = await git.candidateFacts(stale.cwd,s.plan,s.plan.nodes[0]!,s.trunk.commit,built.commit,1,reducer.stateQuarantine(s));
+    assert.notEqual(facts.keys[obligation],stale.fail.key);
+    assert.ok(reducer.activeRisk(s,'a',obligation,stale.fail.seq));
+    await commitAt(stale.cwd,{unrelated:'unadopted trunk-ref drift'});
+    const before = await stale.ledger.read(), act = await stale.waive();
+    assert.equal((act as WaiveEntry).key,s.nodes.a!.candidate!.keys[obligation]);
     assert.deepEqual(act.scope,{on:'candidate'});
+    assert.match(waiverRecordedText(act as WaiveEntry & {scope:typeof act.scope}),new RegExp(`debt recorded on the candidate key ${s.nodes.a!.candidate!.keys[obligation]!.slice(0,12)}`));
+    const appended = (await stale.ledger.read()).slice(before.length);
+    assert.equal(appended.length,1,'stale active key plus drift records the old candidate-key waiver');
+    assert.equal(appended[0]!.kind,'waive');
+    assert.equal(Object.hasOwn(appended[0]!,'scope'),false);
     assert.equal((await stale.state()).nodes.a!.blocks.find(b => b.seq === stale.fail.seq)!.state,'cleared');
+    await ops.adopt({...stale,as:owner,channel:'delegated',note:'fixture adopt unrelated drift after fallback'});
     await assert.rejects(ops.merge({...stale,node:'a',as:parent}));
     const current = (await stale.obs()).findLast(e => e.subject === 'a' && e.merging === 'a' && e.obligation === obligation && e.verdict === 'fail')!;
     assert.notEqual(current.key,stale.fail.key);
