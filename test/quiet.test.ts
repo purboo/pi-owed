@@ -82,7 +82,8 @@ for (const by of ['reviewer', 'parent', 'owner'] as const) {
           assert.match(text.split('\n')[0]!, by === 'reviewer' ? /after resume the driver continues from the current state → owed resume a/ : /awaiting manual evidence: ui → owed evidence a ui/);
         } else {
           assert.ok(text.includes(PARENT), text);
-          assert.ok(text.includes(`--as ${by}:<id> --candidate ${c12} or --as owner:pi`), text);
+          assert.ok(text.includes(`awaiting manual evidence evidence:ui (checked the page) by ${by}`), text);
+          if (text.startsWith('Trunk main')) assert.ok(text.includes(primary.command!), text);
         }
       }
       assert.doesNotMatch(lines.join('\n'),/human/i);

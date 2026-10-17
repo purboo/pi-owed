@@ -18,21 +18,23 @@ Ledger halt reasons remain causes and evidence rather than display rows. Writer-
 
 - `drive.test.ts` — DR1, C1 and R-028-38: owner notices render the authority’s need; stale and stalled reasons no longer carry whole-node command unions.
 - `views020.test.ts` — DR1, C1 and R-028-46: only the driver notification parity assertion changes; it checks the need’s text and command rather than the old owner prefix.
-- `drive-order.test.ts` — DR1, C1 and R-028-42: manual halt reasons contain approval and evidence causes, not command builders.
-- `approve-evidence.test.ts` — DR1, C1 and R-028-42: manual halt causes no longer bundle resolving commands; obligation gates and halt clearance assertions are unchanged.
+- `drive-order.test.ts` — DR1, C1 and R-028-42/56: manual halt reasons retain the cbe7b9a approval/evidence causes minus command suffixes; the no-command assertion is preserved.
+- `approve-evidence.test.ts` — DR1, C1 and R-028-42/56: manual halt causes retain cbe7b9a wording minus command suffixes; obligation gates and halt clearance assertions are unchanged.
 - `drive-live.test.ts` — DR2 and R-028-35: new unanswered-question diagnostics retain their complete text and null need instead of using the legacy prose prescription.
 - `supersede.test.ts` — DR1 and C1: the manual halt assertion checks the retained approval cause rather than an embedded approval command.
-- `quiet.test.ts` — DR1, C1, N5 and R-028-35: driver output renders current needs; diagnostic-only question wakes do not invent a need.
+- `quiet.test.ts` — DR1, C1, N5 and R-028-35/42/56/57: driver output renders current needs; diagnostic-only question wakes do not invent a need. Evidence-only halt expectations retain the historical cause without command suffixes. Non-`a:` surfaces retain PARENT and assert that cause; status --full also includes the primary need command. The `a:` branch is unchanged.
 - `quiet025.test.ts` — DR2: structured wakes use asynchronous fresh-need validation and render the recorded need.
 - `notices.test.ts` — DR1, DR2 and R-028-40/55: answered-but-still-asking output renders the structured answer need and its retry command. The grace-boundary assertion now checks the exact reason-only Need.text, and the held retry matches `15m → owed answer` with no `: retry with ` tail. The exact answerRetry command and once-only delivery assertions remain unchanged; the QT5 legacy parser is retained.
 - `repair-epoch.test.ts` — DR4: no-writer-change ruling messages permit a no-change reply and retain the original repair or submit halt cause.
 - `ruling-any.test.ts` — DR1, C1 and DR4: owner notices use per-obligation needs and ruling-only follow-ups no longer mandate a change.
 - `stopask.test.ts` — DR2: structured wakes use the asynchronous delivery entry point; writer-change ruling behavior remains covered.
 - `infra.test.ts`, IF1 driver/follower assertion — C6, N5 and R-028-49: a setup-only halt renders resume after the retained cause; retry budgeting is unchanged. IF4 remains unmodified.
-- `invred.test.ts`, IR repair P2 revalidation assertions — DR2 and R-028-50: structured identity, not legacy invariant metadata, determines validity; a surviving conflict need gets fresh text and an absent need identity is rejected.
+- `invred.test.ts`, IR repair P2 revalidation assertions — DR2 and R-028-50/56: structured identity, not legacy invariant metadata, determines validity; a surviving conflict need gets fresh text and an absent need identity is rejected. A same-key pass leaves an owner conflict, so the non-red case remains `[true]` under R-028-56(2).
 - `resume.test.ts`, L1.2 post-merge assertions — DR7 and R-028-50: record the automatic rebase, then verify the exact merge-naming rebase follow-up without synthetic worktree state.
 - `shared.test.ts`, FS3(b) emitted notice assertions — DR2 and R-028-49: one repository notice renders each repository need exactly once and binds the primary need; action selection text is untouched.
 - `trackfix.test.ts`, TF2/WF1 #3065 driver/follower block — DR1, DR2 and R-028-49: notice and wake follow the current needs, retaining trunk-red diagnosis before the flaky pair. The separate waiver scenario is untouched. Its runtime argument includes only the pinned display fields; the extra clock argument was removed as a type-only correction (proc-03).
+
+- `drive028.test.ts`, new multiline evidence regression — R-028-56/57: the persisted cause uses `oneLine(what)`; it has no actual newline or evidence command. R-028-57 corrects the new test’s expectation to the escaped, not space-folded, representation.
 
 ## Prune candidates
 
@@ -56,7 +58,7 @@ Repository park groups share an obligation but are identified by their full `onc
 
 The new regression covers two live groups with the same obligation through both hookless and hooked followers. Each group’s red line is delivered exactly once and each notice excludes the other group’s waiting node. Existing tests are unmodified for these corrections.
 
-Final net source growth against the slot base is +79 lines: `answer.ts` +1, `drive.ts` +9, `drive-run.ts` +29 and `drive-bg.ts` +40. This stays within the parent’s expanded leaf budget; release-wide subtraction remains the prune gate.
+Final net source growth against the slot base is +84 lines: `answer.ts` +1, `drive.ts` +14, `drive-run.ts` +29 and `drive-bg.ts` +40. This stays within the parent’s expanded leaf budget; release-wide subtraction remains the prune gate.
 
 ## Compatibility and limits
 

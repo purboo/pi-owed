@@ -10,6 +10,7 @@ import { Driver, procStart, reportText, type ActionReport } from '../src/drive-r
 import { Follower, revalidator } from '../src/drive-bg.ts';
 import { decide, rulingFollowUp, rulingMessage, writerLaunch, reviewerLaunch } from '../src/drive.ts';
 import { needs, repoNeeds, needId } from '../src/needs.ts';
+import { oneLine } from '../src/views.ts';
 import { assembleRuntime } from '../src/activity.ts';
 import { clockTime } from '../src/clock.ts';
 import { ownerNeeded, projectId } from '../src/reducer.ts';
@@ -65,13 +66,14 @@ async function primary(f: Awaited<ReturnType<typeof fixture>>) { const s = await
 
 // Every test asserts a changed behavioral output, so each is red individually on the slot base.
 test('DR1/R-028-56: multiline evidence records only the single-line historical halt cause', async () => {
-  const f = await fixture({ evidence: [{ id: 'ui', what: 'checked first line\n  and second line', by: 'reviewer' }] });
+  const what = 'checked first line\n  and second line';
+  const f = await fixture({ evidence: [{ id: 'ui', what, by: 'reviewer' }] });
   try {
     await f.submit(); await measure(f); await f.driver.pass();
     const halt = (await (await Ledger.open(f.cwd)).read()).findLast(e => e.kind === 'halt');
     assert.ok(halt?.kind === 'halt');
     assert.doesNotMatch(halt.reason, /\n|owed evidence/);
-    assert.equal(halt.reason, 'awaiting manual evidence evidence:ui (checked first line and second line) by reviewer');
+    assert.equal(halt.reason, `awaiting manual evidence evidence:ui (${oneLine(what)}) by reviewer`);
   } finally { await f.done(); }
 });
 
