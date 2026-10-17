@@ -66,7 +66,7 @@ for (const by of ['reviewer', 'parent', 'owner'] as const) {
       const commit = await candidate(r), c12 = commit.slice(0, 12);
       const manual = manualHalt(await stateOf(r.cwd), 'a')!;
       assert.equal(manual.needs, 'human', 'ledger shape is unchanged');
-      assert.equal(manual.reason, `awaiting manual evidence evidence:ui: evidence:ui requires manual evidence by ${by}: checked the page`);
+      assert.equal(manual.reason, `awaiting manual evidence evidence:ui (checked the page) by ${by}`);
       assert.doesNotMatch(manual.reason, /owed evidence/);
       const lines: string[] = [], driver = new Driver({ cwd: r.cwd, dsa: new Sealed(), session: null, log: l => lines.push(l) });
       const pass = await driver.pass();

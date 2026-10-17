@@ -1082,7 +1082,12 @@ export function manualHalt(s: State, node: string): { reason: string; needs: 'hu
   if (!n?.candidate || !spec || n.blocks.some(b => (b.state === 'active' || b.state === 'flaky') && !heldFlaky(s,node,b))) return undefined;
   const pending = n.items.filter(i => i.status === 'D');
   if (!pending.length || !pending.every(i => i.obligation === 'approve' || i.obligation.startsWith('evidence:'))) return undefined;
-  return { reason: pending.map(i => i.obligation === 'approve' ? `awaiting owner approval of candidate ${n.candidate!.commit.slice(0,12)}` : `awaiting manual evidence ${i.obligation}: ${i.detail}`).join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
+  const parts = pending.map(i => {
+    if (i.obligation === 'approve') return `awaiting owner approval of candidate ${n.candidate!.commit.slice(0,12)}`;
+    const ev = spec.evidence?.find(e => `evidence:${e.id}` === i.obligation);
+    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}`;
+  });
+  return { reason: parts.join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
 }
 
 /**

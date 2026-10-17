@@ -64,6 +64,17 @@ async function measure(f: Awaited<ReturnType<typeof fixture>>) { await ops.attes
 async function primary(f: Awaited<ReturnType<typeof fixture>>) { const s = await f.state(); return needs(s, 'a', await assembleRuntime({ cwd: f.cwd, state: s, driverRunning: true }))[0]!; }
 
 // Every test asserts a changed behavioral output, so each is red individually on the slot base.
+test('DR1/R-028-56: multiline evidence records only the single-line historical halt cause', async () => {
+  const f = await fixture({ evidence: [{ id: 'ui', what: 'checked first line\n  and second line', by: 'reviewer' }] });
+  try {
+    await f.submit(); await measure(f); await f.driver.pass();
+    const halt = (await (await Ledger.open(f.cwd)).read()).findLast(e => e.kind === 'halt');
+    assert.ok(halt?.kind === 'halt');
+    assert.doesNotMatch(halt.reason, /\n|owed evidence/);
+    assert.equal(halt.reason, 'awaiting manual evidence evidence:ui (checked first line and second line) by reviewer');
+  } finally { await f.done(); }
+});
+
 test('DR1/R-028-43: baseline rank-3 gap stays an owner diagnosis and never launches a writer', async () => {
   const f = await fixture({ review: { count: 1, min_rank: 3 } });
   try {
