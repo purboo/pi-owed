@@ -92,7 +92,8 @@ function standardCounts(log: string): Counts | undefined {
 }
 /** PF1/PF2: only complete terminal summaries or anchored tool zero-test forms; last matching line wins. */
 function fallbackCounts(log: string): { counts: Counts; line: string } | undefined {
-  for (const line of log.split(/\r?\n/).reverse()) {
+  for (const rawLine of log.split(/\r?\n/).reverse()) {
+    const line = rawLine.replace(/\x1b\[[0-9;]*m/g, '');
     const bounded = /^\s*=+\s+(.+?)\s+=+\s*$/.exec(line);
     const body = bounded?.[1] ?? line.trim();
     if (/^\s*(?:=+\s*)?No tests found\b/.test(line)) return { counts: { format: 'jest/vitest', tests: 0 }, line };

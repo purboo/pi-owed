@@ -5,9 +5,8 @@ import type { ObsEntry } from './types.ts';
 /** IF3/IF4: diagnostic only; normalize volatile identifiers, never use this text to discharge a gate. */
 export function setupSignature(log: string): string {
   const counted = zeroTestFallbackSignature(log);
-  if (counted) return counted;
   const lines = log.replace(/\x1b\[[0-9;]*m/g,'').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const line = lines.find(l => /Error|Cannot find|ENOENT|ERR_|not found/i.test(l)) ?? lines.at(-1) ?? '(no output)';
+  const line = counted ?? lines.find(l => /Error|Cannot find|ENOENT|ERR_|not found/i.test(l)) ?? lines.at(-1) ?? '(no output)';
   return line.replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?/g,'<time>')
     .replace(/(?:[A-Za-z]:[\\/]|\/)[^\s'"`,;:)\]}]+/g,'<path>')
     .replace(/\b(?:0x[0-9a-f]+|[0-9a-f]{7,})\b/gi,'<id>').replace(/\d+(?:\.\d+)?/g,'<n>')

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { repo } from './helpers/repo.ts';
 import { parsePlan } from '../src/plan.ts';
 import { Ledger } from '../src/ledger.ts';
-import { parseCounts, runJob } from '../src/exec.ts';
+import { parseCounts, runJob, zeroTestFallbackSignature } from '../src/exec.ts';
 import { setupHint, setupSignature } from '../src/remeasure-on.ts';
 import type { AttestJob, Counts } from '../src/types.ts';
 
@@ -103,8 +103,9 @@ for (const [line, format] of [
   assert.equal(obs.verdict, 'fail');
   assert.equal(obs.counts?.tests, 0);
   assert.equal(obs.note, `zero tests (${signature}); exit 0; a command that runs tests can print an owed-counts line`);
-  assert.equal(setupSignature(log), signature);
-  assert.equal(setupHint(setupSignature(log), 'a'), `setup failure (no tests ran): ${signature} — likely the environment; fix it, then owed decide a --remeasure`);
+  const normalized = signature.replace(/\d+(?:\.\d+)?/g, '<n>');
+  assert.equal(setupSignature(log), normalized);
+  assert.equal(setupHint(setupSignature(log), 'a'), `setup failure (no tests ran): ${normalized} — likely the environment; fix it, then owed decide a --remeasure`);
 });
 test('PF4 nonzero exit retains the command-failure note and adds the counted line', async () => {
   const line = 'No tests found, exiting with code 1', obs = await run(line, undefined, 1);
@@ -116,7 +117,7 @@ test('PF4 nonzero exit retains the command-failure note and adds the counted lin
 test('PF4 counted line is escaped and bounded to 160 displayed characters', async () => {
   const line = `\t\v${'='.repeat(180)} no tests ran in 0.01s ===`;
   const log = `error: unrelated cargo warning\n${line}`, obs = await run(log);
-  const signature = setupSignature(log);
+  const signature = zeroTestFallbackSignature(log)!;
   assert.match(signature, /^pytest fallback counted line "/);
   assert.ok(signature.includes('\\t\\u000b'), signature);
   assert.doesNotMatch(signature, /[\x00-\x1f\x7f-\x9f]/);
@@ -124,6 +125,41 @@ test('PF4 counted line is escaped and bounded to 160 displayed characters', asyn
   assert.ok(quoted.length <= 160, signature);
   assert.ok(quoted.endsWith('…'), signature);
   assert.ok(obs.note?.includes(signature), obs.note);
+  assert.match(setupSignature(log), /^pytest fallback counted line "/);
+});
+test('R-pf-1 colored terminal pytest summary keeps its count and min_tests verdict', async () => {
+  const log = '\x1b[32m===== 3 passed in 0.12s =====\x1b[0m';
+  assert.deepEqual(parseCounts(log), { format: 'pytest', tests: 3, pass: 3 });
+  const obs = await run(log, 3);
+  assert.equal(obs.verdict, 'pass', obs.note);
+  assert.equal(obs.counts?.tests, 3);
+});
+test('R-pf-1 colored zero-test forms count the stripped line in observation notes', async () => {
+  for (const [line, format] of [
+    ['=== no tests ran in 0.01s ===', 'pytest'],
+    ['No tests found, exiting with code 1', 'jest/vitest'],
+  ] as const) {
+    const log = `\x1b[1;32m${line}\x1b[0m`;
+    assert.deepEqual(parseCounts(log), { format, tests: 0 });
+    for (const code of [0, 1]) {
+      const obs = await run(log, undefined, code);
+      assert.equal(obs.verdict, 'fail');
+      assert.ok(obs.note?.includes(`${format} fallback counted line ${JSON.stringify(line)}`), obs.note);
+      assert.doesNotMatch(obs.note ?? '', /\x1b|\\u001b/);
+    }
+  }
+});
+test('R-pf-1 setup signatures dedupe different durations while notes keep the raw line', async () => {
+  const signatures: string[] = [];
+  for (const seconds of ['0.01', '0.02']) {
+    const line = `=== no tests ran in ${seconds}s ===`;
+    const log = `warning: cargo package not found\n\x1b[32m${line}\x1b[0m`;
+    signatures.push(setupSignature(log));
+    const obs = await run(log);
+    assert.ok(obs.note?.includes(`pytest fallback counted line ${JSON.stringify(line)}`), obs.note);
+  }
+  assert.equal(signatures[0], signatures[1]);
+  assert.equal(signatures[0], 'pytest fallback counted line "=== no tests ran in <n>s ==="');
 });
 test('PF4 zero-test provenance respects preferred protocols and nonzero counts', () => {
   const noisy = 'error: unrelated warning\n=== no tests ran in 0.01s ===';
