@@ -1922,8 +1922,8 @@ export function validateDraft(s: State, d: Draft): string[] {
       break;
     case 'waive': {
       // The owner-declared key is computed and checked on the current merge tree by ops.waive.
-      // Replay checks its provenance without needing Git: a cited, non-active merge fail on that key.
-      const mergeKeyRisk = d.accept_risk?.some(seq => !activeRisk(s, d.node, d.obligation, seq) && mergeRisk(s, d.node, d.obligation, seq, d.key));
+      // Old inactive-risk validation stays; pure active merge citations may also name a distinct merge key.
+      const mergeKeyRisk = d.accept_risk?.some(seq => !activeRisk(s, d.node, d.obligation, seq) && mergeRisk(s, d.node, d.obligation, seq, d.key)) || d.key !== n?.candidate?.keys[d.obligation] && !!d.accept_risk?.length && d.accept_risk.every(seq => mergeRisk(s,d.node,d.obligation,seq,d.key));
       allow('owner'); current(d.obligation, mergeKeyRisk ? n?.candidate?.keys[d.obligation] ?? '' : d.key);
       if (d.obligation.startsWith('inv:') || d.node === 'trunk') errors.push('invariant can never be waived');
       if (!d.reason.trim()) errors.push('waive requires a reason');
