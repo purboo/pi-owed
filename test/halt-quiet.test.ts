@@ -16,7 +16,7 @@ import { Follower } from '../src/drive-bg.ts';
 import { procStart } from '../src/drive-run.ts';
 import { needs } from '../src/needs.ts';
 import { reduce } from '../src/reducer.ts';
-import { briefView, ownerCommands, receipt, renderBrief, renderReceipt } from '../src/views.ts';
+import { briefView, receipt, renderBrief, renderReceipt } from '../src/views.ts';
 import { Ledger } from '../src/ledger.ts';
 import { Dsa } from '../src/dsa.ts';
 import { git } from '../src/git.ts';
@@ -137,7 +137,7 @@ test('E3.1 loop driver: wake lines carry the fact mark; a repeat is marked; a no
 test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --as owner:human', () => {
   assert.equal(run.reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'stalled: x' }), `halt a attempt 2, ${OWNER}: halted — stalled: x`);
   assert.equal(run.reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'human', detail: 'x' }), 'halt a attempt 2, needs the parent (the main agent acts; owed lists the command): halted — x');
-  // Brief and owner commands: the owner review command states owner:cli; nothing suggests owner:human.
+  // R-028-59(5): the brief and needs keep the primary decision and owner review alternative.
   const r = rig();
   r.dispatch('a', 'parent:main'); r.submit('1'); r.obs('1');
   r.add({ kind: 'obs', by: 'executor:owed', subject: 'a', obligation: 'writes', key: 'w1', verdict: 'pass', exit: 0, durationMs: 1, commit: 'c1', base: 's0' });
@@ -146,11 +146,10 @@ test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --
   assert.equal(brief.decisions.find(x => x.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
   assert.equal(needs(s, 'a')[0]!.alternatives![0], 'owed review a --ok --rank 3 --candidate c1 --note "<note>" --ack-rulings latest --as owner:<id>');
   assert.deepEqual(Object.keys(brief.summary!.needs.find(n => n.node === 'a')!).sort(), ['command', 'node', 'reason']);
-  const briefText = renderBrief(brief), legacy = ownerCommands(s, 'a').join('\n');
+  const briefText = renderBrief(brief);
   assert.doesNotMatch(briefText, /owner:human/, briefText);
   assert.deepEqual([...briefText.matchAll(/--as (\S+)/g)].map(x => x[1]), [], briefText);
-  assert.doesNotMatch(legacy, /owner:human/, legacy);
-  assert.deepEqual([...new Set([...legacy.matchAll(/--as (\S+)/g)].map(x => x[1]))], ['owner:cli'], legacy);
+  assert.deepEqual([...new Set(needs(s, 'a').flatMap(n => [n.command ?? '', ...(n.alternatives ?? [])]).flatMap(c => [...c.matchAll(/--as (\S+)/g)].map(x => x[1])))], ['owner:<id>']);
   // Needs use a role placeholder independently of the legacy confirmation gate.
   const prior = process.env.OWED_CONFIRM; process.env.OWED_CONFIRM = 'owner';
   try {
@@ -159,7 +158,7 @@ test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --
     assert.deepEqual(confirmed.summary!.needs, brief.summary!.needs);
     const confirmedText = renderBrief(confirmed);
     assert.equal(confirmedText, briefText); assert.doesNotMatch(confirmedText, /owner:human/);
-    assert.deepEqual([...new Set([...ownerCommands(s, 'a').join('\n').matchAll(/--as (\S+)/g)].map(x => x[1]))], ['owner:human']);
+    assert.deepEqual(needs(s, 'a'), needs(r.state(), 'a'));
   }
   finally { if (prior === undefined) delete process.env.OWED_CONFIRM; else process.env.OWED_CONFIRM = prior; }
   // Halt rows of the views use the D25.6 wording (ruling #559 nit).

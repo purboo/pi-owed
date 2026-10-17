@@ -14,12 +14,7 @@ export function setupSignature(log: string): string {
   // Normalize the full raw line before quoting; the fixed parser prefix is not a path.
   return (counted ? `${counted.format} fallback counted line ${JSON.stringify(normalized)}` : normalized).slice(0,300);
 }
-export const setupHint = (signature: string, nodes: string): string => `setup failure (no tests ran): ${signature} — likely the environment; fix it, then owed decide ${nodes} --remeasure`;
-
-/** RO2: match error text, never a test title or a passing-output tail when failures were parsed. */
-export function matchesRemeasureOn(obs: Pick<ObsEntry, 'verdict' | 'failed' | 'counts'>, log: string, needles: readonly string[]): boolean {
-  return remeasureMatches(obs,log,needles).length > 0;
-}
+export { setupHint } from './needs.ts';
 /** Bounded provenance: only configured literals, and only when EVERY failure matched. */
 export function remeasureMatches(obs: Pick<ObsEntry, 'verdict' | 'failed' | 'counts'>, log: string, needles: readonly string[]): string[] {
   const texts = remeasureErrorTexts(obs,log);

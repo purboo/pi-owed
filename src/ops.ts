@@ -27,7 +27,7 @@ import type { Runtime } from './needs.ts';
 import { withMeasuring, measuringScope, measuringRunning, measuringJob, assembleRuntime } from './activity.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
-import { unruledBlocks, stillAskingNeeds, type StillAsking } from './drive.ts';
+import { unruledBlocks } from './drive.ts';
 import { driveStatus, readLock, driveStart, type DriveStart } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
@@ -1326,12 +1326,8 @@ async function recordedModel(cwd: string, s: State, id: string, principal: strin
   const { Dsa } = await import('./dsa.ts');
   try { return (await new Dsa({ cwd, timeoutMs: 5000 }).describe(l.rid)).model; } catch { return undefined; }
 }
-/**
- * SB1/SB3: what is wrong with a candidate that already contains trunk commits after its slot base (its writes would
- * be diffed against the old base and claim other nodes' merged paths) and the fix: the SB2 rebase command.
- */
-export const trunkAfterBaseText = (node: string, commit: string, base: string, latest: string, trunk: string): string =>
-  `commit ${commit.slice(0,12)} contains trunk commits after its slot base ${base.slice(0,12)} (latest ${latest.slice(0,12)}); run owed rebase ${node}, then in the slot worktree run \`git rebase --onto ${trunk} ${latest}\`, then submit again`;
+import { trunkAfterBaseText } from './needs.ts';
+export { trunkAfterBaseText } from './needs.ts';
 /** SB1: refuses (nothing recorded) a submit whose commit contains trunk commits the slot base does not. */
 async function refuseTrunkAfterBase(cwd: string, s: State, node: string, base: string, commit: string): Promise<void> {
   const latest = await git.trunkAfterBase(cwd,base,commit,s.trunk.commit);
@@ -2322,18 +2318,6 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   return card;
 }
 /** DR2: a missing/corrupt busy file cannot create acceptance evidence or hide a gate. */
-/** QT5: answered questions the running driver last saw still open on the subagent host, as Needs-you items. */
-async function applyStillAsking(dir: string, state: State, view: StatusView, now: number): Promise<void> {
-  if (!view.summary) return;
-  let cached: unknown;
-  try { cached = JSON.parse(await readFile(join(dir,'drive','asking.json'),'utf8')); } catch { return; }
-  if (!Array.isArray(cached)) return;
-  const valid = cached.filter((a): a is StillAsking => !!a && typeof a.node === 'string' && typeof a.rid === 'string' && typeof a.qid === 'string' && Number.isSafeInteger(a.rev));
-  for (const { node, text } of stillAskingNeeds(state, valid, now)) {
-    const reason = text.slice(node.length + 2);
-    if (!view.summary.needs.some(n => n.node === node && n.reason === reason)) view.summary.needs.unshift({ node, reason, command: '' });
-  }
-}
 async function applyMergeWaiting(cwd: string, dir: string, state: State, view: StatusView): Promise<void> {
   const driver = await driveStatus({ cwd });
   const measuring = driver.running ? driver.measuring ?? [] : [];
