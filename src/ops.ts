@@ -1497,14 +1497,19 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
       const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
       if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`);
       const built = await git.buildMerge(o.cwd,s.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
-      if ('conflicts' in built) return refused();
-      const m = await mergeFacts(o.cwd,s,o.node,built.commit);
-      key = m.facts.keys[o.obligation] ?? '';
-      if (!key || (o.accept_risk ?? []).some(seq => activeRisk(s,o.node,o.obligation,seq) ? n.blocks.find(b => b.seq === seq)?.key !== key : !mergeRisk(s,o.node,o.obligation,seq,key))) return refused();
-      // Same ledger lock as the append; Git refs can still move independently of the ledger.
-      const after = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
-      if (after) throw new OwedError(`trunk changed (CAS): ${driftText(after)}`);
-      scope = {on:'merge',trunk:s.trunk.commit};
+      if ('conflicts' in built) { if (inactive.length) return refused(); }
+      else {
+        const m = await mergeFacts(o.cwd,s,o.node,built.commit), mergeKey = m.facts.keys[o.obligation] ?? '';
+        const matches = !!mergeKey && risks.every(seq => activeRisk(s,o.node,o.obligation,seq) ? n.blocks.find(b => b.seq === seq)?.key === mergeKey : !!mergeRisk(s,o.node,o.obligation,seq,mergeKey));
+        if (!matches) { if (inactive.length) return refused(); }
+        else {
+          key = mergeKey;
+          // Same ledger lock as the append; Git refs can still move independently of the ledger.
+          const after = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
+          if (after) throw new OwedError(`trunk changed (CAS): ${driftText(after)}`);
+          scope = {on:'merge',trunk:s.trunk.commit};
+        }
+      }
     }
     return {kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key,reason:o.reason,accept_risk:o.accept_risk,...tracked};
   });

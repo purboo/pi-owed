@@ -71,9 +71,9 @@ test('F3.1/F3.2: a waiver clears a flaky block on a merge key, and the merge the
     const rerun = (await obs(x.cwd, 'a')).find(e => e.attribution && e.key === fail.key);
     assert.equal(rerun?.verdict, 'pass');
     assert.equal((await ops.why({ cwd: x.cwd, node: 'a' })).blocks.find(b => b.seq === fail.seq)?.state, 'flaky');
-    // The owner waiver names the merge-key block: it is bound to the candidate key, yet reaches the block.
+    // WK1: the owner waiver names and covers the current merge-key block.
     const w = await ops.waive({ cwd: x.cwd, node: 'a', obligation: 'check:unit', reason: 'stale artifact', accept_risk: [fail.seq], ...owner });
-    assert.equal(w.kind === 'waive' && w.key, cand.keys['check:unit']);
+    assert.equal(w.kind === 'waive' && w.key, fail.key);
     const card = await ops.why({ cwd: x.cwd, node: 'a' });
     assert.equal(card.blocks.some(b => b.seq === fail.seq), false, 'the merge-key block is cleared');
     assert.equal(card.accepted, true);
@@ -86,7 +86,7 @@ test('F3.1/F3.2: a waiver clears a flaky block on a merge key, and the merge the
   } finally { await x.cleanup(); }
 });
 
-test('F3.2: a waived active merge-key block without a pass: owed merge measures the key again and merges on the pass', { timeout: 300_000 }, async () => {
+test('WK1/F3.2: a waived active merge-key block without a pass merges without another measurement', { timeout: 300_000 }, async () => {
   const { x, flag } = await fixture(['a', 'b']);
   try {
     const { fail } = await mergeKeyFail(x.cwd);
@@ -95,18 +95,23 @@ test('F3.2: a waived active merge-key block without a pass: owed merge measures 
     const m = await ops.merge({ cwd: x.cwd, node: 'a', as: parent });
     assert.equal(m.entry.kind, 'merge');
     const again = (await obs(x.cwd, 'a')).filter(e => e.key === fail.key && e.seq > fail.seq);
-    assert.deepEqual(again.map(e => [e.verdict, e.merging]), [['pass', 'a']], 'a later pass on the same merge key');
+    assert.deepEqual(again, [], 'WK1 covers the merge key without another measurement');
   } finally { await x.cleanup(); }
 });
 
-test('F3.2: a waived merge-key fail measured again and failing again still refuses the merge with a new block', { timeout: 300_000 }, async () => {
-  const { x } = await fixture(['a', 'b']);
+test('WK1/F3.2: a changed merge key measured again and failing again still refuses the merge with a new block', { timeout: 300_000 }, async () => {
+  const { x, flag, slots } = await fixture(['a', 'b']);
   try {
     const { fail } = await mergeKeyFail(x.cwd);
-    await ops.waive({ cwd: x.cwd, node: 'a', obligation: 'check:unit', reason: 'environment', accept_risk: [fail.seq], ...owner });
+    const waiver = await ops.waive({ cwd: x.cwd, node: 'a', obligation: 'check:unit', reason: 'environment', accept_risk: [fail.seq], ...owner });
+    assert.equal(waiver.kind === 'waive' && waiver.key,fail.key);
+    await commitAt(slots.a!,{'src/a':'changed candidate reads'});
+    await ops.submit({cwd:slots.a!,node:'a',as:{role:'writer',id:'a#1'}});
+    await writeFile(flag,''); await ops.attest({cwd:x.cwd,node:'a'});
+    await (await import('node:fs/promises')).rm(flag);
     await assert.rejects(ops.merge({ cwd: x.cwd, node: 'a', as: parent }), /still has active blocks|unsatisfied/);
-    const fails = (await obs(x.cwd, 'a')).filter(e => e.verdict === 'fail' && e.key === fail.key);
-    assert.equal(fails.length, 2);
+    const fails = (await obs(x.cwd, 'a')).filter(e => e.verdict === 'fail' && e.merging === 'a');
+    assert.equal(fails.length, 2); assert.notEqual(fails[1]!.key,fail.key);
     const card = await ops.why({ cwd: x.cwd, node: 'a' });
     assert.ok(card.blocks.some(b => b.seq === fails[1]!.seq && b.state === 'active'), 'the new fail is an active block');
     assert.equal(card.accepted, false);
@@ -173,6 +178,6 @@ test('F3.3: the accept-risk result text names a merge-key block and what the mer
     assert.notEqual(res.isError, true, JSON.stringify(res.content));
     assert.match(asked.join('\n'), /The accepted blocks are cleared whatever their key \(a merge-key fail no longer counts against the merge\), and check:unit is no longer measured on the waived key\./);
     const meaning = (res.details as { meaning: string }).meaning;
-    assert.match(meaning, new RegExp(`; --accept-risk clears #${fail.seq} whatever its key, and check:unit is no longer measured on key [0-9a-f]{12}; #${fail.seq} failed on merge key ${fail.key.slice(0, 12)}: that fail no longer counts there, so a pass there satisfies owed merge, and owed merge measures the key again when it has no other verdict$`), meaning);
+    assert.match(meaning, new RegExp(`^waived a/check:unit on merge key ${fail.key.slice(0,12)}: environment; in effect now: --accept-risk accepts #${fail.seq}; check:unit on the candidate key is satisfied by #\\d+; this waiver applies only to that key, not the candidate key [0-9a-f]{12}; changes to check definition, setup, exec, closure or reads change the key and require measurement again$`), meaning);
   } finally { if (prior === undefined) delete process.env.OWED_CONFIRM; else process.env.OWED_CONFIRM = prior; await x.cleanup(); }
 });

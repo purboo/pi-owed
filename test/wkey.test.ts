@@ -158,7 +158,7 @@ test('WK1/WK3: mixed citations retain candidate scope; exact-act and tracker ret
   } finally { await r.cleanup(); }
 });
 
-test('WK1: trunk CAS, conflict and obsolete merge-key refusals append nothing', async () => {
+test('WK1: stale active merge risks retain candidate fallback; CAS and inactive-risk refusals append nothing', async () => {
   const active = await fixture();
   try {
     await commitAt(active.cwd,{trunk:'moved between measurement and waiver'});
@@ -166,6 +166,30 @@ test('WK1: trunk CAS, conflict and obsolete merge-key refusals append nothing', 
     await assert.rejects(active.waive(),/trunk changed \(CAS\)/);
     assert.deepEqual(await active.ledger.read(),before);
   } finally { await active.cleanup(); }
+  const stale = await fixture();
+  try {
+    await commitAt(stale.cwd,{trunk:'new prospective merge key'});
+    await ops.adopt({...stale,as:owner,channel:'delegated',note:'fixture active stale key'});
+    const act = await stale.waive();
+    assert.equal((act as WaiveEntry).key,(await stale.state()).nodes.a!.candidate!.keys[obligation]);
+    assert.deepEqual(act.scope,{on:'candidate'});
+    assert.equal((await stale.state()).nodes.a!.blocks.find(b => b.seq === stale.fail.seq)!.state,'cleared');
+    await assert.rejects(ops.merge({...stale,node:'a',as:parent}));
+    const current = (await stale.obs()).findLast(e => e.subject === 'a' && e.merging === 'a' && e.obligation === obligation && e.verdict === 'fail')!;
+    assert.notEqual(current.key,stale.fail.key);
+    mergeKey(await stale.waive([current.seq]),current.key,(await stale.state()).trunk.commit);
+    const count = await readFile(stale.counter,'utf8');
+    await ops.merge({...stale,node:'a',as:parent}); assert.equal(await readFile(stale.counter,'utf8'),count);
+  } finally { await stale.cleanup(); }
+  const conflict = await fixture();
+  try {
+    await commitAt(conflict.cwd,{impl:'conflicts with candidate'});
+    await ops.adopt({...conflict,as:owner,channel:'delegated',note:'fixture active merge conflict'});
+    const act = await conflict.waive();
+    assert.equal((act as WaiveEntry).key,(await conflict.state()).nodes.a!.candidate!.keys[obligation]);
+    assert.deepEqual(act.scope,{on:'candidate'});
+    assert.equal((await conflict.state()).nodes.a!.blocks.find(b => b.seq === conflict.fail.seq)!.state,'cleared');
+  } finally { await conflict.cleanup(); }
   const r = await fixture();
   try {
     mergeKey(await r.waive(),r.fail.key,r.trunk);
