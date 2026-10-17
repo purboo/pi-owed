@@ -815,5 +815,4 @@ export async function readyHint(cwd: string): Promise<string[] | undefined> {
     return ready.length ? ready : undefined;
   } catch { return undefined; }
 }
-/** The hint line: CLI `owed drive --detach --stay`, pi `owed_drive {action:"start", stay:true}`. */
-export const readyHintText = (ready: readonly string[], surface: 'cli' | 'pi'): string => `ready: ${ready.join(', ')} (${ready.length}); no driver is running: ${surface === 'cli' ? 'owed drive --detach --stay' : 'owed_drive {action:"start", stay:true}'}`;
+export { readyHintText } from './needs.ts';

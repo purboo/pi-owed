@@ -1,9 +1,12 @@
-import type { Block, ItemView, State } from './types.ts';
+import type { Block, Entry, ItemView, ObsEntry, RuleEntry, State } from './types.ts';
+import type { GenesisStatus, KnownRedDebt } from './views.ts';
+import type { TrunkDrift } from './git.ts';
+import type { IdleCounts } from './drive-run.ts';
+import type { SlotGitOperation } from './rebase-view.ts';
 import type { Activity, Need, Runtime } from './needs-types.ts';
 import { driveConfig } from './plan.ts';
 import { clockTime } from './clock.ts';
-import { entriesOf, previousSubmit, awaitingRuling, parentRuling, ownerNeeded, readyDispatchSkips, overlapping, halted, waitingFor, reportedOf, heldFlaky, heldFlakyText, flakyBlockText, nodeReview, sharedFailure, fixCandidates, sharedNames, sharedParked, sharedParkNotices, sharedPhase, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, trunkInvariantReds } from './reducer.ts';
-import { answerRetry } from './answer.ts';
+import { applicableRules, entriesOf, previousSubmit, awaitingRuling, parentRuling, ownerNeeded, readyDispatchSkips, overlapping, halted, waitingFor, reportedOf, heldFlaky, heldFlakyText, flakyBlockText, nodeReview, sharedFailure, fixCandidates, sharedNames, sharedParked, sharedParkNotices, sharedPhase, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, trunkInvariantReds } from './reducer.ts';
 import { shellQuote } from './exec-wrap.ts';
 export type { Need, NeedKind, Activity, Measuring, Asking, Runtime } from './needs-types.ts';
 
@@ -36,7 +39,7 @@ function haltReason(reason: string): string {
   if (/^cannot re-(?:launch|send)/.test(reason)) return 'stored run request is unavailable';
   return plain(reason).replace(/\s+to:"[^"]*"/g, '');
 }
-function writerStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
+function needsWriterStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
   const command = decision(node), suffix = ` → ${command}`;
   if (!text.endsWith(suffix)) return;
   const match = /(?:^|; )(writer says: "(?:[^"\\]|\\.)*"|writer gave no final text)$/.exec(text.slice(0, -suffix.length));
@@ -140,7 +143,7 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   if (h) {
     if (obligations.length) out.push(...obligations.map(o => ({ ...o, halted: true as const })));
     else {
-      const stopped = writerStopNeed(h.reason, node), w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean);
+      const stopped = needsWriterStopNeed(h.reason, node), w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean);
       out.push({ node, actor: 'parent', kind: stopped ? 'decide' : 'resume', since: h.seq, halted: true, text: stopped?.reason ?? `driver halted: ${haltReason(h.reason)}; after resume the driver continues from the current state${deps.length ? `, then waits for ${deps.join(', ')}` : ''}`, command: stopped?.command ?? `owed resume ${word(node)}`, ...(stopped ? { alternatives: [`owed resume ${word(node)}`] } : {}) });
     }
   } else out.push(...obligations);
@@ -155,7 +158,7 @@ export function repoNeeds(s: State, _rt?: Runtime): Need[] {
     const red = trunkInvariantReds(s).find(r => r.obligation === i.obligation && r.key === i.key);
     const text = red?.text ?? `${i.obligation}: ${i.detail}`;
     if (out.some(n => n.obligation === i.obligation && n.text.includes(text))) continue;
-    out.push({ node: 'trunk', actor: 'parent', kind: 'investigate', since: i.evidence.at(-1) ?? null, obligation: i.obligation, key: i.key, text: `no single command: ${oneLine(text)}; ${trunkDecision(s, i.obligation)}` });
+    out.push({ node: 'trunk', actor: 'parent', kind: 'investigate', since: i.evidence.at(-1) ?? null, obligation: i.obligation, key: i.key, text: `no single command: ${oneLine(text)}; ${trunkRepairText(s, i.obligation)}` });
   }
   return out;
 }
@@ -185,7 +188,7 @@ export function activity(s: State, node: string, rt?: Runtime): Activity | undef
 export function needId(n: Need): string {
   return JSON.stringify([n.node, n.kind, n.obligation ?? null, n.block ?? null, n.key ?? null, n.candidate ?? null, n.rid ?? null, n.qid ?? null, n.rev ?? null]);
 }
-function trunkDecision(s: State, obligation: string): string {
+function trunkRepairText(s: State, obligation: string): string {
   const key = s.trunk.invKeys[obligation.replace(/^inv:/, '')], es = entriesOf(s);
   const names = [...new Set(es.filter(e => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === obligation && e.key === key && e.verdict === 'fail').flatMap(e => e.kind === 'obs' ? e.failed ?? [] : []))];
   return `fix ${names.slice(0, 3).map(oneLine).join(', ') || obligation}${names.length > 3 ? `, +${names.length - 3}` : ''}: add a repair node with the recorded plan; clears on the next trunk key`;
@@ -230,7 +233,7 @@ export function itemLine(s: State, node: string, obligation: string, rt?: Runtim
     const ruled = parentRuling(s, b);
     return `${ruled ? `the writer repairs with ruling #${ruled.seq}; then ` : ''}an ok review of ${node}/${obligation} on the current candidate by the original reviewer ${entriesOf(s).find(e => e.seq === b.seq)?.by ?? 'the original reviewer'} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it`;
   }
-  if (i.subject === 'trunk') return i.mark === '⊥' ? 'owed attest --trunk' : `no single command: ${trunkDecision(s, obligation)}`;
+  if (i.subject === 'trunk') return i.mark === '⊥' ? 'owed attest --trunk' : `no single command: ${trunkRepairText(s, obligation)}`;
   if (obligation === 'approve') return `awaiting owner approval → ${approve(s, node)}`;
   if (obligation.startsWith('evidence:')) return `awaiting manual evidence → ${evidence(s, node, obligation, i.discharger ?? 'reviewer')}`;
   if (i.discharger === 'executor') return `${oneLine(i.detail)} → owed attest ${word(node)}`;
@@ -241,4 +244,110 @@ export function itemLine(s: State, node: string, obligation: string, rt?: Runtim
     return `${oneLine(i.detail)}; ${role === 'owner' ? 'an owner' : 'a reviewer'} records owed review ${word(node)}${obligationFlag(obligation)} --ok --rank ${rank}${candidateFlag(s, node)} --note "<note>" --ack-rulings latest --as ${role}:<id>`;
   }
   return oneLine(i.detail);
+}
+
+// Legacy packet and recovery builders retain their exact text; selection above is unchanged.
+export const writerDecisionCommand = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
+/** WS2: parse only owed's own trailer; writer text cannot choose a different next command. */
+export function writerStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
+  const command = writerDecisionCommand(node), suffix = ` → ${command}`;
+  if (!text.endsWith(suffix)) return undefined;
+  const match = /(?:^|; )(writer says: "(?:[^"\\]|\\.)*"|writer gave no final text)$/.exec(text.slice(0, -suffix.length));
+  return match ? { reason: match[1]!, command } : undefined;
+}
+export const reviewDecision = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
+/** AK2: repair advice is grounded in the recorded plan and failures, never a placeholder. */
+export function trunkDecision(s: State | undefined, obligation: string, failed?: readonly string[], history?: readonly Entry[]): string {
+  const es = history ?? (s ? entriesOf(s) : []);
+  const key = s?.trunk.invKeys[obligation.replace(/^inv:/,'')];
+  const names = [...new Set(failed ?? es.filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === obligation && e.key === key && e.verdict === 'fail').flatMap(e => e.failed ?? []))];
+  const tests = names.slice(0,3).map(oneLine).join(', ') || obligation;
+  const law = es.findLast(e => e.kind === 'plan' || e.kind === 'genesis');
+  const path = law && (law.kind === 'plan' || law.kind === 'genesis') ? law.path : undefined;
+  const command = path ? `owed plan ${/^[\w./-]+$/.test(path) ? path : JSON.stringify(path)}, or owed edit --node-new` : 'owed edit --node-new';
+  const defers = s?.deferred.filter(d => `inv:${d.id}` === obligation && (d.key === key || d.seq > (s.nodes[d.node]?.slot?.dispatchSeq ?? Infinity))) ?? [];
+  return `fix ${tests}${names.length > 3 ? `, +${names.length - 3}` : ''}: add a repair node (${command}) — clears on the next trunk key${defers.map(d => `; deferred for ${d.node} #${d.seq}`).join('')}`;
+}
+/** D23: the command that records manual evidence `id` of `node` as principal `as`; `candidate` (G1.3): the commit (prefix) it names. */
+export const evidenceCommand = (node: string, id: string, as: string, candidate?: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}${candidate ? ` --candidate ${candidate}` : ''}`;
+/** DC4: one decision gives acknowledged guidance and releases the halt; no-resume preserves it. */
+export function resumeCommands(node = '<node>'): string { return `owed decide ${node} --text "<decision>" (add --after <node> to wait until that node merges; --no-resume keeps it halted)`; }
+/**
+ * 0.8 (L3.2, app #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
+ * check or test itself must change, a ruling sends the writer to fix it.
+ */
+export const flakyRuleHint = (node: string): string => `or owed decide ${node} --writer --text "<what the writer must change>" when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;
+export const lapsedKnownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} lapsed known_red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}; removable: owed edit --invariant ${d.invariant} --set known_red='<remaining active entries>' --note "remove lapsed entries"`;
+export const overlapDispatchCommand = (node: string): string => `owed dispatch ${node} --allow-overlap`;
+/** The hint line: CLI `owed drive --detach --stay`, pi `owed_drive {action:"start", stay:true}`. */
+export const readyHintText = (ready: readonly string[], surface: 'cli' | 'pi'): string => `ready: ${ready.join(', ')} (${ready.length}); no driver is running: ${surface === 'cli' ? 'owed drive --detach --stay' : 'owed_drive {action:"start", stay:true}'}`;
+/** `Genesis: k/n invariants observed` plus where the rest gets measured (D24.5). */
+export function genesisLine(g: GenesisStatus): string {
+  return `Genesis: ${g.observed}/${g.total} invariants observed ${g.measuring ? '(measuring in this session)' : '— run owed attest --genesis (or the next attest/merge measures them)'}; pending: ${g.pending.join(', ')}`;
+}
+export const idleWaitText = (c: IdleCounts): string => `idle: ${c.ready} ready, ${c.open} open, ${c.waiting} waiting, ${c.reported} reported, ${c.later} later; staying until the ledger changes (owed drive --stop ends it)`;
+/**
+ * Trunk drift (review ruling #559, option c): the trunk ref no longer equals the ledger trunk. It is a repository fact,
+ * not a node fact: never a ledger halt. The text of the repo-level owner notify: a fast-forward is adopted, anything
+ * else (rewound, rewritten, missing) is restored.
+ */
+export function driftNotice(name: string, d: TrunkDrift): string {
+  const ledger = d.ledger.slice(0, 12), ref = d.commit ? d.commit.slice(0, 12) : 'missing';
+  // G3.4c: the ledger's trunk commit is gone, so neither update-ref nor adopt (it checks a fast-forward from it) works yet.
+  if (d.relation === 'ledger-missing') return `trunk ${name}: the ledger's trunk commit ${ledger} is absent from the repository, so git update-ref cannot restore it and owed adopt cannot check a fast-forward from it; bring the commit back (git fetch <remote> ${d.ledger} from any remote or clone that has it), then restore trunk (git update-ref refs/heads/${name} ${d.ledger} ${d.commit ?? '""'}) or adopt the current ref (owed adopt --commit ${ref} --note "<why>")`;
+  return d.relation === 'ahead'
+    ? `trunk ${name} moved outside owed (${ledger} → ${ref}); the main agent resolves it with: owed adopt --note "<why>"`
+    : `trunk ${name} was rewound or rewritten (${ledger} → ${ref}); restore it: git update-ref refs/heads/${name} ${d.ledger} ${d.commit ?? '""'}`;
+}
+/**
+ * SB1/SB3: what is wrong with a candidate that already contains trunk commits after its slot base (its writes would
+ * be diffed against the old base and claim other nodes' merged paths) and the fix: the SB2 rebase command.
+ */
+export const trunkAfterBaseText = (node: string, commit: string, base: string, latest: string, trunk: string): string =>
+  `commit ${commit.slice(0,12)} contains trunk commits after its slot base ${base.slice(0,12)} (latest ${latest.slice(0,12)}); run owed rebase ${node}, then in the slot worktree run \`git rebase --onto ${trunk} ${latest}\`, then submit again`;
+/**
+ * Ending of a halt for a run dsa rejected (D15.1): its id and bytes are fixed for the attempt and dsa answers the
+ * same id the same way, so clearing the halt only re-halts; a new attempt is the recovery.
+ */
+export const rejectedFixed = (node: string): string => `this attempt's request is fixed; fix the cause (plan, agent, model), then \`owed abandon ${node}\` to start a new attempt`;
+/** SR4: a rejected send can be superseded without losing the attempt; rejected runs keep D15.1. */
+export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${what === 'run' ? rejectedFixed(node) : `the attempt is not lost: continue the run (e.g. a dsa follow-up), then \`owed decide ${node} --text "<retry run>"\`; a later resume, submit or send to this run supersedes this send; or \`owed abandon ${node}\``}`;
+const shell = (s: string): string => /[\r\n]/.test(s) ? `$'${s.replaceAll('\\','\\\\').replaceAll("'","\\'").replaceAll('\n','\\n').replaceAll('\r','\\r')}'` : `'${s.replaceAll("'", "'\\''")}'`;
+export const answerRetry = (node: string, entry: RuleEntry, ref?: import('./types.ts').AnswerRef): string => {
+  const a = ref ?? entry.answers?.find(a => a.node === node) ?? entry.answer!;
+  // The prefix's exact length avoids treating punctuation in a qid as answer text.
+  const role = entry.text.startsWith('Answer to writer question ') ? 'writer' : 'reviewer';
+  const text = entry.answers ? entry.text : entry.text.slice(`Answer to ${role} question ${a.qid}: `.length);
+  return `owed answer ${shell(node)} --rid ${shell(a.rid)} --qid ${shell(a.qid)} --rev ${a.rev} -- ${shell(text)}`;
+};
+export function rebaseRecovery(head: string, original: string | undefined, inProgress: boolean | SlotGitOperation | undefined, base?: string, node?: string): string | undefined {
+  if (inProgress) return typeof inProgress === 'string'
+    ? `Git operation in progress; run \`git ${inProgress} --abort\`, then follow the rebase instruction.`
+    : 'Git operation in progress; run `git rebase --abort` (or `git merge --abort` for a merge), then follow the rebase instruction.';
+  if (original && head !== original) return `HEAD differs from last submitted candidate ${original.slice(0,12)}; keep: check \`git log ${base ?? '<slot base>'}..HEAD\` holds only this node's commits, run the focused tests, then \`owed submit ${node ?? '<node>'}\`; reset: \`git reset --hard ${original}\`, then \`git rebase --onto ${base ?? '<slot base>'} $(git merge-base HEAD ${base ?? '<slot base>'})\`.`;
+  return undefined;
+}
+const sweepQuote = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;
+export const sweepEscapeCommand = (node: string, seq: number, note: string): string => `owed escape ${sweepQuote(node)} --merge ${seq} --class missing --note ${sweepQuote(note)}`;
+export const setupHint = (signature: string, nodes: string): string => `setup failure (no tests ran): ${signature} — likely the environment; fix it, then owed decide ${nodes} --remeasure`;
+/**
+ * K5.3: the threshold hint for the measured items, or undefined: for a check X among them, the node's latest two
+ * failing, non-attribution observations of `check:X` both exited 0 with no failing test and counted the same number of
+ * tests, below X's current `min_tests`, and no ruling naming the node (not `*`) was recorded after the later one (after
+ * such a ruling the repair path runs).
+ */
+export function thresholdHint(s: State, node: string, obligations: readonly string[]): string | undefined {
+  const spec = s.plan.nodes.find(x => x.id === node), named = applicableRules(s, node).findLast(r => r.nodes !== '*' && r.nodes.includes(node));
+  for (const o of obligations) {
+    if (!o.startsWith('check:')) continue;
+    const x = o.slice(6), m = spec?.checks.find(c => c.id === x)?.min_tests;
+    if (m === undefined) continue;
+    const fails = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.probe === undefined && e.subject === node && e.obligation === o && e.verdict === 'fail' && !e.attribution).slice(-2);
+    if (fails.length < 2 || (named && named.seq > fails[1]!.seq)) continue;
+    const [a, b] = fails as [ObsEntry, ObsEntry];
+    const tests = a.counts?.tests;
+    if (a.exit !== 0 || b.exit !== 0 || a.counts?.fail !== 0 || b.counts?.fail !== 0 || tests === undefined || b.counts.tests !== tests || tests >= m) continue;
+    return `check ${x}: ${tests} tests ran and passed twice, below min_tests ${m}; the plan's threshold may be wrong: fix the plan (owed plan) or decide (owed decide ${node} --text "…")`;
+  }
+  return undefined;
 }

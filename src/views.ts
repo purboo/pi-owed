@@ -1,6 +1,6 @@
 import { actRuns, collapsedActLines, alreadyRecordedText, type RecordedAct } from './identical-acts.ts';
 import { reviewRequirementText, type ReviewRequirement } from './risk.ts';
-import { nodeReview, readyDispatchSkips, ownerNeeded, heldFlaky, heldFlakyText, flakyBlockText, flakyPass, type DispatchSkip } from './reducer.ts';
+import { nodeReview, readyDispatchSkips, heldFlaky, flakyPass, type DispatchSkip } from './reducer.ts';
 import type { AdoptionView, AttemptRuns, Block, CheckSpec, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, SlotRebase, State } from './types.ts';
 import { mergeWaitSuffix } from './adopt-wait.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
@@ -23,10 +23,8 @@ import type { InFlight } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { nearTimeoutWarnings } from './cost.ts';
 import { nodeTestRun } from './exec.ts';
-export { trunkRedHint, sharedCheckHint } from './needs.ts';
-import { needs, repoNeeds, activity, itemLine, trunkRedHint, sharedCheckHint, type Need, type Runtime } from './needs.ts';
-
-export const writerDecisionCommand = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
+export { trunkRedHint, sharedCheckHint, writerDecisionCommand, writerStopNeed, reviewDecision, trunkDecision, evidenceCommand, resumeCommands, flakyRuleHint, lapsedKnownRedText, genesisLine } from './needs.ts';
+import { needs, repoNeeds, activity, itemLine, trunkRedHint, sharedCheckHint, evidenceCommand, lapsedKnownRedText, overlapDispatchCommand, genesisLine, type Need, type Runtime } from './needs.ts';
 /** WS2: quote only the final non-empty paragraph, flattened and bounded before JSON quoting. */
 export function writerReply(result?: string): string {
   const paragraph = result?.trim().split(/\r?\n\s*\r?\n/).filter(p => p.trim()).at(-1)?.replace(/\s+/g, ' ').trim();
@@ -34,14 +32,6 @@ export function writerReply(result?: string): string {
   const text = paragraph.length > 300 ? `${paragraph.slice(0, 299)}…` : paragraph;
   return `writer says: ${JSON.stringify(text).replace(/[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}`;
 }
-/** WS2: parse only owed's own trailer; writer text cannot choose a different next command. */
-export function writerStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
-  const command = writerDecisionCommand(node), suffix = ` → ${command}`;
-  if (!text.endsWith(suffix)) return undefined;
-  const match = /(?:^|; )(writer says: "(?:[^"\\]|\\.)*"|writer gave no final text)$/.exec(text.slice(0, -suffix.length));
-  return match ? { reason: match[1]!, command } : undefined;
-}
-
 /** LO2: display current driver work without changing the ledger phase or acceptance. */
 export const measurementText = (m: InFlight): string => `${m.do === 'merge' ? 'merging' : 'measuring'} (since ${clockTime(m.since)})`;
 
@@ -52,7 +42,7 @@ const setReadyText = (v: object, lines: string[]): void => { readyText.set(v, li
 function dispatchSkipText(s: State, node: string, skip: DispatchSkip): string {
   const prefix = 'ready, not dispatched: ';
   if (skip.kind === 'max') return `${prefix}${skip.open} of max ${skip.max} attempts open`;
-  if (skip.kind === 'overlap') return `${prefix}writes overlap ${skip.others.map(o => `${oneLine(o.node)} (${o.paths.map(oneLine).join(', ')})`).join(', ')} → owed dispatch ${node} --allow-overlap`;
+  if (skip.kind === 'overlap') return `${prefix}writes overlap ${skip.others.map(o => `${oneLine(o.node)} (${o.paths.map(oneLine).join(', ')})`).join(', ')} → ${overlapDispatchCommand(node)}`;
   if (skip.kind === 'owner') return `${prefix}${nodeNext(s, node)}`;
   return `${prefix}node is no longer in the plan`;
 }
@@ -120,7 +110,6 @@ export function knownRedDebt(s: State): { knownRed?: KnownRedDebt[]; lapsedKnown
   return { ...(knownRed.length ? { knownRed } : {}), ...(lapsedKnownRed.length ? { lapsedKnownRed } : {}) };
 }
 export const knownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} known red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}`;
-export const lapsedKnownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} lapsed known_red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}; removable: owed edit --invariant ${d.invariant} --set known_red='<remaining active entries>' --note "remove lapsed entries"`;
 /** MS5: one debt line per active quarantine entry: invariants `<inv>/<test>`, node checks `<node>/<check>/<test>`. */
 export interface QuarantineDebt { where: string; test: string; fix: string; note?: string; passed?: { seq: number; commit: string; merging?: string; batch?: string[] } }
 export function quarantineDebt(s: State, fix?: string): QuarantineDebt[] {
@@ -200,10 +189,6 @@ export interface SummaryView {
   debt: string[];
 }
 export interface GenesisStatus { observed: number; total: number; pending: string[]; measuring?: boolean }
-/** `Genesis: k/n invariants observed` plus where the rest gets measured (D24.5). */
-export function genesisLine(g: GenesisStatus): string {
-  return `Genesis: ${g.observed}/${g.total} invariants observed ${g.measuring ? '(measuring in this session)' : '— run owed attest --genesis (or the next attest/merge measures them)'}; pending: ${g.pending.join(', ')}`;
-}
 /** One line: backslashes, newlines and other control characters are escaped, so a value cannot add lines to a dialog or terminal prompt. */
 /** Escapes C0/C1 controls, DEL, line/paragraph separators and bidi controls (U+202A–U+202E, U+2066–U+2069). */
 export function oneLine(text: string): string {
@@ -343,20 +328,6 @@ export function reviewAsk(note: string): string {
   const tail = marker ? note.slice(marker.index + marker[0].length).replace(/^[\s):—-]+/, '') : note.trim().match(/[^.!?]+[.!?]*\s*$/)?.[0] ?? note;
   return oneLine(tail.trim().replace(/\s+/g,' ')).slice(0,300).trim();
 }
-export const reviewDecision = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
-export const reviewNeed = (node: string, note: string): string => `Needs you: ${node} — review asks: ${reviewAsk(note)} → ${reviewDecision(node)}`;
-/** AK2: repair advice is grounded in the recorded plan and failures, never a placeholder. */
-export function trunkDecision(s: State | undefined, obligation: string, failed?: readonly string[], history?: readonly Entry[]): string {
-  const es = history ?? (s ? entriesOf(s) : []);
-  const key = s?.trunk.invKeys[obligation.replace(/^inv:/,'')];
-  const names = [...new Set(failed ?? es.filter((e): e is ObsEntry => e.kind === 'obs' && e.subject === 'trunk' && e.obligation === obligation && e.key === key && e.verdict === 'fail').flatMap(e => e.failed ?? []))];
-  const tests = names.slice(0,3).map(oneLine).join(', ') || obligation;
-  const law = es.findLast(e => e.kind === 'plan' || e.kind === 'genesis');
-  const path = law && (law.kind === 'plan' || law.kind === 'genesis') ? law.path : undefined;
-  const command = path ? `owed plan ${/^[\w./-]+$/.test(path) ? path : JSON.stringify(path)}, or owed edit --node-new` : 'owed edit --node-new';
-  const defers = s?.deferred.filter(d => `inv:${d.id}` === obligation && (d.key === key || d.seq > (s.nodes[d.node]?.slot?.dispatchSeq ?? Infinity))) ?? [];
-  return `fix ${tests}${names.length > 3 ? `, +${names.length - 3}` : ''}: add a repair node (${command}) — clears on the next trunk key${defers.map(d => `; deferred for ${d.node} #${d.seq}`).join('')}`;
-}
 export function withActHistory<T extends object>(view: T, entries: readonly Entry[]): T { actHistories.set(view,entries); return view; }
 const repetitions = new WeakMap<Entry, number>();
 const repetition = (e: Entry): string => (repetitions.get(e) ?? 1) > 1 ? ` ×${repetitions.get(e)}` : '';
@@ -485,18 +456,6 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   view.summary = summaryView(s, entries, view, now, rt, currentDefers);
   presentationRuntime.set(view.summary, rt);
   return withPresentationState(view,s);
-}
-/** NY1: a recorded repair after a review block, or a newer submit, is pending replacement evidence. */
-export function repairingBlock(s: State, node: string): Block | undefined {
-  const n = s.nodes[node], slot = n?.slot;
-  if (!n || !slot?.open || halted(s, node)) return undefined;
-  const block = n.blocks.findLast(b => countsBlock(b) && b.kind === 'judgment' && reviewObligation(b.obligation));
-  if (!block) return undefined;
-  return (n.candidate?.seq !== undefined && n.candidate.seq > block.seq || n.runs.find(r => r.attempt === slot.attempt)?.sends.some(x => x.reason === 'repair' && x.seq > block.seq)) ? block : undefined;
-}
-/** NY1/WF2: share the driver's owner predicate without a views -> drive import cycle. */
-function repairNeedsOwner(s: State, node: string): boolean {
-  return ownerNeeded(s,node) !== undefined;
 }
 /** NY5: derive the receipt from the exact recorded prior/next plans, not the current board. */
 export function planReceipt(e: Entry, prior: Plan, next: Plan): string {
@@ -670,14 +629,6 @@ function manualText(i: ItemView & { observations?: Entry[] }): string {
   const evidence = obs.map(e => e.kind === 'evidence' ? `#${e.seq} ${e.by}: ${evidenceText(e)}` : e.kind === 'review' ? `#${e.seq} ${e.by} ${e.verdict}${e.channel ? ` (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : ''}${e.note ? `: ${oneLine(e.note)}` : ''}` : e.kind === 'waive' ? `${e.by}: ${e.reason} (${e.channel}${e.channel === 'flag' ? ' weak confirmation' : ''})` : `#${e.seq}`).join('; ');
   return `${i.mark} ${label} ${i.subject}/${i.obligation} — ${i.detail}${evidence ? ` [${evidence}]` : ''}`;
 }
-/** DC4: one decision gives acknowledged guidance and releases the halt; no-resume preserves it. */
-export function resumeCommands(node = '<node>'): string { return `owed decide ${node} --text "<decision>" (add --after <node> to wait until that node merges; --no-resume keeps it halted)`; }
-/**
- * 0.8 (L3.2, app #21): offered wherever owed tells the owner what to do about a flaky block, next to the waiver: when the
- * check or test itself must change, a ruling sends the writer to fix it.
- */
-export const flakyRuleHint = (node: string): string => `or owed decide ${node} --writer --text "<what the writer must change>" when the check or test itself must change (the writer fixes it; the block stays flaky until a plan change of the check's definition supersedes it, or the owner waives it once the fixed candidate passes)`;
-export const resumeHint = (node = '<node>'): string => `to clear it without an obligation: ${resumeCommands(node)}`;
 /** 0.8 (L1.5): `waiting for <dep> (resume #<seq>)`. */
 export const waitingLine = (w: Waiting): string => [w.deps?.length ? `waiting (deps: ${w.deps.join(', ')})` : '', w.after ? `waiting for ${w.after} (resume #${w.resume})` : ''].filter(Boolean).join('; ');
 /** D25.6 (review ruling #559): an owner halt reads `needs the owner (the main agent decides; owed lists the command)`. */
@@ -689,21 +640,6 @@ const launchText = (l: LaunchEntry): string => `#${l.seq} ${l.role} ${l.rid}`;
 const rulingMark = (b: { ruling?: 'needed' | number }): string => b.ruling === undefined ? '' : b.ruling === 'needed' ? ' (needs a parent ruling)' : ` (ruled #${b.ruling})`;
 function runsText(r: AttemptRuns): string[] {
   return [...r.launches.map(l => `Driver launch ${launchText(l)} (spec ${l.spec.slice(0, 12)})`), ...r.sends.map(x => `Driver send #${x.seq} ${x.sendKind} (${x.reason}) to ${x.rid}: ${x.send}`)];
-}
-/** QT2: the next command for an unsatisfied item of node `node`, by who discharges it. */
-function itemNext(card: string, i: ItemView, s?: State): string {
-  // QT-R1 (5): never a command the CLI refuses: trunk invariants (why trunk / why inv:*) get the commands the status
-  // and decision views give; other items are addressed to their own subject.
-  if (i.subject === 'trunk') return i.mark === '⊥' ? 'owed attest --trunk' : trunkDecision(s,i.obligation);
-  const node = i.subject || card;
-  if (i.discharger === 'executor') return `owed attest ${node} ${SKIP_ATTEST}`;
-  if (i.discharger === 'writer') return `the writer fixes it and runs owed submit ${node}`;
-  if (i.discharger === 'reviewer') return `a reviewer records owed review ${node}${obligationFlag(i.obligation)} --ok|--block --rank <N> --note "<why>"`;
-  if (i.discharger === 'parent') return `owed decide ${node} --text "<decision>"`;
-  if (i.obligation === 'approve') return `owed approve ${node}`;
-  if (i.obligation.startsWith('evidence:')) return `owed evidence ${node} ${i.obligation.slice(9)} --note "<what>"`;
-  if (reviewObligation(i.obligation)) return `owed review ${node}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()} (owner decision)`;
-  return `owed waive ${node} ${i.obligation} --reason "<why>" (owner)`;
 }
 /**
  * QT2: the default `owed why <node>` card: the outcome line, then one line per unsatisfied obligation, active block and
@@ -954,63 +890,6 @@ export interface Brief {
   totals: { merged: number; acceptedUnmerged: number; blocked: number; ready: number; waiting: number; later: number; reported: number };
 }
 const reviewObligation = (o: string): boolean => o === 'review' || o === 'closure-review';
-const obligationFlag = (o: string): string => o === 'closure-review' ? ' --obligation closure-review' : '';
-/** G1.3: ` --candidate <commit12>` of the node's open candidate (candidate-bound acts name what they judged), else empty. */
-const candidate12 = (s: State, node: string): string | undefined => { const n = s.nodes[node]; return n?.slot?.open && n.candidate ? n.candidate.commit.slice(0, 12) : undefined; };
-const candidateFlag = (s: State, node: string): string => { const c = candidate12(s, node); return c ? ` --candidate ${c}` : ''; };
-const waiveCommand = (node: string, obligation: string, risks: number[], flag = ''): string => `owed waive ${node} ${obligation} --reason "<why the risk is acceptable>"${risks.length ? ` --accept-risk ${risks.join(',')}` : ''}${flag}`;
-/** Hint for a node without an open writer slot: nothing can be cleared on an old candidate, only on a new attempt. */
-const dispatchHint = (n: NodeState): string => n.held !== undefined ? `owed decide ${n.id} --text "<decision>" (held by abandon #${n.held})` : n.merged ? `${n.id} is merged; no attempt can clear this` : n.phase === 'removed' ? `${n.id} is not in the current plan; it is never dispatched (add it to the plan to work on it again)` : `owed dispatch ${n.id}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''} (no open attempt; this can only be cleared on a new attempt)`;
-/** D23: the command that records manual evidence `id` of `node` as principal `as`; `candidate` (G1.3): the commit (prefix) it names. */
-export const evidenceCommand = (node: string, id: string, as: string, candidate?: string): string => `owed evidence ${node} ${id} --file <path> --note "<what was checked>" --as ${as}${candidate ? ` --candidate ${candidate}` : ''}`;
-/**
- * D25.6: commands the main agent (the delegated owner) can run, in order, to resolve an owner halt or notification of
- * `node`. With an open candidate: the brief's command for each owner item still owed, a waiver for every other item
- * still owed and every uncleared block, then a new attempt. Without one, every command is executable when its turn
- * comes, as in the brief's clearHint/dispatchHint: a node without an open slot is dispatched first (`owed dispatch`),
- * and a waiver (which needs a candidate) is prefixed `after the writer submits a candidate:`; a merged node has none.
- */
-export function ownerCommands(s: State, node: string): string[] {
-  const n = s.nodes[node];
-  if (!n) return [];
-  const blocks = (o: string) => n.blocks.filter(b => b.obligation === o && countsBlock(b) && !heldFlaky(s,node,b)).map(b => b.seq);
-  const live = !!(n.slot?.open && n.candidate);
-  if (!live && (n.merged || n.phase === 'removed') && !n.slot?.open) return [];
-  const items = live ? n.items.filter(i => i.status === 'D' && !(i.discharger === 'executor' && n.blocks.some(b => b.obligation === i.obligation && heldFlaky(s,node,b)))) : [];
-  const later = live ? '' : 'after the writer submits a candidate: ';
-  const out = n.slot?.open ? [] : [n.held !== undefined ? `owed decide ${node} --text "<decision>" (held by abandon #${n.held})` : `owed dispatch ${node}${n.phase === 'blocked' ? ' once its dependencies are merged' : ''}`];
-  const flag = candidateFlag(s, node);
-  out.push(...items.map(i => i.discharger === 'owner' || n.blocks.some(b => b.obligation === i.obligation && countsBlock(b) && sharedCheckHint(s,b)) ? decisionCommand(s, i, false) : waiveCommand(node, i.obligation, blocks(i.obligation), flag)));
-  for (const b of n.blocks.filter(b => countsBlock(b) && !heldFlaky(s,node,b) && !items.some(i => i.obligation === b.obligation))) out.push(`${later}${waiveCommand(node, b.obligation, blocks(b.obligation), flag)}`);
-  // 0.8 (L3.2): once, after the waivers, when a flaky block is among them.
-  if (n.blocks.some(b => b.state === 'flaky' && !heldFlaky(s,node,b))) out.push(flakyRuleHint(node));
-  if (n.slot?.open) out.push(`owed abandon ${node} --note "<why>" (then the driver starts a new attempt)`);
-  return [...new Set(out)];
-}
-/**
- * The owner principal a resolving command states where a role must be given (E3.3, ruling #559): the CLI's default
- * owner, `owner:cli`, or `owner:human` under the confirmation gate `OWED_CONFIRM=owner`.
- */
-const ownerAs = (): string => process.env.OWED_CONFIRM?.trim() === 'owner' ? 'owner:human' : 'owner:cli';
-/** The command that removes an owner-queue item from the owner's queue. */
-function decisionCommand(s: State, i: ItemView, flakyHint = true): string {
-  if (i.subject === 'trunk') return trunkDecision(s,i.obligation);
-  const n = s.nodes[i.subject];
-  if (n && !n.slot?.open) return dispatchHint(n);
-  const flag = candidateFlag(s, i.subject);
-  if (i.obligation === 'approve') return `owed approve ${i.subject}${flag} [--note TEXT] (owner)`;
-  if (i.obligation.startsWith('evidence:')) return evidenceCommand(i.subject, i.obligation.slice(9), ownerAs(), candidate12(s, i.subject));
-  const counting = s.nodes[i.subject]?.blocks.filter(b => b.obligation === i.obligation && countsBlock(b)) ?? [];
-  const shared = counting.map(b => sharedCheckHint(s,b)).find(h => h !== undefined);
-  if (shared) return shared.split(' → ')[1]!;
-  const blocks = counting.filter(b => !heldFlaky(s,i.subject,b));
-  if (reviewObligation(i.obligation) && blocks.every(b => b.kind === 'judgment' && b.state === 'active')) {
-    const review = `owed review ${i.subject}${obligationFlag(i.obligation)} --ok --rank 3 --as ${ownerAs()}${flag}`;
-    return blocks.length ? `owed decide ${i.subject} --writer --text "<guidance>"; writer repairs and submits again; override only: ${review} (overrides a valid block: state the accepted risk)` : review;
-  }
-  // 0.8 (L3.2): a flaky block also offers a ruling (`ownerCommands` adds it once itself).
-  return `${waiveCommand(i.subject, i.obligation, blocks.map(b => b.seq), flag)}${flakyHint && blocks.some(b => b.state === 'flaky') ? `; ${flakyRuleHint(i.subject)}` : ''}`;
-}
 function mergeBlockClearHint(s: State, entries: readonly Entry[], b: Block, rt?: Runtime): string {
   const e = entries.find(e => e.seq === b.seq);
   return [itemLine(s, b.node, b.obligation, rt), ...(e?.kind === 'obs' && e.merging === b.node ? mergeFailureHints(s, b.node, [e]) : [])].join('; ');
@@ -1097,29 +976,6 @@ function intermittentLine(s: State, history: readonly Entry[], node: string, fai
   const older = other.filter(e => e.probe === undefined && sig(e) !== undefined);
   if (!older.length || !failures.some(f => sig(f) !== undefined) || older.some(e => failures.some(f => sig(f) === sig(e)))) return undefined;
   return `same test failed on older trees (different error): ${oneLine(name)} (${older.slice(0, 3).map(e => `#${e.seq}`).join(', ')})`;
-}
-/**
- * How to clear a non-cleared block. A judgment block is described in words: printing a
- * ready-to-run review command with `--as` of the original reviewer would invite another
- * principal to impersonate them. Only owner commands (gated by the owner channel) are printed.
- */
-function clearHint(s: State, entries: readonly Entry[], b: Block): string {
-  const n = s.nodes[b.node];
-  const trunkRed = trunkRedHint(s, b.seq, b.key);
-  const flaky = b.state === 'flaky' && b.kind === 'exec' ? heldFlaky(s,b.node,b) ? heldFlakyText(s,b.node,b) : `${flakyBlockText(s,b)}; ${flakyRuleHint(b.node)}` : undefined;
-  if (trunkRed) return `${trunkRed}${flaky ? `; ${flaky}` : ''}`;
-  const shared = sharedCheckHint(s,b);
-  if (shared) return `${shared}${flaky ? `; ${flaky}` : ''}`;
-  if (flaky) return flaky;
-  if (n && !n.slot?.open) return dispatchHint(n);
-  const risks = (n?.blocks ?? []).filter(x => x.obligation === b.obligation && countsBlock(x)).map(x => x.seq);
-  const after = n?.candidate ? '' : `after the writer submits a candidate of the current attempt, `, flag = candidateFlag(s, b.node);
-  if (b.state === 'flaky') return `${after}owner accepts the risk: ${waiveCommand(b.node, b.obligation, risks, flag)}; ${flakyRuleHint(b.node)}`;
-  if (b.kind === 'exec') return `writer fixes and runs owed submit ${b.node}, then owed attest ${b.node} ${SKIP_ATTEST} (the attribution rerun on the original content clears the block)`;
-  if (b.obligation === 'approve') return `${after}a later owner approval of the current candidate clears it: owed approve ${b.node}${flag}`;
-  const by = entries.find(e => e.seq === b.seq)?.by ?? 'the original reviewer';
-  const ruling = !currentNeeds(s, b) ? '' : parentRuling(s, b) ? `the writer repairs with ruling #${parentRuling(s, b)!.seq}; then ` : `a parent records owed decide ${b.node} --writer --text "<decision>" (the reviewer asked for a parent ruling), the writer repairs; then `;
-  return `${after}${ruling}an ok review of ${b.node}/${b.obligation} on the current candidate by the original reviewer ${by} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it; or owner: ${waiveCommand(b.node, b.obligation, risks, flag)}`;
 }
 /** A needs-parent block recorded on the current candidate of its node's open attempt (D18b.4: stale ones keep the stale wording). */
 function currentNeeds(s: State, b: Block): boolean {
