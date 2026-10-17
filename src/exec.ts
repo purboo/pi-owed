@@ -14,11 +14,14 @@ import { expandWrap } from './exec-wrap.ts';
 import { assertNoLedgerLock } from './lock-context.ts';
 
 /**
- * K2.1: the note of a non-red check that fails on its count: `zero tests; exit <code>`, or `min_tests unmet: counted
- * <tests> (<pass> pass, <fail> fail[, <skip> skip]) < min_tests <m>; exit <code>` (an unknown pass/fail count reads `?`).
+ * K2.1/PF4: a non-red check's count failure note; zero-test fallbacks also name their bounded source line.
+ * `min_tests unmet: counted <tests> (<pass> pass, <fail> fail[, <skip> skip]) < min_tests <m>; exit <code>`
+ * (an unknown pass/fail count reads `?`).
  */
-export function countNote(counts: Counts | undefined, minTests: number | undefined, code: number | null): string {
+export function countNote(counts: Counts | undefined, minTests: number | undefined, code: number | null, log?: string): string {
   const exit = `exit ${code ?? 'none'}`;
+  const source = counts?.tests === 0 && log !== undefined ? zeroTestFallbackSignature(log) : undefined;
+  if (source) return `zero tests (${source}); ${exit}; a command that runs tests can print an owed-counts line`;
   if (!counts || counts.tests === 0 || minTests === undefined) return `zero tests; ${exit}`;
   const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
   return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
@@ -85,18 +88,55 @@ function standardCounts(log: string): Counts | undefined {
     }
     const total = /\((\d+)\)/.exec(summary); c.tests = total ? Number(total[1]) : c.tests || (c.pass ?? 0) + (c.fail ?? 0) + (c.skip ?? 0); return c;
   }
-  if (/no tests (?:ran|collected|found)|collected 0 items/i.test(log)) return { format: 'pytest', tests: 0 };
-  const py = log.split('\n').reverse().find(l => /\d+ (?:passed|failed|skipped|error)/.test(l) && /(?:=| in \d)/.test(l));
-  if (py) {
+  return fallbackCounts(log)?.counts;
+}
+/** PF1/PF2: only complete terminal summaries or anchored tool zero-test forms; last matching line wins. */
+function fallbackCounts(log: string): { counts: Counts; line: string } | undefined {
+  for (const rawLine of log.split(/\r?\n/).reverse()) {
+    const line = rawLine.replace(/\x1b\[[0-9;]*m/g, '');
+    const bounded = /^\s*=+\s+(.+?)\s+=+\s*$/.exec(line);
+    const body = bounded?.[1] ?? line.trim();
+    if (/^\s*(?:=+\s*)?No tests found\b/.test(line)) return { counts: { format: 'jest/vitest', tests: 0 }, line };
+    if (/^\s*(?:=+\s*)?(?:no tests ran(?: in \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?)?|collected 0 items)\s*(?:=+)?\s*$/.test(line)) return { counts: { format: 'pytest', tests: 0 }, line };
+    // A duration is optional only inside '=' bounds; everything after it must be pytest's optional clock.
+    const duration = /^(.*?) in \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?$/.exec(body);
+    if (!bounded && !duration) continue;
+    const items = (duration?.[1] ?? body).split(/,\s*/);
+    const parsed = items.map(item => /^(\d+) (passed|failed|skipped|errors?|xfailed|xpassed|deselected|warnings?|rerun)$/.exec(item));
+    if (parsed.some(item => !item)) continue;
     const c: Counts = { format: 'pytest', tests: 0 };
-    for (const m of py.matchAll(/(\d+) (passed|failed|skipped|errors?|xfailed|xpassed|deselected)/g)) {
-      if (m[2] === 'deselected') continue;
-      const n = Number(m[1]), k = m[2] === 'passed' || m[2] === 'xpassed' ? 'pass' : m[2] === 'skipped' || m[2] === 'xfailed' ? 'skip' : 'fail';
+    for (const m of parsed) {
+      if (/^(?:deselected|warnings?|rerun)$/.test(m![2]!)) continue;
+      const n = Number(m![1]), k = m![2] === 'passed' || m![2] === 'xpassed' ? 'pass' : m![2] === 'skipped' || m![2] === 'xfailed' ? 'skip' : 'fail';
       c[k] = (c[k] ?? 0) + n; c.tests! += n;
     }
-    return c;
+    return { counts: c, line };
   }
   return undefined;
+}
+/** @internal PF4: full SGR-stripped zero-test source, never stored on Counts. */
+export function zeroTestFallbackLine(log: string): { format: 'pytest' | 'jest/vitest'; line: string } | undefined {
+  const counts = parseCounts(log);
+  if (counts?.tests !== 0 || (counts.format !== 'pytest' && counts.format !== 'jest/vitest')) return undefined;
+  // Preserve the unchanged Tests: parser's precedence over the explicit zero-test fallback.
+  const summary = counts.format === 'jest/vitest' ? [...log.matchAll(/^\s*Tests:?\s+(.+)$/gm)].at(-1) : undefined;
+  const line = summary ? summary[0].split('\n').at(-1)! : fallbackCounts(log)?.line;
+  if (line === undefined) return undefined;
+  return { format: counts.format, line: line.replace(/\x1b\[[0-9;]*m/g, '') };
+}
+/** PF4: display-only provenance, never stored on Counts or used to decide a verdict. */
+export function zeroTestFallbackSignature(log: string): string | undefined {
+  const source = zeroTestFallbackLine(log);
+  if (!source) return undefined;
+  const tokens: string[] = [];
+  let length = 0, truncated = false;
+  for (const char of source.line) {
+    const escaped = JSON.stringify(char).slice(1, -1).replace(/[\x7f-\x9f\u2028\u2029]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+    if (length + escaped.length > 160) { truncated = true; break; }
+    tokens.push(escaped); length += escaped.length;
+  }
+  if (truncated) { while (length > 159) length -= tokens.pop()!.length; tokens.push('…'); }
+  return `${source.format} fallback counted line "${tokens.join('')}"`;
 }
 /** FG: display-only errors; failed names and measurement verdicts remain unchanged. */
 export interface ErrorGroup { message: string; location?: string; names: string[]; expected?: string; actual?: string; signatureLocation?: string }
@@ -670,13 +710,15 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
           if (!red && result.code !== 0 && (!obs.counts || obs.counts.tests === 0)) {
             obs.verdict = 'fail';
             obs.note = `command exited ${result.code} ${obs.counts ? 'after zero tests' : 'with no recognizable test count'}${tail()}`;
+            const source = obs.counts?.tests === 0 ? zeroTestFallbackSignature(result.measurementLog ?? result.log) : undefined;
+            if (source) obs.note += `; ${source}; a command that runs tests can print an owed-counts line`;
           } else {
             if (!red && spec.min_tests !== undefined && !obs.counts) throw new Error('unknown test count format with min_tests');
             const countOK = obs.counts?.tests !== 0 && (red || spec.min_tests === undefined || (obs.counts?.tests ?? 0) >= spec.min_tests);
             const exitOK = red ? result.code !== null && result.code !== 0 && (!spec.red_expect || new RegExp(spec.red_expect).test(result.log)) : result.code === 0;
             // RC2: owed-counts is the command's explicit verdict too; existing formats keep their exit semantics.
             obs.verdict = exitOK && countOK && (red || obs.counts?.format !== 'owed' || obs.counts.fail === 0) ? 'pass' : 'fail';
-            if (!countOK) obs.note = red ? 'zero tests' : countNote(obs.counts, spec.min_tests, result.code);
+            if (!countOK) obs.note = red ? 'zero tests' : countNote(obs.counts, spec.min_tests, result.code, result.measurementLog ?? result.log);
           }
           // RC3: failed names first, followed by a bounded tail, for a failed command even if counts passed.
           if (obs.verdict === 'fail' && !obs.note) {
