@@ -8,7 +8,7 @@ Replay comparison reads a historical ledger and its blob root without changing t
 - `--seqs` selects explicit sequences; `--every` selects periodic sequences; `--halts` includes halt entries. Selection is their union. Without a selector, every entry is sampled.
 - `--baseline-src` supplies the older source directory. `--engine` selects the current engine, the older engine or both; supplying baseline source without an engine compares both.
 - `--plan-cache` selects an engine-and-hash-isolated JSON cache. Without it, a temporary cache is removed on exit. Missing, partial or corrupt JSON falls back to historical YAML; publication is atomic. Parsed plans are deeply frozen and held in a bounded lazy LRU, not preloaded.
-- `--shard i/N` renders only selected sequences belonging to that shard; every shard still folds the entire ledger. `--merge` combines report files only when every distinct shard of the same input and configuration is present.
+- `--shard i/N` assigns selected samples by their ordinal modulo the shard count, not by ledger sequence; every shard still folds the entire ledger. `--merge` requires every distinct shard of the same ledger, referenced-blob input and configuration. All shards record the complete missing-blob and fold-failure lists; differing global facts reject the merge and matching facts are counted once.
 - `--json` emits a structured report. The text report includes findings, coverage and timings. Timing records distinguish fold, YAML parsing, status, driver planning, compact why and the need audit; parsing can be nested within surface timing.
 
 No plan key, ledger field or entry kind changes. Cache entries are tool-side data only; they do not affect acceptance or waiver scope.
@@ -17,9 +17,16 @@ No plan key, ledger field or entry kind changes. Cache entries are tool-side dat
 
 The report separates primary-command disagreement, invalid or incomplete commands, and commands naming an obligation different from the need they are displayed for. Candidate pins, active risk citations, actor flags, evidence files and required acknowledgment are checked independently of CLI syntax.
 
-Coverage is explicit: an owner or parent obligation without a need, or a need without a single command, is uncovered. Missing blobs and replay failures are reported instead of manufacturing state. Empty input, missing requested sequences and empty output cannot produce a successful coverage result.
+Coverage is checked per expected line, using the same current-source mapping for both engines:
 
-A notification with an explicitly present `need: null` is separately reported as diagnostic. It cannot hide a live owner need, and any resolving command in its text still causes a disagreement. For example, the historical `checktpl` snapshot at sequence 1950 follows the rank-two block recorded at 1939 and an attributed merge advancing trunk; its owner-diagnostic notification is not a fabricated resolving command.
+- Status uses `summaryView` and `summaryHead` in `src/views.ts`: every node need produces a Needs-you line, preserving the within-node need order.
+- Compact-why headlines use `cardNeeds` and `renderWhy` in `src/views.ts`: the first need supplies the outcome command. `renderWhy` also emits a `Next:` line for every subsequent need.
+- Compact-why items follow the outstanding-item map in `renderWhy` and `cardItemLine` in `src/views.ts`. Every outstanding item must remain present. Expectations use the public `Need` and prescribed text forms, not the renderer's own item-line function as an oracle. A need-text arrow must carry the need command. A same-text item without a command, or another contextual no-command item, is counted as information; status still independently enforces the need command. A contextual item with a different primary command is a disagreement. An item without a corresponding need receives existence and argv/obligation checks, not a fabricated owner prescription.
+- Emitted, available, non-diagnostic owner notices use `ownerNotify` and `needLines` in `src/drive.ts`: once the owner-need predicate selects the route, every need produces a notice line. Notifications not actually emitted remain a separate coverage category.
+
+Missing or empty expected lines are uncovered with the surface and obligation; a present line whose primary command differs from its corresponding need is a disagreement. Secondary lines receive the same checks as headlines. An owner or parent obligation without a need, or a need without a single command, is also uncovered. Missing blobs and replay failures are reported instead of manufacturing state. Empty input, missing requested sequences and empty output cannot produce a successful coverage result.
+
+A notification with an explicitly present `need: null` is separately reported as diagnostic. It cannot hide a live owner need. An owed command anywhere in its text, including an unarrowed instruction in the body, still causes a disagreement; the recognized acts come from the same CLI validator used for argv checks. For example, the historical `checktpl` snapshot at sequence 1950 follows the rank-two block recorded at 1939 and an attributed merge advancing trunk; its owner-diagnostic notification is not a fabricated resolving command.
 
 An owner notification absent from actual planning output is reported as not emitted, with its reason. It is not compared as though a command were emitted. Private older surfaces are reported as unavailable; they are never exposed through source rewriting. The exported older compact renderer remains observable even though its private item builder is unavailable.
 
@@ -35,4 +42,4 @@ Finding details are capped while totals remain complete; timing records retain e
 
 ## Changed existing tests
 
-None. All replay regression tests and their synthetic ledger data are new; no existing test, shared helper or fixture is changed.
+The existing replay regressions for normal output, command disagreements, missing blobs, empty output, compatibility, diagnostic limits and shard merging are retained and run against the stricter audit. The shard equality checks now exercise global facts counted once; diagnostic detection also covers body commands under R-028-69. The item-form regressions added under R-028-71 distinguish same-text repair information from wrong-command branches without weakening status coverage. New tests reproduce the missing compact items, dropped secondary lines, ordinal-partition and mismatched-blob findings from that ruling. No shared helper, external fixture or pre-replay test changes.

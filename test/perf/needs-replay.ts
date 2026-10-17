@@ -1,5 +1,5 @@
 // RP / R-028-58/62: read-only, incremental comparison. No operation or driver action is executed.
-import { createReadStream, existsSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, renameSync, rmSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, mkdirSync, mkdtempSync, writeFileSync, renameSync, rmSync, openSync, readSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
@@ -18,7 +18,7 @@ import type { Entry, Plan, State } from '../../src/types.ts';
 export interface SurfaceNode {
   node: string;
   status: string[];
-  why: { headline: string; items: { obligation: string; line: string }[] };
+  why: { headline: string; items: { obligation: string; line: string }[]; next?: string[] };
   notice: string[];
   notEmitted?: string;
   diagnostic?: boolean;
@@ -38,13 +38,16 @@ export interface Result {
   coverage: { uncovered: number; missingBlobs: number; notEmitted: number; unavailable: number; diagnostic: number };
   findings: Record<'a' | 'b' | 'c' | 'uncovered' | 'missingBlobs' | 'notEmitted' | 'unavailable' | 'diagnostic', Finding[]>;
   truncated: boolean;
+  global: { missingBlobs: Finding[]; foldFailures: Finding[] };
+  itemBranches: { i: number; ii: number; iii: number; iv: number };
+  itemInfo: Finding[];
 }
 const DETAIL_LIMIT = 200;
 function result(version: string): Result {
   return { version, entries: 0, samples: 0, nodes: 0, normalizedLines: 0,
     timing: { foldMs: 0, planParseMs: 0, planParses: 0, jsonReads: 0, oracleFoldMs: 0, statusMs: 0, decideMs: 0, whyMs: 0, auditMs: 0, samples: [] }, errors: { a: 0, b: 0, c: 0 },
     coverage: { uncovered: 0, missingBlobs: 0, notEmitted: 0, unavailable: 0, diagnostic: 0 },
-    findings: { a: [], b: [], c: [], uncovered: [], missingBlobs: [], notEmitted: [], unavailable: [], diagnostic: [] }, truncated: false };
+    findings: { a: [], b: [], c: [], uncovered: [], missingBlobs: [], notEmitted: [], unavailable: [], diagnostic: [] }, truncated: false, global: { missingBlobs: [], foldFailures: [] }, itemBranches: { i: 0, ii: 0, iii: 0, iv: 0 }, itemInfo: [] };
 }
 function add(r: Result, kind: keyof Result['findings'], f: Finding): void {
   if (kind === 'a' || kind === 'b' || kind === 'c') r.errors[kind]++;
@@ -76,6 +79,14 @@ export function commandWords(text: string): string[] {
 function primary(line: string): string | undefined {
   const tail = line.slice(line.lastIndexOf(' → ') + 3).trim();
   return line.includes(' → ') && tail.startsWith('owed ') ? tail.replace(/; (?:\d+ outstanding|nothing outstanding)(?: \(accepted\))?$/, '') : undefined;
+}
+// Query the validator itself: missing arguments are a recognized act, Unknown command is not.
+function diagnosticCommand(text: string): boolean {
+  for (const match of text.matchAll(/\bowed\s+([a-z][a-z-]*)\b/g)) {
+    try { validateArgv([match[1]!]); return true; }
+    catch (e) { if (!message(e).startsWith('Unknown command ')) return true; }
+  }
+  return false;
 }
 function argvParts(command: string) {
   const words = commandWords(command); if (words.shift() !== 'owed') throw new Error('command must start with owed');
@@ -150,7 +161,7 @@ export const renderCurrent: Renderer = (state, now, timing) => {
     const chosen = actions.find(a => a.node === n.id);
     return { node: n.id, status: statusLines(status, n.id),
       why: { headline: lines[0] ?? '', items: n.items.filter(i => i.status === 'D').map(i => ({ obligation: i.obligation,
-        line: lines.find(l => l.startsWith(`${i.mark} ${i.obligation}: `)) ?? '' })) },
+        line: lines.find(l => l.startsWith(`${i.mark} ${i.obligation}: `)) ?? '' })), next: lines.filter(l => l.startsWith('Next: ')) },
       notice: notice.flatMap(a => a.do === 'notify' ? a.text.split('\n') : []),
       ...(notice.some(a => 'need' in a && a.need === null) ? { diagnostic: true } : {}),
       ...(!notice.length ? { notEmitted: card.halt ? 'halted' : chosen ? `planning action ${chosen.do}` : 'no notify with empty runs (or no owner route)' } : {}) };
@@ -169,7 +180,7 @@ export async function adapter0272(src: string): Promise<{ render: Renderer; redu
       const lines = elapsed(() => v.renderWhy(v.receipt(state, history, n.id)) as string, ms => { if (timing) timing.whyMs += ms; }).split('\n');
       return { node: n.id, status: statusLines(status, n.id), notice: [],
         why: { headline: lines[0] ?? '', items: n.items.filter(i => i.status === 'D').map(i => ({ obligation: i.obligation,
-          line: lines.find(l => l.startsWith(`${i.mark} ${i.obligation}: `)) ?? '' })) } };
+          line: lines.find(l => l.startsWith(`${i.mark} ${i.obligation}: `)) ?? '' })), next: lines.filter(l => l.startsWith('Next: ')) } };
     }) };
   } };
 }
@@ -182,7 +193,7 @@ function normalizedSnapshot(snap: Snapshot, r: Result): Snapshot {
     r.normalizedLines++; return s.slice(0, -DRIVER_SUFFIX.length);
   };
   return { ...snap, nodes: snap.nodes.map(n => ({ ...n, status: n.status.map(line), notice: n.notice.map(line),
-    why: { headline: line(n.why.headline), items: n.why.items.map(i => ({ ...i, line: line(i.line) })) } })) };
+    why: { headline: line(n.why.headline), items: n.why.items.map(i => ({ ...i, line: line(i.line) })), next: n.why.next?.map(line) } })) };
 }
 function audit(r: Result, state: State, seq: number, raw: Snapshot): void {
   const snap = normalizedSnapshot(raw, r);
@@ -200,18 +211,47 @@ function audit(r: Result, state: State, seq: number, raw: Snapshot): void {
     if (!shown) { if (snap.nodes.length) add(r, 'uncovered', { seq, node: node.id, reason: 'node absent from surface output' }); continue; }
     if (shown.diagnostic) {
       add(r, 'diagnostic', { seq, node: node.id, surface: 'owner notice', reason: 'diagnostic notify (need:null)' });
-      if (shown.notice.some(l => primary(l))) add(r, 'a', { seq, node: node.id, reason: 'diagnostic notify has a command unsupported by a need' });
+      if (diagnosticCommand(shown.notice.join('\n'))) add(r, 'a', { seq, node: node.id, reason: 'diagnostic notify has a command unsupported by a need' });
       if (ns.some(n => n.actor === 'owner' || n.obligation !== undefined && n.kind !== 'rule')) add(r, 'a', { seq, node: node.id, reason: 'diagnostic notify misses an owner need' });
     }
     if (shown.notEmitted) add(r, 'notEmitted', { seq, node: node.id, surface: 'owner notice', reason: shown.notEmitted });
     const primaryNeed = ns[0];
-    const surfaces = [{ surface: 'status', line: shown.status[0] }, { surface: 'compact why', line: shown.why.headline },
-      ...(!shown.diagnostic && !shown.notEmitted && !snap.unavailable.includes('ownerNotify') ? [{ surface: 'owner notice', line: shown.notice[0] }] : [])];
-    if (primaryNeed) {
-      const commands = surfaces.map(s => primary(s.line ?? ''));
-      if (commands.some(c => c !== primaryNeed.command)) add(r, 'a', { seq, node: node.id, reason: 'primary command differs between rendered surfaces and need', command: JSON.stringify({ need: primaryNeed.command ?? null, ...Object.fromEntries(surfaces.map((s, i) => [s.surface, commands[i] ?? null])) }) });
-      for (const s of surfaces) if (!s.line?.trim()) add(r, 'uncovered', { seq, node: node.id, surface: s.surface, reason: 'empty output for a need' });
+    const expected = (surface: string, line: string | undefined, n: Need | undefined, command = n?.command) => {
+      if (!line?.trim()) add(r, 'uncovered', { seq, node: node.id, surface, obligation: n?.obligation, reason: 'missing output for a need' });
+      else if (primary(line) !== command) add(r, 'a', { seq, node: node.id, surface, obligation: n?.obligation,
+        reason: 'primary command differs between rendered surface and need', command: JSON.stringify({ need: command ?? null, rendered: primary(line) ?? null }) });
+    };
+    // summaryView/summaryHead and drive.needLines map every need, preserving within-node order.
+    // Match text identities first so deleting a middle row cannot shift a later need into its slot.
+    const needRows = (surface: string, rows: string[], list: Need[]) => list.forEach((n, index) => {
+      const identity = (line: string, need: Need) => line.includes(need.text);
+      const exact = rows.find(line => identity(line, n));
+      const fallback = rows.length === list.length && !list.some(other => other !== n && identity(rows[index] ?? '', other)) ? rows[index] : undefined;
+      expected(surface, exact ?? fallback, n);
+    });
+    needRows('status', shown.status, ns);
+    if (primaryNeed) expected('compact why headline', shown.why.headline, primaryNeed);
+    // R-028-71: use Need + public text forms, never a renderer's own itemLine as its oracle.
+    for (const i of node.items.filter(i => i.status === 'D')) {
+      const n = ns.find(n => n.obligation === i.obligation), line = shown.why.items.find(row => row.obligation === i.obligation)?.line;
+      const finding = { seq, node: node.id, surface: 'compact why item', obligation: i.obligation };
+      if (!line?.trim()) { add(r, 'uncovered', { ...finding, reason: 'missing output for a need' }); continue; }
+      if (!n) continue; // No Need: existence here, argv and obligation audit below.
+      const prefix = `${i.mark} ${i.obligation}: `, body = line.startsWith(prefix) ? line.slice(prefix.length) : line;
+      const command = primary(line);
+      if (body.startsWith(`${n.text} → `)) {
+        r.itemBranches.i++; expected('compact why item', line, n);
+      } else if (command !== undefined) {
+        if (command !== n.command) { r.itemBranches.iv++; add(r, 'a', { ...finding, command, reason: 'contextual item has a different need command' }); }
+      } else {
+        const sameText = body === n.text && n.command !== undefined;
+        if (sameText) r.itemBranches.ii++; else r.itemBranches.iii++;
+        if (r.itemInfo.length < DETAIL_LIMIT) r.itemInfo.push({ ...finding, reason: sameText ? 'item shows need text without command' : 'contextual item (no need command)' });
+        else r.truncated = true;
+      }
     }
+    needRows('compact why next', shown.why.next ?? [], ns.slice(1));
+    if (!shown.diagnostic && !shown.notEmitted && !snap.unavailable.includes('ownerNotify')) needRows('owner notice', shown.notice, ns);
     const check = (command: string, need: Need | undefined, surface: string, obligation?: string) => {
       const errors = commandErrors(command, need, state);
       for (const kind of ['b', 'c'] as const) for (const reason of errors[kind]) add(r, kind, { seq, node: node.id, obligation, surface, command, reason });
@@ -221,6 +261,9 @@ function audit(r: Result, state: State, seq: number, raw: Snapshot): void {
       const command = primary(line); if (command) check(command, ns[index], surface, ns[index]?.obligation);
     });
     const head = primary(shown.why.headline); if (head) check(head, primaryNeed, 'compact why headline', primaryNeed?.obligation);
+    (shown.why.next ?? []).forEach((line, index) => {
+      const command = primary(line), n = ns[index + 1]; if (command) check(command, n, 'compact why next', n?.obligation);
+    });
     for (const i of shown.why.items) {
       const command = primary(i.line), need = ns.find(n => n.obligation === i.obligation);
       if (command) check(command, need ?? { node: node.id, kind: 'investigate', actor: 'parent', since: null, text: '', obligation: i.obligation }, 'compact why item', i.obligation);
@@ -275,16 +318,22 @@ function blobRefs(e: Entry): string[] {
   return [];
 }
 const digest = (text: string): string => createHash('sha256').update(text).digest('hex');
+function blobDigest(file: string): string {
+  const fd = openSync(file, 'r'), hash = createHash('sha256'), chunk = Buffer.allocUnsafe(64 * 1024);
+  try { let n: number; while ((n = readSync(fd, chunk, 0, chunk.length, null)) > 0) hash.update(chunk.subarray(0, n)); }
+  finally { closeSync(fd); }
+  return hash.digest('hex');
+}
 interface Options { ledger: string; blobs: string; every: number; seqs: Set<number>; halts: boolean; baseline?: string; json: boolean; engine: '0.28' | '0.27.2' | 'both'; cache?: string; shard?: { index: number; total: number } }
 interface ReplayReport {
   assumptions: Record<string, unknown>; wallMs: number; results: Result[];
-  partition: { ledger: string; every: number; seqs: number[]; halts: boolean; index: number; total: number };
+  partition: { ledger: string; blobs: string; replayFailures: { engine: string; failures: Finding[] }[]; every: number; seqs: number[]; halts: boolean; index: number; total: number };
 }
 /** No partial acceptance: every shard of one exact input/configuration must be present exactly once. */
 function mergeReports(files: string[]): ReplayReport {
   if (!files.length) throw new Error('--merge requires report files');
   const reports = files.map(file => JSON.parse(readFileSync(file, 'utf8')) as ReplayReport), first = reports[0]!;
-  const key = (r: ReplayReport) => JSON.stringify({ ...r.partition, index: 0, engines: r.results.map(x => x.version), assumptions: r.assumptions });
+  const key = (r: ReplayReport) => JSON.stringify({ ...r.partition, index: 0, engines: r.results.map(x => x.version), global: r.results.map(x => x.global), assumptions: r.assumptions });
   if (!first.partition || !Number.isSafeInteger(first.partition.total) || first.partition.total < 1) throw new Error('invalid shard metadata');
   const seen = new Set<number>();
   for (const r of reports) {
@@ -296,22 +345,32 @@ function mergeReports(files: string[]): ReplayReport {
   if (seen.size !== first.partition.total) throw new Error('missing shard reports');
   const results = first.results.map((source, index) => {
     const out = result(source.version); out.entries = source.entries;
+    out.global = source.global;
     const all = reports.map(r => r.results[index]!);
     if (all.some(r => r.entries !== out.entries)) throw new Error('shard entry counts differ');
     for (const r of all) {
       out.samples += r.samples; out.nodes += r.nodes; out.normalizedLines += r.normalizedLines;
+      for (const k of ['i', 'ii', 'iii', 'iv'] as const) out.itemBranches[k] += r.itemBranches[k];
+      out.itemInfo.push(...r.itemInfo);
       for (const k of ['a', 'b', 'c'] as const) out.errors[k] += r.errors[k];
-      for (const k of ['uncovered', 'missingBlobs', 'notEmitted', 'unavailable', 'diagnostic'] as const) out.coverage[k] += r.coverage[k];
-      for (const k of Object.keys(out.findings) as (keyof Result['findings'])[]) out.findings[k].push(...r.findings[k]);
+      for (const k of ['uncovered', 'notEmitted', 'unavailable', 'diagnostic'] as const) out.coverage[k] += r.coverage[k] - (k === 'uncovered' ? r.global.foldFailures.length : 0);
+      for (const k of Object.keys(out.findings) as (keyof Result['findings'])[]) {
+        if (k === 'missingBlobs') continue;
+        out.findings[k].push(...r.findings[k].filter(f => k !== 'uncovered' || !r.global.foldFailures.some(g => JSON.stringify(g) === JSON.stringify(f))));
+      }
       for (const k of Object.keys(out.timing) as (keyof Result['timing'])[]) {
         if (k === 'samples') out.timing.samples.push(...r.timing.samples); else out.timing[k] += r.timing[k];
       }
       out.truncated ||= r.truncated;
     }
+    for (const f of source.global.missingBlobs) add(out, 'missingBlobs', f);
+    for (const f of source.global.foldFailures) add(out, 'uncovered', f);
     for (const rows of Object.values(out.findings)) {
       rows.sort((a, b) => a.seq - b.seq || JSON.stringify(a).localeCompare(JSON.stringify(b)));
       if (rows.length > DETAIL_LIMIT) { rows.length = DETAIL_LIMIT; out.truncated = true; }
     }
+    out.itemInfo.sort((a, b) => a.seq - b.seq || JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    if (out.itemInfo.length > DETAIL_LIMIT) { out.itemInfo.length = DETAIL_LIMIT; out.truncated = true; }
     out.timing.samples.sort((a, b) => a.seq - b.seq);
     return out;
   });
@@ -367,6 +426,8 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
     const cache = o.cache ?? (temporaryCache = mkdtempSync(join(tmpdir(), 'owed-replay-plans-')));
     const engines = implementations.map(x => ({ ...x, state: x.reduce([], planLookup(o.blobs, x.parse, x.report, cache)), broken: false }));
     const sampled = new Set<number>(), inputHash = createHash('sha256'); let last = -1, sampleOrdinal = 0;
+    // Only digests are retained, never blob contents. Missing blobs/fold failures are whole-input facts.
+    const referenced = new Map<string, { exists: boolean; digest: string | null }>();
     const stream = createReadStream(o.ledger, { encoding: 'utf8' }), lines = createInterface({ input: stream, crlfDelay: Infinity });
     try {
       for await (const line of lines) {
@@ -376,17 +437,28 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
         if (!Number.isSafeInteger(e.seq) || e.seq <= last) throw new Error('ledger seqs must strictly increase'); last = e.seq;
         const selected = o.seqs.has(e.seq) || !!o.every && e.seq % o.every === 0 || o.halts && e.kind === 'halt';
         if (selected) sampled.add(e.seq);
-        const sample = selected && (!o.shard || e.seq % o.shard.total === o.shard.index);
+        const sample = selected && (!o.shard || sampleOrdinal % o.shard.total === o.shard.index);
         if (selected) sampleOrdinal++;
-        const ownEntry = !o.shard || e.seq % o.shard.total === o.shard.index;
-        const missing = blobRefs(e).filter(sha => !/^[a-f0-9]{64}$/.test(sha) || !existsSync(join(o.blobs, sha)));
+        const missing = blobRefs(e).filter(sha => {
+          if (!referenced.has(sha)) {
+            const exists = /^[a-f0-9]{64}$/.test(sha) && existsSync(join(o.blobs, sha));
+            referenced.set(sha, { exists, digest: exists ? blobDigest(join(o.blobs, sha)) : null });
+          }
+          return !referenced.get(sha)!.exists;
+        });
         for (const x of engines) {
           x.report.entries++;
-          for (const sha of ownEntry ? missing : []) add(x.report, 'missingBlobs', { seq: e.seq, reason: `missing blob ${sha} (${e.kind})` });
+          for (const sha of missing) {
+            const finding = { seq: e.seq, reason: `missing blob ${sha} (${e.kind})` };
+            x.report.global.missingBlobs.push(finding); add(x.report, 'missingBlobs', finding);
+          }
           if (missing.length && (e.kind === 'plan' || e.kind === 'genesis')) x.broken = true;
           if (x.broken) { if (sample) add(x.report, 'uncovered', { seq: e.seq, reason: 'cannot replay after missing plan or rejected entry; no fabricated state' }); continue; }
           try { elapsed(() => x.extend(x.state, [e]), ms => { x.report.timing.foldMs += ms; }); }
-          catch (error) { x.broken = true; if (ownEntry) add(x.report, 'uncovered', { seq: e.seq, reason: `replay failed: ${message(error)}` }); continue; }
+          catch (error) {
+            x.broken = true; const finding = { seq: e.seq, reason: `replay failed: ${message(error)}` };
+            x.report.global.foldFailures.push(finding); add(x.report, 'uncovered', finding); continue;
+          }
           if (sample && x.visible) {
             const now = Date.parse(e.ts); if (!Number.isFinite(now)) throw new Error(`invalid timestamp at #${e.seq}`);
             const timing: SampleTiming = { seq: e.seq, statusMs: 0, decideMs: 0, whyMs: 0, auditMs: 0 };
@@ -407,7 +479,9 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
     }
     for (const r of results) for (const rows of Object.values(r.findings)) rows.sort((a, b) => a.seq - b.seq || JSON.stringify(a).localeCompare(JSON.stringify(b)));
     if (o.engine === '0.27.2') results[0]!.timing.oracleFoldMs = current.timing.foldMs;
-    const report: ReplayReport = { partition: { ledger: inputHash.digest('hex'), every: o.every, seqs: [...o.seqs].sort((a, b) => a - b), halts: o.halts,
+    const report: ReplayReport = { partition: { ledger: inputHash.digest('hex'),
+      blobs: digest(JSON.stringify([...referenced].sort(([a], [b]) => a.localeCompare(b)))),
+      replayFailures: engines.map(x => ({ engine: x.report.version, failures: x.report.global.foldFailures })), every: o.every, seqs: [...o.seqs].sort((a, b) => a - b), halts: o.halts,
       index: o.shard?.index ?? 0, total: o.shard?.total ?? 1 }, assumptions: { runs: 'empty map; no historical DSA state inferred', now: 'sampled entry.ts', driverRunning: true,
       runtime: 'no historical measuring/asking records inferred', oracle: '0.28 needs on current replay state; old-only also folds this oracle', detailLimit: DETAIL_LIMIT,
       normalization: `only exact trailing${DRIVER_SUFFIX}`, engine: o.engine,
@@ -419,6 +493,8 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
       for (const r of results) {
         io.log(`${r.version}: entries=${r.entries} samples=${r.samples} nodes=${r.nodes}; (a)=${r.errors.a} (b)=${r.errors.b} (c)=${r.errors.c}; coverage=${JSON.stringify(r.coverage)}; normalizedLines=${r.normalizedLines}`);
         io.log(`${r.version} timing: ${JSON.stringify(r.timing)}`);
+        io.log(`${r.version} item branches: ${JSON.stringify(r.itemBranches)}`);
+        for (const f of r.itemInfo) io.log(`${r.version} item info: ${JSON.stringify(f)}`);
         for (const [kind, findings] of Object.entries(r.findings)) for (const f of findings) io.log(`${r.version} ${kind}: ${JSON.stringify(f)}`);
         if (r.truncated) io.log(`${r.version}: details truncated; totals include every finding`);
       }
