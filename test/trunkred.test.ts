@@ -337,7 +337,11 @@ test('TR1: a remeasured merge failure reuses the trunk probe on its own key', as
   try {
     await r.refusal();
     const failed = (await observations(r)).find(e => e.merging === 'a')!;
-    await ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'fixture retries merge evidence', accept_risk: [failed.seq], as: owner, channel: 'delegated' });
+    const waiver = await ops.waive({ cwd: r.cwd, node: 'a', obligation: 'check:runtime', reason: 'fixture retries merge evidence', accept_risk: [failed.seq], as: owner, channel: 'delegated' });
+    assert.equal(waiver.kind === 'waive' && waiver.key,failed.key);
+    await commitAt(r.a.worktree,{impl:'candidate-v2'});
+    await ops.submit({cwd:r.a.worktree,node:'a',as:writer});
+    await ops.attest({cwd:r.cwd,node:'a'});
     assert.match(await r.refusal(), /^trunk-red:/);
     const es = await observations(r);
     assert.equal(es.filter(e => e.merging === 'a' && e.verdict === 'fail').length, 2);

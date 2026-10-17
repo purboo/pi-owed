@@ -225,7 +225,7 @@ test('WF2/WF3: owner may accept risk while held, CLI receipt leads with debt and
     await change(r);
     const out = await cli(r.cwd,['waive','a','check:unit','--accept-risk',String(r.fail.seq),'--reason','accept held risk','--as','owner:pi']);
     assert.equal(out.code,0,out.stderr);
-    assert.match(out.stdout,new RegExp(`^waived a/check:unit #\\d+: debt recorded \\(accepted block risk #${r.fail.seq}\\)`));
+    assert.match(out.stdout,new RegExp(`^waived a/check:unit #\\d+: debt recorded on the candidate key [a-f0-9]{12} \\(accepted block risk #${r.fail.seq}\\)`));
     assert.match(out.stdout,/in effect now: --accept-risk accepts/);
     assert.match(out.stdout,/Details: owed why a --full/);
     assert.doesNotMatch(out.stdout,/Untested changes:|Untested obligations ΔO⁻:/);
@@ -241,10 +241,18 @@ test('WF3: merge fail → same-key pass → CLI waiver is in effect, not unneces
     assert.match(out.stdout,new RegExp(`in effect now: --accept-risk accepts #${r.fail.seq} \\(flaky: failed #${r.fail.seq} → passed #${r.pass.seq} on the same key\\)`));
     assert.match(out.stdout,/check:unit on the candidate key is satisfied by #\d+/);
     assert.doesNotMatch(out.stdout,/waiver is not needed|Untested changes:/);
-    const full = await cli(r.cwd,[...args,'--full']); assert.equal(full.code,0,full.stderr);
-    assert.match(full.stdout,/^waived a\/check:unit #\d+: debt recorded/);
-    assert.match(full.stdout,/Untested changes:|Untested obligations ΔO⁻:/);
+    const beforeRetry = (await read(r)).entries;
+    const retry = await cli(r.cwd,[...args,'--full']); assert.equal(retry.code,0,retry.stderr);
+    assert.equal(retry.stdout,`already recorded as #${beforeRetry.findLast(e => e.kind === 'waive')!.seq}\n`);
+    assert.deepEqual((await read(r)).entries,beforeRetry);
   } finally {await r.cleanup();}
+  const fresh = await fixture(true);
+  try {
+    const full = await cli(fresh.cwd,['waive','a','check:unit','--accept-risk',String(fresh.fail.seq),'--reason','accept merge flake','--as','owner:pi','--full']);
+    assert.equal(full.code,0,full.stderr);
+    assert.match(full.stdout,/^waived a\/check:unit #\d+: debt recorded on the merge key [a-f0-9]{12}/);
+    assert.match(full.stdout,/Untested changes:|Untested obligations ΔO⁻:/);
+  } finally {await fresh.cleanup();}
 });
 
 test('WF3: tool waiver has explicit debt, compact default and full option',async () => {
