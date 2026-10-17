@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.27.1
+
+Bounded plan memory. No ledger format, entry kind, plan key, gate or output
+change, and no upgrade order: 0.27.0 and 0.27.1 readers, drivers and
+executors can run side by side. Replay snapshots are validated against the
+owed version, so the first load after upgrading replays the full ledger;
+parsed-plan retention during that replay is now bounded too.
+
+- **Bounded parsed-plan caching for long-running processes.** The
+  process plan cache holds at most 8 resolved plan versions, keyed by ledger
+  directory and plan hash (least recently used first out); a long-running
+  `owed drive` no longer retains every parsed plan version through this
+  cache. The on-disk plan JSON cache is written atomically.
+- **Replay and `owed report --metrics` resolve plan versions only when an
+  entry needs them**, instead of loading the whole plan history up front, and
+  a state loaded by owed retains at most four historical plan versions
+  besides the current one. Plans named by an operation that is about to
+  append (for example the new plan of `owed init` or `owed plan`) are still
+  resolved before any ledger entry is appended, so a missing plan with no
+  usable cache entry refuses the operation without recording an entry, as
+  before.
+- On a ledger with 16,724 entries and 658 plan versions (about 950 MB of plan
+  YAML), `owed report --metrics` now completes in about 1.2 GB of memory
+  with the same output, where 0.27.0 exceeded 4.7 GB without finishing.
+- **GitHub Releases.** After a `v*` tag is published to npm, a second job
+  creates the GitHub Release for the tag, with that version's section of this
+  changelog as its notes, and records a deployment in the `npm` environment
+  that links the published npm version. The publishing job itself is
+  unchanged.
+
+Known limit: `owed verify` still parses and keeps every plan version, so on
+very long plan histories it needs memory proportional to that history.
+
 ## 0.27.0
 
 No new ledger entry kind and no gate weakened. New plan keys
