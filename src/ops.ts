@@ -1494,8 +1494,10 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
         const repeated = identicalAct(s,{ kind:'waive', by:by(o), channel:o.channel, node:o.node, obligation:o.obligation, key, reason:o.reason, accept_risk:o.accept_risk, ...tracked });
         return repeated ?? refused();
       }
-      const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
-      if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`);
+      if (inactive.length) {
+        const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
+        if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`);
+      }
       const built = await git.buildMerge(o.cwd,s.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
       if ('conflicts' in built) { if (inactive.length) return refused(); }
       else {
