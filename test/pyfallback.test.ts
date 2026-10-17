@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { repo } from './helpers/repo.ts';
 import { parsePlan } from '../src/plan.ts';
 import { Ledger } from '../src/ledger.ts';
-import { parseCounts, runJob, zeroTestFallbackSignature } from '../src/exec.ts';
+import { parseCounts, runJob, zeroTestFallbackLine, zeroTestFallbackSignature } from '../src/exec.ts';
 import { setupHint, setupSignature } from '../src/remeasure-on.ts';
 import type { AttestJob, Counts } from '../src/types.ts';
 
@@ -161,6 +161,50 @@ test('R-pf-1 setup signatures dedupe different durations while notes keep the ra
   }
   assert.equal(signatures[0], signatures[1]);
   assert.equal(signatures[0], 'pytest fallback counted line "=== no tests ran in <n>s ==="');
+});
+for (const line of [
+  '=== no tests ran in 75.23s (0:01:15) ===',
+  'no tests ran in 75.23s (0:01:15)',
+  '\x1b[33m=== no tests ran in 75.23s (0:01:15) ===\x1b[0m',
+  '\x1b[33mno tests ran in 75.23s (0:01:15)\x1b[0m',
+]) test(`R-pf-2 pytest zero-test clock preserves the failing gate: ${JSON.stringify(line)}`, async () => {
+  assert.deepEqual(parseCounts(line), { format: 'pytest', tests: 0 });
+  for (const minimum of [undefined, 1]) {
+    const obs = await run(line, minimum);
+    assert.equal(obs.verdict, 'fail', obs.note);
+    assert.equal(obs.counts?.tests, 0);
+  }
+});
+test('R-pf-2 setup normalizes the full source before bounding, notes remain bounded', async () => {
+  const signatures: string[] = [];
+  for (const [path, id] of [
+    ['/tmp/short/test.js', 'abc1234'],
+    [`/tmp/${'segment/'.repeat(25)}test.js`, 'def5678'],
+    [`/tmp/${'another/'.repeat(40)}test.js`, 'aabbccdd'],
+  ]) {
+    const line = `No tests found for ${path} id=${id}`;
+    const log = `warning: cargo package not found\n\x1b[33m${line}\x1b[0m`;
+    assert.deepEqual(zeroTestFallbackLine(log), { format: 'jest/vitest', line });
+    signatures.push(setupSignature(log));
+    const display = zeroTestFallbackSignature(log)!;
+    const quoted = display.slice('jest/vitest fallback counted line "'.length, -1);
+    assert.ok(quoted.length <= 160, display);
+    if (line.length > 160) {
+      assert.ok(quoted.endsWith('…'), display);
+      assert.ok(!quoted.includes(`id=${id}`), display);
+    }
+    const obs = await run(log);
+    assert.equal(obs.verdict, 'fail');
+    assert.ok(obs.note?.includes(display), obs.note);
+  }
+  assert.deepEqual(signatures, Array(3).fill('jest/vitest fallback counted line "No tests found for <path> id=<id>"'));
+});
+test('R-pf-2 setup normalizes raw whitespace and escapes controls before the 300 bound', () => {
+  const log = `No tests found for\t/tmp/test.js id=abcdef0\u0001${'x'.repeat(350)}`;
+  const signature = setupSignature(log);
+  assert.ok(signature.startsWith('jest/vitest fallback counted line "No tests found for <path> id=<id>\\u0001'));
+  assert.equal(signature.length, 300);
+  assert.doesNotMatch(signature, /[\x00-\x1f\x7f-\x9f]/);
 });
 test('PF4 zero-test provenance respects preferred protocols and nonzero counts', () => {
   const noisy = 'error: unrelated warning\n=== no tests ran in 0.01s ===';
