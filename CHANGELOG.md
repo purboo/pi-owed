@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.27.2
+
+Two misjudgment and memory fixes. No ledger format, entry kind, plan key,
+CLI flag or gate change, and no upgrade order: 0.27.x readers, drivers and
+executors can run side by side.
+
+- **Free text is no longer read as a pytest summary.** The fallback that
+  counts pytest output used loose matching for numeric count words and
+  summary delimiters, so a custom script that printed `ENOTEMPTY=0 failed=[]`
+  after three passing runs was counted as zero tests and halted as a setup
+  failure. The fallback now accepts only pytest's terminal summary line,
+  either bounded by `=` runs or ending in pytest's duration (`in 0.12s`,
+  optionally followed by the `(0:01:15)` clock pytest prints for runs of a
+  minute or more). Its body must be comma-separated `<n> <word>` items using
+  only recognized pytest count words. The zero-test forms `no tests ran`,
+  `collected 0 items` and jest's `No tests found` are line-anchored, allowing
+  leading whitespace and `=` runs; the pytest forms must occupy the whole
+  line, with an optional duration and clock for `no tests ran`.
+  ANSI SGR color codes are ignored by this fallback. Warnings, reruns and
+  deselected tests are not counted as tests. TAP, cargo, owed-counts and
+  jest/vitest `Tests:` parsing are unchanged. A normally completed check
+  exiting 0 with no recognized count follows the documented rule for
+  unrecognized output: it passes without `min_tests`, and is an error with
+  `min_tests`.
+- **A fallback zero-test result names its parser and counted line.** The
+  observation note of a check counted as zero tests by the pytest or
+  jest/vitest fallback names the parser and quotes the counted line (escaped,
+  at most 160 characters). The setup-failure notice uses a normalized
+  signature from the full counted line instead of an unrelated warning:
+  timestamps, paths, identifiers and numbers are masked, whitespace is
+  collapsed, and the signature is bounded to 300 characters. Failures on
+  several nodes within 30 minutes with the same normalized signature group
+  into one notice per trunk commit.
+- **`owed verify` bounds parsed-plan retention.** It still parses every plan
+  version from its YAML and compares existing entries in the persistent plan
+  cache, but its local LRU keeps at most 8 parsed versions and re-parses
+  evicted versions from YAML when the replay needs them. Each live replay
+  state also retains up to four historical versions plus its current plan;
+  eight is the LRU limit, not a total held-plan limit. On a ledger with
+  16,724 entries and 658 plan versions (about 950 MB of plan YAML),
+  `owed verify` now completes in about 1.1 GB of memory in about 5 minutes,
+  with the same output and the same resulting cache. 0.27.1 ran out of a
+  2.8 GB heap there, and with a 14 GB heap it took 6.3 GB in about
+  3.5 minutes: the bound costs re-parsing time. This removes the known limit
+  listed under 0.27.1.
+
 ## 0.27.1
 
 Bounded plan memory. No ledger format, entry kind, plan key, gate or output
