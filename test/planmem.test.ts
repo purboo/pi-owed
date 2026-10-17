@@ -357,3 +357,41 @@ test('PM repair F2: verify preserves a snapshot with reordered plan keys', async
     assert.deepEqual(snapshot.payload,payload,'snapshot bytes are not deleted or rewritten');
   } finally { await t.cleanup(); }
 });
+
+test('PM repair F3: cold replay does not reload observation plans for cleared execution blocks in supersede', () => {
+  const f = fixture(24), entries: Entry[] = [], calls = new Map<string,number>(), requested: string[] = [];
+  const add = (draft: Entry) => {
+    const e = {...draft,seq:entries.length,prev:entries.at(-1)?.hash ?? ZERO} as Entry;
+    e.hash = entryHash(e); entries.push(e);
+  };
+  for (const e of f.entries) {
+    if (e.kind === 'genesis' || e.kind === 'plan' || e.kind === 'dispatch') add(e);
+    else if (e.kind === 'obs') {
+      // Each law creates a genuine execution block, then a same-key failed attribution clears it.
+      // Nonzero counts avoid setup-failure resolution and isolate supersede's inactive-block path.
+      const measured = {...e,counts:{tests:1,fail:1,pass:0}};
+      add(measured); add({...measured,attribution:true});
+    }
+  }
+  const s = R.reduce(entries,sha => {
+    requested.push(sha); calls.set(sha,(calls.get(sha) ?? 0)+1);
+    return freeze(f.lookup(sha));
+  });
+  const blocks = s.nodes.worker!.blocks;
+  assert.equal(blocks.length,24);
+  assert.ok(blocks.every(b => b.kind === 'exec' && b.state === 'cleared' && b.clearedBy === b.seq+1));
+  const shas = [...f.plans.keys()];
+  let newest = 0;
+  for (const sha of requested) {
+    const index = shas.indexOf(sha);
+    // Genesis may be read by refresh; other old laws have only cleared observation blocks.
+    if (index !== 0) assert.ok(index >= newest,`inactive observation law ${index} reloaded after law ${newest}`);
+    newest = Math.max(newest,index);
+  }
+  const total = [...calls.values()].reduce((a,b) => a+b,0);
+  // The fold boundary and prospective draft validation can each resolve the new law.
+  assert.ok(total <= 2*f.plans.size,`cold replay requested ${total} plans for ${f.plans.size} distinct shas: ${JSON.stringify([...calls])}`);
+  // Explicit diagnostic materialization is outside the measured cold fold.
+  assert.equal(new Set(R.replayMeta(s).obsPlans.values()).size,24,'cleared blocks ran under different old laws');
+  bounded(s);
+});

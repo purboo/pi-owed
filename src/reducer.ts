@@ -982,8 +982,10 @@ export function checkOf(obligation: string): string | undefined { return /^(?:ch
  */
 function supersede(s: State, h: History, seq: number, next: Plan): void {
   for (const n of Object.values(s.nodes)) for (const b of n.blocks) {
-    const id = checkOf(b.obligation), old = obsPlan(h, b.seq);
-    if (b.kind !== 'exec' || !active(b) || id === undefined || !old) continue;
+    const id = checkOf(b.obligation);
+    if (b.kind !== 'exec' || !active(b) || id === undefined) continue;
+    const old = obsPlan(h, b.seq);
+    if (!old) continue;
     if (checkDefinition(old, n.id, id) !== checkDefinition(next, n.id, id)) { h.shadow.set(b.seq, b.state); b.state = 'superseded'; b.supersededBy = seq; }
   }
 }
