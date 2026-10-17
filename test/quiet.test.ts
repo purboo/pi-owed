@@ -74,8 +74,13 @@ for (const by of ['reviewer', 'parent', 'owner'] as const) {
       assert.equal(halted.kind === 'halt' && halted.needs, 'human');
       for (const text of [lines.join('\n'), ...await surfaces(r.cwd), renderEntry(halted)]) {
         assert.doesNotMatch(text, /human/i);
-        assert.ok(text.includes(PARENT), text);
-        assert.ok(text.includes(`--as ${by}:<id> --candidate ${c12} or --as owner:pi`), text);
+        if (text.startsWith('a:')) {
+          assert.match(text, /owed evidence a ui --file <path> --note "<what was checked>" --as (?:reviewer|parent|owner):<id> --candidate [0-9a-f]{12}/);
+          assert.match(text.split('\n')[0]!, by === 'reviewer' ? /after resume the driver continues from the current state → owed resume a/ : /awaiting manual evidence: ui → owed evidence a ui/);
+        } else {
+          assert.ok(text.includes(PARENT), text);
+          assert.ok(text.includes(`--as ${by}:<id> --candidate ${c12} or --as owner:pi`), text);
+        }
       }
     } finally { await r.cleanup(); }
   });
@@ -96,7 +101,8 @@ test('QT1 refusal halt: an invariant failing on the merge renders parent text on
     assert.ok(!entries.some(e => e.kind === 'merge'));
     for (const out of [text, ...await surfaces(r.cwd), renderEntry(halted)]) {
       assert.doesNotMatch(out, /human/i);
-      assert.ok(out.includes(PARENT), out);
+      if (out.startsWith('a:')) assert.match(out.split('\n')[0]!, /after resume the driver continues from the current state → owed resume a/);
+      else assert.ok(out.includes(PARENT), out);
     }
     assert.deepEqual((await driver.pass()).actions, [], 'halted attempts do not retry');
   } finally { await driver.settle(); await r.cleanup(); }

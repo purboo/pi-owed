@@ -10,7 +10,7 @@ import { Ledger, PLAN_CACHE_VERSION, entryHash, lockActivityText, lockWait, type
 import { withLockDeadline } from './lock-deadline.ts';
 import { adoptWaitMs, withAdoptPending, pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { rebasePending, rebasePendingText, slotGitInProgress, slotGitOperation, rebaseRecovery, trunkUpstream } from './rebase-view.ts';
-import { planReceipt, renderEntry, withActHistory, withPresentationState, mergedLine, receiptItem } from './views.ts';
+import { planReceipt, renderEntry, withActHistory, withPresentationState, mergedLine, receiptItem, nodeNext } from './views.ts';
 import * as git from './git.ts';
 import { driveConfig, quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
@@ -23,7 +23,8 @@ import { runJob, runCommand, lastLines } from './exec.ts';
 import { setupFailure, infraSource, observationsOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
-import { withMeasuring, measuringScope, measuringRunning, measuringJob } from './activity.ts';
+import type { Runtime } from './needs.ts';
+import { withMeasuring, measuringScope, measuringRunning, measuringJob, assembleRuntime } from './activity.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks, stillAskingNeeds, type StillAsking } from './drive.ts';
@@ -1608,7 +1609,7 @@ async function rebaseInternal(o: RebaseOptions): Promise<RebaseResult> {
   if (entry.kind !== 'rebase') throw new OwedError('unexpected rebase entry','internal');
   const { state } = await load(await Ledger.open(o.cwd)), slot = state.nodes[o.node]!.slot!, previous = slot.rebase?.seq === entry.seq ? slot.rebase.previous : undefined;
   const work = await rebasePending(state, o.node, true);
-  const packet = [WRITER_DECISION, `# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, ...(work?.recovery ? [work.recovery] : []), `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `First commit your work, then run: ${work?.command ?? `git rebase --onto ${entry.base} $(git merge-base HEAD ${entry.base})`}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
+  const packet = ['moved the slot base; the writer must rebase and resubmit (use --apply to rebase as executor)', WRITER_DECISION, `# Rebase ${o.node} attempt ${entry.attempt} (ledger #${entry.seq})`, `Working directory: ${slot.worktree}`, ...(work?.recovery ? [work.recovery] : []), `Trunk moved: slot base ${entry.from} → ${entry.base}. The open candidate is invalidated; blocks still bind the node.`, `First commit your work, then run: ${work?.command ?? `git rebase --onto ${entry.base} $(git merge-base HEAD ${entry.base})`}`, 'Resolve conflicts only; keep the change within the allowed writes and commit.', `Then run: owed submit ${o.node} (the commit must descend from ${entry.base})`, ...(previous ? [`Previously reviewed patch: ${previous.base}..${previous.commit} (submit #${previous.submit})`, `Re-review hint: git range-diff ${previous.base}..${previous.commit} ${entry.base}..<new commit>`] : [])].join('\n');
   return { node:o.node, attempt:entry.attempt, worktree:slot.worktree, branch:slot.branch, base:entry.base, from:entry.from, ...(previous ? { previous } : {}), packet, entry };
 }
 /** ER2: slot mutation lock precedes ledger lock. Git never runs under the ledger lock; the final CAS records both receipts. */
@@ -1802,11 +1803,11 @@ export interface BatchMergeResult { nodes: string[]; commit: string; entries: En
 /** MT: refusal prefix of a batch merge that measured or decided nothing for single members; they merge one at a time. */
 export const BATCH_REFUSED = 'batch merge ';
 /** MT1: the requested members in merge-queue order; refuses a member that cannot be batched, naming why. */
-function batchMembers(s: State, ids: string[]): string[] {
+function batchMembers(s: State, ids: string[], rt?: Runtime): string[] {
   if (new Set(ids).size !== ids.length || ids.length < 2) throw new OwedError('batch merge needs at least 2 distinct nodes: owed merge A,B[,...]', 'usage');
   for (const id of ids) {
     const n = candidate(s, id), spec = s.plan.nodes.find(x => x.id === id);
-    if (!batchable(s, id)) throw new OwedError(`${BATCH_REFUSED}refused: ${id} ${n.candidate!.closureTouched ? 'touches the closure' : !n.accepted ? spec?.approve && n.items.some(i => i.obligation === 'approve' && i.status === 'D') ? 'needs owner approval' : 'is not accepted' : 'has a remeasure due'}; merge it alone: owed merge ${id}`);
+    if (!batchable(s, id)) throw new OwedError(`${BATCH_REFUSED}refused: ${id} ${n.candidate!.closureTouched ? 'touches the closure' : !n.accepted ? spec?.approve && n.items.some(i => i.obligation === 'approve' && i.status === 'D') ? 'needs owner approval' : 'is not accepted' : 'has a remeasure due'}; ${nodeNext(s, id, rt)}`);
   }
   const queue = mergeQueue(s), order = ids.slice().sort((a, b) => queue.indexOf(a) - queue.indexOf(b));
   for (const [i, a] of order.entries()) for (const b of order.slice(i + 1)) if (effectiveWritesOverlap(s, a, b)) throw new OwedError(`${BATCH_REFUSED}refused: writes of ${a} and ${b} overlap; merge them one at a time`);
@@ -1915,7 +1916,9 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     let state = (await load(ledger)).state;
-    const ids = batchMembers(state, o.nodes);
+    const lock = readLock(ledger.dir);
+    const rt = await assembleRuntime({ cwd: o.cwd, state, driverRunning: lock.state === 'live' || lock.state === 'foreign' });
+    const ids = batchMembers(state, o.nodes, rt);
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     await attestTrunk({ cwd:o.cwd, signal:o.signal });
     const refreshed = await load(ledger); for (const id of ids) nodeStable(state,refreshed,id);
@@ -2207,11 +2210,12 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   }
   const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
   const max = driverRunning && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(state.plan).max;
-  const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers,max);
+  const rt = await assembleRuntime({ cwd, state, driverRunning, now });
+  const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers,max,rt);
+  for (const i of mergeChecks) view.summary!.needs.push({ node: i.subject, reason: `${i.obligation}: ${oneLine(i.detail)}`, command: `owed why ${i.subject}` });
   const red=await sweepRed(cwd,entries,state.trunk.commit);
   if (red) view.sweepRed=red;
   await applyMergeWaiting(cwd, dir, state, view);
-  if (driverRunning) await applyStillAsking(dir, state, view, now);
   const pendingBases: NonNullable<StatusView['rebasePending']> = {};
   for (const id of Object.keys(state.nodes)) {
     const r = await rebasePending(state, id);
@@ -2221,7 +2225,7 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
     if (progress && !view.measuring?.[id]) progress.phase = rebasePendingText(r);
   }
   if (Object.keys(pendingBases).length) view.rebasePending = pendingBases;
-  if (drift && view.summary) view.summary.needs.unshift({ node:'trunk', reason:driftText(drift), command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : 'owed why trunk' });
+  if (drift && view.summary) view.summary.needs.push({ node:'trunk', reason:driftText(drift), command:drift.relation === 'ahead' ? 'owed adopt --note "<why>"' : 'owed why trunk' });
   if (drift) view.drift = drift;
   return view;
 }
@@ -2290,20 +2294,21 @@ export async function mergedLines(cwd: string, merged: readonly { node: string; 
 }
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
+  const lock = readLock(ledger.dir), running = lock.state === 'live' || lock.state === 'foreign';
+  const rt = await assembleRuntime({ cwd: o.cwd, state, driverRunning: running });
   if (o.node === 'trunk' && !state.nodes.trunk) {
     const reds = trunkInvariantReds(state);
-    return withPresentationState({ node:'trunk', phase:'merged', accepted:state.invariants.every(i => i.status !== 'D'), items:state.invariants.map(i => ({ ...receiptItem(i,entries), ...templateReceiptRun(state,i), detail:reds.find(r => r.obligation === i.obligation)?.text ?? i.detail })), blocks:[], untested:[], ownerFlags:[], downgrades:[] }, state);
+    return withPresentationState({ node:'trunk', phase:'merged', accepted:state.invariants.every(i => i.status !== 'D'), items:state.invariants.map(i => ({ ...receiptItem(i,entries), ...templateReceiptRun(state,i), detail:reds.find(r => r.obligation === i.obligation)?.text ?? i.detail })), blocks:[], untested:[], ownerFlags:[], downgrades:[] }, state, rt);
   }
   if (o.node.startsWith('inv:') || (!state.nodes[o.node] && state.plan.invariants.some(i => i.id === o.node))) {
     const id = invariantId(state.plan,o.node), item = state.invariants.find(i => i.obligation === `inv:${id}`)!;
-    return withPresentationState({ node: `inv:${id}`, phase: 'merged', accepted: item.status !== 'D', items: [{ ...receiptItem(item,entries), ...templateReceiptRun(state,item) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] }, state);
+    return withPresentationState({ node: `inv:${id}`, phase: 'merged', accepted: item.status !== 'D', items: [{ ...receiptItem(item,entries), ...templateReceiptRun(state,item) }], blocks: [], untested: [], ownerFlags: [], downgrades: [] }, state, rt);
   }
   const view = reduceFrom(state,[],lookup); await applyReports(ledger,view);
   node(view,o.node);
   const mergeChecks = await currentTrunkRedChecks(o.cwd,view,o.node);
-  const lock = readLock(ledger.dir), running = lock.state === 'live' || lock.state === 'foreign';
   const max = running && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(view.plan).max;
-  const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks),max);
+  const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks),max,rt);
   card.conflicts = (await candidateConflicts(o.cwd,view,o.node))[o.node];
   const pending = await rebasePending(view, o.node);
   if (pending) card.rebasePending = pending;
@@ -2597,7 +2602,7 @@ function resumeDraft(o: ResumeArgs, s: State): Extract<Draft, { kind:'resume' }>
   }
   if (!n.slot?.open) throw new OwedError(`resume requires an open slot of ${o.node}; ${o.node} has none`);
   const unruled = unruledBlocks(s,o.node);
-  if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}), so the driver would halt again at once; record it with owed rule --nodes ${o.node} "<decision>" (the ruling also clears the halt)`);
+  if (unruled.length) throw new OwedError(`resume refused: ${o.node} needs a parent ruling (review block ${unruled.map(x => `#${x.seq} ${x.obligation}`).join(', ')}); ${nodeNext(s, o.node)}`);
   const after = o.after === undefined ? undefined : typeof o.after === 'string' && !o.after.includes(',') ? o.after : [...new Set(afterNodes(o.after).flatMap(x => x.split(',')).map(x => x.trim()))];
   return { kind:'resume', by:by(o), channel:o.channel, node:o.node, attempt:n.slot.attempt, ...(after !== undefined ? { after } : {}), ...(o.expect !== undefined ? { expect:o.expect } : {}), ...(o.note !== undefined && o.note !== '' ? { note:o.note } : {}), ...(o.remeasure ? { remeasure:true as const } : {}) };
 }

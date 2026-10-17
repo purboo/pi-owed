@@ -265,7 +265,7 @@ test('TF2: passing probes add no shared hint, absent fix candidates are named as
     assert.doesNotMatch(views.renderWhy(await ops.why({...r,node:'a'})),/also fails on trunk/);
     await ops.planSet({...r,as:owner,channel:'delegated',note:'remove tracker fixture',plan:JSON.stringify({...r.plan,nodes:r.plan.nodes.filter(n => n.id !== 'fix')})});
     await r.setMode('fail'); assert.equal((await r.probe()).code,1);
-    assert.match(views.renderWhy(await ops.why({...r,node:'a'})),/--tracked-by <fix>.*\(add a fix node first\)/);
+    assert.match(views.renderWhy(await ops.why({...r,node:'a'})),/no single command:.*add a fix node first/);
   } finally { await r.cleanup(); }
 });
 

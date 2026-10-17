@@ -36,7 +36,7 @@ export function remeasureErrorTexts(obs: Pick<ObsEntry, 'verdict' | 'failed' | '
   const groups = errorGroups(log, names, true);
   const texts = names.map(name => {
     const group = groups.find(g => g.names.includes(name));
-    if (!group || group.message === '(no error text)') return undefined;
+    if (!group || group.missingError) return undefined;
     let text = group.message;
     // SG4's expected/actual quote is error text too. Read the diagnostic belonging to this exact TAP name.
     for (const block of log.split(/(?=^\s*not ok \d+ - )/m)) {

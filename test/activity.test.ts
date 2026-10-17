@@ -14,6 +14,7 @@ import { OwedError } from '../src/errors.ts';
 import { procStart } from '../src/drive-run.ts';
 import { readLock } from '../src/drive-bg.ts';
 import { stillAskingNeeds, writerLaunch } from '../src/drive.ts';
+import { answerRetry } from '../src/answer.ts';
 import { projectId } from '../src/reducer.ts';
 import { repo } from './helpers/repo.ts';
 import { commitAt, identity } from './helpers/surface.ts';
@@ -279,7 +280,8 @@ test('AC3 unknown fields stay absent; live/foreign/stopped asking matches the ex
       assert.deepEqual(rt.asking,[{...row,text:stillAskingNeeds(state,[row],now)[0]!.text}]);
       const view = await ops.summaryStatusView(f.cwd,f.ledger.dir,state,(await ops.readState(f)).entries,now);
       const asking = view.summary!.needs.filter(n => n.reason.includes('still asking'));
-      assert.deepEqual(asking.map(n => `${n.node}: ${n.reason}`),rt.asking!.map(a => a.text));
+      assert.deepEqual(asking.map(n => `${n.node}: ${n.reason}`),rt.asking!.map(a => a.text.split(': retry with ',1)[0]!));
+      assert.deepEqual(asking.map(n => n.command),rt.asking!.map(a => answerRetry(a.node,rule,{rid:a.rid,qid:a.qid,rev:a.rev})));
       assert.equal(rt.driverRunning,true);
     }
     await rm(lock); const stopped = await activity.assembleRuntime({cwd:f.cwd,state,driverRunning:false,now}); assert.deepEqual(stopped,{measuring:[],asking:[],driverRunning:false});

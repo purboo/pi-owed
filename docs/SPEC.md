@@ -2268,7 +2268,17 @@ rather than freshly measured.
 tests in recorded name order as
 `failed tests: <name> (<path:line>): expected <X>, actual <Y> | ... (+<N> more)`.
 Both assertion values must be present; otherwise use the first error line,
-or `(no error text)` when missing. Omit absent locations. TAP YAML errors,
+or a missing-error diagnostic when extraction yields no text. **VW6 (0.28):**
+TAP extraction matches the failed name exactly to a `not ok` test point. Its
+`---`/`...` YAML diagnostic must immediately follow at the next indentation;
+only the `error:` field supplies error text. Cargo extraction matches the
+exact thread name in either supported panic format. An unmatched name reads
+`no error text: log <hash12> has no \`not ok\`/panic line named exactly as this failed test`.
+A matched test point with no extracted error reads
+`no error text: the \`not ok\` block of this name in log <hash12> has no error field`.
+The hash identifies the stored observation log (individual repeat notes identify
+their run log). These diagnostics never match `remeasure_on` as error text.
+Omit absent locations. TAP YAML errors,
 quoted/plain/block scalars and both cargo panic formats remain recognized.
 ANSI is stripped, whitespace collapsed, semicolons replaced by commas and
 error messages limited to 160 characters with `…`. Prefer the repository test
@@ -3224,7 +3234,9 @@ dispatch entry. Overlap is checked by the operation, not the reducer.
 open slot and a trunk different from the slot base, and appends
 `{kind: "rebase", node, attempt, base: trunk, from: slot base}`. Without
 `--apply`, `owed rebase <node>` already records the slot-base move and
-invalidates the candidate; it is not a dry run. It prints the writer's
+invalidates the candidate; it is not a dry run. In 0.28 its first receipt line is
+`moved the slot base; the writer must rebase and resubmit (use --apply to rebase as executor)`.
+It prints the writer's
 `git rebase --onto <new> <old>` command, using the computed upstream (§12.5.2)
 when HEAD already contains trunk commits. The writer then rebases in the same
 worktree and submits again. Parent/owner `--apply` additionally performs the
@@ -3482,7 +3494,11 @@ while genesis items lack observations.
   chain, writes overlap and neither depends transitively on the other. Each
   unordered pair appears once; merged nodes are skipped. Advisory only, in
   existing plan `warnings` or new `EditPreview.warnings: string[]`.
-- **PO5 exit codes:** attest (node/genesis/trunk) exits 1 if **any observation
+- **PO5 exit codes:** in 0.28 a node attest exiting 4 starts its text with
+  `measured; not accepted yet: <primary need text or recorded activity>`, including
+  `--rerun` and `--remeasure`. Genesis and trunk attests retain their dedicated
+  recorded/failed/missing receipts. Codes and JSON remain unchanged.
+  Attest (node/genesis/trunk) exits 1 if **any observation
   recorded by this action** has verdict fail, including known_red, attribution
   and probe failures. Never infer this from diagnostics or cached observations.
   Otherwise 0 = nothing outstanding, 4 = obligations remain (including review
@@ -4013,10 +4029,30 @@ card; it does not embed those detailed receipts in writer repairs (§12.5.3).
   parent/owner item, `<node>: <plain reason> → <command>`: driver halts,
   unresolved needs-ruling blocks, trunk-red failures and owner decisions. Ready
   nodes without writes overlaps appear here only when no live/foreign driver
-  owns the repository. An empty queue reads `Needs you: none`. A trunk-red
-  invariant listed in status `trunkRed` has exactly one line, `trunk: <its
-  trunkRed text>`, with that curated text's options instead of a separate
-  command (JSON `command` is empty); its Debt line is unchanged.
+  owns the repository. An empty queue reads `Needs you: none`. In 0.28,
+  `needs()` / `repoNeeds()` select these lines for status, brief, why, receipts,
+  refusals and the extension. Each need keeps its own obligation and command;
+  a missing command is explicit as `(no single command)`. Why shows each
+  alternative as `or: …`. Repository needs never decide, rule or resume `trunk`.
+  Git-derived merge checks and drift remain appended status diagnostics.
+  Activity reports recorded progress and never predicts a driver action.
+  Runtime comes from `assembleRuntime`. Answered-but-asking needs keep the
+  reason separately from their retry command, so each node prefix and answer
+  command appears once. Only a running candidate-tree attest
+  for the same node, current candidate and obligation suppresses that owner
+  need. Queued, other-tree and stale-candidate records remain visible as
+  activity and suppress nothing. Asking-cache needs require a live or foreign
+  driver. The Debt lines retain their existing meaning.
+  An active review or closure-review judgment on an older key after a repair
+  submit says `repair #<S> submitted; #<B> clears when <principal> records ok at
+  rank >= <r> on the current key`. A submit and a ruling do not clear the block.
+  The owner route, when owed, is a pinned rank-3 OK with a note, the latest
+  ruling acknowledgment and the closure-review obligation when applicable.
+  A halted slot first needs any unruled block's ruling, then its parent/owner
+  obligation needs. Otherwise it needs `owed resume <node>` and explains that
+  the driver continues from the current state, then waits for any dependencies.
+  Only that last case uses a stopped writer's decision command, with resume as
+  its alternative. Halt prose never supplies a resolving command.
   `In progress (<R>):` lists unmerged open slots, dependency waits and held
   nodes as `<node>: <phase> (<age>)`; phases are writing, measuring, reviewing,
   waiting for <deps>, held, accepted (merge pending), and the 0.20 repair/rebase/
@@ -4041,7 +4077,8 @@ card; it does not embed those detailed receipts in writer repairs (§12.5.3).
   replay states and keys. Historical owner audit remains in full status.
   Empty sections are omitted. The last line is
   `Details: owed status --full · owed why <node>`.
-  `status --full` (pi `full: true`) preserves the 0.14 renderer plus
+  `status --full` (pi `full: true`) retains the evidence renderer and includes
+  the same Needs-you lines as compact status, plus
   IR/KR lines and the 0.16 line `Merge queue: a, b, c` (`none` when empty).
   Status JSON adds `mergeQueue: string[]`, always present, listing accepted
   open attempts in the driver's merge order (§12.5); all other gates still apply.
@@ -4049,7 +4086,7 @@ card; it does not embed those detailed receipts in writer repairs (§12.5.3).
   audit details belong there. Earlier detailed status descriptions refer to
   this full rendering. `--full --json` and `--json` have the same shape:
   all 0.14 fields remain; additive `summary` contains `{merged, needs:
-  [{node, reason, command}], progress: [{node, phase, ageMs}], debt: string[]}`.
+  [{node, reason, command, alternatives?}], progress: [{node, phase, ageMs}], debt: string[]}`.
   Brief starts with that outcome line and Needs you section; its other sections
   retain their content. Brief JSON keeps `decisions` and all existing fields,
   adding `summary`, `trunk` and `invariants` for the prefix. Compatibility:

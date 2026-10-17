@@ -101,7 +101,7 @@ test('QT5: status lists the answered-but-asking question while the driver runs, 
     const e = await f.answer(), at = Date.parse(e.ts);
     Date.now = () => at + 660_000;
     await new Driver({ cwd: f.cwd, dsa: f.dsa, json: true, session: null, log: () => {} }).pass();
-    const want = `  a: answered at #${e.seq} (${clockTime(e.ts, at + 660_000)}), still asking after 11m: retry with ${answerRetry('a', e)}`;
+    const want = `  a: answered at #${e.seq} (${clockTime(e.ts, at + 660_000)}), still asking after 11m → ${answerRetry('a', e)}`;
     assert.ok(!renderStatus(await ops.status({ cwd: f.cwd })).includes(want), 'no running driver: no host fact to show');
     writeFileSync(lockPath(f.dir), JSON.stringify(owner));
     const text = renderStatus(await ops.status({ cwd: f.cwd }));
@@ -118,9 +118,9 @@ test('QT2: why shows the outcome and only what is outstanding by default; --full
   try {
     const quiet = (await cli(f.cwd, ['why', 'a'])).stdout.trimEnd(), full = (await cli(f.cwd, ['why', 'a', '--full'])).stdout;
     const lines = quiet.split('\n');
-    assert.equal(lines[0], 'a: submitted; 1 outstanding', quiet);
+    assert.equal(lines[0], 'a: writing; 1 outstanding', quiet);
     assert.doesNotMatch(quiet, /conflicts with trunk: none/);
-    assert.ok(lines.some(l => /check:a/.test(l) && l.includes('→')), quiet);
+    assert.ok(lines.some(l => /check:a/.test(l) && l.includes('owed submit a')), quiet);
     assert.equal(lines.at(-1), 'Details: owed why a --full');
     for (const hidden of [/ΔO⁻/, /Untested changes/, /log=/, /counts=/, /Driver launch/, /✔/, /note #\d+/]) assert.doesNotMatch(quiet, hidden, quiet);
     for (const shown of [/Untested obligations ΔO⁻/, /log=/, /Driver launch/, /✔/]) assert.match(full, shown);
@@ -209,7 +209,7 @@ test('QT-R1 (2): the default why card of a reported node says it is parked with 
     await ops.send({ cwd: f.cwd, as: parent, node: 'a', attempt: 1, rid: f.rid, sendKind: 'follow-up', reason: 'report', message: 'report your findings and stop; do not submit unless the parent asks' });
     await ops.recordReport(await Ledger.open(f.cwd), 'a', resumed.entry.seq);   // what the driver records when the report arrives
     const quiet = (await cli(f.cwd, ['why', 'a'])).stdout;
-    assert.ok(quiet.split('\n').includes(`reported (resume #${resumed.entry.seq}): parked with the writer's report, waiting for the parent → owed decide a --text "<decision>"`), quiet);
+    assert.ok(quiet.split('\n').includes(`reported (resume #${resumed.entry.seq}): parked with the writer's report, waiting for the parent`), quiet);
     assert.doesNotMatch(quiet, /waits for the writer's report/);
   } finally { await f.cleanup(); }
 });
@@ -253,9 +253,9 @@ test('QT-R1 (5): the default why card of trunk and inv:* gives only commands the
     const init = await cli(r.cwd, ['init', plan, '--i-am-owner']); assert.equal(init.code, 0, init.stderr);
     for (const subject of ['trunk', 'inv:unit']) {
       const out = await cli(r.cwd, ['why', subject]); assert.equal(out.code, 0, out.stderr);
-      const item = out.stdout.split('\n').find(l => l.includes('inv:unit') && l.includes('→'));
+      const item = out.stdout.split('\n').find(l => l.includes('inv:unit') && l.includes('no single command:'));
       assert.ok(item, out.stdout);
-      assert.match(item, /→ (?:fix state: add a repair node \(owed edit --node-new\) — clears on the next trunk key|owed attest --trunk$)/, out.stdout);
+      assert.match(item, /no single command: fix state: add a repair node with the recorded plan; clears on the next trunk key/, out.stdout);
       assert.doesNotMatch(out.stdout, /owed (?:attest|waive|review|approve|evidence|decide) (?:trunk|inv:)/, out.stdout);
     }
   } finally { await r.cleanup(); }

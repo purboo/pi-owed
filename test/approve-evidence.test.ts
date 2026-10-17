@@ -119,7 +119,7 @@ test('approve and evidence: keys, who may discharge, owner block, merge guard, m
     const block = await ops.approve({ cwd: r.cwd, node: 'pub', as: owner, channel: 'flag', block: true, note: 'not yet' });
     s = await state(r.cwd);
     assert.deepEqual({ mark: item(s, 'approve').mark, discharger: item(s, 'approve').discharger, kind: s.nodes.pub!.blocks[0]?.kind }, { mark: '⛔', discharger: 'owner', kind: 'judgment' });
-    assert.match(renderReceipt(await ops.why({ cwd: r.cwd, node: 'pub' })), new RegExp(`blocked #${block.seq} approve: a later owner approval of the current candidate clears it: owed approve pub`));
+    assert.match(renderReceipt(await ops.why({ cwd: r.cwd, node: 'pub' })), new RegExp(`blocked #${block.seq} approve: awaiting owner approval → owed approve pub`));
     const ok = await ops.approve({ cwd: r.cwd, node: 'pub', as: { role: 'owner', id: 'other' }, channel: 'tty', note: 'ship it' });
     s = await state(r.cwd);
     assert.deepEqual({ block: s.nodes.pub!.blocks[0]!.state, clearedBy: s.nodes.pub!.blocks[0]!.clearedBy, approve: item(s, 'approve').status, accepted: s.nodes.pub!.accepted }, { block: 'cleared', clearedBy: ok.seq, approve: 'E', accepted: true });

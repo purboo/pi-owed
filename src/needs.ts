@@ -111,7 +111,8 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   const h = halted(s, node), out: Need[] = [];
   for (const a of rt?.asking ?? []) if (a.node === node) {
     const e = entriesOf(s).findLast(e => e.kind === 'rule' && (e.answers ?? (e.answer ? [e.answer] : [])).some(ref => ref.rid === a.rid && ref.qid === a.qid && ref.rev >= a.rev));
-    if (e?.kind === 'rule' && n.slot?.open) out.push({ node, actor: 'parent', kind: 'answer', since: e.seq, rid: a.rid, qid: a.qid, rev: a.rev, text: oneLine(a.text), command: answerRetry(node, e, { rid: a.rid, qid: a.qid, rev: a.rev }), ...(h ? { halted: true } : {}) });
+    const text = (a.text.startsWith(`${node}: `) ? a.text.slice(node.length + 2) : a.text).split(': retry with ', 1)[0]!;
+    if (e?.kind === 'rule' && n.slot?.open) out.push({ node, actor: 'parent', kind: 'answer', since: e.seq, rid: a.rid, qid: a.qid, rev: a.rev, text: oneLine(text), command: answerRetry(node, e, { rid: a.rid, qid: a.qid, rev: a.rev }), ...(h ? { halted: true } : {}) });
   }
   const unruled = unruledBlocks(s, node);
   const ruleNeeds = (h ? unruled : unruled.filter(b => !!n.candidate)).map(b => {
@@ -194,6 +195,22 @@ function flakyText(s: State, b: Block, hint = true): string {
   const text = flakyBlockText(s, b).replace(/owed waive [^)]*/, waive(s, b.node, b.obligation));
   return `${text}${hint ? `; or ${decision(b.node)} when the check or test itself must change` : ''}`;
 }
+/** TF2: current trunk-red wins; other complete shared node-check failures retain their unchanged gates. */
+export function sharedCheckHint(s: State, b: Pick<Block,'seq'|'key'>): string | undefined {
+  if (trunkRedHint(s,b.seq,b.key)) return undefined;
+  const e = entriesOf(s).find(e => e.seq === b.seq);
+  if (e?.kind !== 'obs' || e.probe !== undefined || !e.obligation.startsWith('check:')) return undefined;
+  const r = sharedFailure(s,e,e.subject);
+  if (!r) return undefined;
+  const fix = fixCandidates(s,e.subject,r.names)[0]?.id;
+  return [...new Map(r.trunk.map(p => [p.seq,p])).values()].map(probe => `${e.obligation} block #${b.seq} also fails on trunk ${probe.commit.slice(0,12)} without ${e.subject} (probe #${probe.seq}: ${sharedNames(r.names.filter(n => probe.failed?.includes(n)))}): not this node's change → owed waive ${e.subject} ${e.obligation} --accept-risk ${b.seq} --tracked-by ${fix ?? '<fix>'} --reason "<why>"${fix ? '' : ' (add a fix node first)'}`).join('; ');
+}
+/** TR: parent choices; the failing merge observation is the waiver risk, never the probe. */
+export function trunkRedHint(s: State, seq: number, key?: string): string | undefined {
+  const r = trunkRedOf(s, seq, key);
+  if (!r) return undefined;
+  return `${trunkRedText(r)}; merge-tree obs #${r.merge.seq}, trunk probe #${r.probe.seq}; this candidate is not shown to be the cause; parent: fix trunk with a fixing node${s.plan.sweep ? `, or owed sweep --commit ${s.trunk.commit} for its bisect/escape proposal` : ''}; or owed waive ${r.merge.subject} ${r.merge.obligation} --accept-risk ${r.merge.seq}`;
+}
 /** Compact-why next line for one obligation; agent/executor work stays contextual, never a Need. */
 export function itemLine(s: State, node: string, obligation: string, rt?: Runtime): string {
   const i = node === 'trunk' ? s.invariants.find(i => i.obligation === obligation) : s.nodes[node]?.items.find(i => i.obligation === obligation);
@@ -206,6 +223,8 @@ export function itemLine(s: State, node: string, obligation: string, rt?: Runtim
   if (need) return `${need.text}${need.command ? ` → ${need.command}` : ''}`;
   const b = risks(s, node, obligation)[0];
   if (b) {
+    const diagnosis = trunkRedHint(s, b.seq, b.key) ?? sharedCheckHint(s, b);
+    if (diagnosis) return `${diagnosis}${b.state === 'flaky' && b.kind === 'exec' ? `; ${heldFlaky(s, node, b) ? heldFlakyText(s, node, b) : flakyText(s, b)}` : ''}`;
     if (b.state === 'flaky' && b.kind === 'exec') return heldFlaky(s, node, b) ? heldFlakyText(s, node, b) : flakyText(s, b);
     if (b.kind === 'exec') return `writer fixes and runs owed submit ${word(node)}, then owed attest ${word(node)} (the attribution rerun on the original content clears the block)`;
     const ruled = parentRuling(s, b);
