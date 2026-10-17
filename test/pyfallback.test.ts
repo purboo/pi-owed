@@ -105,6 +105,7 @@ for (const [line, format] of [
   assert.equal(obs.note, `zero tests (${signature}); exit 0; a command that runs tests can print an owed-counts line`);
   const normalized = signature.replace(/\d+(?:\.\d+)?/g, '<n>');
   assert.equal(setupSignature(log), normalized);
+  assert.ok(setupSignature(log).startsWith(`${format} fallback counted line `));
   assert.equal(setupHint(setupSignature(log), 'a'), `setup failure (no tests ran): ${normalized} — likely the environment; fix it, then owed decide a --remeasure`);
 });
 test('PF4 nonzero exit retains the command-failure note and adds the counted line', async () => {

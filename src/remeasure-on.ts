@@ -6,11 +6,13 @@ import type { ObsEntry } from './types.ts';
 export function setupSignature(log: string): string {
   const counted = zeroTestFallbackSignature(log);
   const lines = log.replace(/\x1b\[[0-9;]*m/g,'').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const line = counted ?? lines.find(l => /Error|Cannot find|ENOENT|ERR_|not found/i.test(l)) ?? lines.at(-1) ?? '(no output)';
-  return line.replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?/g,'<time>')
+  // The fixed parser prefix contains 'jest/vitest', not a path to normalize.
+  const prefix = counted ? counted.slice(0, counted.indexOf('"')) : '';
+  const line = counted ? counted.slice(prefix.length) : lines.find(l => /Error|Cannot find|ENOENT|ERR_|not found/i.test(l)) ?? lines.at(-1) ?? '(no output)';
+  return (prefix + line.replace(/\b\d{4}-\d{2}-\d{2}[T ][\d:.]+(?:Z|[+-]\d{2}:?\d{2})?/g,'<time>')
     .replace(/(?:[A-Za-z]:[\\/]|\/)[^\s'"`,;:)\]}]+/g,'<path>')
     .replace(/\b(?:0x[0-9a-f]+|[0-9a-f]{7,})\b/gi,'<id>').replace(/\d+(?:\.\d+)?/g,'<n>')
-    .replace(/\s+/g,' ').slice(0,300);
+    .replace(/\s+/g,' ')).slice(0,300);
 }
 export const setupHint = (signature: string, nodes: string): string => `setup failure (no tests ran): ${signature} — likely the environment; fix it, then owed decide ${nodes} --remeasure`;
 
