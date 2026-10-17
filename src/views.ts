@@ -693,8 +693,9 @@ function acceptedText(s: State, e: WaiveEntry, unmeasured: boolean): string {
 }
 /** An exec block that an attribution rerun passed (flaky) before entry `before`, as the reducer marks it. */
 const wasFlaky = (s: State, b: Block, before: number): boolean => flakyPass(s,b,before) !== undefined;
-export function waiverRecordedText(e: WaiveEntry): string {
-  return `waived ${e.node}/${e.obligation} #${e.seq}: debt recorded${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(seq => `#${seq}`).join(', ')})` : ''}`;
+export function waiverRecordedText(e: WaiveEntry & { scope?: { on:'merge'|'candidate'; trunk?:string } }): string {
+  const key = e.scope ? ` on the ${e.scope.on} key ${e.key.slice(0,12)}${e.scope.on === 'merge' ? ` (merge tree of ${e.node} on trunk ${e.scope.trunk?.slice(0,12)})` : ''}` : '';
+  return `waived ${e.node}/${e.obligation} #${e.seq}: debt recorded${key}${e.accept_risk?.length ? ` (accepted block risk ${e.accept_risk.map(seq => `#${seq}`).join(', ')})` : ''}`;
 }
 /** K2.3: a waived item reads `<subject>/<obligation> waived (not measured for this candidate) by <who>: <reason>`. */
 function waivedText(i: ItemView & { observations?: Entry[] }): string {

@@ -1472,17 +1472,19 @@ export async function review(o: Actor & { node: string; verdict:'ok'|'block'; ra
   return entry;
 }
 /** `named` (G1) and `pin` (an owner confirmation's candidate) refuse at append time when the open candidate differs. */
-export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; tracked_by?:string; channel:Channel; named?: string; pin?: CandidatePin }): Promise<RecordedAct> {
+export async function waive(o: Actor & { node:string; obligation:string; reason:string; accept_risk?:number[]; tracked_by?:string; channel:Channel; named?: string; pin?: CandidatePin }): Promise<RecordedAct & { scope: { on:'merge'|'candidate'; trunk?:string } }> {
   const given = candidateArg(o.named);
-  return mutateAct(o,async s => {
+  let scope: { on:'merge'|'candidate'; trunk?:string } = {on:'candidate'};
+  const act = await mutateAct(o,async s => {
     node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin);
     if (o.tracked_by !== undefined && (typeof o.tracked_by !== 'string' || !s.plan.nodes.some(n => n.id === o.tracked_by) || s.nodes[o.tracked_by]?.merged || o.tracked_by === o.node)) throw new OwedError('tracked_by must name an unmerged node of the current plan other than the waived node','usage');
     const tracked = o.tracked_by !== undefined ? {tracked_by:o.tracked_by} : {};
     const n = candidate(s,o.node);
-    const inactive = (o.accept_risk ?? []).filter(seq => !activeRisk(s,o.node,o.obligation,seq));
+    const risks = o.accept_risk ?? [], inactive = risks.filter(seq => !activeRisk(s,o.node,o.obligation,seq));
+    const allMerge = risks.length > 0 && risks.every(seq => { const e = entriesOf(s).find(e => e.seq === seq); return e?.kind === 'obs' && !!mergeRisk(s,o.node,o.obligation,seq,e.key); });
     let key = n.candidate!.keys[o.obligation] ?? '';
     const trackingOnly = trackedRiskRetry(s,{kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key,reason:o.reason,accept_risk:o.accept_risk,...tracked});
-    if (inactive.length && o.as.role === 'owner' && !trackingOnly) {
+    if ((inactive.length || allMerge) && o.as.role === 'owner' && !trackingOnly) {
       const refused = (): never => { throw new OwedError('accept_risk must reference active blocks for this obligation'); };
       if (inactive.some(seq => {
         const e = entriesOf(s).find(e => e.seq === seq);
@@ -1492,19 +1494,28 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
         const repeated = identicalAct(s,{ kind:'waive', by:by(o), channel:o.channel, node:o.node, obligation:o.obligation, key, reason:o.reason, accept_risk:o.accept_risk, ...tracked });
         return repeated ?? refused();
       }
-      const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
-      if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`);
+      if (inactive.length) {
+        const drift = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
+        if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`);
+      }
       const built = await git.buildMerge(o.cwd,s.trunk.commit,n.candidate!.commit,`owed merge ${o.node}`);
-      if ('conflicts' in built) return refused();
-      const m = await mergeFacts(o.cwd,s,o.node,built.commit);
-      key = m.facts.keys[o.obligation] ?? '';
-      if (!key || (o.accept_risk ?? []).some(seq => activeRisk(s,o.node,o.obligation,seq) ? n.blocks.find(b => b.seq === seq)?.key !== key : !mergeRisk(s,o.node,o.obligation,seq,key))) return refused();
-      // Same ledger lock as the append; Git refs can still move independently of the ledger.
-      const after = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
-      if (after) throw new OwedError(`trunk changed (CAS): ${driftText(after)}`);
+      if ('conflicts' in built) { if (inactive.length) return refused(); }
+      else {
+        const m = await mergeFacts(o.cwd,s,o.node,built.commit), mergeKey = m.facts.keys[o.obligation] ?? '';
+        const matches = !!mergeKey && risks.every(seq => activeRisk(s,o.node,o.obligation,seq) ? n.blocks.find(b => b.seq === seq)?.key === mergeKey : !!mergeRisk(s,o.node,o.obligation,seq,mergeKey));
+        if (!matches) { if (inactive.length) return refused(); }
+        else {
+          key = mergeKey;
+          // Same ledger lock as the append; Git refs can still move independently of the ledger.
+          const after = await git.trunkDrift(o.cwd,s.trunk.name,s.trunk.commit);
+          if (after) throw new OwedError(`trunk changed (CAS): ${driftText(after)}`);
+          scope = {on:'merge',trunk:s.trunk.commit};
+        }
+      }
     }
     return {kind:'waive',by:by(o),channel:o.channel,node:o.node,obligation:o.obligation,key,reason:o.reason,accept_risk:o.accept_risk,...tracked};
   });
+  return {...act,scope};
 }
 /** K2.3: what the recorded waiver `entry` means, from the ledger state right after it (a later entry cannot relabel it; see views.waiverText). */
 export async function waiverMeaning(o: Context & { entry: Entry }): Promise<string> { const e = o.entry; if (e.kind !== 'waive') throw new OwedError('not a waiver','internal'); const {entries,lookup} = await load(await Ledger.open(o.cwd)); return waiverText(reduce(entries.filter(x => x.seq <= e.seq),lookup),e); }

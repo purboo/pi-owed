@@ -165,7 +165,7 @@ test('K2.3: waivers say what they mean and their true scope; why shows a waived 
     const res = await tools.get('owed_waive')!.execute('test', { node: 'c', obligation: 'check:unit', reason: 'later' }, undefined, undefined, { cwd: x.cwd, hasUI: false } as unknown as Parameters<ToolDefinition['execute']>[4]);
     assert.notEqual(res.isError, true, JSON.stringify(res.content));
     const text = (res.content[0] as { text: string }).text, meaningC = (res.details as { meaning: string }).meaning;
-    assert.match(text.split('\n')[0]!, /^waived c\/check:unit #\d+: debt recorded$/);
+    assert.match(text.split('\n')[0]!, /^waived c\/check:unit #\d+: debt recorded on the candidate key [a-f0-9]{12}$/);
     assert.equal(text.split('\n')[1], meaningC);
     assert.match(meaningC, /^waived check:unit for candidate #\d+ [0-9a-f]{12} \(key [0-9a-f]{12}\): in effect now; owed counts check:unit as waived, not measured, for every candidate of c whose check:unit key is [0-9a-f]{12}, in this or a later attempt, while no unaccepted active block remains on check:unit; .*; this key has no observation yet, so owed attest still measures it: a pass counts as measured, a fail adds a block that suspends the waiver until it clears$/, meaningC);
     assert.doesNotMatch(meaningC, /flaky/);
