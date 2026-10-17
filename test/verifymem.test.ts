@@ -13,7 +13,7 @@ import type { Draft, Entry, Plan } from '../src/types.ts';
 
 // Namespace access also runs against the base tree: the missing diagnostic must fail an assertion, not import.
 const diagnostic = () => {
-  const stats = (ops as unknown as { verifyPlanStats?: () => { parsed: number; maxRetained: number } }).verifyPlanStats;
+  const stats = (ops as unknown as { verifyPlanStats?: () => { parsed: number; maxRetained: number; maxHeld: number } }).verifyPlanStats;
   assert.equal(typeof stats, 'function', 'VM3: verifyPlanStats diagnostic is missing');
   return stats!();
 };
@@ -55,27 +55,38 @@ async function fixture(count = 20) {
     } };
 }
 
-test('VM1-VM3: verify keeps 20 YAML plan versions bounded and preserves the result and matching snapshot', async () => {
-  const t = await fixture();
-  try {
-    const expected = R.reduce(t.entries, t.lookup), payload = serialize(R.packState(expected));
-    await t.ledger.writeSnapshot(expected.seq, expected.head, payload);
-    const before = await readFile(join(t.dir, 'ledger.jsonl'), 'utf8');
-    assert.deepEqual(await ops.verify({ cwd: t.root }), { ok: true, entries: t.entries.length, head: expected.head });
-    assert.deepEqual((await t.ledger.readSnapshot())?.payload, payload, 'matching snapshot is not rewritten');
-    assert.equal(await readFile(join(t.dir, 'ledger.jsonl'), 'utf8'), before, 'verify appends no entries');
-    const stats = diagnostic();
-    assert.ok(stats.parsed >= 20, `every named plan must be YAML parsed: ${JSON.stringify(stats)}`);
-    assert.ok(stats.maxRetained > 0 && stats.maxRetained <= 8, `VM2: retained plans exceed eight: ${JSON.stringify(stats)}`);
-    assert.deepEqual(ops.planCacheStats(), { entries: 0, max: 8, hits: 0, misses: 0, evictions: 0 }, 'verify does not populate the process LRU');
-    // Diagnostic reads are isolated, and a later call reports only that verification.
-    stats.maxRetained = 999;
-    assert.ok(diagnostic().maxRetained <= 8);
-    await writeFile(join(t.dir, 'ledger.jsonl'), t.entries.slice(0, 1).map(entry => JSON.stringify(entry) + '\n').join(''));
-    await t.ledger.removeSnapshot();
-    assert.equal((await ops.verify({ cwd: t.root })).ok, true);
-    assert.equal(diagnostic().maxRetained, 1, 'last-verify counters are reset for each invocation');
-  } finally { await t.cleanup(); }
+test('VM1-VM3: verify keeps 20 and 40 YAML plan versions bounded and preserves the result and matching snapshot', async () => {
+  let twenty: ReturnType<typeof diagnostic> | undefined;
+  for (const count of [20, 40]) {
+    const t = await fixture(count);
+    try {
+      const expected = R.reduce(t.entries, t.lookup), payload = serialize(R.packState(expected));
+      await t.ledger.writeSnapshot(expected.seq, expected.head, payload);
+      const before = await readFile(join(t.dir, 'ledger.jsonl'), 'utf8');
+      assert.deepEqual(await ops.verify({ cwd: t.root }), { ok: true, entries: t.entries.length, head: expected.head });
+      assert.deepEqual((await t.ledger.readSnapshot())?.payload, payload, 'matching snapshot is not rewritten');
+      assert.equal(await readFile(join(t.dir, 'ledger.jsonl'), 'utf8'), before, 'verify appends no entries');
+      const stats = diagnostic();
+      assert.ok(stats.parsed >= count, `every named plan must be YAML parsed: ${JSON.stringify(stats)}`);
+      assert.ok(stats.maxRetained > 0 && stats.maxRetained <= 8, `VM2: retained plans exceed eight: ${JSON.stringify(stats)}`);
+      assert.ok(stats.maxHeld > stats.maxRetained && stats.maxHeld <= 18, `R-vm-1: LRU plus live states must be counted and bounded: ${JSON.stringify(stats)}`);
+      if (count === 20) twenty = { ...stats };
+      else {
+        assert.equal(stats.maxRetained, twenty!.maxRetained, 'LRU retention is independent of plan count');
+        assert.ok(stats.maxHeld <= twenty!.maxHeld, `held plans must not grow with plan count: ${JSON.stringify({ twenty, forty: stats })}`);
+      }
+      console.log(`# verifyPlanStats: ${count} versions ${JSON.stringify(stats)}`);
+      assert.deepEqual(ops.planCacheStats(), { entries: 0, max: 8, hits: 0, misses: 0, evictions: 0 }, 'verify does not populate the process LRU');
+      // Diagnostic reads are isolated, and a later call reports only that verification.
+      stats.maxRetained = stats.maxHeld = 999;
+      assert.ok(diagnostic().maxRetained <= 8); assert.ok(diagnostic().maxHeld <= 18);
+      await writeFile(join(t.dir, 'ledger.jsonl'), t.entries.slice(0, 1).map(entry => JSON.stringify(entry) + '\n').join(''));
+      await t.ledger.removeSnapshot();
+      assert.equal((await ops.verify({ cwd: t.root })).ok, true);
+      assert.equal(diagnostic().maxRetained, 1, 'last-verify counters are reset for each invocation');
+      assert.equal(diagnostic().maxHeld, 2, 'single-state replay counts its LRU and retained plan separately');
+    } finally { await t.cleanup(); }
+  }
 });
 
 test('VM1: corrupt, stale-version and mismatching historical cache entries retain reporting and rewrite semantics', async () => {

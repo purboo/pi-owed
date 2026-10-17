@@ -16,7 +16,7 @@ import { driveConfig, quarantineNames, parsePlan, planDowngrades, worktreesConfi
 import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, reviewCarrySource, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
-import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, interpretedEntry, newerEntry, type PackedState } from './reducer.ts';
+import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, retainedPlanValues, interpretedEntry, newerEntry, type PackedState } from './reducer.ts';
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, writeCovers } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trackedRiskRetry, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
@@ -2448,9 +2448,13 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const superseded = supersededOf(state,Object.values(state.nodes)).filter(b => included({seq:b.supersededBy}));
   return withActHistory({...(trackedWaivers(state).length ? {trackedDebt:trackedWaivers(state).map(e => trackedDebtText(state,e))} : {}),reviews:{sameModel:sameModelReviews(entries,included)},...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(quarantineDebt(state).length ? {quarantine:quarantineDebt(state).map(quarantineText)} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })},entries);
 }
-let lastVerifyPlanStats = { parsed:0, maxRetained:0 };
-/** @internal Last verify's YAML parse count and local parsed-plan LRU high-water mark. */
-export function verifyPlanStats(): { parsed: number; maxRetained: number } { return { ...lastVerifyPlanStats }; }
+let lastVerifyPlanStats = { parsed:0, maxRetained:0, maxHeld:0 };
+/**
+ * @internal Last verify's YAML parse count, local LRU high-water mark and held-plan high-water mark.
+ * maxHeld samples LRU size + retainedPlanValues for each live state after reduce/unpackState/extendState and
+ * at the snapshot comparison. It is an upper bound: shared plan objects may be counted more than once.
+ */
+export function verifyPlanStats(): { parsed: number; maxRetained: number; maxHeld: number } { return { ...lastVerifyPlanStats }; }
 /**
  * Verifies the hash chain and replays the ledger. N4: never reads the plan caches; every plan is parsed from its YAML
  * blob and reads each persistent cache entry raw: one of another version is rewritten silently; one of this version
@@ -2458,16 +2462,20 @@ export function verifyPlanStats(): { parsed: number; maxRetained: number } { ret
  * failure) and rewritten.
  */
 export async function verify(o: Context): Promise<VerifyResult> {
-  const stats = { parsed:0, maxRetained:0 };
+  const stats = { parsed:0, maxRetained:0, maxHeld:0 };
   lastVerifyPlanStats = stats;
   try {
     const ledger = await Ledger.open(o.cwd), entries = await ledger.read(), plans = new Map<string, Plan>(), cacheMismatch: string[] = [];
     const known = new Set(planShas(entries));
+    const sampleHeld = (...states: State[]) => {
+      stats.maxHeld = Math.max(stats.maxHeld,plans.size + states.reduce((sum,s) => sum + retainedPlanValues(s),0));
+    };
     // VM2: this LRU contains only YAML-checked plans, never values from either plan cache. Deep freezing lets PM3
     // share them instead of retaining mutable clones of every historical law. Evict before parsing the next value.
     const room = () => { if (plans.size === PLAN_CACHE_MAX) plans.delete(plans.keys().next().value!); };
     const remember = (sha: string, p: Plan): Plan => {
-      stats.parsed++; plans.set(sha,deepFreeze(p)); stats.maxRetained = Math.max(stats.maxRetained,plans.size); return p;
+      stats.parsed++; plans.set(sha,deepFreeze(p)); stats.maxRetained = Math.max(stats.maxRetained,plans.size);
+      sampleHeld(); return p;
     };
     for (const sha of known) {
       room();
@@ -2490,12 +2498,17 @@ export async function verify(o: Context): Promise<VerifyResult> {
     const snap = await ledger.readSnapshot();
     let state: State, snapshotMismatch: number | undefined;
     if (snap && entries[snap.seq]?.hash === snap.hash) {
-      state = reduce(entries.slice(0,snap.seq+1),lookup);
+      state = reduce(entries.slice(0,snap.seq+1),lookup); sampleHeld(state);
       let same = false;
-      try { same = sameReplay(unpackState(deserialize(snap.payload) as PackedState,lookup),state); } catch { same = false; }
+      try {
+        const restored = unpackState(deserialize(snap.payload) as PackedState,lookup);
+        sampleHeld(state,restored);
+        // sameReplay resolves historical laws in both states; sample again even if that lookup throws.
+        try { same = sameReplay(restored,state); } finally { sampleHeld(state,restored); }
+      } catch { same = false; }
       if (!same) { await invalidateReplay(ledger); snapshotMismatch = snap.seq; }
-      extendState(state,entries.slice(snap.seq+1));
-    } else state = reduce(entries,lookup);
+      extendState(state,entries.slice(snap.seq+1)); sampleHeld(state);
+    } else { state = reduce(entries,lookup); sampleHeld(state); }
     const errors = decisionTailErrors(state); if (errors.length) throw new OwedError(errors.join('; '));
     const incompleteBatch = incompleteBatchText(state);
     return { ok:true, entries:entries.length, head:state.head, ...(cacheMismatch.length ? { cacheMismatch } : {}), ...(snapshotMismatch !== undefined ? { snapshotMismatch } : {}), ...(incompleteBatch ? { incompleteBatch } : {}) };
