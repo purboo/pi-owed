@@ -2,7 +2,7 @@
 // answered-but-still-asking questions.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
@@ -89,8 +89,9 @@ test('QT5: an answer recorded 10 minutes ago that the run still asks wakes as an
     const follower = new Follower({ log, repo: f.cwd, pid: process.pid, start: procStart(process.pid), deliver() {} });
     Date.now = () => at + 720_000;
     await new Driver({ cwd: f.cwd, dsa: f.dsa, json: true, session: null, log: l => appendFileSync(log, `${l}\n`) }).pass();
-    const wake = follower.tick()!;
-    assert.equal(wake.split('\n')[0], `Needs you: ${late.text}`, wake);
+    const wake = (await follower.step())!;
+    const need = JSON.parse(readFileSync(log,'utf8').trim()).need;
+    assert.equal(wake.split('\n')[0], `Needs you: a — ${need.text} → ${need.command}`, wake);
     assert.doesNotMatch(wake, /Which API|decide /, wake);
   } finally { Date.now = realNow; await f.cleanup(); }
 });
