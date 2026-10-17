@@ -13,7 +13,9 @@
 
 ## Commands and compatibility
 
-Exported `validateArgv()` shares the CLI argument grammar: command names, allowed flags, positional arguments, value shapes and existing required values. Invalid arguments remain usage errors. Candidate pins appear on waive, review, approve and evidence only, not attest, decide or resume.
+Exported `validateArgv()` shares the CLI's pre-I/O argument grammar: command names, allowed flags, positional arguments, value shapes and required values checked before I/O. Checks previously performed after repository access or confirmation stay at those points, preserving the CLI's output, exit codes and error precedence. Candidate pins appear on waive, review, approve and evidence only, not attest, decide or resume.
+
+Removed-node items do not create new needs; their existing halt and ruling paths remain. A reviewer item requiring rank above two names the sufficient owner review route. Node and obligation words are shell-quoted whenever they are not plain safe command words.
 
 Risk commands retain `--accept-risk`, `--candidate`, `--reason` and their role. Review commands retain `--note` and `--ack-rulings latest`; evidence retains files, explanatory text and its role. There are no new flags, plan keys or ledger fields, and no changes to reducer acceptance, provenance or clearance rules. Existing displays and driver callers remain unchanged until the subsequent rendering integration.
 

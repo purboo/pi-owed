@@ -255,9 +255,11 @@ test('NE18 pinned vocabulary is byte-identical to the contract sha', async () =>
 
 test('NE19 NE-CLI: exported grammar preserves CLI usage outcomes before I/O', async () => {
   const { validateArgv } = await grammar(), r = await repo();
-  const invalid = [['wat'], ['toString'], ['constructor'], ['status', 'extra'], ['status', '--candidate', commit('one')], ['status', '--as', 'bad'], ['review', 'a', '--ok'], ['review', 'a', '--ok', '--block', '--rank', '2'], ['waive', 'a', 'check:stress'], ['defer', 'a', 'health'], ['decide', 'a'], ['rule', 'text'], ['evidence', 'a', 'ui'], ['attest', 'a', '--candidate', commit('one')], ['resume', 'a', '--expect', 'no'], ['review', 'a', '--ok', '--rank', 'NaN'], ['answer', 'a', 'text', '--rev', '0'], ['status', '--full=1'], ['report', '--since'], ['status', '--full', '--full'], ['drive', '--stop', '--once'], ['drive', '--now'], ['attest', 'a', '--all'], ['report', '--until', '2']];
+  const invalid = [['wat'], ['status', 'extra'], ['status', '--candidate', commit('one')], ['status', '--as', 'bad'], ['evidence', 'a', 'ui'], ['attest', 'a', '--candidate', commit('one')], ['status', '--full=1'], ['report', '--since'], ['status', '--full', '--full'], ['drive', '--stop', '--once'], ['drive', '--now'], ['attest', 'a', '--all'], ['report', '--until', '2']];
   try {
     for (const argv of invalid) { assert.throws(() => validateArgv(argv), (e: unknown) => !!e && typeof e === 'object' && 'code' in e && e.code === 'usage', argv.join(' ')); const out = await cli(r.cwd, argv); assert.equal(out.code, 2, out.stderr); }
+    // R-028-30: these checks remain after I/O/confirmation; only main validates them there.
+    for (const argv of [['review', 'a', '--ok'], ['defer', 'a', 'health'], ['decide', 'a'], ['rule', 'text'], ['edit', 'a', '--expect', 'bad'], ['review', 'a', '--ok', '--rank', 'bad', '--obligation', 'bogus'], ['waive', 'a', 'check:stress', '--accept-risk', 'bad']]) validateArgv(argv);
     for (const argv of [['--help'], ['version'], ['attest', '--trunk'], ['rule', 'text', '--nodes', 'a'], ['answer', 'a', '--', '--literal answer'], ['review', 'a', '--ok', '--rank', '3', '--ack-rulings', 'latest'], ['decide', 'a', '--text', 'ruling', '--writes', '+a', '+b'], ['evidence', 'a', 'ui', '--file', 'a', '--file', 'b', '--note', 'checked']]) validateArgv(argv);
   } finally { await r.cleanup(); }
 });
@@ -630,4 +632,556 @@ test('NE28 command words preserve literal check ids, rather than shell substitut
     const a = await ops.dispatch({ cwd: r.cwd, as: parent, node }); await commitAt(a.worktree, { impl: 'candidate' }); await ops.submit({ cwd: a.worktree, as: { role: 'writer', id: `${node}#1` }, node }); await ops.attest({ cwd: r.cwd, node }); await ops.halt({ cwd: r.cwd, as: parent, node, attempt: 1, reason: 'stalled', needs: 'owner' });
     const ns = needs((await ops.readState(r)).state, node); assert.equal(ns.length, 1); assert.equal(words(ns[0]!.command!)[2], node); assert.equal(words(ns[0]!.command!)[3], 'check:' + check); await commands(ns);
   } finally { await r.cleanup(); }
+});
+
+// R-028-30: captured once by git archive 2a5f1a8 src, loading that cli.ts on the remote
+// host with isolated HOME/XDG and a fresh uninitialized helper repo for every argv.
+// One missing value/positional operand for every command, plus the six review findings.
+const cliBaseline = [
+  {
+    "argv": [
+      "edit",
+      "a",
+      "--expect",
+      "bad"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --expect must be report"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "review",
+      "a",
+      "--ok",
+      "--rank",
+      "bad",
+      "--obligation",
+      "bogus"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Invalid review obligation"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "drive",
+      "--status",
+      "--max",
+      "bad"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --max is only valid with --detach, --once or the loop"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "report",
+      "--metrics",
+      "--cost",
+      "--as",
+      "bad"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: report takes --metrics, --counterfactual or --cost, not more than one"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "waive",
+      "a",
+      "check:stress",
+      "--accept-risk",
+      "bad"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: accept-risk must be a list of seq numbers"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "defer",
+      "a",
+      "health"
+    ],
+    "code": 1,
+    "stdout": [],
+    "stderr": [
+      "Refused: Not initialized: run owed init <plan.yaml> first"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "start",
+      "--max"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --max requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "decide",
+      "a"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --text"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "answer",
+      "a"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: answer wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "init"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: init wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "plan"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: plan wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "amend"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: amend wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "edit",
+      "a"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --note"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "rule",
+      "text"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --nodes"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "dispatch"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: dispatch wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "submit"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: submit wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "rebase"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: rebase wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "attest"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: attest wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "review",
+      "a",
+      "--ok"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --rank"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "waive",
+      "a",
+      "check:stress"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --reason"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "defer",
+      "a",
+      "health"
+    ],
+    "code": 1,
+    "stdout": [],
+    "stderr": [
+      "Refused: Not initialized: run owed init <plan.yaml> first"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "abandon"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: abandon wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "resume"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: resume wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "approve"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: approve wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "evidence",
+      "a",
+      "ui"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --note"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "merge"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: merge wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "adopt"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --note"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "sweep",
+      "--commit"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --commit requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "status",
+      "--as"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --as requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "idle",
+      "--as"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --as requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "why"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: why wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "report",
+      "--since"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --since requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "brief",
+      "--since"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --since requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "verify",
+      "--as"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --as requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "escape",
+      "a"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: Required: --class"
+    ],
+    "preIO": false
+  },
+  {
+    "argv": [
+      "decoy",
+      "digest"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: decoy wrong number of arguments"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "gc",
+      "--as"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --as requires a value"
+    ],
+    "preIO": true
+  },
+  {
+    "argv": [
+      "drive",
+      "--max"
+    ],
+    "code": 2,
+    "stdout": [],
+    "stderr": [
+      "Usage error: --max requires a value"
+    ],
+    "preIO": true
+  }
+];
+
+test('NE29 R-028-30 frozen CLI output and pre-I/O boundary preserve the baseline ordering', async () => {
+  await api(); const { main, validateArgv } = await grammar(), home = await repo();
+  const original = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME, OWED_CONFIRM: process.env.OWED_CONFIRM };
+  try {
+    process.env.HOME = home.root; process.env.XDG_CONFIG_HOME = join(home.root, 'config'); delete process.env.OWED_CONFIRM;
+    for (const row of cliBaseline) {
+      const r = await repo(), cwd = process.cwd();
+      try {
+        process.chdir(r.cwd);
+        const stdout: string[] = [], stderr: string[] = [];
+        const code = await main(row.argv, { log: text => stdout.push(text), error: text => stderr.push(text) });
+        assert.deepEqual({ code, stdout, stderr }, { code: row.code, stdout: row.stdout, stderr: row.stderr }, row.argv.join(' '));
+        const jsonOut: string[] = [], jsonErr: string[] = [];
+        const jsonCode = await main([...row.argv, '--json'], { log: text => jsonOut.push(text), error: text => jsonErr.push(text) });
+        assert.deepEqual({ code: jsonCode, stdout: jsonOut, stderr: jsonErr }, { code: row.code, stdout: [JSON.stringify({ error: row.stderr[0]!.replace(/^(Usage error|Refused): /, ''), code: row.code === 1 ? 'refused' : 'usage' })], stderr: row.stderr }, `JSON ${row.argv.join(' ')}`);
+        if (row.preIO) assert.throws(() => validateArgv(row.argv), (e: unknown) => !!e && typeof e === 'object' && 'code' in e && e.code === 'usage' && 'message' in e && `Usage error: ${e.message}` === row.stderr[0]);
+        else assert.doesNotThrow(() => validateArgv(row.argv), row.argv.join(' '));
+      } finally { process.chdir(cwd); await r.cleanup(); }
+    }
+  } finally {
+    for (const [key, value] of Object.entries(original)) if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    await home.cleanup();
+  }
+});
+
+test('NE30 R-028-30 removed open-slot approval keeps the frozen empty baseline membership', async () => {
+  const { needs } = await api(), r = await repo();
+  try {
+    await commitAt(r.cwd, { impl: 'base' });
+    const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [], nodes: [{ id: 'a', writes: ['impl'], checks: [], review: { count: 0, min_rank: 1 }, approve: 'owner' }] };
+    await ops.init({ cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify(plan) });
+    const a = await ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' }); await commitAt(a.worktree, { impl: 'candidate' }); await ops.submit({ cwd: a.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    assert.equal(needs((await ops.readState(r)).state, 'a')[0]!.kind, 'approve');
+    await ops.planSet({ cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify({ ...plan, nodes: [] }), note: 'retire open candidate' });
+    const s = (await ops.readState(r)).state;
+    assert.equal(s.nodes.a!.phase, 'removed'); assert.equal(s.nodes.a!.slot!.open, true);
+    for (const driverRunning of [false, true]) {
+      assert.deepEqual(statusView(s, [...entriesOf(s)], [], now, driverRunning).summary!.needs, []);
+      assert.deepEqual(needs(s, 'a', { driverRunning }), []);
+    }
+  } finally { await r.cleanup(); }
+});
+
+test('NE31 R-028-30 high-rank itemLine names a sufficient owner act that discharges the review', async () => {
+  const { needs, itemLine } = await api();
+  for (const rank of [3]) {
+    const r = await repo();
+    try {
+      await commitAt(r.cwd, { impl: 'base' });
+      await ops.init({ cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify({ version: 1, trunk: 'main', lease: false, closure: [], invariants: [], nodes: [{ id: 'a', writes: ['impl'], checks: [], review: { count: 1, min_rank: rank } }] }) });
+      const a = await ops.dispatch({ cwd: r.cwd, as: parent, node: 'a' }); await commitAt(a.worktree, { impl: 'candidate' }); await ops.submit({ cwd: a.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } }); await ops.attest({ cwd: r.cwd, node: 'a' });
+      const s = (await ops.readState(r)).state, c = s.nodes.a!.candidate!;
+      assert.deepEqual(needs(s, 'a'), []);
+      const line = itemLine(s, 'a', 'review'), command = `owed review a --ok --rank ${rank} --candidate ${c.commit.slice(0, 12)} --note "<note>" --ack-rulings latest --as owner:<id>`;
+      assert.equal(line, `${s.nodes.a!.items.find(i => i.obligation === 'review')!.detail}; an owner records ${command}`);
+      const result = await cli(r.cwd, words(command).slice(1).map(w => w === 'owner:<id>' ? 'owner:pi' : w)); assert.equal(result.code, 0, result.stderr);
+      const after = (await ops.readState(r)).state;
+      assert.equal(after.nodes.a!.items.find(i => i.obligation === 'review')!.status, 'E'); assert.equal(after.nodes.a!.accepted, true);
+    } finally { await r.cleanup(); }
+  }
+});
+
+test('NE32 R-028-30 a$HOME is a literal shell word in every itemLine command route', async () => {
+  const { needs, itemLine } = await api(), r = rig({ review: { count: 1, min_rank: 3 } }), node = 'a$HOME';
+  // The plan accepts this id; ops.dispatch's independent worktree-path restriction remains unchanged.
+  // Rebuild the same valid synthetic ledger under that id to test the pure command renderer.
+  const state = () => reduce(r.entries.map(e => ({ ...e,
+    ...( 'node' in e && e.node === 'a' ? { node } : {}),
+    ...( 'subject' in e && e.subject === 'a' ? { subject: node } : {}),
+    by: e.by === 'writer:a#1' ? `writer:${node}#1` : e.by,
+  } as Entry)), () => ({ ...r.state().plan, nodes: r.state().plan.nodes.map(n => n.id === 'a' ? { ...n, id: node } : n) }));
+  let s = state();
+  assert.equal(itemLine(s, node, 'check:stress'), `check:stress awaiting observation → owed attest 'a$HOME'`);
+  assert.ok(itemLine(s, node, 'review').includes(`owed review 'a$HOME' --ok --rank 3`));
+  r.obs('check:stress', 'fail'); s = state();
+  assert.ok(itemLine(s, node, 'check:stress').includes(`owed submit 'a$HOME', then owed attest 'a$HOME'`));
+  r.halt(); const ns = needs(state(), node);
+  assert.match(ns[0]!.command!, /^owed waive 'a\$HOME' check:stress /); await commands(ns);
+  r.flaky(); assert.ok(itemLine(state(), node, 'check:stress').includes(`owed waive 'a$HOME' check:stress`));
+  const missing = summaryRig(); missing.add(node, 'dispatched', [missing.item(node, 'submit', 'writer')]);
+  assert.ok(itemLine(missing.s, node, 'submit').includes(`owed submit 'a$HOME'`));
 });
