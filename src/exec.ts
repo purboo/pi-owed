@@ -97,7 +97,7 @@ function fallbackCounts(log: string): { counts: Counts; line: string } | undefin
     const bounded = /^\s*=+\s+(.+?)\s+=+\s*$/.exec(line);
     const body = bounded?.[1] ?? line.trim();
     if (/^\s*(?:=+\s*)?No tests found\b/.test(line)) return { counts: { format: 'jest/vitest', tests: 0 }, line };
-    if (/^\s*(?:=+\s*)?(?:no tests ran(?: in \d+(?:\.\d+)?s)?|collected 0 items)\s*(?:=+)?\s*$/.test(line)) return { counts: { format: 'pytest', tests: 0 }, line };
+    if (/^\s*(?:=+\s*)?(?:no tests ran(?: in \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?)?|collected 0 items)\s*(?:=+)?\s*$/.test(line)) return { counts: { format: 'pytest', tests: 0 }, line };
     // A duration is optional only inside '=' bounds; everything after it must be pytest's optional clock.
     const duration = /^(.*?) in \d+(?:\.\d+)?s(?: \(\d+:\d{2}:\d{2}\))?$/.exec(body);
     if (!bounded && !duration) continue;
@@ -114,23 +114,29 @@ function fallbackCounts(log: string): { counts: Counts; line: string } | undefin
   }
   return undefined;
 }
-/** PF4: display-only provenance, never stored on Counts or used to decide a verdict. */
-export function zeroTestFallbackSignature(log: string): string | undefined {
+/** @internal PF4: full SGR-stripped zero-test source, never stored on Counts. */
+export function zeroTestFallbackLine(log: string): { format: 'pytest' | 'jest/vitest'; line: string } | undefined {
   const counts = parseCounts(log);
   if (counts?.tests !== 0 || (counts.format !== 'pytest' && counts.format !== 'jest/vitest')) return undefined;
   // Preserve the unchanged Tests: parser's precedence over the explicit zero-test fallback.
   const summary = counts.format === 'jest/vitest' ? [...log.matchAll(/^\s*Tests:?\s+(.+)$/gm)].at(-1) : undefined;
   const line = summary ? summary[0].split('\n').at(-1)! : fallbackCounts(log)?.line;
   if (line === undefined) return undefined;
+  return { format: counts.format, line: line.replace(/\x1b\[[0-9;]*m/g, '') };
+}
+/** PF4: display-only provenance, never stored on Counts or used to decide a verdict. */
+export function zeroTestFallbackSignature(log: string): string | undefined {
+  const source = zeroTestFallbackLine(log);
+  if (!source) return undefined;
   const tokens: string[] = [];
   let length = 0, truncated = false;
-  for (const char of line) {
+  for (const char of source.line) {
     const escaped = JSON.stringify(char).slice(1, -1).replace(/[\x7f-\x9f\u2028\u2029]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
     if (length + escaped.length > 160) { truncated = true; break; }
     tokens.push(escaped); length += escaped.length;
   }
   if (truncated) { while (length > 159) length -= tokens.pop()!.length; tokens.push('…'); }
-  return `${counts.format} fallback counted line "${tokens.join('')}"`;
+  return `${source.format} fallback counted line "${tokens.join('')}"`;
 }
 /** FG: display-only errors; failed names and measurement verdicts remain unchanged. */
 export interface ErrorGroup { message: string; location?: string; names: string[]; expected?: string; actual?: string; signatureLocation?: string }
