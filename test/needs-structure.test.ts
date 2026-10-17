@@ -19,13 +19,37 @@ function enclosing(node: ts.Node): string {
   }
   return name;
 }
+function unparenthesized(node: ts.Expression): ts.Expression {
+  while (ts.isParenthesizedExpression(node)) node = node.expression;
+  return node;
+}
+function literalText(node: ts.Expression): string | undefined {
+  const expression = unparenthesized(node);
+  return ts.isStringLiteralLike(expression) ? expression.text : undefined;
+}
+function plusParts(node: ts.Expression): ts.Expression[] {
+  const expression = unparenthesized(node);
+  return ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+    ? [...plusParts(expression.left), ...plusParts(expression.right)] : [expression];
+}
 function inventory(file: string, source: string): Site[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS), sites: Site[] = [], comments = new Set<number>();
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) {
-      // Scan a template's own text, then visit its expressions too (nested templates/quotes are separate sites).
-      const text = ts.isTemplateExpression(node) ? [node.head.text, ...node.templateSpans.map(s => s.literal.text)].join('\n') : node.text;
+      // R-028-68: inline only literal spans; still visit expressions for nested sites.
+      const text = ts.isTemplateExpression(node) ? node.head.text + node.templateSpans.map(s => (literalText(s.expression) ?? '${}') + s.literal.text).join('') : node.text;
       if (acts.test(text) || /\bowed\s+\$\{/.test(node.getText(sf))) sites.push({ file, fn: enclosing(node), literal: node.getText(sf), comment: false });
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      let parent = node.parent;
+      while (ts.isParenthesizedExpression(parent)) parent = parent.parent;
+      // Scan only the outer '+' chain; existing literal sites retain their original digests.
+      if (!ts.isBinaryExpression(parent) || parent.operatorToken.kind !== ts.SyntaxKind.PlusToken) {
+        const parts = plusParts(node).map(literalText);
+        if (parts.some(p => p !== undefined) && !parts.some(p => p !== undefined && acts.test(p)) && acts.test(parts.map(p => p ?? '${}').join(''))) {
+          sites.push({ file, fn: enclosing(node), literal: node.getText(sf), comment: false });
+        }
+      }
     }
     for (const range of [...(ts.getLeadingCommentRanges(source, node.pos) ?? []), ...(ts.getTrailingCommentRanges(source, node.end) ?? [])]) {
       if (comments.has(range.pos)) continue;
@@ -221,5 +245,43 @@ test('PR2: negative fixtures reject new remedies even in registered functions, d
     assert.equal(unregistered([first, first], exact).length, 1, 'a copied site is not implicitly authorized');
     const registeredFunction = registered.find(([file, , kind]) => file === 'src/views.ts' && kind !== 'comment')![1];
     assert.equal(unregistered(sites.map(s => ({ ...s, fn: registeredFunction }))).length, sites.length, 'registration of a function does not authorize a new literal');
+  }
+});
+const foldedRemedies: Record<string, string[]> = {
+  'constant template spans': [
+    '`${"owed"} resume ${node}`',
+    '`${(("owed"))} resume ${node}`',
+    '`${((`owed`))} resume ${node}`',
+    '`${"ow"}${"ed"} resume ${node}`',
+  ],
+  'split concatenations': [
+    '"ow" + "ed resume " + node',
+    '"ow" + ("ed " + "resume ") + node',
+    "'ow' + 'ed resume ' + node",
+    '("owed ") + verb',
+    'node + ("owed " + verb)',
+    '"owed " + "re" + "sume " + node',
+    '"ow" + "ed " + verb',
+  ],
+};
+for (const [kind, expressions] of Object.entries(foldedRemedies)) test(`PR2/R-028-68: ${kind} cannot hide a remedy`, () => {
+  for (const expression of expressions) {
+    const source = `export function remedy(node: string, verb: string) { return ${expression}; }`;
+    const sites = inventory('src/views.ts', source);
+    assert.deepEqual(sites, [{ file: 'src/views.ts', fn: 'remedy', literal: expression, comment: false }], source);
+    assert.deepEqual(unregistered(sites), sites, source);
+    assert.deepEqual(unregistered(sites.map(s => ({ ...s, file: 'src/needs.ts' }))), [], source);
+    const exact: Registered[] = [['src/views.ts', 'remedy', 'diagnostic example', 'Only this raw expression is registered.', digest(expression)]];
+    assert.deepEqual(unregistered(sites, exact), [], 'the digest still names raw source, not folded text');
+    assert.equal(unregistered([...sites, ...sites], exact).length, 1, 'a copied folded site is not authorized');
+  }
+});
+test('PR2/R-028-68: concatenation keeps existing literal sites and ignores chains without literals', () => {
+  for (const expression of ['"owed resume " + node', '"prefix" + ("owed resume " + node)', '("owed resume ") + node']) {
+    const sites = inventory('src/views.ts', `export function remedy(node: string) { return ${expression}; }`);
+    assert.deepEqual(sites.map(s => s.literal), ['"owed resume "'], expression);
+  }
+  for (const expression of ['node + verb', '1 + 2', '"hello " + node', 'prefix + ["ow", "ed"].join("")']) {
+    assert.deepEqual(inventory('src/views.ts', `export function text() { return ${expression}; }`), [], expression);
   }
 });

@@ -8,6 +8,8 @@ Existing entry points re-export the moved functions. The old whole-node command 
 
 Some remedies remain in reducer.ts to avoid new runtime import cycles. Result hints that depend on shared helpers in other modules also stay in their original locations. Each exception is registered by exact literal, not by a whole-file or whole-function exemption. Incomplete-batch recovery under the lock and test observation hooks are unchanged.
 
+Under R-028-68, PR2 inlines string literals and no-substitution templates in template spans, including parenthesized literals. It scans a '+' chain with at least one literal operand as one text, substituting a placeholder for non-literal operands; a chain is an additional site only when no literal operand is already a site. Site literals and digests still name raw source. Computed strings are out of scope: variable resolution, array join and fromCharCode are not evaluated.
+
 ## Changed existing tests
 
 - `test/halt-quiet.test.ts`, E3.2: R-028-59(5) permits removing assertions specific to ownerCommands' old identity selection. The test uses the need's primary command and owner-review alternative; brief text and confirmation-environment invariance assertions remain.
