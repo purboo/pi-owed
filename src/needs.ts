@@ -4,6 +4,7 @@ import { driveConfig } from './plan.ts';
 import { clockTime } from './clock.ts';
 import { entriesOf, previousSubmit, awaitingRuling, parentRuling, ownerNeeded, readyDispatchSkips, overlapping, halted, waitingFor, reportedOf, heldFlaky, heldFlakyText, flakyBlockText, nodeReview, sharedFailure, fixCandidates, sharedNames, sharedParked, sharedParkNotices, sharedPhase, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, trunkInvariantReds } from './reducer.ts';
 import { answerRetry } from './answer.ts';
+import { shellQuote } from './exec-wrap.ts';
 export type { Need, NeedKind, Activity, Measuring, Asking, Runtime } from './needs-types.ts';
 
 const counts = (b: Block): boolean => b.state === 'active' || b.state === 'flaky';
@@ -14,7 +15,7 @@ const pin = (s: State, node: string): string | undefined => s.nodes[node]?.slot?
 const candidateFlag = (s: State, node: string): string => pin(s, node) ? ` --candidate ${pin(s, node)}` : '';
 const obligationFlag = (o: string): string => o === 'closure-review' ? ' --obligation closure-review' : '';
 const owner = 'owner:<id>';
-const word = (s: string): string => /^[A-Za-z0-9._:/#-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`;
+const word = (s: string): string => /^[A-Za-z0-9._:/@+-]+$/.test(s) ? s : shellQuote(s);
 const decision = (node: string): string => `owed decide ${word(node)} --text "<ruling>" --writer`;
 const risks = (s: State, node: string, obligation: string): Block[] => s.nodes[node]?.blocks.filter(b => counts(b) && b.obligation === obligation) ?? [];
 const waive = (s: State, node: string, obligation: string): string => `owed waive ${word(node)} ${word(obligation)}${candidateFlag(s, node)}${risks(s, node, obligation).length ? ` --accept-risk ${risks(s, node, obligation).map(b => b.seq).join(',')}` : ''} --reason "<reason>" --as ${owner}`;
@@ -121,7 +122,8 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   const ownerReady = n.phase === 'ready' && readyDispatchSkips(s, driveConfig(s.plan).max).get(node)?.kind === 'owner';
   if (ownerReady) return [...out, { node, actor: 'owner', kind: 'recover', since: n.blocks.find(counts)?.seq ?? null, text: `no single command: ready, not dispatched: ${plain(ownerNeeded(s, node)!)}; a current candidate is required to resolve its old blocks` }];
   out.push(...ruleNeeds);
-  const obligations = n.items.filter(i => i.status === 'D').filter(i => {
+  // statusView's pending filter excludes removed-node items, but not their halt/ruling paths.
+  const obligations = (n.phase === 'removed' ? [] : n.items).filter(i => i.status === 'D').filter(i => {
     if (ruleNeeds.some(b => b.obligation === i.obligation) || i.obligation === 'driver-halt' || i.obligation === 'dispatch') return false;
     if (measuring(s, node, i.obligation, rt)) return false;
     if (!h && trunkParked(s, node).length) return false;
@@ -205,15 +207,19 @@ export function itemLine(s: State, node: string, obligation: string, rt?: Runtim
   const b = risks(s, node, obligation)[0];
   if (b) {
     if (b.state === 'flaky' && b.kind === 'exec') return heldFlaky(s, node, b) ? heldFlakyText(s, node, b) : flakyText(s, b);
-    if (b.kind === 'exec') return `writer fixes and runs owed submit ${node}, then owed attest ${node} (the attribution rerun on the original content clears the block)`;
+    if (b.kind === 'exec') return `writer fixes and runs owed submit ${word(node)}, then owed attest ${word(node)} (the attribution rerun on the original content clears the block)`;
     const ruled = parentRuling(s, b);
     return `${ruled ? `the writer repairs with ruling #${ruled.seq}; then ` : ''}an ok review of ${node}/${obligation} on the current candidate by the original reviewer ${entriesOf(s).find(e => e.seq === b.seq)?.by ?? 'the original reviewer'} with rank >= ${b.rank}, or by any reviewer with rank > ${b.rank}, clears it`;
   }
   if (i.subject === 'trunk') return i.mark === '⊥' ? 'owed attest --trunk' : `no single command: ${trunkDecision(s, obligation)}`;
   if (obligation === 'approve') return `awaiting owner approval → ${approve(s, node)}`;
   if (obligation.startsWith('evidence:')) return `awaiting manual evidence → ${evidence(s, node, obligation, i.discharger ?? 'reviewer')}`;
-  if (i.discharger === 'executor') return `${oneLine(i.detail)} → owed attest ${node}`;
-  if (i.discharger === 'writer') return `${oneLine(i.detail)}; the writer fixes it and runs owed submit ${node}`;
-  if (i.discharger === 'reviewer') return `${oneLine(i.detail)}; a reviewer records owed review ${node}${obligationFlag(obligation)} --ok --rank ${obligation === 'closure-review' ? 2 : Math.min(nodeReview(s, node).min_rank, 2)}${candidateFlag(s, node)} --note "<note>" --ack-rulings latest --as reviewer:<id>`;
+  if (i.discharger === 'executor') return `${oneLine(i.detail)} → owed attest ${word(node)}`;
+  if (i.discharger === 'writer') return `${oneLine(i.detail)}; the writer fixes it and runs owed submit ${word(node)}`;
+  if (i.discharger === 'reviewer') {
+    const rank = obligation === 'closure-review' ? 2 : nodeReview(s, node).min_rank;
+    const role = rank > 2 ? 'owner' : 'reviewer';
+    return `${oneLine(i.detail)}; ${role === 'owner' ? 'an owner' : 'a reviewer'} records owed review ${word(node)}${obligationFlag(obligation)} --ok --rank ${rank}${candidateFlag(s, node)} --note "<note>" --ack-rulings latest --as ${role}:<id>`;
+  }
   return oneLine(i.detail);
 }
