@@ -105,13 +105,17 @@ test('VM1-VM2: snapshot mismatch is detected from YAML even when cache repair ca
     const expected = R.reduce(t.entries, t.lookup), packed = deserialize(serialize(R.packState(expected))) as R.PackedState;
     packed.state.nodes.worker!.writers.push('writer:ghost');
     await t.ledger.writeSnapshot(expected.seq, expected.head, serialize(packed));
-    // Replay from a false persistent cache would match this snapshot and miss the real corruption.
+    // A false persistent cache must not influence either a matching snapshot or mismatch detection.
     const current = [...t.plans.keys()].at(-1)!, altered = structuredClone(t.lookup(current));
     altered.nodes[0]!.title = 'false persistent law';
     await writeFile(t.cache(current), JSON.stringify({ v: PLAN_CACHE_VERSION, sha: current, plan: altered }));
     Ledger.prototype.writePlanCache = async () => {};
     Ledger.prototype.readPlanCache = async () => assert.fail('verify must not resolve a plan from persistent cache');
     Ledger.prototype.readPlanCacheSync = () => assert.fail('verify must not resolve a plan from persistent cache');
+    await t.ledger.writeSnapshot(expected.seq, expected.head, serialize(R.packState(expected)));
+    assert.deepEqual(await ops.verify({ cwd: t.root }), { ok: true, entries: 20, head: expected.head, cacheMismatch: [current] },
+      'a matching snapshot remains valid even when the wrong persistent plan cannot be repaired');
+    await t.ledger.writeSnapshot(expected.seq, expected.head, serialize(packed));
     const result = await ops.verify({ cwd: t.root });
     assert.deepEqual(result, { ok: true, entries: 20, head: expected.head, cacheMismatch: [current], snapshotMismatch: expected.seq });
     assert.equal(await t.ledger.readSnapshot(), undefined, 'mismatching snapshot is deleted');
