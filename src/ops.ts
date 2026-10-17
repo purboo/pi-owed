@@ -2448,6 +2448,9 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
   const superseded = supersededOf(state,Object.values(state.nodes)).filter(b => included({seq:b.supersededBy}));
   return withActHistory({...(trackedWaivers(state).length ? {trackedDebt:trackedWaivers(state).map(e => trackedDebtText(state,e))} : {}),reviews:{sameModel:sameModelReviews(entries,included)},...(knownRedDebt(state).knownRed ? {knownRed:knownRedDebt(state).knownRed} : {}),...(quarantineDebt(state).length ? {quarantine:quarantineDebt(state).map(quarantineText)} : {}),...(receipts.length ? {receipts} : {}),...(superseded.length ? {superseded} : {}),escapes:escapeSummary(state),since,merges:recent.filter(e => e.kind === 'merge'),waivers:recent.filter(e => e.kind === 'waive'),blocks:Object.keys(state.nodes).flatMap(id => receipt(state,entries,id).blocks).filter(included),downgrades:state.downgrades.filter(included),rulings:state.rules.filter(included),decisions:items.filter(i => i.status === 'D' && i.discharger === 'owner'),ownerActions:recent.filter(e => e.by.startsWith('owner:') && e.kind !== 'adopt'),adoptions:state.adoptions.filter(included),halts:entries.filter((e): e is HaltEntry => e.kind === 'halt').map(e => ({...e,active:halted(state,e.node)?.seq === e.seq})).filter(e => e.active || included(e)),changes:items.filter(i => !state.nodes[i.subject]?.merged).flatMap(i => { const prev = old.find(p => p.subject === i.subject && p.obligation === i.obligation); return prev?.status === i.status && prev.key === i.key ? [] : [{subject:i.subject,obligation:i.obligation,before:prev?.status,after:i.status}]; })},entries);
 }
+let lastVerifyPlanStats = { parsed:0, maxRetained:0 };
+/** @internal Last verify's YAML parse count and local parsed-plan LRU high-water mark. */
+export function verifyPlanStats(): { parsed: number; maxRetained: number } { return { ...lastVerifyPlanStats }; }
 /**
  * Verifies the hash chain and replays the ledger. N4: never reads the plan caches; every plan is parsed from its YAML
  * blob and reads each persistent cache entry raw: one of another version is rewritten silently; one of this version
@@ -2455,18 +2458,33 @@ export async function report(o: Context & {since?:number|string}): Promise<Repor
  * failure) and rewritten.
  */
 export async function verify(o: Context): Promise<VerifyResult> {
+  const stats = { parsed:0, maxRetained:0 };
+  lastVerifyPlanStats = stats;
   try {
     const ledger = await Ledger.open(o.cwd), entries = await ledger.read(), plans = new Map<string, Plan>(), cacheMismatch: string[] = [];
-    for (const sha of planShas(entries)) {
-      const p = parsePlan((await ledger.getBlob(sha)).toString()), c = await ledger.rawPlanCache(sha);
-      plans.set(sha, p);
+    const known = new Set(planShas(entries));
+    // VM2: this LRU contains only YAML-checked plans, never values from either plan cache. Deep freezing lets PM3
+    // share them instead of retaining mutable clones of every historical law. Evict before parsing the next value.
+    const room = () => { if (plans.size === PLAN_CACHE_MAX) plans.delete(plans.keys().next().value!); };
+    const remember = (sha: string, p: Plan): Plan => {
+      stats.parsed++; plans.set(sha,deepFreeze(p)); stats.maxRetained = Math.max(stats.maxRetained,plans.size); return p;
+    };
+    for (const sha of known) {
+      room();
+      const p = remember(sha,parsePlan((await ledger.getBlob(sha)).toString())), c = await ledger.rawPlanCache(sha);
       if (c.state === 'missing') continue;
       // Another version is a stale entry (rewritten silently); corruption or other content under this version is reported.
       const report = c.state === 'corrupt' || (c.v === PLAN_CACHE_VERSION && (c.sha !== sha || canonical(c.plan) !== canonical(p)));
       if (report) cacheMismatch.push(sha);
       if (report || c.v !== PLAN_CACHE_VERSION) await ledger.writePlanCache(sha, p);
     }
-    const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
+    const lookup = (sha: string): Plan => {
+      if (!known.has(sha)) throw new OwedError(`Missing plan ${sha}`, 'internal');
+      const p = plans.get(sha);
+      if (p) { plans.delete(sha); plans.set(sha,p); return p; }
+      room();
+      return remember(sha,parsePlan(ledger.getBlobSync(sha).toString()));
+    };
     // G1.4: the result is the full replay; a disk snapshot that matches the chain is compared with it at its seq, and
     // deleted (reported) when they differ.
     const snap = await ledger.readSnapshot();
