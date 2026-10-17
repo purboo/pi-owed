@@ -23,6 +23,7 @@ import { runJob, runCommand, lastLines } from './exec.ts';
 import { setupFailure, infraSource, observationsOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
+import { withMeasuring, measuringScope, measuringRunning, measuringJob } from './activity.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks, stillAskingNeeds, type StillAsking } from './drive.ts';
@@ -396,6 +397,7 @@ function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) throw abo
  */
 async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: AttestJob[], signal?: AbortSignal, done?: { recorded: Entry[]; superseded: JobRef[] }, parallel = 1): Promise<{ recorded: Entry[]; superseded: JobRef[] }> {
   const out = done ?? { recorded: [], superseded: [] }, result = out.recorded;
+  const measure = async (job: AttestJob, grantedWrites?: string[]) => measuringJob(cwd,snapshot,job,async () => runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), ...(grantedWrites ? { grantedWrites } : {}), signal },job));
   // Records one observation under the lock when its item is still current (D24.1).
   const record = async (job: AttestJob, obs: Draft, lockSignal?: AbortSignal) => ledger.withLock(async () => {
     const { state } = await load(ledger);
@@ -411,7 +413,7 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
     checkAbort(signal);
     const ready = jobs.map(() => { let settle!: (v: Draft | undefined) => void; const p = new Promise<Draft | undefined>(r => { settle = r; }); return { p, settle }; });
     let failure: { error: unknown } | undefined, stopped = false;
-    const measuring = measureAll(jobs,parallel,signal,async job => runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), signal },job),(i,obs) => ready[i]!.settle(obs),() => stopped).catch(error => { failure = { error }; for (const r of ready) r.settle(undefined); });
+    const measuring = measureAll(jobs,parallel,signal,async job => measure(job),(i,obs) => ready[i]!.settle(obs),() => stopped).catch(error => { failure = { error }; for (const r of ready) r.settle(undefined); });
     // A failed record starts no further job and still waits for the running ones, so none outlives the run (and its lock).
     try {
       for (let i = 0; i < jobs.length; i++) {
@@ -431,7 +433,7 @@ async function runJobs(cwd: string, ledger: Ledger, snapshot: State, jobs: Attes
   for (const job of jobs) {
     checkAbort(signal);
     // Attribution must use the original setup, exec, closure and writes as well as the original check spec (jobPlan).
-    const obs = await runJob({ cwd, ledger, plan:await jobPlan(ledger,snapshot,job), grantedWrites:job.attribution ? [] : grantsOf(snapshot,job.subject).flatMap(g => g.paths), signal }, job);
+    const obs = await measure(job,job.attribution ? [] : grantsOf(snapshot,job.subject).flatMap(g => g.paths));
     checkAbort(signal);
     await record(job,obs,signal);
     const retry = await automaticInvariantRemeasure(cwd,ledger,snapshot,job,obs,signal);
@@ -626,12 +628,14 @@ async function measuringHere(dir: string): Promise<boolean> {
  */
 export async function attestGenesis(o: MeasurementContext): Promise<AttestGenesisResult> {
   checkAbort(o.signal);
+  if (!measuringScope()) return withMeasuring(o.cwd,'trunk',() => attestGenesis(o));
   const opened = Ledger.open(o.cwd), run = { dir: opened.then(l => l.dir, () => undefined) };
   genesisRuns.add(run);
   try {
     const ledger = await opened;
     inited((await load(ledger)).state);
     return await leased(o, signal => ledger.withLock(async () => {
+      await measuringRunning();
       const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),signal,undefined,parallelOf(state.plan));
       return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
     },'genesis',signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` }));
@@ -640,9 +644,11 @@ export async function attestGenesis(o: MeasurementContext): Promise<AttestGenesi
 /** IR1: a shared-machine lease, then trunk-refresh lock, then short ledger locks (never commands under ledger lock). */
 export async function attestTrunk(o: Context & { signal?: AbortSignal; lease?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestTrunkResult> {
   checkAbort(o.signal);
+  if (!measuringScope()) return withMeasuring(o.cwd,'trunk',() => attestTrunk(o));
   if (!measurementScope()) return leased(o, signal => attestTrunk({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
+    await measuringRunning();
     const prepared = await ledger.withLock(async () => {
       const { state } = await load(ledger); inited(state);
       const facts = await git.stateFacts(o.cwd,state.plan,state.trunk.commit,stateQuarantine(state)), changed = refreshChanged(state,facts);
@@ -1351,9 +1357,11 @@ export async function attestProbeTrunk(o: MeasurementContext & { node: string; c
   const runs = o.runs ?? 1;
   if (!Number.isInteger(runs) || runs < 1 || runs > 10) throw new OwedError('--runs must be an integer from 1 to 10','usage');
   checkAbort(o.signal);
+  if (!measuringScope()) return withMeasuring(o.cwd,o.node,() => attestProbeTrunk(o));
   if (!measurementScope()) return leased(o, signal => attestProbeTrunk({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
+    await measuringRunning();
     const { state } = await load(ledger), n = state.nodes[o.node];
     if (!n?.slot?.open || !n.candidate || !state.plan.nodes.some(n => n.id === o.node)) throw new OwedError(`trunk probe requires an open slot with a candidate for ${o.node}`,'usage');
     const specs = state.plan.nodes.find(n => n.id === o.node)!.checks;
@@ -1399,13 +1407,16 @@ export function trunkProbeText(r: TrunkProbeResult): string {
 }
 export async function attest(o: MeasurementContext & { node: string; rerun?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestResult> {
   checkAbort(o.signal);
+  if (!measuringScope()) return withMeasuring(o.cwd,o.node,() => attest(o));
   if (!measurementScope()) return leased(o, signal => attest({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   if (o.remeasure) return ledger.withLock(async () => {
+    await measuringRunning();
     const r = await remeasureMerge(o,ledger), card = await why(o);
     return { node:o.node, observations:r.recorded, superseded:r.superseded, accepted:card.accepted, receipt:card, remeasured:r.remeasured };
   },attestLock(o.node),o.signal,{ busy:owner => attestBusyText(o.node,owner), activity:`attest ${o.node}` });
   return ledger.withLock(async () => {
+    await measuringRunning();
     const { state } = await load(ledger), n = candidate(state,o.node), jobs = attestJobs(state,o.node);
     if (o.rerun) for (const c of state.plan.nodes.find(x => x.id === o.node)!.checks) for (const kind of ['check', ...(c.red ? ['red'] : [])] as ('check'|'red')[]) {
       const obligation = `${kind}:${c.id}`, key = n.candidate!.keys[obligation]!;
