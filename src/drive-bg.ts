@@ -12,7 +12,7 @@ import { OwedError } from './errors.ts';
 import { clockTime } from './clock.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
-import { answeredQuestion, needText } from './drive.ts';
+import { answeredQuestion, needText, parkNeeds } from './drive.ts';
 import { needs, repoNeeds, needId } from './needs.ts';
 import { assembleRuntime } from './activity.ts';
 import type { Need, Runtime } from './needs-types.ts';
@@ -362,7 +362,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
   const structured = j.need && typeof j.need === 'object' && typeof j.needId === 'string' ? j.need as Need : undefined;
   const flaky = !('need' in j) && j.do === 'notify' ? String(j.text ?? '').match(/flaky block #(\d+) on /)?.[1] : undefined;
   const check: WakeCheck = {
-    ...(structured ? { need: structured, needId: j.needId as string, otherNeeds: j.otherNeeds as Need[] | undefined, ...(j.scope === 'repo' ? { scope: 'repo' as const } : {}) } : {}),
+    ...(structured ? { need: structured, needId: j.needId as string, otherNeeds: j.otherNeeds as Need[] | undefined, ...(j.scope === 'repo' ? { scope: 'repo' as const, ...(typeof j.once === 'string' && /^(trunk-red|trunk|shared)\u0000/.test(j.once) ? { once: j.once } : {}) } : {}) } : {}),
     ...(flaky !== undefined && node !== undefined ? {node,flaky:Number(flaky)} : {}),
     ...(invariantRed ? { invariantRed } : {}),
     ...(drift ? { drift: true as const, ...(typeof j.facts === 'number' ? { facts: j.facts } : {}) } : {}),
@@ -382,7 +382,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
  * (the ledger trunk seq), and `rid`/`qid`/`rev` (an asking notify's first open question). Terminal lines and other lines
  * without a fact mark or question carry none and are never dropped.
  */
-export interface WakeCheck { scope?: 'repo'; need?: Need; needId?: string; otherNeeds?: Need[]; currentNeeds?: Need[]; node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
+export interface WakeCheck { once?: string; scope?: 'repo'; need?: Need; needId?: string; otherNeeds?: Need[]; currentNeeds?: Need[]; node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
 export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
 /**
@@ -408,6 +408,7 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
         state ??= stateOf(o.cwd).catch(() => undefined);
         const s = await state;
         if (s) {
+          if (c.once) { c.currentNeeds = parkNeeds(s, c.once); return c.currentNeeds !== undefined; }
           runtime ??= assembleRuntime({ cwd: o.cwd, state: s, driverRunning: true });
           const rt = await runtime, ids = new Set([c.needId!, ...(c.otherNeeds ?? []).map(needId)]);
           const current = c.scope === 'repo' ? repoNeeds(s, rt) : needs(s, c.need.node, rt);
@@ -722,12 +723,19 @@ export class Follower {
     // TP2: waiting membership can change while pi is busy. Recompute at delivery, dropping resolved states.
     const parked = batch.filter(p => p.json?.do === 'notify' && p.json.scope === 'repo' && typeof p.json.once === 'string' && (p.json.once.startsWith('trunk-red\u0000') || p.json.once.startsWith('trunk\u0000') || p.json.once.startsWith('shared\u0000')));
     const resolvedPark = new Set<PendingLine>();
-    if (parked.length && parked.some(p => !('need' in p.json!))) {
+    if (parked.length) {
       const s = await stateOf(this.o.repo).catch(() => undefined);
-      if (s) for (const p of parked.filter(p => !('need' in p.json!))) {
+      if (s) for (const p of parked) {
         const red = [...trunkParkNotices(s), ...sharedParkNotices(s)].find(r => r.once === p.json!.once);
         if (!red) resolvedPark.add(p);
-        else { p.json!.text = red.text; p.text = reportText(p.json!); }
+        else {
+          if (p.check?.need) {
+            p.check.currentNeeds = parkNeeds(s, p.json!.once as string);
+            if (!p.check.currentNeeds) { resolvedPark.add(p); continue; }
+            p.json!.text = p.check.currentNeeds.map(n => `${n.node}: ${needText(n)}`).join('\n');
+          } else p.json!.text = red.text;
+          p.text = reportText(p.json!);
+        }
       }
     }
     const wakes = batch.filter(p => p.wake && p.check);
