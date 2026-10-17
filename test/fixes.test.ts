@@ -52,7 +52,7 @@ test('judgment block hints describe in words who can clear them and never print 
   const text = `${renderBrief(brief)}\n${renderReceipt(card)}`;
   assert.deepEqual([...new Set(asFlags(text))], ['owner:<id>'], text);
   assert.equal(brief.decisions.find(d => d.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
-  assert.match(brief.summary!.needs.find(n => n.node === 'a')!.alternatives![0]!, /^owed review a --ok --rank 3 --candidate c-a --note "<note>" --ack-rulings latest --as owner:<id>$/);
+  assert.match(renderReceipt(receipt(s, r.entries, 'a')), /or: owed review a --ok --rank 3 --candidate c-a --note "<note>" --ack-rulings latest --as owner:<id>/);
   // A different reviewer at the same rank still cannot clear the block.
   r.review('a', 'ok', 2, 'reviewer:peer');
   assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === block)!.state, 'active');

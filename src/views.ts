@@ -195,7 +195,7 @@ export interface StatusView {
 }
 export interface SummaryView {
   merged: number;
-  needs: { node: string; reason: string; command: string; alternatives?: string[] }[];
+  needs: { node: string; reason: string; command: string }[];
   progress: { node: string; phase: string; ageMs: number }[];
   debt: string[];
 }
@@ -512,7 +512,7 @@ function summaryView(s: State, entries: Entry[], v: StatusView, now: number, rt:
   const ns = [...Object.keys(s.nodes).flatMap(id => needs(s, id, rt)), ...repoNeeds(s, rt)];
   // Stable sorting across nodes keeps needs()'s answer/halt/obligation order within each node.
   ns.sort((a,b) => (s.nodes[b.node]?.dependents ?? 0) - (s.nodes[a.node]?.dependents ?? 0) || a.node.localeCompare(b.node));
-  const selected: SummaryView['needs'] = ns.map(n => ({ node: n.node, reason: n.text, command: n.command ?? '', ...(n.alternatives?.length ? { alternatives: n.alternatives } : {}) }));
+  const selected: SummaryView['needs'] = ns.map(n => ({ node: n.node, reason: n.text, command: n.command ?? '' }));
   const at = (seq?: number): number => {
     const ts = entries.find(e => e.seq === seq)?.ts;
     return ts && Number.isFinite(Date.parse(ts)) ? Math.max(0, now - Date.parse(ts)) : 0;

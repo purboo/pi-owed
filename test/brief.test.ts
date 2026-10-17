@@ -147,8 +147,7 @@ test('owed brief --since filters only merges by seq or ISO time, and the printed
     // Guidance does not discharge the block; choose the explicitly labelled owner override and record the risk.
     const guidance = await json<{seq:number}>(r.cwd, ['rule', 'accept the reviewed closure boundary', '--nodes', 'b']);
     assert.ok((await brief()).rejected.some(b => b.node === 'b'));
-    const current = await json<{summary:{needs:{node:string;alternatives?:string[]}[]}}>(r.cwd, ['brief']);
-    const alternative = current.summary.needs.find(n => n.node === 'b')!.alternatives![0]!;
+    const alternative = (await run(r.cwd, ['why', 'b'])).split('\n').find(line => line.startsWith('  or: '))!.slice(6);
     assert.match(alternative, /^owed review b --obligation closure-review --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>$/);
     const command = alternative.split(' ').map(word => word === 'owner:<id>' ? 'owner:cli' : word === '"<note>"' ? 'accept the closure risk after guidance' : word);
     assert.equal(command.shift(), 'owed');

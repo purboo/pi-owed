@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import * as run from '../src/drive-run.ts';
 import { Follower } from '../src/drive-bg.ts';
 import { procStart } from '../src/drive-run.ts';
+import { needs } from '../src/needs.ts';
 import { reduce } from '../src/reducer.ts';
 import { briefView, ownerCommands, receipt, renderBrief, renderReceipt } from '../src/views.ts';
 import { Ledger } from '../src/ledger.ts';
@@ -143,7 +144,8 @@ test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --
   r.add({ kind: 'review', by: 'reviewer:r2', node: 'a', attempt: 1, obligation: 'review', key: 'rv1', verdict: 'block', rank: 2, note: 'no' });
   const s = r.state(), brief = briefView(s, r.entries, -1, 0);
   assert.equal(brief.decisions.find(x => x.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
-  assert.equal(brief.summary!.needs.find(n => n.node === 'a')!.alternatives![0], 'owed review a --ok --rank 3 --candidate c1 --note "<note>" --ack-rulings latest --as owner:<id>');
+  assert.equal(needs(s, 'a')[0]!.alternatives![0], 'owed review a --ok --rank 3 --candidate c1 --note "<note>" --ack-rulings latest --as owner:<id>');
+  assert.deepEqual(Object.keys(brief.summary!.needs.find(n => n.node === 'a')!).sort(), ['command', 'node', 'reason']);
   const briefText = renderBrief(brief), legacy = ownerCommands(s, 'a').join('\n');
   assert.doesNotMatch(briefText, /owner:human/, briefText);
   assert.deepEqual([...briefText.matchAll(/--as (\S+)/g)].map(x => x[1]), [], briefText);
@@ -154,7 +156,7 @@ test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --
   try {
     const confirmed = briefView(s, r.entries, -1, 0);
     assert.equal(confirmed.decisions.find(x => x.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
-    assert.deepEqual(confirmed.summary!.needs.find(n => n.node === 'a')!.alternatives, brief.summary!.needs.find(n => n.node === 'a')!.alternatives);
+    assert.deepEqual(confirmed.summary!.needs, brief.summary!.needs);
     const confirmedText = renderBrief(confirmed);
     assert.equal(confirmedText, briefText); assert.doesNotMatch(confirmedText, /owner:human/);
     assert.deepEqual([...new Set([...ownerCommands(s, 'a').join('\n').matchAll(/--as (\S+)/g)].map(x => x[1]))], ['owner:human']);

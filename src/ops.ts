@@ -23,7 +23,7 @@ import { runJob, runCommand, lastLines } from './exec.ts';
 import { setupFailure, infraSource, observationsOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
-import { itemLine, type Runtime } from './needs.ts';
+import type { Runtime } from './needs.ts';
 import { withMeasuring, measuringScope, measuringRunning, measuringJob, assembleRuntime } from './activity.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
@@ -1703,16 +1703,13 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     let snapshot = await load(ledger), state = snapshot.state;
     const n = candidate(state,o.node);
     if (!n.accepted) {
-      const trunkRed = n.blocks.some(b => b.state === 'active' && trunkRedOf(state,b.seq,b.key));
-      const lock = readLock(ledger.dir);
-      const rt = await assembleRuntime({ cwd: o.cwd, state, driverRunning: lock.state === 'live' || lock.state === 'foreign' });
-      const next = nodeNext(state, o.node, rt);
+      const trunkRed = n.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state,b.seq,b.key) ?? []);
       const failures = entriesOf(state).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === o.node && n.blocks.some(b => b.kind === 'exec' && (b.state === 'active' || b.state === 'flaky') && b.seq === e.seq));
       const lead = await mergeTreeBreakLead(o.cwd,state,o.node,failures.map(e => e.commit)), hints = mergeFailureHints(state,o.node,failures);
       const writesHint = n.items.some(i => i.obligation === 'writes' && i.status === 'D') ? grantHint(state,o.node) : undefined;
       const suffix = writesHint ? `\n${writesHint}` : '';
-      if (trunkRed) throw new OwedError([...n.blocks.filter(b => b.state === 'active' && trunkRedOf(state,b.seq,b.key)).map(b => itemLine(state,o.node,b.obligation,rt)), next, ...lead, ...hints].join('; ') + suffix);
-      throw new OwedError([...lead, `Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, next, ...hints].join('; ') + suffix);
+      if (trunkRed.length) throw new OwedError([...lead, ...trunkRed, ...hints].join('; ') + suffix);
+      throw new OwedError([...lead, `Node ${o.node} current candidate is not yet accepted:${n.items.filter(i => i.status === 'D').map(i => i.obligation).join(', ')}`, ...hints].join('; ') + suffix);
     }
     { const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit); if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}`); }
     // IR1: trunk measurements persist even if the later merge guard refuses.

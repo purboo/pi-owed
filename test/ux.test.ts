@@ -33,9 +33,8 @@ test('UX1: active review block suggests writer ruling and labels any owner overr
   try {
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 2, note: 'repair collision' });
     const s = await ops.status(f), command = s.summary!.needs.find(n => n.node === 'a')!.command!;
-    const need = s.summary!.needs.find(n => n.node === 'a')!;
     assert.equal(command, 'owed decide a --text "<ruling>" --writer');
-    assert.match(need.alternatives![0]!, /^owed review a --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>$/);
+    assert.match(renderReceipt(await ops.why({ ...f, node: 'a' })), /or: owed review a --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>/);
     assert.equal(s.nodes.a!.accepted, false);
   } finally { await f.cleanup(); }
 });
