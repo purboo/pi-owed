@@ -929,7 +929,8 @@ export function sameReplay(a: State, b: State): boolean {
   if (!isDeepStrictEqual(a,b)) return false;
   const ah = context(a), bh = context(b);
   const { plans: _ap, planObjs: ao, ...am } = ah, { plans: _bp, planObjs: bo, ...bm } = bh;
-  if (!isDeepStrictEqual(am,bm) || !isDeepStrictEqual([...ao.keys()],[...bo.keys()])) return false;
+  if (!isDeepStrictEqual(am,bm) || ao.size !== bo.size) return false;
+  for (const sha of ao.keys()) if (!bo.has(sha)) return false;
   for (const sha of ao.keys()) if (!isDeepStrictEqual(lawPlan(ah,sha),lawPlan(bh,sha))) return false;
   return true;
 }
