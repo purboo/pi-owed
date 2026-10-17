@@ -32,11 +32,14 @@ import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, re
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
 import { mergeBatchPlan, sharedParked, sharedParkKey, sharedPhase } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
-import { callAt, decide, recentSetupFailures, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
+import { callAt, decide, needText, recentSetupFailures, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
+import { needs, repoNeeds, needId, activity } from './needs.ts';
+import { assembleRuntime } from './activity.ts';
+import type { Need, Runtime } from './needs-types.ts';
 import type { Action } from './drive.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
-import { oneLine, writerStopNeed } from './views.ts';
+import { oneLine } from './views.ts';
 import type { Entry, Plan, Principal, RunView, SendEntry, State } from './types.ts';
 
 /**
@@ -155,6 +158,8 @@ export interface ActionReport {
   invariantRed?: { obligation: string; key: string };
   /** TP2: full runtime notice identity, including names omitted from the display. Never a ledger field. */
   once?: string;
+  /** Runtime wake identity; null is diagnostic-only, absent is an old log line. */
+  need?: Need | null; needId?: string; otherNeeds?: Need[];
   /** Wake reports (E3.1): the node's fact mark (`factMark`) in the state the pass decided on. */
   facts?: number;
   /** Loop only (E3.1): the same text and fact mark as this node's last printed wake, for the n-th time. */
@@ -420,7 +425,7 @@ export function reportText(json: object): string {
   // G3.6 (0.12): a failed send (outcome error) names its node as a word.
   const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason})${r.outcome === 'error' ? ` for node ${r.node}` : ''} to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt}, ${NEEDS_PARENT}`) : `${r.do} ${r.node}`;
   const repeat = typeof r.repeat === 'number' && r.repeat > 0 ? repeatText(r.repeat) : '';
-  return `${r.do === 'notify' && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}`}${repeat}`;
+  return `${(r.do === 'notify' || (r.do === 'halt' && 'need' in r)) && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}${r.need && r.text ? `\n${r.text}` : ''}`}${repeat}`;
 }
 
 export class Driver {
@@ -575,7 +580,7 @@ export class Driver {
           const r = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
           raw.set(l.rid, r);
           if (r.view.state === 'absent') await blob(l.spec);
-        } catch (e) { if (!waitingFor(s, n.id)) this.emit({ do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }, s); }
+        } catch (e) { if (!waitingFor(s, n.id)) { const r: ActionReport = { do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }; await this.wake(r, s); this.emit(r, s); } }
       }
       // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a
       // crash after the call); only an undecided one is re-sent (with the stored bytes and the same id, D13.1).
@@ -678,7 +683,8 @@ export class Driver {
     const { runs, blobs, rejected, conflicts, rebasePending, rebaseWork, writerWork } = await this.observe(s, measuring);
     const now = Date.now();
     this.recordAsking(stillAsking(s, runs, now));
-    let actions = decide(s, s.plan, runs, { max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, writerWork, measuring, now, noticed: this.facts.once });
+    const runtime = await assembleRuntime({ cwd: this.o.cwd, state: s, driverRunning: true, now });
+    let actions = decide(s, s.plan, runs, { runtime, max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, writerWork, measuring, now, noticed: this.facts.once });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass
@@ -752,6 +758,7 @@ export class Driver {
         continue;
       }
       const r = await this.execute(s, a);
+      await this.wake(r.report, s, runtime);
       reports.push(r.report); applied ||= r.applied;
       this.emit(r.report, s);
     }
@@ -921,7 +928,7 @@ export class Driver {
     }
     // Wake reports carry the node's fact mark in the state after the measurements (their observations are facts).
     const now = await loadState(this.ledger!).catch(() => undefined);
-    for (const r of reports) { out.push(r); this.emit(r, now); }
+    for (const r of reports) { await this.wake(r, now); out.push(r); this.emit(r, now); }
     if (failure) throw failure.e;
     return batch.length+swept;
   }
@@ -942,13 +949,28 @@ export class Driver {
     try { return await Promise.race([all, late]); } finally { clearTimeout(t); }
   }
 
-  /**
-   * Prints a report. A wake report of a node in `s` carries the node's fact mark (E3.1). In the loop a notify / busy
-   * line for a node is printed only when its text (without ages) or, for a notify, the fact mark changed; any other
-   * wake with the text and fact mark of the node's last printed wake is marked `repeat: n` (text: `(repeat n, no new
-   * ledger entries)`), and the follower does not wake for it.
-   */
+  /** Attach display identity only, leaving action selection and ledger reasons untouched. */
+  private async wake(r: ActionReport, s?: State, rt?: Runtime): Promise<void> {
+    if (!wakeReport(r) || ('need' in r && r.need === null)) return;
+    // Halts/refusals may have appended a halt: N5 must see the real post-append state, never a preview.
+    if (r.do === 'halt' || r.outcome === 'rejected' || r.outcome === 'conflict' || r.outcome === 'refused' || r.outcome === 'error') {
+      s = await loadState(this.ledger!).catch(() => undefined); rt = undefined;
+    }
+    if (!s) { r.need = null; return; }
+    rt ??= await assembleRuntime({ cwd: this.o.cwd, state: s, driverRunning: true });
+    const ns = r.do === 'notify' && r.outcome === 'describe-failed' ? []
+      : r.scope === 'repo' && r.node !== DRIFT_NODE && !r.once?.startsWith('setup\u0000') ? repoNeeds(s, rt)
+      : needs(s, r.node, rt).filter(n => r.do !== 'notify' || !r.rid || (n.rid === r.rid && n.qid === r.qid));
+    const primary = ns[0];
+    r.need = primary ?? null;
+    if (primary) { r.needId = needId(primary); if (ns.length > 1) r.otherNeeds = ns.slice(1); }
+    if (primary) r.text = ns.map(n => `${n.node}: ${needText(n)}`).join('\n');
+    else if (r.do === 'halt') r.text = `${r.detail ?? 'halt cleared'} (no single command)`;
+  }
+
+  /** E3.1: print once per notify fact and mark repeated halts for existing follower deduplication. */
   emit(r: ActionReport, s?: State): void {
+    if (wakeReport(r) && !('need' in r)) r.need = null;
     if (s) r.inProgress = Object.values(s.nodes).filter(n => n.slot?.open && !n.merged).length;
     if (s && wakeReport(r) && r.scope !== 'repo' && s.nodes[r.node]) r.facts = factMark(s, r.node);
     if (r.scope === 'repo' && r.do === 'notify' && r.node === DRIFT_NODE) this.facts.drift = true;
@@ -1051,8 +1073,8 @@ export class Driver {
         // K6: attest and merge are started by `pass` (`start`), never executed inline.
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await this.rebaseSlot(s, a.node, since); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
-        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs, ...(writerStopNeed(a.reason, a.node) ? { text: a.reason } : {}) });
-        case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.once !== undefined ? { once:a.once } : {}), ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
+        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
+        case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.once !== undefined ? { once:a.once } : {}), ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, ...('need' in a ? { need: a.need } : {}), outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
       // F4 (wais #31): a failed send names its node, kind and target like any other send line.
@@ -1094,7 +1116,11 @@ export class Driver {
     } else {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
-    if (ran.exit === 0 || ran.exit === 1 || ran.exit === 4) return ok(report('done', `${ran.exit === 0 ? 'accepted' : 'not accepted yet'}${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`));
+    if (ran.exit === 0 || ran.exit === 1 || ran.exit === 4) {
+      const s = await loadState(this.ledger!), rt = await assembleRuntime({ cwd, state: s, driverRunning: true });
+      const next = needs(s, node, rt)[0]?.text ?? activity(s, node, rt)?.text;
+      return ok(report('done', `${ran.exit === 0 ? 'accepted' : `measured; not accepted yet: ${next ?? 'candidate not accepted'}`}${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`));
+    }
     if (ran.exit === 75) return busy(busyDetail(node, tail(ran.stderr || ran.stdout)));
     return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
   }

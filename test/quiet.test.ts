@@ -7,7 +7,8 @@ import { Dsa } from '../src/dsa.ts';
 import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
 import { git } from '../src/git.ts';
-import { manualHalt } from '../src/drive.ts';
+import { manualHalt, needText } from '../src/drive.ts';
+import { needs } from '../src/needs.ts';
 import { Driver, DRIVE_PRINCIPAL, driftNotice, procStart, stateOf } from '../src/drive-run.ts';
 import { Follower, classifyLine, revalidator } from '../src/drive-bg.ts';
 import { renderBrief, renderEntry, renderReceipt, renderStatus } from '../src/views.ts';
@@ -65,14 +66,16 @@ for (const by of ['reviewer', 'parent', 'owner'] as const) {
       const commit = await candidate(r), c12 = commit.slice(0, 12);
       const manual = manualHalt(await stateOf(r.cwd), 'a')!;
       assert.equal(manual.needs, 'human', 'ledger shape is unchanged');
-      assert.equal(manual.reason, `awaiting manual evidence evidence:ui (checked the page) by ${by}: owed evidence a ui --file <path> --note "<what was checked>" --as ${by}:<id> --candidate ${c12} or --as owner:pi`);
+      assert.equal(manual.reason, `awaiting manual evidence evidence:ui: evidence:ui requires manual evidence by ${by}: checked the page`);
+      assert.doesNotMatch(manual.reason, /owed evidence/);
       const lines: string[] = [], driver = new Driver({ cwd: r.cwd, dsa: new Sealed(), session: null, log: l => lines.push(l) });
       const pass = await driver.pass();
       assert.equal(pass.actions.find(a => a.node === 'a')?.do, 'halt');
-      assert.ok(lines.some(l => l.includes(PARENT)), lines.join('\n'));
+      const primary = needs(await stateOf(r.cwd),'a',{driverRunning:true})[0]!;
+      assert.equal(lines[0],`a: ${needText(primary)}`);
       const halted = (await (await Ledger.open(r.cwd)).read()).findLast(e => e.kind === 'halt')!;
       assert.equal(halted.kind === 'halt' && halted.needs, 'human');
-      for (const text of [lines.join('\n'), ...await surfaces(r.cwd), renderEntry(halted)]) {
+      for (const text of [...await surfaces(r.cwd), renderEntry(halted)]) {
         assert.doesNotMatch(text, /human/i);
         if (text.startsWith('a:')) {
           assert.match(text, /owed evidence a ui --file <path> --note "<what was checked>" --as (?:reviewer|parent|owner):<id> --candidate [0-9a-f]{12}/);
@@ -82,6 +85,8 @@ for (const by of ['reviewer', 'parent', 'owner'] as const) {
           assert.ok(text.includes(`--as ${by}:<id> --candidate ${c12} or --as owner:pi`), text);
         }
       }
+      assert.doesNotMatch(lines.join('\n'),/human/i);
+      assert.ok(primary.command!.includes(by === 'reviewer' ? 'owed resume a' : `--as ${by}:<id> --candidate ${c12}`));
     } finally { await r.cleanup(); }
   });
 }
@@ -116,7 +121,7 @@ test('QT1 owner approval halt retains D25.6 owner text while evidence halts use 
     await driver.pass();
     const h = (await (await Ledger.open(r.cwd)).read()).findLast(e => e.kind === 'halt')!;
     assert.ok(h.kind === 'halt' && h.needs === 'owner');
-    assert.equal(lines[0], `halt a attempt 1, ${OWNER}: halted — ${h.reason}`);
+    assert.equal(lines[0],`a: ${needText(needs(await stateOf(r.cwd),'a',{driverRunning:true})[0]!)}`);
     assert.ok(renderReceipt(await ops.why({ cwd: r.cwd, node: 'a' })).includes(`(attempt 1), ${OWNER}:`));
     // A parent halt beside it exercises the new rendering without weakening the unchanged owner assertion.
     await ops.planSet({ cwd: r.cwd, as: parent, plan: JSON.stringify({ ...plan({ approve: 'owner' }), nodes: [...plan({ approve: 'owner' }).nodes, { id: 'b', writes: ['b.txt'] }] }) });
@@ -248,7 +253,8 @@ test('QT2 unscoped plan node trunk open question is delivered when trunk ref equ
     assert.equal(await follow.f.step(), undefined, 'held while busy');
     follow.busy.value = false;
     const message = await follow.f.step();
-    assert.ok(message?.includes('Needs you: trunk — decide which port? → owed decide trunk --text "<text>"'), message); assert.ok(message, 'a current question on plan node trunk must be delivered');
+    assert.ok(message?.includes('which port?'), message); assert.ok(message, 'a current question on plan node trunk must be delivered');
+    assert.doesNotMatch(message,/Needs you:/); // R-028-35: no fabricated Need for a new unanswered question.
     assert.equal(follow.got.length, 1);
     const check = classifyLine(JSON.stringify(wake)).check!;
     assert.equal(check.drift, undefined);

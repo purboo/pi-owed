@@ -125,7 +125,10 @@ for (const [suffix, hour, minute] of [['', 12, 0], [' (local 23:55 across midnig
       assert.equal(wakes.length, 1); assert.equal(wakes[0]!.answerRetry, true);
       const shown = clockTime(e.ts, recorded + 600_000); // the one retry wake is recorded at the grace boundary
       assert.equal(shown, suffix ? '2026-01-15 23:55' : '12:00', 'only the cross-midnight answer needs a local date');
-      assert.equal(wakes[0]!.text, `a: answered at #${e.seq} (${shown}), still asking after 10m: retry with ${answerRetry('a', e)}`);
+      const need = wakes[0]!.need as import('../src/needs-types.ts').Need;
+      assert.equal(need.kind,'answer'); assert.equal(need.command,answerRetry('a',e));
+      assert.equal(wakes[0]!.text,`a: ${need.text} → ${need.command}`);
+      assert.ok(need.text.includes(`answered at #${e.seq} (${shown}), still asking after 10m`));
       assert.equal(f.view.state, 'asking'); assert.deepEqual(f.view.questions, originalQuestion);
       assert.deepEqual(wakes[0]!.qid, e.answer!.qid); assert.equal(wakes[0]!.rev, e.answer!.rev);
     } finally { t.mock.timers.reset(); await f?.cleanup(); }

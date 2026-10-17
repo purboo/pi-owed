@@ -10,7 +10,9 @@ import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
-import { dispatchPacket, evidenceCommand, oneLine, ownerCommands, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
+import { dispatchPacket, oneLine, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
+import { needs } from './needs.ts';
+import type { Need, Runtime } from './needs-types.ts';
 import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
@@ -39,7 +41,7 @@ export type Action =
    * Printed only (asking questions); no ledger write. An asking notify (H1.1b) also names the run (`rid`) and its first
    * open question (`qid`, `rev`; absent when dsa reports none), so a wake can be revalidated at delivery time.
    */
-  | { do: 'notify'; node: string; text: string; scope?: 'repo'; quiet?: true; answerRetry?: true; invariantRed?: { obligation: string; key: string }; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string; /** FL3: runtime receipt, never a ledger entry. */ reportedResume?: number };
+  | { do: 'notify'; node: string; text: string; need?: null; scope?: 'repo'; quiet?: true; answerRetry?: true; invariantRed?: { obligation: string; key: string }; rid?: string; qid?: string; rev?: number; /** F2.2: a notify the executor prints once per value of this key (the environment back-off: once per streak). */ once?: string; /** FL3: runtime receipt, never a ledger entry. */ reportedResume?: number };
 
 /** A merge of the node's candidate `candidate` (submit seq) that this process saw refused. */
 export interface MergeRefusal {
@@ -57,6 +59,8 @@ export interface MergeRefusal {
  * ledger's blob store); they make the result a pure function of the arguments.
  */
 export interface DriveOpts {
+  /** Parent/owner display facts only; never select executor actions. */
+  runtime?: Runtime;
   rebasePending?: ReadonlyMap<string, RebasePending>;
   /** WS1: actual sealed-writer worktree facts; absent means inspection failed, never evidence to send submit. */
   writerWork?: ReadonlyMap<string, { head: string; dirty: boolean }>;
@@ -404,7 +408,9 @@ export function rulingFollowUp(s: State, node: string, refused?: Refused): { mes
   const rules = undelivered(s, node, ar, writer, refused);
   if (!rules.some(r => r.nodes !== '*')) return undefined;
   return { rulings: carried(rules), message: [`New parent rulings for ${node}:`, ...rulingLines(rules),
-    ...blockLines(s, node), `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`, WRITER_DECISION].join('\n') };
+    ...blockLines(s, node), rules.some(r => r.writer)
+      ? `Apply these rulings; they override your packet. Then commit and run \`owed submit ${node}\`.`
+      : `Apply these rulings. If they need a change from you, commit and run owed submit ${node}; if they need none, reply "no change: <why>" and stop.`, WRITER_DECISION].join('\n') };
 }
 /**
  * The block lines of a writer ruling message (`rulingFollowUp`, and the re-send after a resume, G3.5 0.12): the active
@@ -531,12 +537,14 @@ export function driverSlot(s: State, node: string, by: string): number | undefin
 }
 
 // ---------- owner-needed ----------
-/** D25.6: the commands that resolve an owner decision on `node`, as one clause addressed to the main agent. */
-const resolveText = (s: State, node: string): string => { const c = ownerCommands(s, node); return c.length ? `; the main agent resolves it with: ${c.join(' | ')}` : `; the main agent decides: owed why ${node}`; };
-// The reason's own trailing `needs the owner` (ownerNeeded) is dropped: the prefix already says it.
-const ownerNotify = (s: State, node: string, reason: string): Action => {
-  const diagnoses = s.nodes[node]!.blocks.filter(b => b.state === 'active' || b.state === 'flaky').flatMap(b => trunkRedHint(s,b.seq,b.key) ?? sharedCheckHint(s,b) ?? []);
-  return { do:'notify', node, text:`${node}: needs the owner (the main agent decides; owed lists the command): ${[...diagnoses,oneLine(reason.replace(/ needs the owner$/, ''))].join('; ')}; the driver leaves it alone${resolveText(s,node)}` };
+/** C1: render the authority's answer, one line and command per obligation. */
+export const needText = (n: Need): string => `${n.text}${n.command ? ` → ${n.command}` : ' (no single command)'}`;
+const needLines = (s: State, node: string, rt?: Runtime): string => needs(s, node, rt).map(n => `${node}: ${needText(n)}`).join('\n');
+const isOwnerNeed = (n: Need): boolean => n.actor === 'owner' || (n.obligation !== undefined && n.kind !== 'rule');
+const ownerNotify = (s: State, node: string, rt?: Runtime): Action | undefined => {
+  if (needs(s, node, rt).some(isOwnerNeed)) return { do: 'notify', node, text: needLines(s, node, rt) };
+  if (needs(s, node, { ...rt, measuring: [] }).some(isOwnerNeed)) return undefined;
+  return { do: 'notify', node, need: null, text: `${node}: needs the owner (the main agent decides; owed lists the command): ${oneLine(ownerNeeded(s, node) ?? 'owner decision pending')} (no single command)` };
 };
 
 // ---------- decide ----------
@@ -589,7 +597,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
   const taken = open.map(n => n.id);
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
     const skip = dispatchSkip(s, n.id, opts.max, taken);
-    if (skip?.kind === 'owner') out.push(ownerNotify(s, n.id, skip.reason));
+    if (skip?.kind === 'owner') { const notice = ownerNotify(s, n.id, opts.runtime); if (notice) out.push(notice); }
     if (skip) continue;
     out.push({ do: 'dispatch', node: n.id });
     taken.push(n.id);
@@ -739,7 +747,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     }
   }
   // FL1: dependencies merged after dispatch: use the existing rebase route exactly once before other work.
-  const deps = s.plan.nodes.find(x => x.id === id)?.deps ?? [];
+  const deps = [...(s.plan.nodes.find(x => x.id === id)?.deps ?? []), ...afterNodes(resumeOf(s, id)?.after)];
   if (slot.base !== s.trunk.commit && deps.some(d => (s.nodes[d]?.merged?.seq ?? -1) > Math.max(slot.dispatchSeq, slot.rebase?.seq ?? -1))) return { do: 'rebase', node: id };
   // Owner-needed nodes are never touched (no ledger write, no dsa call): notify only. 0.8 (L3.1): unless the writer run
   // is sealed and an undelivered ruling names the node, or a ruling send to the writer is recorded but not applied in
@@ -752,7 +760,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const rulingDue = (): boolean => !!writer && !!writerView && isSealed(writerView)
     && (!!rulingFollowUp(s, id, opts.rejected) || ar.sends.some(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up' && !opts.applied.has(x.send)));
   const reportPending = resumeOf(s,id)?.expect === 'report' && (!!writer && (!!resumeLine(s,id,writer.rid) || !!reportRequest(s,id)));
-  if (owner && !rulingDue() && !writerRule && !reportPending) return ownerNotify(s, id, owner);
+  if (owner && !rulingDue() && !writerRule && !reportPending) return ownerNotify(s, id, opts.runtime);
   // Row 2: writer launch missing.
   if (!writer) return writerLaunch(s, id, opts.project);
   if (live.some(l => !runs.has(l.rid))) return undefined;
@@ -847,11 +855,16 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
    * the ruling follow-up when one is due; after a ruling follow-up later than `after` (the follow-up the halt names, the
    * latest submit), the halt names that ruling follow-up instead, with `cause`.
    */
+  // DR4: retain every old halt route, without substituting a no-change ruling as its cause.
+  const requiresSubmit = (x: import('./types.ts').SendEntry): boolean => {
+    const before = deliveredRulings(s, id, { ...ar, sends: ar.sends.filter(y => y.seq < x.seq) }, writer, opts.rejected);
+    return opts.rejected.has(x.send) || rulingsInScope(s, id).some(r => r.writer && r.seq > before && r.seq <= (x.rulings ?? -1));
+  };
   const writerHalt = (reason: string, cause: string, after: number): Action => {
     if (!wSealed) return halt(reason);
     const f = rulingSend();
     if (f) return f;
-    const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(after, lastSubmit(s, id)?.seq ?? -1, resumed));
+    const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(after, lastSubmit(s, id)?.seq ?? -1, resumed) && requiresSubmit(x));
     if (!rf) return stoppedHalt(reason);
     const refused = opts.rejected.get(rf.send);
     return stoppedHalt(refused !== undefined ? rejectedHalt(id, 'send', `${rf.send}${callAt(w)}`, refused) : `writer run ${at(writer)} finished ruling follow-up ${rf.send} without submitting a new candidate (${cause})`);
@@ -870,7 +883,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return f && send(writer, 'follow-up', 'ruling', f.message, f.rulings);
   };
   // 0.8 (L3.1): an owner-needed node with a due ruling follow-up gets it first; then the notify as before.
-  if (owner) return rulingFirst() ?? ownerNotify(s, id, owner);
+  if (owner) return rulingFirst() ?? ownerNotify(s, id, opts.runtime);
   const writerMsg = (message: string): { message: string; rulings?: number } => withRulings(s, id, ar, writer, message, opts.rejected);
   // Row 6: writer cut off in a tool.
   if (wSealed && wStatus === 'unknown') return send(writer, 'follow-up', 'interrupted', WRITER_INTERRUPTED);
@@ -887,7 +900,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const ruled = rulingFirst();
       if (ruled) return ruled;
       const follow = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'rebase')!;
-      const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(follow.seq, resumed));
+      const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(follow.seq, resumed) && requiresSubmit(x));
       const driftHalt = (reason: string): Action => {
         if (!rf) return stoppedHalt(reason);
         const refused = opts.rejected.get(rf.send);
@@ -1021,10 +1034,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const reviewing = reviewers.some(l => !isSealed(view(l)));
     if (stale.length) {
       if (reviewing) return fenced() ?? steerRulings();
-      return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active and no reviewer run of candidate #${c.seq} is running; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}${resolveText(s, id)}`, 'owner');
+      return halt(`stale review block${stale.length > 1 ? 's' : ''} ${stale.map(b => `#${b.seq} ${b.obligation} rank ${b.rank} by ${entries.find(e => e.seq === b.seq)?.by ?? '?'}`).join(', ')} still active and no reviewer run of candidate #${c.seq} is running; the driver cannot clear ${stale.length > 1 ? 'them' : 'it'}`, 'owner');
     }
-    // D23: everything but approve/evidence:* is satisfied and nothing blocks: halt for the owner (approve) or a human
-    // (evidence) with the exact commands. Never earlier: the rows above run first.
+    // D23: only manual obligations remain; render commands from the real post-halt needs.
     const manual = manualHalt(s, id);
     if (manual) return halt(manual.reason, manual.needs);
     // Rows 16-17: accepted: merge; a merge this process saw refused: rebase when trunk moved, else halt.
@@ -1047,7 +1059,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const blocks = n.blocks.filter(b => b.state === 'active').map(b => blockText(s, c, b));
       const dirty = n.items.some(i => i.mark === '✘') || n.blocks.some(b => !heldFlaky(s,id,b) && (b.state === 'flaky' || (b.state === 'active' && b.key === c.keys[b.obligation])));
       const rulingsOwed = n.items.some(i => i.obligation === 'rulings' && i.status === 'D');
-      return (dirty ? rulingFirst() : rulingsOwed ? reviewerRuling(s, n, ar, reviewers, opts) : undefined) ?? halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}${resolveText(s, id)}`, 'owner');
+      return (dirty ? rulingFirst() : rulingsOwed ? reviewerRuling(s, n, ar, reviewers, opts) : undefined) ?? halt(`stalled: ${[...items, ...(blocks.length ? [`active blocks ${blocks.join(', ')}`] : [])].join('; ') || 'candidate not accepted'}`, 'owner');
     }
   }
   // Row 18: the running writer was fenced after the last steer; else (D22.2a, lowest priority, only when the node
@@ -1057,23 +1069,14 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
 }
 
 /**
- * D23: when the only unsatisfied items of the node's candidate are `approve` and/or `evidence:<id>` (no active or flaky
- * block), the halt the driver records: needs `owner` while approve is pending, else `human`; the reason names each item
- * with the exact command (`owed approve <node>`, `owed evidence <node> <id> --file <path> --note "…" --as <role>:<id>`).
+ * D23: manual-only halt cause, owner while approval is pending, otherwise human (ledger spelling).
  */
 export function manualHalt(s: State, node: string): { reason: string; needs: 'human' | 'owner' } | undefined {
   const n = s.nodes[node], spec = s.plan.nodes.find(x => x.id === node);
   if (!n?.candidate || !spec || n.blocks.some(b => (b.state === 'active' || b.state === 'flaky') && !heldFlaky(s,node,b))) return undefined;
   const pending = n.items.filter(i => i.status === 'D');
   if (!pending.length || !pending.every(i => i.obligation === 'approve' || i.obligation.startsWith('evidence:'))) return undefined;
-  const parts = pending.map(i => {
-    // G1.3 (bind): candidate-bound acts name the open candidate they judge.
-    const c12 = n.candidate!.commit.slice(0, 12);
-    if (i.obligation === 'approve') return `awaiting owner approval of candidate ${c12}: owed approve ${node} --candidate ${c12} [--note TEXT] (owner)`;
-    const ev = spec.evidence?.find(e => `evidence:${e.id}` === i.obligation);
-    return `awaiting manual evidence ${i.obligation}${ev ? ` (${oneLine(ev.what)})` : ''} by ${ev?.by ?? 'reviewer'}: ${evidenceCommand(node, i.obligation.slice(9), `${ev?.by ?? 'reviewer'}:<id>`, c12)} or --as owner:pi`;
-  });
-  return { reason: parts.join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
+  return { reason: pending.map(i => i.obligation === 'approve' ? `awaiting owner approval of candidate ${n.candidate!.commit.slice(0,12)}` : `awaiting manual evidence ${i.obligation}: ${i.detail}`).join('; '), needs: pending.some(i => i.obligation === 'approve') ? 'owner' : 'human' };
 }
 
 /**
