@@ -24,7 +24,7 @@ Ledger halt reasons remain causes and evidence rather than display rows. Writer-
 - `supersede.test.ts` — DR1 and C1: the manual halt assertion checks the retained approval cause rather than an embedded approval command.
 - `quiet.test.ts` — DR1, C1, N5 and R-028-35: driver output renders current needs; diagnostic-only question wakes do not invent a need.
 - `quiet025.test.ts` — DR2: structured wakes use asynchronous fresh-need validation and render the recorded need.
-- `notices.test.ts` — DR1, DR2 and R-028-40: answered-but-still-asking output renders the structured answer need and its retry command, without maintaining a second prose expectation.
+- `notices.test.ts` — DR1, DR2 and R-028-40/55: answered-but-still-asking output renders the structured answer need and its retry command. The grace-boundary assertion now checks the exact reason-only Need.text, and the held retry matches `15m → owed answer` with no `: retry with ` tail. The exact answerRetry command and once-only delivery assertions remain unchanged; the QT5 legacy parser is retained.
 - `repair-epoch.test.ts` — DR4: no-writer-change ruling messages permit a no-change reply and retain the original repair or submit halt cause.
 - `ruling-any.test.ts` — DR1, C1 and DR4: owner notices use per-obligation needs and ruling-only follow-ups no longer mandate a change.
 - `stopask.test.ts` — DR2: structured wakes use the asynchronous delivery entry point; writer-change ruling behavior remains covered.
