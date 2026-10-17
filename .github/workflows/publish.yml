@@ -4,6 +4,9 @@ name: publish
 # the job authenticates with a GitHub OIDC token (id-token: write); there is no
 # npm token and no repository secret. Trusted publishing needs npm >= 11.5, and
 # the npm bundled with Node 24 may be older, so npm is upgraded first.
+# After a successful publish, a separate job creates the GitHub Release and
+# records a deployment linking the npm version. Keeping its environment and
+# contents: write permission separate preserves the publishing job's OIDC claims.
 on:
   push:
     tags: ['v*']
@@ -25,3 +28,35 @@ jobs:
       - name: Upgrade npm (trusted publishing needs npm >= 11.5)
         run: npm install -g npm@11
       - run: npm publish --access public
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/pi-owed/v/${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME"; then
+            exit 0
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          notes="$RUNNER_TEMP/pi-owed-release-notes.txt"
+          awk -v heading="## $version" '
+            $0 == heading { section = 1; next }
+            section && /^## / { exit }
+            section { print }
+          ' CHANGELOG.md > "$notes"
+          if ! awk '/[^[:space:]]/ { found = 1; exit } END { exit !found }' "$notes"; then
+            echo 'See CHANGELOG.md.' > "$notes"
+          fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "pi-owed $version" --notes-file "$notes"
