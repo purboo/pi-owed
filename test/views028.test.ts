@@ -8,8 +8,10 @@ import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { clockTime } from '../src/clock.ts';
 import { sha256 } from '../src/canon.ts';
-import { needs, itemLine } from '../src/needs.ts';
+import { needs, itemLine, trunkRedHint } from '../src/needs.ts';
 import { renderStatus, renderBrief, renderWhy, renderReceipt } from '../src/views.ts';
+import { Driver } from '../src/drive-run.ts';
+import { Dsa } from '../src/dsa.ts';
 import { remeasureErrorTexts } from '../src/remeasure-on.ts';
 import { repo } from './helpers/repo.ts';
 import { cli, commitAt } from './helpers/surface.ts';
@@ -18,10 +20,10 @@ const owner = { role: 'owner', id: 'pi' } as const, parent = { role: 'parent', i
 const now = Date.parse('2026-10-16T12:00:00Z');
 const pass = `echo 'owed-counts {"pass":1,"fail":0}'`;
 const fail = `echo 'owed-counts {"pass":0,"fail":1,"failed":["stress case"]}'; exit 1`;
-async function fixture(o: { failing?: boolean; approve?: boolean; run?: string; closure?: boolean; review?: number } = {}) {
+async function fixture(o: { failing?: boolean; approve?: boolean; run?: string; closure?: boolean; review?: number; lease?: boolean } = {}) {
   const r = await repo();
   await commitAt(r.cwd, { 'src/value': 'base', 'check.sh': o.run ?? (o.failing ? `if [ -e '${r.root}/pass' ]; then ${pass}; else ${fail}; fi` : pass) });
-  await ops.init({ cwd: r.cwd, as: owner, channel: 'delegated', plan: JSON.stringify({ version: 1, trunk: 'main', lease: false, closure: o.closure ? ['check.sh'] : [], invariants: [], nodes: [{ id: 'a', writes: ['src/', 'check.sh'], checks: [{ id: 'stress', run: 'bash check.sh', reads: ['src/', 'check.sh'], min_tests: 1 }], review: { count: o.review ?? 1, min_rank: 1 }, ...(o.approve ? { approve: 'owner' } : {}) }, { id: 'dep', writes: ['dep/'], checks: [], review: { count: 0, min_rank: 1 } }] }) });
+  await ops.init({ cwd: r.cwd, as: owner, channel: 'delegated', lease: false, plan: JSON.stringify({ version: 1, trunk: 'main', lease: o.lease ?? false, closure: o.closure ? ['check.sh'] : [], invariants: [], nodes: [{ id: 'a', writes: ['src/', 'check.sh'], checks: [{ id: 'stress', run: 'bash check.sh', reads: ['src/', 'check.sh'], min_tests: 1 }], review: { count: o.review ?? 1, min_rank: 1 }, ...(o.approve ? { approve: 'owner' } : {}) }, { id: 'dep', writes: ['dep/'], checks: [], review: { count: 0, min_rank: 1 } }] }) });
   const slot = await ops.dispatch({ cwd: r.cwd, node: 'a', as: parent });
   const submit = async (value: string, closure = false) => {
     await commitAt(slot.worktree, { 'src/value': value, ...(closure ? { 'check.sh': `${pass}\n# closure changed ${value}` } : {}) });
@@ -38,6 +40,96 @@ function extension(cwd: string) {
   owed({ registerTool: (t: ToolDefinition) => tools.set(t.name, t), registerCommand: (name: string, c: unknown) => commands.set(name, c), on: (name: string, h: unknown) => hooks.set(name, h), sendMessage() {} } as unknown as ExtensionAPI);
   return { messages, async tool(name: string, args = {}) { const r = await tools.get(`owed_${name}`)!.execute('test', args, undefined, undefined, ctx); assert.notEqual(r.isError, true); return (r.content as { text: string }[]).map(c => c.text).join('\n'); }, async slash() { await commands.get('owed').handler('', ctx); return messages.at(-1)!; }, async close() { await hooks.get('session_shutdown')?.({}, ctx); } };
 }
+
+test('R-028-51: status and brief JSON keep the cbe7b9a need keys while why renders alternatives', async () => {
+  const r = await fixture();
+  try {
+    await ops.attest({ cwd: r.cwd, node: 'a' }); await r.block();
+    const state = (await ops.readState(r)).state, alternative = needs(state, 'a')[0]!.alternatives![0]!;
+    assert.ok(alternative);
+    for (const command of ['status', 'brief']) {
+      const output = await cli(r.cwd, [command, '--json']); assert.equal(output.code, 0, output.stderr);
+      const json = JSON.parse(output.stdout), rows = json.summary.needs;
+      assert.ok(rows.some((n: { node: string }) => n.node === 'a'));
+      for (const row of rows) assert.deepEqual(Object.keys(row).sort(), ['command', 'node', 'reason'], command);
+      assert.doesNotMatch(output.stdout, /"alternatives"\s*:/);
+    }
+    const why = await cli(r.cwd, ['why', 'a']); assert.equal(why.code, 0, why.stderr);
+    assert.ok(why.stdout.includes(`or: ${alternative}`), why.stdout);
+    const json = await cli(r.cwd, ['why', 'a', '--json']); assert.equal(json.code, 0, json.stderr);
+    assert.doesNotMatch(json.stdout, /"alternatives"\s*:/);
+  } finally { await r.cleanup(); }
+});
+
+test('R-028-51: differential preserves corrupted CUR summary reasons, trunk commands and brief decisions', async () => {
+  const { CUR, compare } = await import('./perf/differential.ts'), { synthLedger } = await import('./perf/synth.ts');
+  const sample = synthLedger(50, 5, 2), original = CUR.v;
+  assert.equal(compare(sample.entries, sample.lookup, 10), undefined);
+  for (const fault of ['reason', 'command', 'brief'] as const) {
+    try {
+      CUR.v = { ...original, ...(fault === 'brief' ? { briefView: (...args: Parameters<typeof original.briefView>) => {
+        const brief = original.briefView(...args);
+        brief.decisions = [{ node: 'n0', obligation: 'review', key: 'bad', mark: '⛔', detail: 'deliberately corrupted brief decision', blockedDownstream: 0, command: 'owed resume trunk' }];
+        return brief;
+      } } : { statusView: (...args: Parameters<typeof original.statusView>) => {
+        const status = original.statusView(...args), modern = status as unknown as import('../src/views.ts').StatusView;
+        const row = modern.summary!.needs[0] ?? { node: 'n0', reason: 'ready to dispatch', command: 'owed dispatch n0' };
+        modern.summary!.needs = [{ ...row, ...(fault === 'reason' ? { reason: 'deliberately corrupted summary reason' } : { command: 'owed resume trunk' }) }];
+        return status;
+      } }) };
+      const mismatch = compare(sample.entries, sample.lookup, 10);
+      assert.equal(mismatch?.what, 'snapshot', fault);
+      const base = JSON.parse(mismatch!.base), current = JSON.parse(mismatch!.cur), field = fault === 'brief' ? 'brief' : 'status';
+      assert.notEqual(base[field], current[field], fault);
+      assert.ok(current[field].includes(fault === 'reason' ? 'deliberately corrupted summary reason' : 'owed resume trunk'), current[field]);
+    } finally { CUR.v = original; }
+  }
+});
+
+test('R-028-51: a block inserted after driver merge selection preserves the cbe7b9a halt cause', async () => {
+  for (const obligation of ['review', 'approve'] as const) {
+    const r = await fixture({ review: obligation === 'review' ? 1 : 0, approve: obligation === 'approve', lease: true });
+    let driver: Driver | undefined;
+    try {
+      const { writerLaunch } = await import('../src/drive.ts'), { projectId } = await import('../src/reducer.ts');
+      const state = (await ops.readState(r)).state;
+      await ops.launch({ cwd: r.cwd, as: parent, ...writerLaunch(state, 'a', projectId(state)) });
+      await ops.attest({ cwd: r.cwd, node: 'a', lease: false });
+      if (obligation === 'review') await ops.review({ cwd: r.cwd, node: 'a', as: { role: 'reviewer', id: 'accepted' }, verdict: 'ok', rank: 1, note: 'accepted before selection' });
+      else await ops.approve({ cwd: r.cwd, node: 'a', as: owner, channel: 'delegated', note: 'accepted before selection' });
+      assert.equal((await ops.readState(r)).state.nodes.a!.accepted, true);
+      let injections = 0;
+      class LateBlock extends Dsa {
+        constructor() { super({ bin: '/bin/true' }); }
+        override async describe(rid: string) { return { rid, state: 'sealed' as const, status: 'ok' as const }; }
+        override async inspect(rid: string) { return { view: await this.describe(rid) }; }
+        override async holdWhile<T>(_resource: string, work: (signal: AbortSignal) => Promise<T>, o: { signal?: AbortSignal } = {}) {
+          assert.equal(_resource, 'machine'); assert.equal(++injections, 1);
+          assert.equal((await ops.readState(r)).state.nodes.a!.accepted, true, 'selected accepted candidate before ops.merge');
+          if (obligation === 'review') await ops.review({ cwd: r.cwd, node: 'a', as: { role: 'reviewer', id: 'late' }, verdict: 'block', rank: 2, note: 'new block after selection' });
+          else await ops.approve({ cwd: r.cwd, node: 'a', as: owner, channel: 'delegated', block: true, note: 'new block after selection' });
+          return { outcome: 'ran' as const, value: await work(o.signal ?? new AbortController().signal) };
+        }
+      }
+      const reports: { do: string; outcome: string }[] = [];
+      driver = new Driver({ cwd: r.cwd, max: 1, dsa: new LateBlock(), json: true, handleSignals: false, log: line => reports.push(JSON.parse(line)) });
+      await driver.pass(); await driver.settle();
+      assert.equal(injections, 1); assert.ok(reports.some(r => r.do === 'merge' && r.outcome === 'started'));
+      const after = await ops.readState(r), halt = after.entries.findLast(e => e.kind === 'halt' && e.node === 'a');
+      assert.ok(halt?.kind === 'halt');
+      assert.equal(halt.reason, `merge refused: Node a current candidate is not yet accepted:${obligation}`);
+      assert.doesNotMatch(halt.reason, /\n|Next:|owed (?:resume|waive|approve|decide)/);
+      assert.equal(after.state.nodes.a!.accepted, false); assert.ok(!after.entries.some(e => e.kind === 'merge'));
+    } finally { driver?.abort.abort(); await driver?.settle(); await r.cleanup(); }
+  }
+  const red = await mergeRed();
+  try {
+    const state = (await ops.readState(red)).state;
+    const expected = state.nodes.a!.blocks.filter(b => b.state === 'active').flatMap(b => trunkRedHint(state, b.seq, b.key) ?? []).join('; ');
+    assert.match(expected, /^trunk-red:/);
+    await assert.rejects(ops.merge({ cwd: red.cwd, node: 'a', as: parent }), e => { assert.equal((e as Error).message, expected); return true; });
+  } finally { await red.cleanup(); }
+});
 
 test('VW1/C1: status, brief, both why cards, receipts and extension keep each halted obligation separate', async () => {
   const r = await fixture({ failing: true }); const ext = extension(r.cwd);
@@ -63,7 +155,9 @@ test('VW1/C1: status, brief, both why cards, receipts and extension keep each ha
     await rm(runtimeFile);
     for (const text of [renderWhy(card), renderWhy(card, { full: true })]) assert.ok(text.includes(`or: ${ns[1]!.alternatives![0]}`), text);
     assert.ok(ns[0]!.command!.includes('--accept-risk')); assert.equal(state.nodes.a!.blocks.find(x => x.seq === b.seq)?.state, 'active');
-    await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), e => ns.every(n => String(e).includes(n.command!)));
+    await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), e => {
+      assert.equal((e as Error).message, 'Node a current candidate is not yet accepted:check:stress, review'); return true;
+    });
     // C8: accepting behaviour elsewhere cannot erase stress; accepting review still leaves stress.
     await writeFile(join(r.root, 'pass'), 'passed');
     await ops.attest({ cwd: r.cwd, node: 'a' });

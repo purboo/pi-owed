@@ -8,6 +8,7 @@ import { stateOf } from '../src/drive-run.ts';
 import { decide, ownerNeeded, writerLaunch } from '../src/drive.ts';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
+import { needs } from '../src/needs.ts';
 import { statusView } from '../src/views.ts';
 import { projectId } from '../src/reducer.ts';
 import { Follower } from '../src/drive-bg.ts';
@@ -46,7 +47,7 @@ test('NY1/NY3: driver-authored rank-2 repair hides review debt only when the dri
     const need = status.summary!.needs.find(n => n.node === 'a')!;
     assert.doesNotMatch(need.reason,/review needs an owner decision/);
     assert.equal(need.command,'owed decide a --text "<ruling>" --writer');
-    assert.match(need.alternatives![0]!,/^owed review a --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>$/);
+    assert.match(needs((await ops.readState(r)).state, 'a')[0]!.alternatives![0]!,/^owed review a --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>$/);
     await ops.send({cwd:r.cwd,...driver,node:'a',attempt:1,rid,sendKind:'follow-up',reason:'repair',message:'repair the collision',rulings:0});
     status = await ops.status({cwd:r.cwd});
     assert.equal(status.summary!.progress.find(p => p.node === 'a')!.phase,`repairing (block #${b.seq})`);

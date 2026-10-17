@@ -121,24 +121,29 @@ function wfState(s: State): State {
   return out;
 }
 
-/** R-028-45 / VW1–2: only complete needs/activity sections may be removed on both sides. */
-function withoutVwStatus(text: string, view: curViews.StatusView): string {
-  if (view.summary?.needs.length) {
-    const section = curViews.renderStatusBrief(view).split('\n').slice(1, 2 + view.summary.needs.length).join('\n');
-    text = text.replace(`\n${section}\n`, '\n');
+/** R-028-45/51, VW1–2: add only BASE's missing sections at exact frozen anchors. */
+function vwStatus(text: string, frozen: ReturnType<V['statusView']>, current: curViews.StatusView): string {
+  const rendered = curViews.renderStatusFull(current).replace(/^Merge queue:.*\n/gm, '');
+  if (current.summary?.needs.length) {
+    const section = curViews.renderStatusBrief(current).split('\n').slice(1, 2 + current.summary.needs.length).join('\n');
+    // VW1: 0.10 has no Needs-you section; its exact Trunk line is the insertion anchor.
+    const anchor = `Trunk ${frozen.trunk.name} ${frozen.trunk.commit}`;
+    if (rendered.includes(`${anchor}\n${section}\n`)) text = text.replace(`${anchor}\n`, `${anchor}\n${section}\n`);
   }
-  if (view.summary?.progress.length) {
-    const section = ['In progress:', ...view.summary.progress.map(p => `${p.node}: ${p.phase}`)].join('\n');
-    text = text.replace(`\n${section}\n`, '\n');
+  if (current.summary?.progress.length) {
+    const section = ['In progress:', ...current.summary.progress.map(p => `${p.node}: ${p.phase}`)].join('\n');
+    // N4: progress follows phase groups and precedes the first pending section in the frozen renderer.
+    const anchor = `Pending ${Object.keys(frozen.pending)[0]}:`;
+    if (rendered.includes(`${section}\n${anchor}\n`)) text = text.replace(`${anchor}\n`, `${section}\n${anchor}\n`);
   }
   return text;
 }
-/** VW1/C4: the old brief's complete Needs-your-decision section is the same permitted needs projection. */
-function withoutVwDecisions(text: string, brief: ReturnType<V['briefView']>): string {
-  const heading = brief.decisions.length ? `Needs your decision (${brief.decisions.length}):` : 'Needs your decision: none';
-  const next = brief.merged.length ? `Merged (${brief.merged.length}):` : 'Merged: none';
-  const start = text.indexOf(`${heading}\n`), end = text.indexOf(`${next}\n`, start);
-  return start >= 0 && end > start ? text.slice(0, start) + text.slice(end) : text;
+/** R-028-51/VW1/C4: only BASE's exact legacy decision section adopts the current same-state section. */
+function vwDecisions(text: string, frozen: ReturnType<V['briefView']>, current: curViews.Brief): string {
+  const section = (v: Pick<curViews.Brief, 'decisions'>) => [v.decisions.length ? `Needs your decision (${v.decisions.length}):` : 'Needs your decision: none',
+    ...v.decisions.map(d => `  ${d.node}/${d.obligation} [${d.blockedDownstream} blocked downstream] ${d.mark} ${d.detail} → ${d.command}`)].join('\n');
+  const rendered = curViews.renderBrief(current), next = section(current);
+  return rendered.includes(`${next}\n`) ? text.replace(`${section(frozen)}\n`, `${next}\n`) : text;
 }
 /** The exact inserted fragment of two renders differing only in one item/block. No prose patterns are erased. */
 function inserted(withPart: string, withoutPart: string): string {
@@ -259,9 +264,9 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
         const old = `⛔ ${b.node}: blocked #${b.seq} ${b.obligation} (needs a parent ruling): ${baseViews.oneLine(b.note)}; record owed rule --nodes ${b.node} "<decision>"`;
         text = text.replace(old, `${b.node}: review block #${b.seq} needs a parent ruling`);
       }
-      return rendered(withoutVwStatus(text, current));
+      return rendered(vwStatus(text, status, current));
     }
-    return rendered(withoutVwStatus(text, status as curViews.StatusView));
+    return rendered(text);
   });
   out.brief = attempt(() => {
     const brief = v.briefView(s,prefix,-1,Date.UTC(2027,0,1));
@@ -277,7 +282,11 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       // VW2/C3/C4: brief block clearance is exactly itemLine, without historical merge diagnostics.
       b.clear = curNeeds.itemLine(vwState(), b.node, b.obligation);
     }
-    return rendered(withoutVwDecisions(v.renderBrief(brief), brief));
+    const text = v.renderBrief(brief);
+    if (m !== BASE) return rendered(text);
+    const current = curViews.briefView(vwState(), prefix, -1, Date.UTC(2027, 0, 1));
+    delete current.summary;
+    return rendered(vwDecisions(text, brief, current));
   });
   out.escapes = attempt(() => v.escapeSummary(s));
   for (const id of ids) {
