@@ -236,10 +236,120 @@ test('RP R-028-66: shard merge preserves all findings/totals; missing and duplic
   let merged = '', error = '';
   const io = { log: (s: string) => { merged = s; }, error: (s: string) => { error = s; } };
   assert.equal(await replayMain(['--merge', ...files], io), whole.code); assert.equal(error, '');
-  const semantic = (r: Result) => ({ entries: r.entries, samples: r.samples, nodes: r.nodes, normalizedLines: r.normalizedLines, errors: r.errors, coverage: r.coverage, findings: r.findings, truncated: r.truncated });
+  const semantic = (r: Result) => ({ entries: r.entries, samples: r.samples, nodes: r.nodes, normalizedLines: r.normalizedLines, errors: r.errors, coverage: r.coverage, findings: r.findings, itemBranches: r.itemBranches, itemInfo: r.itemInfo, truncated: r.truncated });
   assert.deepEqual(semantic(JSON.parse(merged).results[0]), semantic(whole.report.results[0]!));
   assert.equal(await replayMain(['--merge', ...files.slice(1)], io), 2); assert.match(error, /missing shard/);
   assert.equal(await replayMain(['--merge', ...files, files[0]!], io), 2); assert.match(error, /duplicate/);
+});
+
+test('RP R-028-69 P1: absent or empty compact item rows fail coverage, including secondary needs', async t => {
+  const f = await fixture(t);
+  for (const empty of [false, true]) {
+    const r = await run(f, await renderer(n => ({ ...n, why: { ...n.why, items: empty ? n.why.items.map(i => ({ ...i, line: '' })) : [] } })), ['--seqs', '5']);
+    assert.notEqual(r.code, 0); const missing = r.report.results[0]!.findings.uncovered.filter(x => x.surface === 'compact why item');
+    assert.deepEqual(missing.map(x => x.obligation).sort(), ['approve', 'evidence:proof']);
+    assert.ok(missing.every(x => x.reason === 'missing output for a need'));
+  }
+});
+
+test('RP R-028-69 P1: deleting a secondary status, notice or compact Next row is uncovered', async t => {
+  const f = await fixture(t);
+  for (const surface of ['status', 'owner notice', 'compact why next']) {
+    const render = await renderer(n => surface === 'status' ? { ...n, status: n.status.slice(0, 1) }
+      : surface === 'owner notice' ? { ...n, notice: n.notice.slice(0, 1) } : { ...n, why: { ...n.why, next: [] } });
+    const r = await run(f, render, ['--seqs', '5']); assert.notEqual(r.code, 0);
+    assert.ok(r.report.results[0]!.findings.uncovered.some(x => x.surface === surface && x.obligation === 'evidence:proof' && x.reason === 'missing output for a need'));
+  }
+});
+
+test('RP R-028-69 P2: a secondary command for the wrong need is disagreement, not only invalid argv', async t => {
+  const f = await fixture(t), r = await run(f, await renderer(n => ({ ...n, status: n.status.map(s => s.replace('owed evidence a proof', 'owed resume a')) })), ['--seqs', '5']);
+  assert.equal(r.code, 1); assert.ok(r.report.results[0]!.findings.a.some(x => x.surface === 'status' && x.obligation === 'evidence:proof'));
+});
+
+test('RP R-028-69 P2: diagnostic prose commands use the validator act vocabulary, without requiring arrows', async t => {
+  const f = await fixture(t);
+  for (const act of ['resume', 'attest', 'review']) {
+    const r = await run(f, await renderer(n => ({ ...n, notice: [`a: diagnostic; run owed ${act} a (no single command)`], diagnostic: true, notEmitted: undefined })), ['--seqs', '1']);
+    assert.equal(r.code, 1); assert.match(r.output, /command unsupported by a need/);
+  }
+  const notAct = await run(f, await renderer(n => ({ ...n, notice: ['a: owed nonsense is not an act'], diagnostic: true, notEmitted: undefined })), ['--seqs', '1']);
+  assert.equal(notAct.report.results[0]!.errors.a, 0);
+});
+
+test('RP R-028-69 P2: sample ordinal partitions every 2 and every multiple of N without empty shards', async t => {
+  const f = await fixture(t), { replayMain } = await api();
+  for (const every of [2, 4]) {
+    const whole = await run(f, undefined, ['--every', String(every)]), files: string[] = [], seen: number[][] = [];
+    for (let i = 0; i < 2; i++) {
+      const r = await run(f, undefined, ['--every', String(every), '--shard', `${i}/2`]);
+      seen.push(r.report.results[0]!.timing.samples.map(s => s.seq)); assert.ok(seen[i]!.length > 0);
+      const file = join(f.root, `ordinal-${every}-${i}.json`); await writeFile(file, r.output); files.push(file);
+    }
+    assert.deepEqual(seen, every === 2 ? [[0, 4], [2]] : [[0], [4]]);
+    let output = ''; await replayMain(['--merge', ...files], { log: s => { output = s; }, error: s => assert.fail(s) });
+    const merged = JSON.parse(output).results[0] as Result, expected = whole.report.results[0]!;
+    for (const key of ['entries', 'samples', 'nodes', 'errors', 'coverage', 'findings', 'itemBranches', 'itemInfo'] as const) assert.deepEqual(merged[key], expected[key]);
+  }
+});
+
+test('RP R-028-69 P1: missing/restored blob inputs cannot merge to partial success', async t => {
+  const f = await fixture(t), { replayMain } = await api(), packet = f.entries.find(e => e.kind === 'dispatch')!;
+  assert.equal(packet.kind, 'dispatch'); if (packet.kind !== 'dispatch') return;
+  const file = join(f.blobs, packet.packet), original = await readFile(file), reports: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    if (i === 0) await rm(file); else await writeFile(file, original);
+    const r = await run(f, undefined, ['--seqs', '5', '--shard', `${i}/2`]);
+    assert.equal(r.report.results[0]!.global.missingBlobs.length, i === 0 ? 1 : 0);
+    const report = join(f.root, `blob-shard-${i}.json`); await writeFile(report, r.output); reports.push(report);
+  }
+  let error = ''; const code = await replayMain(['--merge', ...reports], { log: () => assert.fail('mismatched input must not merge'), error: s => { error = s; } });
+  assert.equal(code, 2); assert.match(error, /incompatible shard reports/);
+});
+
+test('RP R-028-69 P1: identical global missing/fold facts count once after merge', async t => {
+  const f = await fixture(t), { replayMain } = await api(); await rm(join(f.blobs, f.log));
+  // A validly serialized but invalid draft exercises the fold-failure global list.
+  f.add({ kind: 'review', by: 'reviewer:external', node: 'a', attempt: 1, obligation: 'approve', key: '0'.repeat(64), verdict: 'block', rank: 3, note: 'invalid actor' }); await f.save();
+  const whole = await run(f), files: string[] = [];
+  assert.ok(whole.report.results[0]!.global, 'whole-input facts must be explicit in every report');
+  assert.equal(whole.report.results[0]!.global.missingBlobs.length, 2);
+  assert.equal(whole.report.results[0]!.global.foldFailures.length, 1);
+  for (let i = 0; i < 2; i++) {
+    const r = await run(f, undefined, ['--shard', `${i}/2`]);
+    assert.deepEqual(r.report.results[0]!.global, whole.report.results[0]!.global);
+    const file = join(f.root, `global-${i}.json`); await writeFile(file, r.output); files.push(file);
+  }
+  let output = ''; await replayMain(['--merge', ...files], { log: s => { output = s; }, error: s => assert.fail(s) });
+  const merged = JSON.parse(output).results[0] as Result;
+  assert.deepEqual(merged.coverage, whole.report.results[0]!.coverage); assert.deepEqual(merged.findings, whole.report.results[0]!.findings);
+});
+
+test('RP R-028-71: repair item equal to Need.text is informational, with status still enforcing its command', async t => {
+  const f = await fixture(t);
+  const render = await renderer(n => ({ ...n, why: { ...n.why, items: n.why.items.map(i => i.obligation === 'approve' ? { ...i, line: i.line.split(' → ')[0]! } : i) } }));
+  const r = await run(f, render, ['--seqs', '5']);
+  assert.equal(r.code, 0); assert.equal(r.report.results[0]!.itemBranches.ii, 1);
+  assert.match(r.output, /item shows need text without command/);
+  const missingStatus = await run(f, await renderer(n => ({ ...n, status: [], why: { ...n.why, items: n.why.items.map(i => i.obligation === 'approve' ? { ...i, line: i.line.split(' → ')[0]! } : i) } })), ['--seqs', '5']);
+  assert.notEqual(missingStatus.code, 0); assert.ok(missingStatus.report.results[0]!.coverage.uncovered > 0);
+});
+
+test('RP R-028-71: need-form wrong command and contextual different command are disagreements', async t => {
+  const f = await fixture(t);
+  for (const contextual of [false, true]) {
+    const r = await run(f, await renderer(n => ({ ...n, why: { ...n.why, items: n.why.items.map(i => i.obligation === 'approve' ? { ...i, line: contextual ? '⛔ approve: contextual work → owed resume a' : i.line.replace('owed approve a', 'owed resume a') } : i) } })), ['--seqs', '5']);
+    assert.equal(r.code, 1); assert.ok(r.report.results[0]!.errors.a > 0);
+    assert.ok(contextual ? r.report.results[0]!.itemBranches.iv > 0 : r.report.results[0]!.itemBranches.i > 0);
+  }
+});
+
+test('RP R-028-71: contextual no-command item is informational; dangling need arrow is still wrong', async t => {
+  const f = await fixture(t);
+  const context = await run(f, await renderer(n => ({ ...n, why: { ...n.why, items: n.why.items.map(i => i.obligation === 'approve' ? { ...i, line: '⛔ approve: repair context awaiting original reviewer' } : i) } })), ['--seqs', '5']);
+  assert.equal(context.code, 0); assert.equal(context.report.results[0]!.itemBranches.iii, 1);
+  const missing = await run(f, await renderer(n => ({ ...n, why: { ...n.why, items: n.why.items.map(i => i.obligation === 'approve' ? { ...i, line: i.line.split(' → ')[0]! + ' → ' } : i) } })), ['--seqs', '5']);
+  assert.equal(missing.code, 1); assert.ok(missing.report.results[0]!.errors.a > 0);
 });
 
 test('RP standalone CLI: report and nonzero exit survive process boundary; invalid flags fail usage', async t => {
