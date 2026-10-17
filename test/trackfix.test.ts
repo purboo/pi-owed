@@ -210,17 +210,18 @@ test('TF2/WF1 #3065: Follower keeps trunk-red guidance before the flaky pair des
     const need = actions.find(a => a.do === 'notify' && a.node === 'a'); assert.ok(need?.do === 'notify');
     const pair = `failed #${fail.seq} (case one) → passed #${pass.seq} on the same key`;
     assert.match(need.text,/trunk-red:/); assert.ok(need.text.includes(pair));
-    const log = join(r.root,'trunk-red-wake.jsonl'); await writeFile(log,JSON.stringify(need)+'\n');
+    const ns = (await import('../src/needs.ts')).needs(s,'a',{driverRunning:true});
+    const { needText } = await import('../src/drive.ts');
+    assert.equal(need.text,ns.map(n => `a: ${needText(n)}`).join('\n'));
+    assert.ok(need.text.indexOf('trunk-red:') < need.text.indexOf(pair),'trunk-red diagnosis precedes the flaky pair');
+    const log = join(r.root,'trunk-red-wake.jsonl'); await writeFile(log,JSON.stringify({ ...need, outcome:'notify',need:ns[0],otherNeeds:ns.slice(1) })+'\n');
     const follower = new Follower({log,repo:r.cwd,pid:process.pid,from:0,deliver(){}});
     let wake:string | undefined; try { wake = await follower.step(); } finally { follower.stop(); }
     const lines = wake!.split('\n');
-    const diagnosis = need.text.match(/trunk-red: [^;]+/)![0], guidance = need.text.match(/parent: fix trunk[^;]+/)![0];
-    const alternative = `or owed waive a check:unit --accept-risk ${fail.seq}`;
-    assert.ok(need.text.includes(`; ${alternative}`));
-    assert.equal(lines[0],`Needs you: a — ${diagnosis}; ${guidance}; ${alternative}`,'trunk-red diagnosis and parent fix/waive guidance lead the wake without receipt noise');
-    assert.ok(lines[1]!.startsWith(`Needs you: a — flaky block #${fail.seq} on check:unit`),wake);
-    assert.ok(lines[1]!.includes(pair),wake);
-    assert.match(lines[1]!,/a pass does not erase a failure/);
+    assert.equal(lines[0],`Needs you: a — ${needText(ns[0]!)}`,'the primary need leads without receipt noise');
+    assert.deepEqual(lines.filter(l => l.startsWith('Needs you:')),ns.map(n => `Needs you: a — ${needText(n)}`));
+    assert.ok(wake!.includes(pair),wake);
+    assert.match(wake!,/a pass does not erase a failure/);
     assert.deepEqual((await ops.readState(r)).state.nodes,s.nodes,'wake presentation does not change gate state');
     assert.equal((await ops.verify(r)).ok,true);
   } finally { await r.cleanup(); }

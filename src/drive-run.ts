@@ -1103,7 +1103,6 @@ export class Driver {
     const argv = [...this.owed, 'attest', node, ...(!lease || !available ? ['--no-lease'] : [])], cwd = this.root!;
     const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(detail ? { detail: oneLine(detail) } : {}) });
     const measuredSince = (await this.ledger!.read()).length;
-    const ok = (r: ActionReport): Ended => ({ finish: async () => [r] });
     const busy = (detail: string): Ended => { const r = report('busy', detail); return { finish: async () => [r], busy: r }; };
     const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; } });
     let ran: { exit: number | null; stdout: string; stderr: string };
@@ -1117,9 +1116,13 @@ export class Driver {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
     if (ran.exit === 0 || ran.exit === 1 || ran.exit === 4) {
-      const s = await loadState(this.ledger!), rt = await assembleRuntime({ cwd, state: s, driverRunning: true });
-      const next = needs(s, node, rt)[0]?.text ?? activity(s, node, rt)?.text;
-      return ok(report('done', `${ran.exit === 0 ? 'accepted' : `measured; not accepted yet: ${next ?? 'candidate not accepted'}`}${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`));
+      const suffix = `${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`;
+      // Display I/O belongs to the awaited reap, not the background measurement's lifecycle.
+      return { finish: async () => {
+        const s = await loadState(this.ledger!), rt = await assembleRuntime({ cwd, state: s, driverRunning: true });
+        const next = needs(s, node, rt)[0]?.text ?? activity(s, node, rt)?.text;
+        return [report('done', `${ran.exit === 0 ? 'accepted' : `measured; not accepted yet: ${next ?? 'candidate not accepted'}`}${suffix}`)];
+      } };
     }
     if (ran.exit === 75) return busy(busyDetail(node, tail(ran.stderr || ran.stdout)));
     return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
