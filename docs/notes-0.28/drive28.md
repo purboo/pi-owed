@@ -60,6 +60,27 @@ The new regression covers two live groups with the same obligation through both 
 
 Final net source growth against the slot base is +84 lines: `answer.ts` +1, `drive.ts` +14, `drive-run.ts` +29 and `drive-bg.ts` +40. This stays within the parent’s expanded leaf budget; release-wide subtraction remains the prune gate.
 
+## Rebase and final validation (R-028-54/55/56/57)
+
+Rebased the committed R-028-53 patch onto views28's merged main `65e21b44ffadfa0c64026fcf60e9fb0320b5c567`, producing `da41bed6fd9a2bc40cbe497cd7465c9cb6b77291`. The only manual conflict was `quiet.test.ts`: retained main's views28 surface assertions, excluded the separately checked driver log from that surface loop, and kept the driver need-text, primary-command and no-human assertions. `views020.test.ts:83` merged automatically with the R-028-46 notification assertion intact. R-028-57 subsequently updates only the cause-only non-`a:` surface expectation and adds the status --full primary-command assertion.
+
+R-028-55 corrected the answer Need.text and retry delivery assertions after the rebase (`ce9771236af6735f93f1cb7879e64a508889cc97`, tree `0a2072a522cc7f18cdc685b3eb7ececfce131406`). R-028-56 restored the historical single-line manual evidence cause without its command suffix (`9b8a54b0a7120819e36abf62bbf57a2851af3178`, tree `bb89e2002515b2fdb4b99dc2b5509448b2ef73a7`). R-028-57 corrects the new regression to `oneLine(what)` and the remaining cause-only surface assertions, without further src changes (`3c8690ecc848861c31b297562e33d4fc63478756`, tree `6d2b51e8d4fc3c911bea3b47bdc5aa0e4e499b91`). The QT5 legacy retry parser and `test/fixtures/views-0.10-base.ts` remain untouched.
+
+All commands below ran through `/tmp/owed-bench/run.sh /work/pi-owed/.owed/wt/drive28-1 <timeout-seconds> "<command>"`; each log records HEAD, tree, clean/dirty status and the command. Log paths share `/tmp/owed-bench/logs/`.
+
+- Rebased `da41bed6`: tsc exit 0 (`drive28-1-232559.log`); focused checks 177/178, exit 1 (`drive28-1-232638.log`), stopped for the R-028-55 answer retry assertion.
+- `ce97712`: tsc exit 0 (`drive28-1-233234.log`); focused checks 178/178, exit 0 (`drive28-1-233308.log`); 29 unreached files 360/360, exit 0 (`drive28-1-233456.log`, timeout 1500, concurrency 2).
+- `9b8a54b`: tsc exit 0 (`drive28-1-234146.log`); expanded focused checks 214/218, exit 1 (`drive28-1-234231.log`), stopped and reported the new-test expectation and three QT1 surface assertions; parent authorized R-028-57.
+- Final tested `3c8690e`: tsc exit 0 (`drive28-1-234848.log`, timeout 900, command `node_modules/.bin/tsc -p tsconfig.json --noEmit`); expanded focused checks including supersede 226/226, exit 0 (`drive28-1-234933.log`, timeout 900). The focused set includes the plan's minimum-136 checks, trunkpark, both two-group follower variants, views020, quiet, drive-order, approve-evidence and drive028. All 226 ran and passed; zero failures, cancellations or skips.
+
+Final focused command:
+`node --test --test-concurrency=2 --test-reporter=tap test/trunkpark.test.ts test/drive028.test.ts test/drive.test.ts test/drive-rulings.test.ts test/drive-bg.test.ts test/notices.test.ts test/halt-quiet.test.ts test/rulings-carried.test.ts test/drivefix.test.ts test/driver020.test.ts test/views020.test.ts test/quiet.test.ts test/drive-order.test.ts test/approve-evidence.test.ts test/supersede.test.ts`
+
+Reused 29-file command on `ce97712`, as explicitly authorized by R-028-56/57; supersede's manualHalt path is additionally covered by the final focused run:
+`node --test --test-concurrency=2 --test-reporter=tap test/shared.test.ts test/sig.test.ts test/slotsetup.test.ts test/snapshot.test.ts test/stalesend.test.ts test/stopask.test.ts test/strength.test.ts test/summary.test.ts test/supersede.test.ts test/surface.test.ts test/sweep.test.ts test/sweep024.test.ts test/tool-worker.test.ts test/tornread.test.ts test/trackfix.test.ts test/trees-touch.test.ts test/trunkpark.test.ts test/trunkred.test.ts test/ux.test.ts test/verifymem.test.ts test/views020.test.ts test/app026.test.ts test/app027.test.ts test/waits.test.ts test/waive-key.test.ts test/watchdog.test.ts test/wkey.test.ts test/writesglob.test.ts test/wt-config.test.ts`
+
+The earlier serial full run (`drive28-1-222738.log`) timed out with exit 124 after 1372 ok and zero not-ok records, without a final summary. R-028-54 diagnoses the concurrency-1 runtime and forbids another full run; the merge gate's suite invariant remains responsible for the final merged tree. The final notes-only commit changes no tested code. Submission is the writer handoff, not independent review, merge acceptance or publication.
+
 ## Compatibility and limits
 
 The historical prose parser remains only for logs without a `need` field. New diagnostic rows explicitly use a null need. Membership gaps remain visible as diagnostics; the driver does not invent new needs to fill them. Prompt review service during unrelated halts remains outside this release.
