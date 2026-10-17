@@ -103,32 +103,37 @@ function tagInfra(s: State, d: Draft): void {
 }
 function guard(s: State, d: Draft): void { tagInfra(s,d); const errors = validateDraft(s,d); if (errors.length) throw new OwedError(errors.join('; ')); }
 /**
- * N4: parsed plans by `<owed dir>\0<blob sha>`, for the life of the process. Blobs are content-addressed and immutable,
- * so an entry never needs invalidation; plans are deep-frozen because every load shares them (the reducer clones what
- * it keeps). Behind it is the persistent cache of the ledger (Ledger.readPlanCache), then the YAML blob.
+ * PM1: at most eight deep-frozen parsed plans, LRU by `<owed dir>\0<blob sha>`. Behind the process cache is the
+ * persistent cache of the ledger (Ledger.readPlanCache), then the YAML blob.
  */
-const planCache = new Map<string, Plan>();
-function deepFreeze<T>(v: T): T { if (v && typeof v === 'object' && !Object.isFrozen(v)) { Object.freeze(v); for (const x of Object.values(v)) deepFreeze(x); } return v; }
-async function cachedPlan(ledger: Ledger, sha: string): Promise<Plan> {
-  const k = `${ledger.dir}\0${sha}`;
-  let p = planCache.get(k);
-  if (p) return p;
-  const stored = await ledger.readPlanCache(sha);
-  if (stored) p = stored as Plan;
-  else { p = parsePlan((await ledger.getBlob(sha)).toString()); await ledger.writePlanCache(sha, p); }
-  planCache.set(k, deepFreeze(p));
+const planCache = new Map<string, Plan>(), PLAN_CACHE_MAX = 8;
+let planHits = 0, planMisses = 0, planEvictions = 0;
+/** @internal Parsed-plan LRU diagnostics. */
+export function planCacheStats(): { entries: number; max: number; hits: number; misses: number; evictions: number } {
+  return { entries: planCache.size, max: PLAN_CACHE_MAX, hits: planHits, misses: planMisses, evictions: planEvictions };
+}
+/** @internal Forget only parsed plans and their diagnostics, not replay caches. */
+export function forgetPlanCache(): void { planCache.clear(); planHits = planMisses = planEvictions = 0; }
+function planHit(k: string): Plan | undefined {
+  const p = planCache.get(k);
+  if (p) { planHits++; planCache.delete(k); planCache.set(k,p); } else planMisses++;
   return p;
 }
-/** G1: cachedPlan, synchronously (a plan a state from the replay caches resolves on first use); the cache write is not awaited. */
+function rememberPlan(k: string, p: Plan): Plan {
+  planCache.delete(k); planCache.set(k,deepFreeze(p));
+  if (planCache.size > PLAN_CACHE_MAX) { planCache.delete(planCache.keys().next().value!); planEvictions++; }
+  return p;
+}
+function deepFreeze<T>(v: T): T { if (v && typeof v === 'object' && !Object.isFrozen(v)) { Object.freeze(v); for (const x of Object.values(v)) deepFreeze(x); } return v; }
+/** PM1: synchronous resolution and best-effort atomic cache publication, with no pending write retaining the plan. */
 function cachedPlanSync(ledger: Ledger, sha: string): Plan {
   const k = `${ledger.dir}\0${sha}`;
-  let p = planCache.get(k);
+  let p = planHit(k);
   if (p) return p;
   const stored = ledger.readPlanCacheSync(sha);
   if (stored) p = stored as Plan;
-  else { p = parsePlan(ledger.getBlobSync(sha).toString()); void ledger.writePlanCache(sha, p); }
-  planCache.set(k, deepFreeze(p));
-  return p;
+  else { p = parsePlan(ledger.getBlobSync(sha).toString()); ledger.writePlanCacheSync(sha, p); }
+  return rememberPlan(k,p);
 }
 /** Plan shas the ledger names (genesis and plan entries), in ledger order. */
 const planShas = (entries: Entry[]): string[] => [...new Set(entries.flatMap(e => e.kind === 'genesis' || e.kind === 'plan' ? [e.plan] : []))];
@@ -138,22 +143,20 @@ async function readVisibleEntries(ledger: Ledger): Promise<Entry[]> {
   return inFlight === undefined ? read : read.slice(0,inFlight);
 }
 /**
- * The verified entries, a plan lookup for the plans they (and `extra`) name, and the replayed state. G1: the plans the
- * fold needs (all of them for a full replay; those named after the cached seq, and `extra`, for a fold from a replay
- * cache) are read before it as in 0.11; any other named plan is read on first use (cachedPlanSync).
+ * PM2: verified entries, a lazy lookup restricted to plans they (and `extra`) name, and the replayed state.
+ * Only the bounded process cache keeps resolved values; neither this closure nor replay preloads the history.
  */
 async function load(ledger: Ledger, extra: string[] = []) {
   // Capture before the first await: verification may invalidate this load while the ledger is being read.
   const control = replayControl(ledger.dir), epoch = control.epoch;
-  const entries = await readVisibleEntries(ledger), known = new Set([...planShas(entries), ...extra]), plans = new Map<string, Plan>();
+  const entries = await readVisibleEntries(ledger), known = new Set([...planShas(entries), ...extra]);
   const lookup = (sha: string): Plan => {
-    let p = plans.get(sha);
-    if (p) return p;
     if (!known.has(sha)) throw new OwedError(`Missing plan ${sha}`, 'internal');
-    p = cachedPlanSync(ledger, sha); plans.set(sha, p); return p;
+    return cachedPlanSync(ledger, sha);
   };
-  const need = async (from: number): Promise<void> => { for (const sha of new Set([...planShas(entries.slice(from)), ...extra])) if (!plans.has(sha)) plans.set(sha, await cachedPlan(ledger, sha)); };
-  const state = await replay(ledger,entries,lookup,need,control,epoch);
+  // Prospective laws must be readable before any append; only extra is eager, never the full history.
+  for (const sha of new Set(extra)) cachedPlanSync(ledger,sha);
+  const state = await replay(ledger,entries,lookup,control,epoch);
   // RC: diagnostics and CAS/node scans consume the same semantic entries as the reducer, never unknown fields.
   return { entries:entries.map(interpretedEntry), lookup, state };
 }
@@ -209,15 +212,15 @@ const unpacked = (payload: Buffer, lookup: (sha: string) => Plan): State | undef
  * in-process cache and, when the fold went at least SNAPSHOT_EVERY entries past the disk snapshot (or there was none),
  * rewrites the disk snapshot (best effort). Equal to `reduce(entries, lookup)` (G1.1).
  */
-async function replay(ledger: Ledger, entries: Entry[], lookup: (sha: string) => Plan, need: (from: number) => Promise<void>, control: ReplayControl, epoch: number): Promise<State> {
-  if (!entries.length) { await need(0); return reduce(entries,lookup); }
+async function replay(ledger: Ledger, entries: Entry[], lookup: (sha: string) => Plan, control: ReplayControl, epoch: number): Promise<State> {
+  if (!entries.length) return reduce(entries,lookup);
   // New loads wait for a pending verify deletion before reading the disk snapshot.
   await control.publication;
   const t0 = performance.now(), at = (seq: number, hash: string): boolean => entries[seq]?.hash === hash;
   let m = memos.get(ledger.dir), state: State | undefined, via: 'memo' | 'disk' | undefined;
   if (!(m && at(m.seq,m.hash))) { const d = await ledger.readSnapshot(); m = d && at(d.seq,d.hash) ? { ...d, disk: d.seq } : undefined; via = 'disk'; } else via = 'memo';
-  if (m) { await need(m.seq+1); state = unpacked(m.payload,lookup); }
-  if (!state) { m = undefined; via = undefined; await need(0); }
+  if (m) state = unpacked(m.payload,lookup);
+  if (!state) { m = undefined; via = undefined; }
   const start = state ? state.seq+1 : 0;
   if (state) extendState(state,entries.slice(start)); else state = reduce(entries,lookup);
   const decisionErrors = decisionTailErrors(state); if (decisionErrors.length) throw new OwedError(decisionErrors.join('; '));
@@ -2419,7 +2422,7 @@ export async function reportCost(o: Context & { since?: number | string }): Prom
 export async function reportMetrics(o: Context & MetricsWindow): Promise<Metrics> {
   const since = metricsBound(o.since,'since'), until = metricsBound(o.until,'until');
   const {state,entries,lookup} = await load(await Ledger.open(o.cwd)); inited(state);
-  return computeMetrics(entries,new Map(planShas(entries).map(sha => [sha,lookup(sha)])),{since,until});
+  return computeMetrics(entries,{ get:lookup },{since,until});
 }
 /**
  * MX2 (ruling #2572): one cold, validating fold over the verified entries plus bounded `git merge-tree` calls. No lock,
@@ -2429,7 +2432,7 @@ export async function reportCounterfactual(o: Context & { since?: number | strin
   const since = metricsBound(o.since,'since'), ledger = await Ledger.open(o.cwd), entries = await readVisibleEntries(ledger);
   if (!entries.length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   const plans = new Map<string, Plan>();
-  for (const sha of planShas(entries)) plans.set(sha, planCache.get(`${ledger.dir}\0${sha}`) ?? deepFreeze((await ledger.readPlanCache(sha) as Plan | undefined) ?? parsePlan((await ledger.getBlob(sha)).toString())));
+  for (const sha of planShas(entries)) plans.set(sha, planHit(`${ledger.dir}\0${sha}`) ?? deepFreeze((await ledger.readPlanCache(sha) as Plan | undefined) ?? parsePlan((await ledger.getBlob(sha)).toString())));
   const lookup = (sha: string): Plan => { const p = plans.get(sha); if (!p) throw new OwedError(`Missing plan ${sha}`, 'internal'); return p; };
   for (const e of entries) { const newer = newerEntry(e); if (newer) throw newer; }
   return counterfactual(o.cwd,entries.map(interpretedEntry),lookup,since,o.progress);
