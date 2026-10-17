@@ -8,6 +8,7 @@ import { withMachineLease, leaseResult, leaseText } from './lease.ts';
 import type { LeaseOptions } from './lease.ts';
 import { matchesAny } from './plan.ts';
 import { oneLine } from './views.ts';
+import { sweepEscapeCommand } from './needs.ts';
 import { validateDraft, extendState } from './reducer.ts';
 import { sweepDefinitionKey, sameSweepEscape, sweepEvidence, sweepNames } from './sweep-policy.ts';
 export { sweepDefinitionKey } from './sweep-policy.ts';
@@ -67,7 +68,6 @@ export function mergeCoverage(entries: Entry[], lookup: (sha: string) => Plan): 
   }
   return out;
 }
-const quote = (text: string): string => `'${text.replaceAll("'", "'\\''")}'`;
 type SweepDraft = Extract<Draft, { kind: 'sweep' }>;
 type SweepOptions = LeaseOptions & { commit?: string; once?: boolean; due?: boolean; startedAt?: number; onCommit?():void };
 export function sweep(o: SweepOptions & {due:true}): Promise<SweepResult | SweepNotDue>;
@@ -210,7 +210,7 @@ export async function sweep(o: SweepOptions): Promise<SweepResult | SweepNotDue>
         if (!bad || !good) return inconsistent();
         const note=`sweep ${commit.slice(0,12)} failed; first failing merge ${first.commit.slice(0,12)}; failing tests: ${head.failed.join(', ') || 'unknown'}`;
         return finish({first:{commit:first.commit,node:first.node,merge:first.seq,
-          command:`owed escape ${quote(first.node)} --merge ${first.seq} --class missing --note ${quote(note)}`}});
+          command:sweepEscapeCommand(first.node,first.seq,note)}});
       } catch (e) { if (e === budget) return inconsistent('confirmation budget exhausted'); throw e; }
     },'sweep',signal,{busy:owner=> `sweep already running${lockActivityText(owner)}; retry next pass`,activity:'sweep'});
   }

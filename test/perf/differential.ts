@@ -322,9 +322,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
       // NY6: full preserves the frozen receipt's weak-confirmation provenance.
       return rendered(m === CUR ? curViews.renderReceipt(card as curViews.ReceiptCard,{full:true}) : vwReceipt(v.renderReceipt(card), card, curViews.receipt(vwState(), prefix, id), vwState(), prefix));
     });
-    const ownerState = m === BASE ? Object.create(Object.getPrototypeOf(s),Object.getOwnPropertyDescriptors(s)) as State : s;
-    if (m === BASE) ownerState.nodes = {...s.nodes,[id]:{...n,blocks:n.blocks.filter(b => !wfHeld(s,b)),items:n.items.filter(i => !(i.discharger === 'executor' && n.blocks.some(b => b.obligation === i.obligation && wfHeld(s,b))))}};
-    q.owner = attempt(() => v.ownerCommands(ownerState, id).map(command => rendered(m === BASE ? command.replace(/owed plan <plan\.yaml> \(add a node that repairs (inv:[^;]+); invariants cannot be waived, only a measured pass on a later merge clears this debt\)/g, (_all, obligation: string) => curViews.trunkDecision(s,obligation,undefined,prefix)) : command)));
+    // R-028-59(5): ownerCommands was a removed-only legacy query; surfaces still compare above.
     if (n.slot?.open) q.reviewPacket = attempt(() => v.reviewPacket(reviewState, id));
     out[`node:${id}`] = q;
   }

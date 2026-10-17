@@ -3,6 +3,8 @@ import { entriesOf, previousSubmit } from './reducer.ts';
 import { lstat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { git, isAncestor } from './git.ts';
+import { rebaseRecovery } from './needs.ts';
+export { rebaseRecovery } from './needs.ts';
 
 /** WS3: shared packet text is initialized independently of the views/needs/ops cycle. */
 export const WRITER_DECISION = 'If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.';
@@ -17,13 +19,6 @@ export async function slotGitOperation(worktree: string): Promise<SlotGitOperati
   return undefined;
 }
 export async function slotGitInProgress(worktree: string): Promise<boolean> { return !!await slotGitOperation(worktree); }
-export function rebaseRecovery(head: string, original: string | undefined, inProgress: boolean | SlotGitOperation | undefined, base?: string, node?: string): string | undefined {
-  if (inProgress) return typeof inProgress === 'string'
-    ? `Git operation in progress; run \`git ${inProgress} --abort\`, then follow the rebase instruction.`
-    : 'Git operation in progress; run `git rebase --abort` (or `git merge --abort` for a merge), then follow the rebase instruction.';
-  if (original && head !== original) return `HEAD differs from last submitted candidate ${original.slice(0,12)}; keep: check \`git log ${base ?? '<slot base>'}..HEAD\` holds only this node's commits, run the focused tests, then \`owed submit ${node ?? '<node>'}\`; reset: \`git reset --hard ${original}\`, then \`git rebase --onto ${base ?? '<slot base>'} $(git merge-base HEAD ${base ?? '<slot base>'})\`.`;
-  return undefined;
-}
 /** Read actual HEAD; never infer that a recorded rebase was applied. Missing worktrees are not drift evidence. */
 export async function rebasePending(s: State, node: string, includeAligned = false): Promise<RebasePending | undefined> {
   const slot = s.nodes[node]?.slot;

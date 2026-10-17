@@ -13,7 +13,8 @@ import { Ledger } from '../src/ledger.ts';
 import * as ops from '../src/ops.ts';
 import { parsePlan } from '../src/plan.ts';
 import { reduce, validateDraft } from '../src/reducer.ts';
-import { ownerCommands, renderReceipt, reviewPacket } from '../src/views.ts';
+import { renderReceipt, reviewPacket } from '../src/views.ts';
+import { needs } from '../src/needs.ts';
 import type { Draft, Entry, Plan, State } from '../src/types.ts';
 import { repo } from './helpers/repo.ts';
 import { commitAt, identity } from './helpers/surface.ts';
@@ -178,16 +179,16 @@ test('G1.2 gate: the waive and owner-review dialogs (pi and CLI) name the candid
   } finally { await r.cleanup(); }
 });
 
-test('G1.3: ownerCommands, the brief and the review packet carry --candidate <commit12> of the open candidate', { timeout: 120_000 }, async () => {
+test('G1.3: needs, the brief and the review packet carry --candidate <commit12> of the open candidate', { timeout: 120_000 }, async () => {
   const r = await fixture();
   try {
     await withEnv(delegated, async () => {
       const s = await slot(r), c12 = s.first.slice(0, 12);
       await ops.review({ cwd: r.cwd, as: reviewer, node: 'a', verdict: 'block', rank: 1, note: 'no' });
-      const st = await state(r.cwd), cmds = ownerCommands(st, 'a');
-      assert.ok(cmds.includes(`owed approve a --candidate ${c12} [--note TEXT] (owner)`), cmds.join('\n'));
-      assert.ok(cmds.includes(`owed evidence a own --file <path> --note "<what was checked>" --as owner:cli --candidate ${c12}`), cmds.join('\n'));
-      assert.ok(cmds.some(c => c.startsWith('owed waive a review ') && c.endsWith(` --candidate ${c12}`)), cmds.join('\n'));
+      // R-028-59(5): use the authoritative per-obligation commands; the removed-only review waiver is gone.
+      const st = await state(r.cwd), cmds = needs(st, 'a').map(n => n.command);
+      assert.ok(cmds.includes(`owed approve a --candidate ${c12} --note "<note>" --as owner:<id>`), cmds.join('\n'));
+      assert.ok(cmds.includes(`owed evidence a own --file <path> --note "<what was checked>" --as owner:<id> --candidate ${c12}`), cmds.join('\n'));
       const brief = await ops.brief({ cwd: r.cwd });
       assert.ok(brief.decisions.length && brief.decisions.every(d => d.command.includes(`--candidate ${c12}`)), JSON.stringify(brief.decisions));
       assert.ok(!brief.decisions.some(d => d.obligation === 'review'), 'routine reviewer work is not an owner decision');

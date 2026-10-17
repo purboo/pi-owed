@@ -11,7 +11,8 @@ import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices,
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
 import { dispatchPacket, oneLine, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
-import { needs, repoNeeds } from './needs.ts';
+import { needs, repoNeeds, thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
+export { thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from './reducer.ts';
 export { ownerNeeded } from './reducer.ts';
@@ -208,13 +209,6 @@ export function verdictMessage(node: string, c: { seq: number; commit: string },
     ...awaiting.map(o => `owed review ${node} --obligation ${o} --candidate ${c12} --as ${who} --ok|--block --rank <N> --note "<why>"`)].join('\n');
 }
 export const reviewerInterrupted = (node: string): string => `You were interrupted; check \`owed why ${node} --full\` for reviews you already recorded on this candidate, finish the rest.`;
-/**
- * Ending of a halt for a run dsa rejected (D15.1): its id and bytes are fixed for the attempt and dsa answers the
- * same id the same way, so clearing the halt only re-halts; a new attempt is the recovery.
- */
-export const rejectedFixed = (node: string): string => `this attempt's request is fixed; fix the cause (plan, agent, model), then \`owed abandon ${node}\` to start a new attempt`;
-/** SR4: a rejected send can be superseded without losing the attempt; rejected runs keep D15.1. */
-export const rejectedHalt = (node: string, what: 'run' | 'send', id: string, reason: string): string => `dsa rejected ${what} ${id}: ${oneLine(reason)}; ${what === 'run' ? rejectedFixed(node) : `the attempt is not lost: continue the run (e.g. a dsa follow-up), then \`owed decide ${node} --text "<retry run>"\`; a later resume, submit or send to this run supersedes this send; or \`owed abandon ${node}\``}`;
 export const fencedMessage = (reason: string): string => writerMessage(`Your previous execution was cut off (${oneLine(reason)}); processes your tools started are gone; rerun anything you were measuring.`);
 /**
  * Repair follow-up: what to do, the notes of active review blocks (a needs-parent block quotes the ruling that resolved
@@ -471,28 +465,6 @@ function execEvidence(s: State, n: NodeState, items: readonly { obligation: stri
   }
   return out.sort((a, b) => Number(a.slice(1, a.indexOf(' '))) - Number(b.slice(1, b.indexOf(' '))));
 }
-/**
- * K5.3: the threshold hint for the measured items, or undefined: for a check X among them, the node's latest two
- * failing, non-attribution observations of `check:X` both exited 0 with no failing test and counted the same number of
- * tests, below X's current `min_tests`, and no ruling naming the node (not `*`) was recorded after the later one (after
- * such a ruling the repair path runs).
- */
-export function thresholdHint(s: State, node: string, obligations: readonly string[]): string | undefined {
-  const spec = s.plan.nodes.find(x => x.id === node), named = rulingsInScope(s, node).findLast(r => r.nodes !== '*' && r.nodes.includes(node));
-  for (const o of obligations) {
-    if (!o.startsWith('check:')) continue;
-    const x = o.slice(6), m = spec?.checks.find(c => c.id === x)?.min_tests;
-    if (m === undefined) continue;
-    const fails = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && e.probe === undefined && e.subject === node && e.obligation === o && e.verdict === 'fail' && !e.attribution).slice(-2);
-    if (fails.length < 2 || (named && named.seq > fails[1]!.seq)) continue;
-    const [a, b] = fails as [ObsEntry, ObsEntry];
-    const tests = a.counts?.tests;
-    if (a.exit !== 0 || b.exit !== 0 || a.counts?.fail !== 0 || b.counts?.fail !== 0 || tests === undefined || b.counts.tests !== tests || tests >= m) continue;
-    return `check ${x}: ${tests} tests ran and passed twice, below min_tests ${m}; the plan's threshold may be wrong: fix the plan (owed plan) or decide (owed decide ${node} --text "…")`;
-  }
-  return undefined;
-}
-
 // ---------- environment back-off (0.11, F2.2) ----------
 /** F2.2: an error observation whose note starts with `environment: ` (disk full, tree preparation failed). */
 export const isEnvironment = (o: ObsEntry): boolean => o.verdict === 'error' && (o.note ?? '').startsWith('environment: ');
@@ -519,6 +491,7 @@ export function environmentWait(s: State, jobs: readonly { subject: string; obli
   }
   return best;
 }
+
 /** F2.2: the notify of a node whose attest waits after an environment error: the note and the retry time. */
 export const environmentText = (node: string, w: EnvironmentWait): string =>
   `${node}: environment failure #${w.latest.seq} ${w.latest.obligation}: ${clip(w.latest.note ?? '')}; attest waits (${w.step} in a row), retry at ${clockTime(w.until)}; the driver does not halt for it (free the disk or fix the setup; owed decide ${node} --resume --text "<retry setup>" retries at once)`;
