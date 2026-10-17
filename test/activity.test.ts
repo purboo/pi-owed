@@ -178,6 +178,56 @@ test('AC1 invocation inside an already-held lease still publishes exactly one re
   } finally { await f.done(); }
 });
 
+test('AC1 R-028-29 caller-held lease publishes at entry and stays queued until the operation lock', { timeout: 60_000 }, async () => {
+  const f = await fixture(root => ({ checks:[{id:'slow',run:slow(root,'check')}] }));
+  const prior = { OWED_DSA:process.env.OWED_DSA, OWED_LEASED:process.env.OWED_LEASED };
+  const lock = join(f.ledger.dir,ops.attestLock('a'));
+  try {
+    await ops.planSet({...f,as:parent,plan:JSON.stringify({...(await ops.readState(f)).state.plan,lease:true})});
+    const bin = join(f.root,'dsa');
+    await writeFile(bin,`#!/bin/bash\necho requested > '${f.root}/unexpected-lease'\nexit 75\n`); await chmod(bin,0o755);
+    process.env.OWED_DSA = bin; process.env.OWED_LEASED = '1';
+    // A foreign operation lock waits rather than failing fast; the machine lease is already held by the caller.
+    await mkdir(lock); await writeFile(join(lock,'owner.json'),JSON.stringify({pid:1,host:'foreign.invalid',ts:new Date(NOW).toISOString(),token:'holder'}));
+    const run = f.start(signal => ops.attest({...f,node:'a',signal}));
+    await until(async () => (await records(f)).length === 1,'invocation entry record');
+    const [queued] = await records(f); assert.ok(queued); assert.equal(queued.phase,'queued');
+    assert.equal(queued.do,'other'); assert.deepEqual(queued.obligations,[]); assert.equal(Object.hasOwn(queued,'candidate'),false);
+    assert.equal(await exists(join(f.root,'check')),false,'the operation lock still prevents job start');
+    assert.equal(await exists(join(f.root,'unexpected-lease')),false,'caller-held lease is not reacquired');
+    await rm(lock,{recursive:true}); await waitJob(f,'check');
+    const [running] = await records(f); assert.ok(running); assert.equal(running.token,queued.token);
+    assert.equal(running.phase,'running'); assert.equal(running.do,'attest'); assert.equal(running.candidate,await candidate(f));
+    assert.deepEqual(running.obligations,['check:slow']); assert.equal(await exists(join(f.root,'unexpected-lease')),false);
+    await release(f,'check'); await run; assert.deepEqual(await records(f),[]);
+  } finally {
+    await rm(lock,{recursive:true,force:true}); await f.done();
+    for (const [key,value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
+});
+
+test('AC1 R-028-29 resubmit mid-run keeps the snapshot seq on later old-tree jobs and cleans the record', { timeout: 60_000 }, async () => {
+  const f = await fixture(root => ({ checks:[{id:'one',reads:['a.txt'],run:slow(root,'one')},
+    {id:'two',reads:['a.txt'],run:`cat a.txt > '${join(root,'two-content')}'; ${slow(root,'two')}`}] }));
+  try {
+    const old = await candidate(f), run = f.start(signal => ops.attest({...f,node:'a',signal})); await waitJob(f,'one');
+    const [first] = await records(f); assert.ok(first); assert.equal(first.candidate,old); assert.deepEqual(first.obligations,['check:one']);
+    await commitAt(f.slots.a!,{'a.txt':'new candidate\n'});
+    await ops.submit({cwd:f.slots.a!,node:'a',as:{role:'writer',id:'a#1'}});
+    const current = await candidate(f); assert.notEqual(current,old);
+    await release(f,'one'); await waitJob(f,'two');
+    const rs = await records(f); assert.equal(rs.length,1); const later = rs[0]!;
+    assert.equal(later.token,first.token); assert.equal(later.phase,'running'); assert.equal(later.do,'attest');
+    assert.deepEqual(later.obligations,['check:two']); assert.equal(later.candidate,old);
+    assert.notEqual(later.candidate,current,'N6 seq matching cannot suppress a need of the newer candidate');
+    assert.equal(await readFile(join(f.root,'two-content'),'utf8'),'candidate\n','later job still measures the invocation snapshot tree');
+    await release(f,'two'); const result = await run; assert.deepEqual(await records(f),[]);
+    assert.deepEqual(result.superseded.map(j => j.obligation),['check:one','check:two','writes'],'stale observations keep the existing supersession guard');
+    assert.equal((await f.ledger.read()).filter(e => e.kind === 'obs').length,0,'superseded jobs record no observations');
+    assert.equal(await candidate(f),current,'the invocation does not replace the resubmitted candidate');
+  } finally { await f.done(); }
+});
+
 test('AC1 CLI signal keeps the record until actual abort cleanup, then removes it', { timeout: 60_000 }, async () => {
   const f = await fixture(root => ({ checks:[{id:'slow',run:`setsid sleep 2 & ${slow(root,'check')}`}] }));
   let child: ReturnType<typeof spawn> | undefined;
