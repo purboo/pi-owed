@@ -97,7 +97,7 @@ test('IF1/IF3/IF5: deterministic setup failure consumes one retry, halts rather 
     const delivered:string[] = [], f = new Follower({ repo:r.cwd,log,pid:process.pid,from:0,deliver:t => { delivered.push(t); } });
     try { await f.step(); } finally { f.stop(); }
     assert.equal(delivered.length,1);
-    assert.match(delivered[0]!,/Needs you: a — setup failure \(no tests ran\): .*likely the environment.*owed decide a --remeasure/);
+    assert.match(delivered[0]!,/Needs you: a — driver halted: setup failure \(no tests ran\): .*likely the environment; after resume the driver continues from the current state → owed resume a/);
   } finally { await r.cleanup(); }
   const named = await fixture(['pass','setup','named']);
   try {

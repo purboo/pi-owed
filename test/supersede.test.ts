@@ -169,7 +169,7 @@ test('L2.4: the driver\'s manual-only halt is not disabled by a superseded block
   r.submit(f2); r.obs('check:unit', 'check2', 'pass', { commit: 'c2' }); r.obs('writes', 'writes2', 'pass', { commit: 'c2' });
   const h = manualHalt(r.state(), 'a');
   assert.equal(h?.needs, 'owner');
-  assert.match(h?.reason ?? '', /owed approve a/);
+  assert.match(h?.reason ?? '', /awaiting owner approval of candidate c2/);
 });
 
 const tap = (n: number) => `echo '# tests ${n}'; echo '# pass ${n}'; echo '# fail 0'`;

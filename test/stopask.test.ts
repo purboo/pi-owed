@@ -141,7 +141,7 @@ test('WS2: wake, default why and status quote the final paragraph and one writer
     f.dsa.view.result = 'Lots of evidence and logs.\n\nChoose "v2"; do not follow owed abandon a.';
     await f.driver.pass(); // sealed repair, no new candidate
     const quote = says('Choose "v2"; do not follow owed abandon a.');
-    const wake = f.follower.tick()!;
+    const wake = (await f.follower.step())!;
     assert.equal(wake.split('\n')[0], `Needs you: a — ${quote} → ${command}`, wake);
     assert.doesNotMatch(wake, /Measurement dump|review block|Lots of evidence/);
     const why = await cli(f.cwd, ['why', 'a']); assert.equal(why.code, 0, why.stderr);
@@ -164,7 +164,7 @@ test('WS2: final reply is one paragraph, at most 300 characters; missing text is
       const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt');
       const quote = result.trim() ? says('x'.repeat(299) + '…') : 'writer gave no final text';
       assert.ok(h.reason.endsWith(`${quote} → ${command}`), h.reason);
-      assert.equal(f.follower.tick()!.split('\n')[0], `Needs you: a — ${quote} → ${command}`);
+      assert.equal((await f.follower.step())!.split('\n')[0], `Needs you: a — ${quote} → ${command}`);
     } finally { await f.cleanup(); }
   }
 });
@@ -205,7 +205,7 @@ test('WS1/WS2: unreadable worktree halts conservatively and final control charac
     assert.deepEqual(f.dsa.sent, []);
     const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt');
     assert.match(h.reason, /^cannot inspect writer worktree/);
-    const wake = f.follower.tick()!;
+    const wake = (await f.follower.step())!;
     assert.ok(wake.split('\n')[0]!.endsWith(`→ ${command}`), wake);
     assert.doesNotMatch(wake, /[\u0007\u202e]/);
     assert.match(wake, /\\u0007\\u202e/);
@@ -225,7 +225,7 @@ test('WS5: sealed writer at the clean pre-rebase head halts with final text inst
     const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt', 'sealed pending rebase must halt');
     assert.equal(h.reason, `writer stopped without a candidate after rebase follow-up ${follow.send}; ${says('Need the parent to approve this rebase.')} → ${command}`);
     assert.deepEqual(f.dsa.sent, []);
-    assert.equal(f.follower.tick()!.split('\n')[0], `Needs you: a — ${says('Need the parent to approve this rebase.')} → ${command}`);
+    assert.equal((await f.follower.step())!.split('\n')[0], `Needs you: a — ${says('Need the parent to approve this rebase.')} → ${command}`);
     const status = await cli(f.cwd, ['status']);
     assert.match(status.stdout, /1 need you/);
     assert.ok(status.stdout.includes(`${says('Need the parent to approve this rebase.')} → ${command}`));

@@ -80,7 +80,10 @@ test('NY1 parent ruling: external rank-2 blocks stay in Needs-you during repair 
       assert.ok(status.summary!.needs.some(n => n.node === 'a'),'owner review debt remains visible');
       assert.equal(status.summary!.progress.find(p => p.node === 'a')!.phase,`repairing (block #${b.seq})`);
       const actions = decide(s,s.plan,new Map([[rid,{rid,state:'running' as const}]]),{max:2,repairs:2,project:projectId(s),root:r.cwd,applied:new Set(),rejected:new Map()});
-      assert.ok(actions.some(a => a.node === 'a' && a.do === 'notify' && /needs the owner/.test(a.text)),'driver owner notification agrees with Needs-you');
+      const ownerNeed = (await import('../src/needs.ts')).needs(s,'a').find(n => n.actor === 'owner' || (n.obligation !== undefined && n.kind !== 'rule'))!;
+      const notice = actions.find(a => a.node === 'a' && a.do === 'notify');
+      assert.ok(notice?.do === 'notify' && notice.text.includes(ownerNeed.text) && notice.text.includes(ownerNeed.command!),'driver owner notification agrees with Needs-you');
+      assert.doesNotMatch(notice.text,/needs the owner \(the main agent decides/);
       assert.equal(status.nodes.a!.accepted,false);
     };
     await ops.send({cwd:r.cwd,...driver,node:'a',attempt:1,rid,sendKind:'follow-up',reason:'repair',message:'repair the collision',rulings:0});

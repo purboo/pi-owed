@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sha256 } from '../src/canon.ts';
+import { needs } from '../src/needs.ts';
 import { decide, type Action, type DriveOpts } from '../src/drive.ts';
 import * as planMod from '../src/plan.ts';
 import { reduce, runId, validateDraft } from '../src/reducer.ts';
@@ -108,7 +109,7 @@ test('L3.1 #21: an owner-needed node (flaky block) with a sealed writer gets the
   assert.ok(isSend(fu, 'ruling') && fu.rid === W && fu.sendKind === 'follow-up' && fu.rulings === rule.seq, JSON.stringify(fu));
   assert.equal(fu.message, ['New parent rulings for a:', `#${star.seq} (*): general guidance`, `#${rule.seq} (a): make the qpoint test deterministic: sort before comparing`,
     'Flaky blocks of a (an attribution rerun of the failing content passed):', `- flaky block #${f.seq} on check:unit: ac1 failed #${f.seq} (unknown failed tests) → passed #${r.entries.find(e => e.kind === 'obs' && e.attribution)?.seq} on the same key; a pass does not erase a failure: accept the risk (owed waive a check:unit --accept-risk ${f.seq} --reason "…") or fix it; current candidate ac2 passed #${r.entries.find(e => e.kind === 'obs' && e.obligation === 'check:unit' && e.commit === 'ac2')?.seq} — note: not ok 3 - qpoint order is nondeterministic`,
-    'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n'));
+    'Apply these rulings. If they need a change from you, commit and run owed submit a; if they need none, reply "no change: <why>" and stop.', WRITER_DECISION].join('\n'));
   r.record(fu);
   // Sent once: running or sealed again without a new candidate, the node still needs the owner and is notified.
   assert.equal(act(r, running())?.do, 'notify');
@@ -127,7 +128,7 @@ test('L3.1: row 7 (writer sealed non-ok) sends a due ruling follow-up first, the
   const rule = r.rule('retry with the smaller fixture');
   const fu = act(r, err);
   assert.ok(isSend(fu, 'ruling') && fu.rid === W && fu.rulings === rule.seq, JSON.stringify(fu));
-  assert.equal(fu.message, ['New parent rulings for a:', `#${rule.seq} (a): retry with the smaller fixture`, 'Apply these rulings; they override your packet. Then commit and run `owed submit a`.', WRITER_DECISION].join('\n'));
+  assert.equal(fu.message, ['New parent rulings for a:', `#${rule.seq} (a): retry with the smaller fixture`, 'Apply these rulings. If they need a change from you, commit and run owed submit a; if they need none, reply "no change: <why>" and stop.', WRITER_DECISION].join('\n'));
   r.record(fu);
   const h2 = act(r, err);
   assert.ok(h2?.do === 'halt' && h2.reason === `writer run ${W} sealed error: model overloaded; writer gave no final text → owed decide a --text "<ruling>" --writer`, JSON.stringify(h2));
@@ -211,7 +212,7 @@ test('L3.1 review #914 F1: a recorded ruling follow-up dsa did not apply (pendin
   // Nit 1: an unsealed writer of an owner-needed node keeps the notify, whether the ruling is undelivered or its
   // follow-up is unapplied.
   const pend = act(r, running(), { applied });
-  assert.ok(pend?.do === 'notify' && pend.text.startsWith('a: needs the owner'), JSON.stringify(pend));
+  assert.ok(pend?.do === 'notify' && pend.text.startsWith('a: check:unit:'), JSON.stringify(pend));
 });
 
 test('L3.1 review #914 nit 1: an owner-needed node whose writer is not sealed (running, asking) keeps the owner notify despite an undelivered ruling', () => {
@@ -219,7 +220,7 @@ test('L3.1 review #914 nit 1: an owner-needed node whose writer is not sealed (r
   r.rule('make the qpoint test deterministic');
   for (const runs of [running(), new Map([view(W, 'asking')])]) {
     const x = act(r, runs);
-    assert.ok(x?.do === 'notify' && x.text.startsWith('a: needs the owner'), JSON.stringify(x));
+    assert.ok(x?.do === 'notify' && x.text.startsWith('a: check:unit:'), JSON.stringify(x));
   }
 });
 
@@ -239,7 +240,7 @@ test('L3.1 review #914 nit 3: at the stalled point a candidate with a flaky bloc
   assert.equal(mine.length, 1);
   const w = mine[0];
   assert.ok(isSend(w, 'ruling') && w.rid === W && w.sendKind === 'follow-up' && w.rulings === rule.seq, JSON.stringify(w));
-  assert.ok(w.message.includes('Flaky blocks of a (an attribution rerun of the failing content passed):\n- #2 check:gone:') && w.message.endsWith(`Then commit and run \`owed submit a\`.\n${WRITER_DECISION}`), w.message);
+  assert.ok(w.message.includes('Flaky blocks of a (an attribution rerun of the failing content passed):\n- #2 check:gone:') && w.message.endsWith(`Apply these rulings. If they need a change from you, commit and run owed submit a; if they need none, reply "no change: <why>" and stop.\n${WRITER_DECISION}`), w.message);
 });
 
 // ---------- L3.2 ----------
@@ -256,7 +257,9 @@ test('L3.2: flaky hints offer a ruling next to the waiver (why, status, brief, t
   const brief = renderBrief(briefView(s, r.entries));
   assert.ok(brief.split('\n').some(l => l.includes(`flaky block #${f.seq}`) && l.includes(`owed waive a check:unit`) && l.includes('on the same key')), brief);
   const n = act(r);
-  assert.ok(n?.do === 'notify' && n.text.includes(` | ${RULE_HINT}`) && n.text.split(RULE_HINT).length === 2, JSON.stringify(n));
+  assert.ok(n?.do === 'notify');
+  const primary = needs(s,'a')[0]!;
+  assert.equal(n.text,`a: ${primary.text} → ${primary.command}`); assert.doesNotMatch(n.text,/\| owed/);
 });
 
 // ---------- L3.3 ----------

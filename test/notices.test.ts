@@ -125,7 +125,10 @@ for (const [suffix, hour, minute] of [['', 12, 0], [' (local 23:55 across midnig
       assert.equal(wakes.length, 1); assert.equal(wakes[0]!.answerRetry, true);
       const shown = clockTime(e.ts, recorded + 600_000); // the one retry wake is recorded at the grace boundary
       assert.equal(shown, suffix ? '2026-01-15 23:55' : '12:00', 'only the cross-midnight answer needs a local date');
-      assert.equal(wakes[0]!.text, `a: answered at #${e.seq} (${shown}), still asking after 10m: retry with ${answerRetry('a', e)}`);
+      const need = wakes[0]!.need as import('../src/needs-types.ts').Need;
+      assert.equal(need.kind,'answer'); assert.equal(need.command,answerRetry('a',e));
+      assert.equal(wakes[0]!.text,`a: ${need.text} → ${need.command}`);
+      assert.equal(need.text, `answered at #${e.seq} (${shown}), still asking after 10m`);
       assert.equal(f.view.state, 'asking'); assert.deepEqual(f.view.questions, originalQuestion);
       assert.deepEqual(wakes[0]!.qid, e.answer!.qid); assert.equal(wakes[0]!.rev, e.answer!.rev);
     } finally { t.mock.timers.reset(); await f?.cleanup(); }
@@ -153,8 +156,9 @@ test('QN1 repair #1514: grace retry held while pi is busy survives owed resume a
     await driver.pass(); // the driver has consumed its once mark; it cannot replace a dropped retry
     assert.equal(lines.filter(x => x.answerRetry).length, 1);
     busy = false;
-    assert.match(await follower.step() ?? '', /still asking after 15m: retry with owed answer 'a' /);
+    assert.match(await follower.step() ?? '', /still asking after 15m → owed answer 'a' /);
     assert.equal(delivered.length, 1); assert.ok(delivered[0]!.includes(answerRetry('a', e)));
+    assert.doesNotMatch(delivered[0]!, /: retry with /);
     await driver.pass(); await driver.pass();
     assert.equal(await follower.step(), undefined); assert.equal(await follower.step(), undefined);
     assert.equal(delivered.length, 1); assert.equal(lines.filter(x => x.answerRetry).length, 1);

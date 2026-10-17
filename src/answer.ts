@@ -39,7 +39,8 @@ export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick
           const view = await dsa.describe(launch.rid);
           if (view.state !== 'running' && view.state !== 'asking') { result.pending++; if (launch.rid === writer?.rid) (result.finished ??= []).push({ node: id, writer: launch.rid }); continue; }
           const followUp = rulingFollowUp(state, id)?.message;
-          const message = followUp?.includes(`#${entry.seq} `) || followUp?.includes(`#${entry.seq} (`) ? followUp : rulingMessage(id, 'writer', state.rules.filter(r => r.seq === entry.seq));
+          const message = launch.role === 'reviewer' ? rulingMessage(id, 'reviewer', state.rules.filter(r => r.seq === entry.seq))
+            : followUp?.includes(`#${entry.seq} `) || followUp?.includes(`#${entry.seq} (`) ? followUp : rulingMessage(id, 'writer', state.rules.filter(r => r.seq === entry.seq));
           const sent = await dsa.send(`owed-rule-${entry.seq}-${launch.rid}-${sha256(message).slice(0,12)}`, launch.rid, 'notify', message);
           if (sent.outcome !== 'applied') throw new Error(`${sent.outcome}${'reason' in sent && sent.reason ? `: ${sent.reason}` : ''}`);
           result.delivered.push(address);

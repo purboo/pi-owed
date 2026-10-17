@@ -215,10 +215,13 @@ test('FS3(b): a trunk-key conflict from the merge guard\'s trunk refresh parks t
       drv.d.emit = (x: ActionReport, st?: Parameters<typeof emit>[1]) => { emitted.push(x); emit(x, st); };
       await drv.passes(2);
       assert.deepEqual(await r.halts(), [], drv.lines.join('\n'));
-      assert.equal(drv.lines.filter(l => l.startsWith('trunk red: inv:x')).length, 1, drv.lines.join('\n'));
+      const repo = (await import('../src/needs.ts')).repoNeeds(s,{driverRunning:true});
+      const { needText } = await import('../src/drive.ts');
+      for (const n of repo) assert.equal(drv.lines.flatMap(l => l.split('\n')).filter(l => l === `trunk: ${needText(n)}`).length,1,drv.lines.join('\n'));
       const sent = emitted.filter(x => x.do === 'notify' && x.scope === 'repo' && x.once === `trunk\0inv:x\0${NAME}\0${s.trunk.commit}`);
       assert.equal(sent.length, 1, JSON.stringify(emitted));
-      assert.equal(sent[0]!.text, notices[0]!.text);
+      assert.deepEqual(sent[0]!.need,repo[0]);
+      assert.equal(sent[0]!.text,repo.map(n => `trunk: ${needText(n)}`).join('\n'));
       assert.equal(wakeReport(sent[0]!), true);
       // The trunk item of that key changes for a (owner defer): a merges; c stays parked, still without a halt.
       await ops.defer({ cwd: r.cwd, as: owner, channel: 'delegated', node: 'a', items: [{ id: 'x', key: s.trunk.invKeys.x! }], reason: 'accept the flaky trunk test for a' });
