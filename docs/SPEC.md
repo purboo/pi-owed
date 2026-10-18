@@ -3555,7 +3555,9 @@ recorded and the error identifies the saved plan and recovery action.
   `--writer` invalidation. It waives no check and changes no acceptance gate.
 - Resume defaults on only for halted or held nodes. Explicit `--resume`,
   `--after` or `--remeasure` requests resume; `--no-resume` preserves the halt
-  despite the ruling and cannot combine with after/remeasure. Hold release
+  despite the ruling and cannot combine with after/remeasure. A halt kept by
+  that decision is `held by ruling #<seq>`: it remains stopped but does not ask
+  the parent to resume it. `owed resume <node>` releases it when desired. Hold release
   keeps resume's restrictions. `--writer` requires a new submit (the same
   commit is allowed), never acknowledges a ruling or clears a review block.
 - Each node may have at most one open question across its current writer and
@@ -4052,7 +4054,18 @@ card; it does not embed those detailed receipts in writer repairs (§12.5.3).
   obligation needs. Otherwise it needs `owed resume <node>` and explains that
   the driver continues from the current state, then waits for any dependencies.
   Only that last case uses a stopped writer's decision command, with resume as
-  its alternative. Halt prose never supplies a resolving command.
+  its alternative. In 0.29, a later named decision ruling with no halt-clearing
+  entry makes the active halt held: its resume need (including the stopped-writer
+  decide special case) disappears. Activity reads `held by ruling #<rule seq>;
+  owed resume <node> releases it`. Compact/full status, brief and `/owed` show
+  this under In progress; why and receipts name the ruling and show the release
+  command in Next. Independent owner obligations, unruled review blocks, open
+  writer questions and owner debt remain visible and actionable. The held halt
+  itself no longer wakes the parent; queued wakes whose needs disappeared are
+  dropped at delivery revalidation. A rule before the halt, a prospective rule
+  or `*` policy does not hold it. A plain named rule after the halt still clears
+  it as before, as do resume, new attempts and the other existing halt-clearing
+  acts. Halt prose never supplies a resolving command.
   `In progress (<R>):` lists unmerged open slots, dependency waits and held
   nodes as `<node>: <phase> (<age>)`; phases are writing, measuring, reviewing,
   waiting for <deps>, held, accepted (merge pending), and the 0.20 repair/rebase/
@@ -5024,7 +5037,9 @@ must name the node's current open slot (node and attempt), and so must a halt.
   it (not `*`) — or a new attempt (any dispatch of the node). Prospective
   rulings never clear a halt. For entries carrying `decision`, only a `resume`
   can clear it: the group's rule, plan, carry submits and defers do not, so
-  `owed decide --no-resume` preserves the halt (§8.3.1). Driver entries
+  `owed decide --no-resume` preserves the halt (§8.3.1), displayed as held by
+  that ruling rather than a parent resume request (§9). This is derived from
+  existing entries; halt-clearing and replay semantics are unchanged. Driver entries
   (`launch`, `send`, `halt`) and executor entries (`obs`, `merge`, which the
   driver causes) never clear a halt. A halt of an attempt that is no longer
   open is not active.
