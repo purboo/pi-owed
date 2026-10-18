@@ -273,7 +273,7 @@ test('LZ3 genesis stays measuring until its runtime activity cleanup completes',
   }finally{release();ac.abort();await pending.catch(()=>{});t.mock.restoreAll();syncBuiltinESMExports();await r.done();}
 });
 
-test('R-029-7 host status sees native-worker genesis until runtime cleanup ends',async()=>{
+test('R-029-8 worker runtime records never count as host genesis registration',async()=>{
   const r=await rig({invariants:[{id:'slow',run:'touch "$OLEASE_FIXTURE/started"; sleep 60',reads:['**'],timeout_s:30}]}),started=r.path('started');
   let worker:Worker|undefined;
   try {
@@ -283,14 +283,29 @@ fs.unlink=async(...args)=>{if(/attest-.*\\.json$/.test(String(args[0]))){parentP
 parentPort.on('message',m=>{if(m==='abort')ac.abort();if(m==='release')release();});
 try{await ops.attestGenesis({cwd:${JSON.stringify(r.cwd)},signal:ac.signal});}catch(e){if(e.code!=='aborted')throw e;}parentPort.postMessage('ended');parentPort.close();`;
     worker=new Worker(new URL(`data:text/javascript,${encodeURIComponent(script)}`),{execArgv:[],env:{...process.env}});
-    let cleaning!:()=>void,ended!:()=>void;
-    const cleanup=new Promise<void>(resolve=>{cleaning=resolve;}),finished=new Promise<void>(resolve=>{ended=resolve;});
-    worker.on('message',m=>{if(m==='cleanup')cleaning();if(m==='ended')ended();});
+    let cleaning!:()=>void;
+    const cleanup=new Promise<void>(resolve=>{cleaning=resolve;});
+    worker.on('message',m=>{if(m==='cleanup')cleaning();});
     await until(()=>existsSync(started));worker.postMessage('abort');await cleanup;
-    assert.equal((await ops.status({cwd:r.cwd})).genesis?.measuring,true,'host sees same-pid worker during cleanup');
-    worker.postMessage('release');await finished;
-    assert.equal((await ops.status({cwd:r.cwd})).genesis?.measuring,undefined,'host and worker finish at the same boundary');
+    assert.equal((await ops.status({cwd:r.cwd})).genesis?.measuring,undefined,'host has no local genesis registration');
+    await worker.terminate();worker=undefined;
+    const ledger=await Ledger.open(r.cwd),records=(await fs.readdir(join(ledger.dir,'run'))).filter(n=>/^attest-.*\.json$/.test(n));
+    assert.equal(records.length,1,'terminated worker leaves a same-pid runtime record');
+    assert.equal((await ops.status({cwd:r.cwd})).genesis?.measuring,undefined,'stale worker record never reports measuring');
   }finally{await worker?.terminate();await r.done();}
+});
+
+test('R-029-8 unrelated attestTrunk never reports pending genesis as measuring',async()=>{
+  const r=await rig({invariants:[{id:'slow',run:'true',reads:['**'],timeout_s:30}]}),started=r.path('started'),ac=new AbortController();
+  let pending:ReturnType<typeof ops.attestTrunk>|undefined;
+  try {
+    const plan={...r.plan,invariants:[{id:'slow',run:`touch '${started}'; sleep 60`,reads:['**'],timeout_s:30}]};
+    await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',note:'change refresh key while genesis stays pending',plan:JSON.stringify(plan)});
+    pending=ops.attestTrunk({cwd:r.cwd,signal:ac.signal});pending.catch(()=>{});
+    await until(()=>existsSync(started));
+    assert.deepEqual(await ops.genesisPending({cwd:r.cwd}),['slow']);
+    assert.equal((await ops.status({cwd:r.cwd})).genesis?.measuring,undefined,'trunk runtime activity is not genesis');
+  }finally{ac.abort();await pending?.catch(()=>{});await r.done();}
 });
 
 const leaseLines=[
