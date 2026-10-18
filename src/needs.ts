@@ -107,6 +107,13 @@ function obligationNeed(s: State, i: ItemView): Need {
   if (i.obligation.startsWith('inv:')) return { ...base, kind: 'defer', text, command: `owed defer ${word(node)} ${word(i.obligation.slice(4))} --reason "<reason>" --as ${owner}` };
   return { ...base, kind: 'waive', text, command: waive(s, node, i.obligation) };
 }
+/** HD1: the active halt already incorporates clearsHalt; only a later named decision holds it. */
+export function heldRuling(s: State, node: string): RuleEntry | undefined {
+  const h = halted(s, node);
+  return h && entriesOf(s).findLast((e): e is RuleEntry => e.kind === 'rule' && e.decision !== undefined && e.seq > h.seq && !e.prospective && e.nodes !== '*' && e.nodes.includes(node));
+}
+export const resumeCommand = (node: string): string => `owed resume ${word(node)}`;
+export const heldRulingText = (node: string, seq: number): string => `held by ruling #${seq}; ${resumeCommand(node)} releases it`;
 /** Pure parent/owner needs: baseline summary membership, corrected by C1–C9 and N1–N7. */
 export function needs(s: State, node: string, rt?: Runtime): Need[] {
   const n = s.nodes[node];
@@ -142,7 +149,7 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   obligations.sort((a, b) => obligationOrder(a.obligation!) - obligationOrder(b.obligation!));
   if (h) {
     if (obligations.length) out.push(...obligations.map(o => ({ ...o, halted: true as const })));
-    else {
+    else if (!heldRuling(s, node)) {
       const stopped = needsWriterStopNeed(h.reason, node), w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean);
       out.push({ node, actor: 'parent', kind: stopped ? 'decide' : 'resume', since: h.seq, halted: true, text: stopped?.reason ?? `driver halted: ${haltReason(h.reason)}; after resume the driver continues from the current state${deps.length ? `, then waits for ${deps.join(', ')}` : ''}`, command: stopped?.command ?? `owed resume ${word(node)}`, ...(stopped ? { alternatives: [`owed resume ${word(node)}`] } : {}) });
     }
@@ -165,7 +172,10 @@ export function repoNeeds(s: State, _rt?: Runtime): Need[] {
 /** The existing summary progress phase, with invocation-scoped measurement decoration only. */
 export function activity(s: State, node: string, rt?: Runtime): Activity | undefined {
   const n = s.nodes[node], spec = s.plan.nodes.find(n => n.id === node);
-  if (!n || n.merged || spec?.later || !(n.slot?.open || n.phase === 'blocked' || n.phase === 'held')) return;
+  if (!n || n.merged) return;
+  const held = heldRuling(s, node);
+  if (held) return { node, phase: 'held', text: heldRulingText(node, held.seq) };
+  if (spec?.later || !(n.slot?.open || n.phase === 'blocked' || n.phase === 'held')) return;
   const ms = rt?.measuring?.filter(m => m.node === node) ?? [];
   if (ms.length) return { node, phase: 'measuring', text: ms.map(m => `measuring ${m.obligations.join(', ') || 'other'} since ${clockTime(m.since, Date.parse(m.since))} (attest pid ${m.pid})`).join('; ') };
   const w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean), parked = trunkParked(s, node);

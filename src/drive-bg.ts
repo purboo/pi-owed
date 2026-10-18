@@ -13,7 +13,7 @@ import { clockTime } from './clock.ts';
 import { DRIFT_KEY, DRIFT_NODE, defaultOwed, dispatchable, factMark, lockAlive, procStart, reportText, stateOf } from './drive-run.ts';
 import { repeatText, reportKey, wakeReport } from './drive-run.ts';
 import { answeredQuestion, needText, parkNeeds } from './drive.ts';
-import { needs, repoNeeds, needId } from './needs.ts';
+import { needs, repoNeeds, needId, heldRuling } from './needs.ts';
 import { assembleRuntime } from './activity.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import { trunkParkNotices, sharedParkNotices, heldFlaky } from './reducer.ts';
@@ -362,6 +362,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
   const structured = j.need && typeof j.need === 'object' && typeof j.needId === 'string' ? j.need as Need : undefined;
   const flaky = !('need' in j) && j.do === 'notify' ? String(j.text ?? '').match(/flaky block #(\d+) on /)?.[1] : undefined;
   const check: WakeCheck = {
+    ...(j.do === 'halt' && node !== undefined ? { halt: true as const, node } : {}),
     ...(structured ? { need: structured, needId: j.needId as string, otherNeeds: j.otherNeeds as Need[] | undefined, ...(j.scope === 'repo' ? { scope: 'repo' as const, ...(typeof j.once === 'string' && /^(trunk-red|trunk|shared)\u0000/.test(j.once) ? { once: j.once } : {}) } : {}) } : {}),
     ...(flaky !== undefined && node !== undefined ? {node,flaky:Number(flaky)} : {}),
     ...(invariantRed ? { invariantRed } : {}),
@@ -380,9 +381,9 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
 /**
  * What a pi delivery revalidates of one wake line (H1.1b, QT2): `node`/`facts` (a node-scoped fact mark), `drift`/`facts`
  * (the ledger trunk seq), and `rid`/`qid`/`rev` (an asking notify's first open question). Terminal lines and other lines
- * without a fact mark or question carry none and are never dropped.
+ * without a fact mark or question carry none, except node halt lines revalidated for held decisions (HD2).
  */
-export interface WakeCheck { once?: string; scope?: 'repo'; need?: Need; needId?: string; otherNeeds?: Need[]; currentNeeds?: Need[]; node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
+export interface WakeCheck { halt?: true; once?: string; scope?: 'repo'; need?: Need; needId?: string; otherNeeds?: Need[]; currentNeeds?: Need[]; node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
 export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
 /**
@@ -424,6 +425,11 @@ export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
         }));
         c.currentNeeds = current.filter(n => !closed.has(needId(n)));
         return c.currentNeeds.length > 0; // Legacy qid/fact checks must not drop surviving siblings.
+      }
+      if (c.halt && c.node !== undefined) {
+        state ??= stateOf(o.cwd).catch(() => undefined);
+        const s = await state;
+        if (s && heldRuling(s, c.node) && !needs(s, c.node).length) return false;
       }
       if (c.node !== undefined && c.flaky !== undefined) {
         state ??= stateOf(o.cwd).catch(() => undefined);
