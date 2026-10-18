@@ -19,8 +19,6 @@ No ledger/reducer, dependency, lease, sweep, probe or held-ruling semantics chan
 
 Base red: `/tmp/owed-ipc/logs/o-writer-base-162641.log`: exit 1, 22 tests / 0 pass / 22 fail, all 22 ERR_ASSERTION. Only the new test was copied to the detached base worktree; it was then removed (cleanup exit 0).
 
-Before R-029-3 additions: `/tmp/owed-ipc/logs/o-writer-1-162005.log` typecheck exit 0; `/tmp/owed-ipc/logs/o-writer-1-162024.log` exact assigned focused command exit 0, 273 tests / 273 pass / 0 fail. After age additions: `/tmp/owed-ipc/logs/o-writer-1-162552.log` new-file check exit 0, 22 tests / 22 pass / 0 fail. Final clean-commit validation replaces this preliminary state below.
-
 ## Changed existing tests (only contract changes)
 
 - `test/stopask.test.ts:72` (test starts :65), WR1: ordinary stopped-writer reply now includes the evidence paragraph.
@@ -54,9 +52,14 @@ Net +73 source lines, under the +120 leaf limit. Duplicate legacy trailer parsin
 
 ## Final validation and publication
 
-Clean implementation commit `0ec2c518dd16f76fac156a64b3055ebebc79fbc2`, tree `09cd14f2fc18dc34e78239d10fcf967ee6c0d311`:
-- `/tmp/owed-ipc/logs/o-writer-1-162820.log`: `npx tsc --noEmit -p .`, exit 0.
-- `/tmp/owed-ipc/logs/o-writer-1-162840.log`: exact assigned focused command with `--test-concurrency=2`, exit 0, 274 tests / 274 pass / 0 fail.
-- `/tmp/owed-ipc/logs/o-writer-1-163050.log`: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`, timeout 1800, exit 1 (not timed out), 1812 tests / 1811 pass / 1 fail. All headers name this tree with dirty=0. Sole failure: shipped-English scan in `test/english.test.ts:132` rejects the contract-required literal marker in source/docs, not WR1/WR2 behavior. Parent authorized the narrow ASCII escape fix, with no test weakening. The new test's literal marker remains because test/ is outside that scan. Final retry receipts are at the stable `/tmp/owed-ipc/logs/o-writer-final-typecheck.log`, `o-writer-final-check.log` and `o-writer-final-full.log`; their tree/dirty headers and counts are authoritative. Results are reported to the parent after completion; no more than two full runs.
+Full-suite accepted source commit S: `3c445abc7f23b2b274fdcd100f22b7d28eaada1d`; tree `1e0fa91b444e51cc5f96ec1761a19831a153cf15`.
+- `/tmp/owed-ipc/logs/o-writer-1-165545.log`: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`, timeout 1800, exit 0; 1812 tests / 1812 pass / 0 fail, no cancelled/skipped/todo. Header: dirty=0, tree matches S. Duration 1235497 ms.
+- `/tmp/owed-ipc/logs/o-writer-1-165258.log`: `npx tsc --noEmit -p .`, exit 0, dirty=0, tree matches S.
+- `/tmp/owed-ipc/logs/o-writer-1-165318.log`: exact assigned focused command, exit 0; 274 tests / 274 pass / 0 fail, dirty=0, tree matches S.
+- `/tmp/owed-ipc/logs/o-writer-1-165522.log`: `node --test --test-concurrency=2 --test-reporter=tap test/english.test.ts`, exit 0; 3 tests / 3 pass / 0 fail, dirty=0, tree matches S.
+
+Two full-suite runs total. The first, `/tmp/owed-ipc/logs/o-writer-1-163050.log`, was on clean `0ec2c518dd16f76fac156a64b3055ebebc79fbc2` / tree `09cd14f2fc18dc34e78239d10fcf967ee6c0d311`: exit 1, 1812 tests / 1811 pass / 1 fail. Its sole failure was the shipped-English scan rejecting the contract-required literal marker. Parent authorized a behavior-equivalent ASCII escape fix without changing `test/english.test.ts`. That narrow fix changed 3 files, +10/-4 lines (including recording evidence); `src/views.ts` changed one line. The literal regression input remains in test/, outside the shipped-English scan.
+
+Per the final parent workflow, this evidence update is a separate notes-only commit D after S; no amend, and no source/test/SPEC changes between S and D. D runs only typecheck and the assigned leaf check before `owed submit o-writer`; its actual commit/tree, log paths, exit codes and S..D diff stat are returned in the handoff. Full-suite evidence remains bound to S, not relabeled as D.
 
 All node/npm/tsc/test execution is remote through `/tmp/owed-ipc/run.sh`, in the foreground. No live dsa integration (explicit fake-interface scope); parent owns integration/review/acceptance.
