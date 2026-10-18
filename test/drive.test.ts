@@ -117,7 +117,7 @@ test('row 2: writer launch missing → launch writer (agent/model from drive:, s
   assert.deepEqual(Object.keys(parsed), ['agent', 'cwd', 'isolation', 'model', 'name', 'once', 'task']);
   assert.deepEqual({ ...parsed, task: undefined }, { agent: 'worker', model: 'example/x:high', cwd: '/repo/.owed/wt/a-1', isolation: 'none', name: 'owed a#1 writer', once: true, task: undefined });
   const s = r.state(), rules = s.rules.filter(x => x.text === 'before dispatch');
-  assert.equal(parsed.task, dispatchPacket(s.plan.nodes[0]!, 1, '/repo/.owed/wt/a-1', rules), 'task = the dispatch packet, with the rulings seen at dispatch only');
+  assert.equal(parsed.task, dispatchPacket(s.plan.nodes[0]!, 1, '/repo/.owed/wt/a-1', rules, true, s), 'task = the dispatch packet, with the rulings seen at dispatch only');
   assert.match(parsed.task, /Node: a; attempt: 1\nWorking directory: \/repo\/\.owed\/wt\/a-1/);
   assert.doesNotMatch(parsed.task, /after dispatch/);
   // Without a drive: block the defaults apply (no model key).

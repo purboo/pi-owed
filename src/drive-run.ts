@@ -487,6 +487,25 @@ export class Driver {
       this.asking = body;
     } catch { /* a cache only: status shows it after the next successful write */ }
   }
+  /** WR2: replace the durable-wait cache each pass, never recover it as a scheduling fact. */
+  private readonly writerSeals = new Map<string, { gen?: number; since: number }>();
+  private async recordWriterWaiting(s: State, runs: ReadonlyMap<string, RunView>, now: number): Promise<void> {
+    const rows: NonNullable<Runtime['writerWaiting']>[number][] = [], sealed = new Set<string>();
+    for (const n of Object.values(s.nodes)) {
+      const l = n.runs.find(a => a.attempt === n.slot?.attempt)?.launches.find(l => l.role === 'writer'), w = l && runs.get(l.rid);
+      if (!n.slot?.open || n.candidate || halted(s, n.id) || !w || !['sealed', 'pruned'].includes(w.state) || w.status !== 'ok') continue;
+      sealed.add(w.rid);
+      const gen = this.facts.lastGen.get(w.rid), prior = this.writerSeals.get(w.rid), seal = { gen, since: w.sealedAt ?? (prior && prior.gen === gen ? prior.since : now) };
+      this.writerSeals.set(w.rid, seal);
+      if (w.awaiting?.length) rows.push({ node: n.id, attempt: n.slot.attempt, rid: w.rid, ...seal, awaiting: w.awaiting });
+    }
+    for (const rid of this.writerSeals.keys()) if (!sealed.has(rid)) this.writerSeals.delete(rid);
+    try {
+      const path = join(this.ledger!.dir, 'drive', 'writer-waiting.json'), temp = `${path}.${process.pid}.tmp`;
+      await mkdir(join(this.ledger!.dir, 'drive'), { recursive: true });
+      await writeFile(temp, JSON.stringify(rows), { mode: 0o600 }); await rename(temp, path);
+    } catch { /* runtime cache only */ }
+  }
   /** The loop calls this before a pass started by its timer or by a dsa event (not by a measurement ending). */
   tick(): void { this.cycle++; }
   /** A stop at once runs: ended measurements are not handled (their results are not recorded by the driver). */
@@ -622,6 +641,8 @@ export class Driver {
     if ((r.view.state !== 'sealed' && r.view.state !== 'pruned') || r.gen === undefined || this.facts.expectGen.has(rid)) return;
     const x = sends.findLast(x => x.rid === rid && x.sendKind === 'follow-up');
     if (!x || !this.facts.applied.has(x.send) || this.facts.sentGen.has(x.send)) return;
+    // WR2: a generation already observed running can be a durable wake, not this owed send's generation.
+    if ((this.facts.lastGen.get(rid) ?? -1) >= r.gen && ['running', 'asking', 'queued'].includes(this.facts.lastState.get(rid) ?? '')) { this.facts.sentGen.set(x.send, null); return; }
     try {
       const bytes = await ledger.getBlob(x.message);
       const a = await this.dsa.send(x.send, rid, 'follow-up', bytes);
@@ -636,11 +657,13 @@ export class Driver {
    * generation's (dsa's view lags the applied send), not the follow-up's outcome: present it as running.
    */
   private current(view: RunView, gen: number | undefined): RunView {
-    if (gen !== undefined) this.facts.lastGen.set(view.rid, gen);
-    this.facts.lastState.set(view.rid, view.state);
+    const prior = this.facts.lastGen.get(view.rid);
+    if (gen !== undefined) this.facts.lastGen.set(view.rid, Math.max(gen, prior ?? gen));
+    if (gen === undefined || prior === undefined || gen >= prior) this.facts.lastState.set(view.rid, view.state);
     if (view.to) this.facts.lastTo.set(view.rid, view.to);
-    const want = this.facts.expectGen.get(view.rid);
-    if (want === undefined || gen === undefined) return view;
+    // WR2: foreign wake generations advance the fence too; an older seal must never regress it.
+    const want = Math.max(this.facts.expectGen.get(view.rid) ?? -1, prior ?? -1);
+    if (gen === undefined) return view;
     if (gen >= want) { this.facts.expectGen.delete(view.rid); return view; }
     if (view.state !== 'sealed' && view.state !== 'pruned') return view;
     return { rid: view.rid, state: 'running', ...(view.wid ? { wid: view.wid } : {}), ...(view.to ? { to: view.to } : {}), ...(view.labels ? { labels: view.labels } : {}) };
@@ -671,6 +694,7 @@ export class Driver {
     const { runs, blobs, rejected, conflicts, rebasePending, rebaseWork, writerWork } = await this.observe(s, measuring);
     const now = Date.now();
     this.recordAsking(stillAsking(s, runs, now));
+    await this.recordWriterWaiting(s, runs, now);
     const runtime = await assembleRuntime({ cwd: this.o.cwd, state: s, driverRunning: true, now });
     let actions = decide(s, s.plan, runs, { runtime, max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, writerWork, measuring, now, noticed: this.facts.once });
     let applied = false;

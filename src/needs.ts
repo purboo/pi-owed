@@ -39,12 +39,13 @@ function haltReason(reason: string): string {
   if (/^cannot re-(?:launch|send)/.test(reason)) return 'stored run request is unavailable';
   return plain(reason).replace(/\s+to:"[^"]*"/g, '');
 }
-function needsWriterStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
-  const command = decision(node), suffix = ` → ${command}`;
+function parseWriterStop(text: string, command: string): { reason: string; command: string } | undefined {
+  const suffix = ` → ${command}`;
   if (!text.endsWith(suffix)) return;
-  const match = /(?:^|; )(writer says: "(?:[^"\\]|\\.)*"|writer gave no final text)$/.exec(text.slice(0, -suffix.length));
-  return match ? { reason: match[1]!, command } : undefined;
+  const match = /(?:^|; )(writer says: "(?:[^"\\]|\\.)*"(?: \((?:commits: [0-9a-fA-F, ]+(?:; durable: [0-9A-HJKMNP-TV-Z, ]+)?|durable: [0-9A-HJKMNP-TV-Z, ]+)\))?|writer gave no final text)((?:; awaiting durable [^\r\n]+? \((?:pending|running|finished)\))*)(; dsa ended \d+ processes at seal: [^\r\n]*)?$/.exec(text.slice(0, -suffix.length));
+  return match ? { reason: match.slice(1).filter(Boolean).join(''), command } : undefined;
 }
+const needsWriterStopNeed = (text: string, node: string) => parseWriterStop(text, decision(node));
 function unruledBlocks(s: State, node: string): Block[] {
   const n = s.nodes[node], keys = n?.candidate?.keys ?? previousSubmit(s, node)?.facts.keys;
   if (!n?.slot?.open || !keys) return [];
@@ -176,6 +177,8 @@ export function activity(s: State, node: string, rt?: Runtime): Activity | undef
   const held = heldRuling(s, node);
   if (held) return { node, phase: 'held', text: heldRulingText(node, held.seq) };
   if (spec?.later || !(n.slot?.open || n.phase === 'blocked' || n.phase === 'held')) return;
+  const wait = rt?.driverRunning ? rt.writerWaiting?.find(w => w.node === node && w.attempt === n.slot?.attempt) : undefined;
+  if (wait && !n.candidate && !halted(s, node)) return { node, phase: 'waiting', text: `writer waiting on durable ${wait.awaiting.map(a => `${oneLine(a.request)} (${a.state}, ${Math.floor(Math.max(0, (rt?.now ?? Date.now()) - wait.since) / 1000)}s)`).join(', ')}` };
   const ms = rt?.measuring?.filter(m => m.node === node) ?? [];
   if (ms.length) return { node, phase: 'measuring', text: ms.map(m => `measuring ${m.obligations.join(', ') || 'other'} since ${clockTime(m.since, Date.parse(m.since))} (attest pid ${m.pid})`).join('; ') };
   const w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean), parked = trunkParked(s, node);
@@ -260,10 +263,7 @@ export function itemLine(s: State, node: string, obligation: string, rt?: Runtim
 export const writerDecisionCommand = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
 /** WS2: parse only owed's own trailer; writer text cannot choose a different next command. */
 export function writerStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
-  const command = writerDecisionCommand(node), suffix = ` → ${command}`;
-  if (!text.endsWith(suffix)) return undefined;
-  const match = /(?:^|; )(writer says: "(?:[^"\\]|\\.)*"|writer gave no final text)$/.exec(text.slice(0, -suffix.length));
-  return match ? { reason: match[1]!, command } : undefined;
+  return parseWriterStop(text, writerDecisionCommand(node));
 }
 export const reviewDecision = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
 /** AK2: repair advice is grounded in the recorded plan and failures, never a placeholder. */

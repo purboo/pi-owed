@@ -25,12 +25,29 @@ import { nearTimeoutWarnings } from './cost.ts';
 import { nodeTestRun } from './exec.ts';
 export { trunkRedHint, sharedCheckHint, writerDecisionCommand, writerStopNeed, reviewDecision, trunkDecision, evidenceCommand, resumeCommands, flakyRuleHint, lapsedKnownRedText, genesisLine } from './needs.ts';
 import { needs, repoNeeds, activity, itemLine, heldRuling, heldRulingText, resumeCommand, trunkRedHint, sharedCheckHint, evidenceCommand, lapsedKnownRedText, overlapDispatchCommand, genesisLine, type Need, type Runtime } from './needs.ts';
-/** WS2: quote only the final non-empty paragraph, flattened and bounded before JSON quoting. */
+/** WR1: quote the whole final reply, or its head/tail plus omitted commit/durable facts. */
 export function writerReply(result?: string): string {
-  const paragraph = result?.trim().split(/\r?\n\s*\r?\n/).filter(p => p.trim()).at(-1)?.replace(/\s+/g, ' ').trim();
-  if (!paragraph) return 'writer gave no final text';
-  const text = paragraph.length > 300 ? `${paragraph.slice(0, 299)}…` : paragraph;
-  return `writer says: ${JSON.stringify(text).replace(/[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}`;
+  const flat = result?.replace(/\s+/g, ' ').trim();
+  if (!flat) return 'writer gave no final text';
+  const points = Array.from(flat), head = points.slice(0, 200), tail = points.slice(-380);
+  const h = head.lastIndexOf(' '), t = tail.indexOf(' ');
+  const text = points.length <= 600 ? flat : `${head.slice(0, h >= 180 ? h : 200).join('')} … ${tail.slice(t >= 0 && t < 20 ? t + 1 : 0).join('')}`;
+  const facts = (pattern: RegExp, commit = false): string[] => {
+    const out: string[] = [], seen = new Set<string>();
+    for (const m of flat.matchAll(pattern)) {
+      const value = m[1] ?? m[0], key = commit ? value.toLowerCase() : value;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (text.includes(value)) continue;
+      out.push(commit ? value.slice(0, 12) : value);
+      if (out.length === 3) break;
+    }
+    return out;
+  };
+  const commits = facts(/\b[0-9a-f]{40}\b|(?:\bcommit|\bhead|提交)\s*:?\s*([0-9a-f]{7,40})\b/gi, true);
+  const durable = facts(/\b01[0-9A-HJKMNP-TV-Z]{24}\b/g);
+  const extra = [commits.length ? `commits: ${commits.join(', ')}` : '', durable.length ? `durable: ${durable.join(', ')}` : ''].filter(Boolean);
+  return `writer says: ${JSON.stringify(text).replace(/[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}${extra.length ? ` (${extra.join('; ')})` : ''}`;
 }
 /** LO2: display current driver work without changing the ledger phase or acceptance. */
 export const measurementText = (m: InFlight): string => `${m.do === 'merge' ? 'merging' : 'measuring'} (since ${clockTime(m.since)})`;
@@ -1081,7 +1098,7 @@ export function renderBrief(v: Brief): string {
  * driver dispatches, so a manual dispatch stores the packet without the line.
  */
 export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], driver = true, state?: State, dispatchSeq?: number): string {
-  const lines = dispatchLines(spec, attempt, worktree, rules);
+  const lines = dispatchLines(spec, attempt, worktree, rules, state ? entriesOf(state)[0]!.hash.slice(0, 12) : '<project>');
   if (state) {
     if (state.plan.risk !== undefined) lines.push('Owner risk classes (first matching rule per changed path; unmatched paths use the node review):', ...state.plan.risk.map((r, i) => `- risk rule ${i + 1}: ${r.paths.map(oneLine).join(', ')}; review ${r.review.count}, rank >= ${r.review.min_rank}`));
     const permission = preauthorizedWritesLines(state,spec.id,dispatchSeq);
@@ -1117,8 +1134,11 @@ function reviewGrantLines(s: State, node: string): string[] {
 export const DRIVER_ATTESTS = 'the driver measures your candidate; do not run owed attest';
 /** K1.3: the clause after every `owed attest <node>` owed suggests to a writer. */
 export const SKIP_ATTEST = '(skip this when owed drive is running: the driver attests)';
-function dispatchLines(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[]): string[] {
-  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', WRITER_DECISION, `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`), 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`];
+function dispatchLines(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], project: string): string[] {
+  return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', WRITER_DECISION, `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`),
+    'Long runs: processes you start end when your turn ends. Run a check or measurement that may outlive your turn as a durable command call, then end your turn without submitting:',
+    `  pi-durable-subagents run --request owed-${project}-${spec.id}-${attempt}-<name> --wake caller -- <command…>`,
+    'owed does not halt you while it runs; dsa resumes you with its exit status and output tail (pi-durable-subagents >= 1.1.0).', 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`];
 }
 
 // ---------- driver review packet (SPEC §12, D5) ----------
