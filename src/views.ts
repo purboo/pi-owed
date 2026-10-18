@@ -113,15 +113,19 @@ export const knownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} kno
 /** MS5: one debt line per active quarantine entry: invariants `<inv>/<test>`, node checks `<node>/<check>/<test>`. */
 export interface QuarantineDebt { where: string; test: string; fix: string; note?: string; passed?: { seq: number; commit: string; merging?: string; batch?: string[] } }
 export function quarantineDebt(s: State, fix?: string): QuarantineDebt[] {
-  const observations = entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && (e.subject === 'trunk' || e.merging !== undefined || e.batch !== undefined || e.probe === 'trunk'));
+  let observations: ObsEntry[] | undefined;
   const of = (where: string, subject: string, obligation: string, spec: CheckSpec): QuarantineDebt[] => {
+    const entries = activeQuarantineOf(s, spec).filter(e => fix === undefined || e.fix === fix);
+    if (!entries.length) return [];
+    observations ??= entriesOf(s).filter((e): e is ObsEntry => e.kind === 'obs' && (e.subject === 'trunk' || e.merging !== undefined || e.batch !== undefined || e.probe === 'trunk'));
     const latest = observations.findLast(e => {
       if (e.subject !== subject || e.obligation !== obligation) return false;
+      if (e.quarantine_passed === undefined && (e.counts?.format !== 'tap' || e.execution?.completed !== true)) return false;
       const plan = planAt(s, e.seq), original = subject === 'trunk' ? plan.invariants.find(i => `inv:${i.id}` === obligation) : plan.nodes.find(n => n.id === subject)?.checks.find(c => `check:${c.id}` === obligation);
       const active = original && activeQuarantine(plan, original, id => !!s.nodes[id]?.merged, e.merging);
-      return !!active?.length && (e.quarantine_passed !== undefined || (e.counts?.format === 'tap' && nodeTestRun(original!.run) && e.execution?.completed === true));
+      return !!active?.length && (e.quarantine_passed !== undefined || nodeTestRun(original!.run));
     });
-    return activeQuarantineOf(s, spec).filter(e => fix === undefined || e.fix === fix).map(e => ({ where, test:e.test, fix:e.fix, ...(e.note ? { note:e.note } : {}),
+    return entries.map(e => ({ where, test:e.test, fix:e.fix, ...(e.note ? { note:e.note } : {}),
       ...(latest?.quarantine_passed?.includes(e.test) ? { passed:{seq:latest.seq, commit:latest.commit, ...(latest.merging ? {merging:latest.merging} : {}), ...(latest.batch ? {batch:[...latest.batch]} : {})} } : {}) }));
   };
   return [...s.plan.invariants.flatMap(i => of(i.id, 'trunk', `inv:${i.id}`, i)), ...s.plan.nodes.filter(n => !s.nodes[n.id]?.merged).flatMap(n => n.checks.flatMap(c => of(`${n.id}/${c.id}`, n.id, `check:${c.id}`, c)))];
