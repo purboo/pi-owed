@@ -27,7 +27,7 @@ export function countNote(counts: Counts | undefined, minTests: number | undefin
   const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
   return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
 }
-export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; /** QS4: node checks measured on trunk or a merge tree (invariants already have subject trunk). */ quarantineFeedback?: boolean; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void }
+export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; /** QS4: node checks measured on trunk or a merge tree (invariants already have subject trunk). */ quarantineFeedback?: boolean; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void; onTree?(path: string): void }
 function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
   for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
@@ -609,7 +609,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
         if (ctx.signal?.aborted) throw new Error('aborted');
         capture(`\n=== mutant ${path} ===\n`);
         const patch = (await git(ctx.cwd, ['cat-file', 'blob', `${job.base}:${path}`])).stdout;
-        work = await prepare(() => materialize(ctx.cwd, job.commit, reuse));
+        work = await prepare(() => materialize(ctx.cwd, job.commit, reuse)); ctx.onTree?.(work.path);
         try {
           const tree = work.path;
           await prepare(() => overlay(ctx.cwd, tree, job.base, ctx.plan.closure, 'replace'));
@@ -635,7 +635,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
     } else {
       if (job.kind !== 'red') obs.execution = { completed:false, countOK:false };
       const spec = job.spec; if (!spec) throw new Error('missing check spec');
-      work = await prepare(() => materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit, reuse));
+      work = await prepare(() => materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit, reuse)); ctx.onTree?.(work.path);
       const tree = work.path;
       if (job.kind === 'red') await prepare(() => overlay(ctx.cwd, tree, job.commit, spec.tests ?? [], 'add'));
       await prepare(() => overlay(ctx.cwd, tree, job.kind === 'inv' ? job.commit : job.base, ctx.plan.closure, 'replace'));
