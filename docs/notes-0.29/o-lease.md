@@ -28,7 +28,7 @@ Existing changes:
 - `test/init-tool.test.ts:293–294`, R-029-8: exactly one wait replacement plus one comment. Same until/default 60000 ms and all original assertions. Byte-check against 163fce9 proves every other byte unchanged.
 - `test/attest-signal.test.ts:92–96`, LZ3, earlier parent authorized: shared heldRun deliberately uses `env -u OWED_RUN setsid sleep` for both D16a.3 pipe-holder fixtures (60 s and 3 s). Assertions and bounds unchanged.
 
-## Current evidence and pending validation
+## Current evidence and blocked handoff
 
 All Node/typecheck/test commands run in foreground with `/tmp/owed-bench/run.sh`; no owned background driver. Temporary regression worktree was removed.
 
@@ -36,7 +36,14 @@ All Node/typecheck/test commands run in foreground with `/tmp/owed-bench/run.sh`
 - New R-029-8 negatives copied to isolated previous candidate eb577bb: `/tmp/owed-bench/logs/olease-r8-before-195740.log`, exit 1, 2 tests / 0 pass / 2 ERR_ASSERTION failures. These are valid regression reds, not fixture failures.
 - Byte check command compares `git show 163fce9:test/init-tool.test.ts` with current bytes after exactly the authorized replacement: passed.
 
-Pending on the current rebased source: typecheck; shutdown filter repeated 10 times (same until, 0 failures); affected combination (olease/init-tool/attest-signal plus probe exec/ops tests); one full suite with --test-concurrency=2. Commit clean source S, run validation on S; after green full suite add notes-only D without amend, check D, and foreground submit. Final D identity/log headers belong in the handoff rather than recursive amendments.
+Clean rebased source S: commit `d8db2f1dba2f55cbe36702ee1e9bf191467178fd`, tree `151cdaebcc5e93a9c69ed52e5951dd0298eacadc`. Every following run.sh header has that exact head/tree and dirty=0.
+
+- Typecheck: `/tmp/owed-bench/logs/o-lease-1-195901.log`, `npx tsc --noEmit -p .`, exit 0.
+- Shutdown 10×: `/tmp/owed-bench/logs/o-lease-1-195930.log`, exit 0, `shutdown failures=0/10`. Exact filter: `node --test --test-concurrency=2 --test-reporter=tap --test-name-pattern='session_shutdown aborts' test/init-tool.test.ts`, run ten independent invocations with recorded per-invocation exits.
+- Affected set: `/tmp/owed-bench/logs/o-lease-1-195958.log`, exit 0, 220 tests / 220 pass / 0 fail. Command: `node --test --test-concurrency=2 --test-reporter=tap test/olease.test.ts test/init-tool.test.ts test/attest-signal.test.ts test/oprobe.test.ts test/trackfix.test.ts test/trunkred.test.ts test/attrib.test.ts test/views028.test.ts test/gc.test.ts test/summary.test.ts test/compactreply.test.ts test/remeasure.test.ts test/dsa.test.ts test/lease.test.ts test/exec-red.test.ts test/env.test.ts`.
+- Sole permitted full suite: `/tmp/owed-bench/logs/o-lease-1-200304.log`, exit 1; 1883 tests / 1882 pass / 1 fail / 0 skipped / 0 cancelled, 1288649.56182 ms. Exact command: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`, foreground timeout 1800.
+
+Blocker: unchanged `test/activity.test.ts:232–244`, AC1 CLI signal test. Its fixture uses `setsid sleep 2` with inherited pipes and inherited OWED_RUN. LZ3 now correctly ends that proven tagged escaped process, so at the fixed 200 ms observation the command cleanup and runtime unlink have already finished: actual readMeasuring result [] versus expected original record (`:241`). The fixture's inherited-pipe assumption is incompatible with LZ3, like the earlier authorized attest-signal fixture change, but activity.test.ts is not in this repair's authorized writes. No assertion/fixture change made, no additional full-suite run started, no known-failing candidate submitted. Parent must decide the fixture semantics/ownership before any further repair. This follow-up changes only the note and preserves the failed S evidence; final head/tree is reported in the handoff.
 
 Previous full receipts (eb577bb/d224881) predate R-029-8 and the new integration base and do not validate this candidate. The earlier 10/10 leaf-vs-0/10 baseline comparison was real, but its runtime-fallback interpretation was incorrect. It must not be presented as proof of a production status bug.
 
