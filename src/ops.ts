@@ -39,7 +39,7 @@ import { counterfactual, type Counterfactual } from './counterfactual.ts';
 import { actScope, actContent, type RecordedAct } from './identical-acts.ts';
 import { OwedError } from './errors.ts';
 import { assertNoLedgerLock } from './lock-context.ts';
-import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, trackedWaivers, trackedDebtText, oneLine, templateReceiptRun, reusedHint, quarantineDebt, quarantineText, WRITER_DECISION } from './views.ts';
+import { measurementText, mergeWaitingText, receipt, statusView, escapeSummary, driftText, dispatchPacket, supersededOf, trunkRedHint, mergeFailureHints, knownRedDebt, trackedWaivers, trackedDebtText, oneLine, housekeepingText, templateReceiptRun, reusedHint, quarantineDebt, quarantineText, WRITER_DECISION } from './views.ts';
 import type { ReceiptCard, StatusView, Report, DeferredView } from './views.ts';
 import { briefView } from './views.ts';
 import { waiverText } from './views.ts';
@@ -1377,7 +1377,7 @@ export async function attestProbeTrunk(o: MeasurementContext & { node: string; c
         checkAbort(o.signal);
         const drift = await git.trunkDrift(o.cwd,state.trunk.name,state.trunk.commit);
         if (drift) throw new OwedError(`trunk changed (CAS): ${driftText(drift)}; nothing recorded for this run`);
-        const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true},quarantinedJob(state,{kind:'check',subject:o.node,obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'}));
+        const obs = await runTrunkProbe(o,ledger,state,n,{kind:'check',subject:o.node,obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'});
         checkAbort(o.signal);
         const entry = await ledger.withLock(async () => {
           const latest = (await load(ledger)).state;
@@ -1719,7 +1719,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     // M1: up to exec.parallel jobs at once, observations in job order. An aborted run (D16) is not measured, no further
     // job starts, and the merge stops before trunk moves, keeping the completed observations (abortWith).
     const jobs = [...genesisJobs(state).map(job => ({ job, merging: false })),...mergeJobs(state,o.node,m).map(job => ({ job, merging: true }))];
-    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:merging},job); return merging ? {...obs,merging:o.node} as Draft : obs; });
+    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:merging},job); return merging ? await mergeFailureOutput(ledger,{...obs,merging:o.node}) : obs; });
     const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs.map(j => j.job),run.observations.filter((x): x is Draft => x !== undefined),o.signal);
     if (run.aborted || o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
     // TR1: before refusing a measured/reused node-check fail, probe trunk under this same lease and merge lock.
@@ -1733,7 +1733,7 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       if (fresh) { slotBaseRed.push(fresh); continue; }
       const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit,stateQuarantine(state));
       if (entriesOf(state).some(e => e.kind === 'obs' && e.probe === 'trunk' && e.subject === o.node && e.obligation === i.obligation && e.key === key && e.commit === state.trunk.commit && e.verdict !== 'error')) continue;
-      const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true}, quarantinedJob(state,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'}));
+      const obs = await runTrunkProbe(o,ledger,state,n,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'});
       probes.push({...obs,probe:'trunk'});
     }
     if (o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
@@ -2026,6 +2026,28 @@ function deferBoundHints(s: State, node: string, items: ItemView[]): string[] {
     return d && !d.carried ? [`defer #${d.defer.seq} was bound to merge key ${d.defer.key.slice(0,12)} (trunk moved)`] : [];
   });
 }
+/** PB1: runtime checkout roots are not ledger facts; the classified verdict/note use existing fields. */
+async function runTrunkProbe(o: MeasurementContext, ledger: Ledger, state: State, n: NodeState, job: AttestJob): Promise<Awaited<ReturnType<typeof runJob>>> {
+  let root: string | undefined;
+  const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true,onTree:path => { root = path; }},quarantinedJob(state,job));
+  if (obs.verdict === 'fail' && root && n.candidate && obs.log) {
+    const path = await git.missingProbeAddition(o.cwd,n.candidate.base,n.candidate.commit,state.trunk.commit,root,(await ledger.getBlob(obs.log)).toString());
+    if (path) { obs.verdict = 'error'; obs.note = boundedLine(`probe not applicable: trunk lacks ${path}, which the candidate adds`); }
+  }
+  return obs;
+}
+/** PB1/PB2: escape whole code points without splitting a control escape at the display bound. */
+function boundedLine(text: string): string {
+  let out = ''; for (const cp of text) { const escaped = oneLine(cp); if (out.length + escaped.length > 160) break; out += escaped; } return out;
+}
+/** PB2: append after the existing note so setup/timeout classification and historic note prefixes stay unchanged. */
+async function mergeFailureOutput(ledger: Ledger, obs: Awaited<ReturnType<typeof runJob>> & { merging: string }): Promise<Draft> {
+  if (obs.verdict === 'fail' && !obs.failed?.length && obs.log) {
+    const tail = lastLines((await ledger.getBlob(obs.log)).toString(),1)[0];
+    if (tail) obs.note = `${obs.note ?? ''}\nmerge failure output: ${boundedLine(tail)}`;
+  }
+  return obs;
+}
 /** AT2: a check whose `tests` include files new in the candidate is never probed on trunk; its red reference is the slot base. */
 async function newCheckTests(cwd: string, n: NodeState, spec: CheckSpec): Promise<string | undefined> {
   if (!n.candidate || !spec.tests?.length) return undefined;
@@ -2173,7 +2195,7 @@ export async function status(o: Context): Promise<StatusView> {
   await applyReports(ledger,state);
   const view = await summaryStatusView(o.cwd,ledger.dir,state,entries,Date.now());
   view.conflicts = await candidateConflicts(o.cwd,state);
-  const trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name);
+  const trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name).catch(() => undefined);
   if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
   if (trunkWorktree) view.trunkWorktree = trunkWorktree;
   return view;
@@ -2211,6 +2233,7 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   for (const i of mergeChecks) view.summary!.needs.push({ node: i.subject, reason: `${i.obligation}: ${oneLine(i.detail)}`, command: `owed why ${i.subject}` });
   const red=await sweepRed(cwd,entries,state.trunk.commit);
   if (red) view.sweepRed=red;
+  view.housekeeping = await finishedWorktrees(cwd,state,entries);
   await applyMergeWaiting(cwd, dir, state, view);
   const pendingBases: NonNullable<StatusView['rebasePending']> = {};
   for (const id of Object.keys(state.nodes)) {
@@ -2284,9 +2307,14 @@ async function candidateConflicts(cwd: string, state: State, only?: string): Pro
  * no count for gets no debt field: the ledger's defers of a node include defers on older merge keys.
  */
 export async function mergedLines(cwd: string, merged: readonly { node: string; commit: string }[], debt?: Readonly<Record<string, number>>): Promise<string[]> {
-  return Promise.all(merged.map(async ({ node, commit }) => {
+  const lines = await Promise.all(merged.map(async ({ node, commit }) => {
     try { return mergedLine(await why({ cwd, node }), commit, debt?.[node]); } catch { return `${node} merged (${commit.slice(0, 12)})`; }
   }));
+  try {
+    const { state, entries } = await load(await Ledger.open(cwd)), count = await finishedWorktrees(cwd,state,entries);
+    if (count !== undefined && lines.length) lines[0] += `\n${housekeepingText(count)}`;
+  } catch { /* A post-merge hint must never turn a committed merge into a refusal. */ }
+  return lines;
 }
 export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const ledger = await Ledger.open(o.cwd), {state,entries,lookup} = await load(ledger);
@@ -2728,6 +2756,14 @@ export async function decoyCommit(o: Actor & { digest:string; channel:Channel })
 export async function decoyReveal(o: Actor & { payload:string; channel:Channel }): Promise<Entry> { const p = decoyPayload(o.payload); return mutate(o,() => ({kind:'decoy-reveal',by:by(o),channel:o.channel,...p})); }
 // ---------- gc: reclaim worktrees and branches of finished attempts (SPEC §8) ----------
 import { realpath, stat } from 'node:fs/promises';
+/** GC1: one read-only listing; count recorded closed attempts, not branches or measurement trees. */
+async function finishedWorktrees(cwd: string, state: State, entries: Entry[]): Promise<number | undefined> {
+  try {
+    const listed = new Set((await git.listWorktrees(cwd)).map(w => resolve(w.path)));
+    const count = entries.filter(e => e.kind === 'dispatch' && !(state.nodes[e.node]?.slot?.open && state.nodes[e.node]!.slot!.attempt === e.attempt) && listed.has(resolve(e.worktree))).length;
+    return count >= 5 ? count : undefined;
+  } catch { return undefined; }
+}
 export interface GcItem { node: string; attempt: number; worktree: string | null; branch: string | null; pinned: string[] }
 export interface GcKept { node: string; attempt: number; worktree: string; branch: string; reason: string }
 /** M2: a reused measurement tree gc removed (or, with dry run, would remove), or kept, and why. */

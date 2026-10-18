@@ -172,6 +172,23 @@ export async function newFiles(cwd: string, base: string, commit: string, globs:
   const old = new Set((await files(cwd, base)).map(([p]) => p));
   return (await files(cwd, commit)).map(([p]) => p).filter(p => matchesAny(p, globs) && !old.has(p));
 }
+/** PB1: canonicalize even missing paths through their nearest existing ancestor (including symlinked temp roots). */
+async function probePath(path: string): Promise<string> {
+  try { return await realpath(path); } catch { const parent = dirname(path); return parent === path ? resolve(path) : join(await probePath(parent), basename(path)); }
+}
+/** PB1: only a candidate addition absent from the probed tree makes a missing-file diagnostic inapplicable. */
+export async function missingProbeAddition(cwd: string, base: string, commit: string, trunk: string, root: string, log: string): Promise<string | undefined> {
+  const patterns = [/ENOENT[^\n]*?['"]([^'"\n]+)['"]/g, /([^\s:'"]+): No such file or directory/g, /No such file or directory: ['"]([^'"\n]+)['"]/g, /can't open file ['"]([^'"\n]+)['"]/g];
+  const missing = patterns.flatMap(pattern => [...log.matchAll(pattern)].map(m => m[1]!));
+  if (!missing.length) return undefined;
+  const added = new Set((await git(cwd, ['diff', '--no-renames', '--diff-filter=A', '--name-only', '-z', `${base}..${commit}`])).stdout.split('\0').filter(Boolean));
+  const present = new Set((await files(cwd, trunk)).map(([p]) => p)), checkout = await probePath(resolve(root));
+  for (const p of missing) {
+    const path = relative(checkout, await probePath(resolve(root, p)));
+    if (path && !isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`) && added.has(path) && !present.has(path)) return path;
+  }
+  return undefined;
+}
 async function tree(cwd: string, commit: string): Promise<string> { return (await git(cwd, ['rev-parse', `${commit}^{tree}`])).stdout.trim(); }
 /** The `exec` part of a check/red/strength/inv key (D20): only the non-empty fields, undefined (dropped by canonical JSON) without exec. */
 export function execKey(plan: Plan): Pick<ExecConfig, 'env' | 'wrap' | 'touch'> | undefined {

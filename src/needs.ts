@@ -80,6 +80,13 @@ function sharedCheck(s: State, b: Block): { text: string; fix?: string } | undef
   return { fix, text: [...new Map(r.trunk.map(p => [p.seq, p])).values()].map(probe => `${e.obligation} block #${b.seq} also fails on trunk ${probe.commit.slice(0, 12)} without ${e.subject} (probe #${probe.seq}: ${sharedNames(r.names.filter(n => probe.failed?.includes(n)))}): not this node's change`).join('; ') };
 }
 const obligationOrder = (o: string): number => /^(check|red|strength):/.test(o) ? 0 : o.startsWith('inv:') ? 1 : review(o) ? 2 : o === 'rulings' ? 3 : o === 'approve' ? 4 : o.startsWith('evidence:') ? 5 : 6;
+/** PB2/R-029-2: only newly marked anonymous merge-check blocks add output; old notes render identically. */
+function mergeOutput(s: State, i: ItemView): string {
+  if (!i.obligation.startsWith('check:')) return '';
+  const seqs = new Set(risks(s,i.subject,i.obligation).map(b => b.seq));
+  const obs = entriesOf(s).findLast(e => e.kind === 'obs' && seqs.has(e.seq) && e.verdict === 'fail' && e.merging === i.subject && !e.failed?.length && /\nmerge failure output: [^\n]{1,160}$/.test(e.note ?? ''));
+  return obs?.kind === 'obs' ? ` — ${obs.note!.slice(obs.note!.lastIndexOf('\nmerge failure output: ') + '\nmerge failure output: '.length)}` : '';
+}
 function obligationNeed(s: State, i: ItemView): Need {
   const node = i.subject, n = s.nodes[node]!, bs = risks(s, node, i.obligation), b = bs[0], repair = repaired(s, node, i.obligation);
   const base = { node, actor: 'owner' as const, since: b?.seq ?? n.candidate?.seq ?? n.held ?? n.slot?.dispatchSeq ?? null, obligation: i.obligation, key: i.key, ...(b ? { block: b.seq } : {}), ...(pin(s, node) ? { candidate: pin(s, node) } : {}) };
@@ -91,7 +98,7 @@ function obligationNeed(s: State, i: ItemView): Need {
     : repair ? repairLine(s, repair)
     : review(i.obligation) ? i.mark === '⊤' ? `${i.obligation} needs an owner decision` : i.mark === '⛔' ? `${i.obligation} blocked: guidance needed` : `awaiting ${i.obligation}`
     : i.obligation.startsWith('evidence:') ? `awaiting manual evidence: ${i.obligation.slice(9)}`
-    : `${i.obligation}: ${flaky ? flakyText(s, flaky, false) : plain(i.detail)}`);
+    : `${i.obligation}: ${flaky ? flakyText(s, flaky, false) : plain(i.detail)}${mergeOutput(s,i)}`);
   if (!n.slot?.open) return { ...base, actor: 'parent', kind: n.held !== undefined ? 'decide' : 'recover', text: n.held !== undefined ? `held by abandon #${n.held}` : `no single command: ${text}; a new attempt is required`, ...(n.held !== undefined ? { command: `owed decide ${word(node)} --text "<ruling>"` } : {}) };
   if (!n.candidate) return { ...base, kind: 'recover', text: `no single command: ${text}; the writer must first submit a current candidate` };
   if (shared) return { ...base, kind: 'waive', text: shared.fix ? text : `no single command: ${text}; add a fix node first`, ...(shared.fix ? { command: `${waive(s, node, i.obligation)} --tracked-by ${word(shared.fix)}` } : {}) };
