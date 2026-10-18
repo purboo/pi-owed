@@ -1950,10 +1950,15 @@ moved ref silently.
 Every setup, check, invariant and sweep command also receives a fresh random
 `OWED_RUN` token, independent of its key. On cancellation or timeout, owed ends
 the command group and, on Linux, processes carrying that exact token in
-`/proc/<pid>/environ`: TERM, a grace interval, KILL and rescans for up to five
-seconds. Cleanup completes before the command ends or its lease is released.
-Other platforms retain group cleanup. A process that clears the token escapes
-this Linux scan. Normal command exits retain their existing behavior.
+`/proc/<pid>/environ`: group TERM precedes the first scan, followed by a grace
+interval, KILL and rescans. The five-second cleanup deadline includes scanning;
+an unfinished scan at the deadline ends cleanup and the command counts as ended.
+Only readable environ containing the exact token proves a process tagged.
+EACCES/EPERM (non-dumpable processes or another uid) is unproven: owed neither
+signals those processes nor waits for them. A command leaving its group and
+clearing the token or making environ unreadable is outside Linux containment.
+Cleanup completes before the lease is released. Other platforms retain group
+cleanup. Normal command exits retain their existing behavior.
 
 1. For each active execution block of the node, rerun its original item first
    (attribution) using the commit/base recorded in the failing obs.
@@ -2338,8 +2343,10 @@ verdict, no block) with a note beginning `environment: `:
   tail), one per line, indented two spaces, each at most 200 characters. A run whose counts report `fail` > 0 is a `fail`, never
   environment; a passing run, a timeout or a signal is unaffected;
 - a check or invariant command, including a red counterfactual, that exits 75
-  whose last non-empty output line matches
-  `^hold: .*(not running the command|the command was stopped) \(exit 75\)$`.
+  whose last output line that is non-empty after trimming matches
+  `^hold: .*(not running the command|the command was stopped) \(exit 75\)$`
+  without trimming the matched line (only the CR in CRLF is removed); trailing
+  spaces after `(exit 75)` therefore retain the ordinary failure verdict.
   Its note is `environment: machine lease not granted; the check did not run: <line>`
   or `environment: the check yielded the machine lease: <line>`, with the
   diagnostic limited to 160 characters. These errors use environment backoff;
@@ -2388,9 +2395,13 @@ plain `error`. The driver does not count environment errors toward its
   never an unrecorded init. Already inherited `OWED_LEASED=1` still propagates
   when acquisition is disabled. No new ledger entry or field is introduced.
   Driver and standalone attest/merge leases request `--priority 10`. If dsa
-  rejects that option as unknown, owed retries once without it and remembers
-  the fallback for that executable in the current process. Other refusals keep
-  their existing meaning; priority requires pi-durable-subagents 1.1.0.
+  appears to reject that option as unknown, owed confirms using the same cwd,
+  env and hold flags with `--no-wait -- true`. Only the same unknown-option
+  refusal in that confirmation permits one retry without the flag and caches
+  the fallback for this executable in the current process. Confirmation exit
+  0 or 75 returns the original result as a command result: a command forging
+  dsa's refusal text is never executed twice. Other refusals keep their existing
+  meaning; priority requires pi-durable-subagents 1.1.0.
 - **LE4.** Leased results include `lease: "machine (shared)"` in JSON/tool
   details and `lease: machine (shared)` in text (driver completion detail,
   and the extension genesis-completion wake). This metadata is not persisted.
@@ -2481,8 +2492,11 @@ Preparation and tree checkout run before acquisition; the sweep requests its
 lease immediately before the first setup or measurement command and retains it
 through command cleanup. Scheduled leases use `--yield`: if dsa yields the
 lease, owed cancels measurement, records nothing and retries on a later pass
-like busy. An unknown `--yield` option is retried once without it and that
-fallback is remembered for the executable in the current process. Yield requires
+like busy. Apparent unknown `--yield` refusals use the same confirmation as
+priority (§7.14): identical cwd/env/flags, `--no-wait -- true`; only a confirmed
+unknown-option refusal permits one retry without the flag and caches the
+fallback in this process. Confirmation exit 0 or 75 returns the original
+command result, never replays the measured command. Yield requires
 pi-durable-subagents 1.1.0. Busy acquisition retries later; existing drift,
 version and low-disk checks still apply. Without `every`, §7.15's idle-only
 scheduling and preemption remain.

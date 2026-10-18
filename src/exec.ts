@@ -376,14 +376,26 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     const kill = (sig: NodeJS.Signals = 'SIGKILL') => { if (p.pid) { try { process.kill(-p.pid, sig); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
     let cleanup: Promise<void> | undefined;
     const endTree = () => cleanup ??= (async () => {
+      const deadline = Date.now() + 5000;
+      kill('SIGTERM'); kill('SIGCONT');
       const tagged = async (): Promise<number[]> => process.platform !== 'linux' ? [] : (await Promise.all((await readdir('/proc')).filter(p => /^\d+$/.test(p)).map(async p => {
+        // Unreadable environ (EACCES/EPERM) is unproven: never signal or wait for that process.
         try { return (await readFile(`/proc/${p}/environ`)).toString().split('\0').includes(`OWED_RUN=${env.OWED_RUN}`) ? Number(p) : 0; } catch { return 0; }
       }))).filter(Boolean);
+      const scan = async () => {
+        let timer: NodeJS.Timeout | undefined;
+        try { return await Promise.race([tagged().catch(()=>[]),new Promise<undefined>(r=>{timer=cleanupTimer(()=>r(undefined),Math.max(0,deadline-Date.now()));})]); }
+        finally { clearTimeout(timer); }
+      };
       const send = (ids: number[], sig: NodeJS.Signals) => { kill(sig); for (const pid of ids) try { process.kill(pid, sig); } catch { /* gone */ } };
-      const deadline = Date.now() + 5000;
-      send(await tagged(), 'SIGTERM'); kill('SIGCONT');
-      await new Promise(r => cleanupTimer(r, ctx.abortGraceMs ?? 100));
-      do { const ids = await tagged(); send(ids, 'SIGKILL'); if (!ids.length) break; await new Promise(r => cleanupTimer(r, 25)); } while (Date.now() < deadline);
+      let ids=await scan();
+      if (ids) {
+        send(ids,'SIGTERM');
+        await new Promise(r=>cleanupTimer(r,Math.max(0,Math.min(ctx.abortGraceMs ?? 100,deadline-Date.now()))));
+        do { ids=await scan(); if (!ids) break; send(ids,'SIGKILL'); if (!ids.length) break; await new Promise(r=>cleanupTimer(r,Math.max(0,Math.min(25,deadline-Date.now())))); } while (Date.now()<deadline);
+      }
+      kill();
+      if (!ids) { p.stdout.destroy(); p.stderr.destroy(); }
     })();
     const abort = () => { error = 'aborted'; void endTree(); };
     let timeoutDetails: Promise<string> | undefined, wrapperDeadline: NodeJS.Timeout | undefined;
@@ -591,7 +603,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   const command = async (run: string, cwd: string, timeout: number, onTimeout?: string, quarantineFile?: string): Promise<CommandResult> => {
     const execute = () => runCommand(ctx, run, cwd, timeout, capture, onTimeout, quarantineFile);
     const result = await (ctx.commandScope ? ctx.commandScope(execute) : execute());
-    const line = result.log.trimEnd().split(/\r?\n/).at(-1) ?? '';
+    const line = result.log.split(/\r?\n/).findLast(line=>line.trim() !== '') ?? '';
     if (result.code === 75 && /^hold: .*(not running the command|the command was stopped) \(exit 75\)$/.test(line)) {
       obs.exit = result.code;
       throw new EnvironmentError(`${line.includes('the command was stopped') ? 'the check yielded the machine lease' : 'machine lease not granted; the check did not run'}: ${line.slice(0,160)}`);

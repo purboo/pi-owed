@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { Worker } from 'node:worker_threads';
 import { existsSync, readFileSync } from 'node:fs';
 import fs, { chmod, readFile, rm, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
@@ -33,7 +34,7 @@ import {join} from 'node:path';
 const dir=process.env.OLEASE_FIXTURE,args=process.argv.slice(2),sep=args.indexOf('--');
 const path=n=>join(dir,n), log=v=>appendFileSync(path('holds'),JSON.stringify(v)+'\\n');
 if(args[0]==='describe'){console.log(JSON.stringify({state:'sealed',status:'done',calls:[{key:'main',gen:1,status:'ok'}]}));process.exit(0);}
-log({event:'request',args,pid:process.pid,trees:existsSync(path('prepared'))});
+log({event:'request',args,pid:process.pid,cwd:process.cwd(),marker:process.env.OLEASE_PROBE_ENV,trees:existsSync(path('prepared'))});
 for(const flag of ['--yield','--priority']) if(args.includes(flag)&&existsSync(path('old'+flag))){console.error('pi-durable-subagents: Unknown option '+flag);process.exit(1);}
 if(existsSync(path('busy'))){console.error('hold: machine is not free now (fixture); not running the command (exit 75)');process.exit(75);}
 const p=spawn(args[sep+1],args.slice(sep+2),{stdio:'inherit'});
@@ -126,7 +127,9 @@ for(const first of ['hold','holdWhile'] as const) for(const flag of ['--yield','
       assert.equal(result.outcome,'ran');
     }
     const requests=r.holds().filter(h=>h.event==='request');
-    assert.equal(requests.length,3);assert.ok(requests[0].args.includes(flag));assert.ok(requests.slice(1).every(h=>!h.args.includes(flag)));
+    assert.equal(requests.length,4);assert.ok(requests.slice(0,2).every(h=>h.args.includes(flag)));
+    assert.ok(requests[1].args.includes('--no-wait'));assert.deepEqual(requests[1].args.slice(requests[1].args.indexOf('--')+1),['true']);
+    assert.ok(requests.slice(2).every(h=>!h.args.includes(flag)));
   }finally{await r.done();}
 });
 
@@ -135,6 +138,22 @@ test('LZ2/LZ6 command output mentioning an unknown priority option never replays
   try {
     const result=await new Dsa({bin:r.bin}).hold('machine',['sh','-c',`printf '%s\\n' 'Unknown option --priority'; exit 1`],{priority:10,cwd:r.cwd});
     assert.equal(result.outcome,'ran');assert.equal(r.holds().filter(h=>h.event==='request').length,1);
+  }finally{await r.done();}
+});
+
+for(const flag of ['--yield','--priority'] as const) for(const probeExit of [0,75]) test(`R-029-4 command stderr cannot forge ${flag} support failure (probe ${probeExit})`,async()=>{
+  const r=await rig();
+  try {
+    const command=`printf x >> calls; ${probeExit===75?`touch '${r.path('busy')}';`:''} printf '%s\\n' 'pi-durable-subagents: Unknown option ${flag}' >&2; exit 1`;
+    const dsa=new Dsa({bin:r.bin}),o={shared:true,cwd:r.cwd,noWait:false,yield:flag==='--yield',priority:flag==='--priority'?10:undefined,env:{OLEASE_PROBE_ENV:'same-environment'}};
+    const result=await dsa.hold('machine',['sh','-c',command],o);
+    assert.equal(result.outcome,'ran');if(result.outcome==='ran')assert.equal(result.exit,1);
+    assert.equal(await readFile(join(r.cwd,'calls'),'utf8'),'x','measured command executes exactly once');
+    const requests=r.holds().filter(h=>h.event==='request');assert.equal(requests.length,2);
+    assert.ok(requests.every(h=>h.cwd===r.cwd&&h.marker==='same-environment'&&h.args.includes(flag)));
+    assert.ok(requests[1].args.includes('--no-wait'));assert.deepEqual(requests[1].args.slice(requests[1].args.indexOf('--')+1),['true']);
+    await rm(r.path('busy'),{force:true});const next=await dsa.hold('machine',['true'],o);assert.equal(next.outcome,'ran');
+    assert.ok(r.holds().filter(h=>h.event==='request').at(-1).args.includes(flag),'false hint never caches unsupported');
   }finally{await r.done();}
 });
 
@@ -154,7 +173,7 @@ test('LZ4 sweep materializes its tree before requesting the lease and setup runs
 
 function escapedCommand(r:{path:(s:string)=>string},exitNormally=false):string {
   const child=`process.on('SIGTERM',()=>{});setInterval(()=>{},1000);`;
-  const script=`const{spawn}=require('node:child_process'),fs=require('node:fs');const p=spawn(process.execPath,['-e',${JSON.stringify(child)}],{detached:true,stdio:'ignore'});fs.writeFileSync(${JSON.stringify(r.path('grandchild'))},String(p.pid));fs.writeFileSync(${JSON.stringify(r.path('tag'))},process.env.OWED_RUN??'');${exitNormally?'p.unref();':'setInterval(()=>{},1000);'}`;
+  const script=`const{spawn}=require('node:child_process'),fs=require('node:fs');const p=spawn(process.execPath,['-e',${JSON.stringify(child)}],{detached:true,stdio:'ignore'});fs.writeFileSync(${JSON.stringify(r.path('grandchild'))},String(p.pid));fs.writeFileSync(${JSON.stringify(r.path('command-pid'))},String(process.pid));fs.writeFileSync(${JSON.stringify(r.path('tag'))},process.env.OWED_RUN??'');${exitNormally?'p.unref();':'setInterval(()=>{},1000);'}`;
   return `${process.execPath} -e '${script.replace(/'/g,"'\\''")}'`;
 }
 for(const mode of ['abort','timeout'] as const) test(`LZ3 ${mode} ends a tagged grandchild in its own group before releasing the lease`,{skip:process.platform!=='linux'?'Linux /proc environment tags required':false},async()=>{
@@ -172,6 +191,44 @@ for(const mode of ['abort','timeout'] as const) test(`LZ3 ${mode} ends a tagged 
     assert.equal(r.holds().find(h=>h.event==='released').live,false,'release follows tree cleanup');
     assert.ok(alive(unrelated.pid!),'a different exact tag survives');
   }finally{ac.abort();unrelated?.kill('SIGKILL');if(pid&&alive(pid))process.kill(pid,'SIGKILL');await r.done();}
+});
+
+for(const errno of ['EACCES','EPERM']) test(`R-029-4 unreadable detached environ ${errno} is unproven and does not delay cleanup`,{skip:process.platform!=='linux'?'Linux /proc required':false},async t=>{
+  const r=await rig(),ac=new AbortController();let pid=0;
+  const original=fs.readFile;let denied=0;
+  try {
+    const pending=runCommand({plan:parsePlan(JSON.stringify(r.plan)),signal:ac.signal},escapedCommand(r),r.cwd,30);
+    await until(()=>existsSync(r.path('grandchild')));pid=Number(await readFile(r.path('grandchild'),'utf8'));
+    t.mock.method(fs,'readFile',async (...args:Parameters<typeof fs.readFile>)=>{
+      if(String(args[0])===`/proc/${pid}/environ`){denied++;throw Object.assign(new Error('unreadable fixture'),{code:errno});}
+      return original(...args);
+    });syncBuiltinESMExports();const start=Date.now();ac.abort();const result=await pending;
+    assert.equal(result.error,'aborted');assert.ok(denied>0);assert.ok(alive(pid),'unproven detached process was not signalled');
+    assert.ok(Date.now()-start<3000,'unreadable process did not consume the five-second budget');
+  }finally{ac.abort();t.mock.restoreAll();syncBuiltinESMExports();if(pid&&alive(pid))process.kill(pid,'SIGKILL');await r.done();}
+});
+
+for(const blockedScan of [1,2]) test(`R-029-4 slow scan ${blockedScan} cannot exceed the five-second cleanup deadline`,{timeout:15000,skip:process.platform!=='linux'?'Linux /proc required':false},async t=>{
+  const r=await rig(),ac=new AbortController();let pid=0,scans=0,release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve;}),original=fs.readdir;
+  try {
+    const pending=withMachineLease({cwd:r.cwd,dsa:new Dsa({bin:r.bin})},()=>runCommand({plan:parsePlan(JSON.stringify(r.plan)),signal:ac.signal},escapedCommand(r),r.cwd,30));
+    await until(()=>existsSync(r.path('grandchild')));pid=Number(await readFile(r.path('grandchild'),'utf8'));
+    t.mock.method(fs,'readdir',async (...args:Parameters<typeof fs.readdir>)=>{
+      if(String(args[0])==='/proc'&&++scans===blockedScan)await gate;
+      return original(...args);
+    });syncBuiltinESMExports();
+    const commandPid=Number(await readFile(r.path('command-pid'),'utf8')),start=Date.now();ac.abort();
+    // Give a broken pre-fix implementation a bounded way to settle as well.
+    const timer=setTimeout(release,8000);
+    await until(()=>scans>=blockedScan&&!alive(commandPid));
+    assert.ok(Date.now()-start<3000,'group TERM precedes slow scanning');
+    const result=await pending;clearTimeout(timer);
+    assert.equal(alive(commandPid),false,'group ends even while scanning is blocked');
+    const elapsed=Date.now()-start;assert.equal(result.error,'aborted');assert.ok(scans>=blockedScan);
+    assert.ok(elapsed>=4500&&elapsed<7000,`cleanup including its scan took ${elapsed}ms`);
+    assert.equal(r.holds().filter(h=>h.event==='released').length,1,'lease released by the deadline');
+  }finally{release();ac.abort();t.mock.restoreAll();syncBuiltinESMExports();if(pid&&alive(pid))process.kill(pid,'SIGKILL');await r.done();}
 });
 
 test('LZ3 normal exits retain detached descendants and get distinct non-keyed tags',{skip:process.platform!=='linux'?'Linux process fixture':false},async()=>{
@@ -216,6 +273,26 @@ test('LZ3 genesis stays measuring until its runtime activity cleanup completes',
   }finally{release();ac.abort();await pending.catch(()=>{});t.mock.restoreAll();syncBuiltinESMExports();await r.done();}
 });
 
+test('R-029-7 host status sees native-worker genesis until runtime cleanup ends',async()=>{
+  const r=await rig({invariants:[{id:'slow',run:'touch "$OLEASE_FIXTURE/started"; sleep 60',reads:['**'],timeout_s:30}]}),started=r.path('started');
+  let worker:Worker|undefined;
+  try {
+    const script=`import{parentPort}from'node:worker_threads';import fs from'node:fs/promises';import{syncBuiltinESMExports}from'node:module';import*as ops from ${JSON.stringify(new URL('../src/ops.ts',import.meta.url).href)};
+const ac=new AbortController(),unlink=fs.unlink;let release;const gate=new Promise(r=>{release=r;});
+fs.unlink=async(...args)=>{if(/attest-.*\\.json$/.test(String(args[0]))){parentPort.postMessage('cleanup');await gate;}return unlink(...args);};syncBuiltinESMExports();
+parentPort.on('message',m=>{if(m==='abort')ac.abort();if(m==='release')release();});
+try{await ops.attestGenesis({cwd:${JSON.stringify(r.cwd)},signal:ac.signal});}catch(e){if(e.code!=='aborted')throw e;}parentPort.postMessage('ended');parentPort.close();`;
+    worker=new Worker(new URL(`data:text/javascript,${encodeURIComponent(script)}`),{execArgv:[],env:{...process.env}});
+    let cleaning!:()=>void,ended!:()=>void;
+    const cleanup=new Promise<void>(resolve=>{cleaning=resolve;}),finished=new Promise<void>(resolve=>{ended=resolve;});
+    worker.on('message',m=>{if(m==='cleanup')cleaning();if(m==='ended')ended();});
+    await until(()=>existsSync(started));worker.postMessage('abort');await cleanup;
+    assert.equal((await ops.status({cwd:r.cwd})).genesis?.measuring,true,'host sees same-pid worker during cleanup');
+    worker.postMessage('release');await finished;
+    assert.equal((await ops.status({cwd:r.cwd})).genesis?.measuring,undefined,'host and worker finish at the same boundary');
+  }finally{await worker?.terminate();await r.done();}
+});
+
 const leaseLines=[
   'hold: machine is not free now (exclusive); not running the command (exit 75)',
   'hold: machine still held by fixture after 2s; not running the command (exit 75)',
@@ -241,6 +318,18 @@ test('LZ5 non-matching 75 remains a failure, while matching diagnostics must be 
       const spec={id:'lease',run:`printf '%s\\n' '${log}'; exit 75`,reads:['**'],timeout_s:10};
       const obs=await runJob({cwd:r.cwd,ledger,plan},{kind:'check',subject:'a',obligation:'check:lease',key:'a'.repeat(64),commit:r.base,base:r.base,spec});
       assert.equal(obs.verdict,'fail');assert.doesNotMatch(obs.note??'',/^environment:/);
+    }
+  }finally{await r.done();}
+});
+
+test('R-029-4 LZ5 skips whitespace-only lines but never trims the matched diagnostic',async()=>{
+  const r=await rig();
+  try {
+    const ledger=await Ledger.open(r.cwd),plan=parsePlan(JSON.stringify(r.plan));
+    for(const [log,verdict] of [[`${leaseLines[0]}   \r\n \t\r\n`,'fail'],[`${leaseLines[0]}\r\n \t\r\n`,'error']] as const){
+      const spec={id:'lease',run:`printf '%s' '${log}'; exit 75`,reads:['**'],timeout_s:10};
+      const obs=await runJob({cwd:r.cwd,ledger,plan},{kind:'check',subject:'a',obligation:'check:lease',key:'a'.repeat(64),commit:r.base,base:r.base,spec});
+      assert.equal(obs.verdict,verdict);if(verdict==='error')assert.equal(obs.note,`environment: machine lease not granted; the check did not run: ${leaseLines[0]}`);
     }
   }finally{await r.done();}
 });
