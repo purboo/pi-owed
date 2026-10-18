@@ -2,7 +2,11 @@
 
 Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020027) gives the complete public contract.
 
-## Current release: 0.27
+## Current release: 0.29.0
+
+No ledger format, entry kind, entry field, enum value or plan key changes from 0.28.0. Old ledgers and snapshots replay identically; version-bound disk snapshots are rebuilt on upgrade. The new durable-writer wait/seal and yield/priority lease paths need pi-durable-subagents >= 1.1.0. Older dsa omits wait/seal facts and keeps 0.28 writer-wait behavior; confirmed unknown `--yield`/`--priority` options fall back once per option/process, never rerunning a measured command. Held-ruling display, quotes, plan-change sweep aborts, tagged cleanup, lease-output classification, probe applicability and housekeeping do not require that dsa upgrade. Restart drivers/sessions to use the new runtime routing and displays; earlier incompatible entries below still require their upgrade order.
+
+## 0.27 quarantine and display fields
 
 No ledger entry kind is added. New plan keys are `quarantine_sets` and check/invariant `quarantine_set`; optional entry fields are `obs.quarantine_passed`, `waive.tracked_by` and `ignorable`. Field-free historical ledgers and checks without sets retain their states, definitions and keys.
 
