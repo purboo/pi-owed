@@ -1,6 +1,6 @@
 # pi-owed
 
-**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.27](CHANGELOG.md)**.
+**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.29.0](CHANGELOG.md)**.
 
 Why use it?
 - Keep completion tied to a merge receipt, not an agent's success message.
@@ -12,7 +12,7 @@ The main agent is the parent and delegated owner. Pi owner tools act as `owner:p
 
 ## Quickstart
 
-Requires Node.js >= 22.19, Git with `merge-tree --write-tree`, Bash and a configured Git identity. The driver uses [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents) >= 1.0.27 with writer/reviewer agents available.
+Requires Node.js >= 22.19, Git with `merge-tree --write-tree`, Bash and a configured Git identity. The driver uses [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents) >= 1.0.27 with writer/reviewer agents available; >= 1.1.0 is needed for durable-writer waits, seal diagnostics and yield/priority leases. Older dsa keeps 0.28 writer-wait and lease behavior.
 
 ```sh
 pi install npm:pi-owed          # reload pi after installation
@@ -75,7 +75,7 @@ not routine halts the main agent already resolved.
 - **Waivers:** an owner can waive a specific node obligation with a reason and explicit block sequence numbers in `accept_risk`. Waivers remain visible; they do not turn into measured passes. Invariants cannot be waived.
 - **Debt:** missing evidence, failures, conflicts, and deferred invariants remain visible in the pending queue. `defer` permits specified invariant debt for one merge; it does not erase it.
 - **Oracle strength:** a node check may list `mutants` (globs of patch files inside the closure) and `min_kill` (fraction in (0, 1], default 1). The node then owes `strength:<check id>`: for each mutant patch, read from the base and never from the candidate, owed applies it to the materialized candidate and runs the check. A mutant is killed when the run exits non-zero or reports failing tests; a zero-test run or a patch that does not apply is not a kill. The obligation passes when killed/total reaches `min_kill`; the receipt shows `strength k/n` and the log lists every mutant.
-- **Merge guard:** owed tests the prospective merge tree, checks node obligations and invariant debt, then advances the trunk with a compare-and-swap guard. An accepted candidate alone does not guarantee its merge is safe.
+- **Merge guard:** owed tests the prospective synthetic merge commit (HEAD^1 = trunk tip, HEAD^2 = candidate); checks must not pin the candidate base. It checks node obligations and invariant debt, then advances the trunk with a compare-and-swap guard. An accepted candidate alone does not guarantee its merge is safe.
 
 #### Large candidates
 
@@ -203,8 +203,11 @@ The lease, node attest lock and per-run plan/candidate/slot/trunk CAS apply.
 Exit 0 means probes passed even if the candidate owes work, 1 a non-pass/moved
 CAS, 2 usage, 75 Busy. Probes never satisfy/block obligations; latest non-error
 current-trunk evidence changes trunk-red diagnosis, and merge reuses matching
-probes but still refuses the failed merge check. The pi attest tool has no probe
-parameters (SPEC §7.27).
+probes but still refuses the failed merge check. A failed explicit or automatic
+probe naming a candidate-added file absent from trunk records `error` with
+`probe not applicable: trunk lacks <path>, which the candidate adds`, not
+trunk-red; outside-checkout absolute paths are ignored. The pi attest tool has
+no probe parameters (SPEC §7.27).
 
 Complete test-only node-check failures may match same-definition/closure trunk
 probes before or after the failure, with equal signatures or name-only matching
@@ -272,7 +275,10 @@ owed decide greeting --text "Keep hello.txt to one line with a trailing newline.
 
 This also answers the node's sole open question and resumes it if halted or
 held. Use `--writer` when an existing candidate must be changed and submitted
-again, or `--no-resume` to record the decision while retaining a halt.
+again, or `--no-resume` to record the decision while retaining a halt. That
+halt becomes `held by ruling #N` under In progress, without a resume need or
+halt wake; `owed resume <node>` releases it. Other obligations, review
+questions and debt remain actionable.
 
 Act as the writer in that worktree:
 
@@ -320,7 +326,17 @@ protection still apply (SPEC §10.2, §12.8).
 
 ### Stopped writers and parent questions
 
-When a successful writer finishes without a candidate, the driver inspects its
+A successful sealed/pruned writer without a current candidate waits while dsa
+reports outstanding durable wakes: no submit reminder or stopped/no-submit
+halt, including after repair/ruling/rebase follow-ups; due follow-ups still run.
+Use the packet's `pi-durable-subagents run --request owed-<project>-<node>-<attempt>-<name> --wake caller -- <command…>`, then end the turn without submitting.
+A live driver's status/why show `writer waiting on durable <request>` under
+In progress with no wait-generated parent wake; without a driver it is unknown.
+Non-ok seals retain their halt/recovery route and name outstanding requests.
+Wait age uses the described seal time, otherwise first observation of that
+generation (reset on driver restart); it affects display only.
+
+Otherwise, when a successful writer finishes without a candidate, the driver inspects its
 worktree. A clean HEAD at the handed commit halts without a submit reminder;
 a new commit or dirty worktree can receive one reminder, then halts if nothing
 is submitted. Plan-changed resubmissions still allow the same clean commit.
@@ -329,20 +345,20 @@ last submitted commit (or original dispatch base) and each later rebase's
 pre-rebase base; work outside that set can receive one reminder carrying the
 rebase instructions. Unavailable inspection facts halt conservatively.
 
-Stopped-writer wakes, default why and status quote `writer says: "<final
-paragraph>"` (or `writer gave no final text`) and offer
-`owed decide <node> --text "<ruling>" --writer`. This also applies to the
-row-7 halt when a writer run seals non-ok, just as to a clean-stop halt;
-the recorded cause retains its status/error and any abandon guidance. The
-last nonempty paragraph becomes one line of at most 300 characters, ending
-with an ellipsis if truncated. Full evidence keeps
-the cause, run and failure details. Pruned replies depend on what the runner
-still retains. Real questions keep their existing answer flow.
+Stopped-writer wakes, default why and status quote `writer says: "<final text>"`
+(or `writer gave no final text`) and offer `owed decide <node> --text "<ruling>" --writer`,
+also for non-ok seals. The whole reply is flattened: up to 600 Unicode code
+points in full, otherwise head 200/tail 380 with nearby-space cuts and up to
+three omitted commit and durable IDs each. Escaping is unchanged and recorded
+halts are not rewritten. dsa seal diagnostics append the ended-process total
+and at most three pid/commands (80 code points each). Full evidence retains
+the cause/run/failures; pruned text requires runner retention. Real questions
+keep their existing answer flow.
 
 A due ruling follow-up takes precedence over a pending-rebase halt. After
-that follow-up, if the writer seals again without a new submit, the driver
-halts naming it and sends no further submit reminder. This applies when the
-ruling follow-up follows both the rebase follow-up and latest resume, even
+that follow-up, if the writer seals again without a new submit or outstanding
+durable wakes, the driver halts naming it and sends no further submit reminder.
+This applies when the ruling follow-up follows both the rebase follow-up and latest resume, even
 with dirty files or an unsubmitted commit outside the handed set (SPEC §12.5.4).
 
 Writer packets/follow-ups say to ask the parent a question when a decision
@@ -406,9 +422,11 @@ reviewers, merge — with [pi-durable-subagents](https://www.npmjs.com/package/p
 (≥ 1.0.27) as the process runner, and stops for decisions. Every intent is
 recorded in the ledger before dsa is called and retried with the same bytes and
 id, so killing the driver at any point is safe. Attest and merge run under
-`pi-durable-subagents hold machine --shared --no-wait` and is retried later
+`pi-durable-subagents hold machine --shared --priority 10 --no-wait` and are retried later
 while the machine is busy; with an older dsa that rejects `--no-wait` the
-attempt is halted with that error. One driver per repository
+attempt is halted with that error. Unknown `--priority`/`--yield` options fall
+back only after a separate no-op hold confirms dsa's refusal; measured commands
+are never replayed by fallback. One driver per repository
 (`.git/owed/drive.lock`); a lock left by a dead driver on this host is taken
 over, but a lock from another host is not: check that host, then remove the
 file by hand. Attests and merges run in the background while the driver
@@ -477,7 +495,9 @@ Environment failures wait instead of halting (0.11). A measurement that exits
 non-zero with no failing test counted and `ENOSPC`, `No space left on device` or
 `Disk quota exceeded` in the last 50 output lines (TAP/cargo test-name lines are
 ignored, so a test title is never evidence; any counted failing test makes it a
-plain `fail`), or that fails before its command runs (worktree preparation,
+plain `fail`), a check/invariant (red included) exiting 75 whose last non-empty
+line matches `^hold: .*(not running the command|the command was stopped) \(exit 75\)$`,
+or that fails before its command runs (worktree preparation,
 spawn, `setup`), is recorded
 as `error` with a note starting `environment: `. The driver does not count
 those toward "attest recorded no verdict twice"; it waits 1, 2, 5, 10, then 30
@@ -485,7 +505,9 @@ minutes before the node's next attest (a resume starts again) and notifies once
 per streak. Before it starts a measurement it checks the free space of the git
 common dir and the temp dir against `drive.min_free_mb` (default 2048, 0
 disables) and starts none while either is lower (one `disk low: …` notify per
-change). A disk-full error escaping a pass logs a `disk-full` event (a wake),
+change). Lease errors say the check did not run or yielded; trailing spaces
+after `(exit 75)` and other exit-75 output keep their ordinary verdict.
+A disk-full error escaping a pass logs a `disk-full` event (a wake),
 sleeps 60 s and continues.
 
 `--detach` refuses while a driver holds the lock (naming pid, host, start and
@@ -572,7 +594,9 @@ The driver never answers a question, waives, changes the plan or forces a dsa
 restart: questions and owner decisions are printed, and a halt (`owed status`,
 `owed why`) waits for an action on the node by the main agent (the delegated owner;
 owner halts list the command that resolves them). A ruling, submit, review,
-rebase, abandon or resume on the node clears a halt, and the next pass resumes. A ruling recorded while a
+rebase, abandon or resume on the node clears a halt, and the next pass resumes.
+A decision with `--no-resume` instead keeps it held by ruling, with no halt
+resume request/wake; independent needs remain. A ruling recorded while a
 driver-launched writer or reviewer call is running reaches it as a steer
 (reason `ruling`, recorded) once the node has nothing else to do; sealed calls
 get rulings with the next follow-up (submit, rebase and repair follow-ups list
@@ -645,10 +669,12 @@ Prefer `owed decide <node[,node...]> --text "<decision>"` (pi
 `owed_decide {nodes: ["A"], text: "..."}`) for guidance that combines ruling,
 question answer and recovery. It answers at most one open question per node
 across writer and reviewer runs and resumes halted/held nodes by default.
-`--writer` requires resubmission; `--no-resume` keeps the halt. When `owed rule` finds a
+`--writer` requires resubmission; `--no-resume` keeps the halt as `held by ruling #N`,
+without a halt resume request/wake. `owed resume <node>` releases it; other
+needs remain. When `owed rule` finds a
 known writer call neither running nor asking, its receipt says the ruling was
 recorded but not sent now; the driver delivers it on its next pass. A halted
-node needs `owed resume <node>`; decide records and resumes in one step.
+node not held by a decision needs `owed resume <node>`; decide records and resumes in one step.
 `owed rule` never sends follow-ups itself (SPEC §9.3). Add
 `--writes path` (or `+path`) to amend the recorded plan with the same authority as amend,
 `--defer INV` as owner to retain current merge-key debt, `--after FIX` to wait,
@@ -938,11 +964,11 @@ Compatibility: owed 0.14 refuses the new `refresh` entry and unknown obs
 together and restart pi. Historical ledgers without the new fields retain their
 0.14 replay (apart from the actionable missing-key text).
 
-When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. If the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. In 0.17, a candidate whose active binding blocks are all trunk-red waits instead: no driver halt, writer follow-up, reviewer launch or attest (questions still notify). Mixed blocks retain the existing behavior. One repository notice per current trunk/check/sorted-failed-name state lists the waiting nodes and trunk fix/adopt, optional sweep, or owner-waiver options; status and brief share one `Needs you` line and show `waiting: trunk-red (check:X on trunk <trunk12>)` in the node's progress phase. Queued pi notices recompute their waiting list at delivery. Moving trunk automatically resumes the existing measurement/rebase route without a resume entry. Deduplication uses the existing per-process once set: restart may print one repository notice again, never a parked-node halt. This adds no ledger fields and weakens no merge gate. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for localization and a confirmed automatic escape, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq> --reason "<why the risk is acceptable>"` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. Full why shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
+When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. A probe naming a missing candidate-added file absent from trunk instead records `error` (`probe not applicable`), never trunk-red; the merge check still refuses. Otherwise, if the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. In 0.17, a candidate whose active binding blocks are all trunk-red waits instead: no driver halt, writer follow-up, reviewer launch or attest (questions still notify). Mixed blocks retain the existing behavior. One repository notice per current trunk/check/sorted-failed-name state lists the waiting nodes and trunk fix/adopt, optional sweep, or owner-waiver options; status and brief share one `Needs you` line and show `waiting: trunk-red (check:X on trunk <trunk12>)` in the node's progress phase. Queued pi notices recompute their waiting list at delivery. Moving trunk automatically resumes the existing measurement/rebase route without a resume entry. Deduplication uses the existing per-process once set: restart may print one repository notice again, never a parked-node halt. This adds no ledger fields and weakens no merge gate. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for localization and a confirmed automatic escape, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq> --reason "<why the risk is acceptable>"` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. Full why shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
 
 Merge refusals (0.16.2) also show the latest pass of a failing invariant on the current trunk: `inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`. This appears once per obligation, including anonymous failures, before intermittent and fix-candidate hints; if no such pass exists it is omitted. The node's current candidate adds `; node diff touches <p1>, <p2>, <p3> (+<N> more)` when it has changed paths. Merge refusals, driver halts, `why` merge-block hints and `Merge checks:` share the delta. This changes only text; 0.16.0, 0.16.1 and 0.16.2 share ledger fields, replay and keys.
 
-Merge refusals (0.20.1) say `known intermittent` only when one key has both pass and failure evidence for that test; if the current failure has a signature, the failing observation must match it. A same-signature trunk failure alone is not intermittent. Matching latest current-key trunk failures take precedence as `<name>: trunk red since #S (after merge #M NODE); fix trunk before retrying` (or `after adopt #A`): S begins the uninterrupted same-signature run, broken by a pass, missing name or changed signature. Provenance is the latest merge/adopt at or before S, omitted if absent. This lookup scans complete matching subject/obligation/run-definition trunk history; generic history hints keep the last-5000-entry bound. Different known errors say `same test failed on older trees (different error)`. The node's own other trees are not independent evidence. Generic history hints show at most three sequences newest first. For names of at least six characters, an unmerged node with an open slot, accepted candidate or ready phase whose title, brief, check command or tests list contains the name verbatim adds `fix candidate: <node> (<phase>) — owed decide <refused> --after <node> --text "<wait for fix>"`. CLI merge refusals, driver merge-refused halts and `why` block lines carry these hints; `why` also shows hinted current merge-key failures, including invariants, under `Merge checks:`. Anonymous failures add neither named-test hint; missing signatures do not justify a different-error claim. These hints are advisory and change no gate or key; 0.20 signature fields require upgrading readers together.
+Merge refusals (0.20.1) say `known intermittent` only when one key has both pass and failure evidence for that test; if the current failure has a signature, the failing observation must match it. A same-signature trunk failure alone is not intermittent. Matching latest current-key trunk failures take precedence as `<name>: trunk red since #S (after merge #M NODE); fix trunk before retrying` (or `after adopt #A`): S begins the uninterrupted same-signature run, broken by a pass, missing name or changed signature. Provenance is the latest merge/adopt at or before S, omitted if absent. This lookup scans complete matching subject/obligation/run-definition trunk history; generic history hints keep the last-5000-entry bound. Different known errors say `same test failed on older trees (different error)`. The node's own other trees are not independent evidence. Generic history hints show at most three sequences newest first. For names of at least six characters, an unmerged node with an open slot, accepted candidate or ready phase whose title, brief, check command or tests list contains the name verbatim adds `fix candidate: <node> (<phase>) — owed decide <refused> --after <node> --text "<wait for fix>"`. CLI merge refusals, driver merge-refused halts and `why` block lines carry these hints; `why` also shows hinted current merge-key failures, including invariants, under `Merge checks:`. Anonymous failures add neither named-test hint; missing signatures do not justify a different-error claim. An anonymous merge-check failure includes its escaped last non-empty output line (160 characters) in the refusal and newly marked need/notice details; old unmarked notes and invariant diagnostics keep their existing rendering. These hints are advisory and change no gate or key; 0.20 signature fields require upgrading readers together.
 
 `owed status` now starts with `owed: <M> merged · <R> in progress · <A> need you · trunk <name> <short> <✔|✘> invariants (<ok>/<n>)`. `Needs you (<A>):` lists current parent/owner actions as `<node>: <plain reason> → <command>` (or `Needs you: none`); a trunk-red invariant from status `trunkRed` instead has one `trunk: <curated red-on-trunk text>` line with its options, and its Debt line is unchanged; ready nodes need manual dispatch only when no driver runs. `In progress (<R>):` lists open work as writing, measuring, reviewing, waiting for dependencies, held, or accepted (merge pending), with its age. `Debt:` appears for trunk-red invariants, active known-red/quarantine tests, owner defers that still bind the current merge invariant key and waivers of open nodes. The last line is `Details: owed status --full · owed why <node>`. Empty progress/debt sections are omitted. `owed status --full` (pi `owed_status {full:true}`) keeps the 0.14 evidence and pending queues, plus new invariant debt lines; historical confirmation, superseded-block and carried-candidate audit lines live there. JSON retains every existing field; `summary` adds merged totals, current actions, phases/ages and debt. `report --since <sequence-or-ISO-time>` summarizes merges, E/W/D changes, rulings, downgrades, and owner decisions.
 
@@ -1041,7 +1067,7 @@ sweep:
 
 `owed sweep [--commit C] [--due]` (pi: `owed_sweep {commit?, due?, lease?, cwd?}`) measures a fresh detached tree of trunk by default, or the named commit. It uses the shared machine lease, setup and execution wrapper/environment; `--no-lease`, tool `lease: false`, or plan `lease: false` skips acquisition. It buffers the head and probes, recording their informational `sweep` entries atomically at completion, with the full commit, sweep definition key (command/timeout, setup and exec), `verdict: pass|fail|error`, parsed counts when available, log blob digest and up to 50 failed test names (`failed`). It exits 0 for pass, 1 for fail/error; acquisition busy exits 75. Sweeps never change acceptance keys or merge obligations.
 
-With `sweep.every`, continuously running drivers, staying or not, start due sweeps under the shared lease with no waiting. Sweeps serialize on their own operation lock, consume no node measurement slot and continue alongside node work; only driver stop cancels them. Without `every`, only staying idle drivers schedule sweeps: ready work preempts them in the same pass, cleanup leaves no verdict for the interrupted run, and completed heads are skipped across restarts. Busy acquisition retries later. `drive --once` and the pi pass never start a sweep; when due they print `sweep due; --once does not start it (run owed sweep --due or a background driver)` or emit runtime JSON `sweep-due`.
+With `sweep.every`, continuously running drivers, staying or not, start due sweeps under the shared lease with no waiting. Sweeps serialize on their own operation lock, consume no node measurement slot and continue alongside node work. Driver stop or a recorded sweep-definition/`every` change (including removing `every`) cancels an in-flight scheduled sweep without verdict/interruption; an atomic append already begun completes. Activity says `sweep aborted: plan changed`. Scheduled holds use `--yield`: a yield aborts with no record and retries later like busy. Replay and the first tree checkout precede leasing; acquisition starts immediately before the first setup/check command and lasts through command/tree cleanup. Without `every`, only staying idle drivers schedule sweeps: ready work preempts them in the same pass, cleanup leaves no verdict for the interrupted run, and completed heads are skipped across restarts. Busy acquisition retries later. `drive --once` and the pi pass never start a sweep; when due they print `sweep due; --once does not start it (run owed sweep --due or a background driver)` or emit runtime JSON `sweep-due`.
 
 `--due` requires `sweep.every`; a not-due call records nothing and exits 0 with `sweep not due: next after N merges or at HH:MM` (absent threshold clauses omitted, local time). Regular sweeps force measurement. Completed head entries, not bisect samples, reset the schedule. Merge counting uses the first-parent range since an ancestor head sweep, so merges during measurement remain eligible; minutes use its timestamp. Before the first sweep, merges start at initialization and minutes at driver start (initialization for standalone cron). Scheduling changes no sweep definition key.
 
@@ -1144,7 +1170,7 @@ wchan, elapsed and args (200 characters), bounded to 4 MiB ps input, 1000 rows
 and two seconds. Unavailable ps is recorded; macOS is best effort, not validated
 by the Linux behavioral coverage.
 
-The environment is owed's own (without `NODE_TEST_CONTEXT` and any `DSA_*` variable but `DSA_HOME`, so owed commands inside a check are not refused as subagent acts) plus `exec.env`, then `CI=1 OWED=1 OWED_TREE=<absolute tree path>`. The wrapper runs in the materialized tree with that environment, in the same process group, under the timeout/grace rules above and existing abort handling: owed kills the whole group, wrapper included. **Wrapper contract:** for argv arrays, run the trailing argv; for templates, run the substituted command, to completion in the given directory and environment, pass stdout and stderr through, and exit with the command's exit code. When the wrapper cannot run the command (transport, mirror or lease failure) it must exit **126 or 127**: owed reads those as "could not run" (a red run is then `error`), while every other non-zero code counts as a test failure — a red pass unless the check sets `red_expect`. Use `red_expect` on red checks run through a wrapper. A relative `wrap[0]` containing a slash resolves against the materialized tree, not the main worktree; use absolute paths (a bare name is looked up in `PATH`). `exec.env`, `exec.wrap` and an explicitly set `exec.touch` are part of every check, red, strength and invariant key, so changing them means fresh evidence (`parallel` and `trees` are not, see below); `exec: {}` is the same as no block. Because a wrapper can weaken every check (`wrap: ["true"]` passes everything), changing `env`, `wrap` or `touch` is owner-only and shows as a downgrade in ΔO⁻, like `setup`: set it once. `owed why <node> --full` prints `Exec: wrap <argv> · env <NAMES>` (names, never values).
+The environment is owed's own (without `NODE_TEST_CONTEXT` and any `DSA_*` variable but `DSA_HOME`, so owed commands inside a check are not refused as subagent acts) plus `exec.env`, then `CI=1 OWED=1 OWED_TREE=<absolute tree path>`. The wrapper runs in the materialized tree with that environment, in the same process group, under the timeout/grace rules above and existing abort handling: owed ends the whole group, wrapper included, and on Linux scans for descendants proven to carry the fresh `OWED_RUN` token in readable `/proc/<pid>/environ` (TERM/grace/KILL, five-second scan-inclusive bound) before releasing the lease. Untagged/unreadable processes are not individually signalled or waited for; leaving the group and clearing the token or making environ unreadable escapes containment. Normal exits and other-platform group cleanup remain unchanged; `OWED_RUN` enters no key. **Wrapper contract:** for argv arrays, run the trailing argv; for templates, run the substituted command, to completion in the given directory and environment, pass stdout and stderr through, and exit with the command's exit code. When the wrapper cannot run the command (transport, mirror or lease failure) it must exit **126 or 127**: owed reads those as "could not run" (a red run is then `error`), while other non-zero codes count as test failures — red passes unless the check sets `red_expect` — except the strict exit-75 lease diagnostics described above. Use `red_expect` on red checks run through a wrapper. A relative `wrap[0]` containing a slash resolves against the materialized tree, not the main worktree; use absolute paths (a bare name is looked up in `PATH`). `exec.env`, `exec.wrap` and an explicitly set `exec.touch` are part of every check, red, strength and invariant key, so changing them means fresh evidence (`parallel` and `trees` are not, see below); `exec: {}` is the same as no block. Because a wrapper can weaken every check (`wrap: ["true"]` passes everything), changing `env`, `wrap` or `touch` is owner-only and shows as a downgrade in ΔO⁻, like `setup`: set it once. `owed why <node> --full` prints `Exec: wrap <argv> · env <NAMES>` (names, never values).
 
 #### Faster merges: `exec.parallel` and `exec.trees` (0.9)
 
@@ -1233,7 +1259,7 @@ Recipes (sketches; adapt paths):
   done
   ```
   A single slot is just `wrap: ["flock", "/tmp/qa.lock"]`.
-- **dsa machine lease (0.13, LE1–LE4)** — attest, merge, adopt and genesis measurements (including init's background attest) automatically take `pi-durable-subagents hold machine --shared` when dsa is available. Standalone CLI/tools wait; the driver uses `--no-wait` and retries busy attests and merges next pass without halting. Commands inside the lease get `OWED_LEASED=1` and output says `lease: machine (shared)` (JSON/details: `lease: "machine (shared)"`). A wrapper should skip its own lease when that marker is `1`, avoiding a nested request behind an exclusive waiter. Use CLI `--no-lease` on init, attest (also `--genesis`), merge or adopt, tool `lease: false`, or top-level plan `lease: false` to opt out. Default is on; the plan field and automatic environment marker change no item key. Merge's holder is released on completion, throw, abort or parent death.
+- **dsa machine lease (0.13, LE1–LE4)** — attest, merge, adopt and genesis measurements (including init's background attest) automatically take `pi-durable-subagents hold machine --shared` when dsa is available. Standalone CLI/tools wait; the driver uses `--no-wait` and retries busy attests and merges next pass without halting. Commands inside the lease get `OWED_LEASED=1` and output says `lease: machine (shared)` (JSON/details: `lease: "machine (shared)"`). A wrapper should skip its own lease when that marker is `1`, avoiding a nested request behind an exclusive waiter. Use CLI `--no-lease` on init, attest (also `--genesis`), merge or adopt, tool `lease: false`, or top-level plan `lease: false` to opt out. Default is on; the plan field and automatic environment marker change no item key. Driver/standalone attest and merge holds request `--priority 10`, with confirmed unknown-option fallback; sweeps lease only from their first command through cleanup. Merge's holder is released on completion, throw, abort or parent death.
 - **Checks prepare their own artifacts** — owed measures in a fresh temporary worktree of the candidate or merge tree, so nothing that exists only in slot worktrees (build outputs, caches, `node_modules`) is present. A check or invariant must prepare its own build artifacts, for example through `setup` or its `run` command. When a failure was environmental and the parent fixes the check, that plan update supersedes the old block: no rerun and no owner waiver.
 - **Build cache** — every materialized tree starts without build output. Keep build artifacts per tree, for example `export CARGO_TARGET_DIR="$OWED_TREE/../target-$(basename "$OWED_TREE")"` in the check's `run` command; a common target directory can link artifacts from another checkout (use the per-tree or locked last-checkout recipe above). Download caches such as `npm_config_cache` may be shared through `exec.env`. A cache is a trust input: a poisoned cache can make a check pass, so keep it per user and machine.
 - **Remote host** — run checks on another machine:
@@ -1289,7 +1315,7 @@ This is a local, same-user trust boundary. It guards against mistakes and lazy c
 
 ### Reclaiming worktrees
 
-Each dispatch leaves a worktree under `.owed/wt/<node>-<attempt>` of the main worktree (also when dispatched from inside another slot worktree) and a branch `owed/<node>/<attempt>` (or the configured root and branch template, see above). Once an attempt is merged or abandoned, `owed gc` (parent or owner only) reclaims them:
+Each dispatch leaves a worktree under `.owed/wt/<node>-<attempt>` of the main worktree (also when dispatched from inside another slot worktree) and a branch `owed/<node>/<attempt>` (or the configured root and branch template, see above). Once an attempt is merged or abandoned, `owed gc` (parent or owner only) reclaims them. At five registered, recorded closed attempts, compact/full status and merge replies show `Housekeeping: <n> finished attempt worktrees; owed gc reclaims them`. The read-only hint excludes open/unrecorded/measurement worktrees, disappears on listing failure and promises no dirty/locked removal:
 
 ```sh
 owed gc --dry-run   # list what would be removed and what is kept, change nothing
