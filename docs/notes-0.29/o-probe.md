@@ -13,15 +13,18 @@ Scope: PB1–PB3 and GC1 on base 74e5930; writer worktree owed/o-probe/1.
 
 ## Tests
 
-Added only `test/oprobe.test.ts`: 15 TAP tests covering all missing-file patterns, explicit/automatic routes, absolute inside/outside and symlinked root, modified/not-added/present/deleted paths, probe error without trunk-red, escaped/bounded tails and notes, exact legacy need text without marker, SPEC wording, GC threshold/count/list failure/read-only safety and real CLI merge reply.
-Existing-test changes: none.
+Added `test/oprobe.test.ts`: 15 TAP tests covering all missing-file patterns, explicit/automatic routes, absolute inside/outside and symlinked root, modified/not-added/present/deleted paths, probe error without trunk-red, escaped/bounded tails and notes, exact legacy need text without marker, SPEC wording, GC threshold/count/list failure/read-only safety and real CLI merge reply.
+Existing-test changes: `test/needs-structure.test.ts:190` (GC1) adds exactly one registered `Git-derived status addition` literal digest for `src/views.ts/housekeepingText`; no scanner/assertion changes. Parent explicitly authorized this after the first full suite's PR2 failure. Digest `8a2ccacc707ae5b3a6c7349c51bbfa0b83550b250368e35c0b3355e022ce9eb0` was computed remotely with the test's own `digest` expression (log `o-probe-1-165910.log`, exit 0).
 
 Commands (all via `/tmp/owed-ipc/run.sh /home/purboo/project/pi-things/pi-owed/.owed/wt/o-probe-1`, remote foreground):
 - `npx tsc --noEmit -p .` (900 s): exit 0; preliminary log `o-probe-1-162713.log`.
 - `node --test --test-concurrency=2 --test-reporter=tap test/oprobe.test.ts test/trackfix.test.ts test/trunkred.test.ts test/attrib.test.ts test/views028.test.ts test/gc.test.ts test/summary.test.ts test/compactreply.test.ts` (1500 s): 102 pass / 0 fail; preliminary log `o-probe-1-163230.log`.
 - Red on isolated base: copied only the new test, linked shared node_modules, ran `node --test --test-concurrency=2 --test-reporter=tap test/oprobe.test.ts` (300 s). `o-probe-base-163504.log`: exit 1, 15 tests / 5 pass / 10 fail, every changed-behaviour test fails with ERR_ASSERTION; five unchanged-behaviour tests pass. Removed `/tmp/o-probe-base` afterwards. Earlier fixture-only red trial superseded.
-- Full suite `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'` (1800 s): pending final committed-tree validation.
-Final clean-tree typecheck/check/full receipts will replace preliminary receipts before submission.
+- First full suite `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'` (1800 s): commit `b7ed75fb92ad719fcd6441cf993b94039f7c3260`, tree `0b5b1be3e953d8f0b0f42ff0ed77a6189113f00b`, dirty=0. `/tmp/owed-ipc/logs/o-probe-1-163720.log`: exit 1, 1805 tests / 1804 pass / 1 fail, 0 skipped/cancelled. Sole failure: PR2 unregistered housekeeping command literal, fixed by the explicitly approved exact registration above.
+- Second and final full suite, same command (1800 s): validation commit S `5689acc5c579178e75ba22ce8fb166cd800e92e5`, tree `543b550bb6bcd86b54cc4f17526eca58ec0b1c18`, dirty=0. `/tmp/owed-ipc/logs/o-probe-1-165935.log`: exit 0, 1805 tests / 1805 pass / 0 fail / 0 skipped/cancelled; 1234974.901109 ms.
+- Typecheck on the first clean implementation commit: `/tmp/owed-ipc/logs/o-probe-1-163642.log`, exit 0, dirty=0, tree `0b5b1be3e953d8f0b0f42ff0ed77a6189113f00b`.
+
+Parent-approved receipt protocol: retain S reachable and make a separate documentation-only commit D changing this notes file, not an amend. Run the exact typecheck (900 s) and leaf check (1500 s) listed above on D, require dirty=0 and D's exact tree in both headers, then submit D. Their actual log names/counts and D commit/tree belong in the final handoff (produced after these notes were committed). S's full-suite evidence applies to unchanged source/tests; `git diff --stat S D` must name only this notes file. Full suite ran twice total; no third run.
 
 ## Source budget
 
@@ -34,4 +37,4 @@ Final clean-tree typecheck/check/full receipts will replace preliminary receipts
     src/views.ts |  8 ++++++--
     5 files changed, 76 insertions(+), 12 deletions(-)
 
-Net +64 src lines, below +120. No new entry kind/field/enum, dependency, scheduling or reducer changes. No live dsa 1.1.0 dependency; dsa-related changes are outside this leaf.
+Net +64 src lines, below +120. R-029-2 alone: exec.ts 3 insertions / 3 deletions (net 0); needs.ts 8 insertions / 1 deletion (net +7), total net +7. No new entry kind/field/enum, dependency, scheduling or reducer changes. No live dsa 1.1.0 dependency; dsa-related changes are outside this leaf.
