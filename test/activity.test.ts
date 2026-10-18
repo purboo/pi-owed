@@ -230,7 +230,8 @@ test('AC1 R-028-29 resubmit mid-run keeps the snapshot seq on later old-tree job
 });
 
 test('AC1 CLI signal keeps the record until actual abort cleanup, then removes it', { timeout: 60_000 }, async () => {
-  const f = await fixture(root => ({ checks:[{id:'slow',run:`setsid sleep 2 & ${slow(root,'check')}`}] }));
+  // R-029-9/R-029-4: an untagged escapee is never signalled; retain its record until inherited pipes actually close.
+  const f = await fixture(root => ({ checks:[{id:'slow',run:`env -u OWED_RUN setsid sleep 2 & ${slow(root,'check')}`}] }));
   let child: ReturnType<typeof spawn> | undefined;
   try {
     const activity = await import('../src/activity.ts');

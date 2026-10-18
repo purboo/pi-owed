@@ -1,6 +1,6 @@
 # o-lease — 0.29
 
-Scope: LZ1–LZ6, R-029-4 (#3421), superseding R-029-8 (#3450, review block #3449). Current slot base is trunk `163fce9` (#3451), including accepted o-writer/o-probe. The specified `git rebase 163fce9` is complete. This note replaces the erroneous R-029-7 runtime diagnosis and stale acceptance report.
+Scope: LZ1–LZ6, R-029-4 (#3421), superseding R-029-8 (#3450, review block #3449), R-029-9 (#3452). Current slot base is trunk `163fce9` (#3451), including accepted o-writer/o-probe. The specified `git rebase 163fce9` is complete. This note replaces the erroneous R-029-7 runtime diagnosis and stale acceptance report.
 
 ## Implementation and limitations
 
@@ -27,8 +27,9 @@ Auto-merged shared blocks were inspected, not replaced wholesale: `src/ops.ts:20
 Existing changes:
 - `test/init-tool.test.ts:293–294`, R-029-8: exactly one wait replacement plus one comment. Same until/default 60000 ms and all original assertions. Byte-check against 163fce9 proves every other byte unchanged.
 - `test/attest-signal.test.ts:92–96`, LZ3, earlier parent authorized: shared heldRun deliberately uses `env -u OWED_RUN setsid sleep` for both D16a.3 pipe-holder fixtures (60 s and 3 s). Assertions and bounds unchanged.
+- `test/activity.test.ts:233–234`, R-029-9: only the AC1 CLI signal fixture replaces `setsid sleep 2 &` with `env -u OWED_RUN setsid sleep 2 &`, plus one comment. This untagged escaped pipe holder is never individually signalled (R-029-4), so the invocation's runtime record remains until inherited pipes actually close. Byte comparison against d8db2f1 verifies all assertions and every other byte unchanged. No src changes.
 
-## Current evidence and blocked handoff
+## Current evidence and submit handoff
 
 All Node/typecheck/test commands run in foreground with `/tmp/owed-bench/run.sh`; no owned background driver. Temporary regression worktree was removed.
 
@@ -43,7 +44,20 @@ Clean rebased source S: commit `d8db2f1dba2f55cbe36702ee1e9bf191467178fd`, tree 
 - Affected set: `/tmp/owed-bench/logs/o-lease-1-195958.log`, exit 0, 220 tests / 220 pass / 0 fail. Command: `node --test --test-concurrency=2 --test-reporter=tap test/olease.test.ts test/init-tool.test.ts test/attest-signal.test.ts test/oprobe.test.ts test/trackfix.test.ts test/trunkred.test.ts test/attrib.test.ts test/views028.test.ts test/gc.test.ts test/summary.test.ts test/compactreply.test.ts test/remeasure.test.ts test/dsa.test.ts test/lease.test.ts test/exec-red.test.ts test/env.test.ts`.
 - Sole permitted full suite: `/tmp/owed-bench/logs/o-lease-1-200304.log`, exit 1; 1883 tests / 1882 pass / 1 fail / 0 skipped / 0 cancelled, 1288649.56182 ms. Exact command: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`, foreground timeout 1800.
 
-Blocker: unchanged `test/activity.test.ts:232–244`, AC1 CLI signal test. Its fixture uses `setsid sleep 2` with inherited pipes and inherited OWED_RUN. LZ3 now correctly ends that proven tagged escaped process, so at the fixed 200 ms observation the command cleanup and runtime unlink have already finished: actual readMeasuring result [] versus expected original record (`:241`). The fixture's inherited-pipe assumption is incompatible with LZ3, like the earlier authorized attest-signal fixture change, but activity.test.ts is not in this repair's authorized writes. No assertion/fixture change made, no additional full-suite run started, no known-failing candidate submitted. Parent must decide the fixture semantics/ownership before any further repair. This follow-up changes only the note and preserves the failed S evidence; final head/tree is reported in the handoff.
+R-029-9 (#3452) resolves the single full-suite failure as an intended behaviour change. The original AC1 CLI signal fixture's `setsid sleep 2` inherited OWED_RUN and was correctly TERM'd after abort, closing the pipe inside the 200 ms assertion window depending on scan timing. Only the explicitly authorized untagged pipe-holder fixture and comment changed; assertions remain intact. With the untagged holder all ten runs retain the record at 200 ms and remove it after actual cleanup; the product-bug stop condition did not occur.
+
+### R-029-9 exact-tree comparison and repair checks
+
+All commands below use foreground `/tmp/owed-bench/run.sh`; all per-iteration exit codes and full TAP output are preserved. Every repeated command uses `node --test --test-concurrency=2 --test-reporter=tap`.
+
+- Before editing, isolated clean d8db2f1 tree: `/tmp/owed-bench/logs/olease-r9-before-202810.log`, exit 1, **5/5 failed runs**; each activity.test.ts invocation has 17 tests / 16 pass / 1 fail, solely AC1 CLI signal, total 80/85 passed. Identity: `wt=/tmp/olease-r9-before head=d8db2f1dba2f55cbe36702ee1e9bf191467178fd dirty=0 tree=151cdaebcc5e93a9c69ed52e5951dd0298eacadc`. Temporary worktree removed before editing.
+- After edit typecheck: `/tmp/owed-bench/logs/o-lease-1-202953.log`, `npx tsc --noEmit -p .`, exit 0.
+- After edit activity.test.ts 10×: `/tmp/owed-bench/logs/o-lease-1-203021.log`, exit 0, **0/10 failed runs**, 17/17 each, total **170/170**. Loop stops at the first failure; no failure occurred.
+- R-029-8 shutdown filter 3×: `/tmp/owed-bench/logs/o-lease-1-203300.log`, exit 0, **0/3 failed runs**, total 3/3. Command uses `--test-name-pattern='session_shutdown aborts' test/init-tool.test.ts`.
+- All three post-edit logs measure `wt=/work/pi-owed/.owed/wt/o-lease-1 head=395a0db038219ad1fec4a52005f7d695df1e3945 dirty=1 tree=6a1831dc093010dcd8bb4bb61e9106ff6ecd3d1b`; only authorized activity.test.ts fixture was dirty. This notes-only evidence update follows those checks. Final committed candidate's src/tests are identical to that tested tree; head/tree belongs in the submit handoff.
+- Byte-check passed: current activity.test.ts equals d8db2f1 bytes after exactly one fixture replacement and one comment; `git diff d8db2f1 -- src` is empty. Full-suite source is therefore identical. Per R-029-9, no second full suite run: retain the 1882/1883 same-src result above without claiming it as a green exact-candidate full run. Merge attest will measure the complete suite on the exact candidate.
+
+No runtime background scripts remain. Next step is committed clean-slot foreground submit; busy/75 retries wait 60 seconds. Independent review, formal measurements and merge acceptance are still parent-owned.
 
 Previous full receipts (eb577bb/d224881) predate R-029-8 and the new integration base and do not validate this candidate. The earlier 10/10 leaf-vs-0/10 baseline comparison was real, but its runtime-fallback interpretation was incorrect. It must not be presented as proof of a production status bug.
 
