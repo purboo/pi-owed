@@ -44,7 +44,7 @@ export function writerReply(result?: string): string {
     }
     return out;
   };
-  const commits = facts(/\b[0-9a-f]{40}\b|(?:\bcommit|\bhead|提交)\s*:?\s*([0-9a-f]{7,40})\b/gi, true);
+  const commits = facts(/\b[0-9a-f]{40}\b|(?:\bcommit|\bhead|\u63d0\u4ea4)\s*:?\s*([0-9a-f]{7,40})\b/gi, true);
   const durable = facts(/\b01[0-9A-HJKMNP-TV-Z]{24}\b/g);
   const extra = [commits.length ? `commits: ${commits.join(', ')}` : '', durable.length ? `durable: ${durable.join(', ')}` : ''].filter(Boolean);
   return `writer says: ${JSON.stringify(text).replace(/[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)}${extra.length ? ` (${extra.join('; ')})` : ''}`;

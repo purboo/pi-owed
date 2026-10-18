@@ -5,7 +5,7 @@
 Base `74e59304071d66254fb90cc08894f85e13ea09e1`; writer owns only WR1–WR2 in `.owed/wt/o-writer-1`.
 No ledger/reducer, dependency, lease, sweep, probe or held-ruling semantics changed.
 
-- WR1: flatten the complete final text; quote whole through 600 Unicode code points, else head 200/tail 380 with nearby-space cuts. Append omitted commit/durable facts (first appearance, deduplicated, at most three each). Preserve JSON/control/bidi escaping and old recorded halt bytes; both trailer parsers share the new safe parser.
+- WR1: flatten the complete final text; quote whole through 600 Unicode code points, else head 200/tail 380 with nearby-space cuts. Append omitted commit/durable facts (first appearance, deduplicated, at most three each). The named commit marker `\u63d0\u4ea4` (U+63D0 U+4EA4) is ASCII-escaped in shipped source/docs to preserve English-only shipping. Preserve JSON/control/bidi escaping and old recorded halt bytes; both trailer parsers share the new safe parser.
 - WR2: parse only optional facts from the last described call. A successful sealed/pruned writer with awaiting and no current candidate skips stopped/no-submit halts and submit nudges, including pending rebase, ruling and repair-budget routes; existing repair/ruling/rebase follow-ups remain.
 - WR2: foreign wake generations advance the runtime generation fence. Recovery does not replay a prior owed follow-up after observing the foreign generation running, including after a stale seal and later resume.
 - WR2: driver publishes current-attempt waits through its private runtime cache; live status/why show waiting, with no new parent need/wake. No live driver or stale attempt means unknown. Halt trailers include awaiting (non-ok) and up to three bounded ended-process descriptions, with the total including unlisted processes.
@@ -54,4 +54,9 @@ Net +73 source lines, under the +120 leaf limit. Duplicate legacy trailer parsin
 
 ## Final validation and publication
 
-Final validation is not yet run; this section will be replaced with actual clean-commit commands/logs/counts. All node/npm/tsc/test execution is remote through `/tmp/owed-bench/run.sh`, in the foreground. No live dsa integration (explicit fake-interface scope); parent owns integration/review/acceptance.
+Clean implementation commit `0ec2c518dd16f76fac156a64b3055ebebc79fbc2`, tree `09cd14f2fc18dc34e78239d10fcf967ee6c0d311`:
+- `/tmp/owed-bench/logs/o-writer-1-162820.log`: `npx tsc --noEmit -p .`, exit 0.
+- `/tmp/owed-bench/logs/o-writer-1-162840.log`: exact assigned focused command with `--test-concurrency=2`, exit 0, 274 tests / 274 pass / 0 fail.
+- `/tmp/owed-bench/logs/o-writer-1-163050.log`: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`, timeout 1800, exit 1 (not timed out), 1812 tests / 1811 pass / 1 fail. All headers name this tree with dirty=0. Sole failure: shipped-English scan in `test/english.test.ts:132` rejects the contract-required literal marker in source/docs, not WR1/WR2 behavior. Parent authorized the narrow ASCII escape fix, with no test weakening. The new test's literal marker remains because test/ is outside that scan. Final retry receipts are at the stable `/tmp/owed-bench/logs/o-writer-final-typecheck.log`, `o-writer-final-check.log` and `o-writer-final-full.log`; their tree/dirty headers and counts are authoritative. Results are reported to the parent after completion; no more than two full runs.
+
+All node/npm/tsc/test execution is remote through `/tmp/owed-bench/run.sh`, in the foreground. No live dsa integration (explicit fake-interface scope); parent owns integration/review/acceptance.

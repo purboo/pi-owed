@@ -5758,7 +5758,8 @@ and control/bidi escaping. Omitted facts are appended outside the quote as
 ` (commits: <sha12>[, …]; durable: <id>[, …])`, with only nonempty parts,
 at most three of each, ordered by first appearance and skipping fully shown
 facts. Commits are 40-hex tokens or 7–40 hex tokens directly after
-`commit`, `HEAD`, `head` or `提交` (case-insensitive, optional colon/space);
+`commit`, `HEAD`, `head` or `\u63d0\u4ea4` (U+63D0 U+4EA4;
+case-insensitive, optional colon/space);
 durable IDs match the `01`-prefixed 26-character ULID form. Missing text says
 `writer gave no final text`. Pruned runs retain a reply only while describe
 still supplies it. Wakes, default why and status Needs-you show that reply and
