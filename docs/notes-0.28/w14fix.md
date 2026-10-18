@@ -11,7 +11,7 @@
 1. `WF1: a driver halt with multiline evidence yields escaped one-line resume need text` — raw LF/CR absent, escaped LF/CR present, exact independent expected text and resume command.
 2. `WF1: the status Needs-you row is one physical line ending in owed resume` — exact rendered Needs-you row, not the separate progress row.
 3. `WF1: the compact why headline is one physical line with resume and the unchanged outstanding suffix` — exact independent expected headline per R-028-76.
-4. `WF2: quarantineDebt without quarantine makes zero historical plan lookups after reduce` — twelve deep-frozen plan versions, observations under early laws, at most five retained plans, actual lookup counter reset only after reduce. Base performs two further lookups; head performs zero.
+4. `WF2: quarantineDebt without quarantine makes zero historical plan lookups after reduce` — twelve deep-frozen plan versions, observations under early laws, at most five retained plans, actual lookup counter reset only after reduce. Base performs one further lookup; head performs zero.
 5. `WF2: active invariant and check quarantine preserve full passing debt receipts` — full invariant and batch-check debt objects, including passed seq/commit/batch/note; explicit native passing evidence remains visible despite later error observations; fix filtering preserved. This compatibility fixture passes on both base and head.
 
 Existing test changes: **none**.
