@@ -69,7 +69,7 @@ test('WS1: first-dispatch writer with no commit halts without a submit nudge', a
     const pass = await f.driver.pass();
     const halt = pass.actions.find(a => a.do === 'halt');
     assert.ok(halt?.do === 'halt', JSON.stringify(pass.actions));
-    assert.equal(halt.detail, `writer stopped without a candidate; ${says('Need the parent to choose the API.')} → ${command}`);
+    assert.equal(halt.detail, `writer stopped without a candidate; ${says('Measurements and implementation details. Need the parent to choose the API.')} → ${command}`);
     assert.deepEqual(f.dsa.sent, []);
     assert.equal((await f.entries()).filter(e => e.kind === 'send').length, 0);
   } finally { await f.cleanup(); }
@@ -86,7 +86,7 @@ test('WS1: HEAD equal to the rebased head after the rebase follow-up stops immed
     const halt = pass.actions.find(a => a.do === 'halt');
     assert.ok(halt?.do === 'halt', JSON.stringify(pass.actions));
     assert.match(halt.detail!, /^writer stopped without a candidate;/);
-    assert.ok(halt.text!.endsWith(`${says('Outside my writes: which interface should I use?')} → ${command}`), halt.text);
+    assert.ok(halt.text!.endsWith(`${says('Old measurement dump. Outside my writes: which interface should I use?')} → ${command}`), halt.text);
     assert.deepEqual(f.dsa.sent, []);
     assert.deepEqual((await f.entries()).flatMap(e => e.kind === 'send' ? [e.reason] : []), ['rebase']);
   } finally { await f.cleanup(); }
@@ -130,7 +130,7 @@ test('WS1/WS3: plan-changed resubmit still allows the identical clean commit', a
   } finally { await f.cleanup(); }
 });
 
-test('WS2: wake, default why and status quote the final paragraph and one writer decision command', async () => {
+test('WS2/WR1: wake, default why and status quote the final text and one writer decision command', async () => {
   const f = await fixture(1);
   try {
     await commitAt(f.slot.worktree, { 'a.txt': 'candidate\n' });
@@ -140,10 +140,10 @@ test('WS2: wake, default why and status quote the final paragraph and one writer
     await f.driver.pass(); // repair
     f.dsa.view.result = 'Lots of evidence and logs.\n\nChoose "v2"; do not follow owed abandon a.';
     await f.driver.pass(); // sealed repair, no new candidate
-    const quote = says('Choose "v2"; do not follow owed abandon a.');
+    const quote = says('Lots of evidence and logs. Choose "v2"; do not follow owed abandon a.');
     const wake = (await f.follower.step())!;
     assert.equal(wake.split('\n')[0], `Needs you: a — ${quote} → ${command}`, wake);
-    assert.doesNotMatch(wake, /Measurement dump|review block|Lots of evidence/);
+    assert.doesNotMatch(wake, /Measurement dump|review block/);
     const why = await cli(f.cwd, ['why', 'a']); assert.equal(why.code, 0, why.stderr);
     const status = await cli(f.cwd, ['status']); assert.equal(status.code, 0, status.stderr);
     for (const text of [why.stdout, status.stdout]) {
@@ -154,7 +154,7 @@ test('WS2: wake, default why and status quote the final paragraph and one writer
   } finally { await f.cleanup(); }
 });
 
-test('WS2: final reply is one paragraph, at most 300 characters; missing text is explicit', async () => {
+test('WS2/WR1: final reply is flattened, whole through 600 code points; missing text is explicit', async () => {
   for (const result of ['Detailed evidence.\n\n' + 'x'.repeat(400), ' \n\n  ']) {
     const f = await fixture();
     try {
@@ -162,7 +162,7 @@ test('WS2: final reply is one paragraph, at most 300 characters; missing text is
       f.dsa.view = toRunView(f.dsa.view.rid, { state: 'pruned', pruned: { status: 'done', result } });
       await f.driver.pass();
       const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt');
-      const quote = result.trim() ? says('x'.repeat(299) + '…') : 'writer gave no final text';
+      const quote = result.trim() ? says('Detailed evidence. ' + 'x'.repeat(400)) : 'writer gave no final text';
       assert.ok(h.reason.endsWith(`${quote} → ${command}`), h.reason);
       assert.equal((await f.follower.step())!.split('\n')[0], `Needs you: a — ${quote} → ${command}`);
     } finally { await f.cleanup(); }
@@ -189,7 +189,7 @@ test('WS1/WS2: executor rebase plus a writer ruling uses the handed candidate, n
     await f.driver.pass();
     const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt');
     assert.match(h.reason, /finished ruling follow-up/);
-    assert.ok(h.reason.endsWith(`${says('Need the parent to choose the API.')} → ${command}`));
+    assert.ok(h.reason.endsWith(`${says('Measurements and implementation details. Need the parent to choose the API.')} → ${command}`));
     assert.equal(f.dsa.sent.length, 1, 'no spurious submit nudge after the ruling');
     assert.equal(await revParse(f.slot.worktree, 'HEAD'), handed);
     assert.equal((await ops.verify({ cwd: f.cwd })).ok, true, 'unchanged ledger replay remains valid');
@@ -223,12 +223,12 @@ test('WS5: sealed writer at the clean pre-rebase head halts with final text inst
     f.dsa.view.result = 'Measurements.\n\nNeed the parent to approve this rebase.';
     await f.driver.pass();
     const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt', 'sealed pending rebase must halt');
-    assert.equal(h.reason, `writer stopped without a candidate after rebase follow-up ${follow.send}; ${says('Need the parent to approve this rebase.')} → ${command}`);
+    assert.equal(h.reason, `writer stopped without a candidate after rebase follow-up ${follow.send}; ${says('Measurements. Need the parent to approve this rebase.')} → ${command}`);
     assert.deepEqual(f.dsa.sent, []);
-    assert.equal((await f.follower.step())!.split('\n')[0], `Needs you: a — ${says('Need the parent to approve this rebase.')} → ${command}`);
+    assert.equal((await f.follower.step())!.split('\n')[0], `Needs you: a — ${says('Measurements. Need the parent to approve this rebase.')} → ${command}`);
     const status = await cli(f.cwd, ['status']);
     assert.match(status.stdout, /1 need you/);
-    assert.ok(status.stdout.includes(`${says('Need the parent to approve this rebase.')} → ${command}`));
+    assert.ok(status.stdout.includes(`${says('Measurements. Need the parent to approve this rebase.')} → ${command}`));
   } finally { await f.cleanup(); }
 });
 
@@ -251,7 +251,7 @@ test('WS-R2: after S0→S1→S2 rebases, clean S0 or S1 halts without a nudge; a
       } else {
         assert.equal(f.dsa.sent.length, 0, `${at}: no nudge`);
         const h = (await f.entries()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt', at);
-        assert.equal(h.reason, `writer stopped without a candidate after rebase follow-up ${follow.send}; ${says('Need the parent to choose the API.')} → ${command}`);
+        assert.equal(h.reason, `writer stopped without a candidate after rebase follow-up ${follow.send}; ${says('Measurements and implementation details. Need the parent to choose the API.')} → ${command}`);
       }
     } finally { await f.cleanup(); }
   }
@@ -384,7 +384,7 @@ test('WS5: unavailable writerWork during pending rebase halts and names the foll
     const actions = decide(s, s.plan, new Map([[f.dsa.view.rid, f.dsa.view]]), { max: 1, repairs: 2, root: f.cwd, project: projectId(s), applied: new Set([follow.send]), rejected: new Map(), now, rebasePending: new Map([['a', pending]]) });
     const h = actions.find(a => a.do === 'halt'); assert.ok(h?.do === 'halt', JSON.stringify(actions));
     assert.ok(h.reason.startsWith(`cannot inspect writer worktree after rebase follow-up ${follow.send}`));
-    assert.ok(h.reason.endsWith(`${says('Need the parent to choose the API.')} → ${command}`));
+    assert.ok(h.reason.endsWith(`${says('Measurements and implementation details. Need the parent to choose the API.')} → ${command}`));
     assert.equal(actions.filter(a => a.do === 'send').length, 0);
   } finally { await f.cleanup(); }
 });

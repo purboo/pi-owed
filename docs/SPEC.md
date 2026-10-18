@@ -4277,6 +4277,18 @@ closed slot or merged node omits the section. Runtime delivery limits are in
 §7.17. Optional `measuring`, `mergeWaiting`, `rulingFollowUp` and job timestamps
 are view/cache data, not evidence, ledger fields or new plan keys.
 
+A live driver's last describe also publishes durable-writer waits. Status
+lists `<node>: writer waiting on durable <request> (<state>, <seal age>)`
+under In progress; why uses the same headline. The state is `pending`,
+`running` or `finished` (finished with its wake not yet delivered). This wait
+creates no Needs-you item and does not wake the parent. With a finite numeric `sealedAt` from the latest described sealed call,
+the age is measured from that generation's actual seal time. Strings and
+non-finite values are treated as missing; a future time is clamped to age zero.
+Without the field, the approximate age starts when the driver first observes
+that sealed generation. New generations reset it, and approximate ages reset
+on driver restart. Age affects display only, never scheduling. The cache is bound to the current writer attempt and is unknown without a
+live driver. It is runtime context only, never ledger or acceptance evidence.
+
 ### 9.4 Decision metrics and counterfactual reports (0.23, MX / DF3)
 
 `owed report --metrics [--since seq|ISO] [--until seq|ISO] [--json]` retains
@@ -5703,7 +5715,19 @@ old refusal cannot be inferred. All binding failures remain in the full receipt.
 
 ### 12.5.4 Stopped writers and decision questions (0.26, WS)
 
-A successful sealed writer without a current candidate receives a submit
+A successful sealed or pruned writer without a current candidate is waiting
+while its latest described call lists nonempty `awaiting` durable runs. It
+receives no submit reminder, stopped-writer halt or no-submit halt, including
+after a repair, ruling or pending-rebase follow-up. Due repair, ruling and
+rebase follow-ups are still delivered unchanged. Without `awaiting` (including
+older runners), the usual stopped-writer rules below apply. A non-ok seal
+retains its existing halt/recovery route; a halt quoting that writer adds
+`; awaiting durable <request> (<state>)` for its outstanding durable runs.
+When a durable wake opens a writer generation, owed recognizes that generation
+as current even though owed did not send it. Older seals cannot finish it or
+cause an owed follow-up to be delivered again.
+
+Otherwise, a successful sealed writer without a current candidate receives a submit
 reminder only when actual work remains. Outside ledger locks, after checking
 the current runner generation, the driver inspects worktree HEAD and dirtiness.
 In the ordinary row-8 path, the handed head is the latest submitted commit
@@ -5720,18 +5744,26 @@ Existing repair/ruling follow-up halts and the one-reminder bound remain.
 A writer interrupted with unknown tool outcomes retains the recovery route;
 a non-ok writer halt retains its status/error and any abandon guidance.
 The row-7 halt for a writer run sealed non-ok uses the same reply trailer
-as a clean-stop halt: `writer says: "<final paragraph>"` (or
+as a clean-stop halt: `writer says: "<final text>"` (or
 `writer gave no final text`) followed by
 `owed decide <node> --text "<ruling>" --writer`.
 
-Stopped-writer halts record the cause, then `writer says: "<final paragraph>"`
-and `→ owed decide <node> --text "<ruling>" --writer`. The quoted text is the
-last nonempty paragraph of the run's final reply (`RunView.result`), whitespace
-flattened to one line and bounded to 300 characters before JSON quoting/control
-escaping. A long paragraph ends in an ellipsis; missing text says
+Stopped-writer halts record the cause, then `writer says: "<final text>"`
+and `→ owed decide <node> --text "<ruling>" --writer`. All whitespace in the
+run's final reply (`RunView.result`) is collapsed to single spaces. Replies
+of at most 600 Unicode code points are quoted whole; longer replies quote
+the first 200 and last 380 code points, joined by ` … `. Each cut retreats
+to a nearby space within 20 code points when available, before JSON quoting
+and control/bidi escaping. Omitted facts are appended outside the quote as
+` (commits: <sha12>[, …]; durable: <id>[, …])`, with only nonempty parts,
+at most three of each, ordered by first appearance and skipping fully shown
+facts. Commits are 40-hex tokens or 7–40 hex tokens directly after
+`commit`, `HEAD`, `head` or `\u63d0\u4ea4` (U+63D0 U+4EA4;
+case-insensitive, optional colon/space);
+durable IDs match the `01`-prefixed 26-character ULID form. Missing text says
 `writer gave no final text`. Pruned runs retain a reply only while describe
 still supplies it. Wakes, default why and status Needs-you show that reply and
-the one decision command, keeping measurement/repair dumps in full evidence.
+the one decision command. Already-recorded halts are never re-rendered.
 The parser uses owed's own final trailer, so commands inside the writer's
 reply cannot replace the next action. The quote is context for the parent,
 never a candidate, measurement or acceptance receipt.
@@ -5760,6 +5792,19 @@ handed set, or dirty work left behind, cannot trigger another submit reminder.
 A refused ruling follow-up retains its rejection guidance. This is the same
 finished-ruling boundary as the ordinary writer-halt path; no send/halt loop
 or new ledger kind is introduced.
+
+When the last described call reports `endedAtSeal`, halts quoting that writer
+also append `; dsa ended <n> processes at seal: <pid> <command>[, …]` before
+the decision command. The total includes unlisted `endedAtSealMore` processes;
+at most three are listed with commands bounded to 80 code points and escaped
+onto one line. This reports processes dsa sent SIGKILL at the seal, not proof
+of what caused their death. Older runners omit the diagnostic.
+
+Writer dispatch packets include this section immediately after the checks:
+
+    Long runs: processes you start end when your turn ends. Run a check or measurement that may outlive your turn as a durable command call, then end your turn without submitting:
+      pi-durable-subagents run --request owed-<project>-<node>-<attempt>-<name> --wake caller -- <command…>
+    owed does not halt you while it runs; dsa resumes you with its exit status and output tail (pi-durable-subagents >= 1.1.0).
 
 Dispatch packets and writer follow-ups (rebase, repair, submit, plan-changed,
 ruling, interruption and report) carry this sentence:

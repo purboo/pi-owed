@@ -643,7 +643,12 @@ export function answeredQuestion(s: State, rid: string, qid: string, rev?: numbe
 function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpts, n: NodeState): Action | undefined {
   const id = n.id, slot = n.slot!, attempt = slot.attempt, c = n.candidate;
   const halt = (reason: string, needs: 'human' | 'owner' = 'human'): Action => ({ do: 'halt', node: id, attempt, reason, needs });
-  const stoppedHalt = (reason: string): Action => halt(`${reason}; ${writerReply(writerView?.result)} → ${writerDecisionCommand(id)}`);
+  const stoppedHalt = (reason: string): Action => {
+    const w = writerView, ended = w?.endedAtSeal;
+    const awaits = w && statusOf(w) !== 'ok' ? (w.awaiting ?? []).map(a => `; awaiting durable ${oneLine(a.request)} (${a.state})`).join('') : '';
+    const procs = ended ? `; dsa ended ${ended.length + (w?.endedAtSealMore ?? 0)} processes at seal: ${ended.slice(0, 3).map(p => `${p.pid} ${oneLine(Array.from(p.command).slice(0, 80).join(''))}`).join(', ')}` : '';
+    return halt(`${reason}; ${writerReply(w?.result)}${awaits}${procs} → ${writerDecisionCommand(id)}`);
+  };
   // 0.8 (L1.3): the first writer follow-up after a resume starts with the resume line (`resumeLine`).
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => {
     const line = l.role === 'writer' && sendKind === 'follow-up' ? resumeLine(s, id, l.rid) : undefined;
@@ -779,6 +784,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const ask = askingNotice();
   if (ask) return ask;
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
+  const durableWait = !c && wSealed && wStatus === 'ok' && !!w.awaiting?.length;
   // FL3: a fresh report resume gets the next writer follow-up even with an accepted/failed candidate.
   const reportResume = resumeOf(s, id);
   if (reportResume?.expect === 'report' && resumeLine(s, id, writer.rid) && wSealed && wStatus === 'ok') return send(writer, 'follow-up', 'report', REPORT_MESSAGE);
@@ -803,7 +809,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const f = rulingFollowUp(s, id, opts.rejected);
       if (f) return send(writer, 'follow-up', 'ruling', f.message, f.rulings);
       const sent = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'ruling' && x.sendKind === 'follow-up' && x.seq > writerRule.seq);
-      if (sent && sent.seq > resumed) return stoppedHalt(`writer run ${at(writer)} finished ruling follow-up ${sent.send} without submitting a new candidate (writer ruling #${writerRule.seq})`);
+      if (sent && sent.seq > resumed) return durableWait ? undefined : stoppedHalt(`writer run ${at(writer)} finished ruling follow-up ${sent.send} without submitting a new candidate (writer ruling #${writerRule.seq})`);
       // A resume after that follow-up starts a new wait: deliver the writer rulings again instead of repeating the halt.
       if (sent) {
         const rules = s.rules.filter(r => r.writer && r.nodes !== '*' && r.nodes.includes(id) && r.seq > last!.seq && deliversRule(r, writer.rid));
@@ -839,10 +845,11 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const before = deliveredRulings(s, id, { ...ar, sends: ar.sends.filter(y => y.seq < x.seq) }, writer, opts.rejected);
     return opts.rejected.has(x.send) || rulingsInScope(s, id).some(r => r.writer && r.seq > before && r.seq <= (x.rulings ?? -1));
   };
-  const writerHalt = (reason: string, cause: string, after: number): Action => {
+  const writerHalt = (reason: string, cause: string, after: number): Action | undefined => {
     if (!wSealed) return halt(reason);
     const f = rulingSend();
     if (f) return f;
+    if (durableWait) return undefined;
     const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(after, lastSubmit(s, id)?.seq ?? -1, resumed) && requiresSubmit(x));
     if (!rf) return stoppedHalt(reason);
     const refused = opts.rejected.get(rf.send);
@@ -878,6 +885,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       // WS-R3: a due ruling (e.g. `owed decide <node> --writer` after one of these halts) is delivered before halting again.
       const ruled = rulingFirst();
       if (ruled) return ruled;
+      if (durableWait) return undefined;
       const follow = ar.sends.findLast(x => x.rid === writer.rid && x.reason === 'rebase')!;
       const rf = ar.sends.findLast(x => x.rid === writer.rid && x.sendKind === 'follow-up' && x.reason === 'ruling' && x.seq > Math.max(follow.seq, resumed) && requiresSubmit(x));
       const driftHalt = (reason: string): Action => {
@@ -923,6 +931,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     // later plan entry invalidated gets a submit follow-up naming that plan entry (app #1375).
     const last = lastSubmit(s, id), rebased = !!rb && (!last || last.seq < rb.seq);
     if (rebased && !ar.sends.some(x => x.reason === 'rebase' && x.seq > rb!.seq)) { const m = writerMsg(rebaseMessage(s, id, opts.conflicts?.get(id), opts.rebaseWork?.get(id))); return send(writer, 'follow-up', 'rebase', m.message, m.rulings); }
+    if (durableWait) return rulingFirst();
     const changed = !rebased && last ? planInvalidated(s, id, last.seq) : undefined;
     const since = Math.max(rb?.seq ?? slot.dispatchSeq, resumed, changed?.plan ?? -1), nudge = ar.sends.findLast(x => x.reason === 'submit' && x.seq > since);
     if (nudge) return writerHalt(`writer run ${at(writer)} finished without submitting a candidate after follow-up ${nudge.send}`, `no candidate after follow-up ${nudge.send}`, nudge.seq);
