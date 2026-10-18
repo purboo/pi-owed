@@ -1,6 +1,6 @@
 # o-lease — 0.29
 
-Scope: LZ1–LZ6, R-029-4 (#3421), R-029-7 (#3427). Slot base moved by #3426 to `c07a3984afdf3c8b329de5e53da91ef64bbd6cf3`; rebase and final clean-tree evidence are pending this repair checkpoint.
+Scope: LZ1–LZ6, R-029-4 (#3421), R-029-7 (#3427). Slot base moved by #3426 to `c07a3984afdf3c8b329de5e53da91ef64bbd6cf3`. Specified rebase completed without conflicts; accepted source S is `d22488116be35f3554458fcb451511dfcbc64d5b`, tree `237d4074be1641103cfb103016f85b18c5a3a550`, a descendant of c07a398.
 
 ## Implementation and limits
 
@@ -30,7 +30,14 @@ All commands run in the foreground through `/tmp/owed-bench/run.sh`; full paths 
 - Repair regressions red on previous candidate a11ac47 (only new tests copied): `/tmp/owed-bench/logs/olease-before-183013.log`, exit 1; 10 tests / 2 pass / 8 fail, all failures ERR_ASSERTION. Forged-refusal, slow-scan, strict-tail and native-worker-cleanup tests each fail before repair. Unreadable-process negatives already pass, as expected from R-029-4's comment-only requirement.
 - Before R-029-7 repair, expanded checks: `/tmp/owed-bench/logs/o-lease-1-181412.log`, exit 1; 234 tests / 233 pass / 1 fail (unchanged init-tool shutdown assertion). Olease alone was 39/39: `/tmp/owed-bench/logs/o-lease-1-181224.log`, exit 0.
 
-This repair has not yet run a full suite. Parent allows at most two after R-029-7 repair; a second failing full suite must stop implementation. Commit first, rebase exactly onto c07a398, then run full suite on the resulting clean source commit S. After green S, a separate notes-only commit D records S's commit/tree/log/exit. D gets clean typecheck and leaf checks before foreground submit. Final D identity and log headers go in the handoff rather than amending this note recursively.
+## Clean rebased source receipt
+
+- S commit `d22488116be35f3554458fcb451511dfcbc64d5b`, tree `237d4074be1641103cfb103016f85b18c5a3a550`; every following log header records exactly that commit/tree with dirty=0.
+- Rebased typecheck: `/tmp/owed-bench/logs/o-lease-1-183204.log`, `npx tsc --noEmit -p .`, exit 0.
+- Rebased affected combination (same exact 16-file command above): `/tmp/owed-bench/logs/o-lease-1-183242.log`, exit 0; 235 tests / 235 pass / 0 fail.
+- Rebased full suite, repair attempt 1/2: `/tmp/owed-bench/logs/o-lease-1-183604.log`, exit 0; 1842 tests / 1842 pass / 0 fail / 0 cancelled / 0 skipped / 0 todo; duration 1240617.708061 ms, within 1500 s. Exact command: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'` (foreground `/tmp/owed-bench/run.sh` timeout 1800). No second repair full-suite run was needed.
+
+This follow-up D changes only this note, without amend. Run clean D typecheck and required leaf checks before foreground submit; D identity and those log headers belong in the final handoff, avoiding recursive notes amendments.
 
 ## Earlier evidence (superseded, not current-tree acceptance)
 
@@ -38,4 +45,16 @@ This repair has not yet run a full suite. Parent allows at most two after R-029-
 - Earlier source S `85d7129c139df2cd95a27cfc77c556d477996f81`, tree `a9c0c5090b4e2d8eb06789842d894dc0a5b5c8c0`: full `/tmp/owed-bench/logs/o-lease-1-172505.log`, exit 0, dirty=0, 1820/1820, 1238.9 s. Earlier D `a11ac4700395d186cac22ee8e55de88e8241f8c2`, tree `7902911e63aea27966cf697149506ef74f0a4763`: typecheck `/tmp/owed-bench/logs/o-lease-1-174618.log`, exit 0; leaf `/tmp/owed-bench/logs/o-lease-1-174644.log`, exit 0, 141/141. Submitted #3397; review #3411 blocked, now superseded by this repair.
 - Earlier failed full `/tmp/owed-bench/logs/o-lease-1-163224.log`: exit 124 at 1800 s, no final totals. Escaped signal fixture, abort-time lifecycle, and virtualized cleanup timer issues were diagnosed, not called baseline/flaky.
 
-Size before c07a398 rebase: `git diff --stat 74e5930 -- src`: 6 files, 125 insertions(+), 59 deletions(-), net +66. Post-rebase budget is relative to c07a398 and must stay <= +120. Fake dsa only, no dependency on live 1.1.0. No writer integration or publication authority exercised.
+Size after rebase: `git diff --stat c07a3984afdf3c8b329de5e53da91ef64bbd6cf3 -- src`:
+
+```
+ src/drive-run.ts | 22 +++++++++++----------
+ src/dsa.ts       | 31 ++++++++++++++++++++++++++----
+ src/exec.ts      | 58 ++++++++++++++++++++++++++++++++++++++++----------------
+ src/lease.ts     |  4 ++--
+ src/ops.ts       | 34 +++++++++++++++++----------------
+ src/sweep.ts     | 35 +++++++++++++++++++++++-----------
+ 6 files changed, 125 insertions(+), 59 deletions(-)
+```
+
+Net +66, within +120. Size vs original 74e5930 before rebase was identical (125 insertions, 59 deletions). Fake dsa only, no dependency on live 1.1.0. No writer integration or publication authority exercised.
