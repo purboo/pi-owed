@@ -68,6 +68,8 @@ export function dsaAvailable(bin = dsaBin()): boolean {
 /** `signal`: the child was ended by a signal that was not our timeout (exit is null then). */
 interface Spawned { exit: number | null; stdout: string; stderr: string; timedOut: boolean; signal?: NodeJS.Signals }
 const LIMIT = 16 * 1024 * 1024;
+const holdUnsupported = new Set<string>();
+type HoldOptions = { shared?: boolean; cwd?: string; noWait?: boolean; priority?: number; yield?: boolean };
 
 export class Dsa {
   readonly bin: string; private readonly opts: DsaOptions;
@@ -209,9 +211,25 @@ export class Dsa {
    * e.g. an older dsa that does not know `--no-wait`); `signal` — hold was ended by a signal; else `ran` with the
    * command's exit status and output.
    */
-  async hold(resource: string, argv: string[], o: { shared?: boolean; cwd?: string; noWait?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<
+  private holdFlags(o: HoldOptions): string[] {
+    return [...(o.shared ? ['--shared'] : []), ...(o.priority !== undefined && !holdUnsupported.has(`${this.bin}:--priority`) ? ['--priority',String(o.priority)] : []), ...(o.yield && !holdUnsupported.has(`${this.bin}:--yield`) ? ['--yield'] : [])];
+  }
+  private async holdFallback(args: string[], r: Pick<Spawned,'exit'|'stdout'|'stderr'>, cwd?: string, env?: NodeJS.ProcessEnv): Promise<'retry'|'ran'|undefined> {
+    const unknown = (r: Pick<Spawned,'exit'|'stdout'|'stderr'>) => r.exit !== 0 && r.exit !== 75 && !r.stdout.trim() && /^pi-durable-subagents: /m.test(r.stderr)
+      ? ['--yield','--priority'].find(f=>args.includes(f) && new RegExp(`\\b(?:unknown|unrecognized|unexpected)\\b[^\\n]*${f}\\b`,'i').test(r.stderr)) : undefined;
+    const flag=unknown(r); if (!flag) return;
+    const flags=args.slice(2,args.indexOf('--')).filter(f=>f !== '--no-wait');
+    const probe=await this.exec(['hold',args[1]!,...flags,'--no-wait','--','true'],undefined,this.timeout(),cwd,env);
+    if (unknown(probe) === flag) { holdUnsupported.add(`${this.bin}:${flag}`); return 'retry'; }
+    if (probe.exit === 0 || probe.exit === 75) return 'ran';
+  }
+  async hold(resource: string, argv: string[], o: HoldOptions & { env?: NodeJS.ProcessEnv } = {}): Promise<
     { outcome: 'ran'; exit: number | null; stdout: string; stderr: string } | { outcome: 'busy'; reason: string } | { outcome: 'refused'; reason: string } | { outcome: 'signal'; reason: string }> {
-    const r = await this.exec(['hold', resource, ...(o.shared ? ['--shared'] : []), ...(o.noWait === false ? [] : ['--no-wait']), '--', ...argv], undefined, 0, o.cwd ?? this.opts.cwd, o.env);
+    const args = ['hold', resource, ...this.holdFlags(o), ...(o.noWait === false ? [] : ['--no-wait']), '--', ...argv];
+    const r = await this.exec(args, undefined, 0, o.cwd ?? this.opts.cwd, o.env);
+    const fallback=await this.holdFallback(args,r,o.cwd ?? this.opts.cwd,o.env);
+    if (fallback === 'retry') return this.hold(resource,argv,o);
+    if (fallback === 'ran') return {outcome:'ran',exit:r.exit,stdout:r.stdout,stderr:r.stderr};
     if (r.signal) return { outcome: 'signal', reason: `signal ${r.signal}` };
     if (r.exit === 75) return { outcome: 'busy', reason: tail(r.stderr || r.stdout) || `${resource} is busy` };
     if (r.exit !== 0 && !r.stdout.trim() && /^pi-durable-subagents: /m.test(r.stderr)) return { outcome: 'refused', reason: tail(r.stderr) };
@@ -222,12 +240,13 @@ export class Dsa {
    * LE2: hold an argv child while an in-process measurement runs. The child announces acquisition, then owns only
    * stdin: EOF (also after a parent crash) releases it. Never measure before that announcement; always reap the group.
    */
-  async holdWhile<T>(resource: string, measure: (signal: AbortSignal) => Promise<T>, o: { shared?: boolean; cwd?: string; noWait?: boolean; signal?: AbortSignal } = {}): Promise<
+  async holdWhile<T>(resource: string, measure: (signal: AbortSignal) => Promise<T>, o: HoldOptions & { signal?: AbortSignal } = {}): Promise<
     { outcome: 'ran'; value: T } | { outcome: 'busy'; reason: string } | { outcome: 'refused'; reason: string }> {
     if (o.signal?.aborted) throw new DsaError('hold aborted');
     const holder = "process.stdin.resume(); process.stdin.on('end',()=>process.exit(0)); process.stdout.write('leased\\n');";
     const env = { ...process.env, ...this.opts.env }; delete env.DSA_SESSION; delete env.NODE_TEST_CONTEXT;
-    const child = spawn(this.bin, ['hold', resource, ...(o.shared ? ['--shared'] : []), ...(o.noWait ? ['--no-wait'] : []), '--', process.execPath, '-e', holder], { cwd: o.cwd ?? this.opts.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    const args = ['hold', resource, ...this.holdFlags(o), ...(o.noWait ? ['--no-wait'] : []), '--', process.execPath, '-e', holder];
+    const child = spawn(this.bin, args, { cwd: o.cwd ?? this.opts.cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const pid = child.pid; if (pid) this.live.add(pid);
     const ac = new AbortController(); let releasing = false, stdout = '', stderr = '', failed: Error | undefined;
     let ready!: (v: boolean) => void;
@@ -257,12 +276,16 @@ export class Dsa {
       if (!leased) {
         // `close` may await a descendant's inherited pipes after hold itself died. End stdin in finally first.
         const exit = await exited;
+        if (await this.holdFallback(args,{exit,stdout,stderr},o.cwd ?? this.opts.cwd,env) === 'retry') return this.holdWhile(resource,measure,o);
         if (exit === 75) return { outcome: 'busy', reason: tail(stderr || stdout) || `${resource} is busy` };
         return { outcome: 'refused', reason: tail(stderr || stdout) || `lease-holder exited ${exit ?? 'by a signal'} before acquisition` };
       }
       const value = await measure(ac.signal);
       if (ac.signal.aborted) throw new DsaError(`lease-holder of ${resource} ended during measurement`, { stdout, stderr });
       return { outcome: 'ran', value };
+    } catch (e) {
+      if (ac.signal.aborted && await exited === 75 && /^hold: yielded .*\(exit 75\)$/m.test(stderr || stdout)) return {outcome:'busy',reason:tail(stderr || stdout)};
+      throw e;
     } finally {
       releasing = true; clearTimeout(timer); o.signal?.removeEventListener('abort', abort);
       child.stdin.end();
