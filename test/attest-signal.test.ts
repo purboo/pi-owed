@@ -89,11 +89,11 @@ async function submitted(make: (root: string) => { checks?: object[]; invariants
 }
 
 /**
- * A check whose output pipe outlives its process group: `setsid sleep <hold>` escapes the SIGKILL of the group and keeps
- * stdout open, so the aborted run (and with it owed's abort path) waits until it exits. Records the escaped pid, the
+ * A check whose output pipe outlives its process group: `env -u OWED_RUN setsid sleep <hold>` deliberately drops the
+ * containment tag and escapes group cleanup, keeping stdout open until it exits. Records the escaped pid, the
  * temp worktree (pwd), then `<pid> <owed pid>` like slowRun.
  */
-const heldRun = (root: string, hold: number) => `setsid sleep ${hold} & echo $! > '${join(root, 'escaped')}'; pwd > '${join(root, 'tree')}'; echo $$ $PPID > '${join(root, 'pid')}'; sleep 60`;
+const heldRun = (root: string, hold: number) => `env -u OWED_RUN setsid sleep ${hold} & echo $! > '${join(root, 'escaped')}'; pwd > '${join(root, 'tree')}'; echo $$ $PPID > '${join(root, 'pid')}'; sleep 60`;
 const escapedPid = async (root: string): Promise<number | undefined> => Number((await readFile(join(root, 'escaped'), 'utf8').catch(() => '')).trim()) || undefined;
 
 /** A repository driven by the fake dsa: `owed` on PATH, scripted agents in `<root>/dsa/agents`, owner-initialized plan. */

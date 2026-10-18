@@ -1,7 +1,8 @@
 import { matchesWrite, writesSyntax } from './writes.ts';
 import { sha256 } from './canon.ts';
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readdir, readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
@@ -27,7 +28,7 @@ export function countNote(counts: Counts | undefined, minTests: number | undefin
   const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
   return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
 }
-export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; /** QS4: node checks measured on trunk or a merge tree (invariants already have subject trunk). */ quarantineFeedback?: boolean; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void; onTree?(path: string): void }
+export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; /** QS4: node checks measured on trunk or a merge tree (invariants already have subject trunk). */ quarantineFeedback?: boolean; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; commandScope?(run: () => Promise<CommandResult>): Promise<CommandResult>; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void; onTree?(path: string): void }
 function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
   for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
@@ -293,6 +294,8 @@ function failedTests(log: string, failed: readonly string[], cwd: string): strin
   return `failed tests: ${quotes.join(' | ')}${failed.length > 3 ? ` (+${failed.length - 3} more)` : ''}`;
 }
 const LIMIT = 1024 * 1024;
+// Cleanup must keep progressing when a caller virtualizes command/deadline timers.
+const cleanupTimer = setTimeout;
 /** E2.2: the last `n` non-empty output lines (ANSI colour removed, trailing blanks trimmed), each at most 200 characters. */
 export function lastLines(log: string, n = 5): string[] {
   return log.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').split(/\r?\n|\r/).map(l => l.trimEnd()).filter(l => l.trim()).slice(-n).map(l => l.slice(0, 200));
@@ -360,7 +363,7 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     delete inherited.NODE_TEST_CONTEXT;
     for (const name of Object.keys(inherited)) if (name.startsWith('DSA_') && name !== 'DSA_HOME') delete inherited[name];
     cwd = absolutePath(cwd);
-    const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment() };
+    const env: NodeJS.ProcessEnv = { ...inherited, ...ctx.plan.exec?.env, CI: '1', OWED: '1', OWED_TREE: cwd, ...leaseEnvironment(), OWED_RUN: randomUUID() };
     // QS2: never inherit a quarantine file into setup, counterfactuals, diagnostics or unrelated jobs.
     delete env.OWED_QUARANTINE_FILE;
     if (quarantineFile !== undefined) env.OWED_QUARANTINE_FILE = quarantineFile;
@@ -370,13 +373,31 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
     let measurementLog: string | undefined;
     const collect = (b: Buffer) => { if (measurementLog !== undefined) return; capture(b); output = Buffer.concat([output, b]); if (output.length > LIMIT) { outputTruncated = true; output = output.subarray(output.length - LIMIT); } };
     p.stdout.on('data', collect); p.stderr.on('data', collect);
-    let escalation: NodeJS.Timeout | undefined;
     const kill = (sig: NodeJS.Signals = 'SIGKILL') => { if (p.pid) { try { process.kill(-p.pid, sig); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ESRCH') error = String(e); } } };
-    const abort = () => {
-      error = 'aborted';
-      if (ctx.abortGraceMs) { kill('SIGTERM'); escalation = setTimeout(() => kill(), ctx.abortGraceMs); }
-      else kill();
-    };
+    let cleanup: Promise<void> | undefined;
+    const endTree = () => cleanup ??= (async () => {
+      const deadline = Date.now() + 5000;
+      kill('SIGTERM'); kill('SIGCONT');
+      const tagged = async (): Promise<number[]> => process.platform !== 'linux' ? [] : (await Promise.all((await readdir('/proc')).filter(p => /^\d+$/.test(p)).map(async p => {
+        // Unreadable environ (EACCES/EPERM) is unproven: never signal or wait for that process.
+        try { return (await readFile(`/proc/${p}/environ`)).toString().split('\0').includes(`OWED_RUN=${env.OWED_RUN}`) ? Number(p) : 0; } catch { return 0; }
+      }))).filter(Boolean);
+      const scan = async () => {
+        let timer: NodeJS.Timeout | undefined;
+        try { return await Promise.race([tagged().catch(()=>[]),new Promise<undefined>(r=>{timer=cleanupTimer(()=>r(undefined),Math.max(0,deadline-Date.now()));})]); }
+        finally { clearTimeout(timer); }
+      };
+      const send = (ids: number[], sig: NodeJS.Signals) => { kill(sig); for (const pid of ids) try { process.kill(pid, sig); } catch { /* gone */ } };
+      let ids=await scan();
+      if (ids) {
+        send(ids,'SIGTERM');
+        await new Promise(r=>cleanupTimer(r,Math.max(0,Math.min(ctx.abortGraceMs ?? 100,deadline-Date.now()))));
+        do { ids=await scan(); if (!ids) break; send(ids,'SIGKILL'); if (!ids.length) break; await new Promise(r=>cleanupTimer(r,Math.max(0,Math.min(25,deadline-Date.now())))); } while (Date.now()<deadline);
+      }
+      kill();
+      if (!ids) { p.stdout.destroy(); p.stderr.destroy(); }
+    })();
+    const abort = () => { error = 'aborted'; void endTree(); };
     let timeoutDetails: Promise<string> | undefined, wrapperDeadline: NodeJS.Timeout | undefined;
     const timer = setTimeout(() => {
       // Ruling #2118: freeze evidence at the boundary, before any diagnostic can alter the tree.
@@ -389,7 +410,7 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
         const deadline = Date.now() + (ctx.plan.exec?.wrap_grace_s ?? 30) * 1000;
         const arm = () => {
           const remaining = deadline - Date.now();
-          if (remaining <= 0) { kill(); return; }
+          if (remaining <= 0) { void endTree(); return; }
           wrapperDeadline = setTimeout(arm, Math.min(remaining, 2_147_483_647));
         };
         arm();
@@ -405,18 +426,17 @@ export async function runCommand(ctx: Pick<ExecContext, 'plan' | 'signal' | 'abo
           }
           return `${diagnostic}\n${wrapperTree ?? await timeoutProcessTree(p.pid)}`;
         } catch (e) { return `${diagnostic}\nprocess tree unavailable (${String(e).slice(0, 200)})`; }
-        finally { if (!wrapped) kill(); }
+        finally { if (!wrapped) await endTree(); }
       })();
     }, timeout * 1000);
     ctx.signal?.addEventListener('abort', abort, { once: true }); if (ctx.signal?.aborted) abort();
     p.on('error', e => { error = e.message; spawnError = true; });
     p.on('close', async (code, signal) => {
-      clearTimeout(timer); clearTimeout(escalation);
-      // RX2 #2265: close may leave background group members alive with redirected streams.
-      // Do not cancel their hard deadline and then wait for a slow timeout diagnostic.
-      if (wrapped && measurementLog !== undefined) kill();
+      clearTimeout(timer);
+      if (measurementLog !== undefined) await endTree();
       clearTimeout(wrapperDeadline); ctx.signal?.removeEventListener('abort', abort);
       const details = timeoutDetails ? await timeoutDetails : undefined;
+      if (cleanup) await cleanup;
       kill();
       if (details !== undefined) {
         output = output.subarray(Math.max(0, output.length - 256 * 1024));
@@ -581,7 +601,13 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   let timeoutNote: string | undefined, quarantineDirectory: string | undefined;
   const quarantineFiles = new Set<string>(), fileNotes = new Set<string>();
   const command = async (run: string, cwd: string, timeout: number, onTimeout?: string, quarantineFile?: string): Promise<CommandResult> => {
-    const result = await runCommand(ctx, run, cwd, timeout, capture, onTimeout, quarantineFile);
+    const execute = () => runCommand(ctx, run, cwd, timeout, capture, onTimeout, quarantineFile);
+    const result = await (ctx.commandScope ? ctx.commandScope(execute) : execute());
+    const line = result.log.split(/\r?\n/).findLast(line=>line.trim() !== '') ?? '';
+    if (result.code === 75 && /^hold: .*(not running the command|the command was stopped) \(exit 75\)$/.test(line)) {
+      obs.exit = result.code;
+      throw new EnvironmentError(`${line.includes('the command was stopped') ? 'the check yielded the machine lease' : 'machine lease not granted; the check did not run'}: ${line.slice(0,160)}`);
+    }
     if (result.error?.startsWith('timeout after')) {
       const beforeTimeout = result.measurementLog ?? result.log;
       const tail = lastLines(beforeTimeout, 3);

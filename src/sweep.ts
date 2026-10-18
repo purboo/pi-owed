@@ -1,5 +1,7 @@
-// SW: advisory trunk sweeps. Lease -> sweep operation lock -> short ledger append lock;
+// SW: advisory trunk sweeps. Preparation -> machine lease at first command -> short ledger append lock;
 // measurements hold no ledger lock; confirmed boundaries and escapes commit atomically.
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { CommandResult } from './exec.ts';
 import { Ledger, lockActivityText, entryHash } from './ledger.ts';
 import { readState } from './ops.ts';
 import { git, revParse, isAncestor } from './git.ts';
@@ -82,17 +84,28 @@ export async function sweep(o: SweepOptions): Promise<SweepResult | SweepNotDue>
       const due = await sweepDue(o.cwd,initial.state.plan,initial.entries,await revParse(o.cwd,o.commit ?? `refs/heads/${initial.state.trunk.name}`),Date.now(),o.startedAt);
       if (!due.due) return {notDue:true,skipped:true,note:due.text};
     }
-    const leaseAbort=new AbortController(); let running=false;
+    const leaseAbort=new AbortController(), lost=new AbortController(); let running=false;
+    const signal=AbortSignal.any([lost.signal,...(o.signal ? [o.signal] : [])]);
+    let acquired!: (scope:ReturnType<typeof AsyncLocalStorage.snapshot>)=>void, refused!: (e:unknown)=>void, release!: ()=>void;
+    const ready=new Promise<ReturnType<typeof AsyncLocalStorage.snapshot>>((resolve,reject)=>{acquired=resolve;refused=reject;}), done=new Promise<void>(resolve=>{release=resolve;});
+    let held:Promise<void> | undefined;
+    const commandScope=async (run:()=>Promise<CommandResult>):Promise<CommandResult> => {
+      held ??= withMachineLease({...o,signal:leaseAbort.signal,lease:o.lease !== false && initial.state.plan.lease !== false},async leaseSignal=> {
+        running=true;
+        const abort=()=>lost.abort();
+        leaseSignal?.addEventListener('abort',abort,{once:true}); if (leaseSignal?.aborted) abort();
+        acquired(AsyncLocalStorage.snapshot());
+        try { await done; } finally { leaseSignal?.removeEventListener('abort',abort); }
+      }).catch(e=>{lost.abort();refused(e);throw e;});
+      void held.catch(()=>{}); // Observe failure now; tree disposal precedes the final awaited rejection.
+      return (await ready)(run);
+    };
     const cancelWait=()=>{ if (!running) leaseAbort.abort(o.signal?.reason); };
     o.signal?.addEventListener('abort',cancelWait,{once:true}); if (o.signal?.aborted) cancelWait();
     try {
-      return await withMachineLease({...o,signal:leaseAbort.signal,lease:o.lease !== false && initial.state.plan.lease !== false},signal=> {
-        running=true;
-        // Cancel a queued acquisition at once, but retain an acquired holder until the
-        // detached check groups finish their TERM/KILL cleanup.
-        return runLeased(o.signal ? AbortSignal.any([o.signal,...(signal ? [signal] : [])]) : signal);
-      });
-    } finally { o.signal?.removeEventListener('abort',cancelWait); }
+      const result=await runLeased(signal,commandScope);
+      return running && o.lease !== false && initial.state.plan.lease !== false ? {...result,...(await ready)(()=>leaseResult({}))} : result;
+    } finally { release(); try { await held; } finally { o.signal?.removeEventListener('abort',cancelWait); } }
   } catch (e) {
     // Once append has begun the measurement is complete. Cancellation cannot turn that
     // committed evidence into a preemption receipt, or erase the append.
@@ -108,7 +121,7 @@ export async function sweep(o: SweepOptions): Promise<SweepResult | SweepNotDue>
     }
     throw e;
   }
-  async function runLeased(signal?: AbortSignal): Promise<SweepResult | SweepNotDue> {
+  async function runLeased(signal?: AbortSignal, commandScope?: (run:()=>Promise<CommandResult>)=>Promise<CommandResult>): Promise<SweepResult | SweepNotDue> {
     const ledger = await Ledger.open(o.cwd);
     return ledger.withLock(async () => {
       const {state,entries} = await readState(o), spec = state.plan.sweep;
@@ -129,7 +142,7 @@ export async function sweep(o: SweepOptions): Promise<SweepResult | SweepNotDue>
       const measure = async (at: string): Promise<SweepDraft> => {
         if (signal?.aborted) throw new OwedError('aborted','aborted');
         if (drafts.length >= limit || (samples.get(at)?.length ?? 0) >= 2) throw budget;
-        const obs = await runJob({cwd:o.cwd,plan,ledger,signal,abortGraceMs:2000,
+        const obs = await runJob({cwd:o.cwd,plan,ledger,signal,commandScope,abortGraceMs:2000,
           onFailureFiles:paths=>{if (!drafts.length) headFiles=paths;}}, {
           kind:'check',subject:'trunk',obligation:'sweep',key,commit:at,base:at,
           spec:{id:'sweep',...spec,reads:spec.reads ?? ['**']},

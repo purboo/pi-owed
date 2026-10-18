@@ -1946,6 +1946,20 @@ moved ref silently.
 ## 7. Executor (attest)
 
 `attest(node)` for the current candidate:
+
+Every setup, check, invariant and sweep command also receives a fresh random
+`OWED_RUN` token, independent of its key. On cancellation or timeout, owed ends
+the command group and, on Linux, processes carrying that exact token in
+`/proc/<pid>/environ`: group TERM precedes the first scan, followed by a grace
+interval, KILL and rescans. The five-second cleanup deadline includes scanning;
+an unfinished scan at the deadline ends cleanup and the command counts as ended.
+Only readable environ containing the exact token proves a process tagged.
+EACCES/EPERM (non-dumpable processes or another uid) is unproven: owed neither
+signals those processes nor waits for them. A command leaving its group and
+clearing the token or making environ unreadable is outside Linux containment.
+Cleanup completes before the lease is released. Other platforms retain group
+cleanup. Normal command exits retain their existing behavior.
+
 1. For each active execution block of the node, rerun its original item first
    (attribution) using the commit/base recorded in the failing obs.
 2. Materialize C clean: `git worktree add --detach <tmp> <C>`; restore closure
@@ -1996,8 +2010,8 @@ moved ref silently.
    `--rerun`.
 7. Remove the temporary worktree. Append one `obs` per item under the lock.
 8. Abort (D16): `attest`, `merge`, `init` and `adopt` take an optional
-   `signal` (AbortSignal). On abort the running check's process group gets
-   SIGKILL, that run records nothing, no further job starts, and the operation
+   `signal` (AbortSignal). On abort the running command group and tagged
+   descendants receive the cleanup described above; that run records nothing, no further job starts, and the operation
    rejects with `OwedError('aborted', 'aborted')`. Observations of jobs that
    completed before stay: attest/init appended them already; merge/adopt
    append the ones they measured when the ledger did not move meanwhile and
@@ -2328,6 +2342,16 @@ verdict, no block) with a note beginning `environment: `:
   those filtered lines in which the pattern matched (0.12: not the unfiltered
   tail), one per line, indented two spaces, each at most 200 characters. A run whose counts report `fail` > 0 is a `fail`, never
   environment; a passing run, a timeout or a signal is unaffected;
+- a check or invariant command, including a red counterfactual, that exits 75
+  whose last output line that is non-empty after trimming matches
+  `^hold: .*(not running the command|the command was stopped) \(exit 75\)$`
+  without trimming the matched line (only the CR in CRLF is removed); trailing
+  spaces after `(exit 75)` therefore retain the ordinary failure verdict.
+  Its note is `environment: machine lease not granted; the check did not run: <line>`
+  or `environment: the check yielded the machine lease: <line>`, with the
+  diagnostic limited to 160 characters. These errors use environment backoff;
+  they never count as failed checks, red passes or toward the two-errors halt.
+  Other exit-75 commands keep their ordinary verdict;
 - a failure before the command runs: tree preparation (worktree add,
   reused-tree reset/checkout, the closure and test overlays), a spawn failure
   (`environment: spawn failed: …`) and the plan's `setup` command
@@ -2364,11 +2388,20 @@ plain `error`. The driver does not count environment errors toward its
   Top-level plan `lease: false` disables acquisition repository-wide;
   default is on, `lease: true` is allowed, other types are refused. This
   field is neither an obligation nor part of any existing key. Acquire the
-  machine lease before operation/tree/ledger locks, retaining all existing
+  machine lease before operation/tree/ledger locks (except sweep preparation,
+  §7.15b), retaining all existing
   commit, CAS, observation and rollback boundaries. Init records genesis
   before leasing its measurement: interrupted measurement remains incomplete,
   never an unrecorded init. Already inherited `OWED_LEASED=1` still propagates
   when acquisition is disabled. No new ledger entry or field is introduced.
+  Driver and standalone attest/merge leases request `--priority 10`. If dsa
+  appears to reject that option as unknown, owed confirms using the same cwd,
+  env and hold flags with `--no-wait -- true`. Only the same unknown-option
+  refusal in that confirmation permits one retry without the flag and caches
+  the fallback for this executable in the current process. Confirmation exit
+  0 or 75 returns the original result as a command result: a command forging
+  dsa's refusal text is never executed twice. Other refusals keep their existing
+  meaning; priority requires pi-durable-subagents 1.1.0.
 - **LE4.** Leased results include `lease: "machine (shared)"` in JSON/tool
   details and `lease: machine (shared)` in text (driver completion detail,
   and the extension genesis-completion wake). This metadata is not persisted.
@@ -2393,7 +2426,7 @@ See Compatibility before taking the first leased measurement with 0.23.
 
 - **Plan.** Top-level `sweep: {run, timeout_s, reads?, every?}` (§3.9, §7.15b): non-empty command, positive integer timeout (default 600), optional list of read globs (default all paths). Unknown sweep fields and invalid types are refused. This field is not part of any existing check or invariant key and does not invalidate candidates. It adds no obligation. `reads` describes the suite, without restricting the detached tree.
 - **Execution.** `owed sweep [--commit C]` / `owed_sweep {commit?, lease?, cwd?}` / `ops.sweep({cwd, commit?, signal?, lease?})` resolves trunk's ref by default and runs setup plus the command on a fresh detached tree of that commit, with plan `exec.env`/`wrap`. Check-closure overlays and reused check trees do not apply. It uses §7.14's shared lease (waiting for standalone calls, no-wait for the staying driver); skip with CLI `--no-lease`, tool `lease: false` or plan `lease: false`. Leased result metadata says `lease: machine (shared)`, and the process receives `OWED_LEASED=1`.
-- **Persistence.** Each completed run appends a strict `sweep` entry: full 40-hex `commit`, sweep definition `key`, verdict, counts when recognized, log blob digest and `failed` names (TAP/cargo/counts protocol, at most 50). The definition hash covers the sweep command/timeout/reads, setup and all plan exec configuration (including env/wrap), never the lease setting; older entries without a key require green remeasurement. Preparation, spawn and timeout errors record `error`; cancellation sends SIGTERM to the detached process group and escalates to SIGKILL after 2 seconds, disposing the tree before releasing the acquired machine lease. The head and all probes are buffered and appended together only after the run finishes; preempting a head or bisect writes `note: sweep aborted: preempted` and no verdicts for that run. The atomic append is the completion point; after it begins a ready action treats the measurement as complete and cannot retroactively preempt its evidence. Sweep runs serialize with their own operation lock, acquired after the machine lease; they hold the ledger lock only while appending. Trunk or plan updates during a run do not change the commit its evidence names. The CLI exits 0 for pass, 1 for fail/error, 75 for acquisition busy.
+- **Persistence.** Each completed run appends a strict `sweep` entry: full 40-hex `commit`, sweep definition `key`, verdict, counts when recognized, log blob digest and `failed` names (TAP/cargo/counts protocol, at most 50). The definition hash covers the sweep command/timeout/reads, setup and all plan exec configuration (including env/wrap), never the lease setting; older entries without a key require green remeasurement. Preparation, spawn and timeout errors record `error`; cancellation sends SIGTERM to the detached process group and escalates to SIGKILL after 2 seconds, disposing the tree before releasing the acquired machine lease. The head and all probes are buffered and appended together only after the run finishes; preempting a head or bisect writes `note: sweep aborted: preempted` and no verdicts for that run. The atomic append is the completion point; after it begins a ready action treats the measurement as complete and cannot retroactively preempt its evidence. Sweep runs serialize with their own operation lock, preparing trees before the machine lease and acquiring it immediately before the first command; they hold the ledger lock only while appending. Trunk or plan updates during a run do not change the commit its evidence names. The CLI exits 0 for pass, 1 for fail/error, 75 for acquisition busy.
 - **Idle driver (without `sweep.every`).** Only staying drivers run automatic sweeps, with no ready action and no node measurement in flight. They schedule the sweep/bisect in the background and `Driver.pass()` never awaits it; ready dispatch, launch, attest, merge, rebase, follow-up or other driver work signals preemption and proceeds in that same pass. Cleanup and the aborted receipt finish in the background and are included in settle/drain, with no orphan process or lease holder. They skip a trunk commit with completed sweep entries, so restarts preserve the at-most-once rule; aborted runs have no verdict and retry on the next idle period. The driver rechecks that rule under the sweep operation lock. Busy leases/operation locks retry on a later timed pass without a halt; failures and errors wake the parent. Explicit sweeps may remeasure a commit.
 - **Bisect.** A head failure is rerun once before any search: pass on the rerun reports `flaky at head`, without bisect or proposal; error reports `inconsistent (flaky)`. An earlier passing ancestor is a green bound only when its stored definition key matches the current one; otherwise the current definition is run there first. If that run does not pass, report `no green boundary under current sweep definition; definition/environment change`, naming no culprit. The search candidates are recorded owed merges on the first-parent range, in order. Each probe/confirmation appends `bisect: true`. A measurement error stops localization. Before naming X, require two failing samples of X and a passing sample of its actual first parent X^; already repeated head measurements are reused rather than run a third time. Any disagreement reports `inconsistent (flaky)` with the observed verdicts and no culprit/proposal. Each commit is measured at most twice per invocation; total measurements are at most `ceil(log2(n)) + 4` for n owed merges in the search range. If the remaining budget cannot confirm the boundary, report `inconsistent (flaky): confirmation budget exhausted` with observations, without a proposal. Only a confirmed result names the first failing merge's full commit, node and merge seq. In 0.24 it records an automatic escape and coverage notice when the current definition still matches (§7.15b), rather than printing a manual proposal. No sweep result gates a merge. Without a green ancestor or an owed merge in the range it reports the failure alone. For an adopted failing tip, the last owed merge is probed first; if it passes/errors, no merge is blamed.
 - **Coverage.** Each merge computes paths in its actual prior-to-merge diff matched by none of the current invariant `reads`. Group uncovered files by their parent directory (`app/bundles/**`), remove directory globs covered by a shorter reported directory, and keep root files literal; sort and deduplicate. For touched uncovered files `app/bundles/foo/a.ts` and `app/bundles/bar/b.ts`, report `app/bundles/foo/**` and `app/bundles/bar/**`, never widen to `app/bundles/**` or another common ancestor: a suggestion must not cover paths that were not touched. CLI/tool merge results return `unguarded: string[]` and text `Unguarded paths: ...` (`none` when empty). Driver merge completion includes the same text. `owed brief` returns `unguarded: {node, seq, paths}[]` for the last 10 ledger merges, independently of `--since`, with coverage from each merge's recorded plan; text has an `Unguarded paths (last 10 merges)` section. It is report-only, never a gate and not stored as a new merge-entry field.
@@ -2450,8 +2483,21 @@ With `sweep.every` (§3.9), a continuously running driver, foreground or
 detached and staying or not, starts due sweeps in the background. They use the
 shared machine lease with no waiting and their own sweep operation lock,
 consume no node measurement slot, never overlap another sweep and continue
-alongside node work without waiting for it or preempting it. Only driver stop
-cancels a scheduled sweep. Busy acquisition retries later; existing drift,
+alongside node work without waiting for it or preempting it. Driver stop or a
+change to the recorded sweep definition or `every` policy cancels an in-flight
+scheduled sweep; removing `every` also cancels it. Once its atomic append has
+begun it completes. Plan cancellation records no verdict or interruption and
+runtime activity says `sweep aborted: plan changed` until another sweep starts.
+Preparation and tree checkout run before acquisition; the sweep requests its
+lease immediately before the first setup or measurement command and retains it
+through command cleanup. Scheduled leases use `--yield`: if dsa yields the
+lease, owed cancels measurement, records nothing and retries on a later pass
+like busy. Apparent unknown `--yield` refusals use the same confirmation as
+priority (§7.14): identical cwd/env/flags, `--no-wait -- true`; only a confirmed
+unknown-option refusal permits one retry without the flag and caches the
+fallback in this process. Confirmation exit 0 or 75 returns the original
+command result, never replays the measured command. Yield requires
+pi-durable-subagents 1.1.0. Busy acquisition retries later; existing drift,
 version and low-disk checks still apply. Without `every`, §7.15's idle-only
 scheduling and preemption remain.
 

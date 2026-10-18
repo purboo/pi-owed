@@ -290,7 +290,8 @@ test('D24.4: session_shutdown aborts the background genesis attest: its check en
     assert.equal(((await h.call('status')).details as ops.StatusView).genesis?.measuring, true);
     await h.handlers.get('session_shutdown')!({}, h.ctx);
     await until(async () => !alive(pid!), 'the check ends', 10_000);
-    await until(async () => !(await ops.status({ cwd: r.cwd })).genesis?.measuring, 'the attest ends');
+    // R-029-8: genesis runs in the tool worker; wait on that surface, not the host's registration.
+    await until(async () => !((await h.call('status')).details as ops.StatusView).genesis?.measuring, 'the attest ends');
     await new Promise(res => setImmediate(res));
     assert.equal(h.messages.length, 0, 'no wake-up after shutdown');
     assert.deepEqual((await entries(r.cwd)).map(e => e.kind), ['genesis']);
