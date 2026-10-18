@@ -24,7 +24,11 @@ Evidence so far (all commands ran remotely through `/tmp/owed-bench/run.sh`; log
 - Added cleanup regressions red on base: `o-lease-compare-172033.log`, 2 tests / 1 pass / 1 fail, exit 1; delayed genesis cleanup fails with ERR_ASSERTION, ordinary virtual timeout remains supported.
 - Current typecheck + focused integration: `o-lease-1-172122.log`, exit 0; 187 pass / 0 fail. Command: `npx tsc --noEmit -p . && node --test --test-concurrency=2 --test-reporter=tap test/olease.test.ts test/sweep.test.ts test/sweep024.test.ts test/lease.test.ts test/env.test.ts test/exec-red.test.ts test/drive-run.test.ts test/infra.test.ts test/nits.test.ts test/attest-signal.test.ts test/slotsetup.test.ts test/snapshot.test.ts`.
 
-The parent requires the final full suite on a clean source commit S, then a separate notes-only commit D recording S's identity and full receipt. D gets typecheck and the required leaf check before submit. Full-suite attempt 2/2 and final clean-tree receipts are pending this S checkpoint.
+Final source acceptance commit S: `85d7129c139df2cd95a27cfc77c556d477996f81`, tree `a9c0c5090b4e2d8eb06789842d894dc0a5b5c8c0`.
+
+Full-suite attempt 2/2 passed on clean S: `/tmp/owed-bench/logs/o-lease-1-172505.log`, exit 0; 1820 tests / 1820 pass / 0 fail / 0 cancelled / 0 skipped; duration 1238912.431695 ms (1238.9 s, within inv:suite's 1500 s). Exact command: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`. The identity header records S's exact commit/tree and dirty=0. No further full-suite runs are allowed.
+
+The parent-required follow-up D changes only this note. After committing D, run `npx tsc --noEmit -p .` and the required leaf check (`node --test --test-concurrency=2 --test-reporter=tap test/olease.test.ts test/sweep.test.ts test/sweep024.test.ts test/lease.test.ts test/env.test.ts test/exec-red.test.ts test/drive-run.test.ts test/infra.test.ts test/nits.test.ts`) on D, require dirty=0 and matching D tree, then submit D. D identity and those clean-tree log paths/exit codes belong to the final handoff; S's full-suite evidence stays pinned above.
 
 `git diff --stat 74e5930 -- src`:
 
