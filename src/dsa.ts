@@ -214,16 +214,22 @@ export class Dsa {
   private holdFlags(o: HoldOptions): string[] {
     return [...(o.shared ? ['--shared'] : []), ...(o.priority !== undefined && !holdUnsupported.has(`${this.bin}:--priority`) ? ['--priority',String(o.priority)] : []), ...(o.yield && !holdUnsupported.has(`${this.bin}:--yield`) ? ['--yield'] : [])];
   }
-  private holdFallback(args: string[], text: string): boolean {
-    const flag = ['--yield','--priority'].find(f => args.includes(f) && new RegExp(`\\b(?:unknown|unrecognized|unexpected)\\b[^\\n]*${f}\\b`,'i').test(text));
-    if (flag) holdUnsupported.add(`${this.bin}:${flag}`);
-    return !!flag;
+  private async holdFallback(args: string[], r: Pick<Spawned,'exit'|'stdout'|'stderr'>, cwd?: string, env?: NodeJS.ProcessEnv): Promise<'retry'|'ran'|undefined> {
+    const unknown = (r: Pick<Spawned,'exit'|'stdout'|'stderr'>) => r.exit !== 0 && r.exit !== 75 && !r.stdout.trim() && /^pi-durable-subagents: /m.test(r.stderr)
+      ? ['--yield','--priority'].find(f=>args.includes(f) && new RegExp(`\\b(?:unknown|unrecognized|unexpected)\\b[^\\n]*${f}\\b`,'i').test(r.stderr)) : undefined;
+    const flag=unknown(r); if (!flag) return;
+    const flags=args.slice(2,args.indexOf('--')).filter(f=>f !== '--no-wait');
+    const probe=await this.exec(['hold',args[1]!,...flags,'--no-wait','--','true'],undefined,this.timeout(),cwd,env);
+    if (unknown(probe) === flag) { holdUnsupported.add(`${this.bin}:${flag}`); return 'retry'; }
+    if (probe.exit === 0 || probe.exit === 75) return 'ran';
   }
   async hold(resource: string, argv: string[], o: HoldOptions & { env?: NodeJS.ProcessEnv } = {}): Promise<
     { outcome: 'ran'; exit: number | null; stdout: string; stderr: string } | { outcome: 'busy'; reason: string } | { outcome: 'refused'; reason: string } | { outcome: 'signal'; reason: string }> {
     const args = ['hold', resource, ...this.holdFlags(o), ...(o.noWait === false ? [] : ['--no-wait']), '--', ...argv];
     const r = await this.exec(args, undefined, 0, o.cwd ?? this.opts.cwd, o.env);
-    if (r.exit !== 0 && r.exit !== 75 && !r.stdout.trim() && /^pi-durable-subagents: /m.test(r.stderr) && this.holdFallback(args,r.stderr)) return this.hold(resource,argv,o);
+    const fallback=await this.holdFallback(args,r,o.cwd ?? this.opts.cwd,o.env);
+    if (fallback === 'retry') return this.hold(resource,argv,o);
+    if (fallback === 'ran') return {outcome:'ran',exit:r.exit,stdout:r.stdout,stderr:r.stderr};
     if (r.signal) return { outcome: 'signal', reason: `signal ${r.signal}` };
     if (r.exit === 75) return { outcome: 'busy', reason: tail(r.stderr || r.stdout) || `${resource} is busy` };
     if (r.exit !== 0 && !r.stdout.trim() && /^pi-durable-subagents: /m.test(r.stderr)) return { outcome: 'refused', reason: tail(r.stderr) };
@@ -270,7 +276,7 @@ export class Dsa {
       if (!leased) {
         // `close` may await a descendant's inherited pipes after hold itself died. End stdin in finally first.
         const exit = await exited;
-        if (exit !== 0 && exit !== 75 && this.holdFallback(args,`${stderr}\n${stdout}`)) return this.holdWhile(resource,measure,o);
+        if (await this.holdFallback(args,{exit,stdout,stderr},o.cwd ?? this.opts.cwd,env) === 'retry') return this.holdWhile(resource,measure,o);
         if (exit === 75) return { outcome: 'busy', reason: tail(stderr || stdout) || `${resource} is busy` };
         return { outcome: 'refused', reason: tail(stderr || stdout) || `lease-holder exited ${exit ?? 'by a signal'} before acquisition` };
       }

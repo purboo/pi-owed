@@ -24,7 +24,7 @@ import { setupFailure, infraSource, observationsOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import type { Runtime } from './needs.ts';
-import { withMeasuring, measuringScope, measuringRunning, measuringJob, assembleRuntime } from './activity.ts';
+import { withMeasuring, measuringScope, measuringRunning, measuringJob, assembleRuntime, readMeasuring } from './activity.ts';
 import { unguardedPaths, mergeCoverage, sweepRed } from './sweep.ts';
 export { sweep } from './sweep.ts';
 import { unruledBlocks } from './drive.ts';
@@ -2197,7 +2197,8 @@ export async function status(o: Context): Promise<StatusView> {
   const view = await summaryStatusView(o.cwd,ledger.dir,state,entries,Date.now());
   view.conflicts = await candidateConflicts(o.cwd,state);
   const trunkWorktree = await git.trunkElsewhere(o.cwd,state.trunk.name).catch(() => undefined);
-  if (view.genesis && await measuringHere(ledger.dir)) view.genesis.measuring = true;
+  // Native tool workers share the pid, not genesisRuns; retain measuring until their runtime cleanup ends.
+  if (view.genesis && (await measuringHere(ledger.dir) || (await readMeasuring(o.cwd)).some(m=>m.pid === process.pid && m.node === 'trunk'))) view.genesis.measuring = true;
   if (trunkWorktree) view.trunkWorktree = trunkWorktree;
   return view;
 }
