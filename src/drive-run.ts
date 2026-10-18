@@ -26,7 +26,7 @@ import { pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
 import { Ledger } from './ledger.ts';
 import { driveConfig, measureCap, minFreeMb, idleRewakeMin } from './plan.ts';
 import { DISK_FULL } from './exec.ts';
-import { renderSweep, unguardedText, sweepDue } from './sweep.ts';
+import { renderSweep, unguardedText, sweepDue, sweepDefinitionKey } from './sweep.ts';
 import { withMachineLease, machineLeased, leaseText, leaseResult } from './lease.ts';
 import { halted, projectId, mergeQueue, reviewEpoch, waitingFor, trunkParked, reportedOf, type Waiting } from './reducer.ts';
 import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
@@ -428,7 +428,7 @@ export class Driver {
   readonly abort = new AbortController();
   /** K6: measurements in flight by node, in start order; `ended`: those that ended and await `reap`, in end order. */
   readonly measuring = new Map<string, Measurement>();
-  private sweepRun?: { abort:AbortController; ended:Promise<void>; done:boolean; committing:boolean; scheduled:boolean; reports:ActionReport[] };
+  private sweepRun?: { abort:AbortController; ended:Promise<void>; done:boolean; committing:boolean; scheduled:boolean; policy:string; reports:ActionReport[] };
   private readonly startedAt=Date.now();
   private sweepBusyAt?: number;
   private readonly ended: Measurement[] = [];
@@ -733,8 +733,9 @@ export class Driver {
     }
     // Sweep checks own detached process groups. Cancellation is asynchronous: a ready action never
     // awaits the sweep/bisect; it signals preemption and proceeds in this same pass.
-    if (this.sweepRun && !this.sweepRun.done && !this.sweepRun.committing && (this.stopping || (!this.sweepRun.scheduled && (drift || mergeReady || actions.some(a=>a.do !== 'notify') || Object.values(s.nodes).some(n=>n.phase === 'ready'))))) {
-      this.sweepRun.abort.abort(this.stopping ? 'stopped' : 'preempted');
+    const planChanged = this.sweepRun?.scheduled && this.sweepRun.policy !== this.sweepPolicy(s);
+    if (this.sweepRun && !this.sweepRun.done && !this.sweepRun.committing && (planChanged || this.stopping || (!this.sweepRun.scheduled && (drift || mergeReady || actions.some(a=>a.do !== 'notify') || Object.values(s.nodes).some(n=>n.phase === 'ready'))))) {
+      this.sweepRun.abort.abort(planChanged ? 'plan changed' : this.stopping ? 'stopped' : 'preempted');
     }
     /** F2.3: whether the disk is low this pass (checked once, before the first measurement it would start). */
     let low: boolean | undefined;
@@ -835,12 +836,13 @@ export class Driver {
     return true;
   }
 
+  private sweepPolicy(s:State): string { return JSON.stringify([sweepDefinitionKey(s.plan),s.plan.sweep?.every?.merges,s.plan.sweep?.every?.minutes]); }
   private startSweep(s:State): ActionReport {
-    const run={abort:new AbortController(),ended:Promise.resolve(),done:false,committing:false,scheduled:!!s.plan.sweep?.every,reports:[] as ActionReport[]};
+    const run={abort:new AbortController(),ended:Promise.resolve(),done:false,committing:false,scheduled:!!s.plan.sweep?.every,policy:this.sweepPolicy(s),reports:[] as ActionReport[]};
     const abort=()=>run.abort.abort(this.abort.signal.reason);
     this.abort.signal.addEventListener('abort',abort,{once:true});
     if (this.abort.signal.aborted) abort();
-    const options={cwd:this.root!,commit:s.trunk.commit,noWait:true,dsa:this.dsa,signal:run.abort.signal,onCommit:()=>{run.committing=true;}};
+    const options={cwd:this.root!,commit:s.trunk.commit,noWait:true,yield:run.scheduled,dsa:this.dsa,signal:run.abort.signal,onCommit:()=>{run.committing=true;}};
     const pending=run.scheduled ? ops.sweep({...options,due:true,startedAt:this.startedAt}) : ops.sweep({...options,once:true});
     run.ended=pending.then(r=> {
         if ('notDue' in r || r.skipped) return;
@@ -849,7 +851,7 @@ export class Driver {
           ? {do:'sweep',node:'sweep',scope:'repo',outcome:r.entry.verdict,detail:renderSweep(r)}
           : {do:'notify',node:'sweep',scope:'repo',outcome:'notify',text:renderSweep(r),facts:r.entry.seq});
       },(e:unknown)=> {
-        if (run.abort.signal.aborted) run.reports.push({do:'sweep',node:'sweep',scope:'repo',outcome:'aborted',detail:`sweep aborted: ${run.abort.signal.reason === 'preempted' ? 'preempted' : 'stopped'}`});
+        if (run.abort.signal.aborted) run.reports.push({do:'sweep',node:'sweep',scope:'repo',outcome:'aborted',detail:`sweep aborted: ${String(run.abort.signal.reason)}`});
         else {
           const busy=e instanceof OwedError && e.code === 'busy';
           if (busy) this.sweepBusyAt=this.cycle;
@@ -867,7 +869,7 @@ export class Driver {
     if (this.abort.signal.aborted) abort();
     const at = new Date().toISOString(), m: Measurement = { do:'attest', node:'trunk', attempt:0, at, done:false, ended:Promise.resolve(), abort: ac };
     let busy: ActionReport | undefined;
-    m.ended = withMachineLease({ cwd:this.root!, signal:ac.signal, lease:s.plan.lease !== false, noWait:true, dsa:this.dsa }, signal => ops.attestTrunk({ cwd:this.root!, signal }))
+    m.ended = withMachineLease({ cwd:this.root!, signal:ac.signal, lease:s.plan.lease !== false, noWait:true, priority:10, dsa:this.dsa }, signal => ops.attestTrunk({ cwd:this.root!, signal }))
       .then(r => { m.finish = async () => [{ do:'attest', node:'trunk', scope:'repo', outcome:'done', detail:ops.attestTrunkText(r) }]; }, (e:unknown) => {
         const outcome = ac.signal.aborted ? 'aborted' : e instanceof OwedError && e.code === 'busy' ? 'busy' : 'error';
         const report: ActionReport = { do:'attest', node:'trunk', scope:'repo', outcome, detail:ac.signal.reason === 'preempted' ? 'trunk attest aborted: preempted' : e instanceof Error ? e.message : String(e) };
@@ -1118,7 +1120,7 @@ export class Driver {
     const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; } });
     let ran: { exit: number | null; stdout: string; stderr: string };
     if (hold) {
-      const r = await this.dsa.hold('machine', argv, { shared: true, cwd, env: { OWED_LEASED: '1' } });
+      const r = await this.dsa.hold('machine', argv, { shared: true, priority:10, cwd, env: { OWED_LEASED: '1' } });
       if (r.outcome === 'busy') return busy(busyDetail(node, r.reason));
       if (r.outcome === 'signal') return fail(`pi-durable-subagents hold ended by ${r.reason}`);
       if (r.outcome === 'refused') return fail(`pi-durable-subagents hold refused: ${tail(r.reason)}${/--no-wait/.test(r.reason) ? ' (owed drive requires pi-durable-subagents >= 1.0.27 for `hold --no-wait`)' : ''}`);
@@ -1155,7 +1157,7 @@ export class Driver {
   /** LE2: busy merge acquisition has the same back-off and status lifecycle as attest, never a halt. */
   private async leasedMerge(node: string, attempt: number, lease: boolean, batch?: { members: string[]; trunk: string }): Promise<Ended> {
     try {
-      const finish = await withMachineLease({ cwd: this.root!, lease, dsa: this.dsa, noWait: true, signal: this.abort.signal }, signal => batch ? this.mergeBatch(batch.members, batch.trunk, signal) : this.merge(node, attempt, signal));
+      const finish = await withMachineLease({ cwd: this.root!, lease, dsa: this.dsa, noWait: true, priority:10, signal: this.abort.signal }, signal => batch ? this.mergeBatch(batch.members, batch.trunk, signal) : this.merge(node, attempt, signal));
       return { finish };
     } catch (e) {
       if (e instanceof OwedError && e.code === 'busy') {

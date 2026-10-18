@@ -6,7 +6,7 @@ import { OwedError } from './errors.ts';
 
 const scope = new AsyncLocalStorage<{ leased: boolean; waitMs?: number }>();
 export const LEASE = 'machine (shared)';
-export interface LeaseOptions { cwd: string; lease?: boolean; signal?: AbortSignal; noWait?: boolean; dsa?: Dsa }
+export interface LeaseOptions { cwd: string; lease?: boolean; signal?: AbortSignal; noWait?: boolean; priority?: number; yield?: boolean; dsa?: Dsa }
 /** Concurrent in-process measurements must not set process.env: each has its own lease context. */
 export function machineLeased(): boolean { return scope.getStore()?.leased === true || process.env.OWED_LEASED === '1'; }
 export function measurementScope(): boolean { return scope.getStore() !== undefined; }
@@ -54,7 +54,7 @@ export async function withMachineLease<T>(o: LeaseOptions, measure: (signal?: Ab
     const r = await leaseBeforeDeadline(o.signal,(signal,acquired) => dsa.holdWhile('machine', signal => {
       acquired();
       return scope.run({ leased: true, waitMs: Math.max(0, Date.now() - started) }, () => measure(signal));
-    }, { shared: true, cwd: o.cwd, noWait: o.noWait, signal }));
+    }, { shared: true, cwd: o.cwd, noWait: o.noWait, priority:o.priority, yield:o.yield, signal }));
     if (r.outcome === 'busy') throw new OwedError(r.reason, 'busy');
     if (r.outcome === 'refused') throw new OwedError(`pi-durable-subagents hold refused: ${r.reason}`);
     return r.value;
