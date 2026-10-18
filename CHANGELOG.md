@@ -1,5 +1,110 @@
 # Changelog
 
+## 0.29.0
+
+Fewer needless interruptions. No ledger format, entry kind, entry field,
+enum value or plan key changes. Old ledgers and snapshots replay identically;
+version-bound disk snapshots are rebuilt on upgrade. pi-durable-subagents
+>= 1.1.0 enables durable-writer waits, seal diagnostics and the new lease
+options; older dsa keeps 0.28 writer-wait and lease behavior. The other
+improvements below do not require that runner upgrade.
+
+- **Writers can wait on their own durable runs.** A successful sealed or
+  pruned writer with no current candidate and outstanding durable wakes gets
+  no submit reminder or stopped/no-submit halt, including after repair,
+  ruling and rebase follow-ups. Due follow-ups still run; non-ok seals keep
+  their halt/recovery route and name outstanding durable requests. Writer
+  packets give `pi-durable-subagents run --request owed-<project>-<node>-<attempt>-<name> --wake caller -- <command…>`:
+  start the long command, then end the turn without submitting. dsa resumes
+  the writer with the command's exit status and output tail; owed recognizes
+  the wake's generation without replaying its earlier follow-up. A live
+  driver's status and why show `writer waiting on durable <request>` under
+  In progress, without a wait-generated Needs you or parent wake. Without
+  a live driver this runtime fact is unknown. Age uses the described seal
+  time, or the first driver observation of that generation when unavailable;
+  that approximation resets on restart and affects display only.
+- **Stopped-writer quotes keep the substance.** Halts flatten the whole
+  final reply, quoting up to 600 Unicode code points in full; longer replies
+  keep the first 200 and last 380, retreating to nearby spaces. Up to three
+  omitted commit IDs (up to 12 hex characters) and three durable IDs are
+  appended in first-appearance order. JSON, control and bidi escaping remain; old recorded halts are not
+  rewritten. When dsa reports processes it killed at seal, the halt adds
+  their total and at most three pid/command descriptions, commands bounded
+  to 80 code points. The quote is context, not acceptance evidence.
+- **Held by ruling is progress, not a resume request.** After a halt,
+  `owed decide <node> --text "<decision>" --no-resume` leaves it stopped as
+  `held by ruling #N; owed resume <node> releases it`. Status, brief, `/owed`
+  and receipts show the hold without asking the parent to resume; why keeps
+  the release command in Next. The held halt no longer wakes the parent,
+  and obsolete queued needs are dropped at delivery revalidation. Other
+  obligations, review decisions, questions and debt remain actionable;
+  prospective/global rulings and rulings before the halt do not hold it.
+- **Scheduled sweeps stop when their policy changes and yield the lease.**
+  Changing the recorded sweep definition or `every`, or removing `every`,
+  cancels an in-flight scheduled sweep without a verdict or interruption;
+  an atomic append already begun completes. Driver activity reports
+  `sweep aborted: plan changed`. Scheduled sweeps request `--yield`; a lease
+  yield aborts measurement, records nothing and retries later like busy.
+  Unsupported options fall back only after a separate no-op hold confirms
+  dsa's unknown-option refusal; the measured command is never run twice.
+- **Cancellation cleans up tagged process trees before releasing leases.**
+  Every setup, check, invariant and sweep command gets a fresh `OWED_RUN`
+  token, outside evidence keys. Abort/timeout ends the command group and,
+  on Linux, escaped descendants proven to carry that exact token in readable
+  `/proc/<pid>/environ`, using TERM, grace, KILL and rescans bounded to five
+  seconds including scanning. Unreadable or untagged processes are not
+  individually signalled or waited for: leaving the group and clearing the
+  token or making environ unreadable escapes this containment. Other
+  platforms retain group-only cleanup; normal exits are unchanged.
+- **Sweep preparation no longer occupies the machine lease.** Replay and
+  the first tree checkout run before acquisition. The sweep acquires its
+  lease immediately before the first setup or measurement command and
+  retains it through command and tree cleanup.
+- **Lease-wait timeouts are environment errors, not failed checks.** A
+  check or invariant, red runs included, exiting 75 with last non-empty
+  output matching `hold: … not running the command (exit 75)` or
+  `hold: … the command was stopped (exit 75)` records an environment error
+  explaining that the lease was not granted or yielded. It uses existing
+  backoff, never counts as a failed check, red pass or toward the two-errors
+  halt. Other exit-75 output, including trailing spaces after `(exit 75)`,
+  keeps its ordinary verdict.
+- **Acceptance measurements request priority 10.** Driver and standalone
+  attest/merge machine holds pass `--priority 10`; a confirmed unknown-option
+  refusal retries once without it and remembers the fallback in that process.
+  Lease opt-outs and acceptance gates are unchanged.
+- **Candidate-only files do not make a trunk probe trunk-red.** Automatic
+  merge probes and `owed attest <node> --probe-trunk [--check <id>] [--runs <n>]`
+  classify a failed probe naming a missing candidate-added file absent from
+  the probed trunk as `error`, with
+  `probe not applicable: trunk lacks <path>, which the candidate adds`.
+  Outside-checkout absolute paths are ignored.
+  The failed merge check still refuses the merge; this is not a pass or a
+  waiver. Merge checks run on a synthetic merge commit, with HEAD^1 the
+  trunk tip and HEAD^2 the candidate: checks must not pin the candidate base.
+- **Anonymous merge-check failures show their last output line.** When no
+  failed test names were parsed, the merge refusal and newly recorded
+  merge-check need/notice details include the last non-empty output line,
+  escaped and bounded to 160 characters. Unmarked historical notes retain
+  their old rendering; anonymous invariant failures keep their existing
+  refusal diagnostics rather than receiving the new check marker.
+- **Housekeeping is a hint, not automatic deletion.** Compact/full status
+  and merge replies show
+  `Housekeeping: <n> finished attempt worktrees; owed gc reclaims them`
+  at five registered, recorded closed attempts.
+  Open attempts, unrecorded and measurement worktrees do not count; a failed
+  listing shows no hint. Use `owed gc --dry-run` before `owed gc`: the hint
+  neither deletes anything nor promises dirty/locked worktrees can be removed.
+- **W14 replay.** On the wais ledger copy (17147 entries, 1130 sampled
+  states, both engines in one replay), 0.29 reports (a)/(b)/(c) = 0/0/0 and
+  uncovered 715, unchanged from 0.28 (588 suppressed obligations, 107
+  repository items, 20 node items without a single command). Of the 9 sampled
+  halts held by a ruling, 0.28.0 offered `owed resume <node>` as the primary
+  command for 3; 0.29 offers it for 0. Status, decide and why rendering time
+  is unchanged from 0.28.
+- **Source growth stays within budget.** Against 0.28.0, `src/*.ts` has
+  331 insertions and 109 deletions across 14 files, net +222 lines, within
+  the 0.29 budget of +300.
+
 ## 0.28.0
 
 One authority for outstanding needs. No ledger format, entry kind, entry

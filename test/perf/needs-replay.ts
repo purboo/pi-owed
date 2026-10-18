@@ -9,7 +9,7 @@ import { performance } from 'node:perf_hooks';
 import { reduce, extendState, entriesOf } from '../../src/reducer.ts';
 import { parsePlan } from '../../src/plan.ts';
 import { validateArgv } from '../../src/cli.ts';
-import { needs, repoNeeds } from '../../src/needs.ts';
+import { needs, repoNeeds, heldRuling, resumeCommand } from '../../src/needs.ts';
 import { statusView, renderStatus, receipt, renderWhy } from '../../src/views.ts';
 import { decide } from '../../src/drive.ts';
 import type { Need } from '../../src/needs.ts';
@@ -41,13 +41,15 @@ export interface Result {
   global: { missingBlobs: Finding[]; foldFailures: Finding[] };
   itemBranches: { i: number; ii: number; iii: number; iv: number };
   itemInfo: Finding[];
+  /** 0.29 release gate: held halts (oracle heldRuling) at sampled seqs, and how many show `owed resume <node>`. */
+  held?: { nodes: number; resumeShown: number; shown: Finding[] };
 }
 const DETAIL_LIMIT = 200;
 function result(version: string): Result {
   return { version, entries: 0, samples: 0, renderedSamples: 0, nodes: 0, normalizedLines: 0,
     timing: { foldMs: 0, planParseMs: 0, planParses: 0, jsonReads: 0, oracleFoldMs: 0, statusMs: 0, decideMs: 0, whyMs: 0, auditMs: 0, samples: [] }, errors: { a: 0, b: 0, c: 0 },
     coverage: { uncovered: 0, missingBlobs: 0, notEmitted: 0, unavailable: 0, diagnostic: 0 },
-    findings: { a: [], b: [], c: [], uncovered: [], missingBlobs: [], notEmitted: [], unavailable: [], diagnostic: [] }, truncated: false, global: { missingBlobs: [], foldFailures: [] }, itemBranches: { i: 0, ii: 0, iii: 0, iv: 0 }, itemInfo: [] };
+    findings: { a: [], b: [], c: [], uncovered: [], missingBlobs: [], notEmitted: [], unavailable: [], diagnostic: [] }, truncated: false, global: { missingBlobs: [], foldFailures: [] }, itemBranches: { i: 0, ii: 0, iii: 0, iv: 0 }, itemInfo: [], held: { nodes: 0, resumeShown: 0, shown: [] } };
 }
 function add(r: Result, kind: keyof Result['findings'], f: Finding): void {
   if (kind === 'a' || kind === 'b' || kind === 'c') r.errors[kind]++;
@@ -215,6 +217,15 @@ function audit(r: Result, state: State, seq: number, raw: Snapshot): void {
       if (ns.some(n => n.actor === 'owner' || n.obligation !== undefined && n.kind !== 'rule')) add(r, 'a', { seq, node: node.id, reason: 'diagnostic notify misses an owner need' });
     }
     if (shown.notEmitted) add(r, 'notEmitted', { seq, node: node.id, surface: 'owner notice', reason: shown.notEmitted });
+    const heldBy = heldRuling(state, node.id);
+    if (heldBy && r.held) {
+      r.held.nodes++;
+      const rows = [...shown.status, shown.why.headline, ...(shown.why.next ?? [])];
+      if (rows.some(line => primary(line) === resumeCommand(node.id))) {
+        r.held.resumeShown++;
+        if (r.held.shown.length < DETAIL_LIMIT) r.held.shown.push({ seq, node: node.id, reason: `held by ruling #${heldBy.seq}; resume shown` }); else r.truncated = true;
+      }
+    }
     const primaryNeed = ns[0];
     const expected = (surface: string, line: string | undefined, n: Need | undefined, command = n?.command) => {
       if (!line?.trim()) add(r, 'uncovered', { seq, node: node.id, surface, obligation: n?.obligation, reason: 'missing output for a need' });
@@ -374,6 +385,7 @@ function mergeReports(files: string[]): ReplayReport {
       out.samples += r.samples; out.renderedSamples += r.renderedSamples; out.nodes += r.nodes; out.normalizedLines += r.normalizedLines;
       for (const k of ['i', 'ii', 'iii', 'iv'] as const) out.itemBranches[k] += r.itemBranches[k];
       out.itemInfo.push(...r.itemInfo);
+      if (r.held && out.held) { out.held.nodes += r.held.nodes; out.held.resumeShown += r.held.resumeShown; out.held.shown.push(...r.held.shown); }
       for (const k of ['a', 'b', 'c'] as const) out.errors[k] += r.errors[k];
       for (const k of ['uncovered', 'notEmitted', 'unavailable', 'diagnostic'] as const) out.coverage[k] += r.coverage[k] - (k === 'uncovered' ? r.global.foldFailures.length : 0);
       for (const k of Object.keys(out.findings) as (keyof Result['findings'])[]) {
@@ -394,6 +406,8 @@ function mergeReports(files: string[]): ReplayReport {
     }
     out.itemInfo.sort((a, b) => a.seq - b.seq || JSON.stringify(a).localeCompare(JSON.stringify(b)));
     if (out.itemInfo.length > DETAIL_LIMIT) { out.itemInfo.length = DETAIL_LIMIT; out.truncated = true; }
+    out.held?.shown.sort((a, b) => a.seq - b.seq || (a.node ?? '').localeCompare(b.node ?? ''));
+    if (out.held && out.held.shown.length > DETAIL_LIMIT) { out.held.shown.length = DETAIL_LIMIT; out.truncated = true; }
     out.timing.samples.sort((a, b) => a.seq - b.seq);
     return out;
   });
@@ -521,6 +535,7 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
         io.log(`${r.version}: entries=${r.entries} samples=${r.samples} renderedSamples=${r.renderedSamples} nodes=${r.nodes}; (a)=${r.errors.a} (b)=${r.errors.b} (c)=${r.errors.c}; coverage=${JSON.stringify(r.coverage)}; normalizedLines=${r.normalizedLines}`);
         io.log(`${r.version} timing: ${JSON.stringify(r.timing)}`);
         io.log(`${r.version} item branches: ${JSON.stringify(r.itemBranches)}`);
+        if (r.held) io.log(`${r.version} held halts: nodes=${r.held.nodes} resumeShown=${r.held.resumeShown}`);
         for (const f of r.itemInfo) io.log(`${r.version} item info: ${JSON.stringify(f)}`);
         for (const [kind, findings] of Object.entries(r.findings)) for (const f of findings) io.log(`${r.version} ${kind}: ${JSON.stringify(f)}`);
         if (r.truncated) io.log(`${r.version}: details truncated; totals include every finding`);
