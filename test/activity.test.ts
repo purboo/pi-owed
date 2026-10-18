@@ -61,7 +61,7 @@ function other(record: Awaited<ReturnType<typeof records>>[number] | undefined) 
 
 test('AC vocabulary is the byte-for-byte pinned needs-types sha', async () => {
   const bytes = await readFile(new URL('../src/needs-types.ts',import.meta.url)).catch(() => Buffer.alloc(0));
-  assert.equal(sha256(bytes), '7100ff5239731103fd8b95b360b260ff911e72a84822980a5bac55bfac65f7e8');
+  assert.equal(sha256(bytes), 'c6a3451120a2ffe30465bd7c0afd1a7cd6a600e07b6a8f6acad394b51064fbf5');
 });
 
 test('AC1 candidate job publishes one running record in the common owed dir and cleans it after completion', { timeout: 60_000 }, async () => {

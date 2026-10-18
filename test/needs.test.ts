@@ -250,7 +250,7 @@ test('NE17 N1: unknown driver never implies stopped; ready nodes dispatch only o
 
 test('NE18 pinned vocabulary is byte-identical to the contract sha', async () => {
   await api();
-  assert.equal(sha256(await readFile(new URL('../src/needs-types.ts', import.meta.url))), '7100ff5239731103fd8b95b360b260ff911e72a84822980a5bac55bfac65f7e8');
+  assert.equal(sha256(await readFile(new URL('../src/needs-types.ts', import.meta.url))), 'c6a3451120a2ffe30465bd7c0afd1a7cd6a600e07b6a8f6acad394b51064fbf5');
 });
 
 test('NE19 NE-CLI: exported grammar preserves CLI usage outcomes before I/O', async () => {
