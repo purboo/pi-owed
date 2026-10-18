@@ -32,7 +32,7 @@ const elapsed = <T>(run: () => T, record: (ms: number) => void): T => {
 export interface ReplayIo { log(text: string): void; error(text: string): void }
 interface Finding { seq: number; node?: string; obligation?: string; surface?: string; command?: string; reason: string }
 export interface Result {
-  version: string; entries: number; samples: number; nodes: number; normalizedLines: number;
+  version: string; entries: number; samples: number; renderedSamples: number; nodes: number; normalizedLines: number;
   timing: { foldMs: number; planParseMs: number; planParses: number; jsonReads: number; oracleFoldMs: number; statusMs: number; decideMs: number; whyMs: number; auditMs: number; samples: SampleTiming[] };
   errors: { a: number; b: number; c: number };
   coverage: { uncovered: number; missingBlobs: number; notEmitted: number; unavailable: number; diagnostic: number };
@@ -44,7 +44,7 @@ export interface Result {
 }
 const DETAIL_LIMIT = 200;
 function result(version: string): Result {
-  return { version, entries: 0, samples: 0, nodes: 0, normalizedLines: 0,
+  return { version, entries: 0, samples: 0, renderedSamples: 0, nodes: 0, normalizedLines: 0,
     timing: { foldMs: 0, planParseMs: 0, planParses: 0, jsonReads: 0, oracleFoldMs: 0, statusMs: 0, decideMs: 0, whyMs: 0, auditMs: 0, samples: [] }, errors: { a: 0, b: 0, c: 0 },
     coverage: { uncovered: 0, missingBlobs: 0, notEmitted: 0, unavailable: 0, diagnostic: 0 },
     findings: { a: [], b: [], c: [], uncovered: [], missingBlobs: [], notEmitted: [], unavailable: [], diagnostic: [] }, truncated: false, global: { missingBlobs: [], foldFailures: [] }, itemBranches: { i: 0, ii: 0, iii: 0, iv: 0 }, itemInfo: [] };
@@ -222,14 +222,35 @@ function audit(r: Result, state: State, seq: number, raw: Snapshot): void {
         reason: 'primary command differs between rendered surface and need', command: JSON.stringify({ need: command ?? null, rendered: primary(line) ?? null }) });
     };
     // summaryView/summaryHead and drive.needLines map every need, preserving within-node order.
-    // Match text identities first so deleting a middle row cannot shift a later need into its slot.
-    const needRows = (surface: string, rows: string[], list: Need[]) => list.forEach((n, index) => {
-      const identity = (line: string, need: Need) => line.includes(need.text);
-      const exact = rows.find(line => identity(line, n));
-      const fallback = rows.length === list.length && !list.some(other => other !== n && identity(rows[index] ?? '', other)) ? rows[index] : undefined;
-      expected(surface, exact ?? fallback, n);
-    });
-    needRows('status', shown.status, ns);
+    // Multiset matching: reserve exact identities globally before any text/index fallback.
+    // Identical needs still require distinct rows; a consumed row cannot satisfy another need.
+    const needRows = (surface: string, rows: string[], list: Need[]) => {
+      const bodies = rows.map(line => line.replace(surface === 'compact why next' ? /^Next: / : new RegExp(`^\\s*${node.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}: `), ''));
+      const used = new Set<number>(), matched = new Map<number, number>();
+      const reserve = (needIndex: number, rowIndex: number) => { used.add(rowIndex); matched.set(needIndex, rowIndex); };
+      const identity = (body: string, n: Need) => body === n.text || body.startsWith(`${n.text} → `) || body === `${n.text} (no single command)`;
+      list.forEach((n, i) => {
+        const text = `${n.text}${n.command ? ` → ${n.command}` : ' (no single command)'}`;
+        const row = bodies.findIndex((body, j) => !used.has(j) && body === text);
+        if (row >= 0) reserve(i, row);
+      });
+      list.forEach((n, i) => {
+        if (matched.has(i)) return;
+        const row = bodies.findIndex((body, j) => !used.has(j) && identity(body, n));
+        if (row >= 0) reserve(i, row);
+      });
+      list.forEach((n, i) => {
+        if (!matched.has(i) && rows.length === list.length) {
+          const remaining = rows.map((_, j) => j).filter(j => !used.has(j));
+          const row = remaining.find(j => !list.some((other, k) => k !== i && identity(bodies[j] ?? '', other)));
+          if (row !== undefined) reserve(i, row);
+        }
+        const row = matched.get(i);
+        expected(surface, row === undefined ? undefined : rows[row], n);
+      });
+      return new Map([...matched].map(([i, row]) => [row, list[i]!]));
+    };
+    const statusNeeds = needRows('status', shown.status, ns);
     if (primaryNeed) expected('compact why headline', shown.why.headline, primaryNeed);
     // R-028-71: use Need + public text forms, never a renderer's own itemLine as its oracle.
     for (const i of node.items.filter(i => i.status === 'D')) {
@@ -250,19 +271,20 @@ function audit(r: Result, state: State, seq: number, raw: Snapshot): void {
         else r.truncated = true;
       }
     }
-    needRows('compact why next', shown.why.next ?? [], ns.slice(1));
-    if (!shown.diagnostic && !shown.notEmitted && !snap.unavailable.includes('ownerNotify')) needRows('owner notice', shown.notice, ns);
+    const nextNeeds = needRows('compact why next', shown.why.next ?? [], ns.slice(1));
+    const noticeNeeds = !shown.diagnostic && !shown.notEmitted && !snap.unavailable.includes('ownerNotify')
+      ? needRows('owner notice', shown.notice, ns) : new Map<number, Need>();
     const check = (command: string, need: Need | undefined, surface: string, obligation?: string) => {
       const errors = commandErrors(command, need, state);
       for (const kind of ['b', 'c'] as const) for (const reason of errors[kind]) add(r, kind, { seq, node: node.id, obligation, surface, command, reason });
     };
     for (const n of ns) for (const command of [n.command, ...(n.alternatives ?? [])]) if (command) check(command, n, 'needs', n.obligation);
-    for (const [surface, lines] of [['status', shown.status], ['owner notice', shown.notice]] as const) lines.forEach((line, index) => {
-      const command = primary(line); if (command) check(command, ns[index], surface, ns[index]?.obligation);
+    for (const [surface, lines, matches] of [['status', shown.status, statusNeeds], ['owner notice', shown.notice, noticeNeeds]] as const) lines.forEach((line, index) => {
+      const command = primary(line), n = matches.get(index); if (command) check(command, n, surface, n?.obligation);
     });
     const head = primary(shown.why.headline); if (head) check(head, primaryNeed, 'compact why headline', primaryNeed?.obligation);
     (shown.why.next ?? []).forEach((line, index) => {
-      const command = primary(line), n = ns[index + 1]; if (command) check(command, n, 'compact why next', n?.obligation);
+      const command = primary(line), n = nextNeeds.get(index); if (command) check(command, n, 'compact why next', n?.obligation);
     });
     for (const i of shown.why.items) {
       const command = primary(i.line), need = ns.find(n => n.obligation === i.obligation);
@@ -327,7 +349,7 @@ function blobDigest(file: string): string {
 interface Options { ledger: string; blobs: string; every: number; seqs: Set<number>; halts: boolean; baseline?: string; json: boolean; engine: '0.28' | '0.27.2' | 'both'; cache?: string; shard?: { index: number; total: number } }
 interface ReplayReport {
   assumptions: Record<string, unknown>; wallMs: number; results: Result[];
-  partition: { ledger: string; blobs: string; replayFailures: { engine: string; failures: Finding[] }[]; every: number; seqs: number[]; halts: boolean; index: number; total: number };
+  partition: { ledger: string; lastSeq: number; blobs: string; replayFailures: { engine: string; failures: Finding[] }[]; every: number; seqs: number[]; halts: boolean; index: number; total: number };
 }
 /** No partial acceptance: every shard of one exact input/configuration must be present exactly once. */
 function mergeReports(files: string[]): ReplayReport {
@@ -349,7 +371,7 @@ function mergeReports(files: string[]): ReplayReport {
     const all = reports.map(r => r.results[index]!);
     if (all.some(r => r.entries !== out.entries)) throw new Error('shard entry counts differ');
     for (const r of all) {
-      out.samples += r.samples; out.nodes += r.nodes; out.normalizedLines += r.normalizedLines;
+      out.samples += r.samples; out.renderedSamples += r.renderedSamples; out.nodes += r.nodes; out.normalizedLines += r.normalizedLines;
       for (const k of ['i', 'ii', 'iii', 'iv'] as const) out.itemBranches[k] += r.itemBranches[k];
       out.itemInfo.push(...r.itemInfo);
       for (const k of ['a', 'b', 'c'] as const) out.errors[k] += r.errors[k];
@@ -365,6 +387,7 @@ function mergeReports(files: string[]): ReplayReport {
     }
     for (const f of source.global.missingBlobs) add(out, 'missingBlobs', f);
     for (const f of source.global.foldFailures) add(out, 'uncovered', f);
+    noSampleOutput(out, first.partition.lastSeq);
     for (const rows of Object.values(out.findings)) {
       rows.sort((a, b) => a.seq - b.seq || JSON.stringify(a).localeCompare(JSON.stringify(b)));
       if (rows.length > DETAIL_LIMIT) { rows.length = DETAIL_LIMIT; out.truncated = true; }
@@ -375,6 +398,10 @@ function mergeReports(files: string[]): ReplayReport {
     return out;
   });
   return { ...first, partition: { ...first.partition, index: 0, total: 1 }, wallMs: Math.max(...reports.map(r => r.wallMs)), results };
+}
+/** Whole-run coverage only: individual shards never synthesize this finding. */
+function noSampleOutput(r: Result, lastSeq: number): void {
+  if (!r.renderedSamples) add(r, 'uncovered', { seq: lastSeq, reason: 'no sampled output; empty input or sampling/replay produced no coverage' });
 }
 function options(argv: string[]): Options {
   const ledger = argv[0]; if (!ledger || ledger.startsWith('--')) throw new Error('Usage: needs-replay <ledger.jsonl> --blobs DIR [--seqs a,b] [--every N] [--halts] [--baseline-src DIR] [--engine 0.28|0.27.2|both] [--plan-cache DIR] [--shard i/N] [--json]; --merge <report.json>...');
@@ -463,7 +490,7 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
             const now = Date.parse(e.ts); if (!Number.isFinite(now)) throw new Error(`invalid timestamp at #${e.seq}`);
             const timing: SampleTiming = { seq: e.seq, statusMs: 0, decideMs: 0, whyMs: 0, auditMs: 0 };
             try {
-              const snap = x.render(x.state, now, timing);
+              const snap = x.render(x.state, now, timing); x.report.renderedSamples++;
               if (engines[0]!.broken) add(x.report, 'uncovered', { seq: e.seq, reason: 'current need oracle could not replay' });
               else elapsed(() => audit(x.report, engines[0]!.state, e.seq, snap), ms => { timing.auditMs += ms; });
             } catch (error) { add(x.report, 'uncovered', { seq: e.seq, reason: `surface failed: ${message(error)}` }); }
@@ -474,12 +501,12 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
       }
     } finally { lines.close(); stream.destroy(); }
     for (const r of results) {
-      if (!r.samples && (!o.shard || !sampleOrdinal && o.shard.index === 0)) add(r, 'uncovered', { seq: last, reason: 'no sampled output; empty input or sampling/replay produced no coverage' });
+      if (!o.shard) noSampleOutput(r, last);
       for (const seq of o.seqs) if (!sampled.has(seq) && (!o.shard || seq % o.shard.total === o.shard.index)) add(r, 'uncovered', { seq, reason: 'requested seq absent from ledger' });
     }
     for (const r of results) for (const rows of Object.values(r.findings)) rows.sort((a, b) => a.seq - b.seq || JSON.stringify(a).localeCompare(JSON.stringify(b)));
     if (o.engine === '0.27.2') results[0]!.timing.oracleFoldMs = current.timing.foldMs;
-    const report: ReplayReport = { partition: { ledger: inputHash.digest('hex'),
+    const report: ReplayReport = { partition: { ledger: inputHash.digest('hex'), lastSeq: last,
       blobs: digest(JSON.stringify([...referenced].sort(([a], [b]) => a.localeCompare(b)))),
       replayFailures: engines.map(x => ({ engine: x.report.version, failures: x.report.global.foldFailures })), every: o.every, seqs: [...o.seqs].sort((a, b) => a - b), halts: o.halts,
       index: o.shard?.index ?? 0, total: o.shard?.total ?? 1 }, assumptions: { runs: 'empty map; no historical DSA state inferred', now: 'sampled entry.ts', driverRunning: true,
@@ -491,7 +518,7 @@ export async function replayMain(argv: string[], io: ReplayIo = console, render:
     else {
       io.log(`Assumptions: runs=empty map; now=sampled entry.ts; driverRunning=true; no measuring/asking reconstruction`);
       for (const r of results) {
-        io.log(`${r.version}: entries=${r.entries} samples=${r.samples} nodes=${r.nodes}; (a)=${r.errors.a} (b)=${r.errors.b} (c)=${r.errors.c}; coverage=${JSON.stringify(r.coverage)}; normalizedLines=${r.normalizedLines}`);
+        io.log(`${r.version}: entries=${r.entries} samples=${r.samples} renderedSamples=${r.renderedSamples} nodes=${r.nodes}; (a)=${r.errors.a} (b)=${r.errors.b} (c)=${r.errors.c}; coverage=${JSON.stringify(r.coverage)}; normalizedLines=${r.normalizedLines}`);
         io.log(`${r.version} timing: ${JSON.stringify(r.timing)}`);
         io.log(`${r.version} item branches: ${JSON.stringify(r.itemBranches)}`);
         for (const f of r.itemInfo) io.log(`${r.version} item info: ${JSON.stringify(f)}`);
