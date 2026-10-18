@@ -298,7 +298,33 @@ test('WR2/R-029-3 sealedAt age is exact, generation-bound, invalid values absent
   } finally { t.mock.timers.reset(); await f.cleanup(); }
 });
 
-test('WR2 foreign wake generation after owed follow-up: no replay, stale prior seal ignored, current seal follows rows', async () => {
+for (const state of ['sealed', 'pruned'] as const) test(`R-029-5 observed running gen1, applied follow-up gen2, stale ${state} gen1 recovers idempotently`, async () => {
+  const f = await fixture();
+  try {
+    f.dsa.gen = 1; f.dsa.view = { rid: f.launch.rid, state: 'running' };
+    await f.driver.pass();
+    const send = await f.send('submit', submitMessage('a'));
+    // The send applied between passes; an old dsa reply still describes generation 1.
+    f.dsa.view = { rid: f.launch.rid, state, status: 'ok', result: 'old generation finished' };
+    await f.driver.pass();
+    assert.equal((await f.ledger.read()).filter(e => e.kind === 'halt').length, 0, 'stale gen1 cannot halt the already-applied gen2 follow-up');
+    assert.deepEqual(f.dsa.sent, [{ id: send.send, text: submitMessage('a') }], 'recover using the recorded id and exact message');
+    assert.equal(f.driver.facts.sentGen.get(send.send), 2, 'idempotent reply, not observed running state, determines generation');
+    await f.driver.pass();
+    assert.equal(f.dsa.sent.length, 1, 'recovery is cached while describe remains stale');
+    assert.equal((await f.ledger.read()).filter(e => e.kind === 'halt').length, 0);
+    f.dsa.gen = 2; f.dsa.view = { rid: f.launch.rid, state: 'running' };
+    await f.driver.pass();
+    assert.equal((await f.ledger.read()).filter(e => e.kind === 'halt').length, 0);
+    f.dsa.view = { rid: f.launch.rid, state: 'sealed', status: 'ok', result: 'current generation finished' };
+    await f.driver.pass();
+    const h = (await f.ledger.read()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt');
+    assert.ok(h.reason.includes(send.send)); assert.ok(h.reason.includes('current generation finished')); assert.doesNotMatch(h.reason, /old generation finished/);
+    assert.equal(f.dsa.sent.length, 1);
+  } finally { await f.cleanup(); }
+});
+
+test('WR2 foreign wake generation after owed follow-up: idempotent recovery, stale prior seal ignored, current seal follows rows', async () => {
   const f = await fixture();
   try {
     const send = await f.send('submit', submitMessage('a'));
@@ -309,12 +335,14 @@ test('WR2 foreign wake generation after owed follow-up: no replay, stale prior s
     assert.equal((await f.ledger.read()).some(e => e.kind === 'halt'), false, 'old owed generation cannot halt the foreign running generation');
     f.dsa.gen = 3; f.dsa.view = { rid: f.launch.rid, state: 'sealed', status: 'ok', result: 'foreign wake finished' };
     await f.driver.pass();
-    assert.deepEqual(f.dsa.sent, [], 'no recovery replay into a foreign generation already observed running');
+    assert.deepEqual(f.dsa.sent, [{ id: send.send, text: submitMessage('a') }], 'recovery asks the original request once; dsa returns its original gen2 outcome');
+    assert.equal(f.driver.facts.sentGen.get(send.send), 2);
+    assert.equal(f.driver.facts.lastGen.get(f.launch.rid), 3, 'foreign wake advances current() fence independently of the owed send');
     const h = (await f.ledger.read()).findLast(e => e.kind === 'halt'); assert.ok(h?.kind === 'halt');
     assert.ok(h.reason.includes(send.send)); assert.ok(h.reason.includes('foreign wake finished')); assert.doesNotMatch(h.reason, /old follow-up seal/);
     await ops.resume({ cwd: f.cwd, as: parent, node: 'a' });
     f.dsa.view.awaiting = waiting; await f.driver.pass();
-    assert.deepEqual(f.dsa.sent, [], 'releasing the halt cannot recover the old owed send into the foreign generation');
+    assert.equal(f.dsa.sent.length, 1, 'releasing the halt retains the cached recovery answer, without another delivery');
   } finally { await f.cleanup(); }
 });
 

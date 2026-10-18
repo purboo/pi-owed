@@ -641,8 +641,7 @@ export class Driver {
     if ((r.view.state !== 'sealed' && r.view.state !== 'pruned') || r.gen === undefined || this.facts.expectGen.has(rid)) return;
     const x = sends.findLast(x => x.rid === rid && x.sendKind === 'follow-up');
     if (!x || !this.facts.applied.has(x.send) || this.facts.sentGen.has(x.send)) return;
-    // WR2: a generation already observed running can be a durable wake, not this owed send's generation.
-    if ((this.facts.lastGen.get(rid) ?? -1) >= r.gen && ['running', 'asking', 'queued'].includes(this.facts.lastState.get(rid) ?? '')) { this.facts.sentGen.set(x.send, null); return; }
+    // R-029-5: observing a running generation cannot identify a foreign wake; re-ask the fixed request id.
     try {
       const bytes = await ledger.getBlob(x.message);
       const a = await this.dsa.send(x.send, rid, 'follow-up', bytes);
