@@ -1,6 +1,5 @@
 /**
- * owed 0.28 need vocabulary (contract-0.28 "Vocabulary", rev 2). Types only; copied byte for byte by nodes `needs`
- * and `activity`. Change it only through a parent ruling.
+ * owed need vocabulary. Ledger needs retain the 0.28 contract; WR2 (0.29) adds runtime-only durable waits.
  */
 /** Something a parent or owner must do. Agents' and the executor's work is an Activity, never a Need. */
 export type NeedKind = 'dispatch' | 'answer' | 'decide' | 'rule' | 'waive' | 'review' | 'approve' | 'evidence'
@@ -57,5 +56,8 @@ export interface Asking { node: string; rid: string; qid: string; rev: number; t
 export interface Runtime {
   measuring?: readonly Measuring[];
   asking?: readonly Asking[];
+  /** WR2: this driver's last described sealed writer, bound to its current attempt. */
+  writerWaiting?: readonly { node: string; attempt: number; rid: string; gen?: number; since: number; awaiting: NonNullable<import('./types.ts').RunView['awaiting']> }[];
+  now?: number;
   driverRunning?: boolean;
 }

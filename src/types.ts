@@ -367,6 +367,11 @@ export interface RunView {
   spec_digest?: string;
   /** FL3: the final text of the run, kept by describe for the report wake-up. */
   result?: string;
+  /** WR2: optional facts of dsa's last described call; old dsa omits them. */
+  sealedAt?: number;
+  awaiting?: { request: string; wid?: string; state: 'pending' | 'running' | 'finished' }[];
+  endedAtSeal?: { pid: number; command: string }[];
+  endedAtSealMore?: number;
 }
 
 // ---------- executor jobs ----------

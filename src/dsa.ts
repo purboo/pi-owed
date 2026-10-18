@@ -350,8 +350,11 @@ export function toRunView(rid: string, d: Json): RunView {
   const model = modelCalls.findLast(c => typeof c.model === 'string' && c.model.trim())?.model ?? d.model;
   const base = { rid, ...(typeof model === 'string' && model.trim() ? { model } : {}), ...(typeof d.wid === 'string' ? { wid: d.wid } : {}), ...(typeof d.wid === 'string' && d.wid && key !== undefined ? { to: `${d.wid}/${key}` } : {}), ...(typeof d.spec_digest === 'string' ? { spec_digest: d.spec_digest } : {}),
     ...(d.labels && typeof d.labels === 'object' ? { labels: d.labels as Record<string, string> } : {}) };
+  const calls = Array.isArray(d.calls) ? d.calls as Json[] : [], last = calls.at(-1);
+  if (typeof last?.sealedAt === 'number' && Number.isFinite(last.sealedAt) && ['sealed', 'pruned'].includes(str(d.state))) Object.assign(base, { sealedAt: last.sealedAt });
+  if (Array.isArray(last?.awaiting)) Object.assign(base, { awaiting: last.awaiting.filter((a): a is NonNullable<RunView['awaiting']>[number] => !!a && typeof a.request === 'string' && ['pending', 'running', 'finished'].includes(a.state)) });
+  if (Array.isArray(last?.endedAtSeal)) Object.assign(base, { endedAtSeal: last.endedAtSeal.filter((p): p is NonNullable<RunView['endedAtSeal']>[number] => !!p && Number.isSafeInteger(p.pid) && typeof p.command === 'string'), ...(typeof last.endedAtSealMore === 'number' && Number.isSafeInteger(last.endedAtSealMore) && last.endedAtSealMore >= 0 ? { endedAtSealMore: last.endedAtSealMore } : {}) });
   const raw = str(d.state);
-  const calls = Array.isArray(d.calls) ? d.calls as Json[] : [];
   const result = typeof d.result === 'string' ? d.result : calls.map(c => c.result ?? c.output).filter((v): v is string => typeof v === 'string').join('\n');
   if (raw === 'absent') return { ...base, state: 'absent' };
   if (raw === 'pending') return { ...base, state: 'queued' };
