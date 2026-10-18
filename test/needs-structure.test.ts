@@ -187,6 +187,7 @@ const registered: Registered[] = [
   ...at('src/views.ts', 'conflictLines', 'diagnostic example', 'Unknown Git probe inspection retry.', ['44c68684423bcef33a1d14cfa42c61260a1b38596401fafa57ce771101594ba0']),
   ...at('src/views.ts', 'renderStatus', 'diagnostic example', 'Full status and evidence inspection links.', ['ed588000c85568aba90bb6ad276c5f04a9d16898d987ce33ab4e893fd90cc077']),
   ...at('src/views.ts', 'renderStatusBrief', 'diagnostic example', 'Status and evidence inspection links.', ['8aa7ee117f262e26f7eb380f031c63ce7af7329201c3adf29ea15880a80bfe0d']),
+  ...at('src/views.ts', 'housekeepingText', 'Git-derived status addition', 'GC1: housekeeping hint (contract 0.29).', ['8a2ccacc707ae5b3a6c7349c51bbfa0b83550b250368e35c0b3355e022ce9eb0']),
   ...at('src/views.ts', 'renderGc', 'comment', 'Source commentary only.', ['17e3d1051e45e75be1fff0d533fb0d4463e0030bce209ff72bd8769c6c5e6a90']),
   ...at('src/views.ts', 'reusedHint', 'diagnostic example', 'R-028-41/44/64: merge-failure diagnostic only.', ['fff5994c96094b2d21bfe525cb52d38f53536353edd30308970a87b7ea2b9b5a', 'a8d60ce20e2d297f7306ca9dbd6304603db7d4fdd34a0176d937cc5664caae4c']),
   ...at('src/views.ts', 'mergeFailureHints', 'diagnostic example', 'R-028-41/44/64: merge-failure diagnostic only.', ['de125e105acd6f1dbd650f0d1c0204d372d06ef71b2a45e1bd123478bc6986d3']),

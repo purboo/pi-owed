@@ -1306,6 +1306,13 @@ are excluded from obligation verdicts, blocks and decoy outcomes, even if
 their key equals a candidate or merge key. The final merge CAS and current
 plan/key checks discard stale measurements, as for other merge observations.
 
+In 0.29, an automatic or explicit trunk probe whose failed output names a
+missing file added by the candidate, but absent from the probed trunk tree,
+is recorded as `error`: `probe not applicable: trunk lacks <path>, which the
+candidate adds` (escaped, bounded to 160 characters). Absolute paths outside
+the measurement checkout are ignored. This diagnostic cannot make a merge
+trunk-red; the merge check's ordinary failure still refuses the merge.
+
 A failing probe classifies the merge failure as `trunk-red` when every
 merge-tree failed test name is among the probe's failed names, or neither
 observation has names. A passing probe, different names, or names on only
@@ -3249,6 +3256,12 @@ A merge whose candidate conflicts with trunk refuses with
 
 `merge` marks every `obs` it appends for the merge result — invariants and
 checks on M, pass or fail, refused or not — with `merging: <node>` (§6.5).
+Merge-key checks run on a synthetic merge commit: HEAD^1 is the trunk tip and HEAD^2 is the candidate.
+A check must not pin the candidate's base commit. An anonymous merge-key
+failure shows its last non-empty output line in the refusal and, for newly
+recorded merge-check blocks, in the need/notice detail; the line is escaped
+and bounded to 160 characters.
+
 Batch merge-tree observations instead carry `batch: [ids]` (§7.21).
 Genesis invariants that merge measures first on the current trunk are not
 merge results and carry no `merging`.
@@ -3317,6 +3330,14 @@ removes or pins something (not in dry-run) it appends one `note` entry (by the c
 default `parent:cli`) naming what was removed and pinned; there is no new entry kind and
 the reducer is unaffected. `dryRun` reports the same classification without
 changing git or the ledger.
+
+In 0.29, compact/full status and the merge reply show
+`Housekeeping: <n> finished attempt worktrees; owed gc reclaims them` when at
+least five recorded attempts are no longer open (merged, abandoned or
+superseded) and their worktrees remain registered. This is a read-only hint,
+not automatic gc or a promise that dirty/locked worktrees will be removed.
+A failed worktree listing shows no hint; unrecorded and measurement worktrees
+are not counted.
 
 ### 8.1 Worktree layout and a trunk checked out elsewhere (D19)
 
