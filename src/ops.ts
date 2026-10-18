@@ -73,7 +73,7 @@ export interface MergeResult { node: string; commit: string; tree: string; entry
  */
 export interface VerifyResult { ok: boolean; entries: number; head?: string; error?: string; code?: 'version'; cacheMismatch?: string[]; snapshotMismatch?: number; /** Ruling #2110: the ledger tail holds an incomplete batch merge. */ incompleteBatch?: string }
 type Context = { cwd: string };
-type MeasurementContext = Context & { lease?: boolean; signal?: AbortSignal };
+type MeasurementContext = Context & { lease?: boolean; signal?: AbortSignal; priority?: number };
 /** LE3: lease before operation/tree locks; never mutate process.env or persisted observations. */
 async function leased<T extends object>(o: MeasurementContext, measure: (signal?: AbortSignal) => Promise<T>): Promise<T & { lease?: string }> {
   const { state } = await load(await Ledger.open(o.cwd));
@@ -629,24 +629,25 @@ async function measuringHere(dir: string): Promise<boolean> {
  */
 export async function attestGenesis(o: MeasurementContext): Promise<AttestGenesisResult> {
   checkAbort(o.signal);
-  if (!measuringScope()) return withMeasuring(o.cwd,'trunk',() => attestGenesis(o));
   const opened = Ledger.open(o.cwd), run = { dir: opened.then(l => l.dir, () => undefined) };
   genesisRuns.add(run);
   try {
-    const ledger = await opened;
-    inited((await load(ledger)).state);
-    return await leased(o, signal => ledger.withLock(async () => {
-      await measuringRunning();
-      const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),signal,undefined,parallelOf(state.plan));
-      return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
-    },'genesis',signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` }));
+    return await withMeasuring(o.cwd,'trunk',async () => {
+      const ledger = await opened;
+      inited((await load(ledger)).state);
+      return await leased({...o,priority:10}, signal => ledger.withLock(async () => {
+        await measuringRunning();
+        const { state } = await load(ledger), r = await runJobs(o.cwd,ledger,state,genesisJobs(state),signal,undefined,parallelOf(state.plan));
+        return { ...await genesisOutcome(ledger,r.superseded), observations:r.recorded };
+      },'genesis',signal,{ busy:owner => `attest --genesis is already running (${heldBy(owner)}); its observations will appear in owed status` }));
+    });
   } finally { genesisRuns.delete(run); }
 }
 /** IR1: a shared-machine lease, then trunk-refresh lock, then short ledger locks (never commands under ledger lock). */
 export async function attestTrunk(o: Context & { signal?: AbortSignal; lease?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestTrunkResult> {
   checkAbort(o.signal);
   if (!measuringScope()) return withMeasuring(o.cwd,'trunk',() => attestTrunk(o));
-  if (!measurementScope()) return leased(o, signal => attestTrunk({ ...o, signal }));
+  if (!measurementScope()) return leased({...o,priority:10}, signal => attestTrunk({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     await measuringRunning();
@@ -1355,7 +1356,7 @@ export async function attestProbeTrunk(o: MeasurementContext & { node: string; c
   if (!Number.isInteger(runs) || runs < 1 || runs > 10) throw new OwedError('--runs must be an integer from 1 to 10','usage');
   checkAbort(o.signal);
   if (!measuringScope()) return withMeasuring(o.cwd,o.node,() => attestProbeTrunk(o));
-  if (!measurementScope()) return leased(o, signal => attestProbeTrunk({ ...o, signal }));
+  if (!measurementScope()) return leased({...o,priority:10}, signal => attestProbeTrunk({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     await measuringRunning();
@@ -1405,7 +1406,7 @@ export function trunkProbeText(r: TrunkProbeResult): string {
 export async function attest(o: MeasurementContext & { node: string; rerun?: boolean; remeasure?: boolean; all?: boolean }): Promise<AttestResult> {
   checkAbort(o.signal);
   if (!measuringScope()) return withMeasuring(o.cwd,o.node,() => attest(o));
-  if (!measurementScope()) return leased(o, signal => attest({ ...o, signal }));
+  if (!measurementScope()) return leased({...o,priority:10}, signal => attest({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   if (o.remeasure) return ledger.withLock(async () => {
     await measuringRunning();
@@ -1689,7 +1690,7 @@ async function applyRebase(o: Actor & { node:string; since?: number; writerIdle?
 export async function merge(o: Actor & { node:string; signal?: AbortSignal; lease?: boolean }): Promise<MergeResult> {
   owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
   checkAbort(o.signal);
-  if (!measurementScope()) return leased(o, signal => merge({ ...o, signal }));
+  if (!measurementScope()) return leased({...o,priority:10}, signal => merge({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     if (by(o) === DRIVER) {
@@ -1908,7 +1909,7 @@ function batchGuard(latest: Awaited<ReturnType<typeof load>>, current: State, dr
 export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSignal; lease?: boolean }): Promise<BatchMergeResult> {
   owner(o); if (!['owner','parent'].includes(o.as.role)) throw new OwedError('merge requires parent/owner');
   checkAbort(o.signal);
-  if (!measurementScope()) return leased(o, signal => mergeBatch({ ...o, signal }));
+  if (!measurementScope()) return leased({...o,priority:10}, signal => mergeBatch({ ...o, signal }));
   const ledger = await Ledger.open(o.cwd);
   return ledger.withLock(async () => {
     let state = (await load(ledger)).state;
