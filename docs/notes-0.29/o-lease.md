@@ -1,60 +1,47 @@
 # o-lease — 0.29
 
-Scope: LZ1–LZ6, R-029-4 (#3421), R-029-7 (#3427). Slot base moved by #3426 to `c07a3984afdf3c8b329de5e53da91ef64bbd6cf3`. Specified rebase completed without conflicts; accepted source S is `d22488116be35f3554458fcb451511dfcbc64d5b`, tree `237d4074be1641103cfb103016f85b18c5a3a550`, a descendant of c07a398.
+Scope: LZ1–LZ6, R-029-4 (#3421), superseding R-029-8 (#3450, review block #3449). Current slot base is trunk `163fce9` (#3451), including accepted o-writer/o-probe. The specified `git rebase 163fce9` is complete. This note replaces the erroneous R-029-7 runtime diagnosis and stale acceptance report.
 
-## Implementation and limits
+## Implementation and limitations
 
-- LZ1 compares scheduled sweep definition and normalized `every` each pass. Plan changes/drop abort before commit, without a verdict or interruption; committing sweeps finish. Runtime retains `sweep aborted: plan changed` until another sweep starts.
-- LZ2/LZ6 request scheduled yield and acceptance priority 10. Apparent unknown-option refusals are only hints: confirm using identical cwd/env/flags with `hold <resource> <flags> --no-wait -- true`. Only the same confirmed flag refusal permits caching unsupported and one retry without the flag. Probe exit 0/75 returns the original command result; measured commands never replay because they forged dsa's stderr. The fake legacy dsa executes no measured command before its confirmed rejection.
-- LZ3 gives commands random non-keyed OWED_RUN tags. Abort/timeout sends group TERM before scanning; every Linux scan races the remaining five-second cleanup deadline. At an unfinished-scan deadline cleanup ends and the command counts as ended, before lease release. TERM/grace/KILL/rescan only signals individually proven exact-tag processes. Unreadable environ (EACCES/EPERM, non-dumpable or another uid) is unproven: neither individually signalled nor waited for. Leaving the group and clearing the token or making environ unreadable is outside containment. Non-Linux retains group containment; normal exits remain unchanged. Captured real cleanup timers cannot freeze under virtualized command timers. No public test option was added.
-- R-029-7 root cause: `src/ops.ts:2178–2179`, status used only its module-local genesisRuns, but extension attest executes in a native worker with a separate module instance and the same pid. Main-thread ops.status reported no measurement while worker cleanup was still active; the subsequent worker tool status reported measuring. Status now also reads the existing same-pid trunk runtime records. The earlier genesis registration spans runtime cleanup; no ledger fields change.
-- LZ4 changes ordering: sweep preparation and first tree materialization run before acquisition; the first setup/check captures the lease async context, retained until sweep/tree cleanup ends.
-- LZ5 selects the last output line whose trim is non-empty, but matches its original content (only CRLF's CR removed). `(exit 75)   ` is still failure. Strict diagnostics become environment errors for checks, invariants and red; existing backoff and two-errors semantics remain.
+- LZ1 compares the scheduled sweep definition and normalized `every` each pass. Changed/deleted policy aborts before commit, without verdict/interruption; committing sweeps finish. Runtime retains `sweep aborted: plan changed` until the next sweep starts.
+- LZ2/LZ6 request scheduled yield and acceptance priority 10. Apparent unknown-option refusals are only hints: confirm identical cwd/env/flags using `hold <resource> <flags> --no-wait -- true`. Only the same confirmed flag refusal permits caching unsupported and one retry without it. Probe exit 0/75 returns the original command result; forged dsa stderr never replays measured commands. Fake legacy dsa refuses before executing the measured command and falls back once.
+- LZ3 assigns random non-keyed OWED_RUN. Group TERM precedes scanning; each scan races the remaining five-second cleanup deadline. At an unfinished-scan deadline cleanup ends before command completion/lease release. Individual signals go only to readable environ containing the exact token. EACCES/EPERM (non-dumpable, another uid) is unproven: neither individually signalled nor waited for. Leaving the group and clearing the token or making environ unreadable escapes Linux containment. Non-Linux retains groups; normal exits unchanged. Captured real cleanup timers work under virtualized command timers. No public test seam.
+- LZ4 prepares and materializes the first tree before acquisition; the first setup/check captures the lease async context, retained through sweep/tree cleanup.
+- LZ5 selects the last line whose trim is non-empty, matching its original content (only CRLF's CR removed). `(exit 75)   ` remains failure. Strict hold diagnostics become environment errors for checks/invariants/red with existing backoff, not red passes or two-errors halts.
+- R-029-8 root cause is the D24.4 test wait: direct `ops.status` in the host never sees the tool worker's module-local genesisRuns. The old wait passed immediately even on base; its green result depended on the worker finishing abort cleanup before the final tool status. LZ3/LZ4 legitimately extend cleanup. Now the same 60 s `until` polls tool `h.call('status')` details. All original assertions remain. Production status is exactly trunk's measuringHere-only path; no runtime-based fallback or readMeasuring import. Runtime records from unrelated attestTrunk or terminated workers cannot imply genesis activity.
+- The earlier same-module genesisRuns lifetime still spans withMeasuring cleanup; this is distinct from the withdrawn cross-worker runtime fallback. No ledger/reducer changes.
 
-## Tests and existing-test changes
+## Conflict hunk receipt (rebase 163fce9)
 
-`test/olease.test.ts`: 40 behavioral tests. Added repair regressions cover EACCES/EPERM without mis-kill/wait; slow initial/repeated scans bounded at five seconds; group TERM before the blocked scan; stderr-forged yield/priority refusals with probe exit 0/75, same cwd/env, one measured execution; retained support cache after a false hint; genuine legacy confirmations with only one retry; strict whitespace/CRLF handling; same-pid native-worker runtime cleanup visibility. Linux detached-child abort/timeout, distinct tags, lease release order, normal exits, virtual timers and delayed cleanup remain covered.
+1. Replaying `a8626b2`: `src/exec.ts` ExecContext line 31. Trunk had PB1 `onTree?(path)`; leaf added `commandScope`. Resolved to their union. The two post-materialize onTree calls remain after both mutant and ordinary/red materializations (`src/exec.ts:638,664`). LZ3 command cleanup and LZ5 strict line classifier retained.
+2. Replaying `d224881`: `src/ops.ts` status block near 2199. Trunk added `trunkElsewhere(...).catch(() => undefined)`; historical leaf patch added the incorrect runtime fallback. Preserved trunk catch while replaying that historical patch; the final R-029-8 commit removes the fallback.
+3. Replaying `a69c39c` (R-029-8): same status block. Preserved trunk catch and reverted to `if (view.genesis && await measuringHere(ledger.dir)) ...`; removed readMeasuring import. Final status has no diff against 163fce9.
 
-Only existing-test change: `test/attest-signal.test.ts:92–96`, LZ3, parent authorized. Both D16a.3 fixtures (60 s and 3 s) share heldRun, now `env -u OWED_RUN setsid sleep`: deliberately uncontained pipe holders. Assertions and time bounds are unchanged. `test/init-tool.test.ts` is unchanged.
+Auto-merged shared blocks were inspected, not replaced wholesale: `src/ops.ts:2033` passes PB1 onTree to runJob; `mergeFailureOutput` and its call remain, with the PB2 marker guarded by check:/fail/anonymous/merging and no marker for invariants (R-029-6). Existing onTree callback locations are unchanged. src/dsa.ts retains merged WR2 parsing alongside LZ2/LZ6 flags/confirmation; drive-run.ts retains merged WR2 recovery alongside scheduled-sweep cancellation. No sibling files were taken over.
 
-## Current repair evidence
+## Tests and authorized existing-file changes
 
-All commands run in the foreground through `/tmp/owed-ipc/run.sh`; full paths below. No owned background script or temporary worktree remains.
+`test/olease.test.ts`: 41 behavioral tests. R-029-8 replaces the withdrawn cross-worker-positive test with worker-record negatives (active cleanup and stale same-pid record after worker termination), and adds unrelated attestTrunk/genesis-pending negative. R-029-4 process/tag, slow first/repeated scan, group TERM ordering, forged options with probe 0/75, legacy/cache, strict CRLF/tail tests remain. Local delayed cleanup and virtualized timers retain their regressions.
 
-- R-029-7 comparison, original shutdown assertion unchanged, single-test filter `--test-name-pattern='session_shutdown aborts'`, 10 independent node invocations with `--test-concurrency=2`:
-  - Dirty pre-fix source: `/tmp/owed-ipc/logs/o-lease-1-182257.log`, exit 1, failures 10/10. Mirrored tree `f2936e53bcb90fb6550fd344ba76067efd4a8560`.
-  - Clean base 74e5930: `/tmp/owed-ipc/logs/olease-base-182327.log`, exit 0, failures 0/10; commit `74e59304071d66254fb90cc08894f85e13ea09e1`, tree `d94e629739d8a225a334a95e8ed2f82757533b91`, dirty=0.
-  - Fixed source: `/tmp/owed-ipc/logs/o-lease-1-182529.log`, exit 0, failures 0/10; mirrored tree `d621d8cd61038ac3d4096c4d87ad052fee21bc8b`.
-- Fixed typecheck `npx tsc --noEmit -p .`: `/tmp/owed-ipc/logs/o-lease-1-182558.log`, exit 0, same fixed mirrored tree.
-- Fixed focused combination: `/tmp/owed-ipc/logs/o-lease-1-182627.log`, exit 0; 235 tests / 235 pass / 0 fail, same fixed mirrored tree. Exact command: `node --test --test-concurrency=2 --test-reporter=tap test/olease.test.ts test/dsa.test.ts test/lease.test.ts test/sweep.test.ts test/sweep024.test.ts test/env.test.ts test/exec-red.test.ts test/drive-run.test.ts test/infra.test.ts test/nits.test.ts test/attest-signal.test.ts test/slotsetup.test.ts test/snapshot.test.ts test/init-tool.test.ts test/sig.test.ts test/wrapx.test.ts`.
-- Repair regressions red on previous candidate a11ac47 (only new tests copied): `/tmp/owed-ipc/logs/olease-before-183013.log`, exit 1; 10 tests / 2 pass / 8 fail, all failures ERR_ASSERTION. Forged-refusal, slow-scan, strict-tail and native-worker-cleanup tests each fail before repair. Unreadable-process negatives already pass, as expected from R-029-4's comment-only requirement.
-- Before R-029-7 repair, expanded checks: `/tmp/owed-ipc/logs/o-lease-1-181412.log`, exit 1; 234 tests / 233 pass / 1 fail (unchanged init-tool shutdown assertion). Olease alone was 39/39: `/tmp/owed-ipc/logs/o-lease-1-181224.log`, exit 0.
+Existing changes:
+- `test/init-tool.test.ts:293–294`, R-029-8: exactly one wait replacement plus one comment. Same until/default 60000 ms and all original assertions. Byte-check against 163fce9 proves every other byte unchanged.
+- `test/attest-signal.test.ts:92–96`, LZ3, earlier parent authorized: shared heldRun deliberately uses `env -u OWED_RUN setsid sleep` for both D16a.3 pipe-holder fixtures (60 s and 3 s). Assertions and bounds unchanged.
 
-## Clean rebased source receipt
+## Current evidence and pending validation
 
-- S commit `d22488116be35f3554458fcb451511dfcbc64d5b`, tree `237d4074be1641103cfb103016f85b18c5a3a550`; every following log header records exactly that commit/tree with dirty=0.
-- Rebased typecheck: `/tmp/owed-ipc/logs/o-lease-1-183204.log`, `npx tsc --noEmit -p .`, exit 0.
-- Rebased affected combination (same exact 16-file command above): `/tmp/owed-ipc/logs/o-lease-1-183242.log`, exit 0; 235 tests / 235 pass / 0 fail.
-- Rebased full suite, repair attempt 1/2: `/tmp/owed-ipc/logs/o-lease-1-183604.log`, exit 0; 1842 tests / 1842 pass / 0 fail / 0 cancelled / 0 skipped / 0 todo; duration 1240617.708061 ms, within 1500 s. Exact command: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'` (foreground `/tmp/owed-ipc/run.sh` timeout 1800). No second repair full-suite run was needed.
+All Node/typecheck/test commands run in foreground with `/tmp/owed-ipc/run.sh`; no owned background driver. Temporary regression worktree was removed.
 
-This follow-up D changes only this note, without amend. Run clean D typecheck and required leaf checks before foreground submit; D identity and those log headers belong in the final handoff, avoiding recursive notes amendments.
+- Reviewer reproduction on eb577bb: `/tmp/owed-ipc/logs/o-lease-1-190622.log` confirms unrelated trunk activity and stale exited-worker record false positives. R-029-8 accepts this evidence and supersedes the earlier R-029-7 fix.
+- New R-029-8 negatives copied to isolated previous candidate eb577bb: `/tmp/owed-ipc/logs/olease-r8-before-195740.log`, exit 1, 2 tests / 0 pass / 2 ERR_ASSERTION failures. These are valid regression reds, not fixture failures.
+- Byte check command compares `git show 163fce9:test/init-tool.test.ts` with current bytes after exactly the authorized replacement: passed.
 
-## Earlier evidence (superseded, not current-tree acceptance)
+Pending on the current rebased source: typecheck; shutdown filter repeated 10 times (same until, 0 failures); affected combination (olease/init-tool/attest-signal plus probe exec/ops tests); one full suite with --test-concurrency=2. Commit clean source S, run validation on S; after green full suite add notes-only D without amend, check D, and foreground submit. Final D identity/log headers belong in the handoff rather than recursive amendments.
 
-- Initial leaf red on 74e5930: `/tmp/owed-ipc/logs/o-lease-base-162831.log`, exit 1; 27 tests / 2 pass / 25 fail, all ERR_ASSERTION and every LZ1–LZ6 has red evidence.
-- Earlier source S `85d7129c139df2cd95a27cfc77c556d477996f81`, tree `a9c0c5090b4e2d8eb06789842d894dc0a5b5c8c0`: full `/tmp/owed-ipc/logs/o-lease-1-172505.log`, exit 0, dirty=0, 1820/1820, 1238.9 s. Earlier D `a11ac4700395d186cac22ee8e55de88e8241f8c2`, tree `7902911e63aea27966cf697149506ef74f0a4763`: typecheck `/tmp/owed-ipc/logs/o-lease-1-174618.log`, exit 0; leaf `/tmp/owed-ipc/logs/o-lease-1-174644.log`, exit 0, 141/141. Submitted #3397; review #3411 blocked, now superseded by this repair.
-- Earlier failed full `/tmp/owed-ipc/logs/o-lease-1-163224.log`: exit 124 at 1800 s, no final totals. Escaped signal fixture, abort-time lifecycle, and virtualized cleanup timer issues were diagnosed, not called baseline/flaky.
+Previous full receipts (eb577bb/d224881) predate R-029-8 and the new integration base and do not validate this candidate. The earlier 10/10 leaf-vs-0/10 baseline comparison was real, but its runtime-fallback interpretation was incorrect. It must not be presented as proof of a production status bug.
 
-Size after rebase: `git diff --stat c07a3984afdf3c8b329de5e53da91ef64bbd6cf3 -- src`:
+## Source budget
 
-```
- src/drive-run.ts | 22 +++++++++++----------
- src/dsa.ts       | 31 ++++++++++++++++++++++++++----
- src/exec.ts      | 58 ++++++++++++++++++++++++++++++++++++++++----------------
- src/lease.ts     |  4 ++--
- src/ops.ts       | 34 +++++++++++++++++----------------
- src/sweep.ts     | 35 +++++++++++++++++++++++-----------
- 6 files changed, 125 insertions(+), 59 deletions(-)
-```
+Budget baseline c07a398 includes o-held. Already merged siblings from c07a398 to 163fce9 contribute 174 insertions / 38 deletions = net +136. Current whole tree against c07a398 is 295 insertions / 94 deletions = net +201. Therefore the leaf contribution relative to that baseline is +201 − +136 = **+65**, within +120; equivalently `git diff --stat 163fce9 -- src` is 6 files, 122 insertions(+), 57 deletions(-). Both raw and leaf-only counts are explicit; inherited accepted sibling lines are not attributed to this writer.
 
-Net +66, within +120. Size vs original 74e5930 before rebase was identical (125 insertions, 59 deletions). Fake dsa only, no dependency on live 1.1.0. No writer integration or publication authority exercised.
+Per-file leaf diff: drive-run.ts 22 (+12/-10), dsa.ts 31 (+27/-4), exec.ts 58 (+42/-16), lease.ts 4 (+2/-2), ops.ts 29 (+15/-14), sweep.ts 35 (+24/-11). Fake dsa only; no live dsa 1.1.0 dependency. No independent review, integration acceptance, merge or publication authority exercised.
