@@ -154,6 +154,32 @@ test('PB2: the last output line is escaped and bounded in a new merge-block need
   } finally { await r.cleanup(); }
 });
 
+test('PB2/R-029-6: anonymous invariant failures on the merge tree retain their original note without a marker', async () => {
+  const r = await repo();
+  try {
+    await commitAt(r.cwd, { flag: 'clean' });
+    const plan = { version: 1, trunk: 'main', lease: false, closure: [], invariants: [{ id: 'anon', run: 'if test -f impl; then echo invariant-anonymous-tail; exit 1; fi; echo "# tests 1"; echo "# pass 1"', reads: ['impl'] }], nodes: [{ id: 'a', writes: ['impl'], checks: [] }] };
+    await ops.init({ cwd: r.cwd, plan: JSON.stringify(plan), as: owner, channel: 'delegated' });
+    const slot = await ops.dispatch({ cwd: r.cwd, node: 'a', as: parent });
+    await commitAt(slot.worktree, { impl: 'candidate' });
+    await ops.submit({ cwd: slot.worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    assert.equal((await ops.attest({ cwd: r.cwd, node: 'a' })).accepted, true);
+    await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), error => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /invariant-anonymous-tail/);
+      assert.doesNotMatch(error.message, /merge failure output:/);
+      return true;
+    });
+    const ledger = await Ledger.open(r.cwd);
+    const failures = (await ledger.read()).filter((e): e is ObsEntry => e.kind === 'obs' && e.merging === 'a' && e.obligation === 'inv:anon');
+    assert.ok(failures.length, 'the invariant ran on the merge tree');
+    for (const obs of failures) {
+      assert.equal(obs.verdict, 'fail'); assert.equal(obs.failed?.length ?? 0, 0);
+      assert.equal(obs.note, 'command exited 1 with no recognizable test count; last output:\n  invariant-anonymous-tail');
+    }
+  } finally { await r.cleanup(); }
+});
+
 test('PB1: diagnostic notes escape controls, preserve whole escape sequences and stay bounded', async () => {
   const path = `data/${'x'.repeat(130)}\u202e.txt`, r = await fixture(`ENOENT: open '${path}'`);
   try {
