@@ -2042,7 +2042,7 @@ function boundedLine(text: string): string {
 }
 /** PB2: append after the existing note so setup/timeout classification and historic note prefixes stay unchanged. */
 async function mergeFailureOutput(ledger: Ledger, obs: Awaited<ReturnType<typeof runJob>> & { merging: string }): Promise<Draft> {
-  if (obs.verdict === 'fail' && !obs.failed?.length && obs.log) {
+  if (obs.obligation.startsWith('check:') && obs.verdict === 'fail' && !obs.failed?.length && obs.log) {
     const tail = lastLines((await ledger.getBlob(obs.log)).toString(),1)[0];
     if (tail) obs.note = `${obs.note ?? ''}\nmerge failure output: ${boundedLine(tail)}`;
   }
