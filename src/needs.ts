@@ -13,7 +13,7 @@ export type { Need, NeedKind, Activity, Measuring, Asking, Runtime } from './nee
 const counts = (b: Block): boolean => b.state === 'active' || b.state === 'flaky';
 const review = (o: string): boolean => o === 'review' || o === 'closure-review';
 const oneLine = (text: string): string => text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, c => c === '\\' ? '\\\\' : c === '\n' ? '\\n' : c === '\r' ? '\\r' : c === '\t' ? '\\t' : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
-const plain = (text: string): string => text.replace(/#[0-9]+\s*/g, '').split(';')[0]!.trim();
+const plain = (text: string): string => oneLine(text.replace(/#[0-9]+\s*/g, '').split(';')[0]!.trim());
 const pin = (s: State, node: string): string | undefined => s.nodes[node]?.slot?.open ? s.nodes[node]?.candidate?.commit.slice(0, 12) : undefined;
 const candidateFlag = (s: State, node: string): string => pin(s, node) ? ` --candidate ${pin(s, node)}` : '';
 const obligationFlag = (o: string): string => o === 'closure-review' ? ' --obligation closure-review' : '';
