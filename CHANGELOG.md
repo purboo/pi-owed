@@ -1,5 +1,110 @@
 # Changelog
 
+## 0.28.0
+
+One authority for outstanding needs. No ledger format, entry kind, entry
+field, enum value or plan key changes. Existing ledgers and snapshot states
+replay identically; version-bound disk snapshots are rebuilt on upgrade.
+CLI and driver guidance changes below. Mixed 0.27.x/0.28 processes are not
+safe once 0.28 records a waiver citing only active merge failures on a merge
+key distinct from the candidate key: older readers reject that entry, so
+upgrade all readers before recording such a waiver.
+
+- **One need, one command.** `needs()` supplies parent and owner work per
+  obligation, with the required risk citations, candidate pins, reasons,
+  notes, roles and ruling acknowledgments. Resolving one obligation does
+  not hide another. Where no single existing command resolves the work,
+  owed says `no single command`, rather than inventing a fix node or
+  suggesting `decide`, `rule` or `resume` on trunk. A submitted changed-key
+  repair does not clear its old review block: why names the original
+  reviewer, sufficient rank and current-key requirement without promising
+  a new reviewer run. Same-key guidance does not turn a block into a
+  recheck, and execution and flaky blocks retain their own clearance routes.
+- **Consistent status, why and next steps.** Status, brief, why, receipts,
+  owner notices and the pi extension render the shared needs; batch
+  eligibility and unresolved-ruling resume refusals use the same guidance.
+  Why lists same-need alternatives as `or:` lines, and trunk or invariant
+  cards with outstanding obligations no longer say merged. Node attest
+  exit 4 starts with `measured; not accepted yet:` and its need or activity;
+  exit codes are unchanged. `owed rebase <node>` without `--apply` first
+  says that the slot base moved and the writer must rebase and resubmit.
+  Missing error extraction distinguishes an exact failed-test-name mismatch
+  from a matching block without an error field; neither counts as error text
+  for automatic remeasurement. Git-derived merge checks, drift and rebase
+  waits remain supplemental diagnostics, outside the pure need selection.
+- **Halts show the action that clears them.** An open halted slot first
+  needs any unresolved review ruling, then its parent or owner obligation
+  work, otherwise `owed resume <node>` with any dependency wait explained.
+  Only in that last case does a stopped writer instead offer
+  `owed decide <node> --text "<ruling>" --writer`, with resume as an
+  alternative. Structured wakes carry need identities; pi followers with
+  the revalidation hook refresh them before delivery and drop vanished
+  needs without dropping surviving siblings. Hookless followers retain
+  recorded-need delivery, and old unstructured logs retain compatibility
+  parsing.
+- **Measurement activity without duplicate owner requests.** Attest
+  invocations publish separate queued/running runtime records, clean them
+  up after completion or abort cleanup, and readers remove dead-process
+  records. Progress shows obligations, start time and attest pid. Only a
+  running candidate-tree attest matching the node, current candidate and
+  obligation suppresses that obligation's owner need and notice; queued,
+  other-tree and old-candidate runs suppress nothing. Records are not
+  ledger entries, acceptance evidence or predictions of driver actions;
+  measurement selection, lock order and acceptance gates are unchanged.
+- **Merge-failure waivers cover the matching merge key.**
+  `owed waive <node> <obligation> --accept-risk <risks> --reason "<reason>"`
+  records the prospective merge key when every cited risk is a failing
+  merge observation of that node and obligation on that key. An
+  independently satisfied candidate can then reuse that waiver without
+  remeasuring the covered merge key; a distinct failing or unmeasured
+  candidate key and uncited blocks remain uncovered. All-active stale-key
+  or conflicting-tree citations fall back to the candidate key; mixed
+  candidate/merge citations retain their prior behavior. Inactive citations
+  retain their existing refusals and CAS order. The receipt names candidate
+  or merge scope, including the trunk used for a merge key. Waivers remain
+  debt, not measured passes.
+- **Ruling-only follow-ups can finish without a change.** A sealed writer's
+  ruling follow-up with no `writer: true` ruling permits `no change: <why>`
+  instead of a redundant ruling-follow-up-without-submit halt. Existing
+  repair, failure and recovery routes still apply; the reply neither accepts
+  a candidate nor clears a halt. Writer-change rulings still require submit,
+  and live reviewer ruling messages ask for review, not a writer commit.
+- **Resume dependencies trigger automatic rebase.** Once dependencies
+  named by `owed resume <node> --after <deps>` merge, the driver uses the
+  same automatic rebase route as for plan dependencies; the existing
+  rebase and resubmit requirements remain.
+- **One-line need text and cheaper quarantine-debt views.** Need text
+  stays on one physical line: recorded halt reasons and item details escape
+  control characters, with a newline shown as `\n`. When no quarantine is
+  active, `owed status` and `owed why` no longer load historical plans or
+  scan observations for quarantine debt. With active quarantine, observations
+  are collected once, lazily, and irrelevant observations are skipped before
+  plan lookup; the quarantine-debt output is unchanged.
+- **Historical command-surface comparison.** From a source checkout, run
+  `node test/perf/needs-replay.ts <ledger.jsonl> --blobs <dir> --halts --every 25 --baseline-src <0.27.2-src>`
+  to compare status, compact why and emitted owner notices with 0.27.2.
+  This test-side tool is not shipped in the npm package or exposed as an
+  `owed` CLI command. It separates (a) command disagreements, (b) invalid or
+  incomplete commands and (c) wrong-obligation commands, and reports uncovered
+  work, missing blobs, unavailable surfaces and notices not emitted rather
+  than counting them as zero errors. On the wais ledger copy W14, with
+  17147 entries, sampling 464 halt sequences plus every 25th sequence gives
+  1130 samples. 0.28 reports (a)/(b)/(c) = 0/0/0 and uncovered 715: 588
+  parent/owner obligations not listed by the retained membership rules, 107
+  repository needs and 20 node needs with no single command; missing blobs 0.
+  The 0.27.2 column reports (a)/(b)/(c) = 1781/1251/9, uncovered 3302 and
+  unavailable 2260, the private output surfaces that cannot be compared.
+  That column uses a measurement-only copy of 0.27.2 with only the
+  quarantine-debt short-circuit above added, because the unchanged version
+  could not complete the full replay. On a W14 prefix, the copy's compared
+  output is byte-identical to the original 0.27.2 output.
+- **Subtraction target not reached.** 0.28 aimed for a net source reduction
+  but `src/*.ts` grows from 16282 lines in 0.27.2 to 16684, a net +402
+  (R-028-73): removing superseded selectors did not offset the new need
+  vocabulary and corrections, command validation and identities, measurement
+  runtime, waiver-key behavior and driver integration. The code was not
+  compressed just to meet the metric.
+
 ## 0.27.2
 
 Two misjudgment and memory fixes. No ledger format, entry kind, plan key,

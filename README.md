@@ -16,8 +16,11 @@ Requires Node.js >= 22.19, Git with `merge-tree --write-tree`, Bash and a config
 
 ```sh
 pi install npm:pi-owed          # reload pi after installation
+ln -sf "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/.bin/owed" ~/.local/bin/owed
 # Standalone CLI alternative: npm i -g pi-owed
 ```
+
+`pi install npm:pi-owed` does not put `owed` on PATH, but agents, scripts and owed's printed commands call `owed`; use this link with `~/.local/bin` on PATH, or `npm i -g pi-owed` at the same version as the pi package.
 
 In a disposable repository, save this plan as `plan.yaml` ([examples/plan.yaml](examples/plan.yaml)):
 
@@ -1076,7 +1079,10 @@ Requires Node.js 22.19 or later, Git with `merge-tree --write-tree`, and Bash. F
 
 ```sh
 pi install npm:pi-owed
+ln -sf "${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/.bin/owed" ~/.local/bin/owed
 ```
+
+`pi install npm:pi-owed` does not put `owed` on PATH, but agents, scripts and owed's printed commands call `owed`; use this link with `~/.local/bin` on PATH, or `npm i -g pi-owed` at the same version as the pi package.
 
 For the standalone CLI:
 
