@@ -25,7 +25,8 @@ async function fixture(t: TestContext, mode = 'owner') {
   const blobs = join(f.root, 'replay-blobs'); await mkdir(blobs);
   const plan = { version: 1, trunk: 'main', closure: [], invariants: [], nodes: [
     { id: 'a', deps: [], writes: ['a/'], checks: [{ id: 'stress', run: 'false', reads: ['a/'], timeout_s: 10 }],
-      review: { count: 0, min_rank: 1 }, approve: 'owner', evidence: [{ id: 'proof', what: 'proof', by: 'owner' }] },
+      review: { count: mode === 'same-note' ? 1 : 0, min_rank: 1 },
+      ...(mode !== 'same-note' ? { approve: 'owner', evidence: [{ id: 'proof', what: 'proof', by: 'owner' }] } : {}) },
     { id: 'dep', deps: [], writes: ['dep/'], checks: [], review: { count: 0, min_rank: 1 } },
   ] };
   const blob = async (text: string) => { const hash = sha256(text); await writeFile(join(blobs, hash), text); return hash; };
@@ -37,13 +38,18 @@ async function fixture(t: TestContext, mode = 'owner') {
   };
   add({ kind: 'genesis', by: 'owner:pi', channel: 'delegated', plan: planSha, trunk: 'main', commit: base, state: { commit: base, tree: sha256('base'), invKeys: {} } });
   add({ kind: 'dispatch', by: 'parent:drive', node: 'a', attempt: 1, base, branch: 'synthetic', worktree: f.cwd, packet, rulings_seen: -1 });
-  const facts: CandidateFacts = { commit, base, tree: sha256('candidate'), patch: sha256('patch'), changed: ['a/value'], closureTouched: false,
-    keys: { 'check:stress': sha256('stress'), writes: sha256('writes'), rulings: sha256('rulings'), ...manualKeys(plan.nodes[0] as never, sha256('patch')) } };
+  const facts: CandidateFacts = { commit, base, tree: sha256('candidate'), patch: sha256('patch'), changed: ['a/value'], closureTouched: mode === 'same-note',
+    keys: { review: sha256('review'), 'closure-review': sha256('closure-review'), 'check:stress': sha256('stress'), writes: sha256('writes'), rulings: sha256('rulings'), ...manualKeys(plan.nodes[0] as never, sha256('patch')) } };
   add({ kind: 'submit', by: 'writer:a#1', node: 'a', attempt: 1, facts });
   if (mode !== 'recover') {
     for (const obligation of ['check:stress', 'writes']) add({ kind: 'obs', by: 'executor:owed', subject: 'a', obligation, key: facts.keys[obligation]!, verdict: 'pass', exit: 0, durationMs: 1, commit, base, log });
   }
-  if (mode !== 'recover') add({ kind: 'review', by: 'owner:pi', channel: 'delegated', node: 'a', attempt: 1, obligation: 'approve', key: facts.keys.approve!, verdict: 'block', rank: 3, note: 'owner acceptance pending' });
+  if (mode === 'same-note') {
+    for (const obligation of ['review', 'closure-review'] as const) add({ kind: 'review', by: 'reviewer:external', node: 'a', attempt: 1, obligation,
+      key: facts.keys[obligation]!, verdict: 'block', rank: 2, needs: 'parent', note: 'same question' });
+    add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason: 'review asks for guidance', needs: 'human' });
+  }
+  if (mode !== 'recover' && mode !== 'same-note') add({ kind: 'review', by: 'owner:pi', channel: 'delegated', node: 'a', attempt: 1, obligation: 'approve', key: facts.keys.approve!, verdict: 'block', rank: 3, note: 'owner acceptance pending' });
   if (mode === 'halt') add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason: 'stalled: awaiting owner acceptance', needs: 'owner' });
   if (mode === 'recover') {
     add({ kind: 'review', by: 'owner:pi', channel: 'delegated', node: 'a', attempt: 1, obligation: 'approve', key: facts.keys.approve!, verdict: 'block', rank: 3, note: 'owner blocked' });
@@ -71,7 +77,7 @@ test('RP normal: CLI renders real status, compact items and emitted owner notice
     if (s.seq === f.entries.at(-1)!.seq) { const a = out.nodes.find(n => n.node === 'a')!; assert.ok(a.notice[0]?.includes('owed approve a')); assert.ok(a.why.items.some(i => i.obligation === 'evidence:proof')); }
     return out; };
   const r = await run(f, rendered, ['--seqs', String(f.entries.at(-1)!.seq)]);
-  assert.equal(r.code, 0); assert.equal(calls, 1); assert.deepEqual(r.report.results[0]!.errors, { a: 0, b: 0, c: 0 });
+  assert.equal(r.code, 0); assert.equal(calls, 1); assert.equal(r.report.results[0]!.renderedSamples, 1); assert.deepEqual(r.report.results[0]!.errors, { a: 0, b: 0, c: 0 });
   assert.equal(r.report.assumptions.now, 'sampled entry.ts');
   assert.ok(r.report.results[0]!.coverage.notEmitted > 0, 'ready dep has no actual owner notice');
   const timing = r.report.results[0]!.timing; assert.ok(timing.foldMs > 0 && timing.planParseMs > 0);
@@ -236,7 +242,7 @@ test('RP R-028-66: shard merge preserves all findings/totals; missing and duplic
   let merged = '', error = '';
   const io = { log: (s: string) => { merged = s; }, error: (s: string) => { error = s; } };
   assert.equal(await replayMain(['--merge', ...files], io), whole.code); assert.equal(error, '');
-  const semantic = (r: Result) => ({ entries: r.entries, samples: r.samples, nodes: r.nodes, normalizedLines: r.normalizedLines, errors: r.errors, coverage: r.coverage, findings: r.findings, itemBranches: r.itemBranches, itemInfo: r.itemInfo, truncated: r.truncated });
+  const semantic = (r: Result) => ({ entries: r.entries, samples: r.samples, renderedSamples: r.renderedSamples, nodes: r.nodes, normalizedLines: r.normalizedLines, errors: r.errors, coverage: r.coverage, findings: r.findings, itemBranches: r.itemBranches, itemInfo: r.itemInfo, truncated: r.truncated });
   assert.deepEqual(semantic(JSON.parse(merged).results[0]), semantic(whole.report.results[0]!));
   assert.equal(await replayMain(['--merge', ...files.slice(1)], io), 2); assert.match(error, /missing shard/);
   assert.equal(await replayMain(['--merge', ...files, files[0]!], io), 2); assert.match(error, /duplicate/);
@@ -289,7 +295,7 @@ test('RP R-028-69 P2: sample ordinal partitions every 2 and every multiple of N 
     assert.deepEqual(seen, every === 2 ? [[0, 4], [2]] : [[0], [4]]);
     let output = ''; await replayMain(['--merge', ...files], { log: s => { output = s; }, error: s => assert.fail(s) });
     const merged = JSON.parse(output).results[0] as Result, expected = whole.report.results[0]!;
-    for (const key of ['entries', 'samples', 'nodes', 'errors', 'coverage', 'findings', 'itemBranches', 'itemInfo'] as const) assert.deepEqual(merged[key], expected[key]);
+    for (const key of ['entries', 'samples', 'renderedSamples', 'nodes', 'errors', 'coverage', 'findings', 'itemBranches', 'itemInfo'] as const) assert.deepEqual(merged[key], expected[key]);
   }
 });
 
@@ -350,6 +356,64 @@ test('RP R-028-71: contextual no-command item is informational; dangling need ar
   assert.equal(context.code, 0); assert.equal(context.report.results[0]!.itemBranches.iii, 1);
   const missing = await run(f, await renderer(n => ({ ...n, why: { ...n.why, items: n.why.items.map(i => i.obligation === 'approve' ? { ...i, line: i.line.split(' → ')[0]! + ' → ' } : i) } })), ['--seqs', '5']);
   assert.equal(missing.code, 1); assert.ok(missing.report.results[0]!.errors.a > 0);
+});
+
+test('RP R-028-72: same-note review blocks require distinct status, compact and notice rows', async t => {
+  const f = await fixture(t, 'same-note'), { renderCurrent } = await api();
+  const control = await run(f, (s, now, timing) => {
+    const snap = renderCurrent(s, now, timing), n = snap.nodes.find(n => n.node === 'a')!;
+    assert.equal(n.status.length, 2); assert.equal(n.status[0], n.status[1]); assert.equal(n.why.next?.length, 1);
+    return snap;
+  }, ['--seqs', '7']);
+  assert.equal(control.code, 0);
+  for (const surface of ['status', 'compact why next', 'owner notice']) {
+    const r = await run(f, await renderer(n => surface === 'status' ? { ...n, status: n.status.slice(0, 1) }
+      : surface === 'compact why next' ? { ...n, why: { ...n.why, next: [] } }
+      // The real rule-only halted route emits no notice; inject this surface to exercise its identical multiset mapping.
+      : { ...n, notice: n.status.slice(0, 1).map(l => l.trim()), notEmitted: undefined }), ['--seqs', '7']);
+    assert.equal(r.code, 2); assert.equal(r.report.results[0]!.coverage.uncovered, 1);
+    assert.deepEqual(r.report.results[0]!.findings.uncovered, [{ seq: 7, node: 'a', surface, obligation: 'closure-review', reason: 'missing output for a need' }]);
+  }
+});
+
+test('RP R-028-72: exact identities reserve their rows before fallback; reordered distinct commands stay paired', async t => {
+  const f = await fixture(t);
+  const reordered = await run(f, await renderer(n => ({ ...n, status: [...n.status].reverse(), notice: [...n.notice].reverse() })), ['--seqs', '5']);
+  assert.equal(reordered.code, 0); assert.deepEqual(reordered.report.results[0]!.errors, { a: 0, b: 0, c: 0 });
+  const fallback = await run(f, await renderer(n => ({ ...n, status: [n.status[1]!, n.status[0]!.replace(/: .* → /, ': different display text → ')] })), ['--seqs', '5']);
+  assert.equal(fallback.code, 0); assert.equal(fallback.report.results[0]!.coverage.uncovered, 0);
+});
+
+test('RP R-028-72: rejected fold before selected seq produces identical whole-run zero-output coverage at N=2/3', async t => {
+  const f = await fixture(t, 'same-note'), { replayMain } = await api();
+  f.entries[5]!.by = 'writer:invalid-reviewer'; await f.save();
+  const whole = await run(f, undefined, ['--seqs', '7']), expected = whole.report.results[0]!;
+  assert.equal(expected.samples, 0); assert.equal(expected.renderedSamples, 0); assert.equal(expected.coverage.uncovered, 3);
+  assert.deepEqual(expected.findings.uncovered.map(x => x.seq), [5, 7, 7]);
+  for (const total of [2, 3]) {
+    const files: string[] = [];
+    for (let i = 0; i < total; i++) {
+      const shard = await run(f, undefined, ['--seqs', '7', '--shard', `${i}/${total}`]);
+      assert.equal(shard.report.results[0]!.renderedSamples, 0);
+      assert.ok(shard.report.results[0]!.findings.uncovered.every(x => !x.reason.startsWith('no sampled output')));
+      const file = join(f.root, `no-output-${total}-${i}.json`); await writeFile(file, shard.output); files.push(file);
+    }
+    let output = ''; assert.equal(await replayMain(['--merge', ...files], { log: s => { output = s; }, error: s => assert.fail(s) }), whole.code);
+    const merged = JSON.parse(output).results[0] as Result;
+    for (const key of ['entries', 'samples', 'renderedSamples', 'nodes', 'errors', 'coverage', 'findings', 'global', 'itemBranches', 'itemInfo', 'truncated'] as const) assert.deepEqual(merged[key], expected[key]);
+  }
+});
+
+test('RP R-028-72: empty shards omit the whole-run finding; merge emits it once for empty input', async t => {
+  const f = await fixture(t), { replayMain } = await api(); await writeFile(f.ledger, '');
+  const whole = await run(f), files: string[] = [];
+  for (let i = 0; i < 2; i++) {
+    const shard = await run(f, undefined, ['--shard', `${i}/2`]); assert.equal(shard.report.results[0]!.coverage.uncovered, 0);
+    const file = join(f.root, `empty-${i}.json`); await writeFile(file, shard.output); files.push(file);
+  }
+  let output = ''; assert.equal(await replayMain(['--merge', ...files], { log: s => { output = s; }, error: s => assert.fail(s) }), 2);
+  const merged = JSON.parse(output).results[0] as Result;
+  assert.deepEqual(merged.coverage, whole.report.results[0]!.coverage); assert.deepEqual(merged.findings, whole.report.results[0]!.findings);
 });
 
 test('RP standalone CLI: report and nonzero exit survive process boundary; invalid flags fail usage', async t => {
