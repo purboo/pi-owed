@@ -483,6 +483,18 @@ export function parsePlan(text: string): Plan {
     else plan.slot_setup = str(r.slot_setup, 'slot_setup');
   }
   if (r.lease !== undefined) { if (typeof r.lease !== 'boolean') errors.push('lease: expected boolean'); else plan.lease = r.lease; }
+  if (r.env_signatures !== undefined) {
+    const env = obj(r.env_signatures, 'env_signatures');
+    for (const k of Object.keys(env)) if (k !== 'match' && k !== 'unless') errors.push(`env_signatures.${k}: unknown key`);
+    const regexes = (v: unknown, label: string): string[] => strings(v, label).map(value => {
+      if (value.length > 300) errors.push(`${label}: regex must be <= 300 characters`);
+      try { new RegExp(value); } catch { errors.push(`${label}: invalid regex`); }
+      return value;
+    });
+    const match = regexes(env.match, 'env_signatures.match');
+    if (!match.length) errors.push('env_signatures.match: expected at least one regex');
+    plan.env_signatures = { match, ...(env.unless !== undefined ? { unless: regexes(env.unless, 'env_signatures.unless') } : {}) };
+  }
   if (r.sweep !== undefined) {
     const sw = obj(r.sweep, 'sweep');
     for (const k of Object.keys(sw)) if (!['run', 'timeout_s', 'reads', 'every'].includes(k)) errors.push(`sweep.${k}: unknown key`);
