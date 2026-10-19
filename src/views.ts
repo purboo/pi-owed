@@ -1146,6 +1146,8 @@ export function preauthorizedWritesLines(s: State, node: string, dispatchSeq?: n
     }
   }
   const prefixes = [...new Set((plan.allow ?? []).filter(r => r.nodes.some(g => matchesGlob(node,g))).flatMap(r => r.writes ?? []))].sort();
+  const cap = plan.nodes.find(n => n.id === node)?.allow_only;
+  if (cap !== undefined) return [`Pre-authorized by the owner (allowance plan #${allowance}): ${prefixes.join(', ') || '(none)'}; allow_only: [${cap.join(', ')}] — only matching task-needed paths are granted; own writes are unchanged.`];
   return prefixes.length ? [`Pre-authorized by the owner (allowance plan #${allowance}): ${prefixes.join(', ')} — edit these freely; do not ask the parent; owed grants them when your candidate is measured. Change files there only when the task needs it.`] : [];
 }
 function grantedWritesText(g: import('./types.ts').GrantEntry): string {

@@ -274,7 +274,7 @@ test('WG2098 every new genesis/plan/edit/amend records syntax 2 and rejects unkn
     await ops.amend({cwd:r.cwd,node:'a',plan:file,writes:['+more/'],note:'new ownership',as:owner,channel:'flag'});
     const {s,es,lookup}=await r.state(), laws=es.filter(e=>e.kind==='genesis'||e.kind==='plan');
     assert.equal(laws.length,4);for(const e of laws)if(e.kind==='genesis'||e.kind==='plan')assert.equal(e.writes_syntax,2);
-    const d={kind:'plan',by:'owner:test',prior:s.planSha,plan:s.planSha,downgrades:[],writes_syntax:3} as unknown as Draft;
+    const d={kind:'plan',by:'owner:test',prior:s.planSha,plan:s.planSha,downgrades:[],writes_syntax:4} as unknown as Draft;
     assert.throws(()=>R.reduceFrom(s,[forged(s,d)],lookup),/writes_syntax/);
   }finally{await r.cleanup();}
 });
