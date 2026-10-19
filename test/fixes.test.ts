@@ -48,11 +48,11 @@ test('judgment block hints describe in words who can clear them and never print 
     assert.deepEqual(asFlags(hint), [], `hint must not carry --as: ${hint}`);
     assert.match(hint, /^review blocked: guidance needed → owed decide a --text "<ruling>" --writer$/);
   }
-  // The only --as anywhere in the rendered views is the owner's own (owner-channel gated) decision command.
+  // Any --as in rendered views must still be the owner's own decision; HL2 omits the active-block owner override.
   const text = `${renderBrief(brief)}\n${renderReceipt(card)}`;
-  assert.deepEqual([...new Set(asFlags(text))], ['owner:<id>'], text);
+  for (const principal of asFlags(text)) assert.equal(principal, 'owner:<id>', text);
   assert.equal(brief.decisions.find(d => d.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
-  assert.match(renderReceipt(receipt(s, r.entries, 'a')), /or: owed review a --ok --rank 3 --candidate c-a --note "<note>" --ack-rulings latest --as owner:<id>/);
+  assert.doesNotMatch(renderReceipt(receipt(s, r.entries, 'a')), /or: owed review a.*--ok/);
   // A different reviewer at the same rank still cannot clear the block.
   r.review('a', 'ok', 2, 'reviewer:peer');
   assert.equal(r.state().nodes.a!.blocks.find(b => b.seq === block)!.state, 'active');
