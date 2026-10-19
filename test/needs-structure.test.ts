@@ -144,6 +144,7 @@ const registered: Registered[] = [
   ...at('src/ops.ts', 'prepareEdit', 'operation refusal', 'R-028-61: inline synchronous refusal.', ['a7f82766cf2324cc0b6b6e05219337902b2a308453006c30d7e63249eee475f8']),
   ...at('src/ops.ts', 'decide', 'operation refusal', 'R-028-61: inline synchronous refusal.', ['cc064b648d9db9682164e162aeabc8ffb17e591b02b09ec34b0b1bf8cb2c8501']),
   ...at('src/ops.ts', 'decide', 'Git commit message', 'Label passed to git.buildMerge.', ['15e8d3b405ff169c9c755a44ca18c0c6190c271e70de7f7c41558160db7d36a9']),
+  ...at('src/ops.ts', 'remeasureQueuedText', 'diagnostic example', 'RM2: successful remeasure receipt names the conditional flaky-risk command and the explicit rerun alternative; no needs selection.', ['27246abaeedb8482172727432994dcb76fd31fb7568ad9b5f0a1b7079dcb1a09', 'd32f55884200cd2b2738aa16e30c83598eac33d78d3c8b081d768d01feaed879']),
   ...at('src/ops.ts', 'readyDispatchNode', 'operation refusal', 'R-028-61: inline synchronous refusal.', ['55e2a8ff05da956d156986e7e5e25c5404ff15c5f7739a28c090fe2f05ed5f32']),
   ...at('src/ops.ts', 'remeasureMerge', 'Git commit message', 'Label passed to git.buildMerge.', ['facc0d2660e13d56989bc2e5b4733de416c079e3bd4bfd48e3f21c87e778becd']),
   ...at('src/ops.ts', 'remeasureMerge', 'operation refusal', 'R-028-61: inline synchronous refusal.', ['42158c0db8eb59987a9d3e2b0930fb2a4a16a99e8031107fe9324df54ff4ab8f']),
