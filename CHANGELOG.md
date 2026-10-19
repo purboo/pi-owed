@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.29.2
+
+No ledger, entry kind, entry field, plan or key change. `tracked_by` may now hold
+`ext:<id>`, which owed < 0.29.2 refuses on replay: upgrade every reader of a
+ledger before recording an external tracker.
+
+- **`--remeasure` re-measures the node's own blocked check.** After
+  `owed decide <node> --remeasure` (or `owed resume <node> --remeasure`), the
+  driver runs the attribution of every active execution block of the node whose
+  failure precedes that resume, including blocks on the current candidate's
+  key, before it sends any repair follow-up. Each such block gets at most one
+  non-error attribution per resume: a fail clears the block and the failure
+  stays the writer's; a pass leaves a flaky block that needs
+  `owed waive <node> --accept-risk <seq>`; an attribution error follows the
+  existing back-off and halt rules. A plain resume keeps 0.29.1 routing, and
+  merge-tree invariant remeasure is unchanged. Before, the node check stayed
+  blocked and the writer got a repair follow-up until someone ran
+  `owed attest <node> --rerun` by hand.
+- **The `--remeasure` reply says what will be measured again.** One line per
+  obligation: a failed merge-tree invariant as before; a blocked node check as
+  `remeasure queued: <node> check <id> (failure #<seq>) is measured again on
+  its key before any repair; a pass leaves a flaky block: owed waive <node>
+  --accept-risk <seq>`; a check that already failed again on its key as
+  `<node> check <id> already failed again on its key (#<seq>); --remeasure does
+  not measure it again: owed attest <node> --rerun`; otherwise `nothing to
+  remeasure: no failed merge-tree invariant and no blocked check of <node>`.
+  The misleading "(the next merge measures as usual)" is gone. `owed resume
+  --remeasure` now builds its reply from the state that includes the new
+  resume entry.
+- **Waivers can be tracked outside the plan: `--tracked-by ext:<id>`.**
+  `owed waive … --tracked-by` (CLI and the `owed_waive` tool) accepts, besides
+  an unmerged node of the current plan, an external tracker `ext:<id>` with
+  `<id>` matching `^[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}$`. It is recorded in
+  the existing `tracked_by` field and validated on append and on replay; a
+  tracker that names a node of the plan in force when the waiver was recorded
+  keeps its local meaning. An external tracker never settles: summary debt,
+  full status, report and the waived node's `owed why` show
+  `tracked by ext:<id> (external)` for as long as the debt exists. Malformed
+  ids and a bare `ext:` are refused with nothing recorded.
+- **Per-command help.** `owed help <command>`, `owed <command> --help` and
+  `owed <command> <args…> --help` print only that command's forms (for example
+  every `attest` form and its exit codes), the flags it accepts (including the
+  global `--json`, `--as`, `--i-am-owner`) and the `Usage:` line, exit 0, and
+  work outside a repository. The text comes from the existing help and flag
+  tables. `owed help <unknown>` exits 2 and names the known commands; `owed
+  help` and `owed --help` still print the full help.
+
 ## 0.29.1
 
 No ledger, entry, plan or CLI-flag change; durable-writer waits still need
