@@ -1,6 +1,6 @@
 import { alreadyRecordedText } from './identical-acts.ts';
 import { idleWake } from './watchdog.ts';
-import { withWritesSyntax } from './writes.ts';
+import { withWritesSyntax, planWritesSyntax } from './writes.ts';
 import { readFile, stat } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { isMainThread } from 'node:worker_threads';
@@ -259,9 +259,9 @@ export default function owed(pi: ExtensionAPI): void {
     const r = await ops.gc({ ...await actor(ctx, dir, who, `${p.dry_run ? 'Report' : 'Remove'} worktrees and branches of finished attempts`, {}, signal), dryRun: !!p.dry_run });
     return result(r, renderGc(r));
   });
-  tool('decide', 'Record one atomic decision for named nodes: optional writes amendment, defer of their current merge invariant keys, one ruling answering each open question, and resume (default on for halted or held nodes). Every part is validated before one append; dsa delivery follows the lock. defer needs owner; writes uses owed_amend authority. resume: false preserves the halt; after/remeasure use owed_resume semantics; writer invalidates candidates.', Type.Object({ nodes:Type.Array(node,{minItems:1}), text:reason, writes:Type.Optional(Type.Array(Type.String({minLength:1}),{minItems:1})), defer:Type.Optional(Type.String({minLength:1})), resume:Type.Optional(Type.Boolean()), after:Type.Optional(Type.Union([Type.String(),Type.Array(Type.String())])), remeasure:Type.Optional(Type.Boolean()), writer:Type.Optional(Type.Boolean()), as, cwd }), async (p,ctx,dir,signal) => {
+  tool('decide', 'Record one atomic decision for named nodes: optional writes amendment, defer of their current merge invariant keys, one ruling answering each open question, and resume (default on for halted or held nodes). Every part is validated before one append; dsa delivery follows the lock. defer needs owner; writes uses owed_amend authority. allow_only replaces the allow-grant cap (exact literals or syntax 2 globs; [] grants nothing); widening needs owner. resume: false preserves the halt; after/remeasure use owed_resume semantics; writer invalidates candidates.', Type.Object({ nodes:Type.Array(node,{minItems:1}), text:reason, writes:Type.Optional(Type.Array(Type.String({minLength:1}),{minItems:1})), allow_only:Type.Optional(Type.Array(Type.String({minLength:1}))), defer:Type.Optional(Type.String({minLength:1})), resume:Type.Optional(Type.Boolean()), after:Type.Optional(Type.Union([Type.String(),Type.Array(Type.String())])), remeasure:Type.Optional(Type.Boolean()), writer:Type.Optional(Type.Boolean()), as, cwd }), async (p,ctx,dir,signal) => {
     let who = p.as ?? (p.defer !== undefined ? ownerDefault() : 'parent:pi');
-    if (p.writes !== undefined) {
+    if (p.writes !== undefined || p.allow_only !== undefined) {
       const preview = await ops.decidePreview({...p,cwd:dir}), downgrades = planDowngrades(preview.prior,preview.plan), gaps = uncoveredDowngrades(preview.prior,preview.plan,downgrades);
       if (p.as === undefined && gaps.length) who = ownerDefault();
     }
@@ -280,7 +280,7 @@ export default function owed(pi: ExtensionAPI): void {
   tool('plan', 'Update the plan from a file (working tree, or commit rev); downgrades need the owner (the main agent as owner:pi, delegated, with a note saying why; a dialog only under OWED_CONFIRM=owner) unless an `allow` rule of the current plan covers them all (then the parent records them, labelled under allowance).', Type.Object({ plan: Type.String({ minLength: 1, description: 'Plan file path, relative to cwd.' }), rev: Type.Optional(Type.String({ minLength: 1, description: 'Read the plan file from this commit instead of the working tree; the entry records rev and path.' })), note: Type.Optional(Type.String({ description: 'Why (recorded); required for a delegated owner downgrade (D25.5).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const read = await ops.readPlan({ cwd: dir, path: p.plan, rev: p.rev }), text = read.plan;
     const before = (await ops.readState({ cwd: dir })).state;
-    const prior = await currentPlan(dir), next = withWritesSyntax(parsePlan(text),2), downgrades = planDowngrades(prior, next);
+    const prior = await currentPlan(dir), parsed = parsePlan(text), next = withWritesSyntax(parsed,planWritesSyntax(parsed)), downgrades = planDowngrades(prior, next);
     // D21.3: downgrades that an allowance of the current plan covers need no owner; the parent records them.
     const gaps = downgrades.length ? uncoveredDowngrades(prior, next, downgrades) : [];
     const who = p.as ?? (gaps.length ? ownerDefault() : 'parent:pi');

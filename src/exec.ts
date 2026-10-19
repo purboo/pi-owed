@@ -1,4 +1,4 @@
-import { matchesWrite, writesSyntax } from './writes.ts';
+import { matchesWrite, writesSyntax, matchesAllowOnly } from './writes.ts';
 import { sha256 } from './canon.ts';
 import { spawn } from 'node:child_process';
 import { constants } from 'node:fs';
@@ -650,7 +650,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
     if (job.kind === 'writes') {
       const node = ctx.plan.nodes.find(n => n.id === job.subject); if (!node) throw new Error(`unknown node ${job.subject}`);
       const paths = (await git(ctx.cwd, ['diff', '--no-renames', '--name-only', '-z', job.base, job.commit])).stdout.split('\0').filter(Boolean);
-      const bad = paths.filter(p => !node.writes.some(prefix => matchesWrite(p, prefix, writesSyntax(ctx.plan))) && !ctx.grantedWrites?.includes(p));
+      const bad = paths.filter(p => !node.writes.some(prefix => matchesWrite(p, prefix, writesSyntax(ctx.plan))) && !(matchesAllowOnly(node,p) && ctx.grantedWrites?.includes(p)));
       obs.verdict = bad.length ? 'fail' : 'pass'; obs.exit = bad.length ? 1 : 0; obs.note = bad.length ? `outside writes: ${bad.join(', ')}` : 'all changed paths within writes'; capture(obs.note);
     } else if (job.kind === 'strength') {
       // Mutation counterfactuals: every mutant patch comes from the base B, never from the candidate.

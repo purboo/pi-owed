@@ -247,7 +247,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
     if (c.mutants) keys[`strength:${c.id}`] = await strengthKey(cwd, plan, c, base, commit, closure);
     if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, ...runFileKey(c), red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
-  keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes, ...writesKeySyntax(plan,node.writes) });
+  keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes, ...writesKeySyntax(plan,node.writes), ...(node.allow_only !== undefined ? {allow_only:node.allow_only} : {}) });
   const closureTouched = await touchesClosure(cwd, plan, changed, base, commit);
   if (closureTouched) keys['closure-review'] = H({ o: 'closure-review', patch });
   keys.review = H({ o: 'review', patch });

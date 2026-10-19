@@ -200,7 +200,7 @@ test('DC2: writes-only plan set, equal ruling nodes and carries limited to amend
     const drafts=r.entries.map(({seq,ts,prev,hash,...d})=>d);
     const outside=drafts.map(d=>d.kind==='rule'?{...d,nodes:['a','b']}:d);assert.throws(()=>replayDrafts(base,outside,lookup),/equal/);
     const outsideCarry=drafts.map(d=>d.kind==='submit'?{...d,node:'b'}:d);assert.throws(()=>replayDrafts(base,outsideCarry,lookup),/decided|carry/);
-    const changed=structuredClone(r.plan!.kind==='plan'?plans.get(r.plan!.plan)!:base.state.plan);changed.nodes[0]!.title='not writes';const sha=await ledger.putBlob(JSON.stringify(changed));plans.set(sha,changed);const nonWrites=drafts.map(d=>d.kind==='plan'?{...d,plan:sha}:d);assert.throws(()=>replayDrafts(base,nonWrites,lookup),/writes-only/);
+    const changed=structuredClone(r.plan!.kind==='plan'?plans.get(r.plan!.plan)!:base.state.plan);changed.nodes[0]!.title='not writes';const sha=await ledger.putBlob(JSON.stringify(changed));plans.set(sha,changed);const nonWrites=drafts.map(d=>d.kind==='plan'?{...d,plan:sha}:d);assert.throws(()=>replayDrafts(base,nonWrites,lookup),/writes additions.*allow_only replacements/);
     assert.doesNotThrow(()=>replayDrafts(base,drafts,lookup));
   }finally{await f.cleanup();}
 });

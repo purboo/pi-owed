@@ -37,6 +37,8 @@ export interface NodeSpec {
   title?: string;
   deps: string[];
   writes: string[];
+  /** AO: exact paths or syntax 2 globs capping allow grants only; [] grants nothing. */
+  allow_only?: string[];
   checks: CheckSpec[];
   review: { count: number; min_rank: number };   // default {count:0,min_rank:1}
   brief?: string;
@@ -145,11 +147,11 @@ export interface ExecutionResult { completed: boolean; countOK: boolean }
 export interface MeasurementRun { verdict: Verdict; exit: number | null; counts?: Counts; durationMs: number; log: string; note?: string; failed?: string[]; execution?: ExecutionResult }
 
 interface Base { seq: number; ts: string; prev: string; hash: string; by: string /* role:id */; channel?: Channel; /** DC2: first entry seq of one atomic decision. */ decision?: number; /** RC (0.27): sorted unique present display fields unknown readers may ignore; never base fields. */ ignorable?: string[] }
-export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; writes_syntax?: 2; state: StateFacts; /** SF2: source file of the initial plan, for start without --plan. */ path?: string }
+export interface GenesisEntry extends Base { kind: 'genesis'; trunk: string; commit: string; plan: string; writes_syntax?: 2 | 3; state: StateFacts; /** SF2: source file of the initial plan, for start without --plan. */ path?: string }
 /** IR1: current-plan facts on the ledger trunk; refresh changes invariant keys, never the trunk commit/seq. */
 export interface RefreshEntry extends Base { kind: 'refresh'; commit: string; state: StateFacts }
 /** `rev` (resolved commit) and `path` (repository-relative) record where the plan text was read; rev is absent for a working-tree file. */
-export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; writes_syntax?: 2; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
+export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: string; writes_syntax?: 2 | 3; downgrades: Downgrade[]; rev?: string; path?: string; /** why (D25.5; required for a delegated owner downgrade) */ note?: string }
 export interface AnswerRef { rid: string; qid: string; rev: number }
 /** DC: multiple answers share one decision ruling. */
 export interface DecisionAnswer extends AnswerRef { node: string }
