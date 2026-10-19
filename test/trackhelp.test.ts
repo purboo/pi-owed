@@ -164,7 +164,7 @@ test('HP1: command help works outside a repository, keeps every attest form and 
     assert.ok(decide.stdout.includes('--resume|--no-resume'));
     assert.doesNotMatch(decide.stdout,/(?:^|\n| \| )attest\b/);
     const edit = await cli(r.root,['help','edit']); assert.equal(edit.code,0,edit.stderr);
-    assert.ok(edit.stdout.includes('edit <node>')); assert.ok(edit.stdout.includes('edit --invariant'));
+    assert.ok(edit.stdout.includes('edit <node[,node...]>')); assert.ok(edit.stdout.includes('edit --invariant'));
     const decoy = await cli(r.root,['decoy','--help']); assert.equal(decoy.code,0,decoy.stderr);
     for (const form of ['decoy commit','decoy reveal','decoy digest']) assert.ok(decoy.stdout.includes(form));
     const waive = await cli(r.root,['help','waive']); assert.equal(waive.code,0,waive.stderr); assert.ok(waive.stdout.includes('ext:<id>'));

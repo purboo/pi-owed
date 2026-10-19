@@ -31,7 +31,7 @@ import { unruledBlocks } from './drive.ts';
 import { driveStatus, readLock, driveStart, type DriveStart } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
-import { editText, editDiff, type EditFields } from './edit.ts';
+import { editText, editDiff, editNodes, type EditFields } from './edit.ts';
 import { lintPlanShell, lintPlanCost } from './planlint.ts';
 import { admitSelftests, selftestPreview, measureTry, tryLines, type CheckTryArgs } from './checktry.ts';
 import { admitPlan, runFileLines } from './admission.ts';
@@ -969,7 +969,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
 // ---------- ED: atomic node/check/invariant plan edits ----------
 export type EditArgs = Context & EditFields & { signal?: AbortSignal; note: string; plan?: string; rule?: string; writer?: boolean; resume?: boolean; after?: string | string[]; expect?: 'report'; dry_run?: boolean };
 export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades>; warnings: string[] }
-export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string; warnings?: string[] }
+export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; resumes?: Entry[]; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string; warnings?: string[] }
 async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<EditPreview> {
   inited(s);
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('edit needs a non-empty note (--note TEXT)','usage');
@@ -994,12 +994,13 @@ export async function edit(o: Actor & EditArgs): Promise<EditResult | EditPrevie
       checkAbort(o.signal);
       const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:o.note.trim(), notCarried },ledger,p,before);
       if (await readFile(e.file,'utf8') !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while editing; nothing recorded`);
+      const ids = editNodes(o);
       if (o.rule !== undefined) {
-        const rule: Draft = { kind:'rule', by:by(o), channel:o.channel, nodes:[o.node!], text:o.rule, ...(o.writer !== undefined ? { writer:o.writer } : {}) };
+        const rule: Draft = { kind:'rule', by:by(o), channel:o.channel, nodes:ids, text:o.rule, ...(o.writer !== undefined ? { writer:o.writer } : {}) };
         guard(replayed(latest,drafts),rule); drafts.push(rule);
       }
-      if (o.resume) {
-        const resume = resumeDraft({ ...o, node:o.node! },replayed(latest,drafts));
+      if (o.resume) for (const node of ids) {
+        const resume = resumeDraft({ ...o, node },replayed(latest,drafts));
         guard(replayed(latest,drafts),resume); drafts.push(resume);
       }
       const temp = join(dirname(e.file),`.${basename(e.file)}.owed-edit-${process.pid}-${randomUUID().slice(0,8)}.tmp`);
@@ -1010,7 +1011,7 @@ export async function edit(o: Actor & EditArgs): Promise<EditResult | EditPrevie
       const plan = appended[0]!;
       try { await rename(temp,e.file); }
       catch (x) { throw new OwedError(`edit entries #${plan.seq}-#${appended.at(-1)!.seq} were recorded, but ${e.path} could not be replaced (${(x as NodeJS.ErrnoException).code ?? String(x)}): the recorded plan is in ${temp}: move it over ${e.file}`,'internal'); }
-      return { file:e.file, path:e.path, plan, ...(o.rule !== undefined ? { rule:appended.find(x => x.kind === 'rule')! } : {}), ...(o.resume ? { resume:appended.at(-1)! } : {}), carried:appended.filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, diff:e.diff, ...((e.warnings.length || p.lines.length) ? { warnings:[...e.warnings.filter(l => !l.startsWith('selftest:') && !l.endsWith(': not self-tested')),...p.lines] } : {}) };
+      return { file:e.file, path:e.path, plan, ...(o.rule !== undefined ? { rule:appended.find(x => x.kind === 'rule')! } : {}), ...(o.resume ? ids.length > 1 ? { resumes:appended.filter(x => x.kind === 'resume') } : { resume:appended.at(-1)! } : {}), carried:appended.filter((x): x is SubmitEntry => x.kind === 'submit'), notCarried, diff:e.diff, ...((e.warnings.length || p.lines.length) ? { warnings:[...e.warnings.filter(l => !l.startsWith('selftest:') && !l.endsWith(': not self-tested')),...p.lines] } : {}) };
     });
   });
 }

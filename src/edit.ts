@@ -5,10 +5,19 @@ import { OwedError } from './errors.ts';
 
 /** ED1: YAML values, with paths relative to a node or invariant. */
 export interface EditFields {
-  node?: string; invariant?: string; node_new?: boolean;
+  node?: string; nodes?: string[]; invariant?: string; node_new?: boolean;
   set?: string[]; unset?: string[];
 }
 function usage(text: string): never { throw new OwedError(text,'usage'); }
+/** ME1: exclusive target forms; batch ids are deduplicated in caller order. */
+export function editNodes(o: EditFields): string[] {
+  if ([o.node,o.nodes,o.invariant].filter(x => x !== undefined).length !== 1) usage('edit requires exactly one node, nodes or --invariant');
+  if (o.nodes === undefined) return o.node === undefined ? [] : [o.node];
+  if (!Array.isArray(o.nodes) || !o.nodes.length || o.nodes.some(x => typeof x !== 'string' || !x.trim())) usage('edit needs a non-empty list of named nodes');
+  const ids = [...new Set(o.nodes.map(x => x.trim()))];
+  if (o.node_new && ids.length > 1) usage('--node-new requires a single node');
+  return ids;
+}
 const checkFields = ['selftest','run','run_file','args','on_timeout','timeout_s','reads','min_tests','red','tests','red_expect','mutants','min_kill','repeat','quarantine','quarantine_set'];
 function parts(path: string, o: EditFields): string[] {
   const p = path.split('.');
@@ -24,13 +33,18 @@ function parts(path: string, o: EditFields): string[] {
 }
 /** ED1: preserve the target's source range when safe; flow containers and anchors need Document context. */
 export function editText(text: string, o: EditFields): string {
-  if ((o.node === undefined) === (o.invariant === undefined)) usage('edit requires exactly one node or --invariant');
+  const ids = editNodes(o);
   if (o.node_new && o.invariant !== undefined) usage('--node-new requires a node');
   if (!(o.set?.length || o.unset?.length)) usage('edit requires at least one --set or --unset');
   const doc = parseDocument(text);
   if (doc.errors.length) usage(`Invalid plan YAML: ${doc.errors.map(e => e.message).join('; ')}`);
-  const list = doc.get(o.invariant !== undefined ? 'invariants' : 'nodes',true), id = o.invariant ?? o.node!;
+  const list = doc.get(o.invariant !== undefined ? 'invariants' : 'nodes',true);
   if (!isSeq(list)) usage('edit target list is not a YAML sequence');
+  const targets: YAMLMap[] = [];
+  let contextual = !!list.flow || isMap(doc.contents) && !!doc.contents.flow;
+  const context = (target: YAMLMap) => visit(target,(_key,node) => { if (isAlias(node) || isNode(node) && 'anchor' in node && node.anchor) contextual = true; });
+  // ME1: mutate one Document; no intermediate plan is parsed or validated.
+  for (const id of o.invariant !== undefined ? [o.invariant] : ids) {
   let item = list.items.find(x => isMap(x) && x.get('id') === id);
   if (o.node_new) {
     if (item) usage(`Node ${id} already exists`);
@@ -38,6 +52,7 @@ export function editText(text: string, o: EditFields): string {
   }
   if (!isMap(item)) usage(`${o.invariant !== undefined ? 'Invariant' : 'Node'} ${id} does not exist`);
   const target = item as YAMLMap;
+  targets.push(target); context(target);
   const locate = (p: string[], create: boolean): { map: YAMLMap; path: string[] } | undefined => {
     if (p[0] !== 'checks' || o.invariant !== undefined) return { map:target, path:p };
     let checks: unknown = target.get('checks',true);
@@ -82,27 +97,32 @@ export function editText(text: string, o: EditFields): string {
   }
   for (const [map,runPath] of regenerate) if (map.has('run_file') && !(o.set ?? []).some(s => s.slice(0,s.indexOf('=')) === runPath)) map.delete('run');
   if (o.node_new) list.add(target);
+  context(target);
+  }
   const documentText = doc.toString({ lineWidth:0 }), intended = canonical(parsePlan(documentText));
   const checked = (next: string): string => {
     if (canonical(parsePlan(next)) !== intended) throw new OwedError('cannot edit the plan: serialized YAML differs from the intended plan','internal');
     return next;
   };
-  let contextual = !!list.flow || isMap(doc.contents) && !!doc.contents.flow;
-  visit(target,(_key,node) => { if (isAlias(node) || isNode(node) && 'anchor' in node && node.anchor) contextual = true; });
   if (contextual) return checked(documentText);
   // A new block node is appended without re-emitting the existing nodes.
   if (o.node_new) {
     const first = list.items[0] as { range?: [number,number,number] } | undefined;
     const start = first?.range?.[0] ?? list.range![0], line = text.lastIndexOf('\n',start)+1;
     const indent = /^ */.exec(text.slice(line,start))![0];
-    const rendered = stringify(target,{ lineWidth:0 }).trimEnd().split('\n').map((s,i) => `${indent}${i ? '  ' : '- '}${s}`).join('\n') + '\n';
+    const rendered = stringify(targets[0]!,{ lineWidth:0 }).trimEnd().split('\n').map((s,i) => `${indent}${i ? '  ' : '- '}${s}`).join('\n') + '\n';
     const end = list.range![2];
     return checked(text.slice(0,end) + (end && text[end-1] !== '\n' ? '\n' : '') + rendered + text.slice(end));
   }
-  const range = target.range!;
-  const startLine = text.lastIndexOf('\n',range[0])+1, indent = ' '.repeat(range[0]-startLine);
-  const rendered = stringify(target,{ lineWidth:0 }).trimEnd().split('\n').map((s,i) => i ? indent+s : s).join('\n') + '\n';
-  return checked(text.slice(0,range[0]) + rendered + text.slice(range[2]));
+  let next = text;
+  // Splice in reverse source order so earlier ranges remain valid; untouched bytes stay exact.
+  for (const target of targets.sort((a,b) => b.range![0]-a.range![0])) {
+    const range = target.range!;
+    const startLine = text.lastIndexOf('\n',range[0])+1, indent = ' '.repeat(range[0]-startLine);
+    const rendered = stringify(target,{ lineWidth:0 }).trimEnd().split('\n').map((s,i) => i ? indent+s : s).join('\n') + '\n';
+    next = next.slice(0,range[0]) + rendered + next.slice(range[2]);
+  }
+  return checked(next);
 }
 /** ED2: a compact diff of the changed region, accompanied by structured downgrade items in preview. */
 export function editDiff(path: string, before: string, after: string): string {
