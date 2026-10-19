@@ -531,8 +531,13 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
     return [`Needs you: ${node} — review the reported findings → owed decide ${node} --text "<decision>"`, ...(tail.trim() ? [tail] : [])].join('\n');
   }
   // QT-R1 (3): every open question of a run is its own need, with its text and its own answer command (askingText).
-  const asking = j.answerRetry ? [] : source.split('\n').filter(l => /\basks \(qid [^)]*\): /.test(l));
-  if (asking.length) return asking.map(l => {
+  // #3548: only askingText headers start blocks; quoted asks in options/details remain payload.
+  const prefix = node.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const header = `${prefix}: (?:writer|reviewer) (?:run )?\\S+ asks \\(qid [^,)\\n]+, rev \\d+\\): `;
+  const asking = j.answerRetry ? [] : source.split(new RegExp(`\\n(?=${header})`)).filter(block => new RegExp(`^${header}|^${prefix}: asks \\(qid [^)\\n]+\\): `).test(block));
+  if (asking.length) return asking.map(block => {
+    if (/asks \(qid [^)]*\): DECISION: [^\n]*\noptions:/.test(block)) return `Needs you: ${node} — ${block.replace(/^[^\n]*?: /, '')}`;
+    const l = block.split('\n')[0]!;
     const trailer = l.lastIndexOf(' — the driver never answers; answer: ');
     const body = trailer < 0 ? l : l.slice(0,trailer);
     const question = oneLine(body.match(/asks \(qid [^)]*\): (.*)$/)?.[1] ?? 'the run’s open question');
@@ -684,7 +689,7 @@ export class Follower {
       if (p.json?.do === 'merge' && p.json.outcome === 'merged' && typeof p.json.node === 'string') { done.push(p.json.node); merged.add(p); }
       if (p.wake && p.json) {
         const text = 'need' in p.json
-          ? p.json.need ? (p.check?.currentNeeds ?? [p.json.need as Need, ...(p.json.otherNeeds as Need[] ?? [])]).map(n => `Needs you: ${n.node} — ${needText(n)}`).join('\n') : undefined
+          ? p.json.need ? (p.check?.currentNeeds ?? [p.json.need as Need, ...(p.json.otherNeeds as Need[] ?? [])]).map(n => `Needs you: ${n.node} — ${needText(n)}`).join('\n') : /asks \(qid [^)]*\): DECISION: [^\n]*\noptions:/.test(String(p.json.text ?? '')) ? plainNeed(p.json, p.text) : undefined
           : plainNeed(p.json, p.text);
         if (text) needs.set(p.text, text);
       }
