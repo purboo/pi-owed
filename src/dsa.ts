@@ -6,7 +6,7 @@ import { accessSync, constants } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { RunState, RunView } from './types.ts';
+import type { RunQuestion, RunState, RunView } from './types.ts';
 
 /** The subset of `describe --key <rid> --json` the driver uses (contract D1); defined once in `src/types.ts`. */
 export type { RunState, RunQuestion, RunView } from './types.ts';
@@ -363,6 +363,26 @@ function requestOutcome<T>(r: Spawned, applied: (reply: Json) => T): T | Rejecte
   }
 }
 
+/** SA1: validate each optional ask field independently; malformed metadata never becomes display text. */
+function askFields(q: Json): Partial<RunQuestion> {
+  const out: Partial<RunQuestion> = {};
+  const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every(s => typeof s === 'string');
+  const object = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (typeof q.decision_needed === 'string') out.decision_needed = q.decision_needed;
+  for (const k of ['facts', 'tried'] as const) if (Array.isArray(q[k])) { const kept = q[k].filter((v): v is string => typeof v === 'string'); if (kept.length) out[k] = kept; }
+  // R-030-SA-2: never renumber options by dropping members; ambiguous preferred marks all disappear.
+  const ambiguous = Array.isArray(q.options) && q.options.filter(o => object(o) && o.preferred === true).length > 1;
+  if (Array.isArray(q.options) && q.options.every(o => object(o) && typeof o.label === 'string')) out.options = q.options.map(o => ({
+    label: o.label as string, ...Object.fromEntries(['scope', 'cost', 'risk'].flatMap(k => typeof o[k] === 'string' ? [[k, o[k]]] : [])),
+    ...(typeof o.preferred === 'boolean' && !ambiguous ? { preferred: o.preferred } : {}),
+  }));
+  if (Array.isArray(q.classification_candidates)) out.classification_candidates = q.classification_candidates.filter(object).filter(c => typeof c.label === 'string').map(c => ({
+    label: c.label as string, ...(strings(c.evidence) ? { evidence: [...c.evidence] } : {}), ...(strings(c.unproven) ? { unproven: [...c.unproven] } : {}),
+  }));
+  if (!out.classification_candidates?.length) delete out.classification_candidates;
+  return out;
+}
+
 /** Reduce dsa's describe reply. Workflow statuses (`done`) are read as call statuses (`ok`); the status is the latest
  *  generation's call status (first non-ok when a run has several calls), else the workflow's. */
 export function toRunView(rid: string, d: Json): RunView {
@@ -392,7 +412,7 @@ export function toRunView(rid: string, d: Json): RunView {
   const callStatus = statuses.length && statuses.length === calls.length ? statuses.find(s => s !== 'ok') ?? 'ok' : undefined;
   const status = state === 'sealed' ? callStatus ?? wfStatus(d.status) ?? 'unknown' : undefined;
   const error = typeof d.error === 'string' ? d.error : calls.map(c => c.error).find((e): e is string => typeof e === 'string');
-  const questions = Array.isArray(d.questions) ? (d.questions as Json[]).map(q => ({ qid: str(q.qid), rev: Number(q.rev), question: str(q.text ?? q.question), ...(typeof q.to === 'string' ? { to: q.to } : {}) })) : undefined;
+  const questions = Array.isArray(d.questions) ? (d.questions as Json[]).map(q => ({ qid: str(q.qid), rev: Number(q.rev), question: typeof (q.text ?? q.question) === 'string' ? (q.text ?? q.question) as string : '', ...(typeof q.to === 'string' ? { to: q.to } : {}), ...askFields(q) })) : undefined;
   const f = d.lastFence as Json | undefined;
   return { ...base, state, ...(result ? { result } : {}), ...(status ? { status } : {}), ...(error ? { error } : {}), ...(questions?.length ? { questions } : {}),
     ...(f && typeof f === 'object' ? { lastFence: { reason: str(f.reason), at: Number(f.at), ...(typeof f.exec === 'string' ? { exec: f.exec } : {}) } } : {}) };

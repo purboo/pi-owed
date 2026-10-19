@@ -346,7 +346,13 @@ export interface DecoyView { node: string; defect: string; commit: number; revea
 /** dsa run states the driver distinguishes (unknown dsa states map to `running`). */
 export type RunState = 'absent' | 'queued' | 'running' | 'asking' | 'sealed' | 'pruned';
 /** An open question of an `asking` run; `to` is dsa's answer address when reported. */
-export interface RunQuestion { qid: string; rev: number; question: string; to?: string }
+export interface RunQuestion {
+  qid: string; rev: number; question: string; to?: string;
+  decision_needed?: string;
+  options?: { label: string; scope?: string; cost?: string; risk?: string; preferred?: boolean }[];
+  facts?: string[]; tried?: string[];
+  classification_candidates?: { label: string; evidence?: string[]; unproven?: string[] }[];
+}
 /**
  * The subset of `pi-durable-subagents describe --key <rid> --json` the driver uses (the single definition; `src/dsa.ts`
  * builds it). Unknown dsa states map to `running`; `pruned` is treated like `sealed` with the status describe still

@@ -111,7 +111,7 @@ const registered: Registered[] = [
   ...at('src/drive.ts', 'slotAction', 'comment', 'Source commentary only.', ['cb4c66ee5578575a42e9e734f28032600fc82d4a5a38a3f9509ee09573dc4dda']),
   ...at('src/drive.ts', 'slotAction', 'historical text', 'R-028-42: persisted halt cause retains its historical tail.', ['2301efdd66a0dad4496b1c2942eecd556282a2785a368b964d3af989eed9fa31']),
   ...at('src/drive.ts', 'askingText', 'comment', 'Source commentary only.', ['7b2ac918b8de5a774bc099306aaf042fea4c081e0d40a6a62d4f06294ad8a97c']),
-  ...at('src/drive.ts', 'askingText', 'help/usage', 'Runner question response instructions, not needs membership.', ['6d6621c8b0d60e9a6342807fbd3e6ab1e2961ff2896908f981caeb40162744f6', '6e0ee127b29d272310e8f96745b5afd1f5790005fe5c1126f23e553303053b03']),
+  ...at('src/drive.ts', 'askingText', 'help/usage', 'Runner question response instructions, not needs membership (SA2 includes structured answer guidance).', ['211e5f3f0fa356c686a87fca4dde0966a4fc2b610ef0ac94cd130d2e3e95059c', '6d6621c8b0d60e9a6342807fbd3e6ab1e2961ff2896908f981caeb40162744f6', '6e0ee127b29d272310e8f96745b5afd1f5790005fe5c1126f23e553303053b03']),
   ...at('src/errors.ts', '<module>', 'comment', 'Source commentary only.', ['c338bfaed9c7cf3ca7c8f5e648195d765348945781a37bf7cd6af7b8e3ef2966']),
   ...at('src/ext-worker.ts', 'restartLine', 'historical text', 'Runtime version label, not an act.', ['8cd742bda80567c1ac0b9fec423f1ec9eb1e8d428f510418272ac7890326798f']),
   ...at('src/ext-worker.ts', 'toolWorker', 'historical text', 'Runtime version label, not an act.', ['61f7b1dbfbc986fa6a6b9162952997f0dae61949ef4bb279e9e57f2748367cb9']),

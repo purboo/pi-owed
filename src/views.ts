@@ -249,6 +249,23 @@ export interface Report {
   /** L2: execution blocks superseded by a plan entry after `since`; present only when there are any. */
   superseded?: SupersededBlock[];
 }
+/** SA2: decision-first runtime presentation; bounded fields retain whole code points and escaped controls. */
+export function structuredQuestionText(q: import('./types.ts').RunQuestion): string {
+  const clip = (s: string, max: number): string => {
+    let out = ''; for (const cp of s) { const escaped = oneLine(cp); if (out.length + escaped.length > max) break; out += escaped; } return out;
+  };
+  const options = (q.options ?? []).map((o, i) => {
+    const limits = (['scope', 'cost', 'risk'] as const).flatMap(k => o[k] !== undefined ? [`${k} ${clip(o[k]!, 160)}`] : []);
+    return `${i + 1}) ${clip(o.label, 160)}${o.preferred ? ' (preferred)' : ''}${limits.length ? ` — ${limits.join('; ')}` : ''}`;
+  }).join(' | ');
+  const context = [q.facts?.length ? `facts: ${q.facts.join('; ')}` : '', q.tried?.length ? `tried: ${q.tried.join('; ')}` : '',
+    q.classification_candidates?.length ? `candidates: ${q.classification_candidates.map(c => {
+      const proof = [c.evidence?.length ? `evidence: ${c.evidence.join('; ')}` : '', c.unproven?.length ? `unproven: ${c.unproven.join('; ')}` : ''].filter(Boolean);
+      return `${c.label}${proof.length ? ` (${proof.join('; ')})` : ''}`;
+    }).join('; ')}` : ''].filter(Boolean).join('; ');
+  return [`DECISION: ${oneLine(q.decision_needed!)}`, `options: ${options}`, ...(context ? [clip(context, 600)] : []), `details: ${clip(q.question, 300)}`].join('\n');
+}
+
 /** D23: files of a manual evidence entry as `path sha12`, then its note (always manual, never measured). */
 export function evidenceText(e: EvidenceEntry): string {
   return `files ${e.files.map(f => `${oneLine(f.path)} ${f.sha256.slice(0, 12)}`).join(', ') || 'none'}; note: ${oneLine(e.note)}`;
