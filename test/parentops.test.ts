@@ -41,12 +41,13 @@ function tools() {
   return async (name:string,args:unknown) => registered.get(`owed_${name}`)!.execute('test',args,undefined,undefined,{hasUI:false} as ExtensionToolContext);
 }
 
-test('PO1: covered amend refuses without ledger/file mutation; packet and measured grant replace the parent act', async () => {
+test('PO1/AC1: covered amend succeeds without ledger/file mutation; packet and measured grant replace the parent act', async () => {
   const r = await setup(plan([{id:'a',writes:['a/']}],{allow:[{nodes:['a'],writes:['test/']}]}));
   try {
     const before = await entries(r.cwd), text = await readFile(r.file,'utf8');
-    const refused = await call(r.cwd,['amend','a','--writes','+test/new.ts','--note','test coverage'],1);
-    assert.match(refused.stderr,/not needed: test\/new.ts are covered by allow rule \(plan #1\); owed grants them at measurement; tell the writer to edit them/);
+    // AC1: an existing allowance is a successful no-op, not a refusal.
+    const covered = await call(r.cwd,['amend','a','--writes','+test/new.ts','--note','test coverage']);
+    assert.match(covered.stdout,/test\/new.ts already covered by allow rule \(plan #1\); owed decide a --writer delivers a limit/);
     assert.deepEqual(await entries(r.cwd),before); assert.equal(await readFile(r.file,'utf8'),text);
     const d = await ops.dispatch({cwd:r.cwd,as:parent,node:'a'});
     assert.match(d.packet,/edit these freely; do not ask the parent; owed grants them when your candidate is measured/);
