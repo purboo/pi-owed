@@ -177,6 +177,13 @@ export function repoNeeds(s: State, _rt?: Runtime): Need[] {
   }
   return out;
 }
+/** RW2: a candidate keeps its phase unless this attempt's writer owes a repair/ruling resubmit. */
+export function writerWaitingEligible(s: State, node: string): boolean {
+  const n = s.nodes[node], c = n?.candidate, ar = n?.runs.find(r => r.attempt === n.slot?.attempt);
+  const writer = ar?.launches.find(l => l.role === 'writer');
+  return !!n && (!c || !!ar?.sends.some(x => x.rid === writer?.rid && x.seq > c.seq && x.sendKind === 'follow-up' && (x.reason === 'repair' || x.reason === 'ruling')));
+}
+
 /** The existing summary progress phase, with invocation-scoped measurement decoration only. */
 export function activity(s: State, node: string, rt?: Runtime): Activity | undefined {
   const n = s.nodes[node], spec = s.plan.nodes.find(n => n.id === node);
@@ -185,7 +192,7 @@ export function activity(s: State, node: string, rt?: Runtime): Activity | undef
   if (held) return { node, phase: 'held', text: heldRulingText(node, held.seq) };
   if (spec?.later || !(n.slot?.open || n.phase === 'blocked' || n.phase === 'held')) return;
   const wait = rt?.driverRunning ? rt.writerWaiting?.find(w => w.node === node && w.attempt === n.slot?.attempt) : undefined;
-  if (wait && !n.candidate && !halted(s, node)) return { node, phase: 'waiting', text: `writer waiting on durable ${wait.awaiting.map(a => `${oneLine(a.request)} (${a.state}, ${Math.floor(Math.max(0, (rt?.now ?? Date.now()) - wait.since) / 1000)}s)`).join(', ')}` };
+  if (wait && writerWaitingEligible(s, node) && !halted(s, node)) return { node, phase: 'waiting', text: `writer waiting on durable ${wait.awaiting.map(a => `${oneLine(a.request)} (${a.state}, ${Math.floor(Math.max(0, (rt?.now ?? Date.now()) - wait.since) / 1000)}s)`).join(', ')}` };
   const ms = rt?.measuring?.filter(m => m.node === node) ?? [];
   if (ms.length) return { node, phase: 'measuring', text: ms.map(m => `measuring ${m.obligations.join(', ') || 'other'} since ${clockTime(m.since, Date.parse(m.since))} (attest pid ${m.pid})`).join('; ') };
   const w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean), parked = trunkParked(s, node);

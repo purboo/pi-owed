@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { ledgerDir } from './ledger.ts';
 import { git } from './git.ts';
 import { stillAskingNeeds, type StillAsking } from './drive.ts';
+import { writerWaitingEligible } from './needs.ts';
 import type { AttestJob, State } from './types.ts';
 import type { Measuring, Runtime } from './needs-types.ts';
 
@@ -102,7 +103,7 @@ export async function assembleRuntime(o: { cwd: string; state: State; driverRunn
     const rows: NonNullable<Runtime['writerWaiting']> = JSON.parse(await readFile(join(await ledgerDir(o.cwd), 'drive', 'writer-waiting.json'), 'utf8'));
     if (Array.isArray(rows)) runtime.writerWaiting = rows.filter(row => {
       const n = o.state.nodes[row?.node];
-      return n?.slot?.open && !n.candidate && n.slot.attempt === row.attempt && Number.isFinite(row.since)
+      return n?.slot?.open && writerWaitingEligible(o.state, row.node) && n.slot.attempt === row.attempt && Number.isFinite(row.since)
         && n.runs.find(a => a.attempt === row.attempt)?.launches.some(l => l.role === 'writer' && l.rid === row.rid)
         && Array.isArray(row.awaiting) && row.awaiting.length > 0 && row.awaiting.every((a: NonNullable<import('./types.ts').RunView['awaiting']>[number]) => a && typeof a.request === 'string' && ['pending', 'running', 'finished'].includes(a.state));
     });

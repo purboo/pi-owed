@@ -224,16 +224,17 @@ test('WR2 stopped/no-submit halts include ended processes without requiring awai
   } finally { await f.cleanup(); }
 });
 
-test('WR2 current candidate does not gain a durable wait exemption', async () => {
+test('RW1/RW2 current candidate repair turn gains a durable wait exemption', async () => {
   const f = await fixture(1);
   try {
     await commitAt(f.slot.worktree, { 'a.txt': 'candidate' }); await ops.submit({ cwd: f.slot.worktree, as: writer, node: 'a' });
     await ops.attest({ cwd: f.cwd, node: 'a' });
     await ops.review({ ...f, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 1, note: 'fix API' });
     await f.send('repair', 'fix API');
-    assert.ok((await f.policy()).some(a => a.do === 'halt'));
+    f.dsa.gen = 2; // The repair applied as gen2; describe its current seal, not the stale gen1 seal.
+    assert.deepEqual(await f.policy(), []);
     await f.driver.pass();
-    assert.deepEqual((await assembleRuntime({ cwd: f.cwd, state: await f.state(), driverRunning: true })).writerWaiting, [], 'a current candidate never publishes durable waiting');
+    assert.equal((await assembleRuntime({ cwd: f.cwd, state: await f.state(), driverRunning: true })).writerWaiting?.length, 1, 'a current candidate repair turn publishes durable waiting');
   } finally { await f.cleanup(); }
 });
 
