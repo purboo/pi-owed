@@ -18,7 +18,7 @@ import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from
 export { ownerNeeded } from './reducer.ts';
 import type { AttemptRuns, Block, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RunRole, RunView, SendKind, SendReason, State, SubmitEntry } from './types.ts';
 
-/** One driver action (contract D4). The executor runs them in order; at most one per node per pass. */
+/** One driver action (contract D4). At most one scheduled action per node; EV3 adds a log-only notify alongside it. */
 export type Action =
   /** `ops.dispatch` as parent:drive; the writer launch follows from the next `decide` (level-triggered). */
   | { do: 'dispatch'; node: string }
@@ -465,6 +465,27 @@ function execEvidence(s: State, n: NodeState, items: readonly { obligation: stri
   }
   return out.sort((a, b) => Number(a.slice(1, a.indexOf(' '))) - Number(b.slice(1, b.indexOf(' '))));
 }
+// ---------- environment suspicion (EV3; failures remain failures) ----------
+const suspectLine = (o: ObsEntry): string | undefined => o.verdict === 'fail' ? /^environment-suspect: ([^\n]*?); /.exec(o.note ?? '')?.[1] : undefined;
+/** EV3: named current-key attribution exception, independent of the setup-failure exception. */
+function environmentSuspicions(s: State, n: NodeState): { failure: ObsEntry; again?: ObsEntry }[] {
+  if (!n.candidate) return [];
+  const out: { failure: ObsEntry; again?: ObsEntry }[] = [], entries = entriesOf(s), resumed = resumeOf(s,n.id)?.seq ?? -1;
+  for (const b of n.blocks) {
+    if (b.kind !== 'exec' || !b.obligation.startsWith('check:') || !['active','cleared'].includes(b.state) || b.key !== n.candidate.keys[b.obligation]) continue;
+    // Historical blocks do not override the current item's effective satisfaction or owner waiver.
+    if (!n.items.some(i => i.obligation === b.obligation && i.key === b.key && i.status === 'D')) continue;
+    const obs = observationsOf(s,n.id,b.obligation,b.key), failure = obs.find(o => o.seq === b.seq);
+    if (!failure || suspectLine(failure) === undefined) continue;
+    const again = obs.find(o => o.seq > failure.seq && o.attribution && o.commit === failure.commit && o.base === failure.base && o.verdict !== 'error');
+    if ((again && suspectLine(again) === undefined) || (b.state === 'cleared' && !again)) continue;
+    if (again && entries.some(e => e.kind === 'halt' && e.node === n.id && e.attempt === n.slot?.attempt && e.seq < resumed && e.reason === environmentSuspectHalt(n.id,failure,again))) continue;
+    out.push({ failure, ...(again ? { again } : {}) });
+  }
+  return out;
+}
+const environmentSuspectHalt = (node: string, f: ObsEntry, a: ObsEntry): string =>
+  `${node}: check ${f.obligation.slice(6)} failed twice with an environment signature (#${f.seq}, #${a.seq}: ${suspectLine(a)}); the writer is not asked to repair. Fix the environment, then owed attest ${node} --rerun and owed resume ${node}; if it is a real failure: owed decide ${node} --writer --text "<repair instruction>"`;
 // ---------- environment back-off (0.11, F2.2) ----------
 /** F2.2: an error observation whose note starts with `environment: ` (disk full, tree preparation failed). */
 export const isEnvironment = (o: ObsEntry): boolean => o.verdict === 'error' && (o.note ?? '').startsWith('environment: ');
@@ -569,6 +590,11 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
         if (!opts.noticed?.has(once)) { out.push({ ...a, once }); continue; }
       }
       out.push(notice); continue;
+    }
+    // EV3: log alongside the attribution action, without waking the parent or consuming its scheduling slot.
+    if (a?.do === 'attest') for (const { failure: f, again } of environmentSuspicions(s,n)) if (!again) {
+      const once = `environment-suspect\u0000${n.id}\u0000${f.seq}`;
+      if (!opts.noticed?.has(once)) out.push({ do:'notify', node:n.id, need:null, quiet:true, once, text:`${n.id}: check ${f.obligation.slice(6)} failed #${f.seq} with an environment signature (${suspectLine(f)}); measuring again on the same key before asking the writer` });
     }
     if (a) out.push(a);
   }
@@ -721,6 +747,8 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     }
     return undefined;
   }
+  const suspicions = environmentSuspicions(s,n), twice = suspicions.find(p => p.again);
+  if (twice) return halt(environmentSuspectHalt(id,twice.failure,twice.again!));
   // TR3: mixed blocks retain the existing parent halt before attribution or writer follow-up.
   if (c) {
     // AT3: a block measured for an earlier candidate never halts here; the new candidate is attested first.
@@ -762,7 +790,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   // Row 4: a recorded send not confirmed applied in this process: re-send the same id and bytes.
   for (const x of ar.sends) {
     if (x.reason === 'ruling' && x.sendKind === 'notify') continue; // PR2: never retries a notice to a sealed run or halts.
-    if (opts.applied.has(x.send) || !live.some(l => l.rid === x.rid)) continue;
+    if (opts.applied.has(x.send) || !live.some(l => l.rid === x.rid) || x.reason === 'repair' && suspicions.length) continue;
     const refused = opts.rejected.get(x.send);
     // D22.3: a rejected ruling steer is never retried and never halts; its rulings travel with repairs and reviewer
     // acks. A rejected ruling follow-up (K5.2) halts like any other send.
@@ -954,14 +982,17 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return !steer || f.at > Date.parse(steer.ts) ? send(writer, 'steer', 'fenced', fencedMessage(f.reason)) : undefined;
   };
   if (c) {
-    // Rows 9-10: missing verdicts and old-key attribution; RM1 also allows blocked current-key attribution once
-    // after an explicit remeasure resume, before repair. Setup-failure retries retain their existing route.
-    // F2.2: environment errors back off and do not count toward the two-error halt.
+    // Rows 9-10: measured obligations without a verdict on the candidate's keys, and attribution reruns of blocks from
+    // earlier content (a failure of the current content is a repair, not an attest): attest, unless `error` twice.
+    // A current-key attribution still runs for a setup failure, an EV3 environment suspect, or (RM1) once for a block
+    // that precedes an explicit remeasure resume, before repair.
+    // F2.2: an environment error (note `environment: `) does not count toward the two errors; it makes the attest wait.
     const retry = resumeOf(s, id);
+    const suspectAttribution = (j: { obligation: string; key: string }): boolean => suspicions.some(p => !p.again && p.failure.obligation === j.obligation && p.failure.key === j.key);
     const jobs = attestJobs(s, id).filter(j => {
       if (!j.attribution || j.key !== c.keys[j.obligation]) return true;
       const obs = observationsOf(s, j.subject, j.obligation, j.key);
-      return obs.some(o => setupFailure(s, o)) || !!(retry?.remeasure
+      return obs.some(o => setupFailure(s, o)) || suspectAttribution(j) || !!(retry?.remeasure
         && n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === j.obligation && b.key === j.key && b.seq < retry.seq)
         && !obs.some(o => o.attribution && o.seq > retry.seq && o.verdict !== 'error' && o.commit === j.commit && o.base === j.base));
     }).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed && !isEnvironment(o)) }));

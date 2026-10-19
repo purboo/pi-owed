@@ -829,8 +829,16 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   if (timeoutNote) obs.note = timeoutNote;
   if (fileNotes.size) obs.note = `${[...fileNotes].join('; ')}${obs.note ? `; ${obs.note}` : ''}`;
   if (protocolWarnings && !obs.note?.includes('malformed owed-counts')) obs.note = `${obs.note ? `${obs.note}; ` : ''}${protocolWarnings} malformed owed-counts line(s) ignored`;
-  obs.log = await ctx.ledger.putBlob(truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes);
+  const retained = truncated ? Buffer.concat([Buffer.from('[output truncated; last 1 MiB]\n'), bytes]) : bytes;
+  obs.log = await ctx.ledger.putBlob(retained);
   if (obs.note) obs.note = obs.note.replace(/log [0-9a-f]{12}(?= has no `not ok`\/panic line| has no error field)/g, `log ${obs.log.slice(0, 12)}`);
+  // EV2: inspect exactly the retained log; only a note changes, never the failed vote or its evidence.
+  if (job.kind === 'check' && job.subject !== 'trunk' && !job.probe && !job.spec?.repeat && obs.verdict === 'fail' && ctx.plan.env_signatures) {
+    const env = ctx.plan.env_signatures, lines = retained.toString().replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, '').replace(/\r/g, '').split('\n');
+    const matches = env.match.map(r => new RegExp(r)), unless = (env.unless ?? []).map(r => new RegExp(r));
+    const line = lines.find(l => matches.some(r => r.test(l)));
+    if (line !== undefined && !lines.some(l => unless.some(r => r.test(l)))) obs.note = `environment-suspect: ${line.replace(/;/g, ',').trim().slice(0,160)}; ${obs.note ?? ''}`;
+  }
   if (job.kind === 'inv' && obs.verdict === 'fail') {
     const matched = remeasureMatches(obs,measurementBytes.toString(),ctx.plan.invariants.find(i => i.id === job.spec?.id)?.remeasure_on ?? []);
     if (matched.length) obs.remeasure_match = matched;

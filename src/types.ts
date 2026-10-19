@@ -100,6 +100,8 @@ export interface Plan {
   sweep?: SweepSpec;          // advisory trunk measurements, never part of an item key
   /** BD3: submit-only limits in MiB on candidate changed blobs; never part of an item key. */
   limits?: { file_mib?: number; diff_mib?: number };
+  /** EV1: routing hints only; never part of an obligation key or check definition. */
+  env_signatures?: { match: string[]; unless?: string[] };
   exec?: ExecConfig;          // present only when env, wrap, parallel, trees or touch is set
   invariants: InvariantSpec[];
   nodes: NodeSpec[];
