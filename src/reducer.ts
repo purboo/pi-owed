@@ -1353,6 +1353,8 @@ function clearsHalt(e: Entry, node: string): boolean {
 export function entriesOf(s: State): readonly Entry[] { return context(s).entries; }
 /** Executor observations of one item (subject, obligation, key), in ledger order, including `error` ones. */
 export function observationsOf(s: State, subject: string, obligation: string, key: string): ObsEntry[] { return observations(s, subject, obligation, key).filter(e => e.probe === undefined); }
+/** A plan node takes precedence over the external tracker spelling. */
+export const externalTracker = (plan: Plan, tracker: unknown): boolean => typeof tracker === 'string' && !plan.nodes.some(n => n.id === tracker) && tracker === tracker.trim() && /^ext:[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}$/.test(tracker);
 /** The plan in force just before entry `seq` (the latest genesis/plan entry below it), e.g. the plan a dispatch packet was built from. */
 export function planAt(s: State, seq: number): Plan {
   const h = context(s), index = planIndex(h);
@@ -1927,7 +1929,7 @@ export function validateDraft(s: State, d: Draft): string[] {
       allow('owner'); current(d.obligation, mergeKeyRisk ? n?.candidate?.keys[d.obligation] ?? '' : d.key);
       if (d.obligation.startsWith('inv:') || d.node === 'trunk') errors.push('invariant can never be waived');
       if (!d.reason.trim()) errors.push('waive requires a reason');
-      if (d.tracked_by !== undefined && (typeof d.tracked_by !== 'string' || !s.plan.nodes.some(n => n.id === d.tracked_by))) errors.push('waive tracked_by must name a node of the current plan');
+      if (d.tracked_by !== undefined && (typeof d.tracked_by !== 'string' || !s.plan.nodes.some(n => n.id === d.tracked_by) && !externalTracker(s.plan,d.tracked_by))) errors.push('waive tracked_by must name a node of the current plan or ext:<id>');
       if (!trackedRiskRetry(s,d) && d.accept_risk?.some(seq => activeRisk(s, d.node, d.obligation, seq) ? !!mergeKeyRisk && n?.blocks.find(b => b.seq === seq)?.key !== d.key : !mergeRisk(s, d.node, d.obligation, seq, d.key))) errors.push('accept_risk must reference active blocks for this obligation');
       break;
     }

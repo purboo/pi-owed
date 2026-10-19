@@ -13,7 +13,7 @@ import { rebasePending, rebasePendingText, slotGitInProgress, slotGitOperation, 
 import { planReceipt, renderEntry, withActHistory, withPresentationState, mergedLine, receiptItem, nodeNext } from './views.ts';
 import * as git from './git.ts';
 import { driveConfig, quarantineNames, parsePlan, planDowngrades, worktreesConfig, expandBranch, worktreesErrors, nodeIdCaseErrors, execEnvErrors, invariantId, planWarnings } from './plan.ts';
-import { applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
+import { externalTracker, applicableRules, genesisProgress, refreshChanged, trunkJobs, trunkInvariantReds, jobCurrent, invalidates, planAt, carryable, DRIVER, entriesOf, afterNodes, reportRequest } from './reducer.ts';
 import { mergeTreeBreaks, carriedDefer, sharedFailure, sharedNames, NAME_ONLY, sharedParked, sharedBoundText, allowanceDeferDraft, reviewCarrySource, type SharedPark, ruleAnswers, decisionTailErrors, decisionInFlight } from './reducer.ts';
 import { Dsa } from './dsa.ts';
 import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, retainedPlanValues, interpretedEntry, newerEntry, type PackedState } from './reducer.ts';
@@ -1491,7 +1491,7 @@ export async function waive(o: Actor & { node:string; obligation:string; reason:
   let scope: { on:'merge'|'candidate'; trunk?:string } = {on:'candidate'};
   const act = await mutateAct(o,async s => {
     node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin);
-    if (o.tracked_by !== undefined && (typeof o.tracked_by !== 'string' || !s.plan.nodes.some(n => n.id === o.tracked_by) || s.nodes[o.tracked_by]?.merged || o.tracked_by === o.node)) throw new OwedError('tracked_by must name an unmerged node of the current plan other than the waived node','usage');
+    if (o.tracked_by !== undefined && !externalTracker(s.plan,o.tracked_by) && (typeof o.tracked_by !== 'string' || !s.plan.nodes.some(n => n.id === o.tracked_by) || s.nodes[o.tracked_by]?.merged || o.tracked_by === o.node)) throw new OwedError('tracked_by must name an unmerged node of the current plan other than the waived node, or ext:<id>','usage');
     const tracked = o.tracked_by !== undefined ? {tracked_by:o.tracked_by} : {};
     const n = candidate(s,o.node);
     const risks = o.accept_risk ?? [], inactive = risks.filter(seq => !activeRisk(s,o.node,o.obligation,seq));

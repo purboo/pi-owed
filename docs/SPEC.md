@@ -1195,7 +1195,7 @@ retain it. It is not identical-act content; `tracked_by` is (§8.3.3).
 
 - `obs.quarantine_passed?: string[]`: sorted unique active names that actually
   passed in a qualifying native trunk/merge-tree measurement (§7.16).
-- `waive.tracked_by?: string`: a plan node that tracks waived debt (§9.9).
+- `waive.tracked_by?: string`: a plan node or external `ext:<id>` tracker for waived debt (§9.9).
 
 ### Optional 0.20 fields on existing entries
 
@@ -4633,9 +4633,15 @@ Any satisfied candidate clause cites the item's actual evidence, including
 reviews, or is omitted when none exists. Only a waiver accepting no counting
 block can say it is not needed while the candidate stays satisfied.
 
-`owed waive … --tracked-by <fix>` / tool `tracked_by` requires another unmerged
-node of the current plan; missing, merged and self trackers refuse without an
-act. Replay validates the optional string against the plan at that entry.
+`owed waive … --tracked-by <tracker>` / tool `tracked_by` accepts another
+unmerged node of the current plan or an external tracker `ext:<id>`, where the
+id is 1–128 characters matching `[A-Za-z0-9][A-Za-z0-9._:/#-]{0,127}` exactly.
+Missing, merged and self local trackers, and malformed external ids, refuse
+without an act. A tracker naming a node in the plan at the waiver entry keeps
+its local meaning, including literal `ext:` node names. Replay validates the
+optional string against that historical plan; later plan changes never change
+whether a tracker is external. Owed before 0.29.2 refuses external tracker
+values on replay unless they name a node in the recorded plan.
 Tracked debt is identified by `(node, obligation, key, accept_risk block)`:
 re-waiving the same failure replaces its tracker; different failures keep
 separate lines even on one key, including multiple risks in one waiver.
@@ -4648,6 +4654,10 @@ omitted from those lists/counts; full status/report keep
 visible debt as `(tracker <fix> left the plan)`. `owed why <fix>` lists each
 waived debt it tracks. Settlement is presentation only: it neither removes
 the waiver/ΔO⁻ nor proves the flake gone, and changes no acceptance gate.
+External debt instead reads `tracked by ext:<id> (external)` in summary debt,
+full status and report, and in compact/full `owed why` of the waived node.
+It never settles or leaves the plan, even if a later node has the same name;
+it does not appear in unrelated nodes' `why` output.
 
 ## 10. CLI
 
@@ -4656,6 +4666,12 @@ requiring a repository. They accept no other arguments or options and report
 the installed package, not a ledger's reader requirements.
 
 `owed help` is an alias of `owed --help`, listing commands and flags.
+`owed help <command>` and `owed <command> [args…] --help` print only that
+command's help, including all its forms, any command exit codes, the generic
+Usage line and its accepted flags plus `--json`, `--as`, `--i-am-owner`.
+Help uses the same command text and flag table as the CLI and exits 0 before
+repository I/O, including outside a repository. Unknown help commands exit 2
+and name the known commands.
 `owed <command> [args] [--json]`; commands mirror §8:
 `start [--plan <file>] [--max N] [--stay] [--restart]` (§10.2), `init <plan.yaml>`,
 `plan <plan.yaml> [--rev <commit-ish>]` (path relative to the cwd; with
@@ -4684,7 +4700,7 @@ executor rebase, §7.25), `attest <node> [--rerun | --remeasure [--all]] [--full
 `attest <node> --probe-trunk [--check ID] [--runs N]` (§7.27; CLI only),
 `review <node> --ok|--block [--needs-parent] --rank N --as reviewer:ID [--note] [--ack-rulings N|latest] [--model MODEL]`
 (`--needs-parent` records `needs: "parent"`; refused with `--ok`),
-`waive <node> <obligation> --reason ... [--accept-risk 12,15] [--tracked-by FIX] [--full]`
+`waive <node> <obligation> --reason ... [--accept-risk 12,15] [--tracked-by FIX|ext:<id>] [--full]`
 (`review`, `waive`, `approve` and `evidence` also take `--candidate COMMIT`,
 §8 act binding),
 `defer <node> <inv-id...> --reason`, `abandon <node> [--hold] [--note TEXT]` (older
