@@ -307,7 +307,7 @@ test('AN1/AN2 CLI: argument routing, actual dsa argv and retry after sealed ques
     assert.equal((await cli(f.cwd, ['answer', 'a', '--rid', f.writer.rid, '--qid', 'q1', '--json', '--', '--Use API v2'])).code, 0);
     const first = (await f.rules())[0]!;
     const retry = await cli(f.cwd, ['answer', 'a', '--rid', f.writer.rid, '--qid', 'q1', '--', '--Use API v2']);
-    assert.equal(retry.code, 0, retry.stderr); assert.match(retry.stdout, /^answered writer question q1 of \S+ \(rule #\d+\); the call resumes now$/m);
+    assert.equal(retry.code, 0, retry.stderr); assert.match(retry.stdout, /^answered a \S+ qid q1: unknown \(call not identified\)$/m);
     assert.equal((await f.rules()).length, 1);
     assert.deepEqual((await fake.read()).requests, { [`owed-answer-${first.seq}`]: { to: f.writer.rid, qid: 'q1', rev: 2, kind: 'answer', message: '--Use API v2' } });
     assert.equal((await cli(f.cwd, ['answer', 'a', 'text', '--as', 'writer:a#1'])).code, 1);

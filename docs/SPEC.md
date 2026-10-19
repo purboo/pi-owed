@@ -3383,7 +3383,7 @@ edit(o: {cwd, node? | invariant?, set?, unset?, node_new?, note, plan?, rule?, w
 editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
 rule(o: {cwd, text, nodes, writer?, prospective?, as}): Promise<RuleEntry & {delivery?: RulingDelivery}>
-answer(o: {cwd, node, text, qid?, rid?, rev?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult, rulingDelivery?: RulingDelivery}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
+answer(o: {cwd, node, text, qid?, rid?, rev?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult, answers: AnswerState[], rulingDelivery?: RulingDelivery}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as, apply?: boolean}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, model?: string, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
@@ -3835,8 +3835,9 @@ recorded and the error identifies the saved plan and recovery action.
 
 Default output is one line, `decision #S for A,B: ruling #R`, with clauses only
 for requested/performed writes (including covered-path explanations and
-`writes unchanged`), deferral, answers and resume, plus at most one delivery
-failure line. Results expose `covered` per node and omit `plan` for a covered
+`writes unchanged`), deferral, answers and resume, followed by one actual
+post-delivery state line per successfully delivered answer (§12.5.1), plus at
+most one delivery failure line. Results expose `covered` per node and omit `plan` for a covered
 no-op; standalone amendment results also omit `rule` in that case.
 Legacy `rule`, `answer`, `amend`, `defer` and `resume` remain
 supported. Use resume alone for a retry with no new ruling; rule still supplies
@@ -4862,9 +4863,9 @@ are no-ops, as in §8.3.1), `edit <node> --set path=yaml ... [--unset path ...]
 `rule <text> --nodes a,b|* [--writer|--prospective]`,
 `answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (AN1–AN2, AR; parent/owner;
 `--rev` is a positive integer, otherwise a usage error; prints the answered
-role/question/run and rule seq, with other-role delivery results when present;
+node/run/qid and actual post-delivery call state, with other-role delivery results when present;
 `--json` retains the request id and delivery details in
-`{entry, request, delivery}`; a failed delivery refuses with the recorded rule
+`{entry, request, delivery, answers}`; a failed delivery refuses with the recorded rule
 seq and exact retry command), `dispatch <node> [--allow-overlap]`,
 `submit <node> [--commit X] [--model MODEL]`, `rebase <node> [--apply] [--full]` (also
 accepts global `--json`, `--as role:id`, `--i-am-owner` and `--help`; manual:
@@ -5113,7 +5114,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_resume` | `node` (string or non-empty string array), `after?`, `expect?`, `remeasure?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the node phase line and brief status |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
 | `owed_decide` | `nodes: string[]`, `text`, `writes?: string[]`, `defer?: string`, `resume?: boolean`, `after?: string \| string[]`, `remeasure?: boolean`, `writer?: boolean`, `as` | one atomic parent decision and post-append delivery (§8.3.1); no-resume is `resume: false` |
-| `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery}` (§12.5) |
+| `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery, answers}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
 | `owed_edit` | `node?` or `invariant?`, `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
 | `owed_amend` | `node`, `writes` (bare paths or `+path`; covered paths are unchanged), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
@@ -5872,9 +5873,26 @@ it gives the reviewer's `owed evidence` command.
   failure reports the recorded seq and an exactly shell-quoted retry command
   including `--rev <recorded rev>`;
   the rule remains. Dsa deduplicates the stable send id and returns its first
-  outcome. **SB4 (0.22.1):** on success CLI and `owed_answer` print one line,
-  `answered <role> question <qid> of <rid> (rule #<seq>); the call resumes now`,
-  plus one more line only when the ruling also reached other running calls
+  outcome. **AR1 (0.30):** after successful delivery, `owed answer`,
+  `owed decide` and their tools describe the asking run once per run, bounded
+  to 10 seconds and outside the ledger lock. Each delivered answer prints
+  `answered <node> <rid> qid <q8>: <state>`; the state is `running`, `queued`,
+  `asking (answer not yet taken, qid <q8>)`, `asking again (qid <q8>)`,
+  `sealed (<status>)` or `unknown (<reason>)`, taken from the answered call's
+  phase/status and its open questions, never another call in the run.
+  **R-030-AR-1:** only the selected question's `to = <wid>/<key>` identifies
+  the call; a run address or the only remaining call cannot substitute for it.
+  A retry uses a recorded question/answer address if available. Current ledger
+  answer references retain only `rid/qid/rev` and no original ask, so a retry
+  without a selected open question reports `unknown (call not identified)`.
+  With an identified call, any matching question lacking a nonempty string
+  qid, or a call lacking a string phase, reports
+  `unknown (malformed describe reply)`. The same qid still open reports
+  `asking (answer not yet taken, qid <q8>)`; only a different qid reports
+  `asking again (qid <q8>)`. Describe failures also report `unknown` and never
+  resend the answer. JSON/tool results add runtime-only
+  `answers: [{node, rid, qid, rev, request, state}]`; these facts are not recorded
+  in the ledger. **SB4:** answer adds one more line only when the ruling also reached other running calls
   (`the ruling also reached <n> other running call(s) (<node>/<role>, …)`) or
   failed to reach one (`the ruling did not reach <who>; retry exactly: <answer
   retry command>`). The answer and follow-up texts are never echoed. Nothing is rolled back and no separate `send` entry is appended.

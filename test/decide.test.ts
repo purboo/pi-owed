@@ -158,7 +158,7 @@ test('DC1/DC3: multiple answers reuse one ruling and owed_answer retry identity,
     await f.slot('a');await f.slot('b');const a=await f.launch('a'),b=await f.launch('b');f.dsa.ask(a.rid,"q'one",2);f.dsa.ask(b.rid,'q.two',3);f.dsa.fail.add(b.rid);
     const r=await ops.decide({...f.options,nodes:['b','a'],text:"Use 'v2'\nthen validate"});
     assert.equal(r.rule.answer,undefined);assert.equal(r.rule.text,"Use 'v2'\nthen validate");assert.deepEqual(r.rule.answers?.map(a=>a.node),['a','b']);assert.equal(r.answered,2);assert.equal(r.deliveryFailures.length,1);
-    const output=ops.decideText(r);assert.equal(output.split('\n').length,2);assert.ok(output.includes(answerRetry('b',r.rule)));
+    const output=ops.decideText(r);assert.equal(output.split('\n').length,3);assert.ok(output.includes(answerRetry('b',r.rule)));
     const sent=f.dsa.sends.filter(s=>s.kind==='answer');assert.equal(sent.length,2);assert.notEqual(sent[0]!.id,sent[1]!.id);
     const { execFile }=await import('node:child_process'),{promisify}=await import('node:util');
     const evaluated=await promisify(execFile)('/bin/bash',['-c',`owed() { printf '%s' "\${10}"; }; ${answerRetry('b',r.rule)}`]);

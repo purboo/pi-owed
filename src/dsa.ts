@@ -172,15 +172,15 @@ export class Dsa {
   }
 
   /** `describe --key <rid> --json` reduced to a RunView. Failures (non-zero exit, timeout, unparsable output) throw. */
-  async describe(rid: string): Promise<RunView> { return (await this.inspect(rid)).view; }
+  async describe(rid: string, timeoutMs?: number): Promise<RunView> { return (await this.inspect(rid, timeoutMs)).view; }
 
   /**
    * `describe` plus the run's latest generation (the highest `calls[].gen`, when dsa reports one). The driver compares it
    * with the generation a follow-up returned, so a describe that still shows the previous, sealed generation is not
    * read as the follow-up's outcome.
    */
-  async inspect(rid: string): Promise<{ view: RunView; gen?: number }> {
-    const r = await this.exec(['describe', '--key', rid, '--json']);
+  async inspect(rid: string, timeoutMs?: number): Promise<{ view: RunView; gen?: number }> {
+    const r = await this.exec(['describe', '--key', rid, '--json'], undefined, timeoutMs);
     if (r.timedOut) throw new DsaError(`dsa describe ${rid} timed out`, r);
     if (r.exit !== 0) throw new DsaError(`dsa describe ${rid} exited ${r.exit}: ${tail(r.stderr || r.stdout)}`, r);
     const d = parseWhole(r.stdout);
@@ -394,6 +394,7 @@ export function toRunView(rid: string, d: Json): RunView {
   const base = { rid, ...(typeof model === 'string' && model.trim() ? { model } : {}), ...(typeof d.wid === 'string' ? { wid: d.wid } : {}), ...(typeof d.wid === 'string' && d.wid && key !== undefined ? { to: `${d.wid}/${key}` } : {}), ...(typeof d.spec_digest === 'string' ? { spec_digest: d.spec_digest } : {}),
     ...(d.labels && typeof d.labels === 'object' ? { labels: d.labels as Record<string, string> } : {}) };
   const calls = Array.isArray(d.calls) ? d.calls as Json[] : [], last = calls.at(-1);
+  if (Array.isArray(d.calls)) Object.assign(base, { calls: calls.filter(c => typeof c?.key === 'string').map(c => ({ key:c.key, ...(typeof c.phase === 'string' ? {phase:c.phase} : {}), ...(typeof c.status === 'string' ? {status:c.status} : {}) })) });
   if (typeof last?.sealedAt === 'number' && Number.isFinite(last.sealedAt) && ['sealed', 'pruned'].includes(str(d.state))) Object.assign(base, { sealedAt: last.sealedAt });
   if (Array.isArray(last?.awaiting)) Object.assign(base, { awaiting: last.awaiting.filter((a): a is NonNullable<RunView['awaiting']>[number] => !!a && typeof a.request === 'string' && ['pending', 'running', 'finished'].includes(a.state)) });
   if (Array.isArray(last?.endedAtSeal)) Object.assign(base, { endedAtSeal: last.endedAtSeal.filter((p): p is NonNullable<RunView['endedAtSeal']>[number] => !!p && Number.isSafeInteger(p.pid) && typeof p.command === 'string'), ...(typeof last.endedAtSealMore === 'number' && Number.isSafeInteger(last.endedAtSealMore) && last.endedAtSealMore >= 0 ? { endedAtSealMore: last.endedAtSealMore } : {}) });
@@ -412,7 +413,7 @@ export function toRunView(rid: string, d: Json): RunView {
   const callStatus = statuses.length && statuses.length === calls.length ? statuses.find(s => s !== 'ok') ?? 'ok' : undefined;
   const status = state === 'sealed' ? callStatus ?? wfStatus(d.status) ?? 'unknown' : undefined;
   const error = typeof d.error === 'string' ? d.error : calls.map(c => c.error).find((e): e is string => typeof e === 'string');
-  const questions = Array.isArray(d.questions) ? (d.questions as Json[]).map(q => ({ qid: str(q.qid), rev: Number(q.rev), question: typeof (q.text ?? q.question) === 'string' ? (q.text ?? q.question) as string : '', ...(typeof q.to === 'string' ? { to: q.to } : {}), ...askFields(q) })) : undefined;
+  const questions = Array.isArray(d.questions) ? (d.questions as Json[]).map(q => ({ qid: typeof q.qid === 'string' ? q.qid : '', rev: Number(q.rev), question: typeof (q.text ?? q.question) === 'string' ? (q.text ?? q.question) as string : '', ...(typeof q.to === 'string' ? { to: q.to } : {}), ...askFields(q) })) : undefined;
   const f = d.lastFence as Json | undefined;
   return { ...base, state, ...(result ? { result } : {}), ...(status ? { status } : {}), ...(error ? { error } : {}), ...(questions?.length ? { questions } : {}),
     ...(f && typeof f === 'object' ? { lastFence: { reason: str(f.reason), at: Number(f.at), ...(typeof f.exec === 'string' ? { exec: f.exec } : {}) } } : {}) };
