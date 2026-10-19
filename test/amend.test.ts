@@ -111,7 +111,7 @@ test('N3: amend edits the file (comments and flow kept) and records plan, carry 
   } finally { await r.cleanup(); }
 });
 
-test('N3/PO1: authority is that of owed plan: a parent without an allow rule is refused; covered amend is unnecessary and records nothing', { timeout: 120_000 }, async () => {
+test('N3/PO1/AC1: authority is that of owed plan: a parent without an allow rule is refused; covered amend succeeds and records nothing', { timeout: 120_000 }, async () => {
   const { r, file } = await setup();
   try {
     const count = (await entriesOf(r.cwd)).length;
@@ -128,13 +128,13 @@ test('N3/PO1: authority is that of owed plan: a parent without an allow rule is 
     assert.equal(refused.isError, true);
     assert.match(refused.content[0]!.text!, /Only owner may confirm plan downgrades/);
     await untouched(r, file, count, PLAN);
-    // PO1: an allow rule replaces this amend with a grant at measurement.
+    // AC1: an allow rule makes amend a successful no-op; use decide --writer to deliver a limit.
     const ok = await cli(r.cwd, ['amend', 'b', '--writes', '+test/x.cjs', '--note', 'the second fixture only']);
-    assert.equal(ok.code, 1, ok.stderr);
-    assert.match(ok.stderr, /not needed: test\/x\.cjs are covered by allow rule/);
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.match(ok.stdout, /test\/x\.cjs already covered by allow rule \(plan #\d+\)/);
     await untouched(r, file, count, PLAN);
     const covered = await run({ node: 'b', writes: ['+test/x.cjs'], note: 'covered' });
-    assert.equal(covered.isError,true); assert.match(covered.content[0]!.text!,/not needed:/);
+    assert.equal(covered.isError,undefined); assert.match(covered.content[0]!.text!,/test\/x\.cjs already covered by allow rule \(plan #\d+\)/);
     await untouched(r,file,count,PLAN);
     // The pi tool without `as` defaults to the owner (delegated) when an allowance does not cover the widening.
     const pi = await run({ node: 'a', writes: ['+test/y'], note: 'pi limit' });
