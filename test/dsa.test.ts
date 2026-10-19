@@ -297,7 +297,7 @@ test('toRunView maps real describe replies', () => {
   assert.equal(toRunView('r', { state: 'sealed', status: 'failed', calls: [{ status: 'ok' }, { status: 'timeout', error: 'slow' }] }).status, 'timeout');
   const v = toRunView('r', { state: 'asking', status: 'running', calls: [{ key: 'main', gen: 1, phase: 'running' }],
     questions: [{ qid: 'q', rev: 2, to: 'w/main', call: 'w@1/main@1', text: 'why?' }], lastFence: { at: 5, exec: 'e', reason: 'orchestrator-crash' } });
-  assert.deepEqual(v, { rid: 'r', state: 'asking', questions: [{ qid: 'q', rev: 2, question: 'why?', to: 'w/main' }], lastFence: { reason: 'orchestrator-crash', at: 5, exec: 'e' } });
+  assert.deepEqual(v, { rid: 'r', state: 'asking', calls: [{ key: 'main', phase: 'running' }], questions: [{ qid: 'q', rev: 2, question: 'why?', to: 'w/main' }], lastFence: { reason: 'orchestrator-crash', at: 5, exec: 'e' } });
 });
 
 test('client (D9): a missing binary reports "cannot run … ENOENT", never "dsa exited -2"', async () => {
