@@ -1,5 +1,5 @@
 import { riskDowngrades } from './risk.ts';
-import { writeCovers, writesSyntax, writesAllowChanged, writesEntryError } from './writes.ts';
+import { writeCovers, writesSyntax, writesAllowChanged, writesEntryError, allowOnlyWidened } from './writes.ts';
 import { parse } from 'yaml';
 import { wrapErrors } from './exec-wrap.ts';
 import { matchesGlob } from 'node:path';
@@ -448,6 +448,10 @@ export function parsePlan(text: string): Plan {
     const out: NodeSpec = { id: str(n.id, `${p}.id`), deps: strings(n.deps ?? [], `${p}.deps`), writes: strings(n.writes ?? [], `${p}.writes`), checks: checks(n.checks, `${p}.checks`), review: { count: num(review.count ?? 0, `${p}.review.count`, 0), min_rank: num(review.min_rank ?? 1, `${p}.review.min_rank`, 1) } };
     if (out.review.min_rank > 3) errors.push(`${p}.review.min_rank must be <= 3`);
     if (out.checks.length && !out.writes.length) errors.push(`${p}: writes required with checks`);
+    if (n.allow_only !== undefined) {
+      out.allow_only = strings(n.allow_only, `${p}.allow_only`);
+      for (const entry of out.allow_only) { const error = writesEntryError(entry); if (error) errors.push(`${p}.allow_only: ${error}`); }
+    }
     if (n.title !== undefined) out.title = str(n.title, `${p}.title`);
     if (n.brief !== undefined) out.brief = str(n.brief, `${p}.brief`);
     if (n.type !== undefined) { if (typeof n.type !== 'string' || !/^[a-z][a-z0-9-]*$/.test(n.type)) errors.push(`${p}.type: expected a string matching ^[a-z][a-z0-9-]*$`); else out.type = n.type; }
@@ -673,6 +677,7 @@ export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
     if (m.review.count < n.review.count) out.push({ node: n.id, what: 'review count lowered' });
     if (m.review.min_rank < n.review.min_rank) out.push({ node: n.id, what: 'review rank lowered' });
     if (m.writes.some(p => !n.writes.some(old => writeCovers(old, p, writesSyntax(prev), writesSyntax(next))))) out.push({ node: n.id, what: 'writes widened' });
+    if (allowOnlyWidened(n,m)) out.push({ node:n.id, what:`allow_only widened: ${n.id}` });
     out.push(...manualDowngrades(n.id, n, m));
   }
   if (allowWidened(prev, next)) out.push({ node: 'trunk', what: 'allow changed' });
