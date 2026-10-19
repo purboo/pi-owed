@@ -10,7 +10,7 @@ import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
-import { dispatchPacket, oneLine, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
+import { dispatchPacket, oneLine, structuredQuestionText, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
 import { needs, repoNeeds, thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 export { thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 import type { Need, Runtime } from './needs-types.ts';
@@ -1220,6 +1220,7 @@ export function askingText(node: string, l: LaunchEntry, v: RunView, nodeQuestio
     const to = q.to ?? v.to ?? l.rid;
     const command = !single ? `owed answer ${node} --rid ${l.rid} --qid ${q.qid} "<text>"` : `owed decide ${node} --text "<text>"`;
     const tool = !single ? `owed_answer {node:${JSON.stringify(node)}, rid:${JSON.stringify(l.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}` : `owed_decide {nodes:[${JSON.stringify(node)}], text:"…"}`;
+    if (q.decision_needed !== undefined) return `${node}: ${l.role} ${l.rid} asks (qid ${q.qid.slice(0, 8)}, rev ${q.rev}): ${structuredQuestionText(q)}\n — the driver never answers; answer: ${command}; in pi: ${tool}${callAt({ ...v, to })}; answer "option <n>; <limits>"`;
     return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer: ${command}; in pi: ${tool}${callAt({ ...v, to })}`;
   }).join('\n');
 }

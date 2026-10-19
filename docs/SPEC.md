@@ -5966,11 +5966,29 @@ Writer dispatch packets include this section immediately after the checks:
 
 Dispatch packets and writer follow-ups (rebase, repair, submit, plan-changed,
 ruling, interruption and report) carry this sentence:
-`If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.`
+`If you need a decision outside your writes, ask the parent (your run waits): give decision_needed (one sentence) and numbered options (label, scope, cost, risk; mark one preferred), plus facts (commit, run id, log sha), what you tried, and candidate explanations with their evidence and what is unproven — as ask fields when your ask tool has them, else as text starting "Decision needed:". Never submit a candidate you believe fails its checks.`
 Submit reminders also say:
 `If you stopped for a parent decision, do not submit: ask the question instead.`
-Actual runner questions keep the existing verbatim-question/answer flow;
-the driver never chooses an answer. Writer/reviewer messages stay English.
+Runner questions without `decision_needed` keep the existing verbatim-question/answer flow.
+For dsa structured asks, the asking notify and wake show
+`<role> <rid> asks (qid <first 8 characters>, rev <n>): DECISION: <decision_needed>`
+first, then `options: 1) <label> (preferred) — scope <...>; cost <...>; risk <...> | 2) ...`
+(each supplied field at most 160 characters), an optional facts/tried/candidate-evidence
+line (at most 600 characters), and `details: <question>` (one escaped line, at most
+300 characters). The existing answer commands follow, with
+`answer "option <n>; <limits>"`. Every question retains its own qid and answer command;
+the driver never chooses an answer. Describe metadata is validated field by field;
+malformed optional fields are omitted, not coerced into text. An invalid option
+member drops the entire options field, so numbered answers cannot be silently
+renumbered; invalid optional option properties are dropped independently. Multiple
+preferred options lose all preferred markers. Invalid candidate members and
+non-string facts/tried members are removed; empty candidate/facts/tried fields
+are omitted (R-030-SA-2). Values are escaped
+before clipping, retaining whole code points and control-character escapes.
+Needs/status preserve the multiline structure when existing runtime answer-retry
+text already contains a structured question. This does not add unanswered questions
+to needs/status or change runtime cache membership (R-030-SA-1).
+Writer/reviewer messages stay English.
 Checks, reviews and merge gates are unchanged; old ledgers retain their replay
 states and keys, and recorded message retries keep their original bytes.
 Worktree facts can be unavailable, and pruned final replies may be lost;
