@@ -382,7 +382,23 @@ export function parsePlan(text: string): Plan {
       const p = `${label}[${i}]`, c = obj(x, p), id = str(c.id, `${p}.id`);
       if (ids.has(id)) errors.push(`${p}: duplicate id ${id}`); ids.add(id);
       const template = expandCheckTemplate(c, p, errors);
-      const out: InvariantSpec = { id, run: template?.run ?? str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`), ...(template?.min_tests !== undefined ? { min_tests: template.min_tests } : {}) };
+      let runFile: CheckSpec['run_file'], args: string[] | undefined;
+      if (c.run_file !== undefined) {
+        const file = obj(c.run_file, `${p}.run_file`), path = str(file.path, `${p}.run_file.path`);
+        if (path.split('/').some(s => !/^[A-Za-z0-9._@+,=-]+$/.test(s) || s === '.' || s === '..')) errors.push(`${p}.run_file.path: expected normal repository-relative path; allowed segment characters: A-Z a-z 0-9 . _ @ + , = -`);
+        if (typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)) errors.push(`${p}.run_file.sha256: expected 64 lowercase hex characters`);
+        for (const k of Object.keys(file)) if (k !== 'path' && k !== 'sha256') errors.push(`${p}.run_file.${k}: unknown key`);
+        runFile = { path, sha256: file.sha256 as string };
+        if (c.template !== undefined) errors.push(`${p}: template and run_file are exclusive`);
+        if (c.args !== undefined) {
+          const list = arr(c.args, `${p}.args`);
+          if (list.length > 64 || list.some(s => typeof s !== 'string' || s.includes('\0'))) errors.push(`${p}.args: expected at most 64 strings without NUL`);
+          args = list as string[];
+        }
+      } else if (c.args !== undefined) errors.push(`${p}: args requires run_file`);
+      const derived = runFile ? `exec ./${runFile.path}${args?.length ? ' ' + args.filter(s => typeof s === 'string').map(s => `'${s.replaceAll("'", "'\\''")}'`).join(' ') : ''}` : undefined;
+      if (derived !== undefined && c.run !== undefined && c.run !== derived) errors.push(`${p}: run and run_file are exclusive`);
+      const out: InvariantSpec = { id, ...(runFile ? { run_file:runFile, ...(args !== undefined ? { args } : {}) } : {}), run: derived ?? template?.run ?? str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`), ...(template?.min_tests !== undefined ? { min_tests: template.min_tests } : {}) };
       if (c.on_timeout !== undefined) out.on_timeout = str(c.on_timeout, `${p}.on_timeout`);
       if (c.min_tests !== undefined) out.min_tests = num(c.min_tests, `${p}.min_tests`, 0);
       if (c.red !== undefined) { if (typeof c.red !== 'boolean') errors.push(`${p}.red: expected boolean`); else out.red = c.red; }

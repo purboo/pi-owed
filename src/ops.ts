@@ -33,6 +33,7 @@ import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, type EditFields } from './edit.ts';
 import { lintPlanShell, lintPlanCost } from './planlint.ts';
+import { admitPlan, runFileLines } from './admission.ts';
 import { costReport, type CostReport } from './cost.ts';
 import { computeMetrics, sameModelReviews, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
 import { counterfactual, type Counterfactual } from './counterfactual.ts';
@@ -383,7 +384,7 @@ function planBlob(text: string, checkWrites = true, prior?: Plan) {
   }
   const data = stringify(source, { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
 }
-async function storePlan(ledger: Ledger, text: string, prior?: Plan) { const b = planBlob(text,true,prior); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
+async function storePlan(cwd: string, ledger: Ledger, text: string, prior?: Plan, rev?: string) { const b = planBlob(text,true,prior); await admitPlan(cwd,ledger,b.plan,rev); return { plan: b.plan, sha: await ledger.putBlob(b.data) }; }
 /** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
 const aborted = (): OwedError => new OwedError('aborted', 'aborted');
 function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) throw aborted(); }
@@ -586,10 +587,10 @@ export async function initPreview(o: Context & { plan: string }): Promise<InitPr
  */
 export async function init(o: Actor & { plan: string; channel: Channel; signal?: AbortSignal; lease?: boolean; measure?: boolean; commit?: string; path?: string }): Promise<InitResult> {
   owner(o); checkAbort(o.signal); const warnings = lintPlanShell(planBlob(o.plan).plan,undefined,o.plan);
-  const ledger = await Ledger.open(o.cwd), p = await storePlan(ledger,o.plan);
+  const ledger = await Ledger.open(o.cwd), p = await storePlan(o.cwd,ledger,o.plan);
   const commit = await git.revParse(o.cwd,`refs/heads/${p.plan.trunk}`), facts = await git.stateFacts(o.cwd,p.plan,commit,quarantineNames(p.plan,() => false));
   if (o.commit !== undefined && o.commit !== commit) throw new OwedError(`refs/heads/${p.plan.trunk} moved after the confirmation (was ${o.commit.slice(0,12)}, now ${commit.slice(0,12)}); nothing was recorded`);
-  warnings.push(...await lintPlanCost(o.cwd,p.plan,commit));
+  warnings.push(...await lintPlanCost(o.cwd,p.plan,commit), ...runFileLines(p.plan));
   const entry = await ledger.withLock(async () => { const { state } = await load(ledger,[p.sha]); const d: Draft = { kind:'genesis', by:by(o), channel:o.channel, trunk:p.plan.trunk, commit, plan:p.sha, writes_syntax:2, state:facts, ...(o.path !== undefined ? { path:o.path } : {}) }; guard(state,d); return (await ledger.append([d]))[0]!; },undefined,o.signal);
   const done = { recorded: [] as Entry[], superseded: [] as JobRef[] };
   let error: string | undefined, lease: string | undefined;
@@ -750,7 +751,9 @@ export async function planSet(o: Actor & { plan: string; rev?: string; path?: st
     if (hygiene.length) throw new OwedError(hygiene.join('\n'),'usage');
     const priorText = (await ledger.getBlob(before.planSha)).toString();
     const warnings = [...lintPlanShell(b.plan,before.plan,o.plan,priorText), ...await lintPlanCost(o.cwd,b.plan,before.trunk.commit,(await load(ledger)).entries,before.plan)];
+    await admitPlan(o.cwd,ledger,b.plan,o.rev);
     const p = { plan:b.plan, sha:await ledger.putBlob(b.data) };
+    warnings.push(...runFileLines(b.plan));
     return ledger.withLock(async () => { const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); return entry; });
   });
 }
@@ -917,7 +920,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
     if (await readFile(e.file,'utf8') !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while amending; nothing recorded`);
     return { node:o.node, file:e.file, path:e.path, added:[], present:e.present, covered:e.covered, carried:[], notCarried:[] };
   });
-  const p = await storePlan(ledger,e.next,before.plan);
+  const p = await storePlan(o.cwd,ledger,e.next,before.plan);
   const limit = o.note.trim(), widened = e.added.map(x => `+${x}`).join(', '), notCarried: NotCarried[] = [];
   return ledger.withLock(async () => {
     const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:`amend ${o.node}: writes ${widened}. Limit: ${limit}`, notCarried },ledger,p,before);
@@ -952,7 +955,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next,true,s.plan).plan;
-  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString()), ...await lintPlanCost(o.cwd,plan,s.trunk.commit,entries,s.plan)] };
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...runFileLines(plan), ...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString()), ...await lintPlanCost(o.cwd,plan,s.trunk.commit,entries,s.plan)] };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
 export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
@@ -961,7 +964,7 @@ export async function edit(o: Actor & EditArgs): Promise<EditResult | EditPrevie
   if (o.dry_run) return editPreview(o);
   owner(o); const ledger = await Ledger.open(o.cwd);
   return retryCas(ledger,async before => {
-    const { entries } = await load(ledger), e = await prepareEdit(o,entries,before), p = await storePlan(ledger,e.next,before.plan), notCarried: NotCarried[] = [];
+    const { entries } = await load(ledger), e = await prepareEdit(o,entries,before), p = await storePlan(o.cwd,ledger,e.next,before.plan), notCarried: NotCarried[] = [];
     return ledger.withLock(async () => {
       const { latest, drafts } = await planDrafts({ ...o, path:e.path, note:o.note.trim(), notCarried },ledger,p,before);
       if (await readFile(e.file,'utf8') !== e.text) throw new OwedError(`plan file has unrecorded edits: ${e.path} changed while editing; nothing recorded`);
@@ -1033,7 +1036,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   const before = await load(ledger), s = before.state;
   for (const id of ids) { node(s,id); if (s.nodes[id]!.merged) throw new OwedError(`Node ${id} is merged; decide names unfinished nodes`); }
   const amend = o.writes !== undefined ? await decideAmend(o,ids,before.entries,s) : undefined;
-  const stored = amend?.added.length ? await storePlan(ledger,amend.next,s.plan) : undefined;
+  const stored = amend?.added.length ? await storePlan(o.cwd,ledger,amend.next,s.plan) : undefined;
   const granted = [...new Set(Object.values(amend?.perNode ?? {}).flat().filter(c => c.entry.startsWith('allow rule (plan #')).map(c => c.path))];
   const decisionText = o.text + (granted.length ? ` (writes already granted by allow rule, plan #${before.entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}: ${granted.join(', ')})` : '');
   const answers: import('./types.ts').DecisionAnswer[] = [];

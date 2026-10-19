@@ -9,6 +9,8 @@ export type Channel = 'tty' | 'pi-confirm' | 'flag' | 'delegated';
 export interface CheckSpec {
   id: string;
   run: string;
+  run_file?: { path: string; sha256: string };
+  args?: string[];
   timeout_s: number;          // default 600
   on_timeout?: string;        // SG5: diagnostic only, once before kill, limited to 30s
   reads: string[];            // default ["**"]
