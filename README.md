@@ -1,6 +1,6 @@
 # pi-owed
 
-**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.29.0](CHANGELOG.md)**.
+**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.30.0](CHANGELOG.md)**.
 
 Why use it?
 - Keep completion tied to a merge receipt, not an agent's success message.
@@ -12,7 +12,7 @@ The main agent is the parent and delegated owner. Pi owner tools act as `owner:p
 
 ## Quickstart
 
-Requires Node.js >= 22.19, Git with `merge-tree --write-tree`, Bash and a configured Git identity. The driver uses [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents) >= 1.0.27 with writer/reviewer agents available; >= 1.1.0 is needed for durable-writer waits, seal diagnostics and yield/priority leases. Older dsa keeps 0.28 writer-wait and lease behavior.
+Requires Node.js >= 22.19, Git with `merge-tree --write-tree`, Bash and a configured Git identity. The driver uses [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents) >= 1.2.0 with writer/reviewer agents available. Earlier runners retain plain asks; versions before 1.1.0 keep 0.28 writer-wait and lease behavior.
 
 ```sh
 pi install npm:pi-owed          # reload pi after installation
@@ -71,7 +71,7 @@ not routine halts the main agent already resolved.
 - **Items and keys:** an item identifies a subject, an obligation, and a content-derived key. Checks use declared read sets and the pinned check closure. Matching keys allow evidence reuse; relevant changes require fresh evidence.
 - **Receipt:** E means evidenced, W means visibly waived by the owner, and D means debt. `why --full` shows actual logs, counts when available, reviewers, blocks, untested changes, and plan downgrades; default why shows outstanding work. Speech and a successful agent exit are not evidence.
 - **Blocks:** execution failures and negative reviews survive new candidates. Attribution reruns explain old execution failures. A judgment block requires the original reviewer at sufficient rank, a higher-rank reviewer, or an explicit owner risk waiver. A different reviewer at the same rank cannot clear it. When the brief or plan is ambiguous or contradictory, or the fix needs a product or contract decision, the reviewer records `owed review <node> --block --needs-parent ...`: `why` and `status` show the block as needing a parent ruling, and `owed drive` halts instead of sending the writer a repair until the parent records `owed decide <node> --writer --text "<decision and why>"` (a `*` ruling does not count); the driver then repairs with the ruling quoted.
-- **Superseded blocks:** when a plan update changes a check's definition (the check spec with all its fields, `setup`, `exec` and referenced `quarantine_set` entries, if any) or removes the check, the execution blocks recorded under the old definition become `superseded`: they no longer block, get no attribution rerun and need no waiver. The new definition must still pass on the current candidate. `why --full`, `status --full` and `report` show each one as `#<seq> superseded by plan #<p> (check <id> definition changed)` (or `removed`). Only a parent or owner can change a definition, and weakening a check is still an owner downgrade. A block whose definition did not change goes flaky as before.
+- **Superseded blocks:** when a plan update changes a check's definition (the check spec excluding `selftest`, plus `setup`, `exec` and referenced `quarantine_set` entries, if any) or removes the check, the execution blocks recorded under the old definition become `superseded`: they no longer block, get no attribution rerun and need no waiver. The new definition must still pass on the current candidate. `why --full`, `status --full` and `report` show each one as `#<seq> superseded by plan #<p> (check <id> definition changed)` (or `removed`). Only a parent or owner can change a definition, and weakening a check is still an owner downgrade. A block whose definition did not change goes flaky as before.
 - **Waivers:** an owner can waive a specific node obligation with a reason and explicit block sequence numbers in `accept_risk`. Waivers remain visible; they do not turn into measured passes. Invariants cannot be waived.
 - **Debt:** missing evidence, failures, conflicts, and deferred invariants remain visible in the pending queue. `defer` permits specified invariant debt for one merge; it does not erase it.
 - **Oracle strength:** a node check may list `mutants` (globs of patch files inside the closure) and `min_kill` (fraction in (0, 1], default 1). The node then owes `strength:<check id>`: for each mutant patch, read from the base and never from the candidate, owed applies it to the materialized candidate and runs the check. A mutant is killed when the run exits non-zero or reports failing tests; a zero-test run or a patch that does not apply is not a kill. The obligation passes when killed/total reaches `min_kill`; the receipt shows `strength k/n` and the log lists every mutant.
@@ -96,6 +96,37 @@ and add no ledger field. Older owed ignores them; use 0.14+ to enforce them.
 
 ## Reference: plans and nodes
 
+### Authoring checks
+
+Checks and invariants can use `run_file: {path: checks/unit.sh, sha256: <64 lowercase hex>}`
+instead of `run` or `template`, with optional `args: ["literal argument"]`
+(at most 64 strings, no NUL). Path segments use only `A-Z a-z 0-9 . _ @ + , = -`,
+excluding `.` and `..`; paths must be normal and repository-relative. Plan
+admission verifies uncached script bytes from the current worktree, or the
+commit selected by `owed plan --rev`. Every execution installs those bytes
+with mode 0755 after setup and overlays; supply a usable shebang. Candidate
+script edits cannot replace the pin, but loaded helpers still follow ordinary
+reads/closure rules. Pins and args enter execution keys (SPEC §3.6).
+
+Use `owed check try <node> <check> --red <rev> --green <rev> [--plan <file>]`
+or `owed check try --invariant <id> ...` (tool `owed_check_try`) to try the disk
+plan before recording it; at least one revision is required. Each revision
+uses a fresh exact-commit tree without closure/test overlays, with normal
+setup, counts, timeout and repeat behavior. Even `red: true` is measured as an
+ordinary check: red expects fail, green expects pass, and errors meet neither.
+No ledger entries are recorded; logs are retained. Exit codes: 0 all met,
+1 unmet, 2 usage, 75 lease busy; `--no-lease` or plan `lease: false` opts out.
+
+Optional `selftest: [{commit: <40 or 64 hex>, expect: pass|fail}]` (1–8 entries)
+runs before recording new/changed checks or fixtures. Failed expectations or
+errors refuse without ledger entries or replacing the edited plan file;
+success records a `selftest/v1` note with the plan. Unchanged checks are not
+rerun; new/changed checks without fixtures warn `not self-tested`, and previews
+only announce pending selftests. Fixtures change no key, candidate or block
+and are not acceptance evidence. `owed edit` accepts `checks.<id>.selftest`,
+`checks.<id>.run_file.path`, `checks.<id>.run_file.sha256` and `checks.<id>.args`
+(omit `checks.<id>.` for invariants). See SPEC §3.10.
+
 ### Parallel slots and a moving trunk
 
 In 0.20.1, `owed dispatch` retries compare-and-swap (CAS) refusals with fresh state, including a changed plan, up to three total attempts (initial plus two retries). Before creating paths/worktrees each attempt rechecks node membership, hold, readiness/dependencies and writes overlap; removed, held, unready or overlapping nodes refuse normally. Worktree, branch, directory and setup-exclude rollback finish before retry; rollback errors and non-CAS failures (including setup) are not retried. The driver reports exhausted CAS retries as `retry next pass`, never Needs you or a halt; standalone dispatch returns the original refusal class/code. `owed plan`/amend/edit retain the three-attempt policy only while the ledger plan sha is unchanged. Dispatch rollback uses `git update-ref -d refs/heads/<branch> <base>` to compare the tip and delete atomically, regardless of the main worktree's HEAD. A ref that moved is kept and the CAS failure is reported under the existing `git branch -d` rollback label. A branch still checked out in a worktree is kept too.
@@ -118,7 +149,7 @@ and executor submit when safe. Submit refuses a commit containing trunk commits
 after the recorded slot base: the parent records `owed rebase <node>` first,
 then the writer runs the printed rebase and submits (SPEC §6.1, §7.25).
 
-A plan change that alters a node's spec, `setup`, `exec` or `closure` invalidates its open candidate, because the keys were computed under the old plan. Since 0.10, when the node's spec changed only in `checks`, `writes`, `type` or `drive` (plan-wide `setup`, `exec` and `closure` changes do not matter), `owed plan` carries the candidate in the same lock: it appends a carry submit by `executor:owed` for the same commit at the same base with keys recomputed under the new plan, and prints `Carried <node>: …` (a carry it cannot make, e.g. the commit is gone, prints `Not carried <node>: <reason>` and JSON `notCarried`; that candidate stays invalidated). Reviews and other evidence on unchanged keys still count; the next attest measures only the changed checks (or `writes`). `owed why <node> --full` and `owed status --full` show `candidate #C carried by plan #P from submit #S`. Any other change (`brief`, `deps`, `review`, `title`, `approve`, `evidence`) still needs the writer to submit again, and the driver tells it so: `plan #P changed this node's spec (<fields>); resubmit …` (reason `submit`), not a rebase. A ledger with a carry submit needs owed ≥ 0.10.0 to replay.
+A plan change that alters a node's spec, `setup`, `exec` or `closure` invalidates its open candidate, because the keys were computed under the old plan. Since 0.10, when the node's spec changed only in `checks`, `writes`, `allow_only` (0.30), `type` or `drive` (plan-wide `setup`, `exec` and `closure` changes do not matter), `owed plan` carries the candidate in the same lock: it appends a carry submit by `executor:owed` for the same commit at the same base with keys recomputed under the new plan, and prints `Carried <node>: …` (a carry it cannot make, e.g. the commit is gone, prints `Not carried <node>: <reason>` and JSON `notCarried`; that candidate stays invalidated). Reviews and other evidence on unchanged keys still count; the next attest measures only the changed checks (or `writes`). `owed why <node> --full` and `owed status --full` show `candidate #C carried by plan #P from submit #S`. Any other change (`brief`, `deps`, `review`, `title`, `approve`, `evidence`) still needs the writer to submit again, and the driver tells it so: `plan #P changed this node's spec (<fields>); resubmit …` (reason `submit`), not a rebase. A ledger with a carry submit needs owed ≥ 0.10.0 to replay.
 
 ### Waiting, reports and backlog (0.13)
 
@@ -361,10 +392,19 @@ durable wakes, the driver halts naming it and sends no further submit reminder.
 This applies when the ruling follow-up follows both the rebase follow-up and latest resume, even
 with dirty files or an unsubmitted commit outside the handed set (SPEC §12.5.4).
 
-Writer packets/follow-ups say to ask the parent a question when a decision
-exceeds allowed writes, and never submit a candidate believed to fail its
-checks. Submit reminders also say to ask when stopped for a parent decision.
-A reminder is not permission to submit known failing work.
+Writer packets/follow-ups ask for `decision_needed` (one sentence), numbered
+`options` with label/scope/cost/risk and one preferred choice, `facts`, `tried`
+and `classification_candidates` with evidence and unproven explanations.
+Use structured ask fields when available, else text starting `Decision needed:`.
+Structured notices/wakes lead with DECISION and options, then context, details
+and each question's answer command; answer `"option <n>; <limits>"`. Plain asks
+keep their existing flow. Never submit a candidate believed to fail checks;
+submit reminders also say to ask when stopped for a parent decision.
+
+After answer delivery, `owed answer`/`owed decide` and their tools report the
+answered call's observed state, including queued, still asking, asking again,
+sealed or unknown. A describe failure never resends; a retry without the
+original question's call address reports unknown (SPEC §12.5.1).
 
 ### Quiet output and evidence
 
@@ -419,7 +459,7 @@ wake recipient; pi follows a driver from the session's attachment point.
 
 `owed drive` runs the mechanical loop — dispatch, writer, submit, attest,
 reviewers, merge — with [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents)
-(≥ 1.0.27) as the process runner, and stops for decisions. Every intent is
+(>= 1.2.0) as the process runner, and stops for decisions. Every intent is
 recorded in the ledger before dsa is called and retried with the same bytes and
 id, so killing the driver at any point is safe. Attest and merge run under
 `pi-durable-subagents hold machine --shared --priority 10 --no-wait` and are retried later
@@ -766,17 +806,18 @@ Use `owed edit` (pi `owed_edit`) for atomic field changes:
 ```sh
 owed edit auth-api --set 'checks.unit.timeout_s=120' --unset drive.writer.model \
   --rule 'Keep the public API unchanged.' --resume --note 'Bound the unit check'
+owed edit a,b --set 'review.count=2' --note 'Require two reviews for both nodes'
 owed edit auth-api --set 'review.min_rank=2' --note 'Require a senior review' --dry-run
 owed edit follow-up --node-new --set 'deps=[auth-api]' --set 'title=Verify integration' \
   --set 'writes=[test/integration/]' --note 'Add the integration task'
 owed edit --invariant unit --set 'timeout_s=120' --note 'Bound invariant execution' --as owner:pi
 ```
 
-Node paths are `title`, `brief`, `deps`, `writes`, `later`, `review.count`,
+Node paths are `title`, `brief`, `deps`, `writes`, `allow_only`, `later`, `review.count`,
 `review.min_rank`, node overrides under `drive.*`, `checks.<id>` (a whole YAML
 mapping; id inferred) and `checks.<id>.<field>`. Repeat `--set path=yaml` and
 `--unset path`; sets run in order before unsets. `--node-new` adds a node from
-`deps`, `title`, `brief`, `writes` and checks. `--invariant ID` edits a top-level
+`deps`, `title`, `brief`, `writes`, `allow_only` and checks. `--invariant ID` edits a top-level
 invariant field. The source is `--plan FILE`, else the latest plan entry's path;
 unrecorded semantic file changes refuse. Comments are kept and text outside a
 simple block target keeps its layout. Flow containers and targets using anchors
@@ -786,15 +827,23 @@ and downgrades without owner confirmation, even with `OWED_CONFIRM=owner` in
 a non-TTY process.
 
 One ledger lock records the plan (same authority, downgrade guard and candidate
-carries as `owed plan`), then optional `--rule TEXT` naming the node, then
-optional `--resume` on its open slot. `--writer` requires the rule and requests
-writer action. Resume accepts `--after a,b` and `--expect report` with their
-normal waiting/report behavior. A refusal records nothing and leaves the file
-unchanged; the replacement file is prepared before the append and installed
-afterward. Tool parameters are `node` or `invariant`, `set`/`unset` string arrays,
+carries as `owed plan`), then optional `--rule TEXT` naming the targets, then
+optional `--resume` on each target's open slot. `--writer` requires the rule and
+requests writer action. Resume accepts `--after a,b` and `--expect report` with
+their normal waiting/report behavior. Pre-write refusals record nothing and
+leave the file unchanged; file replacement follows the append, with existing
+recovery instructions if replacement fails. Tool targets are exclusive `node`,
+`nodes: string[]` or `invariant`; other parameters are `set`/`unset` string arrays,
 `note`, optional `node_new`, `plan`, `rule`, `writer`, `resume`, `after` (string or
-string array), `expect: "report"`, `dry_run`, `as` and `cwd`. `owed amend` continues
-to work as before.
+string array), `expect: "report"`, `dry_run`, `as` and `cwd`.
+
+`owed edit a,b` applies the same assignments to both nodes, deduplicates in
+first-seen order and validates only the final plan, computing carries once.
+An exact existing CLI node ID wins over comma splitting; `--node-new` also
+keeps its target literal. Use tool `nodes` or separate edits for a colliding
+batch. Otherwise comma parts are trimmed and empty parts refuse. Creation
+allows only one distinct node; dry-run prints one diff and all downgrades.
+`owed amend` continues to work as before.
 
 To widen one node's writes without rewriting the plan by hand, run `owed amend <node> --writes +path[,+path...] --note "<limit>" [--plan <file>]` (pi `owed_amend`). It appends the paths to the node's `writes` in the plan file (default: the file the latest plan entry recorded; comments and layout are kept), records it as `owed plan` would (same authority: the owner, or a parent under an `allow` rule; open candidates are carried), and in the same lock records a ruling `writes of <node> widened by plan #P: +<paths>. Limit: <limit>`, which the writer receives and reviewers acknowledge. It refuses, recording nothing and leaving the file unchanged, when the file has unrecorded edits, the node is unknown or merged, a removal is requested (`-path`, which needs `owed plan`), or the note is empty. Bare paths mean additions just like `+path`. A requested scope is covered only when equal to or provably contained by an existing write; `src/lib` under `src/*` widens, because a filename match is not prefix-range containment. Covered paths report `already covered by <entry>`; an all-covered amend changes neither file nor ledger. An all-covered decide still records its ruling/defer/resume but no plan entry and says `writes unchanged`. Multiple nodes must receive equal additions after dropping covered paths per node; mismatches name each node's covered and added scopes. An allow rule is not an existing write (SPEC §3, §8.3.1).
 
@@ -883,11 +932,23 @@ allow: [{nodes: ["KB*", "A9-*"], writes: ["app/src/entry/", "package.json"]}]
 
 In 0.17, owed uses `allow.writes` at measurement time: covered out-of-writes paths are granted without a plan edit, ruling or parent round trip. Add these rules at plan time; change pre-authorized files only when the task needs it.
 
+Optional node `allow_only: [lib/samples.mjs]` caps grants from these rules:
+literals match exact paths, globs use syntax 2 (`dir/**` for a directory),
+`[]` allows no grants, and own `writes` remain authorized. Current caps also
+filter earlier grants and apply at merge recheck. Cap changes carry candidates
+and remeasure writes; adding/provably narrowing a cap needs parent authority,
+while removal/widening needs the owner and cannot use an allowance.
+`owed decide <node> --allow-only p1,p2 --text "<limit>"` (tool `allow_only`)
+replaces it alongside writes/resume; `--allow-only ''` sets `[]`. Multi-node
+cap decisions refuse mixed changed/unchanged targets. `owed edit` accepts
+`allow_only`; refusal hints name that edit. Upgrade every reader to 0.30 before
+recording caps, which use `writes_syntax: 3` (SPEC §3.4.1).
+
 `owed init` and `owed plan` warn, without refusing or recording anything, for each node of the new plan with no checks and no evidence obligations: `warning: node <id> has no checks: its acceptance rests on review alone`. The CLI prints the warnings after the result; `--json`, `owed_init` and `owed_plan` return them as `warnings: string[]`. They also warn about a check (or invariant) with `min_tests` that runs its command in a shell loop (`for/while/until … do`, `seq N`): owed counts only the last TAP (`# tests`), jest/vitest (`Tests:`) or pytest (`N passed`) summary of the log, i.e. one run, not the sum (only cargo `test result:` lines add up), so such a loop does not raise the count.
 
 `owed adopt --note TEXT --as parent:<id>` (pi: `owed_adopt` with `as: parent:…`) adopts trunk commits without a prompt when every changed path matches an `adopt` scope and the usual no-new-debt guard passes; the refusal names the first path outside. Views show `adopted by parent:<id> under allowance (plan #S)`.
 
-For a covered candidate, owed atomically records `{kind: "grant", by: "executor:owed", node, attempt, commit, paths, allowance}` before its writes observation. `paths` are sorted exact changed paths, not prefixes; `allowance` is the seq of the genesis/plan entry that last changed `allow`. Replay refuses a wrong principal, stale attempt/commit/allowance, uncovered path, closure match, overlap with another open slot or duplicate grant. Eligible paths receive partial grants even if other paths refuse; writes passes only when no refusals remain. Effective writes (plan scopes plus exact attempt grants) apply to measurement, merge recheck and dispatch overlap; grants survive plan/allow changes but a new attempt starts with none. Historical/wildcard-free writes keys stay unchanged; syntax-2 wildcard-bearing scopes include `writes_syntax: 2`.
+For a covered candidate, owed atomically records `{kind: "grant", by: "executor:owed", node, attempt, commit, paths, allowance}` before its writes observation. `paths` are sorted exact changed paths, not prefixes; `allowance` is the seq of the genesis/plan entry that last changed `allow`. Replay refuses a wrong principal, stale attempt/commit/allowance, uncovered path, closure match, overlap with another open slot or duplicate grant. Eligible paths receive partial grants even if other paths refuse; writes passes only when no refusals remain. Effective writes (plan scopes plus exact attempt grants) apply to measurement, merge recheck and dispatch overlap; grants survive plan/allow changes but a new attempt starts with none. Uncapped historical/wildcard-free writes keys stay unchanged; syntax-2 wildcard-bearing scopes include `writes_syntax: 2`.
 
 `owed why --full` shows `Granted writes: <paths> (#seq, allowance plan #S)` (first 20, then `… +N more`; JSON `grantedWrites` keeps all grant entries). Report, brief and receipt ΔO⁻ label grants `granted by owed under allowance (plan #S)`. Dispatch packets show owner pre-authorization; reviewer packets ask whether each grant belongs to the node's task and require blocking otherwise. Failed grants leave the writes observation failing with the first reason (`not covered by an allow rule`, `under closure`, `overlaps open node <id>`). For uncovered paths, why/receipt, merge refusal and driver repair/halt text suggest `hint: an allow rule {nodes: ["<id>"], writes: ["<dirs>"]} would let owed grant these` (deduplicated parent directories, trailing `/`; top-level files stay literal). The merge refusal retains this hint even when trunk-red takes precedence. When paths become covered after their writes key failed, the hint instead says to submit a new commit (any change, e.g. an amended commit message) so writes are measured again under the new allow rule; attribution followed by `attest --rerun` on the same key creates a pass/fail conflict, not acceptance. JSON `outOfWrites` adds optional `hint`. A ruling never accepts out-of-writes paths.
 
@@ -898,6 +959,21 @@ A changed check definition refusal names the changed fields (`run`, `timeout_s`,
 On `owed plan`, both check-less and loop warnings skip nodes already merged in the ledger. Invariant warnings and all `owed init` warnings are unchanged.
 
 ## Reference: evidence and debt
+
+### Environment-signature routing
+
+Optional top-level `env_signatures: {match: ['waiting for machine budget'], unless: ['AssertionError|ERR_ASSERTION']}`
+marks matching ordinary node-check failures as `environment-suspect` without
+changing their verdict, evidence or keys. Regexes are non-empty, at most 300
+characters, without flags; `match` is non-empty and `unless` optional. Matching
+uses retained log lines after ANSI CSI/CR removal. Red/strength executions,
+checks with repeat, invariants and probes are excluded. For an unsatisfied
+current-key check, attribution uses the failure's plan before writer repair;
+two suspect failures halt without spending repair budget. Fix the environment,
+then `owed attest <node> --rerun` and `owed resume <node>`; a resume after that
+halt restores ordinary routing. A pass still needs flaky-block owner action.
+Effectively waived checks do not trigger the halt; full recovery guidance is
+in `owed why <node> --full` (SPEC §3.0a).
 
 ### Setup failures and exact-key resolution
 
