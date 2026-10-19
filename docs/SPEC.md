@@ -4348,7 +4348,11 @@ A live driver's last describe also publishes durable-writer waits. Status
 lists `<node>: writer waiting on durable <request> (<state>, <seal age>)`
 under In progress; why uses the same headline. The state is `pending`,
 `running` or `finished` (finished with its wake not yet delivered). This wait
-creates no Needs-you item and does not wake the parent. With a finite numeric `sealedAt` from the latest described sealed call,
+creates no Needs-you item and does not wake the parent. It also applies to a
+candidate whose current writer received a repair or ruling follow-up after that
+candidate's submit; otherwise a candidate keeps its reviewing, measuring or
+accepted phase even if its writer awaits a durable run. With a finite numeric
+`sealedAt` from the latest described sealed call,
 the age is measured from that generation's actual seal time. Strings and
 non-finite values are treated as missing; a future time is clamped to age zero.
 Without the field, the approximate age starts when the driver first observes
@@ -5782,11 +5786,12 @@ old refusal cannot be inferred. All binding failures remain in the full receipt.
 
 ### 12.5.4 Stopped writers and decision questions (0.26, WS)
 
-A successful sealed or pruned writer without a current candidate is waiting
-while its latest described call lists nonempty `awaiting` durable runs. It
-receives no submit reminder, stopped-writer halt or no-submit halt, including
-after a repair, ruling or pending-rebase follow-up. Due repair, ruling and
-rebase follow-ups are still delivered unchanged. Without `awaiting` (including
+A successful sealed or pruned writer is waiting while its latest described call
+lists nonempty `awaiting` durable runs, including repair and ruling turns of a
+node with a current candidate. It receives no submit reminder, stopped-writer
+halt or no-submit halt, including repairs-exhausted and pending-rebase no-submit
+halts. Review, attest, merge and needs-parent routes are unchanged. Due repair,
+ruling and rebase follow-ups are still delivered unchanged. Without `awaiting` (including
 older runners), the usual stopped-writer rules below apply. A non-ok seal
 retains its existing halt/recovery route; a halt quoting that writer adds
 `; awaiting durable <request> (<state>)` for its outstanding durable runs.
