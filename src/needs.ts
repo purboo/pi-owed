@@ -58,10 +58,12 @@ function repairingBlock(s: State, node: string): Block | undefined {
   const b = n.blocks.findLast(b => counts(b) && b.kind === 'judgment' && review(b.obligation));
   return b && ((n.candidate?.seq ?? -1) > b.seq || n.runs.find(r => r.attempt === slot.attempt)?.sends.some(x => x.reason === 'repair' && x.seq > b.seq)) ? b : undefined;
 }
-/** C3 applies to submitted, changed-key repairs of active review judgments only. */
+const activeReviewBlock = (s: State, node: string, obligation: string): boolean => review(obligation) && risks(s, node, obligation).some(b => b.kind === 'judgment' && b.state === 'active' && b.key === s.nodes[node]?.candidate?.keys[obligation]);
+/** C3 applies to submitted, changed-key repairs with no active review judgment on the current key. */
 function repaired(s: State, node: string, obligation: string): Block | undefined {
   const c = s.nodes[node]?.candidate;
-  return c && risks(s, node, obligation).find(b => b.kind === 'judgment' && b.state === 'active' && review(b.obligation) && c.seq > b.seq && c.keys[obligation] !== b.key);
+  if (!c || activeReviewBlock(s, node, obligation)) return;
+  return risks(s, node, obligation).find(b => b.kind === 'judgment' && b.state === 'active' && review(b.obligation) && c.seq > b.seq && c.keys[obligation] !== b.key);
 }
 function repairLine(s: State, b: Block): string {
   return `repair #${s.nodes[b.node]!.candidate!.seq} submitted; #${b.seq} clears when ${entriesOf(s).find(e => e.seq === b.seq)?.by ?? 'the original reviewer'} records ok at rank >= ${b.rank} on the current key`;
@@ -110,7 +112,7 @@ function obligationNeed(s: State, i: ItemView): Need {
   }
   if (review(i.obligation) && bs.every(b => b.kind === 'judgment' && b.state === 'active')) {
     if (!bs.length || repair) return { ...base, kind: 'review', text, command: ownerReview(s, node, i.obligation) };
-    return { ...base, actor: 'parent', kind: 'decide', text, command: decision(node), alternatives: [ownerReview(s, node, i.obligation)] };
+    return { ...base, actor: 'parent', kind: 'decide', text, command: decision(node), ...(!activeReviewBlock(s, node, i.obligation) ? { alternatives: [ownerReview(s, node, i.obligation)] } : {}) };
   }
   if (i.obligation.startsWith('inv:')) return { ...base, kind: 'defer', text, command: `owed defer ${word(node)} ${word(i.obligation.slice(4))} --reason "<reason>" --as ${owner}` };
   return { ...base, kind: 'waive', text, command: waive(s, node, i.obligation) };
@@ -127,6 +129,8 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   const n = s.nodes[node];
   if (!n || n.merged) return [];
   const h = halted(s, node), out: Need[] = [];
+  const stopped = h && !heldRuling(s, node) ? needsWriterStopNeed(h.reason, node) : undefined;
+  if (stopped) out.push({ node, actor: 'parent', kind: 'decide', since: h!.seq, halted: true, text: stopped.reason, command: stopped.command, alternatives: [`owed resume ${word(node)}`] });
   for (const a of rt?.asking ?? []) if (a.node === node) {
     const e = entriesOf(s).findLast(e => e.kind === 'rule' && (e.answers ?? (e.answer ? [e.answer] : [])).some(ref => ref.rid === a.rid && ref.qid === a.qid && ref.rev >= a.rev));
     const text = (a.text.startsWith(`${node}: `) ? a.text.slice(node.length + 2) : a.text).split(': retry with ', 1)[0]!;
@@ -157,9 +161,9 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   obligations.sort((a, b) => obligationOrder(a.obligation!) - obligationOrder(b.obligation!));
   if (h) {
     if (obligations.length) out.push(...obligations.map(o => ({ ...o, halted: true as const })));
-    else if (!heldRuling(s, node)) {
-      const stopped = needsWriterStopNeed(h.reason, node), w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean);
-      out.push({ node, actor: 'parent', kind: stopped ? 'decide' : 'resume', since: h.seq, halted: true, text: stopped?.reason ?? `driver halted: ${haltReason(h.reason)}; after resume the driver continues from the current state${deps.length ? `, then waits for ${deps.join(', ')}` : ''}`, command: stopped?.command ?? `owed resume ${word(node)}`, ...(stopped ? { alternatives: [`owed resume ${word(node)}`] } : {}) });
+    else if (!stopped && !heldRuling(s, node)) {
+      const w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean);
+      out.push({ node, actor: 'parent', kind: 'resume', since: h.seq, halted: true, text: `driver halted: ${haltReason(h.reason)}; after resume the driver continues from the current state${deps.length ? `, then waits for ${deps.join(', ')}` : ''}`, command: `owed resume ${word(node)}` });
     }
   } else out.push(...obligations);
   if (rt?.driverRunning === false && n.phase === 'ready' && !s.plan.nodes.find(n => n.id === node)?.later && !overlapping(s, node).length) out.push({ node, actor: 'parent', kind: 'dispatch', since: entriesOf(s).findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq ?? null, text: 'ready to dispatch', command: `owed dispatch ${word(node)}` });

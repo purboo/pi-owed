@@ -144,13 +144,12 @@ test('owed brief --since filters only merges by seq or ISO time, and the printed
     assert.equal(later.decisions.length, 2, 'since does not hide current decisions');
     assert.equal(later.rejected.length, 2, 'since does not hide current blocks');
     assert.match(await run(r.cwd, ['brief', '--since', String(mergeSeq)]), new RegExp(`^owed:.*\\nNeeds you \\(3\\):[\\s\\S]*\\nBrief \\(since #${mergeSeq}\\)\\nMerged: none\\n`));
-    // Guidance does not discharge the block; choose the explicitly labelled owner override and record the risk.
+    // Guidance does not discharge the block. HL2 omits the advertised override; an explicit owner act retains its ledger semantics.
     const guidance = await json<{seq:number}>(r.cwd, ['rule', 'accept the reviewed closure boundary', '--nodes', 'b']);
     assert.ok((await brief()).rejected.some(b => b.node === 'b'));
-    const alternative = (await run(r.cwd, ['why', 'b'])).split('\n').find(line => line.startsWith('  or: '))!.slice(6);
-    assert.match(alternative, /^owed review b --obligation closure-review --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>$/);
-    const command = alternative.split(' ').map(word => word === 'owner:<id>' ? 'owner:cli' : word === '"<note>"' ? 'accept the closure risk after guidance' : word);
-    assert.equal(command.shift(), 'owed');
+    assert.doesNotMatch(await run(r.cwd, ['why', 'b']), /or: owed review b.*--ok/);
+    const status = await json<{ nodes: Record<string, { candidate: { commit: string } }> }>(r.cwd, ['status']);
+    const command = ['review', 'b', '--obligation', 'closure-review', '--ok', '--rank', '3', '--candidate', status.nodes.b!.candidate.commit.slice(0, 12), '--note', 'accept the closure risk after guidance', '--ack-rulings', 'latest', '--as', 'owner:cli'];
     await run(r.cwd, [...command, '--i-am-owner']);
     const after = await brief();
     assert.deepEqual(after.decisions.map(d => d.node), ['d']);
