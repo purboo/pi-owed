@@ -126,6 +126,15 @@ export async function readAt(cwd: string, rev: string, path: string): Promise<{ 
   if (shown.code) throw new OwedError(`${file} does not exist in ${rev} (${commit.slice(0, 12)})`, 'usage');
   return { commit, path: file, text: shown.stdout };
 }
+/** RF2: exact blob bytes (not Git's UTF-8 decoded command output). Path is already plan-validated. */
+export async function readBlobAt(cwd: string, commit: string, path: string): Promise<Buffer | undefined> {
+  const chunks: Buffer[] = []; let bytes = 0;
+  const r = await runGit(cwd,['cat-file','blob',`${commit}:${path}`],{allowFail:true},chunk => {
+    bytes += chunk.length; if (bytes <= GIT_MAX_OUTPUT_BYTES) chunks.push(chunk);
+  });
+  if (bytes > GIT_MAX_OUTPUT_BYTES) throw new OwedError('run_file blob exceeds Git output bound');
+  return r.code ? undefined : Buffer.concat(chunks);
+}
 export async function revParse(cwd: string, rev: string): Promise<string> { return (await git(cwd, ['rev-parse', '--verify', '--end-of-options', `${rev}^{commit}`])).stdout.trim(); }
 export async function isAncestor(cwd: string, a: string, b: string): Promise<boolean> {
   const r = await git(cwd, ['merge-base', '--is-ancestor', a, b], { allowFail: true });
@@ -196,9 +205,11 @@ export function execKey(plan: Plan): Pick<ExecConfig, 'env' | 'wrap' | 'touch'> 
   const touch = plan.exec?.touch;
   return env || wrap || touch ? { env, wrap, touch } : undefined;
 }
+/** RF4: absent on legacy run checks, preserving their exact key payloads. */
+const runFileKey = (spec: CheckSpec) => spec.run_file ? { run_file:spec.run_file, args:spec.args } : {};
 /** MS4: `quarantine` (sorted active names) is present only when non-empty, so a key without active entries is the 0.17 key. */
 async function checkKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, closure: string, o: string, quarantine: string[] = []): Promise<string> {
-  return H({ o, id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, repeat: spec.repeat ? { runs: spec.repeat.runs, need: spec.repeat.need ?? spec.repeat.runs } : undefined, closure, reads: await readsDigest(cwd, commit, spec.reads), quarantine: quarantine.length ? [...quarantine].sort() : undefined });
+  return H({ o, id: spec.id, run: spec.run, ...runFileKey(spec), timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, repeat: spec.repeat ? { runs: spec.repeat.runs, need: spec.repeat.need ?? spec.repeat.runs } : undefined, closure, reads: await readsDigest(cwd, commit, spec.reads), quarantine: quarantine.length ? [...quarantine].sort() : undefined });
 }
 /** TR1: the node check's own key on trunk, with closure pinned from that same commit. */
 export async function trunkCheckKey(cwd: string, plan: Plan, spec: CheckSpec, commit: string, q?: QuarantineNames): Promise<string> {
@@ -234,7 +245,7 @@ export async function candidateFacts(cwd: string, plan: Plan, node: NodeSpec, ba
   for (const c of node.checks) {
     keys[`check:${c.id}`] = await checkKey(cwd, plan, c, commit, closure, 'check', q?.(c));
     if (c.mutants) keys[`strength:${c.id}`] = await strengthKey(cwd, plan, c, base, commit, closure);
-    if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
+    if (c.red) keys[`red:${c.id}`] = H({ o: 'red', id: c.id, run: c.run, ...runFileKey(c), red_expect: c.red_expect, timeout_s: c.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: c.min_tests, closure, base: await tree(cwd, base), tests: await readsDigest(cwd, commit, c.tests ?? []) });
   }
   keys.writes = H({ o: 'writes', base, cand: commit, writes: node.writes, ...writesKeySyntax(plan,node.writes) });
   const closureTouched = await touchesClosure(cwd, plan, changed, base, commit);
@@ -249,7 +260,7 @@ export async function mutantPaths(cwd: string, commit: string, mutants: string[]
 }
 async function strengthKey(cwd: string, plan: Plan, spec: CheckSpec, base: string, commit: string, closure: string): Promise<string> {
   const mutants = H((await files(cwd, base)).filter(([p]) => matchesAny(p, spec.mutants ?? []) && matchesAny(p, plan.closure)));
-  return H({ o: 'strength', id: spec.id, run: spec.run, timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, min_kill: spec.min_kill ?? 1, closure, mutants, reads: await readsDigest(cwd, commit, spec.reads) });
+  return H({ o: 'strength', id: spec.id, run: spec.run, ...runFileKey(spec), timeout_s: spec.timeout_s, setup: plan.setup, exec: execKey(plan), min_tests: spec.min_tests, min_kill: spec.min_kill ?? 1, closure, mutants, reads: await readsDigest(cwd, commit, spec.reads) });
 }
 export async function stateFacts(cwd: string, plan: Plan, commit: string, q?: QuarantineNames): Promise<StateFacts> {
   commit = await revParse(cwd, commit);

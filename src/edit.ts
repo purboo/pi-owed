@@ -9,15 +9,15 @@ export interface EditFields {
   set?: string[]; unset?: string[];
 }
 function usage(text: string): never { throw new OwedError(text,'usage'); }
-const checkFields = ['run','on_timeout','timeout_s','reads','min_tests','red','tests','red_expect','mutants','min_kill','repeat','quarantine','quarantine_set'];
+const checkFields = ['run','run_file','args','on_timeout','timeout_s','reads','min_tests','red','tests','red_expect','mutants','min_kill','repeat','quarantine','quarantine_set'];
 function parts(path: string, o: EditFields): string[] {
   const p = path.split('.');
   if (p.some(x => !x || ['__proto__','prototype','constructor'].includes(x))) usage(`Invalid edit path: ${path}`);
   if (o.invariant !== undefined) {
-    if (p.length !== 1 || ![...checkFields, 'known_red'].includes(p[0]!)) usage(`Invalid invariant edit path: ${path}; use a check field other than id`);
+    if (!(p.length === 1 && [...checkFields, 'known_red'].includes(p[0]!) || p.length === 2 && p[0] === 'run_file' && ['path','sha256'].includes(p[1]!))) usage(`Invalid invariant edit path: ${path}; use a check field other than id`);
   } else {
     const simple = ['title','brief','deps','writes','later'];
-    const valid = p.length === 1 && simple.includes(p[0]!) || p.length === 2 && p[0] === 'review' && ['count','min_rank'].includes(p[1]!) || p[0] === 'drive' && p.length >= 2 || p[0] === 'checks' && (p.length === 2 || p.length === 3 && checkFields.includes(p[2]!));
+    const valid = p.length === 1 && simple.includes(p[0]!) || p.length === 2 && p[0] === 'review' && ['count','min_rank'].includes(p[1]!) || p[0] === 'drive' && p.length >= 2 || p[0] === 'checks' && (p.length === 2 || p.length === 3 && checkFields.includes(p[2]!) || p.length === 4 && p[2] === 'run_file' && ['path','sha256'].includes(p[3]!));
     if (!valid || o.node_new && !['title','brief','deps','writes','checks'].includes(p[0]!)) usage(`Invalid node edit path: ${path}`);
   }
   return p;
@@ -47,8 +47,10 @@ export function editText(text: string, o: EditFields): string {
     if (p.length === 2) return { map:target, path:['checks',String(check ? checks.items.indexOf(check) : checks.items.length)] };
     if (!check && create) { check = doc.createNode({ id:p[1] }); checks.add(check); }
     if (!isMap(check)) { if (!create && !check) return undefined; usage(`Check ${p[1]} is not a YAML map`); }
-    return { map:check as YAMLMap, path:[p[2]!] };
+    return { map:check as YAMLMap, path:p.slice(2) };
   };
+  const pinned = new Set<YAMLMap>(), regenerate = new Map<YAMLMap,string>();
+  visit(target,(_key,node) => { if (isMap(node) && node.has('run_file')) pinned.add(node); });
   for (const assignment of o.set ?? []) {
     const eq = assignment.indexOf('=');
     if (eq < 1) usage(`--set needs path=yaml: ${assignment}`);
@@ -68,12 +70,17 @@ export function editText(text: string, o: EditFields): string {
     const at = locate(p,true)!, prior = at.map.getIn(at.path,true), next = freeBrief ? doc.createNode(raw) : value.contents?.clone() ?? doc.createNode(null);
     if (isNode(prior)) { next.comment = prior.comment; next.commentBefore = prior.commentBefore; next.spaceBefore = prior.spaceBefore; }
     if ((isMap(prior) && isMap(next)) || (isSeq(prior) && isSeq(next))) next.flow = prior.flow;
+    // RF1: a stored canonical command is derived metadata; regenerate it when its pin/argv is edited.
+    const runPath = o.invariant !== undefined ? 'run' : `checks.${p[1]}.run`;
+    if (['run_file','args'].includes(at.path[0]!) && pinned.has(at.map)) regenerate.set(at.map,runPath);
     at.map.setIn(at.path,next);
   }
   for (const path of o.unset ?? []) {
     const at = locate(parts(path,o),false);
     if (!at || !at.map.deleteIn(at.path)) usage(`Cannot unset missing edit path: ${path}`);
+    if (at.path[0] === 'args' && pinned.has(at.map)) regenerate.set(at.map,o.invariant !== undefined ? 'run' : `checks.${path.split('.')[1]}.run`);
   }
+  for (const [map,runPath] of regenerate) if (map.has('run_file') && !(o.set ?? []).some(s => s.slice(0,s.indexOf('=')) === runPath)) map.delete('run');
   if (o.node_new) list.add(target);
   const documentText = doc.toString({ lineWidth:0 }), intended = canonical(parsePlan(documentText));
   const checked = (next: string): string => {

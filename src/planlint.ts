@@ -117,8 +117,8 @@ function nestedBash(script: string): string[] {
 function planRuns(plan: Plan, text?: string): Map<string, string> {
   const runs = new Map<string, string>();
   if (typeof plan.exec?.wrap === 'string') runs.set('plan/exec.wrap', expandWrap(plan.exec.wrap, '/owed tree', 30, 'true'));
-  for (const node of plan.nodes) for (const check of node.checks) runs.set(`${node.id}/${check.id}`, check.run);
-  for (const inv of plan.invariants) runs.set(`inv:${inv.id}/run`, inv.run);
+  for (const node of plan.nodes) for (const check of node.checks) if (!check.run_file) runs.set(`${node.id}/${check.id}`, check.run);
+  for (const inv of plan.invariants) if (!inv.run_file) runs.set(`inv:${inv.id}/run`, inv.run);
   if (plan.sweep) runs.set('plan/sweep', plan.sweep.run);
   if (plan.setup !== undefined) runs.set('plan/setup', plan.setup);
   if (typeof plan.slot_setup === 'string') runs.set('plan/slot_setup', plan.slot_setup);
