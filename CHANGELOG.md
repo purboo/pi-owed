@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.29.1
+
+No ledger, entry, plan or CLI-flag change; durable-writer waits still need
+pi-durable-subagents >= 1.1.0, as in 0.29.0, and old ledgers replay identically.
+
+- **Writers can wait on their own durable runs during repair turns too.** In
+  13 h of field use on 0.29.0, 4 of 9 writer halts fired while the writer's
+  own `--wake caller` run was still pending during a repair turn on a node
+  with a current candidate. The 0.29.0 wait now applies whether or not the
+  node has a candidate: a writer sealed ok (or pruned) with outstanding
+  durable wakes no longer gets the "finished repair follow-up … without
+  submitting a new candidate", repairs-exhausted, writer-ruling or rebase
+  no-submit halt. Due follow-ups are still sent first; a non-ok seal still
+  halts with `; awaiting durable <request>`; when the woken generation seals
+  without a new candidate and without outstanding wakes, the halt fires as
+  before. Status and why show `writer waiting on durable <request>` for a
+  node with a candidate only after a repair or ruling follow-up went to its
+  writer after that candidate; otherwise the node keeps its reviewing,
+  measuring or accepted phase.
+- **The writer-stop halt leads Needs you; no owner ok over an unresolved
+  block.** For a node halted because its writer stopped (finished or stopped
+  without submitting, sealed non-ok, repairs exhausted, worktree not
+  inspectable), the halt need comes first, followed by the node's obligation
+  needs; other halts keep their order. While an active review judgment block
+  sits on the current candidate's key, no need for that obligation offers
+  `owed review … --ok`, and the "repair #… submitted; #… clears when …" line
+  appears only for a repaired block with no newer active block on the
+  current key.
+- **Writes already granted by an allow rule no longer refuse a decision.**
+  `owed decide --writes` records its decision when some or all paths are
+  covered by an allow rule of the current plan: the ruling text ends with
+  ` (writes already granted by allow rule, plan #<seq>: <paths>)` and
+  uncovered paths are added as before. `owed amend` with only such paths
+  records nothing, exits 0, names `allow rule (plan #<seq>)` and adds
+  `; owed decide <node> --writer delivers a limit`.
+
 ## 0.29.0
 
 Fewer needless interruptions. No ledger format, entry kind, entry field,
