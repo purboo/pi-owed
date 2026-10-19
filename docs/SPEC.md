@@ -4119,14 +4119,19 @@ card; it does not embed those detailed receipts in writer repairs (§12.5.3).
   driver. The Debt lines retain their existing meaning.
   An active review or closure-review judgment on an older key after a repair
   submit says `repair #<S> submitted; #<B> clears when <principal> records ok at
-  rank >= <r> on the current key`. A submit and a ruling do not clear the block.
-  The owner route, when owed, is a pinned rank-3 OK with a note, the latest
-  ruling acknowledgment and the closure-review obligation when applicable.
-  A halted slot first needs any unruled block's ruling, then its parent/owner
-  obligation needs. Otherwise it needs `owed resume <node>` and explains that
-  the driver continues from the current state, then waits for any dependencies.
-  Only that last case uses a stopped writer's decision command, with resume as
-  its alternative. In 0.29, a later named decision ruling with no halt-clearing
+  rank >= <r> on the current key` only when no active judgment block for that
+  obligation remains on the current candidate's key. A submit and a ruling do
+  not clear the block. The owner route, when owed, is a pinned rank-3 OK with a
+  note, the latest ruling acknowledgment and the closure-review obligation when
+  applicable. An active review judgment block on the current key keeps the
+  guidance need and offers no owner OK command or alternative.
+  A stopped-writer halt leads the node's needs with its writer reply and decision
+  command, with resume as an alternative, followed by its unruled review and
+  parent/owner obligation needs. Status, why and parent wakes use that first
+  need as the headline. Other halts first need any unruled block's ruling, then
+  their parent/owner obligation needs; otherwise they need `owed resume <node>`
+  and explain that the driver continues from the current state, then waits for
+  any dependencies. In 0.29, a later named decision ruling with no halt-clearing
   entry makes the active halt held: its resume need (including the stopped-writer
   decide special case) disappears. Activity reads `held by ruling #<rule seq>;
   owed resume <node> releases it`. Compact/full status, brief and `/owed` show

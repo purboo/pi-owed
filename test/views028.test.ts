@@ -45,8 +45,8 @@ test('R-028-51: status and brief JSON keep the cbe7b9a need keys while why rende
   const r = await fixture();
   try {
     await ops.attest({ cwd: r.cwd, node: 'a' }); await r.block();
-    const state = (await ops.readState(r)).state, alternative = needs(state, 'a')[0]!.alternatives![0]!;
-    assert.ok(alternative);
+    const state = (await ops.readState(r)).state;
+    assert.equal(needs(state, 'a')[0]!.alternatives, undefined);
     for (const command of ['status', 'brief']) {
       const output = await cli(r.cwd, [command, '--json']); assert.equal(output.code, 0, output.stderr);
       const json = JSON.parse(output.stdout), rows = json.summary.needs;
@@ -55,7 +55,7 @@ test('R-028-51: status and brief JSON keep the cbe7b9a need keys while why rende
       assert.doesNotMatch(output.stdout, /"alternatives"\s*:/);
     }
     const why = await cli(r.cwd, ['why', 'a']); assert.equal(why.code, 0, why.stderr);
-    assert.ok(why.stdout.includes(`or: ${alternative}`), why.stdout);
+    assert.doesNotMatch(why.stdout, /or: owed review a.*--ok/);
     const json = await cli(r.cwd, ['why', 'a', '--json']); assert.equal(json.code, 0, json.stderr);
     assert.doesNotMatch(json.stdout, /"alternatives"\s*:/);
   } finally { await r.cleanup(); }
@@ -153,7 +153,7 @@ test('VW1/C1: status, brief, both why cards, receipts and extension keep each ha
       assert.doesNotMatch(text, /owed waive a check:stress/); assert.ok(text.includes(ns[1]!.command!), text);
     }
     await rm(runtimeFile);
-    for (const text of [renderWhy(card), renderWhy(card, { full: true })]) assert.ok(text.includes(`or: ${ns[1]!.alternatives![0]}`), text);
+    for (const text of [renderWhy(card), renderWhy(card, { full: true })]) assert.doesNotMatch(text, /or: owed review a.*--ok/);
     assert.ok(ns[0]!.command!.includes('--accept-risk')); assert.equal(state.nodes.a!.blocks.find(x => x.seq === b.seq)?.state, 'active');
     await assert.rejects(ops.merge({ cwd: r.cwd, node: 'a', as: parent }), e => {
       assert.equal((e as Error).message, 'Node a current candidate is not yet accepted:check:stress, review'); return true;
@@ -249,7 +249,7 @@ test('VW4: manual rebase receipt leads with its mutation and writer responsibili
   } finally { await ext.close(); await r.cleanup(); }
 });
 
-test('VW5/N5: resource and dependency halts render resume; unruled review takes precedence over writer-stop', async () => {
+test('VW5/HL1: resource and dependency halts render resume; writer-stop precedes unruled review', async () => {
   const r = await fixture(), ext = extension(r.cwd);
   try {
     await ops.resume({ cwd: r.cwd, node: 'a', as: parent, after: 'dep' });
@@ -262,7 +262,8 @@ test('VW5/N5: resource and dependency halts render resume; unruled review takes 
     await r.halt('writer run r sealed ok; writer says: "No change" → owed decide a --text "<ruling>" --writer', 'human');
     const card = await ops.why({ cwd: r.cwd, node: 'a' });
     for (const text of [renderStatus(await ops.status({ cwd: r.cwd })), renderWhy(card), renderWhy(card, { full: true })]) {
-      assert.match(text, /review asks: choose the response → owed decide a --text "<ruling>" --writer/); assert.doesNotMatch(text.split('\n').filter(l => !l.startsWith('⏸ halted by driver')).join('\n'), /owed resume a|writer says:/);
+      assert.match(text, /review asks: choose the response → owed decide a --text "<ruling>" --writer/);
+      assert.ok(text.indexOf('a: writer says: "No change"') < text.indexOf('review asks: choose the response'), text);
     }
     const refused = await cli(r.cwd, ['resume', 'a']); assert.equal(refused.code, 1); assert.match(refused.stderr, /review asks: choose the response → owed decide a/); assert.doesNotMatch(refused.stderr, /owed rule --nodes/);
   } finally { await ext.close(); await r.cleanup(); }

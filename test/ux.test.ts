@@ -28,13 +28,13 @@ async function fixture(two: boolean | 3 = false) {
   return { ...r, slot };
 }
 
-test('UX1: active review block suggests writer ruling and labels any owner override', async () => {
+test('UX1/HL2: active review block suggests writer ruling without an owner OK override', async () => {
   const f = await fixture();
   try {
     await ops.review({ cwd: f.cwd, as: { role: 'reviewer', id: 'independent' }, node: 'a', verdict: 'block', rank: 2, note: 'repair collision' });
     const s = await ops.status(f), command = s.summary!.needs.find(n => n.node === 'a')!.command!;
     assert.equal(command, 'owed decide a --text "<ruling>" --writer');
-    assert.match(renderReceipt(await ops.why({ ...f, node: 'a' })), /or: owed review a --ok --rank 3 --candidate [0-9a-f]{12} --note "<note>" --ack-rulings latest --as owner:<id>/);
+    assert.doesNotMatch(renderReceipt(await ops.why({ ...f, node: 'a' })), /or: owed review a.*--ok/);
     assert.equal(s.nodes.a!.accepted, false);
   } finally { await f.cleanup(); }
 });

@@ -113,7 +113,7 @@ test('NE3 §99.3 C1: halted review and stress have separate commands and alterna
   const { needs } = await api(), r = rig(); r.block('review', 'reviewer:external'); const b = r.obs('check:stress', 'fail'); r.halt();
   const ns = needs(r.state(), 'a'); assert.equal(ns.length, 2); assert.deepEqual(ns[0], stressNeed(r.state(), b.seq, true));
   assert.deepEqual(ns.map(n => [n.obligation, n.kind, n.halted]), [['check:stress', 'waive', true], ['review', 'decide', true]]);
-  assert.ok(ns[1]!.alternatives?.[0]?.includes('--ack-rulings latest')); await commands(ns);
+  assert.equal(ns[1]!.alternatives, undefined); await commands(ns);
 });
 
 test('NE4 §99.4: a changed-key repair plus stress halt never asks for another writer decision', async () => {
@@ -174,7 +174,7 @@ test('NE10 N5: halted executor, reviewer and dependency-only work requires resum
   }
 });
 
-test('NE11 N5.1: unruled current and invalidated latest-submit blocks precede writer-stop and resume', async () => {
+test('NE11 HL1: writer-stop precedes unruled current and invalidated latest-submit blocks', async () => {
   const { needs } = await api();
   for (const invalidated of [false, true]) {
     const r = rig(); const b = r.block('review', 'reviewer:drive-a-1-1', 2, 'parent');
@@ -182,10 +182,11 @@ test('NE11 N5.1: unruled current and invalidated latest-submit blocks precede wr
       r.add({ kind: 'adopt', by: 'owner:pi', channel: 'delegated', trunk: 'main', prior: commit('base'), commit: commit('next-trunk'), commits: 1, changed: ['other'], note: 'trunk moved', state: { commit: commit('next-trunk'), tree: 'next-tree', invKeys: {} } });
       r.add({ kind: 'rebase', by: 'parent:drive', node: 'a', attempt: 1, from: commit('base'), base: commit('next-trunk') });
     }
-    r.halt(`writer run r sealed ok; writer gave no final text → ${writerDecisionCommand('a')}`);
-    const n = needs(r.state(), 'a')[0]!;
+    const h = r.halt(`writer run r sealed ok; writer gave no final text → ${writerDecisionCommand('a')}`);
+    const ns = needs(r.state(), 'a'), n = ns[1]!;
+    assert.deepEqual(ns[0], { node: 'a', actor: 'parent', kind: 'decide', since: h.seq, halted: true, text: 'writer gave no final text', command: writerDecisionCommand('a'), alternatives: ['owed resume a'] });
     assert.deepEqual(n, { node: 'a', actor: 'parent', kind: 'rule', since: b.seq, obligation: 'review', block: b.seq, key: r.facts('one').keys.review!, text: 'review asks: choose the response', command: writerDecisionCommand('a'), halted: true });
-    assert.equal(needs(r.state(), 'a').length, 1); assert.equal(n.alternatives, undefined); await commands([n]);
+    assert.equal(ns.length, 2); assert.equal(n.alternatives, undefined); await commands(ns);
   }
 });
 
