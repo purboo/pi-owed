@@ -20,7 +20,7 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, re
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, writeCovers } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trackedRiskRetry, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
-import { setupFailure, infraSource, observationsOf } from './reducer.ts';
+import { setupFailure, infraSource, observationsOf, resumeOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import type { Runtime } from './needs.ts';
@@ -2631,17 +2631,21 @@ export function remeasureQueuedText(s: State, node: string): string[] {
     const latest = es.findLast((e): e is ObsEntry => e.kind === 'obs' && e.by === 'executor:owed' && e.merging === node && e.obligation === `inv:${inv.id}` && e.probe === undefined);
     return latest?.verdict === 'fail' ? [latest] : [];
   });
-  const lines = failures.length ? failures.map(f => s.trunk.seq < f.seq && candidate && candidate.seq < f.seq
+  const lines = failures.map(f => s.trunk.seq < f.seq && candidate && candidate.seq < f.seq
     ? `remeasure queued: ${f.obligation} on merge key ${f.key.slice(0,12)}`
-    : `${f.obligation}: trunk moved to ${s.trunk.commit.slice(0,12)} (or the candidate changed) since #${f.seq}: the next merge builds a new merge tree; ${f.obligation} is remeasured there if its key is still ${f.key.slice(0,12)}, otherwise measured as usual`)
-    : [`remeasure queued: no merge-tree invariant of ${node} failed on its current key (the next merge measures as usual)`];
-  for (const b of s.nodes[node]?.blocks ?? []) {
-    const f = es.find(e => e.seq === b.seq);
-    if (b.kind !== 'exec' || !b.obligation.startsWith('check:') || f?.kind !== 'obs' || f.merging !== node || (b.state !== 'active' && b.state !== 'flaky')) continue;
-    lines.push(b.state === 'active' ? `${b.obligation}: the next merge reruns it on merge key ${b.key.slice(0,12)} as an attribution rerun`
-      : `${b.obligation}: flaky block #${b.seq} on merge key ${b.key.slice(0,12)} already has an attribution pass; --remeasure measures invariants only; accept the block risk or fix it before merging`);
+    : `${f.obligation}: trunk moved to ${s.trunk.commit.slice(0,12)} (or the candidate changed) since #${f.seq}: the next merge builds a new merge tree; ${f.obligation} is remeasured there if its key is still ${f.key.slice(0,12)}, otherwise measured as usual`);
+  const n = s.nodes[node], retry = resumeOf(s,node);
+  for (const check of s.plan.nodes.find(n => n.id === node)?.checks ?? []) {
+    const obligation = `check:${check.id}`, key = candidate?.keys[obligation];
+    const b = n?.blocks.findLast(b => b.kind === 'exec' && b.obligation === obligation && b.state === 'active' && retry?.remeasure && b.seq < retry.seq);
+    if (candidate && b) {
+      lines.push(`remeasure queued: ${node} check ${check.id} (failure #${b.seq}) is measured again on its key before any repair; a pass leaves a flaky block: owed waive ${node} --accept-risk ${b.seq}`);
+    } else if (key && !n?.blocks.some(b => b.kind === 'exec' && b.obligation === obligation && b.key === key && b.state === 'active')) {
+      const f = observationsOf(s,node,obligation,key).findLast(o => o.verdict !== 'error');
+      if (f?.verdict === 'fail') lines.push(`${node} check ${check.id} already failed again on its key (#${f.seq}); --remeasure does not measure it again: owed attest ${node} --rerun`);
+    }
   }
-  return lines;
+  return lines.length ? lines : [`nothing to remeasure: no failed merge-tree invariant and no blocked check of ${node}`];
 }
 export interface ResumeResult { entry: Entry; merged?: boolean; entries?: Entry[]; remeasure?: string[] }
 /** PO2: validate the whole batch under one ledger lock before any append. */
@@ -2662,7 +2666,7 @@ export async function resume(o: Omit<ResumeArgs,'node'> & { node: string | strin
       merged = !!after.length && after.every(dep => !!state.nodes[dep]?.merged);
     }
     const entries = await ledger.append(drafts);
-    return { entry:entries[0]!, ...(merged ? { merged:true } : {}), ...(nodes.length > 1 ? { entries } : {}), ...(o.remeasure ? {remeasure:nodes.flatMap(id => remeasureQueuedText(latest.state,id))} : {}) };
+    return { entry:entries[0]!, ...(merged ? { merged:true } : {}), ...(nodes.length > 1 ? { entries } : {}), ...(o.remeasure ? {remeasure:nodes.flatMap(id => remeasureQueuedText(reduceFrom(latest.state,entries,latest.lookup),id))} : {}) };
   });
 }
 /** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. `since`: as for launch (F1). */
