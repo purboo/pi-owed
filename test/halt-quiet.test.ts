@@ -137,19 +137,19 @@ test('E3.1 loop driver: wake lines carry the fact mark; a repeat is marked; a no
 test('E3.2 D25.6 wording: owner halts, CAS merge halts and brief commands; no --as owner:human', () => {
   assert.equal(run.reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'owner', detail: 'stalled: x' }), `halt a attempt 2, ${OWNER}: halted — stalled: x`);
   assert.equal(run.reportText({ do: 'halt', node: 'a', outcome: 'halted', attempt: 2, needs: 'human', detail: 'x' }), 'halt a attempt 2, needs the parent (the main agent acts; owed lists the command): halted — x');
-  // R-028-59(5): the brief and needs keep the primary decision and owner review alternative.
+  // HL2: brief and needs keep the primary decision, with no active-block owner OK alternative.
   const r = rig();
   r.dispatch('a', 'parent:main'); r.submit('1'); r.obs('1');
   r.add({ kind: 'obs', by: 'executor:owed', subject: 'a', obligation: 'writes', key: 'w1', verdict: 'pass', exit: 0, durationMs: 1, commit: 'c1', base: 's0' });
   r.add({ kind: 'review', by: 'reviewer:r2', node: 'a', attempt: 1, obligation: 'review', key: 'rv1', verdict: 'block', rank: 2, note: 'no' });
   const s = r.state(), brief = briefView(s, r.entries, -1, 0);
   assert.equal(brief.decisions.find(x => x.node === 'a')!.command, 'owed decide a --text "<ruling>" --writer');
-  assert.equal(needs(s, 'a')[0]!.alternatives![0], 'owed review a --ok --rank 3 --candidate c1 --note "<note>" --ack-rulings latest --as owner:<id>');
+  assert.equal(needs(s, 'a')[0]!.alternatives, undefined);
   assert.deepEqual(Object.keys(brief.summary!.needs.find(n => n.node === 'a')!).sort(), ['command', 'node', 'reason']);
   const briefText = renderBrief(brief);
   assert.doesNotMatch(briefText, /owner:human/, briefText);
   assert.deepEqual([...briefText.matchAll(/--as (\S+)/g)].map(x => x[1]), [], briefText);
-  assert.deepEqual([...new Set(needs(s, 'a').flatMap(n => [n.command ?? '', ...(n.alternatives ?? [])]).flatMap(c => [...c.matchAll(/--as (\S+)/g)].map(x => x[1])))], ['owner:<id>']);
+  for (const principal of needs(s, 'a').flatMap(n => [n.command ?? '', ...(n.alternatives ?? [])]).flatMap(c => [...c.matchAll(/--as (\S+)/g)].map(x => x[1]))) assert.equal(principal, 'owner:<id>');
   // Needs use a role placeholder independently of the legacy confirmation gate.
   const prior = process.env.OWED_CONFIRM; process.env.OWED_CONFIRM = 'owner';
   try {

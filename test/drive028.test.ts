@@ -199,7 +199,7 @@ test('DR1/C1/C4: owner notice is exactly the primary need and each obligation ke
     assert.equal(wake.text, ns.map(n => `a: ${rendered(n)}`).join('\n'));
     assert.deepEqual(wake.need, ns[0]); assert.equal(wake.needId, needId(ns[0]!)); assert.deepEqual(wake.otherNeeds, ns.slice(1));
     assert.doesNotMatch(wake.text!, /resolves it with|\| owed/);
-    assert.ok(ns[0]!.alternatives!.some(c => c.includes('--ack-rulings latest'))); assert.ok(ns[1]!.command!.includes('evidence a proof'));
+    assert.equal(ns[0]!.alternatives, undefined); assert.ok(ns[1]!.command!.includes('evidence a proof'));
   } finally { await f.done(); }
 });
 
