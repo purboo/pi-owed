@@ -198,13 +198,13 @@ test('SB4: answer prints one line, a second only for other calls reached or miss
     const w = await launch('writer'), dsa = new Client();
     dsa.views.set(w, { rid: w, state: 'asking', questions: [{ qid: 'q1', rev: 1, question: 'Which API?' }] });
     const alone = answerText('a', await ops.answer({ ...r, as: parent, node: 'a', text: 'Use SECRET-v2', dsa }));
-    assert.match(alone, new RegExp(`^answered writer question q1 of ${w} \\(rule #\\d+\\); the call resumes now$`));
+    assert.equal(alone, `answered a ${w} qid q1: unknown (call not identified)`);
     const rev = await launch('reviewer');
     dsa.views.set(rev, { rid: rev, state: 'running' });
     dsa.views.set(w, { rid: w, state: 'asking', questions: [{ qid: 'q2', rev: 1, question: 'Which file?' }] });
     const reached = answerText('a', await ops.answer({ ...r, as: parent, node: 'a', text: 'Use SECRET-file', dsa })).split('\n');
     assert.equal(reached.length, 2, reached.join('\n'));
-    assert.match(reached[0]!, /^answered writer question q2 of .* the call resumes now$/);
+    assert.equal(reached[0], `answered a ${w} qid q2: unknown (call not identified)`);
     assert.equal(reached[1], 'the ruling also reached 1 other running call (a/reviewer)');
     dsa.fail.add(rev);
     dsa.views.set(w, { rid: w, state: 'asking', questions: [{ qid: 'q3', rev: 1, question: 'Which name?' }] });

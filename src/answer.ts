@@ -12,7 +12,34 @@ import { answerRetry } from './needs.ts';
 export { answerRetry } from './needs.ts';
 
 export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; dsa?: Pick<Dsa, 'describe' | 'send'> }
-export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; rulingDelivery?: RulingDelivery }
+export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; answers: AnswerState[]; rulingDelivery?: RulingDelivery }
+export interface AnswerState { node: string; rid: string; qid: string; rev: number; request: string; state: string }
+/** AR1: one bounded, read-only post-delivery describe per run; failures never retry the send. */
+export async function answerStates(dsa: Pick<Dsa,'describe'>, entry: RuleEntry, refs: (import('./types.ts').DecisionAnswer & { to?: string })[]): Promise<AnswerState[]> {
+  const views = new Map<string, Promise<import('./types.ts').RunView>>();
+  return Promise.all(refs.map(async a => {
+    let probe = views.get(a.rid);
+    if (!probe) {
+      probe = (async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try { return await Promise.race([dsa.describe(a.rid, 10000), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('describe timed out after 10 s')), 10000); })]); }
+        finally { clearTimeout(timer); }
+      })();
+      views.set(a.rid, probe);
+    }
+    const key = typeof a.to === 'string' ? /^[^/\s]+\/([^/\s]+)$/.exec(a.to)?.[1] : undefined;
+    let state: string;
+    try {
+      const view = await probe;
+      const call = key ? view.calls?.find(c => c.key === key) : undefined, questions = key ? view.questions?.filter(q => q.to === a.to) ?? [] : [], question = questions[0];
+      state = !key ? 'unknown (call not identified)' : typeof call?.phase !== 'string' || questions.some(q => typeof q.qid !== 'string' || !q.qid.trim()) ? 'unknown (malformed describe reply)'
+        : question ? `${question.qid === a.qid ? 'asking (answer not yet taken, qid' : 'asking again (qid'} ${oneLine(question.qid.slice(0,8))})`
+        : call.phase === 'running' || call.phase === 'queued' ? call.phase : call.phase === 'sealed' ? `sealed (${oneLine(call.status ?? 'unknown')})` : 'unknown (call phase not reported)';
+    } catch (e) { state = !key ? 'unknown (call not identified)' : `unknown (${oneLine(e instanceof Error ? e.message : String(e)).slice(0,160)})`; }
+    return { node:a.node, rid:a.rid, qid:a.qid, rev:a.rev, request:answerRequest(entry,a), state };
+  }));
+}
+export const answerStateText = (a: AnswerState): string => `answered ${oneLine(a.node)} ${oneLine(a.rid)} qid ${oneLine(a.qid.slice(0,8))}: ${a.state}`;
 export interface RulingDelivery { delivered: string[]; pending: number; failures: string[]; slots?: { node: string; writer?: string; followUp: string }[]; finished?: { node: string; writer: string }[] }
 /** DR4: runtime receipt only. Notify once after committing the rule, with no ledger writes or retry loop. */
 export async function deliverRuling(cwd: string, entry: RuleEntry, client?: Pick<Dsa, 'describe' | 'send'>, exclude?: string): Promise<RulingDelivery> {
@@ -124,7 +151,9 @@ export async function answer(o: AnswerOptions): Promise<AnswerResult> {
   const rulingDelivery = await deliverRuling(o.cwd, entry, dsa, a.rid);
   try {
     const delivery = await deliverAnswer(dsa,ruled,a,message);
-    return { entry, request, delivery, rulingDelivery };
+    // R-030-AR-1: ledger answer refs contain only rid/qid/rev; closed-question retries have no recorded call address.
+    const states = await answerStates(dsa, ruled, [{ node:o.node, ...a, to:selected[0]?.question.to }]);
+    return { entry, request, delivery, answers:states, rulingDelivery };
   } catch (e) {
     throw new OwedError(`Answer rule #${entry.seq} recorded; dsa delivery failed: ${(e as Error).message}; ${rulingDeliveryText(rulingDelivery)}. Retry exactly: ${answerRetry(o.node, entry)}`);
   }
@@ -141,8 +170,7 @@ export async function deliverAnswer(dsa: Pick<Dsa,'send'>, entry: RuleEntry, a: 
  * reached other running calls or failed to reach one (who, and the exact retry).
  */
 export function answerText(node: string, r: AnswerResult): string {
-  const a = r.entry.answer!, role = r.entry.text.startsWith('Answer to writer question ') ? 'writer' : 'reviewer';
-  return [`answered ${role} question ${a.qid} of ${a.rid} (rule #${r.entry.seq}); the call resumes now`, ...answerRulingLine(node, r)].join('\n');
+  return [...r.answers.map(answerStateText), ...answerRulingLine(node, r)].join('\n');
 }
 function answerRulingLine(node: string, r: AnswerResult): string[] {
   const d = r.rulingDelivery;
