@@ -29,7 +29,7 @@ export function countNote(counts: Counts | undefined, minTests: number | undefin
   const parts = [`${counts.pass ?? '?'} pass`, `${counts.fail ?? '?'} fail`, ...(counts.skip ? [`${counts.skip} skip`] : [])];
   return `min_tests unmet: counted ${counts.tests ?? '?'} (${parts.join(', ')}) < min_tests ${minTests}; ${exit}`;
 }
-export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; /** QS4: node checks measured on trunk or a merge tree (invariants already have subject trunk). */ quarantineFeedback?: boolean; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; commandScope?(run: () => Promise<CommandResult>): Promise<CommandResult>; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void; onTree?(path: string): void }
+export interface ExecContext { cwd: string; plan: Plan; ledger: Ledger; /** CT1: fresh exact-commit diagnostic tree, no closure or red overlay. */ exactTree?: boolean; /** QS4: node checks measured on trunk or a merge tree (invariants already have subject trunk). */ quarantineFeedback?: boolean; grantedWrites?: readonly string[]; signal?: AbortSignal; abortGraceMs?: number; commandScope?(run: () => Promise<CommandResult>): Promise<CommandResult>; onProgress?(msg: string): void; /** Diagnostic paths, normalized in the measured tree; never acceptance evidence. */ onFailureFiles?(paths: string[]): void; onTree?(path: string): void }
 function tapCounts(log: string): Counts | undefined {
   const tap: Counts = { format: 'tap' };
   for (const m of log.matchAll(/^\s*(?:#|ℹ)\s*(tests|pass|fail|skip|skipped)\s+(\d+)\s*$/gm)) {
@@ -620,7 +620,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
   }
   let work: Awaited<ReturnType<typeof materialize>> | undefined;
   // M2: with exec.trees reuse, every tree of this job is the check's reused tree (a failure to prepare it is a note).
-  const reuse = ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, touch: ctx.plan.exec?.touch, note: (line: string) => capture(`${line}\n`) } : undefined;
+  const reuse = !ctx.exactTree && ctx.plan.exec?.trees === 'reuse' && job.spec && job.kind !== 'writes' ? { kind: job.kind, id: job.spec.id, touch: ctx.plan.exec?.touch, note: (line: string) => capture(`${line}\n`) } : undefined;
   let timeoutNote: string | undefined, quarantineDirectory: string | undefined;
   const quarantineFiles = new Set<string>(), fileNotes = new Set<string>();
   const command = async (run: string, cwd: string, timeout: number, onTimeout?: string, quarantineFile?: string): Promise<CommandResult> => {
@@ -691,7 +691,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
       work = await prepare(() => materialize(ctx.cwd, job.kind === 'red' ? job.base : job.commit, reuse)); ctx.onTree?.(work.path);
       const tree = work.path;
       if (job.kind === 'red') await prepare(() => overlay(ctx.cwd, tree, job.commit, spec.tests ?? [], 'add'));
-      await prepare(() => overlay(ctx.cwd, tree, job.kind === 'inv' ? job.commit : job.base, ctx.plan.closure, 'replace'));
+      if (!ctx.exactTree) await prepare(() => overlay(ctx.cwd, tree, job.kind === 'inv' ? job.commit : job.base, ctx.plan.closure, 'replace'));
       if (ctx.plan.setup) {
         const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
         if (setup.error || setup.code !== 0) { obs.exit = setup.code; throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`); }
