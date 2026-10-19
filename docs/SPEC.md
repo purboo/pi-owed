@@ -429,6 +429,7 @@ nodes:
     title: "Add token refresh"
     deps: [schema]
     writes: ["src/auth/", "test/auth/"]   # prefixes or supported path globs (§3.7)
+    # allow_only: ["lib/samples.mjs"]    # optional cap on allow grants only (§3.4.1)
     checks:                    # node acceptance checks (become invariants after merge only if listed in invariants)
       - id: auth-tests
         run: "node --test test/auth"
@@ -867,7 +868,9 @@ invalidates a candidate.
   Effective writes are plan scopes plus exact granted paths (not new prefixes),
   used for measurement, merge recheck and dispatch/grant overlap. Grants survive
   candidate, rebase, plan and allowance changes within the attempt; a new attempt
-  starts without grants. Attribution reruns retain the original writes measurement.
+  starts without grants. A current `allow_only` cap filters old grants out of
+  effective writes while keeping their audit receipts (§3.4.1).
+  Attribution reruns retain the original writes measurement.
   The writes key remains `H({o: "writes", base, cand, writes: node.writes})`
   for legacy/wildcard-free scopes; syntax-2 wildcard scopes also include
   `writes_syntax: 2` (§3.7).
@@ -881,6 +884,34 @@ invalidates a candidate.
   — change files there only when the task needs it; owed records the grant; do not ask.`
   Review packets (including driver reviewers) add `Writes granted under allowance
   (plan #S): <paths> — judge whether each belongs to this node's task; block if not.`
+
+### 3.4.1 Node allow-grant caps (0.30, AO)
+
+Optional node `allow_only: string[]` caps only what matching `allow.writes` rules
+may grant. It does not narrow the node's own `writes`, grant permission without
+an allow rule, or change check, review, defer or adopt permissions. Each literal
+entry is an exact repository path (not a prefix); entries with `*`, `?` or
+whole-segment `**` use §3.7 syntax-2 whole-path matching. Omission is unbounded;
+`[]` allows no grants. Types and path hygiene are validated on plan admission.
+
+New grants and the effective paths of previous grants must satisfy both the
+allow rule and cap. Closure and other open-slot ownership still refuse grants;
+partial eligible grants are retained. A capped path reports
+`<path>: outside allow_only of <node> [<entries>]`, with the hint
+`owed edit <node> --set allow_only=[...]`, not an allowance-widening hint.
+It never becomes an overlap-only wait. Writer packets print the cap next to
+pre-authorized scopes, and no longer say all paths there may be edited freely.
+
+Only the writes key gains `allow_only` when present, including `[]`; other
+check/review keys and all uncapped keys are unchanged. A plan update carries an
+open candidate normally, but a changed writes key requires fresh evidence.
+Adding a cap to an unbounded node, or provably narrowing it, needs parent
+permission. Removing or widening it is `allow_only widened: <node>` and requires
+the owner; allow rules cannot authorize that downgrade. Containment is proved
+by equality, an exact path matched by a prior glob, or an enclosing trailing
+`**` glob; an unproved wildcard relation conservatively needs the owner.
+`owed edit <node> --set 'allow_only=[...]'` and `--unset allow_only` use the same
+policy.
 
 ### 3.5 Candidate size limits (0.14, BD)
 
@@ -1082,8 +1113,13 @@ Unproven widening requires the owner. Overlap is conservative: scopes may
 intersect unless their literal prefixes before the first wildcard are disjoint.
 The same matching rules govern writes, grants, adoption and merge rechecks.
 
-Newly recorded genesis/plan entries carry optional `writes_syntax: 2` metadata;
-this is not a YAML key. Without it, entries retain 0.20 literal-prefix semantics,
+Newly recorded genesis/plan entries carry optional `writes_syntax: 2` metadata,
+or `writes_syntax: 3` if any node has `allow_only` (including `[]`). Syntax 3
+retains syntax 2 path matching and activates caps; 0.29 readers refuse version
+3 rather than ignoring its permissions. This is not a YAML key. Plans without
+caps continue recording version 2. In historical syntax 1/2 entries a valid
+`allow_only` is ignored as before. A pre-0.30 plan containing a malformed node
+`allow_only` field is refused by 0.30 replay. Without it, entries retain 0.20 literal-prefix semantics,
 including literal `*`, `?` and brackets. Replay, snapshots and attribution use
 the recording entry's dialect, not the plan blob hash. Runtime plan copies
 retain that dialect without adding it to plan JSON or changing its content hash.
@@ -3695,7 +3731,7 @@ while genesis items lack observations.
 
 ### 8.3.1 One parent decision (0.23, DC / DF)
 
-`owed decide A[,B...] --text TEXT [--writes +PATH ...] [--defer INV]
+`owed decide A[,B...] --text TEXT [--writes +PATH ...] [--allow-only p1,p2] [--defer INV]
 [--resume | --no-resume] [--after NODE] [--remeasure] [--writer]` combines
 writes amendment, invariant deferral, one ruling, answer delivery and recovery.
 It requires parent/owner authority, never the driver or a subagent, and a
@@ -3720,6 +3756,16 @@ recorded and the error identifies the saved plan and recovery action.
   ` (writes already granted by allow rule, plan #<seq>: <paths>)`, listing those
   paths; uncovered paths alone are added. This amendment's
   ruling is the decision ruling, not an extra. `-path` still requires a plan update.
+- `--allow-only p1,p2` (tool `allow_only: string[]`) replaces each named node's
+  cap; `--allow-only ''` or tool `[]` sets an empty cap. It can combine with
+  writes/defer/resume in the same atomic append and plan-file replacement.
+  Cap widening requires the owner (§3.4.1). The ruling appends
+  ` (allow rule grants capped to: <paths>)` (`[]` for empty). A cap-only decision
+  is valid and reports the cap; unrelated plan edits remain forbidden.
+  Multi-node decisions require every named node to actually change, or all to
+  remain unchanged; mixed cap no-ops refuse before any file/ledger
+  write, naming the already-equal and changed nodes and suggesting separate
+  decisions. A node with writes additions is changed even if its cap is equal.
 - `--defer` requires owner authority and binds the named invariant to each
   candidate's current merge key, using TEXT as its reason. It precedes any
   `--writer` invalidation. It waives no check and changes no acceptance gate.

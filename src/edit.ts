@@ -16,9 +16,9 @@ function parts(path: string, o: EditFields): string[] {
   if (o.invariant !== undefined) {
     if (!(p.length === 1 && [...checkFields, 'known_red'].includes(p[0]!) || p.length === 2 && p[0] === 'run_file' && ['path','sha256'].includes(p[1]!))) usage(`Invalid invariant edit path: ${path}; use a check field other than id`);
   } else {
-    const simple = ['title','brief','deps','writes','later'];
+    const simple = ['title','brief','deps','writes','allow_only','later'];
     const valid = p.length === 1 && simple.includes(p[0]!) || p.length === 2 && p[0] === 'review' && ['count','min_rank'].includes(p[1]!) || p[0] === 'drive' && p.length >= 2 || p[0] === 'checks' && (p.length === 2 || p.length === 3 && checkFields.includes(p[2]!) || p.length === 4 && p[2] === 'run_file' && ['path','sha256'].includes(p[3]!));
-    if (!valid || o.node_new && !['title','brief','deps','writes','checks'].includes(p[0]!)) usage(`Invalid node edit path: ${path}`);
+    if (!valid || o.node_new && !['title','brief','deps','writes','allow_only','checks'].includes(p[0]!)) usage(`Invalid node edit path: ${path}`);
   }
   return p;
 }

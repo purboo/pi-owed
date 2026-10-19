@@ -67,7 +67,7 @@ const digest = (literal: string): string => createHash('sha256').update(literal)
 const at = (file: string, fn: string, kind: Class, reason: string, literals: string[]): Registered[] => literals.map(literal => [file, fn, kind, reason, literal]);
 const registered: Registered[] = [
   ...at('src/answer.ts', 'rulingDeliveryWarnings', 'cycle-blocked remedy', 'R-028-64: views.oneLine has other callers; needs -> views -> needs.', ['c755286339b655ec6008549ca5bc9fc371efb94b4af1c4e74b2266aa0d6d362d', '0733c972e32508b7edd7ac6726c7f52e1b1e70d6f814dfc0589f3858087cbffd', '461bda46a50609e8923b7485a99c49bf6aa6ed1d5518330d0911c59e7de6dc90']),
-  ...at('src/cli.ts', 'HELP', 'help/usage', 'TB1/HP1: CLI grammar and examples include local or external waiver trackers.', ['5d685bc4b4104bba640aad906865b590b1579e6ffe939ad7bafd2f4e186baebe']),
+  ...at('src/cli.ts', 'HELP', 'help/usage', 'TB1/HP1: CLI grammar and examples include local or external waiver trackers.', ['2625bbc2579748d9515413f14209a173fdb976d3417c24198d01004063587a65']),
   ...at('src/cli.ts', 'main', 'historical text', 'Runtime version label, not an act.', ['8d2a0da087698b1c2364c3c7775ef339a80779374bf20887c92c1699030a9e56']),
   ...at('src/cli.ts', 'main', 'comment', 'Source commentary only.', ['f512c3053e124bcb1d3bfe911409b51eb80a0d81d2c62f44b6551efa2b414707', 'd1356cf0fadf27be887f3f5a63579e6aef0b53d52179e3a651c63269fed967dd', '0cc59866549a3b0037f60fb70c6b26ca393013004592d6347485d40b2a76fcf9']),
   ...at('src/cli.ts', 'main', 'help/usage', 'R-028-61: agent submit instructions.', ['8beef719f1119e332edddddb73e4eaca8f35a6e65a372e482dfdf7c56580e854']),
@@ -171,6 +171,7 @@ const registered: Registered[] = [
   ...at('src/plan.ts', 'loopWarnings', 'comment', 'Source commentary only.', ['ab66d69082bd57385de65da8b0682ae9f390b52634120f79fb45cb2c587b27b0']),
   ...at('src/plan.ts', '<module>', 'comment', 'Source commentary only.', ['5bb2f96a05a2543948096f954f24bcbed8c575939a332b0a30f120dc24f12415']),
   ...at('src/planlint.ts', 'lintPlanCost', 'diagnostic example', 'Cost report inspection hint.', ['a437bf5801294cf68bda53b0d74624c6629801a8dffa1baf28ca92c0d9c02c24']),
+  ...at('src/reducer.ts', 'grantHint', 'cycle-blocked remedy', 'R-030-AO-3: AO2 cap refusal hint; needs -> reducer, reducer cannot import needs.', ['a9f32308f9458c842bb4f53d5e17deff133a852f434504ec3e669ff77f2ac305']),
   ...at('src/reducer.ts', 'flakyBlockText', 'cycle-blocked remedy', 'R-028-64: reducer -> needs -> reducer.', ['3d5b70a0b9d0484b89dd9c83b5954d7cd751c4825bef719750a5b90d0e7891ec']),
   ...at('src/reducer.ts', 'item', 'cycle-blocked remedy', 'R-028-64: reducer -> needs -> reducer.', ['52415c8e74448af73934554df2d810b0123697fe4a25cff647980424a8fa6757']),
   ...at('src/reducer.ts', 'trunkParkNotices', 'cycle-blocked remedy', 'R-028-64: reducer -> needs -> reducer.', ['cc207ffefbf88b7e6e20471b015cde8b489193e28b070facf009069495492104', 'b350a769d70d5e7b44b475aaf903d309980cf31f401d69a59ea72418946a39f3']),
