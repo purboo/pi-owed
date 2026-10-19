@@ -2466,11 +2466,27 @@ Decide/resume replies with `--remeasure` name each latest failed merge-tree
 invariant key. If neither trunk nor candidate moved since that failure, they
 say `remeasure queued: inv:<id> on merge key <key12>`. Otherwise they explain
 that the next merge builds a new tree: if its key is unchanged it is remeasured,
-otherwise measured as usual. With none they say the next merge measures as
-usual. No Git tree is built at decide/resume time. An active merge-check block
-is rerun on its original merge key as attribution; an already-flaky one has
-that pass already, and still needs accepted risk or a fix. `--remeasure`
-measures invariants only, not node checks.
+otherwise measured as usual. Replies also name each active node-check block
+that will be attributed on its original key before any repair, including the
+current candidate's key, with its failure sequence and the command
+`owed waive <node> --accept-risk <seq>` for accepting a possible flaky result.
+A current-key check that already failed its attribution instead directs the
+caller to `owed attest <node> --rerun`: another remeasure request does not
+repeat that check. With no failed invariant, active check block or such
+current-key failure, the reply says `nothing to remeasure: no failed merge-tree
+invariant and no blocked check of <node>`. No Git tree is built at decide/resume
+time.
+
+For `owed decide <node> --remeasure` and `owed resume <node> --remeasure`, the
+latest resume of the current attempt authorizes attribution of active execution
+blocks whose failures precede it, before repair of that candidate. Each block
+gets at most one pass or fail attribution after that resume; errors retain the
+normal environment back-off and two non-environment errors halt. A plain resume
+keeps ordinary repair routing for current-key failures. Attribution fail clears
+the block but leaves the check failed for the writer to repair; attribution pass
+leaves a flaky block requiring accepted risk. A pass never erases a failure.
+Merge-tree invariant remeasurement before merge is unchanged; the direct
+`attest <node> --remeasure` command still measures invariants only.
 
 A refusal reusing a failing invariant observation measured before the current
 call appends `reused #<seq> (same merge key, measured <age> ago); measure again:

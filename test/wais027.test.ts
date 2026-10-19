@@ -352,7 +352,7 @@ test('WF5: active merge-check block queues its attribution rerun, distinct from 
     await writeFile(r.flag,'pass');
     const out = await cli(r.cwd,['resume','a','--remeasure','--note','attribute new block']);
     assert.equal(out.code,0,out.stderr);
-    assert.ok(out.stdout.includes(`check:unit: the next merge reruns it on merge key ${r.fail.key.slice(0,12)} as an attribution rerun`),out.stdout);
+    assert.ok(out.stdout.includes(`remeasure queued: a check unit (failure #${r.fail.seq}) is measured again on its key before any repair; a pass leaves a flaky block: owed waive a --accept-risk ${r.fail.seq}`),out.stdout);
     const d = await driver(r);
     assert.ok(driveDecide(d.state,d.state.plan,d.runs,d.opts).some(a => a.do === 'attest' && a.node === 'a'));
     const result = await ops.attest({cwd:r.cwd,node:'a'});
@@ -361,12 +361,12 @@ test('WF5: active merge-check block queues its attribution rerun, distinct from 
   } finally {await r.cleanup();}
 });
 
-test('WF5: node-check merge failure describes attribution rerun and absence of failed invariants',async () => {
+test('WF5/RM2: an already-flaky merge-check block queues no check or invariant remeasure',async () => {
   const r = await fixture(true);
   try {
     const out = await cli(r.cwd,['decide','a','--remeasure','--text','retry merge check']);
     assert.equal(out.code,0,out.stderr);
-    assert.match(out.stdout,/remeasure queued: no merge-tree invariant of a failed on its current key/);
-    assert.match(out.stdout,/check:unit: flaky block #.*already has an attribution pass; --remeasure measures invariants only/);
+    assert.match(out.stdout,/nothing to remeasure: no failed merge-tree invariant and no blocked check of a/);
+    assert.doesNotMatch(out.stdout,/remeasure queued:|the next merge measures as usual/);
   } finally {await r.cleanup();}
 });

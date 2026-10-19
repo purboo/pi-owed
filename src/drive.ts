@@ -954,10 +954,17 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     return !steer || f.at > Date.parse(steer.ts) ? send(writer, 'steer', 'fenced', fencedMessage(f.reason)) : undefined;
   };
   if (c) {
-    // Rows 9-10: measured obligations without a verdict on the candidate's keys, and attribution reruns of blocks from
-    // earlier content (a failure of the current content is a repair, not an attest): attest, unless `error` twice.
-    // F2.2: an environment error (note `environment: `) does not count toward the two errors; it makes the attest wait.
-    const jobs = attestJobs(s, id).filter(j => !(j.attribution && j.key === c.keys[j.obligation]) || observationsOf(s,j.subject,j.obligation,j.key).some(o => setupFailure(s,o))).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed && !isEnvironment(o)) }));
+    // Rows 9-10: missing verdicts and old-key attribution; RM1 also allows blocked current-key attribution once
+    // after an explicit remeasure resume, before repair. Setup-failure retries retain their existing route.
+    // F2.2: environment errors back off and do not count toward the two-error halt.
+    const retry = resumeOf(s, id);
+    const jobs = attestJobs(s, id).filter(j => {
+      if (!j.attribution || j.key !== c.keys[j.obligation]) return true;
+      const obs = observationsOf(s, j.subject, j.obligation, j.key);
+      return obs.some(o => setupFailure(s, o)) || !!(retry?.remeasure
+        && n.blocks.some(b => b.kind === 'exec' && b.state === 'active' && b.obligation === j.obligation && b.key === j.key && b.seq < retry.seq)
+        && !obs.some(o => o.attribution && o.seq > retry.seq && o.verdict !== 'error' && o.commit === j.commit && o.base === j.base));
+    }).map(j => ({ j, errors: observationsOf(s, j.subject, j.obligation, j.key).filter(o => o.verdict === 'error' && o.seq > resumed && !isEnvironment(o)) }));
     if (jobs.some(x => x.errors.length < 2)) {
       const wait = opts.now === undefined ? undefined : environmentWait(s, jobs.map(x => x.j), resumed);
       if (wait && wait.until > opts.now!) return { do: 'notify', node: id, text: environmentText(id, wait), once: `environment\u0000${id}\u0000${wait.streak}` };
