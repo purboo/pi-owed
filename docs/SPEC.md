@@ -930,6 +930,50 @@ When any sets exist, new/changed Cargo or Node test commands with neither
 This is admission guidance, not an acceptance gate; even an explicit empty
 own list suppresses it. Changes compare run, reads and timeout (§9.7).
 
+A check/invariant may use `run_file: {path, sha256}` **instead of** `run` or
+`template`, with optional `args` (at most 64 strings, no NUL). `sha256` is exactly
+64 lowercase hex characters. The path is normal and repository-relative: no
+leading `/` or `./`, empty segment, trailing `/`, or `.`/`..` segment. Each
+segment must match `^[A-Za-z0-9._@+,=-]+$`; whitespace, shell metacharacters,
+globs and backslashes are refused. This restricted alphabet keeps the derived
+command safe without quoting its path. The parsed plan retains `run_file` and
+`args` and derives `run` as `exec ./<path>` followed by each argument
+single-quoted, replacing each embedded `'` with `'\''`, separated by spaces.
+A supplied `run` is accepted only if identical to that derived command (so
+canonical stored plans reparse); otherwise `run and run_file are exclusive`.
+`args` without `run_file`, and `template` with `run_file`, are errors.
+
+Before recording a plan (init/start/plan/edit/amend/decide with plan changes),
+for each pin not already present in the ledger blob store, owed reads the script
+from the current worktree's repository root, or from the commit selected by
+`plan --rev`, verifies its SHA-256, and stores its bytes. Missing files or hash
+mismatches refuse before recording any ledger entry or replacing an edited plan
+file. Refusals name `run_file <path> of check <node>/<id>` (invariants use
+`inv:<id>`), then `not found in <source>` or
+`sha256 <actual>, the plan says <declared>`. Replay never reads source files.
+
+After setup and overlays, immediately before every actual run (including red,
+mutants, invariants, attribution, trunk probes and each repeat), owed verifies
+and installs the stored blob at that path with mode 0755, creating parent
+directories. Candidate script bytes are overwritten; symlinked parents and
+paths leaving the measured tree are refused. A target symlink or hard link is
+replaced, never followed. A missing/corrupt blob or installation failure is an
+error with `environment: run_file <path>: <reason>`, never a successful red
+counterfactual. Shell, wrap, env and timeout semantics remain unchanged; the
+script must have a usable shebang. Only this script's bytes are pinned: files it
+loads still follow ordinary `reads` and closure rules.
+
+Check/invariant, red and strength keys include `run_file: {path, sha256}` and
+`args` only for pinned checks. The full check definition includes these fields.
+Checks without `run_file` retain their existing plan shape, keys and replay.
+Shell lint skips only the derived command (not setup or timeout diagnostics).
+Plan/edit replies show `check <node>/<id>: run_file <path> (sha256 <first 12>)`.
+Editable paths include `checks.<id>.run_file.path`,
+`checks.<id>.run_file.sha256`, `checks.<id>.args`, and invariant `run_file.path`,
+`run_file.sha256`, `args`. Editing a canonical pin or args regenerates its
+stored derived command unless `run` is explicitly assigned too; explicit
+conflicting `run` remains an error.
+
 A check/invariant may use `template` **instead of** `run`. Loading expands it
 deterministically into `run` and, for test templates, `min_tests = min_ok`;
 no template metadata remains in the parsed plan. A handwritten identical

@@ -1,12 +1,13 @@
 import { matchesWrite, writesSyntax } from './writes.ts';
 import { sha256 } from './canon.ts';
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm, readdir, readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { mkdtemp, writeFile, rm, readdir, readFile, mkdir, lstat, open, realpath } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import type { Plan, AttestJob, ObsEntry, Counts, QuarantineEntry } from './types.ts';
+import type { Plan, AttestJob, ObsEntry, Counts, QuarantineEntry, CheckSpec } from './types.ts';
 import type { Ledger } from './ledger.ts';
 import { git, materialize, overlay, mutantPaths, keyCommitsTo } from './git.ts';
 import { leaseEnvironment, leaseWaitField } from './lease.ts';
@@ -586,6 +587,28 @@ function withoutQuarantined(c: Counts, excused: QuarantineEntry[]): Counts {
 }
 /** MS4: `quarantined: <name> (fix: <node>)`, comma-separated. */
 export const quarantineNote = (q: Map<string, string>): string => `quarantined: ${[...q].map(([test, fix]) => `${test} (fix: ${fix})`).join(', ')}`;
+/** RF3: install after setup/overlays and before each execution, never follow a script or parent symlink. */
+async function installRunFile(ctx: ExecContext, spec: CheckSpec, tree: string): Promise<void> {
+  if (!spec.run_file) return;
+  const { path, sha256: hash } = spec.run_file;
+  try {
+    const segments = path.split('/');
+    if (segments.some(s => !/^[A-Za-z0-9._@+,=-]+$/.test(s) || s === '.' || s === '..')) throw new Error('path leaves the tree or is not normal');
+    const data = await ctx.ledger.getBlob(hash);
+    let parent = await realpath(tree);
+    for (const segment of segments.slice(0,-1)) {
+      parent = join(parent,segment);
+      try { await mkdir(parent); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+      const info = await lstat(parent);
+      if (info.isSymbolicLink() || !info.isDirectory()) throw new Error('symlinked or non-directory parent');
+    }
+    const target = join(parent,segments.at(-1)!);
+    // Unlink first: neither a symlink nor a hard link may redirect writes outside the measurement tree.
+    await rm(target,{force:true});
+    const file = await open(target,constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,0o755);
+    try { await file.writeFile(data); await file.chmod(0o755); } finally { await file.close(); }
+  } catch (e) { throw new EnvironmentError(`run_file ${path}: ${e instanceof Error ? e.message : String(e)}`); }
+}
 export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<ObsEntry, 'seq' | 'ts' | 'prev' | 'hash'>> {
   assertNoLedgerLock();
   const start = Date.now();
@@ -616,6 +639,10 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
     }
     return result;
   };
+  const checkCommand = async (spec: CheckSpec, tree: string, quarantineFile?: string) => {
+    await installRunFile(ctx,spec,tree);
+    return command(spec.run,tree,spec.timeout_s,spec.on_timeout,quarantineFile);
+  };
   try {
     await ctx.ledger.measuringActivity(job.obligation);
     ctx.onProgress?.(`${job.subject}: ${job.obligation}`);
@@ -645,7 +672,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
             const setup = await command(ctx.plan.setup, work.path, spec.timeout_s);
             if (setup.error || setup.code !== 0) throw new EnvironmentError(`setup failed: ${setup.error ?? setup.code}`);
           }
-          const result = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout), counts = parseCounts(result.measurementLog ?? result.log, () => { protocolWarnings++; });
+          const result = await checkCommand(spec,work.path), counts = parseCounts(result.measurementLog ?? result.log, () => { protocolWarnings++; });
           if (result.spawn) throw new EnvironmentError(`spawn failed: ${result.error}`);
           diskFull(result.code, counts, result.measurementLog ?? result.log, `mutant ${path} run exited ${result.code}`);
           if (result.error && !result.error.startsWith('timeout')) throw new Error(result.error);
@@ -692,7 +719,7 @@ export async function runJob(ctx: ExecContext, job: AttestJob): Promise<Omit<Obs
           }
         }
         let raw: CommandResult;
-        try { raw = await command(spec.run, work.path, spec.timeout_s, spec.on_timeout, quarantineFile); }
+        try { raw = await checkCommand(spec,work.path,quarantineFile); }
         finally {
           if (quarantineDirectory) { await rm(quarantineDirectory, { recursive: true, force: true }); quarantineFiles.delete(quarantineDirectory); quarantineDirectory = undefined; }
         }
