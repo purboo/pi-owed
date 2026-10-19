@@ -12,7 +12,7 @@ The main agent is the parent and delegated owner. Pi owner tools act as `owner:p
 
 ## Quickstart
 
-Requires Node.js >= 22.19, Git with `merge-tree --write-tree`, Bash and a configured Git identity. The driver uses [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents) >= 1.2.0 with writer/reviewer agents available. Earlier runners retain plain asks; versions before 1.1.0 keep 0.28 writer-wait and lease behavior.
+Requires Node.js >= 22.19, Git with `merge-tree --write-tree`, Bash and a configured Git identity. The driver uses [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents) >= 1.0.27 with writer/reviewer agents available; >= 1.1.0 is needed for durable-writer waits, seal diagnostics and yield/priority leases (older dsa keeps 0.28 writer-wait and lease behavior), and >= 1.2.0 for structured asks (earlier runners retain plain asks).
 
 ```sh
 pi install npm:pi-owed          # reload pi after installation
@@ -459,7 +459,7 @@ wake recipient; pi follows a driver from the session's attachment point.
 
 `owed drive` runs the mechanical loop — dispatch, writer, submit, attest,
 reviewers, merge — with [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents)
-(>= 1.2.0) as the process runner, and stops for decisions. Every intent is
+(≥ 1.0.27) as the process runner, and stops for decisions. Every intent is
 recorded in the ledger before dsa is called and retried with the same bytes and
 id, so killing the driver at any point is safe. Attest and merge run under
 `pi-durable-subagents hold machine --shared --priority 10 --no-wait` and are retried later
