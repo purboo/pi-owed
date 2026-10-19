@@ -1021,10 +1021,11 @@ function replayed(latest: Awaited<ReturnType<typeof load>>, drafts: Draft[]): St
   return reduceFrom(latest.state,more,latest.lookup);
 }
 export { answer } from './answer.ts';
+import { answerStateText } from './answer.ts';
 
 // ---------- DC: one decision, one append; effects only after the lock ----------
 export type DecideArgs = Actor & { signal?: AbortSignal; nodes: string | string[]; text: string; writes?: string[]; allow_only?: string[]; defer?: string; resume?: boolean; after?: string | string[]; remeasure?: boolean; writer?: boolean; dsa?: Pick<Dsa,'describe'|'send'> };
-export interface DecideResult { warnings?: string[]; decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; allow_only?: string[]; covered?: Record<string, AmendEdit['covered']>; deferred?: string; answered: number; resumed: boolean; deliveryFailures: string[]; remeasure?: string[] }
+export interface DecideResult { warnings?: string[]; decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; allow_only?: string[]; covered?: Record<string, AmendEdit['covered']>; deferred?: string; answered: number; answers: import('./answer.ts').AnswerState[]; resumed: boolean; deliveryFailures: string[]; remeasure?: string[] }
 function decideNodes(nodes: string | string[]): string[] {
   const ids = [...new Set((Array.isArray(nodes) ? nodes : typeof nodes === 'string' ? nodes.split(',') : []).map(x => typeof x === 'string' ? x.trim() : ''))];
   if (!ids.length || ids.some(x => !x || x === '*')) throw new OwedError('decide needs a non-empty list of named nodes','usage');
@@ -1080,12 +1081,12 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   const stored = amend && canonical(amend.plan) !== canonical(s.plan) ? await storePlan(o.cwd,ledger,amend.next,s.plan,undefined,o) : undefined;
   const granted = [...new Set(Object.values(amend?.perNode ?? {}).flat().filter(c => c.entry.startsWith('allow rule (plan #')).map(c => c.path))];
   const decisionText = o.text + (granted.length ? ` (writes already granted by allow rule, plan #${before.entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}: ${granted.join(', ')})` : '') + (o.allow_only !== undefined ? ` (allow rule grants capped to: ${o.allow_only.join(', ') || '[]'})` : '');
-  const answers: import('./types.ts').DecisionAnswer[] = [];
+  const answers: import('./types.ts').DecisionAnswer[] = [], answerTargets = new Map<string,string>();
   for (const id of ids) {
     const n = s.nodes[id]!, launches = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
     const questions = (await Promise.all(launches.map(async launch => { const view = await client.describe(launch.rid); return view.state === 'asking' ? (view.questions ?? []).map(question => ({launch,question})) : []; }))).flat();
     if (questions.length > 1) throw new OwedError(`Ambiguous question for ${id}; use owed answer --rid and --qid before deciding`);
-    if (questions[0]) { const {launch,question} = questions[0]; answers.push({node:id,rid:launch.rid,qid:question.qid,rev:question.rev}); }
+    if (questions[0]) { const {launch,question} = questions[0]; answers.push({node:id,rid:launch.rid,qid:question.qid,rev:question.rev}); if (question.to) answerTargets.set(launch.rid,question.to); }
   }
   answers.sort((a,b) => a.node.localeCompare(b.node) || a.qid.localeCompare(b.qid));
   const deferred: Extract<Draft,{kind:'defer'}>[] = [];
@@ -1145,19 +1146,21 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     const appendedErrors = decisionTailErrors(replayed(prepared,entries));
     if (appendedErrors.length) throw new OwedError(appendedErrors.join('; '));
     if (temp && amend) { try { await rename(temp,amend.file); } catch (e) { throw new OwedError(`decision #${first} recorded; recorded plan in ${temp}: move it over ${amend.file} (${(e as Error).message})`,'internal'); } }
-    return { warnings:stored?.lines, decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {added:amend.added,covered:amend.perNode,...(stored ? {plan:entries[0]!} : {})} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),...(o.allow_only !== undefined ? {allow_only:o.allow_only} : {}),answered:answers.length,resumed,deliveryFailures:[],...(o.remeasure ? {remeasure:ids.flatMap(id => remeasureQueuedText(final,id))} : {}) } as DecideResult;
+    return { warnings:stored?.lines, decision:first,nodes:ids,entries,rule:entries.find((e): e is RuleEntry => e.kind === 'rule')!,...(amend ? {added:amend.added,covered:amend.perNode,...(stored ? {plan:entries[0]!} : {})} : {}),...(o.defer !== undefined ? {deferred:o.defer} : {}),...(o.allow_only !== undefined ? {allow_only:o.allow_only} : {}),answered:answers.length,answers:[],resumed,deliveryFailures:[],...(o.remeasure ? {remeasure:ids.flatMap(id => remeasureQueuedText(final,id))} : {}) } as DecideResult;
   });
-  const { deliverRuling, deliverAnswer, answerRetry } = await import('./answer.ts');
+  const { deliverRuling, deliverAnswer, answerRetry, answerStates } = await import('./answer.ts');
   const delivery = await deliverRuling(o.cwd,result.rule,client);
   result.deliveryFailures.push(...delivery.failures.map(f => `${oneLine(f)}; next dispatch or follow-up delivers ruling #${result.rule.seq}`));
+  const delivered: (import('./types.ts').DecisionAnswer & {to?:string})[] = [];
   for (const a of answers) {
-    try { await deliverAnswer(client,result.rule,a,decisionText); }
+    try { await deliverAnswer(client,result.rule,a,decisionText); delivered.push({...a,to:answerTargets.get(a.rid)}); }
     catch (e) { result.deliveryFailures.push(`${oneLine((e as Error).message)}; Retry exactly: ${answerRetry(a.node,result.rule,a)}`); }
   }
+  result.answers = await answerStates(client,result.rule,delivered);
   return result;
 }
 export function decideText(r: DecideResult): string {
-  return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; ${r.allow_only !== undefined && !r.added?.length ? 'allow_only' : `writes ${r.added!.map(p => `+${p}`).join(',')}`} (plan #${r.plan.seq})` : r.added !== undefined ? '; writes unchanged' : ''}${r.allow_only !== undefined ? `; allow_only [${r.allow_only.join(', ')}]` : ''}${Object.entries(r.covered ?? {}).flatMap(([node, covered]) => covered.map(c => `; ${node}: ${c.path} already covered by ${c.entry}`)).join('')}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.remeasure?.length ? `\n${r.remeasure.join('\n')}` : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
+  return `decision #${r.decision} for ${r.nodes.join(',')}: ruling #${r.rule.seq}${r.plan ? `; ${r.allow_only !== undefined && !r.added?.length ? 'allow_only' : `writes ${r.added!.map(p => `+${p}`).join(',')}`} (plan #${r.plan.seq})` : r.added !== undefined ? '; writes unchanged' : ''}${r.allow_only !== undefined ? `; allow_only [${r.allow_only.join(', ')}]` : ''}${Object.entries(r.covered ?? {}).flatMap(([node, covered]) => covered.map(c => `; ${node}: ${c.path} already covered by ${c.entry}`)).join('')}${r.deferred ? `; deferred ${r.deferred}` : ''}${r.answered ? `; answered ${r.answered} question(s)` : ''}${r.resumed ? '; resumed' : ''}${r.answers.map(a => `\n${answerStateText(a)}`).join('')}${r.remeasure?.length ? `\n${r.remeasure.join('\n')}` : ''}${r.deliveryFailures.length ? `\ndelivery failed: ${r.deliveryFailures.join('; ')}` : ''}`;
 }
 
 /** AN2: record once under the ledger lock; retries use the original entry and bytes. */

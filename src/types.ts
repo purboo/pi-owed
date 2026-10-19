@@ -372,6 +372,8 @@ export interface RunView {
   status?: string;
   error?: string;
   questions?: RunQuestion[];
+  /** AR1: optional per-call facts for post-answer receipts, not scheduling or ledger state. */
+  calls?: { key: string; phase?: string; status?: string }[];
   lastFence?: { reason: string; at: number; exec?: string };
   wid?: string;
   /** 0.8 (L1.4): dsa's call address `<wid>/<key>` of the run's (latest) call, when describe reports both. */
