@@ -627,6 +627,44 @@ lowered, writes widened) is a **downgrade**: allowed only to the owner (or to a
 parent when an allowance of the prior plan covers it, §3.4), and
 listed in reports as ΔO⁻.
 
+### 3.0a Environment-signature routing (`env_signatures`, 0.30)
+
+Optional top-level `env_signatures: {match: [<regex>, ...], unless: [<regex>, ...]}`
+provides routing hints, not acceptance evidence. `match` must be non-empty;
+`unless` may be absent or empty. Each regex is a non-empty string of at most
+300 characters compiling as a JavaScript `RegExp` without flags. Unknown keys
+are refused. Adding, changing or removing this field changes no obligation key,
+check definition, candidate or block, and is never a downgrade. Plans without
+it retain their previous behavior and replay.
+
+For a failing ordinary node-check measurement, the executor removes ANSI CSI
+sequences and CR from the retained log text and splits it into lines. A failure
+is suspect when any line matches any `match` regex and no line matches any
+`unless` regex. Its note is prefixed with `environment-suspect: <line>; `,
+using the first matching line, replacing each semicolon with a comma, trimming
+and clipping to 160 characters. The original log, verdict, counts, failed names,
+signatures and keys are unchanged. Ordinary candidate checks participate even
+when their spec also configures `red` or `mutants`; red and strength executions,
+repeat runs, invariants and trunk probes do not.
+
+For a block on the current candidate's key with a suspect failure F that is
+still in force (its current item is unsatisfied), the driver measures its
+attribution before asking the writer to repair any failure of that node.
+A satisfied or effectively owner-waived item does not trigger suspect routing,
+even when historical active/cleared blocks remain; another unwaived failure or
+a failure on a new key still follows its own routing. Attribution uses the plan
+at F, not newly added signatures.
+It prints once per F, without a parent wake:
+`<node>: check <id> failed #<F> with an environment signature (<line>); measuring again on the same key before asking the writer`.
+
+If attribution A fails with another suspect note, the driver halts the node,
+sends no repair and spends no repair budget:
+`<node>: check <id> failed twice with an environment signature (#<F>, #<A>: <line>); the writer is not asked to repair. Fix the environment, then owed attest <node> --rerun and owed resume <node>; if it is a real failure: owed decide <node> --writer --text "<repair instruction>"`.
+A resume after that halt returns those failures to ordinary repair routing.
+An attribution pass retains the failure and the existing flaky-block owner
+need; a non-suspect fail follows ordinary repair, and an error follows the
+existing backoff/two-errors halt rules. No signature turns a failure into done.
+
 ### 3.1 Worktree location and branch names (D19)
 
 ```yaml
