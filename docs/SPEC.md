@@ -486,8 +486,11 @@ is already covered only when equal to an existing write or provably contained
 by it under §3.7 (`w === p || writeCovers(w, p)`). For example, `src/lib`
 under `src/*` widens ownership: the filename match does not cover the prefix
 range below `src/lib`. Uncertain containment is a real widening. Covered
-paths are skipped with `already covered by <entry>`; an all-covered amendment
-returns `writes unchanged` without changing the file or recording any entry.
+paths are skipped with `already covered by <entry>`; paths covered by an allow
+rule of the current plan are skipped too, naming `allow rule (plan #<seq>)`.
+An all-covered amendment exits successfully with `writes unchanged` without
+changing the file or recording any entry. When an allow rule covers paths, the
+output points to `owed decide <node> --writer` to deliver a limit.
 For a real widening, the edit locates the node's `writes` list with the
 `yaml` Document API and changes only that list's source text (a flow list gets
 `, path` before its `]`, a block list one `- path` line per path at the same
@@ -3525,10 +3528,11 @@ while genesis items lack observations.
 
 ### 8.3 Parent operations (0.20, PO1–PO7)
 
-- **PO1 covered amend:** if every added path is covered by current
-  `allow.writes`, amend refuses with no file/ledger change: `not needed: <paths>
-  are covered by allow rule (plan #<seq>); owed grants them at measurement;
-  tell the writer to edit them`. Mixed additions retain normal authority rules.
+- **PO1 covered amend:** paths covered by current `allow.writes` are reported
+  with their allow rule and plan number, and are not added to the node's writes.
+  If every path is covered, amend exits successfully with no file/ledger change;
+  use `owed decide <node> --writer` to deliver a limit. Uncovered additions retain
+  normal authority rules.
   Writer packets say `edit these freely; do not ask the parent; owed grants
   them when your candidate is measured`, still only for task-needed edits.
 - **PO2 batch resume:** `owed resume A,B,C`, or `owed_resume` with `node` a
@@ -3613,9 +3617,10 @@ recorded and the error identifies the saved plan and recovery action.
   covered paths per node, then require equal additions for all named nodes;
   a mismatch refuses naming each node's covered and added paths. If all paths
   are covered, record the decision's ruling and requested defer/resume but no
-  plan entry or file replacement, reporting `writes unchanged`. Fully
-  allowance-covered real additions retain amend's `not needed` refusal: edit
-  task-needed files and let measurement grant them instead. This amendment's
+  plan entry or file replacement, reporting `writes unchanged`. Allow-covered
+  paths do not refuse the decision: its ruling ends with
+  ` (writes already granted by allow rule, plan #<seq>: <paths>)`, listing those
+  paths; uncovered paths alone are added. This amendment's
   ruling is the decision ruling, not an extra. `-path` still requires a plan update.
 - `--defer` requires owner authority and binds the named invariant to each
   candidate's current merge key, using TEXT as its reason. It precedes any

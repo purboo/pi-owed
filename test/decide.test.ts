@@ -136,9 +136,12 @@ test('DC1: authority matches amend allowance and subagent rails; no implicit all
   try {await f.slot();const prior=process.env.DSA_CALL;process.env.DSA_CALL='child';try{await assert.rejects(ops.decide(f.options),/reserved for the main agent/);}finally{if(prior===undefined)delete process.env.DSA_CALL;else process.env.DSA_CALL=prior;}
     const s=(await ops.readState(f)).state,plan={...s.plan,allow:[{nodes:['a'],writes:['x.txt']}]};
     await ops.planSet({cwd:f.cwd,as:owner,channel:'delegated',plan:JSON.stringify(plan),note:'pre-authorized writes'});
-    // Covered paths retain amend's not-needed refusal, not a second permission path.
+    // AC1: covered paths do not widen the plan, and the decision still records its ruling.
     await writeFile(join(f.cwd,'plan.json'),JSON.stringify(plan));await ops.planSet({cwd:f.cwd,as:parent,...await ops.readPlan({cwd:f.cwd,path:'plan.json'})});
-    await assert.rejects(ops.decide({...f.options,writes:['+x.txt']}),/not needed/);
+    const before=await ops.readState(f), decision=await ops.decide({...f.options,writes:['+x.txt']});
+    assert.deepEqual(decision.entries.map(e=>e.kind),['rule']);
+    assert.equal(decision.rule.text,`Keep the interface (writes already granted by allow rule, plan #${before.state.seq}: x.txt)`);
+    assert.equal(decision.plan,undefined);
   }finally{await f.cleanup();}
 });
 

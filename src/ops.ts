@@ -806,7 +806,7 @@ export interface AmendEdit {
   /** the file text read (equal to the ledger's current plan) and the edited text */
   text: string; next: string;
   prior: Plan; plan: Plan;
-  /** paths appended to the node's writes, and given paths that were already there (skipped) */
+  /** paths appended to writes, and paths already covered by writes or a current-plan allow rule (skipped) */
   added: string[]; present: string[];
   covered: { path: string; entry: string }[];
   /** the ledger plan sha the edit starts from */
@@ -855,16 +855,19 @@ async function amendEdit(o: AmendArgs, entries: Entry[], s: State): Promise<Amen
   if (!isMap(item)) throw new OwedError(`cannot edit ${read.path}: node ${o.node} is not a map in its nodes list`);
   // Every addition is a writes scope, not a filename: even a bare path owns its prefix range.
   const covered = paths.flatMap(path => {
-    const entry = spec.writes.find(w => w === path || writeCovers(w, path, writesSyntax(s.plan)));
+    const entry = spec.writes.find(w => w === path || writeCovers(w, path, writesSyntax(s.plan)))
+      ?? (writesCovered(s.plan,o.node,[path]) ? `allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq})` : undefined);
     return entry === undefined ? [] : [{ path, entry }];
   });
   const present = covered.map(c => c.path), added = paths.filter(p => !present.includes(p));
-  if (added.length && writesCovered(s.plan,o.node,added)) throw new OwedError(`not needed: ${added.join(', ')} are covered by allow rule (plan #${entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}); owed grants them at measurement; tell the writer to edit them`);
   const next = added.length ? spliceWrites(read.plan,doc,item,added) : read.plan;
   if (next === undefined) throw new OwedError(`cannot edit ${read.path}: writes of node ${o.node} is not a list`);
   const plan = added.length ? planBlob(next,true,s.plan).plan : s.plan, expect: Plan = { ...s.plan, nodes:s.plan.nodes.map(n => n.id === o.node ? { ...n, writes:[...n.writes,...added] } : n) };
   if (canonical(plan) !== canonical(expect)) throw new OwedError(`cannot edit ${read.path}: the edited file would change more than the writes of ${o.node}`,'internal');
   return { node:o.node, file:await realpath(resolve(o.cwd,source)), path:read.path, text:read.plan, next, prior:s.plan, plan, added, present, covered, planSha:s.planSha };
+}
+export function amendLimitText(r: Pick<AmendResult,'node'|'covered'>): string {
+  return r.covered.some(c => c.entry.startsWith('allow rule (plan #')) ? `; owed decide ${r.node} --writer delivers a limit` : '';
 }
 /** A path as a YAML scalar: plain when that is unambiguous (also inside a flow list), else double-quoted (JSON). */
 const yamlPath = (p: string): string => /^[A-Za-z0-9_./][A-Za-z0-9_./*-]*$/.test(p) ? p : JSON.stringify(p);
@@ -1031,6 +1034,8 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   for (const id of ids) { node(s,id); if (s.nodes[id]!.merged) throw new OwedError(`Node ${id} is merged; decide names unfinished nodes`); }
   const amend = o.writes !== undefined ? await decideAmend(o,ids,before.entries,s) : undefined;
   const stored = amend?.added.length ? await storePlan(ledger,amend.next,s.plan) : undefined;
+  const granted = [...new Set(Object.values(amend?.perNode ?? {}).flat().filter(c => c.entry.startsWith('allow rule (plan #')).map(c => c.path))];
+  const decisionText = o.text + (granted.length ? ` (writes already granted by allow rule, plan #${before.entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}: ${granted.join(', ')})` : '');
   const answers: import('./types.ts').DecisionAnswer[] = [];
   for (const id of ids) {
     const n = s.nodes[id]!, launches = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
@@ -1069,10 +1074,10 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     }
     const push = (d: Draft) => { const next = {...d,decision:first}; guard(replayed(prepared,drafts),next); drafts.push(next); };
     for (const d of deferred) push(d);
-    let text = o.text, answer: AnswerRef | undefined, supersedes: number | undefined;
+    let text = decisionText, answer: AnswerRef | undefined, supersedes: number | undefined;
     if (answers.length === 1) {
       const a = answers[0]!, launch = s.nodes[a.node]!.runs.flatMap(r => r.launches).find(l => l.rid === a.rid)!;
-      answer = {rid:a.rid,qid:a.qid,rev:a.rev}; text = `Answer to ${launch.role} question ${a.qid}: ${o.text}`;
+      answer = {rid:a.rid,qid:a.qid,rev:a.rev}; text = `Answer to ${launch.role} question ${a.qid}: ${decisionText}`;
       supersedes = latest.entries.findLast(e => e.kind === 'rule' && ruleAnswers(e).some(ref => ref.rid === a.rid && ref.qid === a.qid))?.seq;
     }
     push({kind:'rule',by:by(o),channel:o.channel,nodes:ids,text,...(o.writer !== undefined ? {writer:o.writer} : answer ? {writer:false} : {}),...(answer ? {answer} : {}),...(answers.length > 1 ? {answers} : {}),...(supersedes !== undefined ? {supersedes} : {})});
@@ -1101,7 +1106,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   const delivery = await deliverRuling(o.cwd,result.rule,client);
   result.deliveryFailures.push(...delivery.failures.map(f => `${oneLine(f)}; next dispatch or follow-up delivers ruling #${result.rule.seq}`));
   for (const a of answers) {
-    try { await deliverAnswer(client,result.rule,a,o.text); }
+    try { await deliverAnswer(client,result.rule,a,decisionText); }
     catch (e) { result.deliveryFailures.push(`${oneLine((e as Error).message)}; Retry exactly: ${answerRetry(a.node,result.rule,a)}`); }
   }
   return result;

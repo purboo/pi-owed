@@ -186,7 +186,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
       }
       // N3: plan text edit + plan entry (same guard as plan) + carries + ruling, in one lock.
       case 'amend': {
-        const file=value('plan'), r=await ops.amend({...actor,node,writes:value('writes')?.split(',') ?? [],note:value('note') ?? '',...(file !== undefined ? {plan:file} : {})}); result=r; text=amendLines(r).join('\n');
+        const file=value('plan'), r=await ops.amend({...actor,node,writes:value('writes')?.split(',') ?? [],note:value('note') ?? '',...(file !== undefined ? {plan:file} : {})}); result=r; text=amendLines(r).join('\n') + ops.amendLimitText(r);
         if(r.plan && !r.plan.by.startsWith('owner:')) { const d=(await ops.report({cwd,since:r.plan.seq-1})).downgrades.find(x => x.seq === r.plan?.seq); if(d?.allowance !== undefined) text+=`\nDowngrades ${allowanceLabel(d)}: ${d.items.map(i => `${i.node}: ${i.what}`).join('; ')}`; }
         break;
       }
