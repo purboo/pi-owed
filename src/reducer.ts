@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { actContent } from './identical-acts.ts';
 import { H, ZERO, canonical, sha256 } from './canon.ts';
 import { OWED_VERSION, OwedError } from './errors.ts';
-import { EVIDENCE_ID, manualDowngrades, knownRedDowngrades, quarantineDowngrades, activeQuarantine, quarantineNames, type QuarantineNames, matchesAny } from './plan.ts';
+import { withoutSelftest, EVIDENCE_ID, manualDowngrades, knownRedDowngrades, quarantineDowngrades, activeQuarantine, quarantineNames, type QuarantineNames, matchesAny } from './plan.ts';
 import { execKey } from './git.ts';
 import { executorEscapeErrors, sweepBoundaryErrors } from './sweep-policy.ts';
 import type { AllowRule, AttestJob, Block, CandidateFacts, CheckSpec, DecoyPayload, DecoyView, Discharger, Downgrade, Draft, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, MergeBatch, MergeGuard, NodeSpec, NodeState, ObsEntry, Plan, ResumeEntry, ReviewEntry, Rule, RunRole, SendEntry, SendKind, SendReason, State, StateFacts, WaiveEntry } from './types.ts';
@@ -74,7 +74,7 @@ function nodeSpec(s: State, id: string): NodeSpec | undefined {
   return m.get(id);
 }
 /** A node spec without its `type` (D19.4) and `drive` (K3): neither is an obligation. */
-const withoutType = (n: NodeSpec | undefined): NodeSpec | undefined => n && { ...n, type: undefined, drive: undefined, later: undefined };
+const withoutType = (n: NodeSpec | undefined): NodeSpec | undefined => n && { ...n, checks:n.checks.map(withoutSelftest), type: undefined, drive: undefined, later: undefined };
 const itemKey = (subject: string, obligation: string, key: string): string => `${subject}\0${obligation}\0${key}`;
 const listed = <K, V>(m: Map<K, V[]>, k: K): V[] => m.get(k) ?? [];
 const push = <K, V>(m: Map<K, V[]>, k: K, v: V): void => { const l = m.get(k); if (l) l.push(v); else m.set(k, [v]); };
@@ -976,7 +976,7 @@ export function carryable(prev: Plan, next: Plan, id: string): boolean {
  * `drive`, which never invalidate a candidate), then `setup`, `exec` and `closure` when the plan-wide ones differ.
  */
 export function specChanges(prev: Plan, next: Plan, id: string): string[] {
-  const a = (prev.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>, b = (next.nodes.find(x => x.id === id) ?? {}) as Record<string, unknown>;
+  const a = (withoutType(prev.nodes.find(x => x.id === id)) ?? {}) as Record<string, unknown>, b = (withoutType(next.nodes.find(x => x.id === id)) ?? {}) as Record<string, unknown>;
   const fields = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => k !== 'type' && k !== 'drive' && k !== 'later' && canonical(a[k]) !== canonical(b[k]));
   return [...fields, ...(prev.setup !== next.setup ? ['setup'] : []), ...(execChanged(prev, next) ? ['exec'] : []), ...(canonical(prev.closure) !== canonical(next.closure) ? ['closure'] : []), ...(canonical(prev.closure_neutral) !== canonical(next.closure_neutral) ? ['closure_neutral'] : [])];
 }
@@ -986,7 +986,7 @@ export function specChanges(prev: Plan, next: Plan, id: string): string[] {
  */
 export function checkDefinition(plan: Plan, node: string, id: string): string | undefined {
   const c = plan.nodes.find(x => x.id === node)?.checks.find(x => x.id === id);
-  return c ? canonical({ check: c, setup: plan.setup, exec: execKey(plan), ...(c.quarantine_set !== undefined ? { quarantine_set:plan.quarantine_sets?.[c.quarantine_set] } : {}) }) : undefined;
+  return c ? canonical({ check: withoutSelftest(c), setup: plan.setup, exec: execKey(plan), ...(c.quarantine_set !== undefined ? { quarantine_set:plan.quarantine_sets?.[c.quarantine_set] } : {}) }) : undefined;
 }
 /** The check id of an execution obligation `check:<id>`, `red:<id>` or `strength:<id>`; undefined for others. */
 export function checkOf(obligation: string): string | undefined { return /^(?:check|red|strength):(.+)$/.exec(obligation)?.[1]; }

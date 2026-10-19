@@ -67,7 +67,7 @@ const digest = (literal: string): string => createHash('sha256').update(literal)
 const at = (file: string, fn: string, kind: Class, reason: string, literals: string[]): Registered[] => literals.map(literal => [file, fn, kind, reason, literal]);
 const registered: Registered[] = [
   ...at('src/answer.ts', 'rulingDeliveryWarnings', 'cycle-blocked remedy', 'R-028-64: views.oneLine has other callers; needs -> views -> needs.', ['c755286339b655ec6008549ca5bc9fc371efb94b4af1c4e74b2266aa0d6d362d', '0733c972e32508b7edd7ac6726c7f52e1b1e70d6f814dfc0589f3858087cbffd', '461bda46a50609e8923b7485a99c49bf6aa6ed1d5518330d0911c59e7de6dc90']),
-  ...at('src/cli.ts', 'HELP', 'help/usage', 'TB1/HP1: CLI grammar and examples include local or external waiver trackers.', ['2625bbc2579748d9515413f14209a173fdb976d3417c24198d01004063587a65']),
+  ...at('src/cli.ts', 'HELP', 'help/usage', 'TB1/HP1, AO2 and CT1: CLI grammar includes waiver trackers, allow-only caps and exact-commit check try diagnostics.', ['3ae6c8d96145c57bf50e8805552ba2c02017c0c475424e1871fa15f1f55d8cdc']),
   ...at('src/cli.ts', 'main', 'historical text', 'Runtime version label, not an act.', ['8d2a0da087698b1c2364c3c7775ef339a80779374bf20887c92c1699030a9e56']),
   ...at('src/cli.ts', 'main', 'comment', 'Source commentary only.', ['f512c3053e124bcb1d3bfe911409b51eb80a0d81d2c62f44b6551efa2b414707', 'd1356cf0fadf27be887f3f5a63579e6aef0b53d52179e3a651c63269fed967dd', '0cc59866549a3b0037f60fb70c6b26ca393013004592d6347485d40b2a76fcf9']),
   ...at('src/cli.ts', 'main', 'help/usage', 'R-028-61: agent submit instructions.', ['8beef719f1119e332edddddb73e4eaca8f35a6e65a372e482dfdf7c56580e854']),
