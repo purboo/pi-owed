@@ -33,7 +33,7 @@ import { DRIVER, entriesOf, remeasureDue } from './reducer.ts';
 import { mergeBatchPlan, sharedParked, sharedParkKey, sharedPhase } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
 import { callAt, decide, needText, parkNeeds, recentSetupFailures, rejectedHalt, stillAsking, wantsRebaseConflicts } from './drive.ts';
-import { needs, repoNeeds, needId, activity } from './needs.ts';
+import { needs, repoNeeds, needId, activity, writerWaitingEligible } from './needs.ts';
 import { assembleRuntime } from './activity.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import type { Action } from './drive.ts';
@@ -493,7 +493,7 @@ export class Driver {
     const rows: NonNullable<Runtime['writerWaiting']>[number][] = [], sealed = new Set<string>();
     for (const n of Object.values(s.nodes)) {
       const l = n.runs.find(a => a.attempt === n.slot?.attempt)?.launches.find(l => l.role === 'writer'), w = l && runs.get(l.rid);
-      if (!n.slot?.open || n.candidate || halted(s, n.id) || !w || !['sealed', 'pruned'].includes(w.state) || w.status !== 'ok') continue;
+      if (!n.slot?.open || !writerWaitingEligible(s, n.id) || halted(s, n.id) || !w || !['sealed', 'pruned'].includes(w.state) || w.status !== 'ok') continue;
       sealed.add(w.rid);
       const gen = this.facts.lastGen.get(w.rid), prior = this.writerSeals.get(w.rid), seal = { gen, since: w.sealedAt ?? (prior && prior.gen === gen ? prior.since : now) };
       this.writerSeals.set(w.rid, seal);

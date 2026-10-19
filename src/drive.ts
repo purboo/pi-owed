@@ -784,7 +784,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const ask = askingNotice();
   if (ask) return ask;
   const w = view(writer), wSealed = isSealed(w), wStatus = statusOf(w);
-  const durableWait = !c && wSealed && wStatus === 'ok' && !!w.awaiting?.length;
+  const durableWait = wSealed && wStatus === 'ok' && !!w.awaiting?.length;
   // FL3: a fresh report resume gets the next writer follow-up even with an accepted/failed candidate.
   const reportResume = resumeOf(s, id);
   if (reportResume?.expect === 'report' && resumeLine(s, id, writer.rid) && wSealed && wStatus === 'ok') return send(writer, 'follow-up', 'report', REPORT_MESSAGE);
