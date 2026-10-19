@@ -7,7 +7,7 @@ import { rebaseRecovery } from './needs.ts';
 export { rebaseRecovery } from './needs.ts';
 
 /** WS3: shared packet text is initialized independently of the views/needs/ops cycle. */
-export const WRITER_DECISION = 'If you need a decision outside your writes, ask the parent a question (your run waits); never submit a candidate you believe fails its checks.';
+export const WRITER_DECISION = 'If you need a decision outside your writes, ask the parent (your run waits): give decision_needed (one sentence) and numbered options (label, scope, cost, risk; mark one preferred), plus facts (commit, run id, log sha), what you tried, and candidate explanations with their evidence and what is unproven — as ask fields when your ask tool has them, else as text starting "Decision needed:". Never submit a candidate you believe fails its checks.';
 export interface RebasePending { head: string; base: string; upstream: string; command: string; recovery?: string }
 export type SlotGitOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
 /** Porcelain can be clean while an interrupted Git operation still owns the worktree. */

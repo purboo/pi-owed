@@ -134,7 +134,7 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   for (const a of rt?.asking ?? []) if (a.node === node) {
     const e = entriesOf(s).findLast(e => e.kind === 'rule' && (e.answers ?? (e.answer ? [e.answer] : [])).some(ref => ref.rid === a.rid && ref.qid === a.qid && ref.rev >= a.rev));
     const text = (a.text.startsWith(`${node}: `) ? a.text.slice(node.length + 2) : a.text).split(': retry with ', 1)[0]!;
-    if (e?.kind === 'rule' && n.slot?.open) out.push({ node, actor: 'parent', kind: 'answer', since: e.seq, rid: a.rid, qid: a.qid, rev: a.rev, text: oneLine(text), command: answerRetry(node, e, { rid: a.rid, qid: a.qid, rev: a.rev }), ...(h ? { halted: true } : {}) });
+    if (e?.kind === 'rule' && n.slot?.open) out.push({ node, actor: 'parent', kind: 'answer', since: e.seq, rid: a.rid, qid: a.qid, rev: a.rev, text: /asks \(qid [^)]*\): DECISION: [^\n]*\noptions:/.test(text) ? text : oneLine(text), command: answerRetry(node, e, { rid: a.rid, qid: a.qid, rev: a.rev }), ...(h ? { halted: true } : {}) });
   }
   const unruled = unruledBlocks(s, node);
   const ruleNeeds = (h ? unruled : unruled.filter(b => !!n.candidate)).map(b => {
