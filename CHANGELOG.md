@@ -1,5 +1,163 @@
 # Changelog
 
+## 0.30.0
+
+Plans without the new fields keep their existing behavior, keys and replay.
+Upgrade every ledger reader before using allow caps: `writes_syntax: 3` is
+refused by owed < 0.30.0. External `tracked_by: ext:<id>` trackers still require
+owed >= 0.29.2; earlier readers refuse them. Structured asks need
+pi-durable-subagents >= 1.2.0; earlier runners retain plain asks.
+
+- **Environment signatures guide who is asked first.** Optional top-level
+  `env_signatures: {match: [<regex>], unless: [<regex>]}` changes no acceptance
+  key, check definition, candidate or downgrade. `match` must be non-empty;
+  `unless` is optional. Each regex is a non-empty string of at most 300
+  characters compiling as a JavaScript RegExp without flags; unknown keys refuse.
+- **Suspect failures stay failures.** A failing ordinary node check gets an
+  `environment-suspect: <line>; ` note when a retained log line matches `match`
+  and no line matches `unless`, after ANSI CSI and carriage returns are removed.
+  The excerpt replaces semicolons with commas, trims and clips to 160 characters;
+  verdict, counts, failed tests, signatures, log and keys stay unchanged. Ordinary
+  checks with red/mutant specifications qualify, but red/strength executions,
+  checks with repeat, invariants and trunk probes do not.
+- **Measure suspect failures again before asking the writer.** For an
+  unsatisfied check blocked on the current candidate's key, the driver measures
+  attribution using the failure's plan and logs one notice without waking the
+  parent. Two suspect failures halt the node without a repair or repair-budget
+  charge. Full recovery guidance is in `owed why <node> --full`: fix the
+  environment, run `owed attest <node> --rerun`, then `owed resume <node>`;
+  for a real code failure use `owed decide <node> --writer --text "<instruction>"`.
+  A resume after this halt restores ordinary routing. A pass retains the flaky
+  owner need; a non-suspect fail or error retains its usual repair/backoff route.
+  Satisfied or effectively waived checks do not trigger this routing.
+- **Checks can run a pinned script.** Node checks and invariants accept
+  `run_file: {path: <path>, sha256: <64 lowercase hex>}` instead of `run` or
+  `template`, with optional `args` (at most 64 strings, no NUL). Each normal
+  repository-relative path segment uses only `A-Z a-z 0-9 . _ @ + , = -`,
+  excluding `.` and `..`; absolute paths, empty segments and trailing slashes
+  refuse. Owed derives `exec ./<path>` with individually single-quoted arguments.
+  An explicit `run` must equal that command; `args` alone refuses. Edit pins
+  with `checks.<id>.run_file.path`, `checks.<id>.run_file.sha256` and
+  `checks.<id>.args` (omit `checks.<id>.` for invariants).
+- **Script admission verifies the declared bytes.** Before recording a plan,
+  owed reads each uncached pin from the current worktree's repository root, or
+  the commit selected by `owed plan --rev`, checks its SHA-256 and stores it.
+  A missing file or hash mismatch refuses without ledger entries or replacement
+  of the edited plan file; verified blobs may remain cached. Replay never reads
+  the source file, and a cached pin needs no source reread.
+- **Every execution installs the pinned script.** After setup and overlays,
+  owed verifies and installs the stored bytes with mode 0755 before each run,
+  including red, strength, invariants, attribution, probes and repeats. Candidate
+  script changes are overwritten; target links are replaced, and symlinked
+  parents or paths leaving the tree refuse. Missing/corrupt blobs and install
+  failures are environment errors, never successful red results. The script
+  needs a usable shebang; loaded helpers are not pinned and still follow reads
+  and closure. Shell, wrapper, environment and timeout behavior stays the same.
+- **Pins and arguments participate in execution keys.** Check/invariant, red
+  and strength keys include `run_file` and `args` only for pinned checks; those
+  fields also belong to the check definition used for superseding blocks.
+  Checks without pins keep their existing keys.
+- **Pinned checks have clear plan feedback.** Shell lint skips their derived
+  command while still checking setup, wrappers and timeout diagnostics.
+  Plan/edit replies identify `check <node>/<id>: run_file <path> (sha256 <first 12>)`;
+  invariants use `inv:<id>`.
+- **Try a check before recording it.** `owed check try <node> <check> --red <rev>
+  --green <rev> [--plan <file>]` (or `owed check try --invariant <id> ...`, tool
+  `owed_check_try`) reads the plan on disk and needs at least one revision.
+  Each side uses a fresh exact-commit tree without closure replacement or test
+  overlays, with normal setup, wrapper, counts, timeout and repeat behavior.
+  Even `red: true` uses ordinary verdicts: red expects `fail`, green expects
+  `pass`, and `error` meets neither. No ledger entries are recorded; output
+  retains logs and unmet expectations include the last 20 lines. `--json` gives
+  per-side results. Exit codes are 0 for all met, 1 for unmet, 2 for usage and
+  75 for a busy lease; `--no-lease` or plan `lease: false` disables the lease.
+- **Selftests guard check authoring.** Optional check/invariant
+  `selftest: [{commit: <40 or 64 hex>, expect: pass|fail}]` accepts 1–8 fixtures.
+  Recording a plan runs fixtures for new checks, changed execution definitions
+  or changed fixture lists, outside the ledger lock under the shared lease
+  unless disabled. Unmet expectations, errors or unknown commits refuse with
+  no ledger entries or edited plan replacement. Success adds a `selftest/v1`
+  note in the same append after the plan; unchanged checks are not rerun.
+  New/changed checks without fixtures warn `not self-tested`; previews only
+  announce pending selftests. Fixtures affect no key, downgrade, candidate
+  invalidation or block supersede, and their results are not acceptance evidence.
+- **Cap allow grants per node.** Optional `allow_only: [<entry>, ...]` limits
+  grants from `allow.writes`; it neither grants permission itself nor narrows
+  the node's own `writes`. Literal entries match exact paths, while globs use
+  syntax-2 matching (`dir/**` for a directory). Omission is unbounded and `[]`
+  permits no allow grants. Caps constrain paths, not functions or diff hunks.
+- **Caps apply throughout writes enforcement.** Grant admission and replay,
+  effective writes, executor measurements and merge rechecks enforce the cap.
+  Previously granted paths excluded by the current cap cease to confer
+  permission while their receipts remain. Refusals say `outside allow_only`
+  and suggest `owed edit <node> --set 'allow_only=[...]'`, not a wider allowance.
+- **Changing a cap remeasures writes.** Only the writes key gains `allow_only`
+  when present, including `[]`. A cap change carries the open candidate through
+  the usual plan-update path and requires fresh writes evidence; uncapped keys
+  and check/review keys are unchanged.
+- **Widening a cap needs the owner.** Adding a cap or provably narrowing it
+  needs parent authority without a downgrade. Removing it, widening it or an
+  unproved containment change is `allow_only widened: <node>`; allow rules
+  cannot authorize that owner-only downgrade. Containment uses equality, exact
+  paths matched by a prior glob or an enclosing trailing `**` glob.
+- **Older readers cannot silently ignore new caps.** New plans with any
+  `allow_only`, including `[]`, record `writes_syntax: 3`; uncapped plans keep
+  2. Syntax 3 retains syntax-2 path matching and enables caps. Historical
+  syntax-1/2 plans keep ignoring a valid `allow_only`; a malformed historical
+  field is refused by 0.30 replay.
+- **Decide and edit expose allow caps.** `owed decide <node> --allow-only p1,p2
+  --text "<limit>"` (tool `allow_only: string[]`) replaces the cap alongside
+  optional writes/ruling/resume changes in one append. `--allow-only ''` sets
+  `[]`; `owed edit` also accepts `allow_only`. Multi-node decisions refuse a
+  mix of changed and unchanged nodes; split those decisions, or include actual
+  writes additions. Dispatch packets show the cap beside pre-authorized scopes.
+- **Structured ask fields are validated without coercion.** Runner questions
+  retain `decision_needed`, `options`, `facts`, `tried` and
+  `classification_candidates`. Invalid option members discard the entire
+  options field to preserve numbering; invalid optional properties are dropped
+  independently, and multiple preferred options lose all preferred markers.
+  Invalid facts/tried or candidate members are removed instead of displayed
+  as object text.
+- **Questions lead with the decision.** Structured asking notices and wakes
+  show `DECISION:`, numbered options with scope/cost/risk and a preferred marker,
+  context, details and the existing answer command with
+  `answer "option <n>; <limits>"`. Option fields are bounded to 160 characters,
+  context to 600 and details to 300. Existing needs/status answer-retry text
+  preserves this structure; no new unanswered-question membership is added.
+  Each question keeps its own answer command; plain questions stay unchanged
+  and the driver never chooses an answer.
+- **Writer guidance asks for actionable decisions.** Packets and follow-ups
+  ask for one-sentence `decision_needed`, numbered options with scope, cost,
+  risk and one preferred choice, facts, attempted work, and candidate
+  explanations with evidence and what remains unproven. Tools without ask
+  fields use text starting `Decision needed:`. Writers must still ask before
+  exceeding their scope and never submit a candidate they believe fails checks.
+- **Edit several nodes together.** `owed edit a,b --set review.count=2
+  --note "<why>"` or tool `owed_edit {nodes:["a","b"], ...}` applies the same
+  sets/unsets, deduplicates in order and validates only the final plan. One
+  plan computes carries once, with one optional rule naming all targets and
+  one requested resume per node. Unknown targets, missing unsets, authority,
+  resume and pre-write append refusals leave ledger and plan file unchanged;
+  dry-run shows one diff and downgrades. Exact existing CLI IDs and
+  `--node-new` targets stay literal even with commas; use tool `nodes` or
+  separate edits for a colliding batch. `nodes` is exclusive with `node` and
+  `invariant`; creation permits only one distinct node. Existing post-append
+  file-replacement recovery still applies.
+- **Answers report the observed call state.** After successful `owed answer`
+  or answering `owed decide`, including tools, owed describes each run once
+  with a 10-second bound outside the ledger lock. Each answer reports
+  `running`, `queued`, `asking (answer not yet taken, qid <q8>)`,
+  `asking again (qid <q8>)`, `sealed (<status>)` or `unknown (<reason>)`.
+  Only the selected question's `to = <wid>/<key>` identifies the call; a
+  closed-question retry without that address reports unknown rather than
+  borrowing another call. Missing phase or malformed matching question IDs
+  also report unknown; the original qid still open means the answer is not
+  yet taken. JSON/tool `answers` are runtime facts only. A describe failure
+  never resends an answer or appends an extra ledger entry.
+
+Source grew by 421 lines net across 20 TypeScript files: 585 insertions and
+164 deletions since 0.29.2.
+
 ## 0.29.2
 
 No ledger, entry kind, entry field, plan or key change. `tracked_by` may now hold
