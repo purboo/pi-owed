@@ -514,7 +514,7 @@ retries a CAS refusal up to 3 attempts while the ledger's plan sha is unchanged;
 each attempt re-reads the ledger and the file, and a failed attempt removes its
 temporary file.
 **Atomic field edits (0.13, ED1–ED3, app §65).**
-`owed edit <node> --set <path>=<yaml> ... [--unset <path> ...]
+`owed edit <node[,node...]> --set <path>=<yaml> ... [--unset <path> ...]
 [--node-new] [--rule "<text>" [--writer]]
 [--resume [--after a,b] [--expect report]] --note "<why>"
 [--dry-run] [--plan <file>]` edits the latest recorded plan file (or `--plan`,
@@ -528,6 +528,23 @@ check id refuse. `--node-new` adds a node from `deps`, `title`, `brief`, `writes
 and check assignments; it refuses an existing id. An invariant edit is
 `owed edit --invariant <id> --set <field>=<yaml> --note "<why>"`; its id cannot
 change, and rule/resume options apply only to node edits.
+
+**Multi-node edits (0.30, ME1).** A comma-separated node list, or the tool's
+`nodes: string[]` (exclusive with `node` and `invariant`), applies the same sets
+and unsets to every listed node. CLI targets matching an exact current node ID,
+or used with `--node-new`, remain literal even with commas; otherwise split on
+commas, trim each part and reject empty parts, using tool `nodes` or separate
+edits for batches whose joined name collides with an existing ID (R-030-ME-1).
+Duplicate ids are removed in first-seen order; tool/ops `nodes` with `node_new`
+requires a single distinct node. Only the final plan is validated,
+so intermediate edits need not form a valid plan. One note explains the batch,
+which records one plan entry, computes carries once from that final plan,
+records one optional rule naming all nodes, and validates and records one
+resume per node when requested. Any unknown node, missing unset, authority or
+resume refusal, or pre-write append refusal records nothing and leaves the
+plan file unchanged, as for single-node ED2. Dry-run prints one diff and all
+downgrades. Single-node behavior and output are unchanged; multi-node results
+return `resumes: Entry[]` instead of the single `resume` when requested.
 
 ED1 uses the `yaml` Document API and re-emits only the target map when safe,
 retaining its comments and keeping every byte outside it. Targets inside flow
@@ -3379,7 +3396,7 @@ this mode; `owed_attest` has no probe parameters.
 init(o: {cwd, plan: string, as: Principal, channel, signal?}): Promise<InitResult>      // genesis + genesis attest of invariants; signal: §7.8
 readPlan(o: {cwd, path, rev?}): Promise<{plan, rev?, path}>   // plan text from the working tree, or from commit `rev` (`git show rev:path`); path repository-relative
 planSet(o: {cwd, plan, rev?, path?, note?, as, channel?}): Promise<Entry>   // records rev/path (and note: why, D25.5) in the plan entry
-edit(o: {cwd, node? | invariant?, set?, unset?, node_new?, note, plan?, rule?, writer?, resume?, after?, expect?, dry_run?, as, channel?}): Promise<EditResult | EditPreview> // ED2: one lock; dry_run previews only
+edit(o: {cwd, node? | nodes?: string[] | invariant?, set?, unset?, node_new?, note, plan?, rule?, writer?, resume?, after?, expect?, dry_run?, as, channel?}): Promise<EditResult | EditPreview> // ED2: one lock; dry_run previews only
 editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
 rule(o: {cwd, text, nodes, writer?, prospective?, as}): Promise<RuleEntry & {delivery?: RulingDelivery}>
@@ -4853,7 +4870,7 @@ and name the known commands.
 `--rev` the file is read from that commit, so a plan kept in trunk is the
 ledger plan), `amend <node> --writes +<path>[,+<path>...] --note <limit>
 [--plan <file>]` (§3 Amend; bare paths mean `+path`, and already-covered paths
-are no-ops, as in §8.3.1), `edit <node> --set path=yaml ... [--unset path ...]
+are no-ops, as in §8.3.1), `edit <node[,node...]> --set path=yaml ... [--unset path ...]
 [--node-new] [--rule TEXT [--writer]] [--resume [--after a,b] [--expect report]]
 --note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
 --note WHY` (§3 ED1/ED2),
@@ -5116,7 +5133,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_decide` | `nodes: string[]`, `text`, `writes?: string[]`, `defer?: string`, `resume?: boolean`, `after?: string \| string[]`, `remeasure?: boolean`, `writer?: boolean`, `as` | one atomic parent decision and post-append delivery (§8.3.1); no-resume is `resume: false` |
 | `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery, answers}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
-| `owed_edit` | `node?` or `invariant?`, `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
+| `owed_edit` | `node?`, `nodes?: string[]` or `invariant?` (exclusive), `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
 | `owed_amend` | `node`, `writes` (bare paths or `+path`; covered paths are unchanged), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
 | `owed_plan` | `plan` (path relative to `cwd`), `rev?`, `note?` (why; required for a delegated owner downgrade), `as` | plan update; a downgrade needs the owner unless an allowance of the current plan covers every downgrade (§3.4): then the default principal is `parent:pi`, no dialog, and the result names the allowance; otherwise the refusal for a parent lists the uncovered items |
 | `owed_init` | `plan` (path relative to `cwd`), `lease?`, `as` (default `owner:pi`, delegated; `owner:human` under `OWED_CONFIRM=owner`; owner only) | initialize the ledger (§11.1) |
