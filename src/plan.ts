@@ -364,6 +364,8 @@ function expandCheckTemplate(c: Record<string, unknown>, p: string, errors: stri
   }
   return { run: errors.length === start ? `# owed-template/v${CHECK_TEMPLATE_VERSION}/${c.template}\nset -o pipefail; ${command} | ${templateCounter(c.template === 'cargo-tests' ? 'cargo' : 'tap', min as number, c.template === 'node-tap' ? c.files as string[] : [])}` : '', ...(typeof min === 'number' ? { min_tests: min } : {}) };
 }
+/** CT2: author fixtures are metadata, never an execution definition or candidate obligation. */
+export function withoutSelftest<T extends CheckSpec>({ selftest: _selftest, ...check }: T): Omit<T,'selftest'> { return check; }
 export function parsePlan(text: string): Plan {
   const errors: string[] = [];
   let raw: unknown;
@@ -399,6 +401,17 @@ export function parsePlan(text: string): Plan {
       const derived = runFile ? `exec ./${runFile.path}${args?.length ? ' ' + args.filter(s => typeof s === 'string').map(s => `'${s.replaceAll("'", "'\\''")}'`).join(' ') : ''}` : undefined;
       if (derived !== undefined && c.run !== undefined && c.run !== derived) errors.push(`${p}: run and run_file are exclusive`);
       const out: InvariantSpec = { id, ...(runFile ? { run_file:runFile, ...(args !== undefined ? { args } : {}) } : {}), run: derived ?? template?.run ?? str(c.run, `${p}.run`), timeout_s: num(c.timeout_s ?? 600, `${p}.timeout_s`, 1), reads: strings(c.reads ?? ['**'], `${p}.reads`), ...(template?.min_tests !== undefined ? { min_tests: template.min_tests } : {}) };
+      if (c.selftest !== undefined) {
+        const list = arr(c.selftest, `${p}.selftest`);
+        if (list.length < 1 || list.length > 8) errors.push(`${p}.selftest: expected 1-8 entries`);
+        out.selftest = list.map((x, i) => {
+          const q = `${p}.selftest[${i}]`, e = obj(x,q);
+          if (typeof e.commit !== 'string' || !/^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/.test(e.commit)) errors.push(`${q}.commit: expected 40 or 64 hex`);
+          if (e.expect !== 'pass' && e.expect !== 'fail') errors.push(`${q}.expect: expected pass or fail`);
+          for (const k of Object.keys(e)) if (k !== 'commit' && k !== 'expect') errors.push(`${q}.${k}: unknown key`);
+          return { commit:e.commit as string, expect:e.expect as 'pass' | 'fail' };
+        });
+      }
       if (c.on_timeout !== undefined) out.on_timeout = str(c.on_timeout, `${p}.on_timeout`);
       if (c.min_tests !== undefined) out.min_tests = num(c.min_tests, `${p}.min_tests`, 0);
       if (c.red !== undefined) { if (typeof c.red !== 'boolean') errors.push(`${p}.red: expected boolean`); else out.red = c.red; }

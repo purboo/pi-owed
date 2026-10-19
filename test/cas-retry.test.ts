@@ -248,8 +248,10 @@ test('N2 warnings skip merged nodes in helpers, CLI and pi; init and invariants 
       const warnings = JSON.parse(out.stdout).warnings as string[];
       assert.ok(warnings.length > 0); assert.ok(warnings.every(w => !w.includes('node a')), warnings.join('\n'));
       const result = await tools.get('owed_plan')!.execute('test', { plan: file, as: 'parent:test' }, undefined, undefined, ctx as Parameters<ToolDefinition['execute']>[4]);
-      // WF4: the CLI just admitted this plan; repeating it through the tool does not repeat cost lint.
-      assert.deepEqual((result.details as { warnings: string[] }).warnings, warnings.filter(w => !w.startsWith('warning: reads of ')));
+      // WF4/CT2: the CLI just admitted this plan; the tool repeats neither cost lint nor changed-check selftest warnings.
+      const selftestWarnings = plan === p ? ['check a/loop: not self-tested', 'check b/loop: not self-tested', 'check inv:loop: not self-tested'] : [];
+      assert.deepEqual(warnings.filter(w => w.endsWith(': not self-tested')), selftestWarnings);
+      assert.deepEqual((result.details as { warnings: string[] }).warnings, warnings.filter(w => !w.startsWith('warning: reads of ') && !selftestWarnings.includes(w)));
     }
   } finally { await r.cleanup(); }
 });
