@@ -1215,6 +1215,52 @@ Absent `every`, staying drivers keep idle-only scheduling and node-work
 preemption. Running-loop and `--due` behavior, baselines and limits are in
 §7.15b.
 
+### 3.10 Check author diagnostics and selftests (0.30, CT)
+
+`owed check try <node> <check> [--red <rev>] [--green <rev>] [--plan <file>]
+[--no-lease] [--json]`, or `owed check try --invariant <id> ...`, tries the
+plan file currently on disk, not its recorded blob. `--plan` selects the file;
+otherwise use the latest plan entry's path (an entry without a path requires
+`--plan`). At least one revision is required. Run-file admission is §3.6,
+including checks not yet recorded.
+
+Each revision resolves to a commit and runs in a fresh temporary worktree of
+exactly that commit: no closure replacement, test overlay or tree reuse. Setup,
+command shell/env/wrap, timeout/on_timeout, counts, min_tests and repeat follow
+attest. Even `red: true` is measured as an ordinary non-red check. Red expects
+`fail`, green expects `pass`; `error` satisfies neither. The shared machine
+lease applies unless `--no-lease` or plan `lease: false` disables it. Trees and
+processes are cleaned on completion and abort; output remains in verified log
+blobs. No observation or other ledger entry is appended.
+
+For each revision print `red <rev> (<commit12>): fail ✔ (<passed>/<total> tests,
+<seconds> s) log <path>`, or `✘ expected fail, got pass` followed by the last
+20 output lines. JSON is `{node|invariant, check, plan, results:[{side, rev,
+commit, expect, verdict, ok, counts?, durationMs, log}]}`. Exit codes: 0 all
+expectations met, 1 any unmet, 2 usage (including unknown revisions), 75 machine
+lease busy. Tool parity is §11.
+
+Optional check/invariant `selftest: [{commit: <40 or 64 hex>, expect: pass|fail}]`
+has 1–8 entries; each entry permits only `commit` and `expect`. Editable paths
+are `checks.<id>.selftest` and invariant `selftest`. Fixtures are author
+metadata: no key, downgrade, candidate invalidation or block supersede depends
+on them. Adding, changing or removing just fixtures preserves acceptance
+observations and failures; a selftest pass itself is never acceptance evidence.
+
+Before recording init/start/plan/edit/amend/decide plan changes, run selftests
+for every new check/invariant, changed execution definition (without fixtures),
+or changed fixture list. Run them exactly as the diagnostic path above, under
+one shared lease and outside the ledger lock. Unmet expectations, execution
+errors and unknown commits refuse recording with diagnostic lines and log tails;
+no ledger entries or edited plan file are written. Successful recording adds
+one existing-kind `note` immediately after genesis/plan in the same append:
+`selftest/v1 ` followed by JSON `{plan:<plan sha>, results:[{node|invariant,
+check, commit, expect, verdict, log}]}`. Carry/rule/resume entries follow it.
+Unchanged checks are not rerun. Replies list the results and warn for each new
+or changed check without fixtures: `check <node>/<id>: not self-tested` (use
+`inv:<id>` for invariants). Dry runs and tool previews never execute fixtures;
+they say `selftest: <n> check(s) run when recorded`.
+
 ## 4. Items and keys
 
 An item is `(subject, obligation, key)`; status is evaluated per item.
@@ -4982,6 +5028,13 @@ still refuse. Preflight and actor restrictions are unchanged.
 
 ## 11. pi extension
 
+0.30 adds `owed_check_try` (§3.10): `{node?, check?, invariant?, red?, green?,
+plan?, no_lease?, json?, cwd?}`. Select either node/check or invariant and give
+at least one revision. This diagnostic tool records no ledger entries and needs
+no owner/parent identity. Unmet expectations return `isError: true` with results
+and the retained log tail. Plan-recording tools run changed selftests before
+recording; previews never execute them.
+
 0.23 adds `owed_decide` (§8.3.1): `{nodes: ["A", "B"], text, writes?, defer?,
 resume?, after?, remeasure?, writer?, as?, cwd?}`. False `resume` preserves the
 halt; writes uses amendment authority and defer needs the owner. Delivery
@@ -5052,6 +5105,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; prints packet once and references it in text arguments; structured `subagents` retains full task (agent `worker`, cwd = slot worktree, isolation `none`, task = packet) |
 | `owed_submit` | `node`, `commit?`, `model?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
+| `owed_check_try` | `node?`, `check?`, `invariant?`, `red?`, `green?`, `plan?`, `no_lease?`, `json?` | exact-commit disk-plan diagnostics (§3.10); ordinary verdicts even for red checks; no ledger entries |
 | `owed_attest` | `node?`, `trunk?`, `rerun?`, `remeasure?`, `all?`, `lease?`, `as` | attest; trunk needs no node; all requires remeasure |
 | `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?: number \| "latest"`, `model?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `lease?`, `as` | merge |
