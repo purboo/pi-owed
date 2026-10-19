@@ -150,3 +150,47 @@ test('RM2: with neither failed invariants nor blocked or failing checks the repl
     assert.doesNotMatch(ops.decideText(result), /the next merge measures as usual/);
   } finally { await r.cleanup(); }
 });
+
+test('RM2 review: a flaky older key cannot hide the latest current-key attribution failure', async () => {
+  const r = await fixture();
+  try {
+    await r.append('pass', true);
+    const before = (await ops.readState(r)).state, worktree = before.nodes.a!.slot!.worktree;
+    await commitAt(worktree, { impl: 'changed candidate' });
+    await ops.submit({ cwd: worktree, node: 'a', as: { role: 'writer', id: 'a#1' } });
+    await ops.attest({ cwd: r.cwd, node: 'a' });
+    await ops.attest({ cwd: r.cwd, node: 'a' });
+    const { state } = await ops.readState(r), n = state.nodes.a!, key = n.candidate!.keys['check:unit']!;
+    const last = (await r.obs()).at(-1)!;
+    assert.notEqual(key, r.fail.key);
+    assert.equal(n.blocks.find(b => b.key === r.fail.key)?.state, 'flaky');
+    assert.equal(n.blocks.find(b => b.key === key)?.state, 'cleared');
+    assert.equal(n.items.find(i => i.obligation === 'check:unit')?.mark, '⛔', 'reproduce the misleading aggregate display mark');
+    assert.equal(last.key, key); assert.equal(last.verdict, 'fail'); assert.equal(last.attribution, true);
+    const expected = `a check unit already failed again on its key (#${last.seq}); --remeasure does not measure it again: owed attest a --rerun`;
+    const result = await r.remeasure();
+    assert.ok(ops.decideText(result).includes(expected), ops.decideText(result));
+    await r.ledger.withLock(() => r.ledger.append([{ kind: 'obs', by: 'executor:owed', subject: 'a', obligation: 'check:unit', key, commit: last.commit, base: last.base, verdict: 'error', exit: null, durationMs: 1, note: 'environment: later unavailable' }]));
+    const afterError = await r.remeasure();
+    assert.ok(ops.decideText(afterError).includes(expected), 'a later error must not hide the latest non-error fail');
+  } finally { await r.cleanup(); }
+});
+
+test('RM2 review: a second resume reports a new block using its own resume sequence', async () => {
+  const r = await fixture();
+  try {
+    await r.append('fail', true);
+    const first = await ops.resume({ cwd: r.cwd, as: parent, node: 'a', remeasure: true });
+    await r.append('fail', false);
+    const latest = (await r.obs()).at(-1)!;
+    assert.ok(latest.seq > first.entry.seq);
+    const beforeSeqs = (await r.obs()).map(e => e.seq);
+    const before = (await ops.readState(r)).state;
+    assert.deepEqual(ops.remeasureQueuedText(before, 'a'), ['nothing to remeasure: no failed merge-tree invariant and no blocked check of a'], 'the old resume does not authorize the newer block');
+    const second = await ops.resume({ cwd: r.cwd, as: parent, node: 'a', remeasure: true });
+    assert.ok(second.entry.seq > latest.seq);
+    assert.deepEqual(second.remeasure, [`remeasure queued: a check unit (failure #${latest.seq}) is measured again on its key before any repair; a pass leaves a flaky block: owed waive a --accept-risk ${latest.seq}`], 'the reply uses the actual second resume, not the preceding resume');
+    assert.equal((await r.action())?.do, 'attest');
+    assert.deepEqual((await r.obs()).map(e => e.seq), beforeSeqs, 'reply generation appends no observations');
+  } finally { await r.cleanup(); }
+});

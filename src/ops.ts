@@ -20,7 +20,7 @@ import { reduce, reduceFrom, extendState, packState, unpackState, sameReplay, re
 import { writesEntryError, writesSyntaxErrors, withWritesSyntax, writesSyntax, writeCovers } from './writes.ts';
 import { validateDraft, openBatch, attestJobs, genesisJobs, mergeJobs, mergeGuard, adoptJobs, adoptGuard, decoyDigest as digestOf, decoyPayloadErrors, overlapping, withinWrites, grantsOf, grantHint, halted, manualKeys, adoptPrefixes, unadoptable, allowanceSeq, activeRisk, mergeRisk, trackedRiskRetry, trunkRedOf, stateQuarantine, quarantinedJob, remeasureJobs, trunkRemeasureJobs, writesCovered, writesRefusals, effectiveWritesOverlap, batchable, batchFailed, batchJobs, batchQuarantine, mergeQueue, uncoveredDowngrades } from './reducer.ts';
 import { runJob, runCommand, lastLines } from './exec.ts';
-import { setupFailure, infraSource, observationsOf } from './reducer.ts';
+import { setupFailure, infraSource, observationsOf, resumeOf } from './reducer.ts';
 import { setupHint, setupSignature } from './remeasure-on.ts';
 import { withMachineLease, measurementScope, leaseResult, leaseWaitField } from './lease.ts';
 import type { Runtime } from './needs.ts';
@@ -2634,14 +2634,15 @@ export function remeasureQueuedText(s: State, node: string): string[] {
   const lines = failures.map(f => s.trunk.seq < f.seq && candidate && candidate.seq < f.seq
     ? `remeasure queued: ${f.obligation} on merge key ${f.key.slice(0,12)}`
     : `${f.obligation}: trunk moved to ${s.trunk.commit.slice(0,12)} (or the candidate changed) since #${f.seq}: the next merge builds a new merge tree; ${f.obligation} is remeasured there if its key is still ${f.key.slice(0,12)}, otherwise measured as usual`);
-  const n = s.nodes[node];
+  const n = s.nodes[node], retry = resumeOf(s,node);
   for (const check of s.plan.nodes.find(n => n.id === node)?.checks ?? []) {
-    const obligation = `check:${check.id}`, b = n?.blocks.findLast(b => b.kind === 'exec' && b.obligation === obligation && b.state === 'active');
+    const obligation = `check:${check.id}`, key = candidate?.keys[obligation];
+    const b = n?.blocks.findLast(b => b.kind === 'exec' && b.obligation === obligation && b.state === 'active' && retry?.remeasure && b.seq < retry.seq);
     if (candidate && b) {
       lines.push(`remeasure queued: ${node} check ${check.id} (failure #${b.seq}) is measured again on its key before any repair; a pass leaves a flaky block: owed waive ${node} --accept-risk ${b.seq}`);
-    } else if (candidate && n?.items.some(i => i.obligation === obligation && i.mark === '✘')) {
-      const f = observationsOf(s,node,obligation,candidate.keys[obligation] ?? '').findLast(o => o.verdict === 'fail');
-      if (f) lines.push(`${node} check ${check.id} already failed again on its key (#${f.seq}); --remeasure does not measure it again: owed attest ${node} --rerun`);
+    } else if (key && !n?.blocks.some(b => b.kind === 'exec' && b.obligation === obligation && b.key === key && b.state === 'active')) {
+      const f = observationsOf(s,node,obligation,key).findLast(o => o.verdict !== 'error');
+      if (f?.verdict === 'fail') lines.push(`${node} check ${check.id} already failed again on its key (#${f.seq}); --remeasure does not measure it again: owed attest ${node} --rerun`);
     }
   }
   return lines.length ? lines : [`nothing to remeasure: no failed merge-tree invariant and no blocked check of ${node}`];
@@ -2665,7 +2666,7 @@ export async function resume(o: Omit<ResumeArgs,'node'> & { node: string | strin
       merged = !!after.length && after.every(dep => !!state.nodes[dep]?.merged);
     }
     const entries = await ledger.append(drafts);
-    return { entry:entries[0]!, ...(merged ? { merged:true } : {}), ...(nodes.length > 1 ? { entries } : {}), ...(o.remeasure ? {remeasure:nodes.flatMap(id => remeasureQueuedText(latest.state,id))} : {}) };
+    return { entry:entries[0]!, ...(merged ? { merged:true } : {}), ...(nodes.length > 1 ? { entries } : {}), ...(o.remeasure ? {remeasure:nodes.flatMap(id => remeasureQueuedText(reduceFrom(latest.state,entries,latest.lookup),id))} : {}) };
   });
 }
 /** Stops the driver on the node's current attempt until a later non-driver entry on the node or a new attempt. `since`: as for launch (F1). */
