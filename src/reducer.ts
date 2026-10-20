@@ -252,13 +252,19 @@ export function ownerNeeded(s: State, node: string): string | undefined {
   }
   return ownerBlock.length ? text(ownerBlock[0]!) : undefined;
 }
-export type DispatchSkip = { kind: 'owner'; reason: string } | { kind: 'max'; open: number; max: number } | { kind: 'overlap'; others: { node: string; paths: string[] }[] } | { kind: 'removed' };
+export type DispatchSkip = { kind: 'owner'; reason: string } | { kind: 'max'; open: number; active: number; pending: number; max: number } | { kind: 'overlap'; others: { node: string; paths: string[] }[] } | { kind: 'removed' };
+/** MQ1: same-pass reservations count as active; removed open slots remain active. */
+export function attemptCapacity(s: State, taken = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').map(n => n.id)): { open: number; active: number; pending: number } {
+  const open = taken.length + Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'removed').length;
+  const pending = taken.filter(id => s.nodes[id]?.slot?.open && s.nodes[id]?.phase === 'accepted').length;
+  return { open, active: open - pending, pending };
+}
 /** WA1: the dispatch loop's skip predicate, including slots removed from the plan and same-pass dispatches. */
 export function dispatchSkip(s: State, id: string, max: number, taken = Object.values(s.nodes).filter(n => n.slot?.open && n.phase !== 'removed').map(n => n.id)): DispatchSkip | undefined {
   const owner = ownerNeeded(s, id);
   if (owner) return { kind: 'owner', reason: owner };
-  const open = taken.length + Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'removed').length;
-  if (open >= max) return { kind: 'max', open, max };
+  const capacity = attemptCapacity(s, taken);
+  if (capacity.open >= 2 * max || capacity.active >= max) return { kind: 'max', ...capacity, max };
   if (!s.plan.nodes.some(n => n.id === id)) return { kind: 'removed' };
   const others = [...new Set([...overlapping(s, id), ...taken.filter(other => effectiveWritesOverlap(s, id, other))])].sort();
   if (others.length) return { kind: 'overlap', others: others.map(node => ({ node, paths: effectiveWrites(s, id).filter(p => effectiveWrites(s, node).some(q => writeOverlaps(p, q, writesSyntax(planForWrites(s, id)), writesSyntax(planForWrites(s, node))))) })) };
@@ -1451,12 +1457,27 @@ export function batchable(s: State, id: string): boolean {
   const n = s.nodes[id], spec = nodeSpec(s, id);
   return !!n?.slot?.open && !!n.candidate && n.accepted && !n.merged && !!spec && !n.candidate.closureTouched && !remeasureDue(s, id);
 }
-/** MT4: a batch of exactly these members failed on the current trunk (a fail observation tagged with them since trunk moved). */
+/** MQ2/R-031-MQ-1: historical candidate identity uses the fold, including plan invalidation and carry submits. */
+const batchCandidates = new WeakMap<History, Map<number, Record<string, string | undefined>>>();
+function candidatesAtBatch(s: State, index: number): Record<string, string | undefined> {
+  const h = context(s), seq = h.entries[index]!.seq;
+  let cache = batchCandidates.get(h);
+  if (!cache) { cache = new Map(); batchCandidates.set(h, cache); }
+  if (!cache.has(seq)) {
+    const before = reduce(h.entries.slice(0, index), sha => lawPlan(h, sha));
+    cache.set(seq, Object.fromEntries(Object.values(before.nodes).map(n => [n.id, n.candidate?.commit])));
+  }
+  return cache.get(seq)!;
+}
+/** MT4/MQ2: the same candidates failed together on the current trunk. */
 export function batchFailed(s: State, members: string[]): boolean {
   const want = members.join('\0'), entries = context(s).entries;
   for (let i = entries.length - 1; i >= 0 && entries[i]!.seq > s.trunk.seq; i--) {
     const e = entries[i]!;
-    if (e.kind === 'obs' && e.verdict === 'fail' && e.batch?.join('\0') === want) return true;
+    if (e.kind === 'obs' && e.verdict === 'fail' && e.batch?.join('\0') === want) {
+      const prior = candidatesAtBatch(s, i);
+      if (members.every(id => prior[id] !== undefined && prior[id] === s.nodes[id]?.candidate?.commit)) return true;
+    }
   }
   return false;
 }

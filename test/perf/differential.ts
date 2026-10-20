@@ -122,12 +122,17 @@ function wfState(s: State): State {
 }
 
 /** R-028-45/51, VW1–2: add only BASE's missing sections at exact frozen anchors. */
-function vwStatus(text: string, frozen: ReturnType<V['statusView']>, current: curViews.StatusView): string {
+function vwStatus(text: string, frozen: ReturnType<V['statusView']>, current: curViews.StatusView, s: State): string {
+  // MQ1/R-031-MQ-2: add capacity only with pending merges, from frozen facts; never erase CUR output or alter state/keys.
+  const open = Object.values(s.nodes).filter(n => n.slot?.open);
+  const pending = open.filter(n => n.phase === 'accepted').length;
+  const trunk = `Trunk ${frozen.trunk.name} ${frozen.trunk.commit}`;
+  const anchor = trunk + (pending > 0 ? `\nactive ${open.length - pending} of max ${s.plan.drive?.max ?? 4}, waiting to merge ${pending}` : '');
+  text = text.replace(`${trunk}\n`, `${anchor}\n`);
   const rendered = curViews.renderStatusFull(current).replace(/^Merge queue:.*\n/gm, '');
   if (current.summary?.needs.length) {
     const section = curViews.renderStatusBrief(current).split('\n').slice(1, 2 + current.summary.needs.length).join('\n');
-    // VW1: 0.10 has no Needs-you section; its exact Trunk line is the insertion anchor.
-    const anchor = `Trunk ${frozen.trunk.name} ${frozen.trunk.commit}`;
+    // VW1/MQ1: Needs-you follows Trunk and, only with pending merges, its capacity sentence.
     if (rendered.includes(`${anchor}\n${section}\n`)) text = text.replace(`${anchor}\n`, `${anchor}\n${section}\n`);
   }
   if (current.summary?.progress.length) {
@@ -264,7 +269,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
         const old = `⛔ ${b.node}: blocked #${b.seq} ${b.obligation} (needs a parent ruling): ${baseViews.oneLine(b.note)}; record owed rule --nodes ${b.node} "<decision>"`;
         text = text.replace(old, `${b.node}: review block #${b.seq} needs a parent ruling`);
       }
-      return rendered(vwStatus(text, status, current));
+      return rendered(vwStatus(text, status, current, s));
     }
     return rendered(text);
   });

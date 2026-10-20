@@ -440,12 +440,25 @@ export class Driver {
    */
   private cycle = 0;
   private readonly busyAt = new Map<string, number>();
-  /** MT4: batches refused in this process (`<trunk>\0<members>`): their members merge one at a time until trunk moves. */
-  private readonly batchRefused = new Set<string>();
-  /** MT1: the batch to merge this pass: the plan's batch over this pass's merge actions, unless refused on this trunk. */
+  /** MQ2: candidate commits isolated after a refused batch; the single driver owns this runtime file. */
+  private readonly batchIsolated = new Map<string, string>();
+  private saveBatchIsolation(): void {
+    const dir = join(this.ledger!.dir, 'drive'), path = join(dir, 'batch-isolated.json'), temp = `${path}.${process.pid}.tmp`;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(temp, JSON.stringify(Object.fromEntries(this.batchIsolated)), { mode: 0o600 });
+    renameSync(temp, path);
+  }
+  private pruneBatchIsolation(s: State): void {
+    let changed = false;
+    for (const [id, commit] of this.batchIsolated) {
+      const n = s.nodes[id];
+      if (!n?.slot?.open || n.merged || n.candidate?.commit !== commit) { this.batchIsolated.delete(id); changed = true; }
+    }
+    if (changed) this.saveBatchIsolation();
+  }
+  /** MT1/MQ2: filter isolated candidates before planning, preserving the existing single-merge order. */
   private batchOf(s: State, actions: Action[]): string[] {
-    const b = mergeBatchPlan(s, mergeBatchSize(s.plan), actions.flatMap(a => a.do === 'merge' ? [a.node] : []));
-    return b.length && !this.batchRefused.has(`${s.trunk.commit}\0${b.join('\0')}`) ? b : [];
+    return mergeBatchPlan(s, mergeBatchSize(s.plan), actions.flatMap(a => a.do === 'merge' && this.batchIsolated.get(a.node) !== s.nodes[a.node]?.candidate?.commit ? [a.node] : []));
   }
   /** LO-W2: keep the first busy end across the visible wait's removal at each retry start. */
   private readonly busyWaiting = new Map<string, { attempt: number; candidate?: number; since: string }>();
@@ -527,6 +540,12 @@ export class Driver {
   private async init(): Promise<Ledger> {
     if (!this.ledger) {
       this.ledger = await Ledger.open(this.o.cwd); this.root = await git.mainRoot(this.o.cwd);
+      try {
+        const saved: unknown = JSON.parse(await readFile(join(this.ledger.dir, 'drive', 'batch-isolated.json'), 'utf8'));
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+          for (const [id, commit] of Object.entries(saved)) if (typeof commit === 'string') this.batchIsolated.set(id, commit);
+        }
+      } catch { /* absent or unreadable isolation file: no records */ }
       try {
         const saved = JSON.parse(await readFile(join(this.ledger.dir, 'drive', 'waiting.json'), 'utf8')) as Record<string, { reason: string; since: string; attempt: number; candidate?: number }>;
         for (const [id, w] of Object.entries(saved)) if (typeof w.reason === 'string' && Number.isFinite(Date.parse(w.since)) && Number.isSafeInteger(w.attempt)) this.mergeWaiting.set(id, w);
@@ -678,6 +697,7 @@ export class Driver {
     // K6: first the measurements that ended, in the order they ended (their halts and rebases are in the state below).
     const handled = await this.reap(reports);
     const s = await loadState(ledger), cfg = driveConfig(s.plan);
+    this.pruneBatchIsolation(s);
     const mergeReady = mergeQueue(s).length > 0;
     for (const [id, wait] of this.mergeWaiting) {
       const n = s.nodes[id];
@@ -889,7 +909,7 @@ export class Driver {
     this.recordMergeWaiting(node);
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
     const m: Measurement = { do: what, node, attempt, at, ...(batch ? {batch} : {}), done: false, ended: Promise.resolve() };
-    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && { members: batch, trunk: s.trunk.commit });
+    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && new Map(batch.map(id => [id, s.nodes[id]!.candidate!.commit])));
     let busy: ActionReport | undefined;
     m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
       .finally(() => {
@@ -941,6 +961,7 @@ export class Driver {
     }
     // Wake reports carry the node's fact mark in the state after the measurements (their observations are facts).
     const now = await loadState(this.ledger!).catch(() => undefined);
+    if (now) this.pruneBatchIsolation(now);
     for (const r of reports) { await this.wake(r, now); out.push(r); this.emit(r, now); }
     if (failure) throw failure.e;
     return batch.length+swept;
@@ -1155,9 +1176,9 @@ export class Driver {
    * retry line plus the trunk drift notify, never a halt (ruling #559 c); any other refusal halts needing a human.
    */
   /** LE2: busy merge acquisition has the same back-off and status lifecycle as attest, never a halt. */
-  private async leasedMerge(node: string, attempt: number, lease: boolean, batch?: { members: string[]; trunk: string }): Promise<Ended> {
+  private async leasedMerge(node: string, attempt: number, lease: boolean, batch?: ReadonlyMap<string, string>): Promise<Ended> {
     try {
-      const finish = await withMachineLease({ cwd: this.root!, lease, dsa: this.dsa, noWait: true, priority:10, signal: this.abort.signal }, signal => batch ? this.mergeBatch(batch.members, batch.trunk, signal) : this.merge(node, attempt, signal));
+      const finish = await withMachineLease({ cwd: this.root!, lease, dsa: this.dsa, noWait: true, priority:10, signal: this.abort.signal }, signal => batch ? this.mergeBatch(batch, signal) : this.merge(node, attempt, signal));
       return { finish };
     } catch (e) {
       if (e instanceof OwedError && e.code === 'busy') {
@@ -1180,20 +1201,22 @@ export class Driver {
     catch (e) { if (!(e instanceof OwedError) || e.code === 'aborted' || e.code === 'busy') throw e; }
   }
   /**
-   * MT: one batch merge of `members` (planned on trunk `trunk`). A pass reports every member merged; any refusal is
-   * remembered for this trunk and reported as a retry: the next pass merges the members one at a time (never a halt).
+   * MQ2: a refused batch isolates its captured candidates before reporting the retry. New candidates are never
+   * isolated by a stale asynchronous result; the next state reconciliation drops obsolete records.
    */
-  private async mergeBatch(members: string[], trunk: string, signal?: AbortSignal): Promise<() => Promise<ActionReport[]>> {
+  private async mergeBatch(candidates: ReadonlyMap<string, string>, signal?: AbortSignal): Promise<() => Promise<ActionReport[]>> {
+    const members = [...candidates.keys()];
     const report = (node: string, outcome: string, detail: string): ActionReport => ({ do: 'merge', node, outcome, detail: oneLine(detail) });
     try {
       const r = leaseResult(await ops.mergeBatch({ cwd: this.o.cwd, as: DRIVE_PRINCIPAL, nodes: members, signal }));
       return async () => r.nodes.map(id => report(id, 'merged', `trunk ${r.commit.slice(0, 12)} (batch of ${r.nodes.length}: ${r.nodes.join(', ')})${leaseText(r).replace('\n', '; ')}`));
     } catch (e) {
       if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
-      this.batchRefused.add(`${trunk}\0${members.join('\0')}`);
+      for (const [id, commit] of candidates) this.batchIsolated.set(id, commit);
+      this.saveBatchIsolation();
       return async () => {
         const now = await loadState(this.ledger!), d = /trunk changed \(CAS\)/.test(e.message) ? await git.trunkDrift(this.root!, now.trunk.name, now.trunk.commit).catch(() => undefined) : undefined;
-        return [report(members[0]!, 'retry', `batch merge refused (${e.message}); ${members.join(', ')} merge one at a time from the next pass`), ...(d ? [driftReport(now, d)] : [])];
+        return [report(members[0]!, 'retry', `batch merge refused (${e.message}); ${members.join(', ')} merge alone until merged or resubmitted`), ...(d ? [driftReport(now, d)] : [])];
       };
     }
   }
