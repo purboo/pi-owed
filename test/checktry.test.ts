@@ -35,7 +35,7 @@ test('CT red: CLI check try meets fail/pass on exact commits, stores logs but no
     assert.deepEqual(data.results.map((x: {verdict:string;ok:boolean}) => [x.verdict,x.ok]),[['fail',true],['pass',true]]);
     assert.match(await readFile(data.results[0].log,'utf8'),/failure detail/);
     assert.deepEqual(await (await Ledger.open(r.cwd)).read(),[]);
-    const plain=await cli(r.cwd,['check','try','a','gate','--red',r.red,'--plan','plan.json']); assert.match(plain.stdout,/red .*: fail ✔ \(0\/1 tests, .* s\) log /);
+    const plain=await cli(r.cwd,['check','try','a','gate','--red',r.red,'--plan','plan.json']); assert.match(plain.stdout,/red .*\(.*tree [a-f0-9]{12}\): fail ✔ \(0\/1 tests, .* s\) log /);
   } finally { await r.cleanup(); }
 });
 
