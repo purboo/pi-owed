@@ -446,17 +446,18 @@ test('D17 (A): the detached driver carries no dsa call identity (DSA_EXEC/DSA_CA
     assert.equal(c.code, 0, c.stderr);
     const pid = Number(/^driver started: pid (\d+), log /m.exec(c.stdout)?.[1]);
     assert.ok(pid > 0, c.stdout); f.pids.push(pid);
-    assert.ok(c.stdout.trimEnd().endsWith(`\n${note}`), c.stdout);
+    assert.ok(c.stdout.includes(`\n${note}\n`), c.stdout);
+    assert.match(c.stdout.trimEnd(), /\nnote: no pi session follows this driver;.*`owed watch`.*$/);
     const env2 = environ(pid);
     assert.ok(!env2.some(e => e.startsWith('DSA_EXEC=') || e.startsWith('DSA_CALL=')));
     assert.ok(env2.includes(`DSA_HOME=${home}`));
     assert.equal((await f.cli(['drive', '--stop'])).stdout.trim(), 'stopped');
-    // Outside a dsa call: no note (DSA_EXEC empty: the test itself may run under a dsa hold).
+    // Outside a dsa call: no containment note (DSA_EXEC empty: the test itself may run under a dsa hold).
     const plain = await f.cli(['drive', '--detach'], { DSA_EXEC: '' });
     assert.equal(plain.code, 0, plain.stderr);
     const pid3 = Number(/^driver started: pid (\d+), log /m.exec(plain.stdout)?.[1]);
     assert.ok(pid3 > 0, plain.stdout); f.pids.push(pid3);
-    assert.doesNotMatch(plain.stdout, /note:/);
+    assert.doesNotMatch(plain.stdout, /note: started from inside a dsa call/);
     assert.equal((await f.cli(['drive', '--stop'])).stdout.trim(), 'stopped');
   } finally { await f.done(); }
 });
