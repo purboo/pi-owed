@@ -1,6 +1,6 @@
 # pi-owed
 
-**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.30.0](CHANGELOG.md)**.
+**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.31.0](CHANGELOG.md)**.
 
 Why use it?
 - Keep completion tied to a merge receipt, not an agent's success message.
@@ -133,12 +133,15 @@ In 0.20.1, `owed dispatch` retries compare-and-swap (CAS) refusals with fresh st
 
 `owed dispatch <node>` refuses when the node's `writes` overlap (using conservative literal prefixes before wildcards) those of another node with an open slot and names that node; `--allow-overlap` dispatches anyway and records the overlap in the dispatch entry. Default `owed status` and `owed why <node>` explain ready nodes skipped by the
 same predicate as the driver: writes overlap (with `owed dispatch <node>
---allow-overlap`), open-attempt capacity, or an owner decision. Same-pass
-reservations and removed nodes with open slots consume capacity. Owner-needed
-ready nodes appear once under Needs you. Current status ready lines and why
-use a live recorded `--max` override when available; other view callers outside
-summary/why read paths, and status/brief summaries, use plan `drive.max`
-(SPEC §9.8).
+--allow-overlap`), active-attempt capacity, or an owner decision. `max` counts
+non-accepted open attempts; accepted attempts are `waiting to merge` outside
+`max`, but all open attempts count toward the `2 × max` cap and reserve writes.
+Same-pass reservations and removed nodes with open slots consume active capacity.
+With pending merges, status adds `active <a> of max <m>, waiting to merge <p>`;
+without them it keeps the prior output. Owner-needed ready nodes appear once
+under Needs you. Current status capacity/ready lines and why use a live recorded
+`--max` override when available; view callers outside summary/why read paths
+use plan `drive.max` (SPEC §9.8).
 
 When trunk moves under an open slot, there is no need to abandon and redispatch. `owed rebase <node>` (the parent, or the writer inside its worktree) moves the slot base to the current trunk and invalidates the open candidate; the writer then runs the printed `git rebase --onto <new base> <computed upstream>` in the same worktree and submits again. Review blocks still bind the node. `owed why <node> --full` shows the previously reviewed patch and a hint, `git range-diff <old base>..<old commit> <new base>..<new commit>`, so a reviewer only has to review the conflict resolution. Recovery names the actual interrupted Git operation, including `git cherry-pick --abort` and `git revert --abort`, rather than always suggesting rebase abort.
 
@@ -344,7 +347,15 @@ For this small demonstration a person can perform the independent review. In a r
 
 Fresh init is delegated `owner:pi`; the driver performs genesis measurements through the existing attest/merge lifecycle. Under `OWED_CONFIRM=owner`, start refuses with explicit `owed init <file>` guidance and never opens a dialog. An uncovered downgrade refuses and names `owed plan <file> --note "<why>"`; record that explicit owner act with `--as owner:pi`, then start again. Allowance-covered changes retain their downgrade accounting. Refusals name the failed preflight and remedy. Plan/init remains recorded if a later launch fails; fix the launch and start again, not init again.
 
-An unchanged plan and live driver says `already running`, with no entry or log rotation. `max` (positive integer) and `stay` change only a newly started driver. Output has three lines: action (with lint warnings folded into it), driver state and next step. JSON/tool results are `{initialized, updated, plan, warnings, driver}`, with optional driver `alreadyRunning`; these are runtime fields, not ledger entries. Pi follows a reused driver from the current log end (no old wakes), a new one from its fresh beginning. Standalone CLI start has no pi session to wake; use it from pi or inspect driver status when needed.
+An unchanged plan and live driver says `already running`, with no entry or log rotation. `max` (positive integer) and `stay` change only a newly started driver. Tool output has three lines: action (with lint warnings folded into it), driver state and next step. CLI start adds `followed by pi session <first 8 characters>` when the driver's session is known, including reuse; otherwise it adds:
+
+```text
+note: no pi session follows this driver; its wakes reach only pi sessions opened in this repository. To be woken elsewhere, run `owed watch` (for example as a dsa command call).
+```
+
+JSON/tool results are `{initialized, updated, plan, warnings, driver}`, with optional driver `alreadyRunning`; CLI JSON also has `followedBy: <id> | null`. These are runtime fields. A tool start follows a reused driver from the current log end, a new one from its fresh beginning. `owed drive --detach` prints the same follower line.
+
+An agent without a pi session can wait with `owed watch [--after <offset>[:<ino>]] [--timeout s] [--json]`, for example in a durable dsa command call that wakes its caller on completion. Watch writes no files and revalidates wakes against the ledger and dsa. Without `--after` it starts at the current log end. Exit 0 delivers a wake or driver exit; exit 5 reports `no wake within <s> s`. Both print `next: owed watch --after <offset>:<ino>`: reuse that cursor to continue. An inode change starts the current log at zero; bare byte offsets remain accepted. Timeout seconds must be a nonnegative integer. Exit 3 says `no owed driver is running in <repo>; start one with owed start` with no `next:` line. JSON is `{lines, next, exit}`, with a cursor string in `next`. An old cursor can show a repeated wake line again.
 
 `owed start --restart` / `owed_start {restart:true}` drains a live driver's
 current action and in-flight measurements, waits up to ten seconds for its
@@ -379,7 +390,9 @@ rebase instructions. Unavailable inspection facts halt conservatively.
 Stopped-writer wakes, default why and status quote `writer says: "<final text>"`
 (or `writer gave no final text`) and offer `owed decide <node> --text "<ruling>" --writer`,
 also for non-ok seals. The whole reply is flattened: up to 600 Unicode code
-points in full, otherwise head 200/tail 380 with nearby-space cuts and up to
+points in full, otherwise head 200/tail 380: the head prefers a late sentence
+ending, then whitespace/CJK; the tail keeps the original ending and adjusts
+only its start to a nearby whitespace/CJK boundary. It retains up to
 three omitted commit and durable IDs each. Escaping is unchanged and recorded
 halts are not rewritten. dsa seal diagnostics append the ended-process total
 and at most three pid/commands (80 code points each). Full evidence retains
@@ -397,7 +410,9 @@ Writer packets/follow-ups ask for `decision_needed` (one sentence), numbered
 and `classification_candidates` with evidence and unproven explanations.
 Use structured ask fields when available, else text starting `Decision needed:`.
 Structured notices/wakes lead with DECISION and options, then context, details
-and each question's answer command; answer `"option <n>; <limits>"`. Plain asks
+and each question's answer command; answer `"option <n>; <limits>"`. Clipped
+fields prefer sentence/word/CJK boundaries and end in `…`; clipped details add
+`(full: pi-durable-subagents describe --key <rid> --json)` for the whole question. Plain asks
 keep their existing flow. Never submit a candidate believed to fail checks;
 submit reminders also say to ask when stopped for a parent decision.
 
@@ -439,7 +454,10 @@ one, the final sentence is used (one line, at most 300 characters). Full why
 keeps the note. Review acknowledgment validates before append: insufficient
 or underivable ack refuses with nothing recorded and names the required
 watermark. Read the rulings, then use `--ack-rulings latest` / tool
-`ack_rulings:"latest"` or a sufficient number; the alias records a number.
+`ack_rulings:"latest"`, a sufficient number, or a comma list of numbers
+(optionally including `latest`). Lists select their maximum; `latest` selects
+the latest applicable ruling. The tool also accepts a nonempty integer array;
+all forms record one numeric watermark, and malformed lists refuse.
 Trunk repair guidance names failing tests and the recorded plan path, or
 `owed edit --node-new` when no source exists. Existing repository notices
 retain their red text, waiting membership and remedies.
@@ -454,8 +472,8 @@ A single or batch CLI merge gives `<node> merged (<commit12>); measured <n>, wai
 
 `owed start` is the normal preflight/start entry. The low-level `owed drive`
 controls below remain for an initialized repository; unlike start, detached
-drive start refuses an already running driver. A standalone CLI has no pi
-wake recipient; pi follows a driver from the session's attachment point.
+drive start refuses an already running driver. Without a pi session, use
+`owed watch` to wait for its wakes.
 
 `owed drive` runs the mechanical loop — dispatch, writer, submit, attest,
 reviewers, merge — with [pi-durable-subagents](https://www.npmjs.com/package/pi-durable-subagents)
@@ -485,12 +503,16 @@ owed drive --stop     # stop it after its current action and in-flight measureme
 
 The plan's optional `drive:` block sets the writer and reviewer dsa agents
 (and models) for every node; a node may override them with its own `drive`
-(0.7.0), e.g. to route routine nodes to cheaper models:
+(0.7.0), e.g. to route routine nodes to cheaper models. The packaged default
+reviewer is `owed-reviewer`: it must record its verdict with `owed review` and
+may run checks in a scratch checkout, without editing the writer's or main
+checkout. To keep a custom profile, explicitly set `drive.reviewer.agent`
+globally or on the node; existing recorded launches keep their agent:
 
 ```yaml
 drive:
   writer:   { agent: worker,   model: "example/model-large:high" }
-  reviewer: { agent: reviewer, model: "example/model-large:high" }
+  reviewer: { agent: owed-reviewer, model: "example/model-large:high" }
 nodes:
   - id: docs-pass
     drive:
@@ -503,6 +525,19 @@ every intervening plan, projected onto members plus all global settings,
 is canonically unchanged. Relevant or transient member/global edits refuse;
 facts are recomputed after unrelated edits and indirect changes still refuse.
 Trunk, slot and candidate CAS and the latest guard remain binding (SPEC §7.21).
+A refused driver batch's candidates merge alone across trunk changes, new
+partners and restarts, until their commit changes, the node merges or its slot
+closes. Re-submitting the same commit keeps isolation. Missing or unreadable
+isolation state means no remembered isolation; status's ledger-only batch
+preview can still propose isolated members.
+
+After a `review-missing` halt, `owed resume <node>` gives the same sealed run
+one new verdict follow-up; another seal without a review halts again. Rejected
+or pruned runs cannot receive it, so their remedies omit resume. Builtin
+read-only reviewer guidance includes `owed edit --drive --set
+reviewer.agent=owed-reviewer --note "<why>"` for a new run of a later candidate,
+then owner review or `owed abandon <node>`. The edit does not replace the
+existing run.
 
 A node `drive` is not an obligation: changing it is never a downgrade, keeps
 the submitted candidate and affects only later launches (a re-launch resends
@@ -574,9 +609,13 @@ not a halt: the driver merges nothing and notifies once per change with
 `owed adopt --note "<why>"` (or the `git update-ref` that restores a rewound
 trunk); after the adopt its next pass merges. Every top-level pi
 session opened in the repository later follows a running driver from then on
-and is woken too; sessions inside a dsa call (`DSA_EXEC`/`DSA_CALL` set, e.g.
-dsa writers and reviewers in the repository's worktrees) do not attach by
-themselves (an explicit start still follows). Nobody has to poll
+and is woken too. Every owed tool call in a top-level session attaches to its
+target repository, including refusals. Sessions also discover their live
+drivers across repositories at most once every ten seconds, using the starting
+`DSA_SESSION` with `PI_SESSION_ID` as fallback outside dsa calls. Registry
+attachment starts at the log end: a wake written before attachment is seen
+again only when repeated or at the idle re-wake. Sessions inside dsa calls
+(`DSA_EXEC`/`DSA_CALL` set) never attach. Nobody has to poll
 `action: "status"`; `action: "stop"` stops it. The driver survives pi exiting.
 The driver carries no dsa call identity (`DSA_EXEC` and `DSA_CALL` are removed
 from its environment; `DSA_HOME` and the rest are kept). Started from inside a
@@ -811,6 +850,7 @@ owed edit auth-api --set 'review.min_rank=2' --note 'Require a senior review' --
 owed edit follow-up --node-new --set 'deps=[auth-api]' --set 'title=Verify integration' \
   --set 'writes=[test/integration/]' --note 'Add the integration task'
 owed edit --invariant unit --set 'timeout_s=120' --note 'Bound invariant execution' --as owner:pi
+owed edit --drive --set max=6 --set reviewer.agent=owed-reviewer --note 'Tune driver launches'
 ```
 
 Node paths are `title`, `brief`, `deps`, `writes`, `allow_only`, `later`, `review.count`,
@@ -818,7 +858,10 @@ Node paths are `title`, `brief`, `deps`, `writes`, `allow_only`, `later`, `revie
 mapping; id inferred) and `checks.<id>.<field>`. Repeat `--set path=yaml` and
 `--unset path`; sets run in order before unsets. `--node-new` adds a node from
 `deps`, `title`, `brief`, `writes`, `allow_only` and checks. `--invariant ID` edits a top-level
-invariant field. The source is `--plan FILE`, else the latest plan entry's path;
+invariant field. `--drive` edits or creates the top-level drive mapping, with
+relative paths such as `max`, `repairs`, `merge_batch` and `reviewer.model`,
+validated by the plan parser. It excludes other targets, `--node-new`,
+`--rule` and `--resume`. The source is `--plan FILE`, else the latest plan entry's path;
 unrecorded semantic file changes refuse. Comments are kept and text outside a
 simple block target keeps its layout. Flow containers and targets using anchors
 or aliases use whole-Document serialization; spacing may be normalized. Results
@@ -833,7 +876,7 @@ requests writer action. Resume accepts `--after a,b` and `--expect report` with
 their normal waiting/report behavior. Pre-write refusals record nothing and
 leave the file unchanged; file replacement follows the append, with existing
 recovery instructions if replacement fails. Tool targets are exclusive `node`,
-`nodes: string[]` or `invariant`; other parameters are `set`/`unset` string arrays,
+`nodes: string[]`, `invariant` or `drive: true`; other parameters are `set`/`unset` string arrays,
 `note`, optional `node_new`, `plan`, `rule`, `writer`, `resume`, `after` (string or
 string array), `expect: "report"`, `dry_run`, `as` and `cwd`.
 
@@ -1175,7 +1218,7 @@ reads prefixes. Cost is CLI-only, exclusive with metrics/counterfactual;
 
 The default `core` profile registers every owed tool but declares only `owed_status`, `owed_why`, `owed_decide`, `owed_drive`, `owed_start`, `owed_submit` and `owed_review` directly. Every other tool is deferred at load. Use `tool_search` when a tool is not declared, or the `owed <command>` CLI (`owed help` lists commands/flags).
 
-At `session_start`, owed follows the host's MCP discovery precedent: when exposure is supported and `tool_search` declares `reachesTools`, add that search to the active set if inactive. If search is unavailable or cannot activate, re-register deferred owed tools as direct; older hosts ignoring exposure treat them as direct already. Owed never removes active tools. `OWED_TOOLS=all` declares all tools directly and opts out of search activation. Manually disabling search later can hide deferred tools until the next session start; hosts without session hooks cannot run this fallback repair. SPEC §11 lists every registered tool and its parameters.
+At `session_start`, owed follows the host's MCP discovery precedent: when exposure is supported and `tool_search` declares `reachesTools`, add that search to the active set if inactive. If search is unavailable or cannot activate, re-register deferred owed tools as direct; older hosts ignoring exposure treat them as direct already. Owed never removes active tools. `OWED_TOOLS=all` declares all tools directly and opts out of search activation. Manually disabling search later can hide deferred tools until the next session start; hosts without session hooks cannot run this fallback repair. At `session_start` and every `agent_start`, owed also restores missing registered direct tools without removing active tools; unavailable or throwing host APIs are left alone. Deferred tool descriptions and parent-facing tool-name hints include the exact CLI alternative. SPEC §11 lists every registered tool and its parameters.
 
 Requires Node.js 22.19 or later, Git with `merge-tree --write-tree`, and Bash. For pi:
 
@@ -1534,7 +1577,9 @@ retain their recorded writes dialect; no automatic migration rewrites them.
   votes belong only to that batch: the driver retries members singly, each on
   its own tree, with its own eligible automatic remeasure. Batch observations
   never carry `remeasure_match`/`auto_remeasure`, block a member or count as its
-  remeasure receipt. The same failed set is not batched until trunk moves.
+  remeasure receipt. In 0.31, the same failed set stays suppressed on the same
+  trunk while its candidate commits are unchanged; driver isolation also keeps
+  refused candidates merging alone across trunk changes and restarts.
   Every member compares inherited debt with pre-train trunk. A later individual
   merge can identify old debt from a completed batch's trunk failure while still
   measuring its own tree; new/truncated failures and automatic retry conflicts

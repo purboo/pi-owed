@@ -2,7 +2,11 @@
 
 Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020027) gives the complete public contract.
 
-## Current release: 0.29.0
+## Current release: 0.31.0
+
+Plans and ledgers from 0.30.0 replay unchanged; no new ledger kinds or fields. New reviewer launches default to the packaged `owed-reviewer`; explicitly set global or node `drive.reviewer.agent` to keep a custom profile. Recorded launches keep their agent. Accepted attempts waiting to merge no longer consume `max`, but count toward the `2 × max` open-attempt cap. Driver batch isolation survives restarts. Restart upgraded drivers/pi sessions for the runtime behavior; `owed watch`, `owed edit --drive` and acknowledgment lists need the 0.31 input surface. Dsa requirements remain unchanged: >= 1.0.27 for the driver, >= 1.1.0 for durable-writer waits and lease options, >= 1.2.0 for structured asks. Earlier incompatible features below keep their upgrade requirements.
+
+## 0.29.0
 
 No ledger format, entry kind, entry field, enum value or plan key changes from 0.28.0. Old ledgers and snapshots replay identically; version-bound disk snapshots are rebuilt on upgrade. The new durable-writer wait/seal and yield/priority lease paths need pi-durable-subagents >= 1.1.0. Older dsa omits wait/seal facts and keeps 0.28 writer-wait behavior; confirmed unknown `--yield`/`--priority` options fall back once per option/process, never rerunning a measured command. Held-ruling display, quotes, plan-change sweep aborts, tagged cleanup, lease-output classification, probe applicability and housekeeping do not require that dsa upgrade. Restart drivers/sessions to use the new runtime routing and displays; earlier incompatible entries below still require their upgrade order.
 
