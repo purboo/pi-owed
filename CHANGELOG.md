@@ -1,5 +1,107 @@
 # Changelog
 
+## 0.31.0
+
+Plans and ledgers from 0.30.0 replay unchanged; no new ledger kinds or fields
+are added. New reviewer launches default to the packaged `owed-reviewer` when
+no `drive.reviewer` agent is set. Keep a custom reviewer by explicitly setting
+`drive.reviewer.agent` globally or on a node; recorded launches keep their
+agent. By default, accepted attempts waiting to merge no longer consume `max`,
+refused batch candidates stay isolated across driver restarts, and top-level
+pi sessions discover their drivers across repositories. The dsa requirements
+stay as in 0.30.0: pi-durable-subagents >= 1.0.27 for the driver, >= 1.1.0 for
+durable-writer waits and lease options, and >= 1.2.0 for structured asks.
+
+- **Owed tools attach the session to the target driver.** Every owed tool call
+  in a top-level pi session follows the driver in its target repository after
+  the call, including refusals. Following the same driver again preserves the
+  pending wakes. Sessions inside dsa calls do not attach.
+- **Session drivers are found across repositories.** A top-level pi session
+  discovers live drivers belonging to it at most once every ten seconds,
+  regardless of its working directory. Discovery uses the starting
+  `DSA_SESSION`, with `PI_SESSION_ID` as fallback outside dsa calls; stale
+  registrations are ignored and unavailable discovery never fails a driver or
+  tool. Attachment starts at the log end: a wake written before attachment is
+  seen again only when repeated or at the idle re-wake.
+- **CLI start says who follows.** `owed start` (including reuse) and
+  `owed drive --detach` append `followed by pi session <first 8 characters>`
+  when the driver's session is known. Otherwise the line is:
+  ``note: no pi session follows this driver; its wakes reach only pi sessions opened in this repository. To be woken elsewhere, run `owed watch` (for example as a dsa command call).``
+  JSON adds `followedBy: <id> | null`; tool replies keep their form.
+- **Wait for wakes without a pi session.**
+  `owed watch [--after <offset>[:<ino>]] [--timeout s] [--json]` reads driver
+  wakes and revalidates them against the ledger and dsa, without taking the
+  driver lock or writing files. Without a cursor it starts at the current log
+  end. Exit 0 delivers a wake batch or driver exit, followed by
+  `next: owed watch --after <offset>:<ino>`; pass that cursor to continue.
+  A different inode resumes the current log from zero; bare offsets remain
+  accepted. Malformed cursors give a usage error naming `<offset>[:<ino>]`.
+  Exit 3 prints `no owed driver is running in <repo>; start one with owed start`
+  with no `next:` line. Exit 5 prints `no wake within <s> s` and the next
+  cursor. Timeout seconds must be a nonnegative integer; omission waits until
+  a wake or exit. JSON is `{lines, next, exit}`, with `next` a cursor string.
+  Re-running with an old cursor can show a repeated wake line again.
+- **The default reviewer can record its verdict.** The package includes
+  `owed-reviewer`, which inspects the candidate, may run checks in its own
+  scratch checkout and must run `owed review`. It may not edit the writer's
+  worktree or main checkout. Explicit global or node reviewer agents remain
+  selected; the new default changes no acceptance key or vote rule.
+- **Missing reviews have usable recovery commands.** After a `review-missing`
+  halt, `owed resume <node>` gives the same sealed reviewer run one more
+  verdict follow-up; another seal without a review halts again. Rejected or
+  pruned runs cannot take follow-ups, so their remedies omit resume. For the
+  builtin read-only profile, guidance next offers
+  `owed edit --drive --set reviewer.agent=owed-reviewer --note "<why>"`,
+  affecting a new run of a later candidate, then
+  `owed review <node> --ok|--block --rank <1-3> --note "<note>" --as owner:<id>`
+  and `owed abandon <node>`. The edit never replaces the existing run.
+- **Direct tools return in resumed sessions.** At session start and every
+  agent start, owed restores missing registered direct tools while keeping
+  existing active tools. Unsupported or throwing host tool APIs are left alone.
+- **Tool guidance includes the CLI alternative.** Deferred descriptions give
+  the exact `owed <command>` fallback, including multiword commands such as
+  `owed check try`. Parent-facing tool-name hints also give their CLI form.
+- **Merge waits leave capacity for active work.** `max` counts open attempts
+  whose phase is not accepted; accepted attempts are `waiting to merge`.
+  Total open attempts are capped at `2 × max`, and accepted slots still reserve
+  their writes. With pending merges, status shows
+  `active <a> of max <m>, waiting to merge <p>`. Dispatch skips explain either
+  `ready, not dispatched: <a> active of max <m> (<p> waiting to merge)` or
+  `ready, not dispatched: <o> open attempts reach the cap 2 × max = <2m> (<p> waiting to merge)`.
+- **Refused batch candidates merge alone across restarts.** After a batch
+  refusal, its members stay out of driver batches even when trunk or partners
+  change. The report says `batch merge refused (<reason>); <members> merge alone until merged or resubmitted`.
+  Isolation ends when the candidate commit changes, the node merges or its
+  slot closes; re-submitting the same commit does not lift it. Missing or
+  unreadable isolation state means no remembered isolation. Status's batch
+  preview uses only ledger facts and can still propose isolated members.
+- **Review acknowledgments accept lists.** `--ack-rulings` accepts `latest`,
+  one ruling number or `--ack-rulings <n>,<m>`, optionally containing `latest`. A list
+  selects its maximum; `latest` selects the latest applicable ruling. The
+  tool's `ack_rulings` also accepts a nonempty integer array. Invalid forms
+  refuse before recording; all forms retain one numeric watermark. Read the
+  applicable rulings before acknowledging them.
+- **Incomplete genesis refusals name the remedy.** Adoption and merge refusals
+  for missing initial invariant observations now give `owed attest --genesis`,
+  matching status guidance.
+- **Edit driver settings directly.**
+  `owed edit --drive --set <path>=<value> [--unset <path>] --note "<why>"`
+  (tool `owed_edit` with `drive: true`) edits or creates the top-level `drive`
+  mapping. Paths such as `max`, `repairs`, `merge_batch`, `writer.agent` and
+  `reviewer.model` use the plan parser's keys and types. It preserves comments
+  and layout outside simple targets and follows ordinary plan authority,
+  downgrade and dry-run rules. Node, nodes, invariant and node-new targets,
+  and rule/resume options, cannot be combined with drive edits.
+- **Clipped messages keep readable boundaries.** Bounded questions, review
+  asks and driver evidence prefer a late sentence ending, then whitespace or
+  a CJK character boundary, with `…` when clipped. Long writer replies keep
+  their original ending. Clipped structured details append
+  `(full: pi-durable-subagents describe --key <rid> --json)` to retrieve the
+  full question; text that fits stays unchanged.
+
+Source grew by 273 lines net across 14 TypeScript files: 367 insertions and
+94 deletions since 0.30.0.
+
 ## 0.30.0
 
 Plans without the new fields keep their existing behavior, keys and replay.
