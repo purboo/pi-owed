@@ -698,11 +698,11 @@ test('D15.1 (widened): describe reporting a reviewer run rejected halts review-m
   const r = submitted(); r.pass(); r.launchReviewer(1);
   const c = r.state().nodes.a!.candidate!;
   const a = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'rejected', error: 'unknown agent reviewer' })));
-  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'human', reason: `review-missing: reviewer run ${R(1)} sealed rejected: unknown agent reviewer without recording review on candidate #${c.seq}; ${rejectedFixed('a')}` });
-  // Any other sealed status of the reviewer first gets the verdict follow-up (F1.2), then the plain review-missing text.
+  assert.deepEqual(a, { do: 'halt', node: 'a', attempt: 1, needs: 'human', reason: `review-missing: reviewer run ${R(1)} sealed rejected: unknown agent reviewer without recording review on candidate #${c.seq}; remedies: owed edit --drive --set reviewer.agent=owed-reviewer --note "<why>"; owed review a --ok|--block --rank <1-3> --note "<note>" --as owner:<id>; owed abandon a; this run cannot take follow-ups; builtin reviewer is read-only and may refuse to record; the agent edit applies to a new reviewer run of a later candidate` });
+  // Any other sealed status first gets the verdict follow-up (F1.2), then the ordered RM1 remedies.
   const v = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'x' })));
   assert.ok(v?.do === 'send' && v.reason === 'verdict', JSON.stringify(v));
   r.send(R(1), 'verdict');
   const f = act(r, runsOf(okWriter(), view(R(1), 'sealed', { status: 'failed', error: 'x' })), { applied: applied(r) });
-  assert.ok(f?.do === 'halt' && !f.reason.includes('owed abandon'), JSON.stringify(f));
+  assert.ok(f?.do === 'halt' && f.reason.includes('owed abandon'), JSON.stringify(f));
 });

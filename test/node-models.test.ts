@@ -38,7 +38,7 @@ test('node drive: unknown keys and bad types are errors (same validation as the 
   bad('    drive:\n      reviewer: { model: "  " }\n', /nodes\[0\]\.drive\.reviewer\.model: expected non-empty string/);
   // The plan-level block keeps its own validation and defaults.
   assert.throws(() => parsePlan(yamlPlan('', 'drive:\n  writer: { agent: "" }\n')), /drive\.writer\.agent: expected non-empty string/);
-  assert.deepEqual(parsePlan(yamlPlan('', 'drive:\n  writer: { model: m }\n')).drive, { max: 4, repairs: 2, writer: { agent: 'worker', model: 'm' }, reviewer: { agent: 'reviewer' } });
+  assert.deepEqual(parsePlan(yamlPlan('', 'drive:\n  writer: { model: m }\n')).drive, { max: 4, repairs: 2, writer: { agent: 'worker', model: 'm' }, reviewer: { agent: 'owed-reviewer' } });
 });
 
 test('a plan without node drive keeps its canonical bytes and sha; drive: {} gives the same sha', () => {
@@ -165,5 +165,5 @@ test('owed why shows the effective Drive line only when the node sets drive', ()
   const plainText = renderReceipt(receipt(r.state(), r.entries, 'b'));
   assert.doesNotMatch(plainText, /^Drive:/m);
   const both = rig(mkPlan(undefined, { drive: { writer: { agent: 'w', model: 'm' } } }));
-  assert.match(renderReceipt(receipt(both.state(), both.entries, 'a')), /^Drive: writer w \(m\) · reviewer reviewer$/m);
+  assert.match(renderReceipt(receipt(both.state(), both.entries, 'a')), /^Drive: writer w \(m\) · reviewer owed-reviewer$/m);
 });
