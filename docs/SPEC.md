@@ -1547,6 +1547,21 @@ is recorded as `error`: `probe not applicable: trunk lacks <path>, which the
 candidate adds` (escaped, bounded to 160 characters). Absolute paths outside
 the measurement checkout are ignored. This diagnostic cannot make a merge
 trunk-red; the merge check's ordinary failure still refuses the merge.
+In 0.31.1 this includes Node's CJS and ESM `Cannot find module '<path>'`
+diagnostics. Bare module names without `/` are excluded.
+
+For a new probe where neither side has failed test names, owed compares
+failure lines before recording it: the last line matching
+`/error|Error|ERR_|FAIL|fail|refus|Cannot|not found/`, or the last non-empty
+line otherwise. Known measurement checkout roots and historical absolute
+`<ledger directory>/trees/<directory>/` prefixes (original and canonical
+paths) become the same token, and whitespace is collapsed. Two present,
+different lines record the probe as `error` with
+`probe inconclusive: trunk fails differently (<bounded trunk line>)`.
+The merge failure keeps its ordinary refusal and `merge failure output:`
+detail. Equal lines, a missing line or an unreadable log keep the existing
+classification. This is runtime probe classification; historical observations
+and replay are unchanged.
 
 A failing probe classifies the merge failure as `trunk-red` when every
 merge-tree failed test name is among the probe's failed names, or neither
@@ -1628,10 +1643,19 @@ new merge-key waivers require 0.14's validation and scope interpretation.
 whose current trunk key passes (without a fail) prevents a node-check failure
 on that tree being classified as trunk-red. When trunk moved N >= 1 commits
 since the slot base, the FIRST sentence of the CLI refusal, driver halt and
-Needs-you reason is `merge tree does not pass <inv>[, ...] (trunk passes);
-trunk moved <N> commits since the slot base: rebase → owed rebase <node>`.
-It precedes even `Node <node> current candidate is not yet accepted`; no
-waive/sweep/adopt trunk-red suggestion replaces the rebase remedy. An unmoved
+Needs-you reason begins `merge tree does not pass <inv>[, ...] (trunk passes)`.
+In 0.31.1 its advice compares paths changed from the slot base to trunk with
+paths changed from the slot base to the candidate:
+
+- With overlap: `; trunk moved <N> commits since the slot base and changed files this node changes (<a>, <b>, +<remaining>): rebase → owed rebase <node>`.
+- Without overlap: `; trunk moved <N> commits since the slot base but changed none of the files this node changes, so the node's own change is the likely cause: owed decide <node> --writer --text "<repair instruction>" (rebase → owed rebase <node> only reproduces it on the current trunk)`.
+- If Git cannot compute the paths: `; trunk moved <N> commits since the slot base: rebase → owed rebase <node>`.
+
+The overlap lists at most two escaped, bounded paths and the remaining count
+when needed. `owed decide --writer` sends a writer ruling requiring a new
+submission after the halt; plain `owed resume` can retry the same merge.
+The lead precedes even `Node <node> current candidate is not yet accepted`;
+no waive/sweep/adopt trunk-red suggestion replaces its advice. An unmoved
 trunk gets the normal refusal: rebase is not the remedy for the candidate's
 own break.
 
