@@ -146,6 +146,7 @@ export async function driveStart(o: { cwd: string; max?: number; stay?: boolean;
     // when an inherited DSA_SESSION would otherwise reach the driver once DSA_EXEC/DSA_CALL are removed.
     const session = startingSession(process.env);
     if (session !== undefined) env.DSA_SESSION = session; else delete env.DSA_SESSION;
+    if (process.env.DSA_EXEC || process.env.DSA_CALL) delete env.PI_SESSION_ID;
     const fd = openSync(log, 'a');
     const child = (() => { try { return spawn(argv[0]!, argv.slice(1), { cwd: repo, env, detached: true, stdio: ['ignore', fd, fd] }); } finally { closeSync(fd); } })();
     const run: { ended?: string } = {};
@@ -479,6 +480,8 @@ export interface FollowerOptions {
   log: string; repo: string; pid: number; start?: string; since?: string;
   /** Byte offset to start at; default the log's size now (no replay). */
   from?: number;
+  /** CLI resume cursor: an inode mismatch starts the current log from zero. */
+  fromIno?: number;
   /** `step` awaits delivery acknowledgments; `tick` is the synchronous CLI path. */
   deliver: (content: string) => unknown;
   intervalMs?: number;
@@ -595,9 +598,11 @@ export class Follower {
     this.o = o;
     let size = 0;
     try { const st = statSync(o.log); size = st.size; this.file = { dev: st.dev, ino: st.ino }; } catch { size = 0; }
-    this.offset = o.from ?? size;
+    this.offset = o.fromIno !== undefined && o.fromIno !== this.file?.ino ? 0 : o.from ?? size;
   }
   get pid(): number { return this.o.pid; }
+  /** FW4: byte position and identity of the log last read, never a fresh stat of a possibly rotated path. */
+  get next(): string { return `${this.offset}:${this.file?.ino ?? 0}`; }
   /** A new driver of the same log keeps held lines and ride-alongs from its predecessor. */
   reconnect(o: { pid: number; start?: string; since?: string }): this {
     Object.assign(this.o, o); this.ended = false; this.last.clear(); return this;
@@ -786,7 +791,7 @@ export class DriveWatch {
   private readonly hooks?: WatchHooks;
   constructor(deliver: (content: string) => void, intervalMs?: number, hooks?: WatchHooks) { this.deliver = deliver; this.intervalMs = intervalMs; if (hooks) this.hooks = hooks; }
   get size(): number { return this.followers.size; }
-  follow(o: { log: string; repo: string; pid: number; start?: string; since?: string; from?: number }): Follower {
+  follow(o: { log: string; repo: string; pid: number; start?: string; since?: string; from?: number; fromIno?: number }): Follower {
     const previous = this.followers.get(o.log);
     if (previous && !previous.stopped) return previous.reconnect(o);
     const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo) } : {};
@@ -794,7 +799,7 @@ export class DriveWatch {
     this.followers.set(o.log, f);
     return this.intervalMs === 0 ? f : f.start();
   }
-  async attach(cwd: string): Promise<Follower | undefined> {
+  async attach(cwd: string, from?: number, fromIno?: number): Promise<Follower | undefined> {
     let dir: string;
     try { dir = await driveDir(cwd); } catch { return undefined; }
     const lock = readLock(dir);
@@ -802,7 +807,7 @@ export class DriveWatch {
     const log = logPath(dir), have = this.followers.get(log);
     if (have && have.pid === lock.owner.pid) return have;
     const repo = await git.mainRoot(cwd).catch(() => cwd);
-    return this.follow({ log, repo, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}) });
+    return this.follow({ log, repo, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}), ...(from !== undefined ? { from } : {}), ...(fromIno !== undefined ? { fromIno } : {}) });
   }
   /** One step of every follower now (agent_settled, H1.1a); the messages delivered. */
   async flush(): Promise<string[]> {
