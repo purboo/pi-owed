@@ -107,6 +107,18 @@ exit codes and generated log paths are recorded in
 5. `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`
    (1800 s; starts only when preceding checks have their expected exits).
 
+## R-031-RA-5 package closure test placement
+
+Moved only RA1's package discovery and publish assertions into
+`test/review031-package.test.ts`. Node checks measure `package.json` from the
+base closure, so these assertions belong to the suite invariant, which measures
+the candidate closure. RA1 retains every agent profile assertion; no gate,
+check, plan or production code changed. bench verification covers typecheck,
+both test files on the candidate, and `test/review031.test.ts` in an isolated
+copy with `package.json` from `05440a0`. Exact commands, exits and log paths are
+in `/tmp/owed-o-review-ra5-checks.results.log`. The full suite is not rerun for
+this test-only move, as authorized by R-031-RA-5.
+
 ## Source budget and delivery
 
 `git diff --stat ebf090b -- src`:
