@@ -109,6 +109,12 @@ async function fixture(p = plan()) {
 }
 /** At most 3 lines besides the lint warnings, which each take their own line (SF6). */
 const compact = (text: string) => assert.ok(text.trim().split('\n').filter(l => !l.startsWith('warning:')).length <= 3, text);
+/** FW3 adds exactly one CLI-only followership line; the tool's original bound remains unchanged. */
+const compactCli = (text: string) => {
+  const lines = text.trim().split('\n');
+  assert.match(lines.pop()!, /^(followed by pi session \S{1,8}|note: no pi session follows this driver;.*`owed watch`.*)$/);
+  compact(lines.join('\n'));
+};
 
 // DSA_CALL keeps session_start from attaching watchers to /tmp; the tool-exposure handling runs regardless.
 test('SF1 core with a reaching tool_search: deferred registration at load, tool_search activated, exactly core + tool_search declared', async () => {
@@ -152,12 +158,12 @@ test('SF2 CLI fresh start initializes delegated owner, starts a staying driver a
   const f=await fixture();
   try {
     const first=await cli(f.cwd,['start','--plan','plan.json','--max','2','--stay']);
-    assert.equal(first.code,0,first.stderr); compact(first.stdout); assert.match(first.stdout,/initialized ledger/); assert.match(first.stdout,/warning: node a has no checks/);
+    assert.equal(first.code,0,first.stderr); compactCli(first.stdout); assert.match(first.stdout,/initialized ledger/); assert.match(first.stdout,/warning: node a has no checks/);
     const before=await entries(f.cwd), genesis=before[0]!;
     assert.equal(genesis.kind,'genesis'); assert.equal(genesis.by,'owner:pi'); assert.equal(genesis.channel,'delegated');
     assert.equal(genesis.kind === 'genesis' && genesis.path,'plan.json');
     const driver=await driveStatus({cwd:f.cwd}); assert.equal(driver.running,true);
-    const again=await cli(f.cwd,['start']); assert.equal(again.code,0,again.stderr); compact(again.stdout); assert.match(again.stdout,/already running/);
+    const again=await cli(f.cwd,['start']); assert.equal(again.code,0,again.stderr); compactCli(again.stdout); assert.match(again.stdout,/already running/);
     assert.deepEqual(await entries(f.cwd),before);
     assert.equal((await driveStatus({cwd:f.cwd})).pid,driver.pid);
     assert.equal(existsSync(`${driver.log}.1`),false,'no rotation of the live driver log');
@@ -172,7 +178,7 @@ test('SF2 fresh start leaves genesis measurement to the driver and passes max to
     const agents=join(process.env.FAKE_DSA_DIR!,'agents'); await mkdir(agents,{recursive:true});
     await writeFile(join(agents,'a-writer.sh'),`echo done > a.txt; git add a.txt; git commit -qm done; "${process.execPath}" "${OWED}" submit a`);
     const out=await cli(f.cwd,['start','--plan','plan.json','--max','1','--stay']);
-    assert.equal(out.code,0,out.stderr); compact(out.stdout);
+    assert.equal(out.code,0,out.stderr); compactCli(out.stdout);
     const deadline=Date.now()+30_000;
     let es=await entries(f.cwd);
     while (!es.some(e => e.kind === 'dispatch') || !es.some(e => e.kind === 'obs' && e.obligation === 'inv:health')) {
@@ -215,7 +221,7 @@ test('SF2 start rereads the latest plan path, records a changed plan once, and i
   try {
     assert.equal((await cli(f.cwd,['start','--plan','plan.json','--stay'])).code,0);
     const next=plan(); next.nodes[0]!.review.count=2; await f.put('plan.json',JSON.stringify(next));
-    const changed=await cli(f.cwd,['start']); assert.equal(changed.code,0,changed.stderr); compact(changed.stdout); assert.match(changed.stdout,/updated plan[\s\S]*already running/);
+    const changed=await cli(f.cwd,['start']); assert.equal(changed.code,0,changed.stderr); compactCli(changed.stdout); assert.match(changed.stdout,/updated plan[\s\S]*already running/);
     const before=await entries(f.cwd); assert.equal(before.at(-1)!.kind,'plan'); assert.equal(before.at(-1)!.by,'parent:pi');
     await f.put('plan.json',JSON.stringify(next,null,2));
     const same=await cli(f.cwd,['start']); assert.equal(same.code,0,same.stderr); assert.deepEqual(await entries(f.cwd),before);

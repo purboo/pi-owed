@@ -146,6 +146,7 @@ export async function driveStart(o: { cwd: string; max?: number; stay?: boolean;
     // when an inherited DSA_SESSION would otherwise reach the driver once DSA_EXEC/DSA_CALL are removed.
     const session = startingSession(process.env);
     if (session !== undefined) env.DSA_SESSION = session; else delete env.DSA_SESSION;
+    if (process.env.DSA_EXEC || process.env.DSA_CALL) delete env.PI_SESSION_ID;
     const fd = openSync(log, 'a');
     const child = (() => { try { return spawn(argv[0]!, argv.slice(1), { cwd: repo, env, detached: true, stdio: ['ignore', fd, fd] }); } finally { closeSync(fd); } })();
     const run: { ended?: string } = {};
@@ -598,6 +599,8 @@ export class Follower {
     this.offset = o.from ?? size;
   }
   get pid(): number { return this.o.pid; }
+  /** FW4: byte position after the last complete log line read. */
+  get next(): number { return this.offset; }
   /** A new driver of the same log keeps held lines and ride-alongs from its predecessor. */
   reconnect(o: { pid: number; start?: string; since?: string }): this {
     Object.assign(this.o, o); this.ended = false; this.last.clear(); return this;
@@ -794,7 +797,7 @@ export class DriveWatch {
     this.followers.set(o.log, f);
     return this.intervalMs === 0 ? f : f.start();
   }
-  async attach(cwd: string): Promise<Follower | undefined> {
+  async attach(cwd: string, from?: number): Promise<Follower | undefined> {
     let dir: string;
     try { dir = await driveDir(cwd); } catch { return undefined; }
     const lock = readLock(dir);
@@ -802,7 +805,7 @@ export class DriveWatch {
     const log = logPath(dir), have = this.followers.get(log);
     if (have && have.pid === lock.owner.pid) return have;
     const repo = await git.mainRoot(cwd).catch(() => cwd);
-    return this.follow({ log, repo, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}) });
+    return this.follow({ log, repo, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}), ...(from !== undefined ? { from } : {}) });
   }
   /** One step of every follower now (agent_settled, H1.1a); the messages delivered. */
   async flush(): Promise<string[]> {

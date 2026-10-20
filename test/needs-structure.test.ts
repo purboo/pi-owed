@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 type Class = 'help/usage' | 'comment' | 'Git commit message' | 'executable argv' | 'diagnostic example' | 'historical text' | 'Git-derived status addition' | 'operation refusal' | 'cycle-blocked remedy';
 type Site = { file: string; fn: string; literal: string; comment: boolean };
 type Registered = [file: string, fn: string, kind: Class, reason: string, literal: string];
-const acts = /\bowed\s+(?:start|decide|answer|init|plan|rule|edit|amend|dispatch|submit|rebase|attest|review|waive|defer|abandon|resume|approve|evidence|merge|adopt|status|idle|why|report|brief|verify|sweep|escape|decoy|gc|drive|help|version)\b|\bowed\s+\$\{/;
+const acts = /\bowed\s+(?:start|decide|answer|init|plan|rule|edit|amend|dispatch|submit|rebase|attest|review|waive|defer|abandon|resume|approve|evidence|merge|adopt|status|idle|why|report|brief|verify|sweep|escape|decoy|gc|drive|watch|help|version)\b|\bowed\s+\$\{/;
 function enclosing(node: ts.Node): string {
   let name = '<module>';
   for (let p: ts.Node | undefined = node; p; p = p.parent) {
@@ -67,9 +67,12 @@ const digest = (literal: string): string => createHash('sha256').update(literal)
 const at = (file: string, fn: string, kind: Class, reason: string, literals: string[]): Registered[] => literals.map(literal => [file, fn, kind, reason, literal]);
 const registered: Registered[] = [
   ...at('src/answer.ts', 'rulingDeliveryWarnings', 'cycle-blocked remedy', 'R-028-64: views.oneLine has other callers; needs -> views -> needs.', ['c755286339b655ec6008549ca5bc9fc371efb94b4af1c4e74b2266aa0d6d362d', '0733c972e32508b7edd7ac6726c7f52e1b1e70d6f814dfc0589f3858087cbffd', '461bda46a50609e8923b7485a99c49bf6aa6ed1d5518330d0911c59e7de6dc90']),
-  ...at('src/cli.ts', 'HELP', 'help/usage', 'SM1/SM3 and prior CLI grammar: list acknowledgments and drive edit targets.', ['5f18afcaa3cb93c83eb9a98c15aeae1b31dcb81c7c6aab93b24fe60dda48dd19']),
+  ...at('src/cli.ts', 'HELP', 'help/usage', 'SM1/SM3, TB1/HP1, AO2, CT1, ME1/R-030-ME-1 and FW4: CLI grammar includes list acknowledgments, drive edit targets, waiver trackers, allow-only caps, exact-commit check try diagnostics, batch edit targets, literal comma-ID precedence and driver watch cursors/timeouts.', ['3d66e4793d66d3b17e4e6fc457e77f3f3b32864993a01b8e3f7002517afc3d7d']),
   ...at('src/reducer.ts', 'adoptGuard', 'operation refusal', 'SM2: incomplete genesis refusal names the existing completion command.', ['67821012b668cefdeda42e54cfa2ae3880bfb7e4ad66bf74624ec904f5b5e1eb']),
   ...at('src/reducer.ts', 'scopedMergeGuard', 'operation refusal', 'SM2: same incomplete genesis refusal for merge.', ['67821012b668cefdeda42e54cfa2ae3880bfb7e4ad66bf74624ec904f5b5e1eb']),
+  ...at('src/watch.ts', 'watchDriver', 'help/usage', 'FW4: initialization guidance when no live driver can be followed.', ['5666c80c66974b3866911c7f86dc7a05e0f9255357ad97a6793b851ab2089292']),
+  ...at('src/watch.ts', 'followText', 'help/usage', 'FW3: CLI followership disclosure and read-only watch guidance.', ['7834dc488707419bf8be0a28a003fea97b16f96dc21f0390525e29a346d4d7ef']),
+  ...at('src/watch.ts', 'watchText', 'help/usage', 'FW4: exact next byte cursor for continuing the read-only follower.', ['a79499678780c187d81bb8508eaf5ea7fc3ae4fa97e9c5a08f1e88e8d6f67005']),
   ...at('src/cli.ts', 'main', 'historical text', 'Runtime version label, not an act.', ['8d2a0da087698b1c2364c3c7775ef339a80779374bf20887c92c1699030a9e56']),
   ...at('src/cli.ts', 'main', 'comment', 'Source commentary only.', ['f512c3053e124bcb1d3bfe911409b51eb80a0d81d2c62f44b6551efa2b414707', 'd1356cf0fadf27be887f3f5a63579e6aef0b53d52179e3a651c63269fed967dd', '0cc59866549a3b0037f60fb70c6b26ca393013004592d6347485d40b2a76fcf9']),
   ...at('src/cli.ts', 'main', 'help/usage', 'R-028-61: agent submit instructions.', ['8beef719f1119e332edddddb73e4eaca8f35a6e65a372e482dfdf7c56580e854']),

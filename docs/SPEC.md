@@ -6548,6 +6548,18 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   <id>` or `no pi session: runs show only in pi-durable-subagents status / the
   CLI`, `--json` adds `session` when recorded, and the `/owed` driver line
   ends with `; ` and the same text. No driver running: no session line.
+- **Session discovery (0.31).** Each live driver atomically registers
+  `{repo, pid, start, session?, at}` in
+  `<state>/owed/drivers/<sha256(main repository root), first 16 hex>.json`,
+  where `<state>` is `$XDG_STATE_HOME` or `~/.local/state`. The entry's session
+  is the lock's existing `DSA_SESSION`, falling back to `PI_SESSION_ID` only
+  when absent; both are ignored inside a dsa call. The lock and dsa run
+  session semantics above are unchanged. Normal and hard-stop exits remove
+  the registration; dead or reused pids are ignored. Registry failures never
+  fail a driver or tool. Top-level pi sessions scan on their tick, at most
+  once every 10 seconds, and follow matching live entries from any repository.
+  The session id comes from pi's context, then `DSA_SESSION`, then
+  `PI_SESSION_ID`. Old runtime files without a session remain usable.
 - **Loop.** Passes run back to back while they make progress (at most 20;
   progress = the ledger head advanced, dsa applied a request or an ended
   measurement was handled in the pass; starting a measurement is not
@@ -6681,11 +6693,33 @@ polling.
   `--now` only with `--stop`; `--max` not with `--status`/`--stop` (it stays
   valid with `--once`); `--json` with any. The tool refuses `now` without
   `stop` and `max` with `status`/`stop` (usage).
+- **CLI follower information (0.31).** `owed start` and `owed drive --detach`
+  add `followed by pi session <first 8 characters>` when the driver's registry
+  session is known, including reused drivers. Otherwise they add
+  `note: no pi session follows this driver; its wakes reach only pi sessions opened in this repository. To be woken elsewhere, run \`owed watch\` (for example as a dsa command call).`
+  JSON adds `followedBy: <id> | null`; tool replies keep their existing form.
+- **Watch (0.31).** `owed watch [--after <offset>] [--timeout <s>] [--json]`
+  reads the repository's driver log without taking the driver lock or writing
+  the ledger. It uses the session follower's wake lines, batch revalidation
+  against ledger and dsa, and rotation handling, without the busy hold. With
+  no cursor it starts at the current log size, like session attach; `--after`
+  starts at that byte offset. Both numeric options are nonnegative integers.
+  It exits 0 on a ready wake batch or driver exit, printing the wake and then
+  `next: owed watch --after <offset>`. Reusing this offset skips that batch.
+  It exits 3 when no live driver holds the lock at startup, printing
+  `no owed driver is running in <repo>; start one with owed start`. A timeout
+  exits 5 with `no wake within <s> s` and the `next:` line. Without a timeout it
+  waits until a wake or driver exit. JSON is `{lines, next, exit}`, where
+  `lines` contains the message lines and `next` is the byte offset.
 - **Wake-ups** (src/extension.ts, `DriveWatch`/`Follower`). After a tool
-  start (in any session), the follower reads the fresh (rotated) log from its
+  start in a top-level session, the follower reads the fresh (rotated) log from its
   start; on `session_start` of a session not inside a dsa call (`DSA_EXEC` and
   `DSA_CALL` unset, D17a.1), when the repository of `ctx.cwd` has a live lock,
-  from the log's size at that moment (no replay). Every top-level pi session
+  from the log's size at that moment (no replay). Every owed tool call also
+  attaches to its target repository after it runs, including refusals, before
+  attaching the idle watcher. Attaching the same driver pid is a no-op, keeping
+  deduplication and pending batches. Sessions inside dsa calls never attach.
+  Every top-level pi session
   opened in the repository is therefore woken. A log replaced by rotation
   (other dev/ino, or shorter than the offset) is read from 0 (D17a.4). Every 2 s (unref'd timer) it reads the
   complete lines appended since. Wake lines: `do: halt` (not with outcome `stale`, 0.11), `do: notify` (asking

@@ -1,3 +1,4 @@
+import { registeredDrivers } from './registry.ts';
 import { alreadyRecordedText } from './identical-acts.ts';
 import { idleWake } from './watchdog.ts';
 import { withWritesSyntax, planWritesSyntax } from './writes.ts';
@@ -148,9 +149,17 @@ export default function owed(pi: ExtensionAPI): void {
   const idleWatch = idleWake(pi, { busy });
   const attachIdle = async (dir: string) => { if (!process.env.DSA_EXEC && !process.env.DSA_CALL) await idleWatch.attach(dir).catch(() => undefined); };
   const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, revalidate: repo => revalidator({ cwd: repo }) });
+  let registryAt = -Infinity;
+  const attachSessionDrivers = async (ctx: ExtensionContext) => {
+    if (process.env.DSA_EXEC || process.env.DSA_CALL || Date.now() - registryAt < 10_000) return;
+    registryAt = Date.now();
+    const session = (ctx as ExtensionContext & { sessionId?: string }).sessionId || process.env.DSA_SESSION || process.env.PI_SESSION_ID;
+    if (session) for (const r of registeredDrivers()) if (r.session === session) await watch.attach(r.repo).catch(() => undefined);
+  };
+  const attachDriver = async (dir: string) => { if (!process.env.DSA_EXEC && !process.env.DSA_CALL) await watch.attach(dir).catch(() => undefined); };
   if (typeof pi.on === 'function') {
     // Internal worker tick: the timer lives in pi, all log/git/replay work lives here.
-    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { agent.ctx = ctx; await watch.flush(); await idleWatch.flush(); });
+    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { agent.ctx = ctx; await attachSessionDrivers(ctx); await watch.flush(); await idleWatch.flush(); });
     pi.on('agent_start', (_event, ctx) => { agent.running = true; agent.ctx = ctx; });
     pi.on('agent_settled', async (_event, ctx) => { agent.running = false; agent.ctx = ctx; await watch.flush(); await idleWatch.flush(); });
     // D17a.1: auto-attach only in a session that is not inside a dsa call (dsa writers and reviewers run in worktrees of
@@ -166,12 +175,13 @@ export default function owed(pi: ExtensionAPI): void {
     pi.registerTool({ name: `owed_${name}`, label: `owed ${name}`, description: `${description}${core.has(name) ? ' Other owed operations are owed_* tools: load any that are not declared with tool_search, or use the owed <command> CLI (owed help).' : allTools ? '' : ` If this tool is not declared, use the owed CLI: owed ${name.replaceAll('_', ' ')} (owed help).`}`, parameters, exposure: allTools || core.has(name) ? 'direct' : 'deferred', executionMode: 'sequential',
       async execute(_id, p, signal, _update, ctx) {
         try {
-          // G2.3 (F5): refused everywhere, reads included.
-          if ((p as { as?: unknown }).as === 'parent:drive') throw new OwedError(ops.DRIVER_CLAIM);
           agent.ctx = ctx;
           const dir = await target(ctx, (p as { cwd?: string }).cwd);
-          try { return await run(p, ctx, dir, signal); }
-          finally { await attachIdle(dir); }
+          try {
+            // G2.3 (F5): refused everywhere, reads included; FW1 still follows the target after refusal.
+            if ((p as { as?: unknown }).as === 'parent:drive') throw new OwedError(ops.DRIVER_CLAIM);
+            return await run(p, ctx, dir, signal);
+          } finally { await attachDriver(dir); await attachIdle(dir); }
         }
         catch (e) {
           if (!(e instanceof OwedError)) throw e;
@@ -403,9 +413,8 @@ export default function owed(pi: ExtensionAPI): void {
     if (action === 'start') {
       const r = await driveStart({ cwd: dir, max: p.max, ...(p.stay ? { stay: true } : {}) });
       // Follow the fresh log from its start (it was rotated for this driver): nothing it wrote before this is missed.
-      // A driver that already ended (its exit record is in this result) gets no follower (D17a.8). An explicit start
-      // follows in any session, also inside a dsa call.
-      if (!r.exited) watch.follow({ log: r.log, repo: r.repo, pid: r.pid, ...(r.start ? { start: r.start } : {}), from: 0 });
+      // FW1: call sessions never attach, including explicit starts.
+      if (!r.exited && !process.env.DSA_EXEC && !process.env.DSA_CALL) watch.follow({ log: r.log, repo: r.repo, pid: r.pid, ...(r.start ? { start: r.start } : {}), from: 0 });
       return result(r, `${renderDriveStart(r)}\nThis session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or it exits; do not poll status.`);
     }
     if (action === 'status') { const r = await driveStatus({ cwd: dir }); return result(r, renderDriveStatus(r)); }
