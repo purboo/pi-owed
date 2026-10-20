@@ -85,13 +85,13 @@ test('WA1: max reason agrees with driver and counts removed open slots',async ()
     assert.ok(!driveDecide(state,state.plan,new Map(),{...driveOpts,max:1}).some(a => a.do === 'dispatch'));
     const why = await cli(r.cwd,['why','b']);
     assert.equal(why.code,0,why.stderr);
-    assert.match(why.stdout,/ready, not dispatched: 1 of max 1 attempts open/);
-    assert.match(renderStatus(statusView(state,entries,[],now,true)),/b: ready, not dispatched: 1 of max 1 attempts open/);
+    assert.match(why.stdout,/ready, not dispatched: 1 active of max 1 \(0 waiting to merge\)/);
+    assert.match(renderStatus(statusView(state,entries,[],now,true)),/b: ready, not dispatched: 1 active of max 1 \(0 waiting to merge\)/);
     await ops.planSet({cwd:r.cwd,as:owner,channel:'delegated',plan:JSON.stringify({...state.plan,nodes:state.plan.nodes.filter(n => n.id !== 'a')}),note:'remove a'});
     ({state,entries} = await ops.readState(r));
     assert.equal(state.nodes.a!.phase,'removed');
     assert.ok(!driveDecide(state,state.plan,new Map(),{...driveOpts,max:1}).some(a => a.do === 'dispatch'));
-    assert.match(renderStatus(statusView(state,entries,[],now,true)),/b: ready, not dispatched: 1 of max 1 attempts open/);
+    assert.match(renderStatus(statusView(state,entries,[],now,true)),/b: ready, not dispatched: 1 active of max 1 \(0 waiting to merge\)/);
   } finally {await r.cleanup();}
 });
 
@@ -103,11 +103,11 @@ test('WA1: status and why use the live driver max override instead of the plan m
     try {
       const why = await cli(r.cwd,['why','b']), status = await cli(r.cwd,['status']);
       assert.equal(why.code,0,why.stderr); assert.equal(status.code,0,status.stderr);
-      assert.match(why.stdout,/ready, not dispatched: 1 of max 1 attempts open/);
-      assert.match(status.stdout,/b: ready, not dispatched: 1 of max 1 attempts open/);
+      assert.match(why.stdout,/ready, not dispatched: 1 active of max 1 \(0 waiting to merge\)/);
+      assert.match(status.stdout,/b: ready, not dispatched: 1 active of max 1 \(0 waiting to merge\)/);
     } finally {await lock.release();}
     const why = await cli(r.cwd,['why','b']);
-    assert.doesNotMatch(why.stdout,/max 1 attempts open/);
+    assert.doesNotMatch(why.stdout,/active of max 1/);
   } finally {await r.cleanup();}
 });
 
