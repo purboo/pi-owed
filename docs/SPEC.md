@@ -5215,7 +5215,17 @@ at load with `exposure: 'deferred'`, without a load-time host probe or later
 re-publishing as deferred. `OWED_TOOLS=all` declares every tool directly and
 opts out of owed's discovery activation. Descriptions of core tools explain
 that other operations are `owed_*` tools (load with `tool_search` when not
-declared) or the `owed <command>` CLI (`owed help`).
+declared) or the `owed <command>` CLI (`owed help`). Each deferred tool's
+description ends with `If this tool is not declared, use the owed CLI: owed
+<command> (owed help).`, using its command (for example, `owed check try`).
+Parent-facing tool-name hints also include the corresponding CLI command.
+
+At `session_start` and every `agent_start`, owed adds every missing registered
+direct owed tool to the current active set. Existing active tools are kept,
+including unrelated tools and manually activated deferred tools. Hosts without
+`getActiveTools`/`setActiveTools`, or whose registry throws, are left alone.
+This also restores all tools in the `all` profile and tools previously promoted
+to direct because search was unavailable.
 
 On `session_start`, as the host's MCP extension does, owed checks whether the
 host reports exposure and a registered `tool_search` declares `reachesTools`.
