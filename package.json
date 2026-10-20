@@ -11,8 +11,8 @@
   "keywords": ["pi-package", "agents", "acceptance", "ledger", "merge-gate", "dag"],
   "engines": { "node": ">=22.19" },
   "bin": { "owed": "bin/owed.js" },
-  "pi": { "extensions": ["./index.js"], "skills": ["./skills"] },
-  "files": ["index.js", "bin", "dist", "skills", "docs", "README.md", "CHANGELOG.md", "LICENSE"],
+  "pi": { "extensions": ["./index.js"], "skills": ["./skills"], "subagents": { "agents": ["./agents"] } },
+  "files": ["index.js", "bin", "dist", "skills", "agents", "docs", "README.md", "CHANGELOG.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",

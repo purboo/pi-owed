@@ -12,7 +12,7 @@ import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
 import { shellQuote } from './exec-wrap.ts';
 import { boundaryClip, dispatchPacket, oneLine, structuredQuestionText, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
-import { needs, repoNeeds, thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
+import { needs, repoNeeds, thresholdHint, rejectedFixed, rejectedHalt, reviewMissingRemedies } from './needs.ts';
 export { thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import { nodeReview, ownerNeeded, dispatchSkip, heldFlaky, flakyBlockText } from './reducer.ts';
@@ -179,6 +179,19 @@ export function writerLaunch(s: State, node: string, project: string): Extract<A
 export function reviewerLaunch(s: State, node: string, n: number, project: string, root: string): Extract<Action, { do: 'launch' }> {
   const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan, node).reviewer;
   return { do: 'launch', node, attempt: slot.attempt, role: 'reviewer', n, rid: runId(project, node, slot.attempt, 'reviewer', n), spec: launchSpec({ ...agent, cwd: root, task: reviewPacket(s, node, n), name: runName(node, slot.attempt, 'reviewer', n) }), labels: runLabels(project, node, slot.attempt, 'reviewer'), rulings: carried(rulingsInScope(s, node)) };
+}
+/** RA/RM: a historical run uses its recorded agent, never the current plan's selection. */
+function reviewerAgent(s: State, l: LaunchEntry, blobs: DriveOpts['blobs']): string {
+  const bytes = blobs?.get(l.spec);
+  if (bytes !== undefined && sha256(bytes) === l.spec) {
+    try { const spec = JSON.parse(bytes); if (typeof spec.agent === 'string') return spec.agent; } catch { /* historical plan fallback */ }
+  }
+  return driveConfig(planAt(s, l.seq), l.node).reviewer.agent;
+}
+/** RM2: only a resume after this run's review-missing halt renews its verdict allowance. */
+function reviewResumed(s: State, l: LaunchEntry, candidate: number, resumed: number): boolean {
+  return entriesOf(s).some(e => e.kind === 'halt' && e.node === l.node && e.attempt === l.attempt
+    && e.seq > candidate && e.seq < resumed && e.reason.startsWith(`review-missing: reviewer run ${l.rid} `));
 }
 const writerMessage = (text: string): string => text.includes(WRITER_DECISION) ? text : `${text}\n${WRITER_DECISION}`;
 export const WRITER_INTERRUPTED = writerMessage('You were interrupted; processes your tools started are gone. Check the worktree (HEAD, git status) before continuing, then commit and `owed submit`.');
@@ -533,7 +546,7 @@ export function driverSlot(s: State, node: string, by: string): number | undefin
 
 // ---------- owner-needed ----------
 /** C1: render the authority's answer, one line and command per obligation. */
-export const needText = (n: Need): string => `${n.text}${n.command ? ` → ${n.command}` : ' (no single command)'}`;
+export const needText = (n: Need): string => `${n.text}${n.command ? ` → ${n.command}` : ' (no single command)'}${n.kind === 'resume' && n.text.startsWith('driver halted: reviewer finished without recording') ? (n.alternatives ?? []).map(c => `; or: ${c}`).join('') : ''}`;
 /** R-028-53: needs.ts:151 preserves parks first, in trunkParkNotices/sharedParkNotices order. */
 export function parkNeeds(s: State, once?: string): Need[] | undefined {
   const parks = [...trunkParkNotices(s), ...sharedParkNotices(s)], i = parks.findIndex(p => p.once === once);
@@ -1049,10 +1062,13 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const k = reviewerN(l), who = driveReviewer(id, attempt, k - reviewerBase(s, id));
       const awaiting = reviewObligations(s, id, k).filter(o => n.items.find(i => i.obligation === o)?.status === 'D' && !entries.some(e => e.kind === 'review' && e.node === id && e.by === who && e.obligation === o && e.key === c.keys[o]));
       if (!awaiting.length) continue;
-      if (statusOf(v) === 'unknown' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
+      if (statusOf(v) === 'unknown' && v.state !== 'pruned' && !ar.sends.some(x => x.rid === l.rid && x.reason === 'interrupted')) return send(l, 'follow-up', 'interrupted', reviewerInterrupted(id));
       const asked = ar.sends.findLast(x => x.rid === l.rid && x.reason === 'verdict' && x.seq > c.seq);
-      if (!asked && statusOf(v) !== 'rejected' && v.state !== 'pruned') return send(l, 'follow-up', 'verdict', verdictMessage(id, c, who, awaiting));
-      return halt(`review-missing: reviewer run ${at(l)} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${asked ? ` after verdict follow-up ${asked.send}` : ''}${statusOf(v) === 'rejected' ? `; ${rejectedFixed(id)}` : ''}`);
+      const renewed = reviewResumed(s, l, c.seq, resumed) && (!asked || asked.seq < resumed);
+      const retryable = statusOf(v) !== 'rejected' && v.state !== 'pruned';
+      if ((!asked || renewed) && retryable) return send(l, 'follow-up', 'verdict', verdictMessage(id, c, who, awaiting));
+      const builtin = reviewerAgent(s, l, opts.blobs) === 'reviewer';
+      return halt(`review-missing: reviewer run ${at(l)} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${asked ? ` after verdict follow-up ${asked.send}` : ''}; remedies: ${reviewMissingRemedies(id, builtin, retryable).join('; ')}; ${retryable ? 'resume asks the same reviewer run again' : 'this run cannot take follow-ups'}${builtin ? '; builtin reviewer is read-only and may refuse to record; the agent edit applies to a new reviewer run of a later candidate' : ''}`);
     }
     // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale
     // block (recorded on an earlier candidate) is left to the slot re-review: wait only while a reviewer run of this

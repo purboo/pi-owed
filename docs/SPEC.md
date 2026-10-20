@@ -5308,7 +5308,7 @@ drive:
   measure: 2             # attests and merges in flight at once (0.7.0; default 2, integer >= 1)
   min_free_mb: 2048      # free MB the driver needs before it starts a measurement (0.11; default 2048, 0 disables)
   writer:   { agent: worker,   model: "example/model-large:high" }   # default {agent: worker}
-  reviewer: { agent: reviewer, model: "example/model-large:high" }   # default {agent: reviewer}
+  reviewer: { agent: owed-reviewer, model: "example/model-large:high" }   # default {agent: owed-reviewer}
 ```
 Optional; `model` is optional (agent default). `parsePlan` fills the defaults
 when the block is present (`Plan.drive`; absent block → `Plan.drive`
@@ -5479,10 +5479,9 @@ must name the node's current open slot (node and attempt), and so must a halt.
     a new candidate) is followed by a fresh repair under the new budget, not by
     the "finished repair follow-up without submitting" halt. Halts the driver
     has no remedy for recur with the same reason after a resume while their
-    cause persists: a writer run sealed non-ok (row 7) and a reviewer run
-    sealed without recording its reviews (row 14, `review-missing`) halt again
-    on the next pass with the same reason — fix the cause (or record the
-    review, or abandon) instead;
+    cause persists: a writer run sealed non-ok (row 7) still halts again.
+    After a review-missing halt, resume grants the same sealed reviewer run
+    one new verdict follow-up (§12.4); rejected or pruned runs still halt;
   - with `after`: the node is **waiting** while the latest resume of the open
     attempt has `after` and that node is not merged (`waitingFor(state,
     node) → {after, resume} | undefined`). A later resume replaces an earlier
@@ -5619,7 +5618,8 @@ one run per required principal, each with the next attempt-global `n`
 In 0.16.1 (RR2), a carried reviewer run's verdict follow-up names the **current**
 candidate, not C0. A review already recorded by that principal on the same
 obligation key counts even if it predates the latest submit. The existing
-one-verdict-follow-up-per-run-of-the-current-candidate rule is unchanged.
+one-verdict-follow-up-per-run-of-the-current-candidate rule applies, with the
+explicit resume allowance described below (0.31).
 No ledger kind or field is added; replayed states and obligation keys are unchanged.
 **Deferred (RR4, not implemented in 0.16.1):** stopping surplus reviewer runs
 once review is satisfied requires a driver `stop` effect, which this release
@@ -5672,9 +5672,33 @@ follow-up of row 13 when that applies, ONE follow-up with reason `verdict`:
 obligation `owed review <node> --obligation <o> --candidate <commit12> --as
 reviewer:drive-<node>-<attempt>-<k> --ok|--block --rank <N> --note "<why>"`.
 The `review-missing` halt follows only when such a follow-up was sent to the run
-for this candidate and it sealed again without recording (the reason then ends
-`… on candidate #<seq> after verdict follow-up <send id>`), or at once for a
-run sealed `rejected` or `pruned` (a follow-up cannot reach it).
+for this candidate and it sealed again without recording (the diagnostic reason
+ends `… on candidate #<seq> after verdict follow-up <send id>` before the remedies),
+or at once for a run sealed `rejected` or `pruned` (a follow-up cannot reach it).
+
+Review recovery (0.31, RA/RM). The package ships `owed-reviewer`, the default
+reviewer agent. It may run checks in its own scratch checkout and must record
+its verdict with `owed review`; it may not edit the writer's or main checkout.
+An explicit global or node `drive.reviewer.agent` keeps its selected profile.
+The agent selects later launches only: keys, votes, reviewer identities and
+candidate invalidation are unchanged. Previously recorded launch specs remain
+unchanged, including their agent choice.
+
+A resume recorded after this run's review-missing halt grants that same sealed
+run one new `verdict` follow-up, with the same reviewer principal. If it seals
+again without recording the review, the driver halts again. Rejected or pruned
+runs cannot receive follow-ups and keep halting. No replacement run is launched.
+The halt, wake, needs and why list these remedies in order:
+
+1. `owed resume <node>` asks the same reviewer run again. This remedy is omitted
+   for rejected or pruned runs, which cannot take a follow-up (R-031-RA-3).
+2. When the recorded run used the builtin `reviewer` (read-only and liable to
+   refuse recording), `owed edit --drive --set reviewer.agent=owed-reviewer
+   --note "<why>"` changes a new reviewer run of a later candidate. It does not
+   change the existing run.
+3. `owed review <node> --ok|--block --rank <1-3> --note "<note>" --as owner:<id>`
+   records an owner review under the existing authority and vote rules.
+4. `owed abandon <node>` abandons the attempt.
 
 Environment back-off (0.11, F2.2). In the attest rows (9-10) an `error`
 observation whose note starts with `environment: ` (§7.13) does not count
