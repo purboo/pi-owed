@@ -4,6 +4,7 @@ import { nodeReview, readyDispatchSkips, attemptCapacity, heldFlaky, flakyPass, 
 import type { AdoptionView, AttemptRuns, Block, CheckSpec, Entry, EscapeClass, EvidenceEntry, HaltEntry, ItemView, LaunchEntry, NodeSpec, NodeState, ObsEntry, Plan, Rule, RuleEntry, SlotRebase, State } from './types.ts';
 import { mergeWaitSuffix } from './adopt-wait.ts';
 import type { AdoptPreview, GcResult } from './ops.ts';
+import { measuredWrites } from './planlint.ts';
 import type { TrunkDrift } from './git.ts';
 import { matchesGlob } from 'node:path';
 import { matchesAny, driveConfig, isCheckTemplateRun, activeQuarantine } from './plan.ts';
@@ -1131,8 +1132,8 @@ export function renderBrief(v: Brief): string {
  * defaults to true for the driver's writer task (drive.ts writerTask); `owed dispatch` passes false unless the
  * driver dispatches, so a manual dispatch stores the packet without the line.
  */
-export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], driver = true, state?: State, dispatchSeq?: number): string {
-  const lines = dispatchLines(spec, attempt, worktree, rules, state ? entriesOf(state)[0]!.hash.slice(0, 12) : '<project>');
+export function dispatchPacket(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], driver = true, state?: State, dispatchSeq?: number, paths?: readonly string[]): string {
+  const lines = dispatchLines(spec, attempt, worktree, rules, state ? entriesOf(state)[0]!.hash.slice(0, 12) : '<project>', dispatchSeq === undefined ? state?.plan : state && planAt(state,dispatchSeq), paths);
   if (state) {
     if (state.plan.risk !== undefined) lines.push('Owner risk classes (first matching rule per changed path; unmatched paths use the node review):', ...state.plan.risk.map((r, i) => `- risk rule ${i + 1}: ${r.paths.map(oneLine).join(', ')}; review ${r.review.count}, rank >= ${r.review.min_rank}`));
     const permission = preauthorizedWritesLines(state,spec.id,dispatchSeq);
@@ -1170,11 +1171,21 @@ function reviewGrantLines(s: State, node: string): string[] {
 export const DRIVER_ATTESTS = 'the driver measures your candidate; do not run owed attest';
 /** K1.3: the clause after every `owed attest <node>` owed suggests to a writer. */
 export const SKIP_ATTEST = '(skip this when owed drive is running: the driver attests)';
-function dispatchLines(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], project: string): string[] {
+function packetInvariantLines(plan: Plan | undefined, spec: NodeSpec, paths?: readonly string[]): string[] {
+  if (!plan || !paths) return [];
+  const measured = measuredWrites(plan,spec,paths), narrow = measured.filter(i => !i.broad), broad = measured.filter(i => i.broad);
+  if (!measured.length) return [];
+  const globs = (reads: string[]) => reads.slice(0,5).map(oneLine).join(', ') + (reads.length > 5 ? `, +${reads.length - 5} more` : '');
+  return ['Invariants that measure files you write (they run on the merge tree at merge; try one first: owed check try --invariant <id> --green <your commit>):',
+    ...narrow.slice(0,5).map(i => `- inv:${i.id}: ${globs(i.reads)}`), ...(narrow.length > 5 ? [`+${narrow.length - 5} more`] : []),
+    ...(broad.length ? [`- broad: ${broad.map(i => `inv:${i.id}`).join(', ')} (every change)`] : [])];
+}
+function dispatchLines(spec: NodeSpec, attempt: number, worktree: string, rules: readonly Rule[], project: string, plan?: Plan, paths?: readonly string[]): string[] {
   return [`# ${spec.title ?? spec.id}`, spec.brief ?? '', WRITER_DECISION, `Node: ${spec.id}; attempt: ${attempt}`, `Working directory: ${worktree}`, `Allowed writes: ${spec.writes.join(', ')}`, 'Checks run by owed:', ...spec.checks.map(c => `- ${c.id}: ${c.run}\n  red: ${!!c.red}${c.red ? `; tests: ${c.tests?.join(', ')}` : ''}`),
+    ...packetInvariantLines(plan,spec,paths),
     'Long runs: processes you start end when your turn ends. Run a check or measurement that may outlive your turn as a durable command call, then end your turn without submitting:',
     `  pi-durable-subagents run --request owed-${project}-${spec.id}-${attempt}-<name> --wake caller -- <command…>`,
-    'owed does not halt you while it runs; dsa resumes you with its exit status and output tail (pi-durable-subagents >= 1.1.0).', 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`];
+    'owed does not halt you while it runs; dsa resumes you with its exit status and output tail (pi-durable-subagents >= 1.1.0).', 'Applicable rulings:', ...rules.map(r => `- #${r.seq} ${r.text}`), 'Checks, owed check try and your own preflight see committed HEAD only: commit code, then evidence, then measure, then report.', 'commit your work; do not edit files outside writes; owed will run the checks itself', `After committing, run: owed submit ${spec.id}`];
 }
 
 // ---------- driver review packet (SPEC §12, D5) ----------

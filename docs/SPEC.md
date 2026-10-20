@@ -1243,6 +1243,15 @@ preemption. Running-loop and `--due` behavior, baselines and limits are in
 
 ### 3.10 Check author diagnostics and selftests (0.30, CT)
 
+`owed plan` (CLI and tool) prints advisory notes for added nodes or changed
+writes that overlap a non-broad invariant, based on the current trunk's files:
+`note: <node> writes files inv:<id> measures (<reads>); before submit: owed check try --invariant <id> --green <commit>`.
+The same notes appear in `owed edit --dry-run` and the tool's edit preview.
+At most ten notes are printed, then `note: +k more`. Unchanged writes and
+broad invariants produce no notes. Notes are output only, separate from
+warnings; they record nothing and do not refuse a plan or change any gate.
+
+
 `owed check try <node> <check> [--red <rev>] [--green <rev>] [--plan <file>]
 [--no-lease] [--json]`, or `owed check try --invariant <id> ...`, tries the
 plan file currently on disk, not its recorded blob. `--plan` selects the file;
@@ -6204,7 +6213,22 @@ at most three are listed with commands bounded to 80 code points and escaped
 onto one line. This reports processes dsa sent SIGKILL at the seal, not proof
 of what caused their death. Older runners omit the diagnostic.
 
-Writer dispatch packets include this section immediately after the checks:
+Writer dispatch packets list overlapping invariants after the checks, using the
+attempt's slot-base file inventory. An invariant overlaps when its reads match
+an existing file covered by the node's writes, or a literal new file path in
+writes (not a directory prefix). Glob-only writes do not predict future files.
+The section lists at most five specific invariants, with bounded read lists and
+a remainder count. Invariants whose reads cover at least 90% of the inventory
+are grouped once as `- broad: inv:a, inv:b (every change)`.
+The section points to `owed check try --invariant <id> --green <your commit>`;
+these invariants measure the merge tree at merge. No overlap, no invariants or
+an unavailable inventory means no section. Manual and driver packets use the
+same renderer.
+
+Before the commit instruction, every writer packet says:
+`Checks, owed check try and your own preflight see committed HEAD only: commit code, then evidence, then measure, then report.`
+
+Writer dispatch packets include this section after the checks and any invariant guidance:
 
     Long runs: processes you start end when your turn ends. Run a check or measurement that may outlive your turn as a durable command call, then end your turn without submitting:
       pi-durable-subagents run --request owed-<project>-<node>-<attempt>-<name> --wake caller -- <command…>
