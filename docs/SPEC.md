@@ -283,20 +283,25 @@ No acceptance gate is weakened by diagnostic hooks, acknowledgements or retries.
   longer appears in a genesis or plan entry, and temp files older than 60 s
   (`GcResult.planCache`, a `Plan cache files ... removed` line); nothing is
   recorded in the ledger for them.
-- `snapshot/state.v8` (0.12, G1.4): the disk snapshot, a private derived cache
+- `snapshot/state-<escaped owed version>.v8` (0.12, G1.4; version isolation 0.31.1): the disk snapshot, a private derived cache
   of the replayed State and its replay metadata (§6, Resumable replay) at one
   ledger entry. One v8-serialized record `{format: "owed-snapshot/1", version:
   <owed package version>, seq, hash, digest, payload}`: `seq`/`hash` = the last
   folded entry, `payload` = the v8-serialized packed state (plans named by blob
   sha, re-resolved through the plan lookup), `digest` = sha256 of the payload.
-  An op uses it only when format, version and digest match and the verified
+  An op reads and writes only its own version's file (the package version is
+  URI-component escaped); legacy `state.v8` and other versions are never read.
+  It uses the snapshot only when format, version and digest match and the verified
   chain's entry `seq` has `hash`; a missing, unreadable, foreign or mismatching
   snapshot is ignored (and replaced), never an error. It is written atomically
   (temp file `snapshot/.state.<uuid>.tmp`, then rename; concurrent writers are
   harmless) after a load that folded at least 256 entries past the snapshot, or
-  found none; a write that fails is ignored. `owed verify` never uses it for
-  its result (§8). It lives in the private owed dir, is never committed and
-  needs no gc: deleting it only costs one full replay.
+  found none; a write that fails is ignored. After a successful write, best-effort
+  cleanup retains this version and the two newest other snapshot files by mtime
+  (including legacy files); cleanup failure is ignored. `owed verify` never uses
+  it for its result (§8) and removes only its own version's snapshot on mismatch.
+  It lives in the private owed dir and is never committed; deleting it only costs
+  one full replay. Concurrent versions no longer overwrite each other's cache.
 - `lock/`: mutual exclusion by atomic `mkdir`; contains `owner.json`
   `{pid, host, ts}`. A lock whose pid is dead on the same host is stale and may be
   broken. All read-check-append sequences run under the lock (§6.4). Other named

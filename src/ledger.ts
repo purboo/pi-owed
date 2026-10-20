@@ -20,7 +20,7 @@ import type { Entry, Draft } from './types.ts';
 export const PLAN_CACHE_VERSION = `plan-cache/1 owed/${OWED_VERSION}`;
 /** RC (0.27): the display-only fields this writer marks after draft validation, before hashing. */
 export const IGNORABLE: Record<string, readonly string[]> = { waive: ['tracked_by'], obs: ['quarantine_passed'] };
-/** G1.4 (0.12): the format id of the disk snapshot `snapshot/state.v8`. */
+/** G1.4 (0.12): the format id of a version-specific disk snapshot. */
 export const SNAPSHOT_FORMAT = 'owed-snapshot/1';
 /**
  * G1.4: a disk snapshot as read: the seq and entry hash it was folded to and the v8-serialized packed state
@@ -93,8 +93,24 @@ function dropTornTail(text: string): string {
   return text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1);
 }
 const lockActivities = new AsyncLocalStorage<Map<string,string>>();
+/** PP2: best-effort retention after publication; never remove the file this writer just published. */
+async function trimSnapshots(dir: string, current: string): Promise<void> {
+  try {
+    const files = (await readdir(dir)).filter(name => /^state(?:-.+)?\.v8$/.test(name));
+    const entries = (await Promise.all(files.map(async name => {
+      try { const info = await stat(join(dir,name)); return info.isFile() ? { name, info } : undefined; } catch { return undefined; }
+    }))).filter(e => e !== undefined).sort((a,b) => b.info.mtimeMs-a.info.mtimeMs || a.name.localeCompare(b.name));
+    for (const e of entries.filter(e => e.name !== current).slice(2)) {
+      // Another version may have replaced its file since the scan; leave that fresh publication alone.
+      const file = join(dir,e.name), now = await stat(file).catch(() => undefined);
+      if (now?.ino === e.info.ino && now.mtimeMs === e.info.mtimeMs) await rm(file, { force: true }).catch(() => undefined);
+    }
+  } catch { /* a cache retention failure never fails its successful publication */ }
+}
 export class Ledger {
   readonly dir: string;
+  /** @internal Separate instances can model mixed-version processes without changing the snapshot format. */
+  readonly snapshotVersion: string = OWED_VERSION;
   /** MT (ruling #2110): the repository this ledger was opened from (git commands of the batch tail completion). */
   repo?: string;
   /** MT (ruling #2110): runs first under every outermost ledger lock (ops completes a torn batch merge tail). */
@@ -278,8 +294,8 @@ export class Ledger {
     try { return (await readdir(join(this.dir, 'cache', 'plans'))).sort(); } catch { return []; }
   }
   async removePlanCache(file: string): Promise<void> { if (!file.includes('/')) await rm(join(this.dir, 'cache', 'plans', file), { force: true }); }
-  /** G1.4: the disk snapshot file. */
-  get snapshotFile(): string { return join(this.dir, 'snapshot', 'state.v8'); }
+  /** G1.4/PP2: only this version's escaped cache name; legacy and foreign files are never read. */
+  get snapshotFile(): string { return join(this.dir, 'snapshot', `state-${encodeURIComponent(this.snapshotVersion)}.v8`); }
   /**
    * G1.4: the disk snapshot when it is readable and has this format, this owed version and an intact payload (sha256);
    * undefined otherwise (missing, unreadable, foreign or corrupt: never an error). The caller checks seq and hash
@@ -288,7 +304,7 @@ export class Ledger {
   async readSnapshot(): Promise<Snapshot | undefined> {
     try {
       const o = deserialize(await readFile(this.snapshotFile)) as Record<string, unknown> | null;
-      if (!o || typeof o !== 'object' || o.format !== SNAPSHOT_FORMAT || o.version !== OWED_VERSION || !Number.isInteger(o.seq) || typeof o.hash !== 'string' || !(o.payload instanceof Uint8Array) || o.digest !== sha256(o.payload)) return undefined;
+      if (!o || typeof o !== 'object' || o.format !== SNAPSHOT_FORMAT || o.version !== this.snapshotVersion || !Number.isInteger(o.seq) || typeof o.hash !== 'string' || !(o.payload instanceof Uint8Array) || o.digest !== sha256(o.payload)) return undefined;
       return { seq: o.seq as number, hash: o.hash, payload: Buffer.from(o.payload.buffer, o.payload.byteOffset, o.payload.byteLength) };
     } catch { return undefined; }
   }
@@ -297,8 +313,9 @@ export class Ledger {
     const dir = join(this.dir, 'snapshot'), temp = join(dir, `.state.${randomUUID()}.tmp`);
     try {
       await mkdir(dir, { recursive: true });
-      await writeFile(temp, serialize({ format: SNAPSHOT_FORMAT, version: OWED_VERSION, seq, hash, digest: sha256(payload), payload }));
+      await writeFile(temp, serialize({ format: SNAPSHOT_FORMAT, version: this.snapshotVersion, seq, hash, digest: sha256(payload), payload }));
       await rename(temp, this.snapshotFile);
+      await trimSnapshots(dir, `state-${encodeURIComponent(this.snapshotVersion)}.v8`);
       return true;
     } catch { await rm(temp, { force: true }).catch(() => undefined); return false; }
   }
