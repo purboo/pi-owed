@@ -62,6 +62,7 @@ export interface MergeRefusal {
  */
 export interface DriveOpts {
   /** Parent/owner display facts only; never select executor actions. */
+  writerPaths?: ReadonlyMap<string, readonly string[]>;
   runtime?: Runtime;
   rebasePending?: ReadonlyMap<string, RebasePending>;
   /** WS1: actual sealed-writer worktree facts; absent means inspection failed, never evidence to send submit. */
@@ -163,17 +164,17 @@ const carried = (rules: readonly { seq: number }[]): number => Math.max(0, ...ru
 /** The rulings a writer's dispatch packet carries: those covering the node recorded before its dispatch. */
 const writerRulings = (s: State, node: string, dispatchSeq: number): Rule[] => rulingsInScope(s, node).filter(r => r.seq < dispatchSeq);
 /** The writer task of the node's open attempt: its dispatch packet, rebuilt from dispatch-time facts (plan in force, rulings, worktree). */
-export function writerTask(s: State, node: string): string {
+export function writerTask(s: State, node: string, paths?: readonly string[]): string {
   const slot = s.nodes[node]?.slot;
   if (!slot) throw new Error(`Node ${node} has no slot`);
   const spec = planAt(s, slot.dispatchSeq).nodes.find(x => x.id === node);
   if (!spec) throw new Error(`Node ${node} is not in the plan of its dispatch #${slot.dispatchSeq}`);
-  return dispatchPacket(spec, slot.attempt, slot.worktree, writerRulings(s, node, slot.dispatchSeq), true, s, slot.dispatchSeq);
+  return dispatchPacket(spec, slot.attempt, slot.worktree, writerRulings(s, node, slot.dispatchSeq), true, s, slot.dispatchSeq, paths);
 }
 /** Launch action of the writer of the node's open attempt (spec: writer agent/model of `driveConfig(plan, node)`, cwd = slot worktree, task = dispatch packet). */
-export function writerLaunch(s: State, node: string, project: string): Extract<Action, { do: 'launch' }> {
+export function writerLaunch(s: State, node: string, project: string, paths?: readonly string[]): Extract<Action, { do: 'launch' }> {
   const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan, node).writer;
-  return { do: 'launch', node, attempt: slot.attempt, role: 'writer', rid: runId(project, node, slot.attempt, 'writer'), spec: launchSpec({ ...agent, cwd: slot.worktree, task: writerTask(s, node), name: runName(node, slot.attempt, 'writer') }), labels: runLabels(project, node, slot.attempt, 'writer'), rulings: carried(writerRulings(s, node, slot.dispatchSeq)) };
+  return { do: 'launch', node, attempt: slot.attempt, role: 'writer', rid: runId(project, node, slot.attempt, 'writer'), spec: launchSpec({ ...agent, cwd: slot.worktree, task: writerTask(s, node, paths), name: runName(node, slot.attempt, 'writer') }), labels: runLabels(project, node, slot.attempt, 'writer'), rulings: carried(writerRulings(s, node, slot.dispatchSeq)) };
 }
 /** Launch action of reviewer run `n` (attempt-global) on the node's current candidate (cwd = repo root, task = review packet, which lists every ruling in scope). */
 export function reviewerLaunch(s: State, node: string, n: number, project: string, root: string): Extract<Action, { do: 'launch' }> {
@@ -788,7 +789,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
   const reportPending = resumeOf(s,id)?.expect === 'report' && (!!writer && (!!resumeLine(s,id,writer.rid) || !!reportRequest(s,id)));
   if (owner && !rulingDue() && !writerRule && !reportPending) return ownerNotify(s, id, opts.runtime);
   // Row 2: writer launch missing.
-  if (!writer) return writerLaunch(s, id, opts.project);
+  if (!writer) return writerLaunch(s, id, opts.project, opts.writerPaths?.get(id));
   if (live.some(l => !runs.has(l.rid))) return undefined;
   const view = (l: LaunchEntry): RunView => runs.get(l.rid)!;
   // 0.8 (L1.4): a run named in a halt carries dsa's call address when describe reported one.
@@ -1149,7 +1150,7 @@ export function blockText(s: State, c: { seq: number; keys: Record<string, strin
 /** Re-launch action of a recorded launch: rebuilt bytes when they hash to the stored spec, else the supplied stored bytes. */
 function relaunch(s: State, opts: DriveOpts, l: LaunchEntry): Action | undefined {
   let rebuilt: Extract<Action, { do: 'launch' }> | undefined;
-  try { rebuilt = l.role === 'writer' ? writerLaunch(s, l.node, opts.project) : reviewerLaunch(s, l.node, reviewerN(l), opts.project, opts.root); } catch { rebuilt = undefined; }
+  try { rebuilt = l.role === 'writer' ? writerLaunch(s, l.node, opts.project, opts.writerPaths?.get(l.node)) : reviewerLaunch(s, l.node, reviewerN(l), opts.project, opts.root); } catch { rebuilt = undefined; }
   const base = { do: 'launch' as const, node: l.node, attempt: l.attempt, role: l.role, ...(l.role === 'reviewer' ? { n: reviewerN(l) } : {}), rid: l.rid, labels: { ...l.labels }, ...(l.rulings !== undefined ? { rulings: l.rulings } : {}) };
   if (rebuilt && sha256(rebuilt.spec) === l.spec) return { ...base, spec: rebuilt.spec };
   const stored = opts.blobs?.get(l.spec);

@@ -32,7 +32,7 @@ import { driveStatus, readLock, driveStart, type DriveStart } from './drive-bg.t
 import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, editNodes, type EditFields } from './edit.ts';
-import { lintPlanShell, lintPlanCost } from './planlint.ts';
+import { lintPlanShell, lintPlanCost, packetPaths, planWriteNotes } from './planlint.ts';
 import { admitSelftests, selftestPreview, measureTry, tryLines, type CheckTryArgs } from './checktry.ts';
 import { admitPlan, runFileLines } from './admission.ts';
 import { costReport, type CostReport } from './cost.ts';
@@ -760,7 +760,7 @@ export function startText(r: StartResult): string {
 /** N1 (23:4x): a carry `owed plan` skipped (facts not computable or validation refused it); the candidate stays invalidated. */
 export interface NotCarried { node: string; reason: string }
 /** `notCarried` (N1, optional): receives one item per open candidate the plan entry invalidated and could not carry. */
-export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[]; shellWarnings?: string[]; signal?: AbortSignal }): Promise<Entry> {
+export async function planSet(o: Actor & { plan: string; rev?: string; path?: string; note?: string; notCarried?: NotCarried[]; shellWarnings?: string[]; planNotes?: string[]; signal?: AbortSignal }): Promise<Entry> {
   owner(o); checkAbort(o.signal); const ledger = await Ledger.open(o.cwd), b = planBlob(o.plan,false);
   // N2: each attempt recomputes carries from its own fresh locked read; only the successful attempt reports skips.
   return retryCas(ledger, async before => {
@@ -770,8 +770,9 @@ export async function planSet(o: Actor & { plan: string; rev?: string; path?: st
     const warnings = [...lintPlanShell(b.plan,before.plan,o.plan,priorText), ...await lintPlanCost(o.cwd,b.plan,before.trunk.commit,(await load(ledger)).entries,before.plan)];
     await admitPlan(o.cwd,ledger,b.plan,o.rev);
     const p = { plan:b.plan, sha:await ledger.putBlob(b.data), ...await admitSelftests({cwd:o.cwd,signal:o.signal},ledger,b.plan,b.sha,before.plan) };
+    const notes = await planWriteNotes(o.cwd,b.plan,before.trunk.commit,before.plan);
     warnings.push(...p.lines, ...runFileLines(b.plan));
-    return ledger.withLock(async () => { checkAbort(o.signal); const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); return entry; });
+    return ledger.withLock(async () => { checkAbort(o.signal); const skipped: NotCarried[] = [], entry = (await ledger.append((await planDrafts({ ...o, notCarried:skipped },ledger,p,before)).drafts))[0]!; o.notCarried?.push(...skipped); o.shellWarnings?.push(...warnings); o.planNotes?.push(...notes); return entry; });
   });
 }
 type PlanArgs = Actor & { rev?: string; path?: string; note?: string; notCarried?: NotCarried[] };
@@ -968,7 +969,7 @@ export async function amend(o: Actor & AmendArgs): Promise<AmendResult> {
 }
 // ---------- ED: atomic node/check/invariant plan edits ----------
 export type EditArgs = Context & EditFields & { signal?: AbortSignal; note: string; plan?: string; rule?: string; writer?: boolean; resume?: boolean; after?: string | string[]; expect?: 'report'; dry_run?: boolean };
-export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades>; warnings: string[] }
+export interface EditPreview { file: string; path: string; text: string; next: string; prior: Plan; plan: Plan; planSha: string; diff: string; downgrades: ReturnType<typeof planDowngrades>; warnings: string[]; notes: string[] }
 export interface EditResult { file: string; path: string; plan: Entry; rule?: Entry; resume?: Entry; resumes?: Entry[]; carried: SubmitEntry[]; notCarried: NotCarried[]; diff: string; warnings?: string[] }
 async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<EditPreview> {
   inited(s);
@@ -980,7 +981,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
   const next = editText(read.plan,o), plan = planBlob(next,true,s.plan).plan;
-  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), warnings:[...selftestPreview(plan,s.plan), ...runFileLines(plan), ...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString()), ...await lintPlanCost(o.cwd,plan,s.trunk.commit,entries,s.plan)] };
+  return { file:await realpath(source), path:read.path, text:read.plan, next, prior:s.plan, plan, planSha:s.planSha, diff:editDiff(read.path,read.plan,next), downgrades:planDowngrades(s.plan,plan), notes:await planWriteNotes(o.cwd,plan,s.trunk.commit,s.plan), warnings:[...selftestPreview(plan,s.plan), ...runFileLines(plan), ...parentOverlapWarnings(plan,s), ...lintPlanShell(plan,s.plan,next,(await (await Ledger.open(o.cwd)).getBlob(s.planSha)).toString()), ...await lintPlanCost(o.cwd,plan,s.trunk.commit,entries,s.plan)] };
 }
 /** ED1/ED2: preview the YAML edit and downgrades, with no append or file write. */
 export async function editPreview(o: EditArgs): Promise<EditPreview> { const { entries, state } = await load(await Ledger.open(o.cwd)); return prepareEdit(o,entries,state); }
@@ -1282,7 +1283,7 @@ export async function dispatch(o: Actor & { node: string; allowOverlap?: boolean
     const attempt = (n.slot?.attempt ?? 0)+1, { branch, worktree, excludeLine } = await slotLayout(root,state.plan,spec,attempt);
     const rules = state.rules.filter(r => r.nodes === '*' || r.nodes.includes(o.node));
     // K1.3: the driver (parent:drive) launches this writer and measures its candidate itself.
-    let packet = dispatchPacket(spec, attempt, worktree, rules, by(o) === 'parent:drive', state);
+    let packet = dispatchPacket(spec, attempt, worktree, rules, by(o) === 'parent:drive', state, undefined, state.plan.invariants.length ? await packetPaths(root,state.trunk.commit) : undefined);
     const d: Draft = { kind:'dispatch', by:by(o), channel:o.channel, node:o.node, attempt, base:state.trunk.commit, branch, worktree, packet:await ledger.putBlob(packet), rulings_seen:Math.max(-1,...rules.map(r => r.seq)), ...(overlaps.length ? { overlaps } : {}) };
     guard(state,d);
     const exclude = join(await git.commonDir(o.cwd),'info','exclude');
