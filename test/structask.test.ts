@@ -84,7 +84,10 @@ test('SA2: each option field, context line and details are bounded after one-lin
   const option = lines[1]!.match(/^options: 1\) (.*?) \(preferred\) — scope (.*?); cost (.*?); risk (.*)$/)!;
   for (const field of option.slice(1)) assert.ok(Array.from(field).length <= 160);
   assert.ok(Array.from(lines[2]!).length <= 600);
-  assert.ok(Array.from(lines[3]!.slice('details: '.length)).length <= 300);
+  // SM4: the full-question command follows the bounded details payload.
+  const details = lines[3]!.slice('details: '.length), suffix = details.lastIndexOf(' (full: ');
+  assert.ok(suffix > 0); assert.ok(Array.from(details.slice(0,suffix)).length <= 300);
+  assert.match(details,/… \(full: pi-durable-subagents describe --key 'rid-writer' --json\)$/);
   assert.equal(lines.length, 5); assert.doesNotMatch(lines.join('\n'), /\u202e/);
 });
 

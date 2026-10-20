@@ -529,6 +529,15 @@ and check assignments; it refuses an existing id. An invariant edit is
 `owed edit --invariant <id> --set <field>=<yaml> --note "<why>"`; its id cannot
 change, and rule/resume options apply only to node edits.
 
+**Drive edits (0.31, SM3).** `owed edit --drive --set max=6 --set
+reviewer.agent=owed-reviewer --unset reviewer.model --note "<why>"`, or
+`owed_edit {drive:true, set:[...], unset:[...], note:"..."}`, edits only the
+top-level `drive` mapping, creating it if absent. Paths are relative to `drive`
+and must pass the same drive-key/type parser as a full plan. `drive` is exclusive
+with node, nodes, invariant and node-new. These edits use the same comments/layout,
+authority, atomic append/rename, downgrade and dry-run rules as node edits;
+rule/resume options remain limited to node edits.
+
 **Multi-node edits (0.30, ME1).** A comma-separated node list, or the tool's
 `nodes: string[]` (exclusive with `node` and `invariant`), applies the same sets
 and unsets to every listed node. CLI targets matching an exact current node ID,
@@ -3544,7 +3553,8 @@ the commit with its observation seqs; trunk stays unadopted. Otherwise it append
 the observations and the `adopt` entry, first advancing the ref for an off-ref
 hotfix as in §8.3.2. Adoption of the existing ref does not move it.
 `AdoptResult` = `AdoptPreview & {entry, observations, allowance?}` (`allowance` =
-S of §3.4 for a parent adoption).
+S of §3.4 for a parent adoption). If genesis observations remain incomplete,
+the refusal names `owed attest --genesis`, matching status guidance (0.31, SM2).
 
 The merge CAS refusal (refs/heads/<trunk> ≠ ledger trunk) says how the ref
 differs: ahead by N commits made outside owed (then the owner runs `owed adopt`),
@@ -4504,11 +4514,13 @@ Review acknowledgment validates under the append lock before recording. A
 watermark below the latest applicable ruling, or omission without a sufficient
 complete driver packet (§8.3 PO6), refuses with exit 2 and nothing appended:
 `ack-rulings must be at least <N> (the latest ruling for <node>); rerun with
---ack-rulings <N> or --ack-rulings latest`. The CLI alias `--ack-rulings latest`
-and tool `ack_rulings: "latest"` record the computed number, never a string.
+--ack-rulings <N> or --ack-rulings latest`. The CLI accepts `--ack-rulings latest`, one seq, or a comma list of seqs;
+`latest` anywhere in a list selects the latest applicable ruling. Lists without
+`latest` select their maximum. The tool accepts the same strings, a scalar integer
+or a nonempty integer array. Empty/malformed lists refuse with exit 2 before a
+review is appended. All forms record the computed single number.
 Read those rulings before acknowledging them; the alias is not a waiver or
-implicit review. The watermark is one number, not a comma list. Historical
-reviews retain their old replay rules, including old missing-ack debt.
+implicit review. Historical reviews retain their old replay rules, including old missing-ack debt.
 Delivery `slots` and view `conflicts` are runtime data, not ledger evidence.
 No plan key or entry kind is added; input compatibility is in Compatibility.
 
@@ -4517,7 +4529,11 @@ An unresolved needs-parent review appears in wakes, status and default why as
 --writer`. The ask is the text after the first case-insensitive `needs parent`,
 `Parent decision needed:` or `BLOCK (needs parent):` marker; without one it
 uses the last sentence. Whitespace is flattened, escaped onto one line and
-bounded to 300 characters. Full receipts retain the review note and block
+bounded to 300 characters. In 0.31, bounded review asks, structured option/context/details
+fields and driver evidence lines prefer the last sentence ending in the final
+40% of the limit, otherwise the last whitespace/CJK character boundary, and end
+with `…` when clipped. Whole code points and control escapes are retained; text
+that fits is unchanged. Full receipts retain the review note and block
 facts. A parent decision guides repair but never clears the review block by itself.
 
 Trunk invariant conflict/red owner guidance names at most three failing tests
@@ -6113,9 +6129,12 @@ Stopped-writer halts record the cause, then `writer says: "<final text>"`
 and `→ owed decide <node> --text "<ruling>" --writer`. All whitespace in the
 run's final reply (`RunView.result`) is collapsed to single spaces. Replies
 of at most 600 Unicode code points are quoted whole; longer replies quote
-the first 200 and last 380 code points, joined by ` … `. Each cut retreats
-to a nearby space within 20 code points when available, before JSON quoting
-and control/bidi escaping. Omitted facts are appended outside the quote as
+the first 200 and last 380 code points, joined by ` … `. In 0.31 the head
+ends at the last sentence ending within the final 40% of its limit, otherwise
+at the last whitespace/CJK boundary; the separator supplies its ellipsis.
+The tail keeps the original ending and only moves its start forward to a
+whitespace/CJK boundary within 20 code points (R-031-SM-1). JSON quoting
+and control/bidi escaping follow clipping. Omitted facts are appended outside the quote as
 ` (commits: <sha12>[, …]; durable: <id>[, …])`, with only nonempty parts,
 at most three of each, ordered by first appearance and skipping fully shown
 facts. Commits are 40-hex tokens or 7–40 hex tokens directly after
@@ -6178,7 +6197,9 @@ For dsa structured asks, the asking notify and wake show
 first, then `options: 1) <label> (preferred) — scope <...>; cost <...>; risk <...> | 2) ...`
 (each supplied field at most 160 characters), an optional facts/tried/candidate-evidence
 line (at most 600 characters), and `details: <question>` (one escaped line, at most
-300 characters). The existing answer commands follow, with
+300 characters). Clipped details append `(full: pi-durable-subagents describe
+--key <rid> --json)`, whose JSON retains the original full question. The full
+command suffix is outside the 300-character details payload limit. The existing answer commands follow, with
 `answer "option <n>; <limits>"`. Every question retains its own qid and answer command;
 the driver never chooses an answer. Describe metadata is validated field by field;
 malformed optional fields are omitted, not coerced into text. An invalid option
