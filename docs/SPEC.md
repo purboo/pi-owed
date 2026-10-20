@@ -1253,11 +1253,21 @@ warnings; they record nothing and do not refuse a plan or change any gate.
 
 
 `owed check try <node> <check> [--red <rev>] [--green <rev>] [--plan <file>]
-[--no-lease] [--json]`, or `owed check try --invariant <id> ...`, tries the
+[--no-lease] [--record] [--for <node>] [--json]`, or
+`owed check try --invariant <id> ...`, tries the
 plan file currently on disk, not its recorded blob. `--plan` selects the file;
 otherwise use the latest plan entry's path (an entry without a path requires
 `--plan`). At least one revision is required. Run-file admission is §3.6,
-including checks not yet recorded.
+including checks not yet recorded. Exactly one target form is required:
+`<node> <check>`, `--invariant <id>`, or `--run '<command>'`.
+
+`owed check try --run '<command>' (--green|--red) <rev> [--min-tests N]
+[--timeout <seconds>]` uses the same measurement path, disk plan setup and
+execution settings. Ad-hoc specs have no `reads` or `red` fields, default to
+`min_tests: 1` and a 900-second timeout, and refuse zero-test or unknown-count
+successes as ordinary plan checks do. `--min-tests` and `--timeout` apply only
+to `--run`; the minimum is a nonnegative safe integer and the timeout a
+positive safe integer.
 
 Each revision resolves to a commit and runs in a fresh temporary worktree of
 exactly that commit: no closure replacement, test overlay or tree reuse. Setup,
@@ -1266,14 +1276,37 @@ attest. Even `red: true` is measured as an ordinary non-red check. Red expects
 `fail`, green expects `pass`; `error` satisfies neither. The shared machine
 lease applies unless `--no-lease` or plan `lease: false` disables it. Trees and
 processes are cleaned on completion and abort; output remains in verified log
-blobs. No observation or other ledger entry is appended.
+blobs. Dirty-tree requests are usage errors: `--red` and `--green` accept
+revisions, and only their committed trees are measured.
 
-For each revision print `red <rev> (<commit12>): fail ✔ (<passed>/<total> tests,
-<seconds> s) log <path>`, or `✘ expected fail, got pass` followed by the last
-20 output lines. JSON is `{node|invariant, check, plan, results:[{side, rev,
-commit, expect, verdict, ok, counts?, durationMs, log}]}`. Exit codes: 0 all
+For each revision print `red <rev> (<commit12>, tree <tree12>): fail ✔
+(<passed>/<total> tests, <seconds> s) log <path>`, or
+`✘ expected fail, got pass` followed by the last 20 output lines. With
+`--record` the line also includes `receipt #<seq>`. JSON includes
+`{node|invariant|run, check, plan, results:[{side, rev, commit, tree, expect,
+verdict, ok, counts?, durationMs, log, receipt?}]}`. Exit codes: 0 all
 expectations met, 1 any unmet, 2 usage (including unknown revisions), 75 machine
 lease busy. Tool parity is §11.
+
+Without `--record` no ledger entries are appended. `--record` requires an
+initialized ledger and appends one ordinary `note` by `executor:owed` per
+measured side after measurement, under the ledger lock. Its text is `try/v1 `
+plus canonical JSON `{for?, target, side, rev, commit, tree, verdict, counts?,
+durationMs, log, plan}`. `tree` is the commit's tree OID, `log` the retained
+log blob SHA, and `plan` the canonical blob SHA of the disk plan used for the
+measurement. `target` is `{node, check}`, `{invariant}`, or
+`{run, run_sha256, min_tests, timeout_s}`. Node checks associate the receipt
+with their node by default; `--for <node>` associates it explicitly with a
+node in the disk plan and is valid only with `--record`. Invariant and ad-hoc
+receipts without `--for` have no node association. Failed or error verdicts
+are recorded too. Receipts are informational and never satisfy a gate, change
+a key or vote, or direct the driver.
+
+`owed why <node>` lists associated `try/v1` notes newest first, at most five;
+`--full` lists all. Each line is `receipt #<seq> <target> on <commit12>
+(tree <tree12>): <verdict> <pass>/<tests> tests, log <path>` (unknown counts
+use `?`). Cite a ruling-ordered measurement as `receipt #<seq>`; raw logs or
+handwritten tree proofs need not be copied into the repository.
 
 Optional check/invariant `selftest: [{commit: <40 or 64 hex>, expect: pass|fail}]`
 has 1–8 entries; each entry permits only `commit` and `expect`. Editable paths
@@ -5088,10 +5121,13 @@ still refuse. Preflight and actor restrictions are unchanged.
 
 ## 11. pi extension
 
-0.30 adds `owed_check_try` (§3.10): `{node?, check?, invariant?, red?, green?,
-plan?, no_lease?, json?, cwd?}`. Select either node/check or invariant and give
-at least one revision. This diagnostic tool records no ledger entries and needs
-no owner/parent identity. Unmet expectations return `isError: true` with results
+0.30 adds `owed_check_try` (§3.10); 0.31.1 extends it to
+`{node?, check?, invariant?, run?, min_tests?, timeout?, record?, for?, red?,
+green?, plan?, no_lease?, json?, cwd?}`. Select exactly one of node/check,
+invariant or run and give at least one revision. This diagnostic tool needs
+no owner/parent identity. `record: true` saves informational receipts;
+`for` requires `record` and names a plan node. Unmet expectations return
+`isError: true` with results
 and the retained log tail. Plan-recording tools run changed selftests before
 recording; previews never execute them.
 
@@ -5165,7 +5201,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; prints packet once and references it in text arguments; structured `subagents` retains full task (agent `worker`, cwd = slot worktree, isolation `none`, task = packet) |
 | `owed_submit` | `node`, `commit?`, `model?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
-| `owed_check_try` | `node?`, `check?`, `invariant?`, `red?`, `green?`, `plan?`, `no_lease?`, `json?` | exact-commit disk-plan diagnostics (§3.10); ordinary verdicts even for red checks; no ledger entries |
+| `owed_check_try` | `node?`, `check?`, `invariant?`, `run?`, `min_tests?`, `timeout?`, `record?`, `for?`, `red?`, `green?`, `plan?`, `no_lease?`, `json?` | exact-commit diagnostics (§3.10); ordinary verdicts even for red checks; optional informational receipts |
 | `owed_attest` | `node?`, `trunk?`, `rerun?`, `remeasure?`, `all?`, `lease?`, `as` | attest; trunk needs no node; all requires remeasure |
 | `owed_review` | `node`, `verdict`, `rank`, `note`, `obligation?`, `ack_rulings?: number \| "latest"`, `model?`, `needs_parent?`, `candidate?`, `as` | review (`needs_parent: true` = `needs: "parent"`, block only); as owner under the gate the dialog shows and pins the candidate (§8) |
 | `owed_merge` | `node`, `lease?`, `as` | merge |
