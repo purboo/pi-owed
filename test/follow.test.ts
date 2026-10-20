@@ -165,14 +165,15 @@ test('FW2 registry discovery falls back to DSA_SESSION then PI_SESSION_ID and re
   try {
     for (const key of ['DSA_SESSION', 'PI_SESSION_ID']) {
       process.env[key] = 'fallback-session'; f.register(f.cwd, 'fallback-session'); const h = harness(f.root);
-      try { await h.emit('session_start'); await pause(2600); f.append(`fallback ${key}`); await h.emit('agent_settled'); assert.match(h.messages[0]?.content ?? '', new RegExp(`fallback ${key}`)); }
+      try { await h.emit('session_start'); await pause(2600); f.append(`fallback ${key}`); await h.emit('agent_settled'); assert.match(h.messages.map(m => m.content).join('\n'), new RegExp(`fallback ${key}`)); }
       finally { await h.emit('session_shutdown'); delete process.env[key]; }
     }
     rmSync(f.reg()); const h = harness(f.root, 'late-session');
     try {
       await h.emit('session_start'); await pause(2600); f.register(f.cwd, 'late-session'); await pause(2600);
       f.append('too early'); await h.emit('agent_settled'); assert.equal(h.messages.length, 0, 'registry not rescanned on every 2s tick');
-      await pause(8000); f.append('after next registry scan'); await h.emit('agent_settled'); assert.match(h.messages[0]?.content ?? '', /after next registry scan/);
+      await pause(8000); await h.emit('agent_settled'); assert.match(h.messages[0]?.content ?? '', /too early/, 'PD1 registry attach replays the wake preceding discovery');
+      f.append('after next registry scan'); await h.emit('agent_settled'); assert.match(h.messages.map(m => m.content).join('\n'), /after next registry scan/);
     } finally { await h.emit('session_shutdown'); }
   } finally { await f.close(); }
 });

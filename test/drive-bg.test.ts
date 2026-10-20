@@ -382,7 +382,7 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
   } finally { writeFileSync(gate, ''); await h.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' }); await f.done(); }
 });
 
-test('D17.7/8: session_start follows a live driver without replaying old lines; session_shutdown stops the follower', { timeout: 60_000 }, async () => {
+test('D17.7/8: session_start replays current old wakes; session_shutdown stops the follower', { timeout: 60_000 }, async () => {
   const f = await rig(planOf(node('s')));
   const h = harness(f.cwd), witness = harness(f.cwd), late = harness(f.cwd);
   const line = (o: Json) => appendFileSync(f.log, `${JSON.stringify(o)}\n`);
@@ -391,17 +391,18 @@ test('D17.7/8: session_start follows a live driver without replaying old lines; 
     line({ do: 'notify', node: 'old', outcome: 'notify', text: 'old question' });
     liveLock(f.lock);   // this test process plays the live driver
     await topLevelStart(h);
+    assert.match(h.messages[0]!.message.content, /old question/, 'PD1 replays current wakes at attach');
     line({ do: 'halt', node: 's', outcome: 'halted', attempt: 1, needs: 'owner', detail: 'new reason' });
-    await until(() => h.messages.length >= 1, 8000, 'the wake for the new line');
-    const c = h.messages[0]!.message.content;
+    await until(() => h.messages.length >= 2, 8000, 'the wake for the new line');
+    const c = h.messages[1]!.message.content;
     assert.match(c, /^Needs you: s — new reason → owed why s$/m);
-    assert.doesNotMatch(c, /old question/, 'lines before the attach are not replayed');
+    assert.doesNotMatch(c, /old question/, 'the replayed wake is not repeated');
     // A second session_start for the same driver keeps the one follower (no duplicate message).
     await topLevelStart(h);
     line({ do: 'notify', node: 's', outcome: 'notify', text: 'second' });
-    await until(() => h.messages.length >= 2, 8000, 'the second wake');
+    await until(() => h.messages.length >= 3, 8000, 'the second live wake');
     await sleepMs(2500);   // after the positive: a second follower would have delivered a duplicate by now
-    assert.equal(h.messages.length, 2, 'one follower per repository');
+    assert.equal(h.messages.length, 3, 'one follower per repository');
     assert.match(await h.status(), new RegExp(`\\nDriver: running pid ${process.pid} since `));
     // After shutdown: a witness session (still attached) is woken by the next line, h is not.
     await topLevelStart(witness);
@@ -409,7 +410,7 @@ test('D17.7/8: session_start follows a live driver without replaying old lines; 
     line({ do: 'notify', node: 's', outcome: 'notify', text: 'after shutdown' });
     await until(() => witness.messages.some(m => /after shutdown/.test(m.message.content)), 8000, 'the witness wake');
     await sleepMs(2500);
-    assert.equal(h.messages.length, 2, 'no follower after session_shutdown');
+    assert.equal(h.messages.length, 3, 'no follower after session_shutdown');
     rmSync(f.lock, { force: true });
     assert.match(await h.status(), /\nDriver: not running \(ended without an exit record\)/);
     // No lock: session_start follows nothing (the witness, attached before, shows the line was there to read).

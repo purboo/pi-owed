@@ -2923,8 +2923,8 @@ it is evidence to consider removal, not an automatic lift or proof of a fix.
 - Conservative glob overlap can delay disjoint patterns sharing a literal prefix.
   Overlap-only writes retries require a driver; without one, attest after the
   named slots close. Mixed refusal reasons do not receive automatic retries.
-- Batch isolation is driver runtime state; status's ledger-only batch preview
-  may still propose isolated members. The driver persists refused candidates
+- Batch isolation is driver runtime state; status reads the isolation file for
+  its batch preview. The driver persists refused candidates
   across restarts and leaves them out of its batch plan (§7.21). A plan CAS
   change to a member or global setting during batch measurement discards its
   results and falls back to individual merges; unrelated node-only changes
@@ -3134,11 +3134,15 @@ order, even after trunk moves or new partners appear. A record is removed when
 the candidate changes, the node merges or the slot closes; a missing or unreadable
 file means no records. A late refusal cannot isolate a newer candidate. The retry
 report reads `batch merge refused (<reason>); <members> merge alone until merged
-or resubmitted`. This scheduling state never changes ledger facts or merge gates.
+or resubmitted`. If saving isolation fails, the in-memory records remain and
+this report adds `(isolation not saved: <error code>)`; the refusal is preserved.
+This scheduling state never changes ledger facts or merge gates.
 
 `status --full` shows the planned batch beside Merge queue; JSON exposes optional
 `mergeBatch: [ids]`. The displayed plan excludes dependency/continuation waits,
-`later`, halted, trunk-parked and reported nodes. A member of a running batch is
+`later`, halted, trunk-parked and reported nodes, and candidates matching the
+runtime isolation file. Status reads that file outside the reducer; isolated
+members merge alone and changed candidates can join batches again. A member of a running batch is
 shown as `merge in batch with <leader>`. CLI success names member commits,
 dropped conflicts and the final trunk. Batch entries must be consecutive,
 ordered and identical in metadata;
@@ -6719,27 +6723,34 @@ polling.
   `stop` and `max` with `status`/`stop` (usage).
 - **CLI follower information (0.31).** `owed start` and `owed drive --detach`
   add `followed by pi session <first 8 characters>` when the driver's registry
-  session is known, including reused drivers. Otherwise they add
+  session is known, including reused drivers, while the reported driver is
+  running. An already exited driver keeps its exit output without follower
+  information. Otherwise running drivers add
   `note: no pi session follows this driver; its wakes reach only pi sessions opened in this repository. To be woken elsewhere, run \`owed watch\` (for example as a dsa command call).`
   JSON adds `followedBy: <id> | null`; tool replies keep their existing form.
 - **Watch (0.31).** `owed watch [--after <offset>] [--timeout <s>] [--json]`
-  reads the repository's driver log without taking the driver lock or writing
-  the ledger. It uses the session follower's wake lines, batch revalidation
+  reads the drive log; writes no ledger entries and takes no driver lock.
+  Revalidation may write the best-effort state snapshot cache. It uses the session follower's wake lines, batch revalidation
   against ledger and dsa, and rotation handling, without the busy hold. With
-  no cursor it starts at the current log size, like session attach; `--after`
+  no cursor it starts at the current log size; `--after`
   starts at that byte offset. Both numeric options are nonnegative integers.
   It exits 0 on a ready wake batch or driver exit, printing the wake and then
   `next: owed watch --after <offset>`. Reusing this offset skips that batch.
   It exits 3 when no live driver holds the lock at startup, printing
   `no owed driver is running in <repo>; start one with owed start`. A timeout
-  exits 5 with `no wake within <s> s` and the `next:` line. Without a timeout it
+  exits 5 with `no wake within <s> s` and the `next:` line. The timeout cursor
+  retains unread ride-alongs (including merge `Done:` lines) for the next watch;
+  reported or stale lines are skipped when no earlier ride-along still awaits.
+  Without a timeout it
   waits until a wake or driver exit. JSON is `{lines, next, exit}`, where
   `lines` contains the message lines and `next` is the byte offset.
-- **Wake-ups** (src/extension.ts, `DriveWatch`/`Follower`). After a tool
-  start in a top-level session, the follower reads the fresh (rotated) log from its
-  start; on `session_start` of a session not inside a dsa call (`DSA_EXEC` and
-  `DSA_CALL` unset, D17a.1), when the repository of `ctx.cwd` has a live lock,
-  from the log's size at that moment (no replay). Every owed tool call also
+- **Wake-ups** (src/extension.ts, `DriveWatch`/`Follower`). When a top-level
+  session attaches to a running driver at session start, a tool call or registry
+  discovery, it replays complete lines from at most the last 256 KiB of the
+  current log, with the same revalidation as live wakes and at most one state
+  load per attach, then follows from the end. Already delivered wakes are not
+  repeated by that follower instance. Busy sessions hold the replay for delivery
+  and revalidate when idle. Every owed tool call also
   attaches to its target repository after it runs, including refusals, before
   attaching the idle watcher. Attaching the same driver pid is a no-op, keeping
   deduplication and pending batches. Sessions inside dsa calls never attach.
