@@ -1,5 +1,114 @@
 # Changelog
 
+## 0.31.1
+
+Plans, ledgers and snapshots from 0.31.0 replay unchanged;
+no new ledger kinds or fields are added. `owed check try --record` writes an
+ordinary `note` entry. Snapshot format and validation are unchanged, but the
+old `snapshot/state.v8` is no longer read, costing one cold replay on first
+use. The dsa requirements stay as in 0.31.0: pi-durable-subagents >= 1.0.27
+for the driver, >= 1.1.0 for durable-writer waits and lease options, and
+>= 1.2.0 for structured asks.
+
+- **Missing candidate modules do not make trunk red.** CJS and ESM
+  `Cannot find module '<path>'` diagnostics now qualify for
+  `probe not applicable: trunk lacks <path>, which the candidate adds`.
+  The path must resolve inside the probe checkout to a candidate addition
+  absent from trunk; bare module names without `/` do not qualify. The probe
+  records `error`, and the failed merge check still refuses the merge.
+- **Different unnamed failures keep the node's own refusal.** When neither
+  the merge failure nor its trunk probe names failed tests, owed compares
+  their last error-like lines, falling back to the last non-empty line.
+  Measurement checkout paths become one token and whitespace is folded.
+  Different lines produce `probe inconclusive: trunk fails differently (<line>)`
+  with an `error` verdict; the merge keeps its `merge failure output:` detail.
+  Equal or missing lines, or unreadable logs, keep the previous classification.
+- **Merge-tree advice checks which files trunk changed.** The lead remains
+  `merge tree does not pass <inv>[, ...] (trunk passes)`. When paths overlap it
+  continues `; trunk moved <N> commits since the slot base and changed files this node changes (<paths>): rebase → owed rebase <node>`
+  (at most two paths, then `+<remaining>`). Without overlap it continues
+  `; trunk moved <N> commits since the slot base but changed none of the files this node changes, so the node's own change is the likely cause: owed decide <node> --writer --text "<repair instruction>" (rebase → owed rebase <node> only reproduces it on the current trunk)`.
+  If Git cannot compute the paths, the existing rebase hint remains.
+- **Try an ad-hoc command with owed's measurement rules.**
+  `owed check try --run '<command>' (--green|--red) <rev> [--min-tests N] [--timeout <seconds>]`
+  uses the disk plan's setup and execution settings on an exact commit tree.
+  Defaults are one required test and 900 seconds; zero-test or unknown-count
+  successes do not pass by default. Choose exactly one of `<node> <check>`,
+  `--invariant <id>` or `--run`; `--min-tests` and `--timeout` apply only to
+  `--run`. Red expects `fail`, green expects `pass`, and `error` meets neither.
+  The `owed_check_try` tool exposes the same options.
+- **Record diagnostic measurements for later citation.**
+  `owed check try <node> <check> --green <rev> --record` appends one
+  informational receipt per measured side, including failures and errors.
+  Output identifies `(<commit12>, tree <tree12>)` and adds `receipt #<seq>`
+  when recorded. Receipts retain the measured plan, commit, tree, counts and
+  log reference. Node checks associate receipts automatically; invariant or
+  ad-hoc measurements use `--record --for <node>` to associate a plan node.
+  `--for` requires `--record`, and recording requires an initialized ledger.
+  Without `--record`, logs remain but no ledger entries are appended.
+  Receipts never satisfy gates, change keys or votes, or direct the driver.
+- **Find measurement receipts in why.** `owed why <node>` lists associated
+  receipts newest first, at most five; `owed why <node> --full` lists all.
+  Lines read `receipt #<seq> <target> on <commit12> (tree <tree12>): <verdict> <pass>/<tests> tests, log <path>`;
+  unknown counts use `?`. Cite `receipt #<seq>` for a ruling-ordered measurement
+  instead of copying raw logs or handwritten tree proofs into the repository.
+- **Writer packets show invariants that measure their writes.** Manual and
+  driver packets list `- inv:<id>: <reads>` using the attempt's slot-base file
+  inventory, with at most five specific invariants and a remainder count.
+  Invariants covering at least 90% of slot-base files are grouped as
+  `- broad: inv:a, inv:b (every change)`.
+  Literal new write paths count; globs do not predict future files. No overlap
+  or unavailable inventory means no section. The packet points to
+  `owed check try --invariant <id> --green <your commit>` before merge-tree
+  measurement at merge.
+- **Plan feedback names invariant coverage before submit.** `owed plan`
+  and `owed edit --dry-run` (including their tool forms) print
+  `note: <node> writes files inv:<id> measures (<reads>); before submit: owed check try --invariant <id> --green <commit>`
+  for added nodes or changed writes overlapping non-broad invariants.
+  At most ten notes appear, then `note: +k more`; these are advice, not
+  warnings or refusals, and add no ledger entries.
+- **Packets make the commit-before-measure order explicit.** Every writer
+  packet says `Checks, owed check try and your own preflight see committed HEAD only: commit code, then evidence, then measure, then report.`
+  For `check try`, `--red` and `--green` select committed revisions; uncommitted
+  edits are never measured, and requests for a dirty tree are usage errors.
+- **Large ledgers load and report faster.** On one large ledger (about 21,700
+  entries), cold submit fell from 301.7 s to 104.1 s; with a snapshot, submit
+  fell from 9.48 s to 5.72 s, status from 6.99 s to 3.82 s, and why from
+  7.04 s to 3.54 s. Lookup optimizations preserve replay and output bytes.
+  Each version uses `snapshot/state-<version>.v8`, so different versions no
+  longer overwrite each other's snapshots. Best-effort cleanup keeps the
+  current file and the two newest other snapshot files by modification time.
+- **Attaching sessions receive still-current earlier wakes.** Session start,
+  tool calls and registry discovery replay complete lines from at most the
+  last 256 KiB of the current drive log, revalidate them like live wakes,
+  then follow from the end. Older lines outside that tail are not replayed.
+  An existing follower does not redeliver an already delivered wake; busy
+  sessions hold delivery until idle. Sessions inside dsa calls do not attach.
+- **Start reports followers only for a running driver.** `owed start` and
+  `owed drive --detach` print `followed by pi session <first 8 characters>`
+  or the no-session note only while the reported driver is running. An
+  already exited driver keeps its exit output without a follower line;
+  CLI JSON reports `followedBy: null`.
+- **Watch timeout cursors preserve pending merge messages.**
+  On timeout, `owed watch --timeout <s>` exits 5 with `no wake within <s> s` and
+  `next: owed watch --after <offset>:<ino>`. That cursor retains pending
+  ride-along lines such as merge `Done:` messages for the next watch;
+  reported or stale lines are skipped when no earlier ride-along awaits.
+  Without a cursor, watch still starts at the current log end.
+  `owed watch` reads the drive log; writes no ledger entries and takes no
+  driver lock. Revalidation may write the state snapshot cache.
+- **An isolation-save error preserves the batch refusal.** Refused members
+  remain isolated in memory if saving their runtime isolation fails. The
+  original retry report gains `(isolation not saved: <error code>)`; a
+  restart cannot rely on isolation that was not saved.
+- **Status previews respect saved batch isolation.** The batch preview
+  excludes open candidates matching the driver's isolation file, so those
+  members merge alone. Changed candidates can join batches again; missing,
+  malformed or unreadable isolation state means no remembered isolation.
+
+Source grew by 203 lines net across 14 TypeScript files: 313 insertions and
+110 deletions since 0.31.0.
+
 ## 0.31.0
 
 Plans and ledgers from 0.30.0 replay unchanged; no new ledger kinds or fields
