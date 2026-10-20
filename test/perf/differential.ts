@@ -84,6 +84,8 @@ function wfBlockText(s: State, b: Block): string {
   }
   return text.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g,c => c === '\\' ? '\\\\' : `\\u${c.charCodeAt(0).toString(16).padStart(4,'0')}`);
 }
+/** SM2 changes only this exact guard diagnostic, never a replay field or verdict. */
+const sm2Reason = (text: string): string => text === 'genesis invariant initial observations are incomplete' ? `${text}; run owed attest --genesis` : text;
 function wfReasons(s: State, text: string): string {
   for (const n of Object.values(s.nodes)) for (const i of n.items) {
     const blocks = n.blocks.filter(b => b.obligation === i.obligation && (b.state === 'active' || b.state === 'flaky'));
@@ -91,7 +93,7 @@ function wfReasons(s: State, text: string): string {
     const old = `${i.obligation} still blocked: ${blocks.map(b => `#${b.seq}${b.state === 'flaky' ? ' flaky' : ''}`).join(', ')}`;
     text = text.replaceAll(old,wfItem(s,i).detail);
   }
-  return text;
+  return sm2Reason(text);
 }
 function wfRendered(s: State, text: string): string {
   for (const n of Object.values(s.nodes)) {
@@ -208,7 +210,7 @@ export function snapshot(m: { r: R; v: V }, s: State, entries: Entry[]): string 
   };
   out.genesisJobs = attempt(() => r.genesisJobs(s)); out.genesisProgress = attempt(() => r.genesisProgress(s));
   out.allowanceSeq = r.allowanceSeq(s); out.projectId = attempt(() => r.projectId(s));
-  out.adoptGuard = attempt(() => r.adoptGuard(s, { commit: 'adopted', tree: 'adopted-tree', invKeys: { ...s.trunk.invKeys } }));
+  out.adoptGuard = attempt(() => { const g = r.adoptGuard(s, { commit: 'adopted', tree: 'adopted-tree', invKeys: { ...s.trunk.invKeys } }); return m === BASE ? wfItems(s,g) : g; });
   out.planAt = attempt(() => r.planAt(s, s.seq + 1)); out.entries = r.entriesOf(s).length;
   // QT1 intentionally changes only the rendered human halt wording, never the ledger value or acceptance state.
   const rendered = (text: string): string => (m === BASE ? wfRendered(s,text).replace(/halted by driver #(\d+) \(attempt (\d+), needs human\):/g,
@@ -378,6 +380,7 @@ export function intendedChange(s: State, d: Draft, base: unknown, cur: unknown):
     const next = wfItem(s,i);
     if (next.detail !== i.detail) expected = expected.map(x => typeof x === 'string' ? x.replace(`${i.obligation} unsatisfied:${i.detail}`,`${i.obligation} unsatisfied:${next.detail}`) : x);
   }
+  expected = expected.map(x => typeof x === 'string' ? sm2Reason(x) : x);
   return canonical(expected) === canonical(withoutGrantHints(cur));
 }
 /**

@@ -975,7 +975,7 @@ async function prepareEdit(o: EditArgs, entries: Entry[], s: State): Promise<Edi
   if (typeof o.note !== 'string' || !o.note.trim()) throw new OwedError('edit needs a non-empty note (--note TEXT)','usage');
   if (o.writer && o.rule === undefined) throw new OwedError('--writer requires --rule','usage');
   if ((o.after !== undefined || o.expect !== undefined) && !o.resume) throw new OwedError('--after and --expect require --resume','usage');
-  if (o.invariant !== undefined && (o.rule !== undefined || o.resume)) throw new OwedError('invariant edits do not take --rule or --resume','usage');
+  if ((o.invariant !== undefined || o.drive) && (o.rule !== undefined || o.resume)) throw new OwedError('invariant and drive edits do not take --rule or --resume','usage');
   if (o.rule !== undefined && !o.rule.trim()) throw new OwedError('--rule needs non-empty text','usage');
   const source = await amendSource(o.cwd,entries,o.plan), read = await readPlan({ cwd:o.cwd, path:source });
   if (planBlob(read.plan,false).sha !== s.planSha) throw new OwedError(`plan file has unrecorded edits: ${read.path} differs from the ledger's current plan; record it with owed plan first, or restore it`);
@@ -1524,12 +1524,20 @@ export const attestBusyText = (node: string, owner: LockOwner): string => `attes
  * either refuses at append time when the open candidate differs. `from`: further working directories of the calling
  * process for the writer-worktree rail (G2.1; o.cwd and process.cwd() are always checked).
  */
-export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number|'latest'; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<RecordedAct & { warnings?: string[] }> {
+/** SM1: normalize acknowledgments to the existing single watermark before drafting a review. */
+export function rulingAck(value: unknown): number | 'latest' | undefined {
+  if (value === undefined) return;
+  const items: unknown[] = typeof value === 'string' ? value.split(',').map(x => x.trim()) : Array.isArray(value) ? value : [value];
+  if (!items.length || items.some(x => !(x === 'latest' && typeof value === 'string') && !(typeof x === 'number' ? Number.isSafeInteger(x) && x >= 0 : typeof x === 'string' && !Array.isArray(value) && /^\d+$/.test(x) && Number.isSafeInteger(Number(x))))) throw new OwedError('ack-rulings requires latest, a seq, or a comma list of seqs (optionally latest); the tool also accepts an array of integers','usage');
+  return items.includes('latest') ? 'latest' : Math.max(...items.map(Number));
+}
+export async function review(o: Actor & { node: string; verdict:'ok'|'block'; rank:number; note:string; ack_rulings?:number|string|number[]; obligation?:'review'|'closure-review'; needs?:'parent'; named?: string; pin?: CandidatePin; from?: string[]; model?: string }): Promise<RecordedAct & { warnings?: string[] }> {
   const given = candidateArg(o.named), ledger = await Ledger.open(o.cwd);
   const modelState = (await readState(o)).state;
   const measuredModel = await recordedModel(o.cwd,modelState,o.node,by(o),o.model);
   const entry = await mutateAct(o,async s => { node(s,o.node); named(s,o.node,given); pinned(s,o.node,o.pin); await writerTree(s,o.node,[o.cwd,process.cwd(),...(o.from ?? [])]); const n = candidate(s,o.node), obligation = o.obligation ?? 'review'; const model = o.model ?? (n.slot?.attempt === modelState.nodes[o.node]?.slot?.attempt && n.candidate?.seq === modelState.nodes[o.node]?.candidate?.seq ? measuredModel : undefined); const required = Math.max(0, ...applicableRules(s,o.node).map(r => r.seq));
-    const ack = o.ack_rulings === 'latest' ? required : o.ack_rulings ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString());
+    const suppliedAck = rulingAck(o.ack_rulings);
+    const ack = suppliedAck === 'latest' ? required : suppliedAck ?? await launchedReviewAck(s,o.node,by(o),async sha => (await ledger.getBlob(sha)).toString());
     if (required > 0 && (ack === undefined || ack < required)) throw new OwedError(`ack-rulings must be at least ${required} (the latest ruling for ${o.node}); rerun with --ack-rulings ${required} or --ack-rulings latest`, 'usage');
     return { kind:'review',by:by(o),channel:o.channel,node:o.node,attempt:n.slot!.attempt,obligation,key:n.candidate!.keys[obligation] ?? '',verdict:o.verdict,rank:o.rank,note:o.note,ack_rulings:ack,...(model !== undefined ? { model } : {}),...(o.needs !== undefined ? { needs:o.needs } : {}) }; });
   return entry;

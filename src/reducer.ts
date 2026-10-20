@@ -2483,7 +2483,7 @@ export function adoptGuard(s: State, st: StateFacts): AdoptGuard {
     }
     return v;
   });
-  if (!s.genesisDone) reasons.push('genesis invariant initial observations are incomplete');
+  if (!s.genesisDone) reasons.push('genesis invariant initial observations are incomplete; run owed attest --genesis');
   return { ok: reasons.length === 0, reasons, failed, invItems };
 }
 /** IR2: a named test failure, not a timeout, error, zero/unknown count or min_tests failure. */
@@ -2620,6 +2620,6 @@ function scopedMergeGuard(s: State, id: string, m: { facts: CandidateFacts; stat
     }
     return v;
   });
-  if (!s.genesisDone) reasons.push('genesis invariant initial observations are incomplete');
+  if (!s.genesisDone) reasons.push('genesis invariant initial observations are incomplete; run owed attest --genesis');
   return { ok: reasons.length === 0, reasons, nodeItems: nodeItemsOnMerge, invItems };
 }

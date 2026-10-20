@@ -25,10 +25,24 @@ const waive = (s: State, node: string, obligation: string): string => `owed waiv
 const ownerReview = (s: State, node: string, obligation: string): string => `owed review ${word(node)}${obligationFlag(obligation)} --ok --rank 3${candidateFlag(s, node)} --note "<note>" --ack-rulings latest --as ${owner}`;
 const approve = (s: State, node: string): string => `owed approve ${word(node)}${candidateFlag(s, node)} --note "<note>" --as ${owner}`;
 const evidence = (s: State, node: string, obligation: string, role = 'owner'): string => `owed evidence ${word(node)} ${word(obligation.slice(9))} --file <path> --note "<what was checked>" --as ${role}:<id>${candidateFlag(s, node)}`;
+/** SM4: keep escaped code points whole; prefer a late sentence, then whitespace/CJK. */
+export function boundaryClip(text: string, max: number, escape: (s: string) => string = s => s, mark = '…'): string {
+  const points = Array.from(text), tokens = points.map(escape), sizes = tokens.map(t => Array.from(t).length);
+  if (sizes.reduce((a,b) => a+b,0) <= max) return tokens.join('');
+  let length = 0, end = 0, sentence = 0, boundary = -1;
+  for (; end < points.length && length + sizes[end]! <= max-mark.length; end++) {
+    length += sizes[end]!;
+    const cp = points[end]!;
+    if ((/[.!?]/u.test(cp) && (end+1 === points.length || /\s/u.test(points[end+1]!)) || /[\u3002\uff01\uff1f]/u.test(cp)) && length >= max*0.6) sentence = end+1;
+    if (/\s/u.test(cp)) boundary = end;
+    else if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(cp)) boundary = end+1;
+  }
+  return tokens.slice(0,sentence || (boundary >= 0 ? boundary : end)).join('').trimEnd() + mark;
+}
 function reviewAsk(note: string): string {
   const marker = /BLOCK\s*\(needs parent\)\s*:|Parent decision needed\s*:|needs parent/i.exec(note);
   const tail = marker ? note.slice(marker.index + marker[0].length).replace(/^[\s):—-]+/, '') : note.trim().match(/[^.!?]+[.!?]*\s*$/)?.[0] ?? note;
-  return oneLine(tail.trim().replace(/\s+/g, ' ')).slice(0, 300).trim();
+  return boundaryClip(tail.trim().replace(/\s+/g, ' '),300,oneLine);
 }
 function haltReason(reason: string): string {
   if (reason.startsWith('review-missing:')) return 'reviewer finished without recording the required review';
