@@ -1,6 +1,6 @@
 # o-small — 0.31 SM1–SM4
 
-Base: `ebf090b83644c4bb170802b97053bc17cd09a910` (0.30.0).
+Base: `dc40bae09aa33083d144d942a5d664910a8c3ac6` (parent-rebased candidate #3729, after o-coretools on main `05440a0`). Repair is one new commit; no amend/rebase. Keep the combined edit description and its `3590c17e...` CT2/CT3 digest unchanged.
 Ownership: only packet-authorized files; no sibling work taken over. No local node/tsc/tests.
 
 Implemented:
@@ -9,6 +9,7 @@ Implemented:
 - SM3: exclusive top-level drive target in CLI/tool; YAML Document map edits retain external bytes/comments where safe, validate final plan, and reuse existing plan authority, carry, lock, append/rename and dry-run paths. Drive has no node rule/resume target.
 - SM4: named shared code-point/escape-aware sentence/whitespace/CJK clipping helper; structured details suffix points to full dsa describe JSON; review asks and driver evidence use the helper.
 - R-031-SM-1 (#3714): writer head uses new boundaries and existing ` … ` separator; tail retains original ending, moving its start only within the existing 20-code-point window. Replies <=600 code points stay whole.
+- R-031-SM-2 (parent accepts independent review #3740): ASCII semicolon is a sentence end only before whitespace/end; fullwidth semicolon is a sentence end without whitespace, like the other CJK marks. Three named regressions distinguish both positive cases and the ASCII no-whitespace negative case. All other clipping behavior stays unchanged.
 
 Changed existing tests (only contract-driven assertions):
 - `test/owriter.test.ts`: one head-boundary assertion now ends at whitespace beyond the obsolete 20-code-point head retreat window; test title updated. Tail/end retention and 600/601-code-point tests remain.
@@ -19,7 +20,7 @@ Changed existing tests (only contract-driven assertions):
 - `test/perf/differential.ts`: adapt only the exact SM2 genesis diagnostic in baseline query/refusal presentation. Frozen 0.10 fixtures, replay facts, keys, evidence and verdict comparisons remain unchanged. This serves existing `perf.test.ts` and `snapshot.test.ts`.
 - All new regression coverage is in `test/small031.test.ts`: CLI/tool acknowledgment and atomic refusals, adoption with deliberately failed genesis execution, drive edit/create/flow/comments/atomic append failure/dry-run/schema/exclusivity/tool/verify, sentence/word/CJK/escape limits, writer tail hash retention, driver environment evidence, and a full-details command executed against a deterministic dsa fixture.
 
-Source budget, `git diff --stat ebf090b -- src` (121 changed lines, <=130):
+Original SM1-SM4 source budget at `821be51`, `git diff --stat ebf090b -- src` (121 changed lines, <=130):
 ```
  src/cli.ts       | 16 +++++++++-------
  src/drive.ts     |  7 ++++---
@@ -32,14 +33,19 @@ Source budget, `git diff --stat ebf090b -- src` (121 changed lines, <=130):
  8 files changed, 91 insertions(+), 30 deletions(-)
 ```
 
-Validation (all runtime commands via `/tmp/owed-ipc/run.sh`, no local node/tsc/tests):
-- Tested tree: `b761cf6e7f653ed8a34a35a3e23ab62688379890`. Only this handoff's receipts changed after the passing run; source, tests and SPEC are identical.
-- Baseline detached `ebf090b`, only new test copied: `node --test --test-reporter=tap test/small031.test.ts`, exit 1, 0/7 pass. Log `/tmp/owed-ipc/logs/owed-small031-red-ebf090b-084503.log`. Reasons: old ack parser rejects lists; adoption omits completion command; CLI has no drive edit flag; old review/details clipping lacks sentence boundaries/ellipsis/full command. No import or fixture failures.
-- `npm run typecheck`, exit 0; `node --test --test-concurrency=2 --test-reporter=tap test/small031.test.ts test/edit.test.ts test/multiedit.test.ts test/structask.test.ts test/adopt.test.ts test/cli.test.ts test/owriter.test.ts`, exit 0, 78/78 pass. Combined log `/tmp/owed-ipc/logs/o-small-1-084510.log`.
-- Same log: targeted rerun of the six first-full-suite failures with `node --test --test-concurrency=2 --test-reporter=tap --test-name-pattern='AK1: the first|English shipped|PR2: every|differential: fuzz|K5.4: each|equivalence: every k' test/asks026.test.ts test/english.test.ts test/needs-structure.test.ts test/perf.test.ts test/repair-epoch.test.ts test/snapshot.test.ts`, exit 0, 6/6 pass.
-- Full suite `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'` (timeout 1800), exit 0, 2036/2036 pass, 1386.826 s. Log `/tmp/owed-ipc/logs/o-small-1-084641.log`.
-- Durable request `owed-b1da092bfb45-o-small-1-validation2`, run `01M5BC9P33N929AQ3JAHA3R587`, exit 0. `git diff --check` passed.
+Validation for R-031-SM-2 (all runtime commands via `/tmp/owed-ipc/run.sh`):
+- Tested tree `ead7f713a07d3afe13cd461cf29debd486dfdc48`; only this English handoff's receipts changed afterward. Source and tests are identical to the passing tree.
+- Isolated dc40bae plus new tests: `node --test --test-reporter=tap --test-name-pattern='R-031-SM-2' test/small031.test.ts`, exit 1; both positive cases fail with the old whitespace/CJK fallback, ASCII no-whitespace negative passes (1 pass, 2 failures). Log `/tmp/owed-ipc/logs/owed-small031-sm2-red-dc40bae-092447.log`.
+- `npm run typecheck`, exit 0.
+- `node --test --test-reporter=tap test/small031.test.ts`, exit 0, 10/10 pass (also the exact o-small-red node command on the repaired tree).
+- `node --test --test-reporter=tap test/needs-structure.test.ts`, exit 0, 5/5 pass.
+- Exact o-small node check: `node --test --test-reporter=tap test/small031.test.ts test/edit.test.ts test/multiedit.test.ts test/structask.test.ts test/adopt.test.ts test/cli.test.ts`, exit 0, 57/57 pass. Typecheck and all focused checks share `/tmp/owed-ipc/logs/o-small-1-092450.log` (timeout 600 s).
+- Full suite: `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`, exit 0, 2051/2051 pass, 1390.161 s (timeout 1800 s). Log `/tmp/owed-ipc/logs/o-small-1-092549.log`.
+- Durable request `owed-b1da092bfb45-o-small-sm2-validation`, run `01M5BEJDR7H4V91M2M7XE5JRGJ`, exit 0. `git diff --check` passes. Combined edit description and CT2/CT3 digest are byte-identical to dc40bae.
+Prior passing receipts are superseded for this changed tree.
 
-Remaining: no unmet SM1–SM4 criterion identified. Cross-sibling integration/review is parent-owned. The details command is behaviorally checked against a deterministic dsa fixture; no real runner question was created.
+Repair source budget: `git diff --stat dc40bae -- src` = one changed line (1 insertion, 1 deletion). Original SM1-SM4 source budget above remains 121 changed lines against its original base.
+
+Remaining: no unmet R-031-SM-2 requirement identified. Independent re-review and integration are parent-owned.
 
 Publication state: slot branch only, no submit/attest/merge/release; parent owns those actions.
