@@ -2,7 +2,11 @@
 
 Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020027) gives the complete public contract.
 
-## Current release: 0.31.0
+## Current release: 0.31.1
+
+Plans, ledgers and snapshots from 0.31.0 replay unchanged; no new ledger kinds or fields. `check try --record` stores ordinary informational `note` entries. New options `--run`, `--record` and `--for` need the 0.31.1 CLI/tool surface. Snapshot format and validation stay unchanged, but each version uses `snapshot/state-<version>.v8`; legacy `state.v8` is no longer read, costing one cold replay on first use. Cleanup keeps the current snapshot plus the two newest other files, best effort. Restart upgraded drivers/pi sessions for attachment replay and runtime behavior. Dsa minimums remain unchanged from 0.31.0.
+
+## 0.31.0
 
 Plans and ledgers from 0.30.0 replay unchanged; no new ledger kinds or fields. New reviewer launches default to the packaged `owed-reviewer`; explicitly set global or node `drive.reviewer.agent` to keep a custom profile. Recorded launches keep their agent. Accepted attempts waiting to merge no longer consume `max`, but count toward the `2 × max` open-attempt cap. Driver batch isolation survives restarts. Restart upgraded drivers/pi sessions for the runtime behavior; `owed watch`, `owed edit --drive` and acknowledgment lists need the 0.31 input surface. Dsa requirements remain unchanged: >= 1.0.27 for the driver, >= 1.1.0 for durable-writer waits and lease options, >= 1.2.0 for structured asks. Earlier incompatible features below keep their upgrade requirements.
 

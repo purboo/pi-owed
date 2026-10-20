@@ -114,8 +114,20 @@ plan before recording it; at least one revision is required. Each revision
 uses a fresh exact-commit tree without closure/test overlays, with normal
 setup, counts, timeout and repeat behavior. Even `red: true` is measured as an
 ordinary check: red expects fail, green expects pass, and errors meet neither.
-No ledger entries are recorded; logs are retained. Exit codes: 0 all met,
-1 unmet, 2 usage, 75 lease busy; `--no-lease` or plan `lease: false` opts out.
+Without `--record`, no ledger entries are appended; logs are retained.
+`owed check try --run '<command>' (--green|--red) <rev> [--min-tests N] [--timeout <seconds>]`
+uses the same disk plan settings, defaulting to one required test and 900 seconds;
+zero-test or unknown-count successes do not pass by default. Select exactly one
+of node/check, invariant or run. Only committed revisions are measured, even
+when the working directory has uncommitted edits.
+`owed check try <node> <check> --green <rev> --record` saves an informational
+receipt per side, including fail/error verdicts, and prints the tree and
+`receipt #<seq>`. For invariant/ad-hoc receipts use `--record --for <node>`
+to associate a plan node. `owed why <node>` shows the newest five associated
+receipts; `--full` shows all. Cite the receipt for a ruling-ordered measurement;
+receipts never satisfy gates or change keys or votes. Recording requires an
+initialized ledger. Exit codes: 0 all met, 1 unmet, 2 usage, 75 lease busy;
+`--no-lease` or plan `lease: false` opts out.
 
 Optional `selftest: [{commit: <40 or 64 hex>, expect: pass|fail}]` (1–8 entries)
 runs before recording new/changed checks or fixtures. Failed expectations or
@@ -126,6 +138,13 @@ only announce pending selftests. Fixtures change no key, candidate or block
 and are not acceptance evidence. `owed edit` accepts `checks.<id>.selftest`,
 `checks.<id>.run_file.path`, `checks.<id>.run_file.sha256` and `checks.<id>.args`
 (omit `checks.<id>.` for invariants). See SPEC §3.10.
+
+Writer packets list invariants whose reads overlap the node's writes using
+slot-base files and literal new write paths, grouping broad invariants once.
+They point to `owed check try --invariant <id> --green <your commit>` and say:
+`Checks, owed check try and your own preflight see committed HEAD only: commit code, then evidence, then measure, then report.`
+`owed plan` and `owed edit --dry-run` print advisory invariant coverage notes
+for added nodes or changed writes; these notes do not refuse the plan.
 
 ### Parallel slots and a moving trunk
 
@@ -347,15 +366,15 @@ For this small demonstration a person can perform the independent review. In a r
 
 Fresh init is delegated `owner:pi`; the driver performs genesis measurements through the existing attest/merge lifecycle. Under `OWED_CONFIRM=owner`, start refuses with explicit `owed init <file>` guidance and never opens a dialog. An uncovered downgrade refuses and names `owed plan <file> --note "<why>"`; record that explicit owner act with `--as owner:pi`, then start again. Allowance-covered changes retain their downgrade accounting. Refusals name the failed preflight and remedy. Plan/init remains recorded if a later launch fails; fix the launch and start again, not init again.
 
-An unchanged plan and live driver says `already running`, with no entry or log rotation. `max` (positive integer) and `stay` change only a newly started driver. Tool output has three lines: action (with lint warnings folded into it), driver state and next step. CLI start adds `followed by pi session <first 8 characters>` when the driver's session is known, including reuse; otherwise it adds:
+An unchanged plan and live driver says `already running`, with no entry or log rotation. `max` (positive integer) and `stay` change only a newly started driver. Tool output has three lines: action (with lint warnings folded into it), driver state and next step. CLI start adds `followed by pi session <first 8 characters>` only for a running driver when its session is known, including reuse; otherwise a running driver adds:
 
 ```text
 note: no pi session follows this driver; its wakes reach only pi sessions opened in this repository. To be woken elsewhere, run `owed watch` (for example as a dsa command call).
 ```
 
-JSON/tool results are `{initialized, updated, plan, warnings, driver}`, with optional driver `alreadyRunning`; CLI JSON also has `followedBy: <id> | null`. These are runtime fields. A tool start follows a reused driver from the current log end, a new one from its fresh beginning. `owed drive --detach` prints the same follower line.
+JSON/tool results are `{initialized, updated, plan, warnings, driver}`, with optional driver `alreadyRunning`; CLI JSON also has `followedBy: <id> | null`. These are runtime fields. Session attachment revalidates complete wake lines from at most the last 256 KiB of the current drive log, then follows from the end; an existing follower preserves deduplication. `owed drive --detach` prints the same follower line. Already exited drivers omit follower information and report `followedBy: null`.
 
-An agent without a pi session can wait with `owed watch [--after <offset>[:<ino>]] [--timeout s] [--json]`, for example in a durable dsa command call that wakes its caller on completion. Watch writes no files and revalidates wakes against the ledger and dsa. Without `--after` it starts at the current log end. Exit 0 delivers a wake or driver exit; exit 5 reports `no wake within <s> s`. Both print `next: owed watch --after <offset>:<ino>`: reuse that cursor to continue. An inode change starts the current log at zero; bare byte offsets remain accepted. Timeout seconds must be a nonnegative integer. Exit 3 says `no owed driver is running in <repo>; start one with owed start` with no `next:` line. JSON is `{lines, next, exit}`, with a cursor string in `next`. An old cursor can show a repeated wake line again.
+An agent without a pi session can wait with `owed watch [--after <offset>[:<ino>]] [--timeout s] [--json]`, for example in a durable dsa command call that wakes its caller on completion. `owed watch` reads the drive log; writes no ledger entries and takes no driver lock. It revalidates wakes against the ledger and dsa and may write the state snapshot cache. Without `--after` it starts at the current log end. Exit 0 delivers a wake or driver exit; exit 5 reports `no wake within <s> s`. Both print `next: owed watch --after <offset>:<ino>`: reuse that cursor to continue. On timeout it preserves pending ride-alongs such as merge `Done:` lines for the next watch. An inode change starts the current log at zero; bare byte offsets remain accepted. Timeout seconds must be a nonnegative integer. Exit 3 says `no owed driver is running in <repo>; start one with owed start` with no `next:` line. JSON is `{lines, next, exit}`, with a cursor string in `next`. An old cursor can show a repeated wake line again.
 
 `owed start --restart` / `owed_start {restart:true}` drains a live driver's
 current action and in-flight measurements, waits up to ten seconds for its
@@ -528,8 +547,10 @@ Trunk, slot and candidate CAS and the latest guard remain binding (SPEC §7.21).
 A refused driver batch's candidates merge alone across trunk changes, new
 partners and restarts, until their commit changes, the node merges or its slot
 closes. Re-submitting the same commit keeps isolation. Missing or unreadable
-isolation state means no remembered isolation; status's ledger-only batch
-preview can still propose isolated members.
+isolation state means no remembered isolation. Status reads the isolation file
+and excludes matching candidates from its batch preview. If saving isolation
+fails, the refusal report adds `(isolation not saved: <error code>)` and the
+driver keeps the in-memory isolation.
 
 After a `review-missing` halt, `owed resume <node>` gives the same sealed run
 one new verdict follow-up; another seal without a review halts again. Rejected
@@ -613,8 +634,8 @@ and is woken too. Every owed tool call in a top-level session attaches to its
 target repository, including refusals. Sessions also discover their live
 drivers across repositories at most once every ten seconds, using the starting
 `DSA_SESSION` with `PI_SESSION_ID` as fallback outside dsa calls. Registry
-attachment starts at the log end: a wake written before attachment is seen
-again only when repeated or at the idle re-wake. Sessions inside dsa calls
+attachment revalidates still-current wakes from complete lines in at most the
+last 256 KiB of the current drive log, then follows from the end. Sessions inside dsa calls
 (`DSA_EXEC`/`DSA_CALL` set) never attach. Nobody has to poll
 `action: "status"`; `action: "stop"` stops it. The driver survives pi exiting.
 The driver carries no dsa call identity (`DSA_EXEC` and `DSA_CALL` are removed
@@ -1083,7 +1104,7 @@ Compatibility: owed 0.14 refuses the new `refresh` entry and unknown obs
 together and restart pi. Historical ledgers without the new fields retain their
 0.14 replay (apart from the actionable missing-key text).
 
-When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. A probe naming a missing candidate-added file absent from trunk instead records `error` (`probe not applicable`), never trunk-red; the merge check still refuses. Otherwise, if the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. In 0.17, a candidate whose active binding blocks are all trunk-red waits instead: no driver halt, writer follow-up, reviewer launch or attest (questions still notify). Mixed blocks retain the existing behavior. One repository notice per current trunk/check/sorted-failed-name state lists the waiting nodes and trunk fix/adopt, optional sweep, or owner-waiver options; status and brief share one `Needs you` line and show `waiting: trunk-red (check:X on trunk <trunk12>)` in the node's progress phase. Queued pi notices recompute their waiting list at delivery. Moving trunk automatically resumes the existing measurement/rebase route without a resume entry. Deduplication uses the existing per-process once set: restart may print one repository notice again, never a parked-node halt. This adds no ledger fields and weakens no merge gate. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for localization and a confirmed automatic escape, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq> --reason "<why the risk is acceptable>"` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. Full why shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
+When a node check fails on the merge tree, `owed merge` first measures that same check on current trunk under the same lease, setup and execution configuration. Its diagnostic observation has `probe: "trunk"`, subject = node, commit/base = trunk and its own trunk check key; the same key on unchanged trunk is reused. Probes never satisfy or block obligations and invariants get no probes. A probe naming a missing candidate-added file absent from trunk, including CJS/ESM `Cannot find module '<path>'` diagnostics (not bare names without `/`), instead records `error` (`probe not applicable`), never trunk-red; the merge check still refuses. When neither side names failed tests, different failure lines after checkout-path and whitespace normalization produce `error` with `probe inconclusive: trunk fails differently (<line>)`; equal/missing lines or unreadable logs keep the prior classification. Otherwise, if the probe fails with every merge failure name among its names (or neither result has names), the refusal begins `trunk-red: check:X fails on trunk <short> without <node> (<names>)` and says the candidate is not shown to be the cause. `status`/`why` mark the item trunk-red with parent as discharger and both observation sequences. In 0.17, a candidate whose active binding blocks are all trunk-red waits instead: no driver halt, writer follow-up, reviewer launch or attest (questions still notify). Mixed blocks retain the existing behavior. One repository notice per current trunk/check/sorted-failed-name state lists the waiting nodes and trunk fix/adopt, optional sweep, or owner-waiver options; status and brief share one `Needs you` line and show `waiting: trunk-red (check:X on trunk <trunk12>)` in the node's progress phase. Queued pi notices recompute their waiting list at delivery. Moving trunk automatically resumes the existing measurement/rebase route without a resume entry. Deduplication uses the existing per-process once set: restart may print one repository notice again, never a parked-node halt. This adds no ledger fields and weakens no merge gate. Fix trunk with a fixing node, use a configured `owed sweep --commit <trunk>` for localization and a confirmed automatic escape, or knowingly accept the merge observation with `owed waive <node> check:X --accept-risk <merge-tree obs seq> --reason "<why the risk is acceptable>"` (existing active-block waivers reach merge keys). A failure cleared by attribution can still be accepted when its key equals the current merge key; that waiver binds only that key. Full why shows an additional `mergeChecks` item and `status` a parent pending item when an accepted candidate still has a reused trunk-red merge failure. Passing probes or differing names keep the ordinary refusal; moving trunk recomputes classification with a current-trunk probe, while failures on an unchanged merge check key remain valid. Compatibility: owed 0.13 refuses `obs.probe` with code `version`; owed 0.12 and older ignore the field and cannot safely interpret probes. Existing histories without probes keep their replayed states and keys; use 0.14 for the new merge-key waiver scope.
 
 Merge refusals (0.16.2) also show the latest pass of a failing invariant on the current trunk: `inv:<id>: pass on trunk <trunk12> (#<seq>) → fail on merge tree <commit12> (#<seq>)`. This appears once per obligation, including anonymous failures, before intermittent and fix-candidate hints; if no such pass exists it is omitted. The node's current candidate adds `; node diff touches <p1>, <p2>, <p3> (+<N> more)` when it has changed paths. Merge refusals, driver halts, `why` merge-block hints and `Merge checks:` share the delta. This changes only text; 0.16.0, 0.16.1 and 0.16.2 share ledger fields, replay and keys.
 
@@ -1409,7 +1430,7 @@ These safeguards change no acceptance key or complete historical ledger state.
 `owed --version` / `owed version` prints the installed package version without
 a repository and accepts no other arguments/options.
 
-Since 0.12 owed also keeps the replayed state in `owed/snapshot/state.v8`, so a call folds only the entries appended since (a long-running pi session keeps the same in memory). The snapshot is derived and private: one of another owed version, a damaged one or one that does not match the ledger is ignored and rewritten, and deleting it only costs one full replay. `owed verify` always replays the whole ledger; when the snapshot differs from that replay it deletes it and reports `snapshotMismatch: <seq>`. A ledger entry written by a newer owed (an unknown kind or value) is refused with `ledger entry #<seq> (...) needs a newer owed than <version>: upgrade owed and restart pi sessions that load it` (exit 1).
+Since 0.31.1 owed keeps replayed state in `owed/snapshot/state-<version>.v8` (URI-component escaped version), so a call folds only the entries appended since (a long-running pi session keeps the same in memory). Only the current version's file is read; legacy `state.v8` is ignored, costing one cold replay on first use. Successful writes retain the current file and the two newest other snapshots by modification time, best effort. The format and validation are unchanged. A damaged or ledger-mismatching snapshot is ignored and rewritten; deleting it only costs one full replay. `owed verify` always replays the whole ledger; when the snapshot differs from that replay it deletes only the current version's file and reports `snapshotMismatch: <seq>`. A ledger entry written by a newer owed (an unknown kind or value) is refused with `ledger entry #<seq> (...) needs a newer owed than <version>: upgrade owed and restart pi sessions that load it` (exit 1).
 
 Since 0.16 every driver state load (passes, measurement reaping/refusals and wake/status revalidation) uses the same verified replay and persistent plan caches as ops. At a cached replay point it neither full-replays nor parses historical YAML; appended entries fold from that point. The in-process memo still refreshes every 32 folded entries: after a short increment, a same-head reload may refold at most 31 entries, and consecutive incremental loads fold at most the newly appended entries plus 31. Crossing 32 folded entries advances the memo replay point, so a following same-head load folds zero; the disk snapshot cadence remains unchanged. Every load still reads and verifies the entire hash chain. The driver applies `drive/reports.json` only to that load's private state after caching the ledger-only replay: a report or driver mutation cannot leak into another load or the snapshot. Shared cached plans are immutable. No gate, key, ledger field, lock or scheduling/idempotence rule changes; incremental hash verification and driver pass frequency remain deferred. The scale benchmark is `node --expose-gc test/perf/driver-load-bench.ts` (not part of `npm test`).
 
@@ -1719,7 +1740,9 @@ all runs (an old pass/fail conflict can replay as pass or fail).
   successful tests only, not skips/ignored tests or empty TAP file wrappers.
   JSON evidence checks own-field presence, not truthiness. See SPEC §3.6/RC2.
 - **Attribution and actionable state:** non-shared merge-tree breaks on moved
-  trunk lead with rebase (0.23 shared/trunk-red failures instead wait), new
+  trunk recommend rebase when trunk changed candidate paths; disjoint changes
+  point to `owed decide <node> --writer --text "<repair instruction>"`
+  (shared/trunk-red failures instead wait). New
   tests use the slot base, and new submits do not re-halt on
   old candidate blocks. Intermittency and defer carry require recorded proof.
   Repair progress hides Needs you only when the driver needs no owner decision;
