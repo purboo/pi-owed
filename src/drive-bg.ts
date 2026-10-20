@@ -386,7 +386,7 @@ export function classifyLine(line: string): { kind: LineKind; text: string; fact
  */
 export interface WakeCheck { halt?: true; once?: string; scope?: 'repo'; need?: Need; needId?: string; otherNeeds?: Need[]; currentNeeds?: Need[]; node?: string; facts?: number; flaky?: number; drift?: true; rid?: string; qid?: string; rev?: number; answerRetry?: true; invariantRed?: { obligation: string; key: string } }
 /** Per wake line: true = still current (deliver), false = resolved before delivery (drop). Same order as the input. */
-export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
+export type Revalidate = (checks: readonly WakeCheck[], state?: Promise<State | undefined>) => Promise<boolean[]>;
 /**
  * The revalidation of a pi delivery (H1.1b), against the ledger of `cwd` and dsa. A line is dropped when the node's
  * current fact mark (`factMark`, the function that produced the mark) is higher than the line's (someone acted on the
@@ -397,8 +397,8 @@ export type Revalidate = (checks: readonly WakeCheck[]) => Promise<boolean[]>;
  * trunk ref and each run are read at most once per delivery.
  */
 export function revalidator(o: { cwd: string; dsa?: Dsa }): Revalidate {
-  return async checks => {
-    let state: Promise<State | undefined> | undefined;
+  return async (checks, sharedState) => {
+    let state = sharedState;
     let trunk: Promise<string | undefined> | undefined;
     let runtime: Promise<Runtime> | undefined;
     const views = new Map<string, Promise<{ qid: string; rev: number }[] | undefined>>();
@@ -482,6 +482,8 @@ export interface FollowerOptions {
   from?: number;
   /** CLI resume cursor: an inode mismatch starts the current log from zero. */
   fromIno?: number;
+  /** PD1: session attach replays only complete lines in the last 256 KiB. */
+  replay?: boolean;
   /** `step` awaits delivery acknowledgments; `tick` is the synchronous CLI path. */
   deliver: (content: string) => unknown;
   intervalMs?: number;
@@ -576,11 +578,13 @@ function plainNeed(j: Record<string, unknown>, text: string): string | undefined
   return `Needs you: ${node} — ${reason} → ${command}`;
 }
 type DriverIdentity = { pid: number; start?: string; at?: string };
-type PendingLine = { text: string; wake: boolean; repeatOf?: string; key?: string; rec?: Rec; check?: WakeCheck; halt?: true; json?: Record<string, unknown>; terminal?: { driver: DriverIdentity; event: string }; earlier?: boolean };
+type PendingLine = { cursor?: { offset: number; ino: number }; text: string; wake: boolean; repeatOf?: string; key?: string; rec?: Rec; check?: WakeCheck; halt?: true; json?: Record<string, unknown>; terminal?: { driver: DriverIdentity; event: string }; earlier?: boolean };
 
 export class Follower {
   private readonly o: FollowerOptions;
   private offset: number;
+  private replayEnd?: number;
+  private skipPartial = false;
   /** Identity of the file the offset belongs to. */
   private file?: { dev: number; ino: number };
   private timer?: NodeJS.Timeout;
@@ -599,10 +603,16 @@ export class Follower {
     let size = 0;
     try { const st = statSync(o.log); size = st.size; this.file = { dev: st.dev, ino: st.ino }; } catch { size = 0; }
     this.offset = o.fromIno !== undefined && o.fromIno !== this.file?.ino ? 0 : o.from ?? size;
+    if (o.replay && o.from === undefined) {
+      this.offset = Math.max(0, size - 256 * 1024); this.replayEnd = size; this.skipPartial = this.offset > 0;
+    }
   }
   get pid(): number { return this.o.pid; }
   /** FW4: byte position and identity of the log last read, never a fresh stat of a possibly rotated path. */
-  get next(): string { return `${this.offset}:${this.file?.ino ?? 0}`; }
+  get next(): string {
+    const pending = this.pending.find(p => p.cursor?.ino === this.file?.ino)?.cursor;
+    return `${pending?.offset ?? this.offset}:${this.file?.ino ?? 0}`;
+  }
   /** A new driver of the same log keeps held lines and ride-alongs from its predecessor. */
   reconnect(o: { pid: number; start?: string; since?: string }): this {
     Object.assign(this.o, o); this.ended = false; this.last.clear(); return this;
@@ -621,20 +631,27 @@ export class Follower {
     if (!this.stopped) { this.stopped = true; this.o.onStop?.(); }
   }
   /** Complete lines appended since the last read; a rotated log (new dev/ino, or shorter) is read from its start. */
-  private read(): string[] {
+  private read(): { line: string; cursor: { offset: number; ino: number } }[] {
     let fd: number;
     try { fd = openSync(this.o.log, 'r'); } catch { return []; }
     try {
-      const st = fstatSync(fd), size = st.size;
-      if ((this.file && (this.file.dev !== st.dev || this.file.ino !== st.ino)) || size < this.offset) this.offset = 0;
+      const st = fstatSync(fd);
+      if ((this.file && (this.file.dev !== st.dev || this.file.ino !== st.ino)) || st.size < this.offset) { this.offset = 0; this.replayEnd = undefined; this.skipPartial = false; }
       this.file = { dev: st.dev, ino: st.ino };
+      const size = Math.min(st.size, this.replayEnd ?? st.size); this.replayEnd = undefined;
       if (size === this.offset) return [];
       const CAP = 4 * 1024 * 1024, buf = Buffer.alloc(Math.min(size - this.offset, CAP)), n = readSync(fd, buf, 0, buf.length, this.offset);
       const end = n > 0 ? buf.lastIndexOf(0x0a, n - 1) : -1;
       // No newline yet: an incomplete line waits for its end, unless it alone exceeds the cap (then it is taken as is).
-      if (end < 0) { if (n < CAP) return []; this.offset += n; return [buf.toString('utf8')]; }
-      this.offset += end + 1;
-      return buf.subarray(0, end).toString('utf8').split('\n').filter(l => l.trim());
+      if (end < 0) { if (n < CAP) return []; const offset = this.offset; this.offset += n; return [{ line: buf.toString('utf8'), cursor: { offset, ino: st.ino } }]; }
+      const from = this.offset; this.offset += end + 1;
+      const lines: { line: string; cursor: { offset: number; ino: number } }[] = [];
+      for (let at = 0; at <= end;) {
+        const next = buf.indexOf(0x0a, at);
+        lines.push({ line: buf.subarray(at, next).toString('utf8'), cursor: { offset: from + at, ino: st.ino } }); at = next + 1;
+      }
+      if (this.skipPartial) { lines.shift(); this.skipPartial = false; }
+      return lines.filter(l => l.line.trim());
     } finally { closeSync(fd); }
   }
   /** Reads the lines appended since the last read into the pending batch (E3.1 repeats, terminal and pid-gone notice). */
@@ -642,13 +659,13 @@ export class Follower {
     if (this.ended) return;
     // Liveness first: a driver found gone has written everything it ever will before the read below.
     const alive = pidAlive(this.o.pid, this.o.start), seen = new Set<string>();
-    for (const line of this.read()) {
+    for (const { line, cursor } of this.read()) {
       const c = classifyLine(line), json = parseObject(line);
       if (typeof json?.inProgress === 'number') this.inProgress = json.inProgress;
       if (typeof (json?.counts as { open?: number } | undefined)?.open === 'number') this.inProgress = (json!.counts as { open: number }).open;
       if (c.clears !== undefined) { this.last.delete(c.clears); this.pending = this.pending.filter(p => p.repeatOf !== c.clears); }
       if (c.kind === 'quiet') continue;
-      if (c.kind === 'merge') { this.pending.push({ text: c.text, wake: false, ...(json ? { json } : {}) }); continue; }
+      if (c.kind === 'merge') { this.pending.push({ cursor, text: c.text, wake: false, ...(json ? { json } : {}) }); continue; }
       const seenKey = c.kind === 'terminal' ? `${c.text}\u0000${JSON.stringify(json?.driver ?? { pid: this.o.pid, start: this.o.start })}` : c.text;
       if (seen.has(seenKey)) continue;
       seen.add(seenKey);
@@ -660,12 +677,12 @@ export class Follower {
           prior.n++;
           if (prior.resolved) continue;
           this.pending = this.pending.filter(p => p.repeatOf !== f.key);
-          this.pending.push({ text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.key });
+          this.pending.push({ cursor, text: `${f.base}${repeatText(prior.n)}`, wake: false, repeatOf: f.key });
           continue;
         }
         this.last.set(f.key, { base: f.base, facts: f.facts, n: 0 });
       }
-      this.pending.push({ text: c.text, wake: true, ...(json ? { json } : {}), ...(c.kind === 'terminal' ? { terminal: { driver: json?.driver as DriverIdentity ?? { pid: this.o.pid, start: this.o.start, at: this.o.since }, event: c.text } } : {}), ...(c.fact ? { key: c.fact.key, rec: this.last.get(c.fact.key)! } : {}), ...(c.check ? { check: c.check } : {}), ...(c.halt ? { halt: c.halt } : {}) });
+      this.pending.push({ cursor, text: c.text, wake: true, ...(json ? { json } : {}), ...(c.kind === 'terminal' ? { terminal: { driver: json?.driver as DriverIdentity ?? { pid: this.o.pid, start: this.o.start, at: this.o.since }, event: c.text } } : {}), ...(c.fact ? { key: c.fact.key, rec: this.last.get(c.fact.key)! } : {}), ...(c.check ? { check: c.check } : {}), ...(c.halt ? { halt: c.halt } : {}) });
       if (c.kind === 'terminal') this.ended = true;
     }
     if (!this.ended && !alive) { this.ended = true; this.pending.push({ text: `driver pid ${this.o.pid} ended without an exit record`, wake: true, terminal: { driver: { pid: this.o.pid, start: this.o.start, at: this.o.since }, event: 'ended without an exit record' } }); }
@@ -739,8 +756,9 @@ export class Follower {
     // TP2: waiting membership can change while pi is busy. Recompute at delivery, dropping resolved states.
     const parked = batch.filter(p => p.json?.do === 'notify' && p.json.scope === 'repo' && typeof p.json.once === 'string' && (p.json.once.startsWith('trunk-red\u0000') || p.json.once.startsWith('trunk\u0000') || p.json.once.startsWith('shared\u0000')));
     const resolvedPark = new Set<PendingLine>();
+    const sharedState = parked.length ? stateOf(this.o.repo).catch(() => undefined) : undefined;
     if (parked.length) {
-      const s = await stateOf(this.o.repo).catch(() => undefined);
+      const s = await sharedState;
       if (s) for (const p of parked) {
         const red = [...trunkParkNotices(s), ...sharedParkNotices(s)].find(r => r.once === p.json!.once);
         if (!red) resolvedPark.add(p);
@@ -756,7 +774,7 @@ export class Follower {
     }
     const wakes = batch.filter(p => p.wake && p.check);
     let keep: boolean[] = wakes.map(() => true);
-    if (wakes.length && this.o.revalidate) { try { keep = await this.o.revalidate(wakes.map(p => p.check!)); } catch { /* keep all */ } }
+    if (wakes.length && this.o.revalidate) { try { keep = await this.o.revalidate(wakes.map(p => p.check!), sharedState); } catch { /* keep all */ } }
     if (this.stopped || this.o.busy?.()) return undefined;
     const dropped = new Set([...resolvedPark, ...wakes.filter((_, i) => keep[i] === false)]);
     // Nothing reads while a step runs (one step at a time); anything appended after the snapshot stays pending.
@@ -780,8 +798,7 @@ export class Follower {
 export interface WatchHooks { busy: () => boolean; revalidate: (repo: string) => Revalidate }
 /**
  * The followers of one pi extension instance: one per driver log (= per repository) (D17.7). `follow` replaces the
- * follower of that log; `attach` (session_start) follows the live driver of cwd's repository from the log's current
- * size; `flush` (agent_settled) delivers what the followers hold; `stopAll` (session_shutdown) clears every timer, the
+ * follower of that log; `attach` replays the current driver's bounded log tail; `flush` (agent_settled) delivers what the followers hold; `stopAll` (session_shutdown) clears every timer, the
  * drivers keep running.
  */
 export class DriveWatch {
@@ -791,15 +808,15 @@ export class DriveWatch {
   private readonly hooks?: WatchHooks;
   constructor(deliver: (content: string) => void, intervalMs?: number, hooks?: WatchHooks) { this.deliver = deliver; this.intervalMs = intervalMs; if (hooks) this.hooks = hooks; }
   get size(): number { return this.followers.size; }
-  follow(o: { log: string; repo: string; pid: number; start?: string; since?: string; from?: number; fromIno?: number }): Follower {
+  follow(o: { log: string; repo: string; pid: number; start?: string; since?: string; from?: number; fromIno?: number; replay?: boolean }): Follower {
     const previous = this.followers.get(o.log);
-    if (previous && !previous.stopped) return previous.reconnect(o);
+    if (previous && !previous.stopped) return previous.pid === o.pid ? previous : previous.reconnect(o);
     const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo) } : {};
     const f: Follower = new Follower({ ...o, deliver: this.deliver, ...hooks, ...(this.intervalMs !== undefined ? { intervalMs: this.intervalMs } : {}), onStop: () => { if (this.followers.get(o.log) === f) this.followers.delete(o.log); } });
     this.followers.set(o.log, f);
     return this.intervalMs === 0 ? f : f.start();
   }
-  async attach(cwd: string, from?: number, fromIno?: number): Promise<Follower | undefined> {
+  async attach(cwd: string, from?: number, fromIno?: number, replay = true): Promise<Follower | undefined> {
     let dir: string;
     try { dir = await driveDir(cwd); } catch { return undefined; }
     const lock = readLock(dir);
@@ -807,7 +824,9 @@ export class DriveWatch {
     const log = logPath(dir), have = this.followers.get(log);
     if (have && have.pid === lock.owner.pid) return have;
     const repo = await git.mainRoot(cwd).catch(() => cwd);
-    return this.follow({ log, repo, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}), ...(from !== undefined ? { from } : {}), ...(fromIno !== undefined ? { fromIno } : {}) });
+    const follower = this.follow({ log, repo, replay, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}), ...(from !== undefined ? { from } : {}), ...(fromIno !== undefined ? { fromIno } : {}) });
+    if (replay) await follower.step();
+    return follower;
   }
   /** One step of every follower now (agent_settled, H1.1a); the messages delivered. */
   async flush(): Promise<string[]> {

@@ -2269,6 +2269,15 @@ function unverifiedDefers(state: State, id: string, defers: State['deferred'], u
   const dispatch = state.nodes[id]?.slot?.dispatchSeq ?? Infinity;
   return defers.filter(d => d.seq > dispatch && state.plan.nodes.some(n => n.id === id) && state.plan.invariants.some(i => i.id === d.id)).map(d => ({...d,unverified}));
 }
+/** PD5: runtime isolation affects the preview only, never the replayed state. */
+async function statusBatchIsolation(dir: string, state: State): Promise<Set<string>> {
+  try {
+    const saved: unknown = JSON.parse(await readFile(join(dir, 'drive', 'batch-isolated.json'), 'utf8'));
+    return new Set(saved && typeof saved === 'object' && !Array.isArray(saved) ? Object.entries(saved).flatMap(([id, commit]) => {
+      const n = state.nodes[id]; return typeof commit === 'string' && n?.slot?.open && !n.merged && n.candidate?.commit === commit ? [id] : [];
+    }) : []);
+  } catch { return new Set(); }
+}
 /** SQ: both status and brief use the same current merge diagnostics and defer scope. */
 export async function summaryStatusView(cwd: string, dir: string, state: State, entries: Entry[], now: number): Promise<StatusView> {
   const drift = await git.trunkDrift(cwd,state.trunk.name,state.trunk.commit);
@@ -2293,7 +2302,7 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   const lock = readLock(dir), driverRunning = lock.state === 'live' || lock.state === 'foreign';
   const max = driverRunning && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(state.plan).max;
   const rt = await assembleRuntime({ cwd, state, driverRunning, now });
-  const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers,max,rt);
+  const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers,max,rt,await statusBatchIsolation(dir,state));
   for (const i of mergeChecks) view.summary!.needs.push({ node: i.subject, reason: `${i.obligation}: ${oneLine(i.detail)}`, command: `owed why ${i.subject}` });
   const red=await sweepRed(cwd,entries,state.trunk.commit);
   if (red) view.sweepRed=red;

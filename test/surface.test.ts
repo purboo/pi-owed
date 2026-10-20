@@ -202,7 +202,7 @@ test('SF2 owed_start uses cwd, returns compact output and never opens an owner d
     assert.notEqual(again.isError,true,again.text); assert.match(again.text,/already running/); assert.deepEqual(await entries(f.cwd),before);
   } finally { await h.shutdown(); await f.done(); }
 });
-test('SF6 owed_start follows a new driver from its log start but a reused driver from the current end (no replayed wakes)', {timeout:90_000},async () => {
+test('SF6 owed_start replays current wakes for both new and reused drivers', {timeout:90_000},async () => {
   const f=await fixture(), a=harness(f.root), b=harness(f.root);
   const wait = async (h: ReturnType<typeof harness>, ms: number) => { const end=Date.now()+ms; while (!h.messages.length && Date.now() < end) await new Promise(r => setTimeout(r,100)); };
   try {
@@ -213,7 +213,10 @@ test('SF6 owed_start follows a new driver from its log start but a reused driver
     const again=await env(identity,() => b.call('start',{cwd:f.cwd}));
     assert.match(again.text,/already running/);
     await wait(b,6_000);
-    assert.deepEqual(b.messages,[],'the old idle-wait is not replayed to the reusing session');
+    assert.equal(b.messages.length,1,'PD1 replays the current idle-wait to the reusing session');
+    assert.match(b.messages[0]!,/idle/);
+    await env(identity,() => b.call('start',{cwd:f.cwd}));
+    assert.equal(b.messages.length,1,'the same follower does not replay it again');
   } finally { await a.shutdown(); await b.shutdown(); await f.done(); }
 });
 test('SF2 start rereads the latest plan path, records a changed plan once, and ignores formatting-only changes', {timeout:90_000},async () => {
