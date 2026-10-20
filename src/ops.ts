@@ -33,7 +33,7 @@ import { clockTime } from './clock.ts';
 import { launchedReviewAck, parentOverlapWarnings } from './parentops.ts';
 import { editText, editDiff, editNodes, type EditFields } from './edit.ts';
 import { lintPlanShell, lintPlanCost, packetPaths, planWriteNotes } from './planlint.ts';
-import { admitSelftests, selftestPreview, measureTry, tryLines, type CheckTryArgs } from './checktry.ts';
+import { admitSelftests, selftestPreview, measureTry, tryLines, validateTry, adhocTry, tryReceipts, type TryTarget, type TryReceipt, type CheckTryArgs } from './checktry.ts';
 import { admitPlan, runFileLines } from './admission.ts';
 import { costReport, type CostReport } from './cost.ts';
 import { computeMetrics, sameModelReviews, metricsBound, type Metrics, type MetricsWindow } from './metrics.ts';
@@ -386,20 +386,36 @@ function planBlob(text: string, checkWrites = true, prior?: Plan) {
   const data = stringify(source, { sortMapEntries: true }); return { plan, data, sha: sha256(data) };
 }
 async function storePlan(cwd: string, ledger: Ledger, text: string, prior?: Plan, rev?: string, options: { signal?: AbortSignal; lease?: boolean } = {}) { const b = planBlob(text,true,prior); await admitPlan(cwd,ledger,b.plan,rev); const receipt = await admitSelftests({cwd,...options},ledger,b.plan,b.sha,prior); return { plan: b.plan, sha: await ledger.putBlob(b.data), ...receipt }; }
-/** CT1: disk source and exact commit; no observations are appended. */
+/** PR1–PR2: exact commits; optional informational notes are appended only after the lease is released. */
 export async function checkTry(o: CheckTryArgs) {
-  if ((o.node === undefined) === (o.invariant === undefined) || o.node !== undefined && !o.check || !o.red && !o.green) throw new OwedError('check try requires node/check or invariant, and --red or --green','usage');
+  validateTry(o);
   const ledger = await Ledger.open(o.cwd), source = await amendSource(o.cwd,await ledger.read(),o.plan), read = await readPlan({cwd:o.cwd,path:source}), plan = parsePlan(read.plan);
-  const spec = o.invariant !== undefined ? plan.invariants.find(c => c.id === o.invariant) : plan.nodes.find(n => n.id === o.node)?.checks.find(c => c.id === o.check);
+  const adhoc = o.run !== undefined ? adhocTry(o) : undefined;
+  const spec = adhoc?.spec ?? (o.invariant !== undefined ? plan.invariants.find(c => c.id === o.invariant) : plan.nodes.find(n => n.id === o.node)?.checks.find(c => c.id === o.check));
   if (!spec) throw new OwedError('unknown check or invariant','usage');
+  const forNode = o.for ?? o.node;
+  if (forNode !== undefined && !plan.nodes.some(n => n.id === forNode)) throw new OwedError(`unknown plan node ${forNode}`,'usage');
+  if (o.record) inited((await load(ledger)).state);
   await admitPlan(o.cwd,ledger,plan);
-  const target = {...(o.node !== undefined ? {node:o.node} : {invariant:o.invariant}),check:spec.id};
+  const target = {...(o.node !== undefined ? {node:o.node} : o.invariant !== undefined ? {invariant:o.invariant} : {}),check:spec.id};
+  const receiptTarget: TryTarget = adhoc?.target ?? (o.node !== undefined ? {node:o.node,check:spec.id} : {invariant:o.invariant!});
+  const planSha = o.record ? await ledger.putBlob(planBlob(read.plan,false).data) : undefined;
   const results = await withMachineLease({...o,lease:plan.lease === false ? false : o.lease,priority:10},async signal => {
     const results = [];
     for (const side of ['red','green'] as const) if (o[side] !== undefined) results.push(await measureTry({...o,signal},ledger,plan,target,spec,side,o[side]!,side === 'red' ? 'fail' : 'pass'));
     return results;
   });
-  return {...target,plan:read.path,results};
+  if (o.record) await ledger.withLock(async () => {
+    const {state} = await load(ledger);
+    const drafts: Draft[] = results.map(r => {
+      const data: TryReceipt = {...(forNode !== undefined ? {for:forNode} : {}),target:receiptTarget,side:r.side,rev:r.rev,commit:r.commit,tree:r.tree!,verdict:r.verdict,...(r.counts ? {counts:r.counts} : {}),durationMs:r.durationMs,log:basename(r.log),plan:planSha!};
+      return {kind:'note',by:'executor:owed',text:'try/v1 '+canonical(data)};
+    });
+    for (const d of drafts) guard(state,d);
+    const entries = await ledger.append(drafts);
+    results.forEach((r,i) => { r.receipt = entries[i]!.seq; });
+  },undefined,o.signal);
+  return {...target,...(adhoc ? {run:o.run} : {}),plan:read.path,results};
 }
 export async function checkTryText(cwd: string, r: Awaited<ReturnType<typeof checkTry>>): Promise<string> { return (await tryLines(await Ledger.open(cwd),r.results)).join('\n'); }
 /** The rejection of an operation whose `signal` aborted (D16): the CLI maps it to the signal's exit code. */
@@ -2397,6 +2413,7 @@ export async function why(o: Context & {node:string}): Promise<ReceiptCard> {
   const mergeChecks = await currentTrunkRedChecks(o.cwd,view,o.node);
   const max = running && Number.isSafeInteger(lock.owner.max) && lock.owner.max! > 0 ? lock.owner.max : driveConfig(view.plan).max;
   const card = receipt(view,entries,o.node,await hintedMergeChecks(o.cwd,view,o.node,mergeChecks),max,rt);
+  card.tryReceipts = tryReceipts(entries,o.node).map(r => ({...r,logPath:join(ledger.dir,'blobs',r.log)}));
   card.conflicts = (await candidateConflicts(o.cwd,view,o.node))[o.node];
   const pending = await rebasePending(view, o.node);
   if (pending) card.rebasePending = pending;
