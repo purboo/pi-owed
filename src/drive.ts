@@ -180,13 +180,13 @@ export function reviewerLaunch(s: State, node: string, n: number, project: strin
   const slot = s.nodes[node]!.slot!, agent = driveConfig(s.plan, node).reviewer;
   return { do: 'launch', node, attempt: slot.attempt, role: 'reviewer', n, rid: runId(project, node, slot.attempt, 'reviewer', n), spec: launchSpec({ ...agent, cwd: root, task: reviewPacket(s, node, n), name: runName(node, slot.attempt, 'reviewer', n) }), labels: runLabels(project, node, slot.attempt, 'reviewer'), rulings: carried(rulingsInScope(s, node)) };
 }
-/** RA/RM: a historical run uses its recorded agent, never the current plan's selection. */
-function reviewerAgent(s: State, l: LaunchEntry, blobs: DriveOpts['blobs']): string {
+/** RA/RM: recorded agents are authoritative; absent specs cannot distinguish the old/new default. */
+function builtinReviewer(s: State, l: LaunchEntry, blobs: DriveOpts['blobs']): boolean {
   const bytes = blobs?.get(l.spec);
   if (bytes !== undefined && sha256(bytes) === l.spec) {
-    try { const spec = JSON.parse(bytes); if (typeof spec.agent === 'string') return spec.agent; } catch { /* historical plan fallback */ }
+    try { const spec = JSON.parse(bytes); if (typeof spec.agent === 'string') return spec.agent === 'reviewer'; } catch { /* historical plan fallback */ }
   }
-  return driveConfig(planAt(s, l.seq), l.node).reviewer.agent;
+  return ['reviewer', 'owed-reviewer'].includes(driveConfig(planAt(s, l.seq), l.node).reviewer.agent);
 }
 /** RM2: only a resume after this run's review-missing halt renews its verdict allowance. */
 function reviewResumed(s: State, l: LaunchEntry, candidate: number, resumed: number): boolean {
@@ -1067,7 +1067,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
       const renewed = reviewResumed(s, l, c.seq, resumed) && (!asked || asked.seq < resumed);
       const retryable = statusOf(v) !== 'rejected' && v.state !== 'pruned';
       if ((!asked || renewed) && retryable) return send(l, 'follow-up', 'verdict', verdictMessage(id, c, who, awaiting));
-      const builtin = reviewerAgent(s, l, opts.blobs) === 'reviewer';
+      const builtin = builtinReviewer(s, l, opts.blobs);
       return halt(`review-missing: reviewer run ${at(l)} sealed ${statusOf(v)}${v.error ? `: ${v.error}` : ''} without recording ${awaiting.join(', ')} on candidate #${c.seq}${asked ? ` after verdict follow-up ${asked.send}` : ''}; remedies: ${reviewMissingRemedies(id, builtin, retryable).join('; ')}; ${retryable ? 'resume asks the same reviewer run again' : 'this run cannot take follow-ups'}${builtin ? '; builtin reviewer is read-only and may refuse to record; the agent edit applies to a new reviewer run of a later candidate' : ''}`);
     }
     // Row 15 (D11/D12): a review block recorded on the current candidate's key: repair (counts as a repair). A stale

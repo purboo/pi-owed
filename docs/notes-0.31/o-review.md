@@ -25,6 +25,12 @@ renewed verdict follow-up after resume.
   the remaining commands retain their order: edit (builtin reviewer only), owner
   review, abandon. `rejectedFixed`, writer halts and `rejectedHalt` are unchanged.
   Previously recorded halt reasons are not rewritten.
+- R-031-RA-4 accepts the independent review finding on `1d689c1`: without a
+  readable spec, a launch-time plan's default cannot distinguish the legacy
+  `reviewer` from `owed-reviewer`. Both now include the agent-edit remedy in
+  this fallback only; an explicit other agent omits it. Readable launch specs
+  still match only `reviewer`, and 0.31 halt records retain their recorded
+  remedies. No blob/runtime plumbing was added to `needs()`.
 - `reviewResumed` requires a matching node/attempt/rid review-missing halt after
   the current candidate and before resume. It renews one verdict follow-up on
   the same run and principal, using the existing send/generation protections.
@@ -79,6 +85,28 @@ The unchanged `real-020-ledger.json` passes chain verification and full/incremen
 replay comparison, with baseline-measured full-state digest
 `4ddeb551d448c6308c2455a9142c11a18bb0ac863aaac0fdf0d3989705d75653`.
 
+## R-031-RA-4 verification
+
+The repair is a new commit on top of `1d689c1`, with no amend or rebase. The
+existing legacy-halt regression in `test/review031.test.ts` now covers omitted,
+explicit builtin, explicit owed-reviewer and custom agents in needs, why and
+wake text, including a later plan edit. Added cases cover missing/unparsable/
+agentless/hash-invalid launch specs and preservation of recorded 0.31 remedies.
+No other existing test expectations changed for this ruling.
+
+`/tmp/owed-o-review-ra4-checks.sh` runs the following IPC checks in order; exact
+exit codes and generated log paths are recorded in
+`/tmp/owed-o-review-ra4-checks.results.log`:
+
+1. `node --test --test-reporter=tap test/review031.test.ts` against detached
+   `1d689c1` at `/tmp/owed-o-review-ra4-red-1d689c1`, with only the revised test
+   copied in (240 s; expected exit 1).
+2. `npm run typecheck` (120 s).
+3. `node --test --test-reporter=tap test/review031.test.ts` (240 s).
+4. `node --test --test-reporter=tap test/review031.test.ts test/drive.test.ts test/reviewdedup.test.ts test/nits.test.ts test/drive-ledger.test.ts test/snapshot.test.ts test/node-models.test.ts` (900 s).
+5. `node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'`
+   (1800 s; starts only when preceding checks have their expected exits).
+
 ## Source budget and delivery
 
 `git diff --stat ebf090b -- src`:
@@ -86,10 +114,10 @@ replay comparison, with baseline-measured full-state digest
 ```text
  src/drive-run.ts |  2 +-
  src/drive.ts     | 26 +++++++++++++++++++++-----
- src/needs.ts     | 25 +++++++++++++++++++++++--
+ src/needs.ts     | 26 ++++++++++++++++++++++++--
  src/plan.ts      |  2 +-
- 4 files changed, 46 insertions(+), 9 deletions(-)
+ 4 files changed, 47 insertions(+), 9 deletions(-)
 ```
 
-Net increase: 37 source lines, below the 110-line budget. Integration and
+Net increase: 38 source lines, below the 110-line budget. Integration and
 publication belong to the parent. This leaf does not run `owed submit`.

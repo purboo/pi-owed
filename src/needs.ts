@@ -150,7 +150,8 @@ function reviewMissingNeed(s: State, node: string): Need | undefined {
   const launch = s.nodes[node]?.runs.find(r => r.attempt === h.attempt)?.launches.find(l => l.role === 'reviewer' && h.reason.startsWith(`review-missing: reviewer run ${l.rid} `));
   const builtin = h.reason.includes('; remedies: ')
     ? h.reason.includes('owed edit --drive --set reviewer.agent=owed-reviewer')
-    : !!launch && driveConfig(planAt(s, launch.seq), node).reviewer.agent === 'reviewer';
+    // R-031-RA-4: a defaulted launch-time plan cannot distinguish the 0.30 and 0.31 agents.
+    : !!launch && ['reviewer', 'owed-reviewer'].includes(driveConfig(planAt(s, launch.seq), node).reviewer.agent);
   const retryable = h.reason.includes('; remedies: ')
     ? h.reason.includes(`; remedies: ${resumeCommand(node)};`) : !h.reason.includes(' sealed rejected');
   const [command, ...alternatives] = reviewMissingRemedies(node, builtin, retryable);

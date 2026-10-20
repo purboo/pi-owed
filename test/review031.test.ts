@@ -115,13 +115,44 @@ test('RM1: recorded spec wins over launch-time plan and later plan edits; missin
   remedies(expectHalt(legacy.go()).reason, true);
 });
 
-test('RM1: legacy halt gets remedies without rewriting its recorded reason', () => {
-  const r = rig(parsePlan(JSON.stringify({ ...raw, drive: { reviewer: { agent: 'reviewer' } } })));
-  r.launch(); r.send();
-  const reason = `review-missing: reviewer run ${R} sealed ok without recording review on candidate #3`;
-  r.add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason, needs: 'human' });
-  remedies(needText(needs(r.state(), 'a')[0]!), true);
-  assert.equal(r.state().nodes.a!.halt!.reason, reason);
+for (const agent of [undefined, 'reviewer', 'owed-reviewer', 'my-reviewer']) {
+  const builtin = agent !== 'my-reviewer';
+  const plan = () => parsePlan(JSON.stringify({ ...raw, ...(agent ? { drive: { reviewer: { agent } } } : {}) }));
+  test(`R-031-RA-4: legacy halt uses compatible launch-time fallback (agent=${agent ?? 'omitted'})`, () => {
+    const r = rig(plan()); r.launch(); r.send();
+    r.changePlan(parsePlan(JSON.stringify({ ...raw, drive: { reviewer: { agent: builtin ? 'other-reviewer' : 'reviewer' } } })));
+    const reason = `review-missing: reviewer run ${R} sealed ok without recording review on candidate #3`;
+    r.add({ kind: 'halt', by: 'parent:drive', node: 'a', attempt: 1, reason, needs: 'human' });
+    const n = needs(r.state(), 'a')[0]!;
+    assert.deepEqual([n.command, ...n.alternatives!], commands(builtin));
+    remedies(needText(n), builtin);
+    remedies(renderReceipt(receipt(r.state(), r.entries, 'a')), builtin);
+    assert.equal(r.state().nodes.a!.halt!.reason, reason);
+  });
+  test(`R-031-RA-4: absent/unreadable spec uses compatible launch-time fallback (agent=${agent ?? 'omitted'})`, () => {
+    for (const unavailable of ['missing', 'unparsable', 'no-agent', 'bad-hash']) {
+      const r = rig(plan()), l = r.launch(); r.send();
+      r.changePlan(parsePlan(JSON.stringify({ ...raw, drive: { reviewer: { agent: builtin ? 'other-reviewer' : 'reviewer' } } })));
+      remedies(expectHalt(r.go()).reason, agent === 'reviewer', true);
+      assert.ok(l.kind === 'launch');
+      const bytes = unavailable === 'unparsable' ? '{' : '{}';
+      if (unavailable === 'missing') r.blobs.delete(l.spec);
+      else {
+        if (unavailable !== 'bad-hash') l.spec = sha256(bytes);
+        r.blobs.set(l.spec, bytes);
+      }
+      remedies(expectHalt(r.go()).reason, builtin);
+    }
+  });
+}
+
+test('R-031-RA-4: a recorded 0.31 halt keeps its spec-derived remedies', () => {
+  const r = rig(); r.launch(); r.send();
+  const h = expectHalt(r.go()); remedies(h.reason, false); r.halt(h);
+  r.changePlan(parsePlan(JSON.stringify({ ...raw, drive: { reviewer: { agent: 'reviewer' } } })));
+  remedies(needText(needs(r.state(), 'a')[0]!), false);
+  remedies(renderReceipt(receipt(r.state(), r.entries, 'a')), false);
+  assert.equal(r.state().nodes.a!.halt!.reason, h.reason);
 });
 
 test('RM2: resume re-asks the same run/principal once, then halts on a second seal; a review permits merge', () => {
