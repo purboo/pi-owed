@@ -20,6 +20,8 @@ import { rebasePending, type RebasePending } from './rebase-view.ts';
  */
 const rebaseWorkOf = async (s: State, node: string, pending?: RebasePending): Promise<RebasePending | undefined> =>
   s.nodes[node]?.slot?.rebase ? pending ?? await rebasePending(s, node, true) : undefined;
+import { packetPaths } from './planlint.ts';
+import { planAt } from './reducer.ts';
 import * as git from './git.ts';
 import { clockTime } from './clock.ts';
 import { pendingAdopt, adoptPendingReason } from './adopt-wait.ts';
@@ -573,6 +575,21 @@ export class Driver {
    * stored bytes `decide` may need for retries. `rejected`: the attempt's sends dsa decided rejected (every pass; cached
    * once terminal) and the runs and sends rejected in this process.
    */
+  private readonly writerInventory = new Map<string, readonly string[]>();
+  private async writerPacketPaths(s: State): Promise<Map<string, readonly string[]>> {
+    const paths = new Map<string, readonly string[]>(), bases = new Set<string>();
+    for (const n of Object.values(s.nodes)) if (n.slot?.open && planAt(s,n.slot.dispatchSeq).invariants.length) {
+      bases.add(n.slot.base);
+      if (!this.writerInventory.has(n.slot.base)) {
+        const files = await packetPaths(this.root!,n.slot.base);
+        if (files) this.writerInventory.set(n.slot.base,files);
+      }
+      const files = this.writerInventory.get(n.slot.base); if (files) paths.set(n.id,files);
+    }
+    for (const base of this.writerInventory.keys()) if (!bases.has(base)) this.writerInventory.delete(base);
+    return paths;
+  }
+
   private async observe(s: State, measuring: ReadonlySet<string>): Promise<{ runs: Map<string, RunView>; blobs: Map<string, string>; rejected: Map<string, string>; conflicts: Map<string, string[]>; rebasePending: Map<string, RebasePending>; rebaseWork: Map<string, RebasePending>; writerWork: Map<string, { head: string; dirty: boolean }> }> {
     const ledger = this.ledger!, runs = new Map<string, RunView>(), blobs = new Map<string, string>(), rejected = new Map<string, string>(), conflicts = new Map<string, string[]>();
     const pendingBases = new Map<string, RebasePending>(), rebaseWork = new Map<string, RebasePending>(), writerWork = new Map<string, { head: string; dirty: boolean }>();
@@ -717,7 +734,9 @@ export class Driver {
     this.recordAsking(stillAsking(s, runs, now));
     await this.recordWriterWaiting(s, runs, now);
     const runtime = await assembleRuntime({ cwd: this.o.cwd, state: s, driverRunning: true, now });
-    let actions = decide(s, s.plan, runs, { runtime, max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, writerWork, measuring, now, noticed: this.facts.once });
+    // PK1: runtime inventory is cached by immutable slot base, outside the policy and ledger.
+    const writerPaths = await this.writerPacketPaths(s);
+    let actions = decide(s, s.plan, runs, { writerPaths, runtime, max: this.o.max ?? cfg.max, repairs: cfg.repairs, project: this.project, root: this.root!, applied: this.facts.applied, rejected, blobs, conflicts, rebasePending, rebaseWork, writerWork, measuring, now, noticed: this.facts.once });
     let applied = false;
     const cap = measureCap(s.plan);
     // Ruling #559 (c): before merging, compare the trunk ref with the ledger trunk; on drift merge nothing this pass

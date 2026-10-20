@@ -2,13 +2,35 @@ import { spawnSync } from 'node:child_process';
 import { basename } from 'node:path';
 import { parse } from 'yaml';
 import { OwedError } from './errors.ts';
-import type { Plan, CheckSpec } from './types.ts';
+import type { Plan, CheckSpec, NodeSpec } from './types.ts';
 import { canonical } from './canon.ts';
 import { expandWrap } from './exec-wrap.ts';
 import { git } from './git.ts';
 import { matchesAny } from './plan.ts';
 import { nearTimeoutWarnings } from './cost.ts';
+import { matchesWrite, writesSyntax } from './writes.ts';
 import type { Entry } from './types.ts';
+
+/** PK1: runtime inventory is supplied by callers; no filesystem facts enter replay. */
+export async function packetPaths(cwd: string, commit: string): Promise<string[] | undefined> {
+  try { return (await git(cwd, ['ls-tree', '-rz', '--name-only', commit])).stdout.split('\0').filter(Boolean); }
+  catch { return undefined; }
+}
+function readsPercent(reads: string[], paths: readonly string[]): number {
+  return paths.length ? paths.filter(p => matchesAny(p, reads)).length * 100 / paths.length : reads.includes('**') ? 100 : 0;
+}
+export function measuredWrites(plan: Plan, node: NodeSpec, paths: readonly string[]) {
+  const writes = [...paths.filter(p => node.writes.some(w => matchesWrite(p, w, writesSyntax(plan)))), ...node.writes.filter(w => !/[?*\[\]{}]/.test(w) && !w.endsWith('/'))];
+  return plan.invariants.filter(i => writes.some(p => matchesAny(p, i.reads))).map(i => ({ ...i, broad: i.reads.includes('**') || readsPercent(i.reads, paths) >= 90 }));
+}
+/** PK2: advisory output only; deliberately separate from admission warnings. */
+export async function planWriteNotes(cwd: string, plan: Plan, commit: string, prior?: Plan): Promise<string[]> {
+  if (!plan.invariants.length) return [];
+  const paths = await packetPaths(cwd, commit); if (!paths) return [];
+  const lines = plan.nodes.filter(n => canonical(n.writes) !== canonical(prior?.nodes.find(p => p.id === n.id)?.writes)).flatMap(n => measuredWrites(plan,n,paths).filter(i => !i.broad).map(i => `note: ${n.id} writes files inv:${i.id} measures (${i.reads.join(', ')}); before submit: owed check try --invariant ${i.id} --green <commit>`));
+  return [...lines.slice(0,10), ...(lines.length > 10 ? [`note: +${lines.length - 10} more`] : [])];
+}
+
 
 /** WF4: stable check identity, and only measurement-affecting admission fields. */
 export function planCheckChanged(next: CheckSpec, prior?: CheckSpec): boolean {
@@ -18,8 +40,7 @@ export function planCheckChanged(next: CheckSpec, prior?: CheckSpec): boolean {
 export async function lintPlanCost(cwd: string, plan: Plan, commit: string, entries: readonly Entry[] = [], prior?: Plan): Promise<string[]> {
   const paths = (await git(cwd, ['ls-tree', '-rz', '--name-only', commit])).stdout.split('\0').filter(Boolean), warnings: string[] = [];
   const coverage = (id: string, reads: string[]) => {
-    const n = paths.filter(p => matchesAny(p, reads)).length;
-    const percent = paths.length ? n * 100 / paths.length : reads.includes('**') ? 100 : 0;
+    const percent = readsPercent(reads, paths);
     if (reads.includes('**') || percent >= 90) warnings.push(`reads of ${id} cover ${Math.round(percent * 10) / 10}% of the repository: almost every change remeasures it (owed report --cost)`);
   };
   for (const inv of plan.invariants) if (planCheckChanged(inv,prior?.invariants.find(i => i.id === inv.id))) coverage(`inv:${inv.id}`, inv.reads);
