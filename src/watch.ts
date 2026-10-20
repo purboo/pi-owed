@@ -6,6 +6,7 @@ import type { DriveStart } from './drive-bg.ts';
 import { driverSession, registeredDrivers } from './registry.ts';
 
 export function followedBy(r: DriveStart): string | null {
+  if (r.exited) return null;
   return r.session ?? registeredDrivers().find(d => d.repo === r.repo && d.pid === r.pid && d.start === r.start)?.session
     ?? (r.alreadyRunning ? null : driverSession() ?? null);
 }
@@ -22,7 +23,7 @@ export interface WatchResult { lines: string[]; next: string; exit: 0 | 3 | 5 }
 export async function watchDriver(o: { cwd: string; after?: string; timeout?: number }): Promise<WatchResult> {
   const after = parseWatchCursor(o.after);
   const repo = await git.mainRoot(o.cwd), watch = new DriveWatch(() => undefined, 0, { busy: () => false, revalidate: repo => revalidator({ cwd: repo }) });
-  const follower = await watch.attach(o.cwd, after?.offset, after?.ino);
+  const follower = await watch.attach(o.cwd, after?.offset, after?.ino, false);
   if (!follower) return { lines: [`no owed driver is running in ${repo}; start one with owed start`], next: `${after?.offset ?? 0}:${after?.ino ?? 0}`, exit: 3 };
   const end = o.timeout === undefined ? Infinity : Date.now() + o.timeout * 1000;
   try {

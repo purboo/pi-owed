@@ -12,7 +12,7 @@ import { matchesAny, driveConfig, isCheckTemplateRun, activeQuarantine } from '.
 import { externalTracker, mergeQueue, applicableRules, NO_RULINGS, checkDefinition, checkOf, planAt, overlapping, halted, driveReviewer, driveReviewerSlot, reviewerBase, entriesOf, parentRuling, awaitingRuling, isManual, writesAllowed, allowanceSeq, grantsOf, withinWrites, grantHint, waitingFor, reportedOf, type Waiting } from './reducer.ts';
 import { genesisProgress, trunkInvariantReds, activeKnownRed, knownRedPlanSeq, activeQuarantineOf } from './reducer.ts';
 import { canonical } from './canon.ts';
-import { mergeBatchPlan } from './reducer.ts';
+import { mergeBatchPlan, trunkParked, sharedParked } from './reducer.ts';
 import { mergeBatchSize } from './plan.ts';
 /** MT6: the planned batch after the merge queue (`; batch of N: A, B`). */
 const batchPlanText = (b: string[] | undefined): string => b?.length ? `; batch of ${b.length}: ${b.join(', ')}` : '';
@@ -480,7 +480,7 @@ function outOfWritesText(o: NonNullable<ReceiptCard['outOfWrites']>): string {
 }
 /** `by parent:<id> under allowance (plan #S)` of a downgrade a parent recorded under an allowance (D21.3); empty otherwise. */
 export const allowanceLabel = (d: { by: string; allowance?: number; items?: { what: string }[] }): string => d.allowance === undefined ? '' : d.by === 'executor:owed' ? `${d.items?.some(i => /^inv:\S+ deferred: /.test(i.what)) ? 'deferred' : 'granted'} by owed under allowance (plan #${d.allowance})` : `by ${d.by} under allowance (plan #${d.allowance})`;
-export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key), dispatchMax = driveConfig(s.plan).max, rt: Runtime = { driverRunning }): StatusView {
+export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemView[] = [], now = Date.now(), driverRunning = false, currentDefers: DeferredView[] = s.deferred.filter(d => s.trunk.invKeys[d.id] === d.key), dispatchMax = driveConfig(s.plan).max, rt: Runtime = { driverRunning }, isolated: ReadonlySet<string> = new Set()): StatusView {
   const groups: Record<string, string[]> = {}, pending: Record<string, ItemView[]> = { owner: [], 'parent+writer': [], reviewer: [], executor: [] };
   for (const n of Object.values(s.nodes)) {
     (groups[n.phase] ??= []).push(n.id);
@@ -506,7 +506,10 @@ export function statusView(s: State, entries: Entry[] = [], mergeChecks: ItemVie
   if (runtimeWarnings.length) view.runtimeWarnings = runtimeWarnings;
   if (s.plan.risk !== undefined) view.reviewRequirements = Object.fromEntries(Object.values(s.nodes).filter(n => n.candidate && n.slot?.open).map(n => [n.id, nodeReview(s, n.id)]));
   if (currentDefers.length) view.deferred = currentDefers;
-  { const batch = mergeBatchPlan(s, mergeBatchSize(s.plan)); if (batch.length) view.mergeBatch = batch; }
+  {
+    const queue = isolated.size ? mergeQueue(s).filter(id => !isolated.has(id) && !waitingFor(s,id) && !halted(s,id) && !trunkParked(s,id).length && !sharedParked(s,id).length && reportedOf(s,id) === undefined && !s.plan.nodes.find(n => n.id === id)?.later) : undefined;
+    const batch = mergeBatchPlan(s, mergeBatchSize(s.plan), queue); if (batch.length) view.mergeBatch = batch;
+  }
   setReadyText(view, [...readyDispatchSkips(s, dispatchMax)].filter(([, skip]) => skip.kind !== 'owner').map(([id, skip]) => `${id}: ${dispatchSkipText(s, id, skip)}`));
   const capacity = attemptCapacity(s);
   if (capacity.pending > 0) capacityText.set(view, `active ${capacity.active} of max ${dispatchMax}, waiting to merge ${capacity.pending}`);
