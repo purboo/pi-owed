@@ -29,7 +29,7 @@ export function versionNotice<T extends { content: { type: string; text?: string
   else content.push({ type: 'text', text: restartLine(version) });
   return { ...r, content };
 }
-type Context = { cwd: string; hasUI: boolean; idle: boolean };
+type Context = { cwd: string; hasUI: boolean; idle: boolean; sessionId?: string };
 type Request = { id: number; method: string; args: unknown[] };
 type Reply = { id: number; result?: unknown; error?: { code: string; message: string } };
 type Callback = { callback: number; call: number; method: 'confirm' | 'dismiss' | 'notify' | 'message'; args: unknown[]; session: number };
@@ -125,6 +125,11 @@ export function toolWorker(): ToolWorker {
   const rpc = new ToolWorker(); host[sharedKey] = { version: loadedVersion, rpc }; return rpc;
 }
 
+/** FW2: retain the host session identity across the worker boundary, including older hosts without this API. */
+function contextSession(ctx: ExtensionContext): string | undefined {
+  try { return ctx.sessionManager?.getSessionId(); } catch { return undefined; }
+}
+
 /** Register schemas locally; execute tools, commands and watcher events in the worker. */
 export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
   const rpc = toolWorker();
@@ -162,7 +167,7 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
       if (missing.length) pi.setActiveTools([...active, ...missing]);
     } catch { /* A host without a bound tool registry is left alone. */ }
   };
-  const plain = (ctx: ExtensionContext): Context => ({ cwd: ctx.cwd, hasUI: ctx.hasUI, idle: idle() });
+  const plain = (ctx: ExtensionContext): Context => ({ cwd: ctx.cwd, hasUI: ctx.hasUI, idle: idle(), sessionId: contextSession(ctx) });
   const event = async (name: string, ctx: ExtensionContext) => rpc.call('event', [session, name, plain(ctx)], ctx);
   const timer = setInterval(() => {
     if (!context || polling || stopped) return;

@@ -234,7 +234,8 @@ test('AK6: restart gracefully stops a fake driver, waits for process exit, and s
   const r = await startFixture(), f = await fakeDriver(r);
   try {
     const text = (await call(r.cwd, ['start', '--restart', '--stay'])).stdout;
-    assert.ok(text.trim().split('\n').length <= 3, text); assert.match(text, /driver: started/);
+    assert.ok(text.trim().split('\n').length <= 4, text); assert.match(text, /driver: started/);
+    assert.match(text.trim().split('\n').at(-1)!, /^(followed by pi session \S{1,8}|note: no pi session follows this driver;.*`owed watch`.*)$/);
     assert.equal(f.child.exitCode, 0, 'start waits for exit, not only lock removal');
     const stopped = await import('node:fs/promises').then(fs => fs.readFile(f.trace, 'utf8'));
     assert.equal(stopped, 'TERM\nEXIT\n', 'one graceful signal, not an immediate kill');
@@ -245,7 +246,8 @@ test('AK6: restart without a running driver equals start and ordinary start reus
   const r = await startFixture();
   try {
     const before = await r.ledger.read();
-    const out = await call(r.cwd, ['start', '--restart', '--stay']); assert.match(out.stdout, /driver: started/); assert.ok(out.stdout.trim().split('\n').length <= 3);
+    const out = await call(r.cwd, ['start', '--restart', '--stay']); assert.match(out.stdout, /driver: started/); assert.ok(out.stdout.trim().split('\n').length <= 4);
+    assert.match(out.stdout.trim().split('\n').at(-1)!, /^(followed by pi session \S{1,8}|note: no pi session follows this driver;.*`owed watch`.*)$/);
     const first = await driveStatus(r);
     const again = await call(r.cwd, ['start']); assert.match(again.stdout, /already running/);
     assert.equal((await driveStatus(r)).pid, first.pid); assert.deepEqual(await r.ledger.read(), before);

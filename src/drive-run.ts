@@ -37,6 +37,7 @@ import { needs, repoNeeds, needId, activity, writerWaitingEligible } from './nee
 import { assembleRuntime } from './activity.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import type { Action } from './drive.ts';
+import { registerDriver } from './registry.ts';
 import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
 import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
@@ -311,7 +312,7 @@ export function lockAlive(o: LockOwner): boolean {
  * A lock of another host is never taken over (its pid cannot be checked here). Returns the release functions.
  */
 export interface DriveLock { owner: LockOwner; release(): Promise<void>; /** Synchronous release for a hard stop. */ releaseSync(): void }
-export async function acquireDriveLock(dir: string, session?: string, max?: number): Promise<DriveLock> {
+export async function acquireDriveLock(dir: string, session?: string, max?: number, repo?: string): Promise<DriveLock> {
   const path = join(dir, 'drive.lock'), me: LockOwner = { pid: process.pid, ...(procStart(process.pid) ? { start: procStart(process.pid)! } : {}), host: hostname(), at: new Date().toISOString(), token: randomUUID(), ...(session ? { session } : {}), ...(max !== undefined ? { max } : {}) };
   const text = JSON.stringify(me);
   for (let i = 0; i < 10; i++) {
@@ -335,10 +336,11 @@ export async function acquireDriveLock(dir: string, session?: string, max?: numb
       await rm(aside, { force: true });
       continue;
     }
+    const unregister = repo ? registerDriver(repo, me) : () => undefined;
     return {
       owner: me,
-      release: async () => { if (await readFile(path, 'utf8').catch(() => '') === text) await rm(path, { force: true }); },
-      releaseSync: () => { try { if (readFileSync(path, 'utf8') === text) rmSync(path, { force: true }); } catch { /* gone */ } },
+      release: async () => { unregister(); if (await readFile(path, 'utf8').catch(() => '') === text) await rm(path, { force: true }); },
+      releaseSync: () => { unregister(); try { if (readFileSync(path, 'utf8') === text) rmSync(path, { force: true }); } catch { /* gone */ } },
     };
   }
   throw new OwedError(`could not take ${path}`, 'internal');
@@ -1399,7 +1401,7 @@ async function driveLoop(o: DriveOptions, end: LoopEnd): Promise<number> {
   let failure: { e: unknown } | undefined;
   try {
     const ledger = await Ledger.open(o.cwd);
-    lock = await acquireDriveLock(ledger.dir, driver.session, o.max);
+    lock = await acquireDriveLock(ledger.dir, driver.session, o.max, await git.mainRoot(o.cwd));
     identity = { pid: lock.owner.pid, start: lock.owner.start, at: lock.owner.at };
     if (!o.once && driver.stopping) { say('stopped', { event: 'stopped' }); end.reason = 'stopped'; return 0; }
     // K6: --once (and the pi tool's pass) waits for the measurements its pass started and handles them.
