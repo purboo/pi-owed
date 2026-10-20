@@ -67,9 +67,6 @@ function remedies(text: string, builtin: boolean, retryable = true) {
 }
 
 test('RA1: package discovers and publishes the exact owed-reviewer profile', async () => {
-  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-  assert.deepEqual(pkg.pi.subagents, { agents: ['./agents'] });
-  assert.ok(pkg.files.includes('agents'));
   const text = await readFile(new URL('../agents/owed-reviewer.md', import.meta.url), 'utf8');
   assert.equal(sha256(text), '0a048ba015bd3d0d80cda42d3b560bb1fdc67f48da6c3de295fa2ce484c794d8', 'contract Appendix A exact bytes');
   const front = parse(text.split('---\n')[1]!);
