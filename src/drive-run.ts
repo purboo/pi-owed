@@ -605,7 +605,7 @@ export class Driver {
           // F4 (wais #34): a describe that timed out is retried once in this pass before it is reported.
           const r = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
           raw.set(l.rid, r);
-          if (r.view.state === 'absent') await blob(l.spec);
+          if (r.view.state === 'absent' || (l.role === 'reviewer' && (r.view.state === 'sealed' || r.view.state === 'pruned'))) await blob(l.spec);
         } catch (e) { if (!waitingFor(s, n.id)) { const r: ActionReport = { do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }; await this.wake(r, s); this.emit(r, s); } }
       }
       // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a

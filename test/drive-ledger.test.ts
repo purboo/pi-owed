@@ -22,9 +22,9 @@ const base = { version: 1, trunk: 'main', closure: ['closure/'], invariants: [],
 test('drive plan block: absent, defaults, explicit values, never a downgrade', () => {
   const plain = parsePlan(JSON.stringify(base));
   assert.equal(plain.drive, undefined, 'no drive block: the plan is unchanged');
-  assert.deepEqual(driveConfig(plain), { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } });
-  assert.deepEqual(DRIVE_DEFAULTS, { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } });
-  assert.deepEqual(parsePlan(JSON.stringify({ ...base, drive: {} })).drive, { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } });
+  assert.deepEqual(driveConfig(plain), { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'owed-reviewer' } });
+  assert.deepEqual(DRIVE_DEFAULTS, { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'owed-reviewer' } });
+  assert.deepEqual(parsePlan(JSON.stringify({ ...base, drive: {} })).drive, { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'owed-reviewer' } });
   const yaml = `version: 1\ntrunk: main\ndrive:\n  max: 2\n  repairs: 0\n  writer: { agent: worker, model: "example/model-large:high" }\n  reviewer: { agent: reviewer }\nnodes: []\n`;
   const p = parsePlan(yaml);
   assert.deepEqual(p.drive, { max: 2, repairs: 0, writer: { agent: 'worker', model: 'example/model-large:high' }, reviewer: { agent: 'reviewer' } });
