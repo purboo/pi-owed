@@ -25,13 +25,17 @@ import { nearTimeoutWarnings } from './cost.ts';
 import { nodeTestRun } from './exec.ts';
 export { trunkRedHint, sharedCheckHint, writerDecisionCommand, writerStopNeed, reviewDecision, trunkDecision, evidenceCommand, resumeCommands, flakyRuleHint, lapsedKnownRedText, genesisLine } from './needs.ts';
 import { needs, repoNeeds, activity, itemLine, heldRuling, heldRulingText, resumeCommand, trunkRedHint, sharedCheckHint, evidenceCommand, lapsedKnownRedText, overlapDispatchCommand, genesisLine, type Need, type Runtime } from './needs.ts';
+export { boundaryClip } from './needs.ts';
+import { boundaryClip } from './needs.ts';
 /** WR1: quote the whole final reply, or its head/tail plus omitted commit/durable facts. */
 export function writerReply(result?: string): string {
   const flat = result?.replace(/\s+/g, ' ').trim();
   if (!flat) return 'writer gave no final text';
-  const points = Array.from(flat), head = points.slice(0, 200), tail = points.slice(-380);
-  const h = head.lastIndexOf(' '), t = tail.indexOf(' ');
-  const text = points.length <= 600 ? flat : `${head.slice(0, h >= 180 ? h : 200).join('')} … ${tail.slice(t >= 0 && t < 20 ? t + 1 : 0).join('')}`;
+  const points = Array.from(flat), tail = points.slice(-380);
+  // R-031-SM-1: keep the original ending; only the tail's first boundary may move.
+  const t = tail.findIndex(cp => /\s|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(cp));
+  const start = t >= 0 && t < 20 ? t + (/\s/u.test(tail[t]!) ? 1 : 0) : 0;
+  const text = points.length <= 600 ? flat : `${boundaryClip(flat,200,undefined,'')} … ${tail.slice(start).join('')}`;
   const facts = (pattern: RegExp, commit = false): string[] => {
     const out: string[] = [], seen = new Set<string>();
     for (const m of flat.matchAll(pattern)) {
@@ -254,10 +258,8 @@ export interface Report {
   superseded?: SupersededBlock[];
 }
 /** SA2: decision-first runtime presentation; bounded fields retain whole code points and escaped controls. */
-export function structuredQuestionText(q: import('./types.ts').RunQuestion): string {
-  const clip = (s: string, max: number): string => {
-    let out = ''; for (const cp of s) { const escaped = oneLine(cp); if (out.length + escaped.length > max) break; out += escaped; } return out;
-  };
+export function structuredQuestionText(q: import('./types.ts').RunQuestion, full = 'pi-durable-subagents describe --key <rid> --json'): string {
+  const clip = (s: string, max: number): string => boundaryClip(s,max,oneLine);
   const options = (q.options ?? []).map((o, i) => {
     const limits = (['scope', 'cost', 'risk'] as const).flatMap(k => o[k] !== undefined ? [`${k} ${clip(o[k]!, 160)}`] : []);
     return `${i + 1}) ${clip(o.label, 160)}${o.preferred ? ' (preferred)' : ''}${limits.length ? ` — ${limits.join('; ')}` : ''}`;
@@ -267,7 +269,8 @@ export function structuredQuestionText(q: import('./types.ts').RunQuestion): str
       const proof = [c.evidence?.length ? `evidence: ${c.evidence.join('; ')}` : '', c.unproven?.length ? `unproven: ${c.unproven.join('; ')}` : ''].filter(Boolean);
       return `${c.label}${proof.length ? ` (${proof.join('; ')})` : ''}`;
     }).join('; ')}` : ''].filter(Boolean).join('; ');
-  return [`DECISION: ${oneLine(q.decision_needed!)}`, `options: ${options}`, ...(context ? [clip(context, 600)] : []), `details: ${clip(q.question, 300)}`].join('\n');
+  const details = clip(q.question,300), clipped = details !== oneLine(q.question);
+  return [`DECISION: ${oneLine(q.decision_needed!)}`, `options: ${options}`, ...(context ? [clip(context, 600)] : []), `details: ${details}${clipped ? ` (full: ${full})` : ''}`].join('\n');
 }
 
 /** D23: files of a manual evidence entry as `path sha12`, then its note (always manual, never measured). */
@@ -374,7 +377,7 @@ const downgradeLines = (ds: State['downgrades']): string[] => ds.map(d => `ΔO�
 export function reviewAsk(note: string): string {
   const marker = /BLOCK\s*\(needs parent\)\s*:|Parent decision needed\s*:|needs parent/i.exec(note);
   const tail = marker ? note.slice(marker.index + marker[0].length).replace(/^[\s):—-]+/, '') : note.trim().match(/[^.!?]+[.!?]*\s*$/)?.[0] ?? note;
-  return oneLine(tail.trim().replace(/\s+/g,' ')).slice(0,300).trim();
+  return boundaryClip(tail.trim().replace(/\s+/g,' '),300,oneLine);
 }
 export function withActHistory<T extends object>(view: T, entries: readonly Entry[]): T { actHistories.set(view,entries); return view; }
 const repetitions = new WeakMap<Entry, number>();

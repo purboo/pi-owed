@@ -36,10 +36,10 @@ test('WR1 whole final text and code points: whitespace, 600 boundary, 601 head/t
   assert.equal(writerReply(), 'writer gave no final text');
 });
 
-test('WR1 head/tail cut back to nearby spaces but not beyond 20 code points', () => {
+test('WR1/SM4 head clips at a boundary; tail keeps the nearby-space start and original ending', () => {
   const text = 'a'.repeat(185) + ' ' + 'b'.repeat(20) + 'M'.repeat(50) + 'c'.repeat(10) + ' ' + 'd'.repeat(369);
   assert.equal(writerReply(text), quote('a'.repeat(185) + ' … ' + 'd'.repeat(369)));
-  assert.equal(writerReply('a'.repeat(179) + ' ' + 'b'.repeat(430)), quote('a'.repeat(179) + ' ' + 'b'.repeat(20) + ' … ' + 'b'.repeat(380)));
+  assert.equal(writerReply('a'.repeat(179) + ' ' + 'b'.repeat(430)), quote('a'.repeat(179) + ' … ' + 'b'.repeat(380)));
 });
 
 test('WR1 facts: scan omitted middle, keep first appearance, skip fully shown, deduplicate, cap three each', () => {
