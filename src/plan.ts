@@ -8,7 +8,7 @@ import { canonical } from './canon.ts';
 import type { QuarantineEntry, Plan, CheckSpec, InvariantSpec, NodeSpec, Downgrade, DriveAgent, DriveConfig, NodeDrive, NodeDriveAgent, WorktreesConfig, ExecConfig, EvidenceSpec, AllowRule } from './types.ts';
 
 /** Driver defaults (SPEC §12, D2). */
-export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'reviewer' } };
+export const DRIVE_DEFAULTS: DriveConfig = { max: 4, repairs: 2, writer: { agent: 'worker' }, reviewer: { agent: 'owed-reviewer' } };
 /**
  * The plan's driver config, or the defaults when it has no `drive:` block. With `node`, that node's `drive` (K3)
  * overrides each role it sets: a role object with `agent` replaces the plan's (model: the node's, else none, so the

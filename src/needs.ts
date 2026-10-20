@@ -6,7 +6,7 @@ import type { SlotGitOperation } from './rebase-view.ts';
 import type { Activity, Need, Runtime } from './needs-types.ts';
 import { driveConfig } from './plan.ts';
 import { clockTime } from './clock.ts';
-import { applicableRules, entriesOf, previousSubmit, awaitingRuling, parentRuling, ownerNeeded, readyDispatchSkips, overlapping, halted, waitingFor, reportedOf, heldFlaky, heldFlakyText, flakyBlockText, nodeReview, sharedFailure, fixCandidates, sharedNames, sharedParked, sharedParkNotices, sharedPhase, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, trunkInvariantReds } from './reducer.ts';
+import { applicableRules, entriesOf, planAt, previousSubmit, awaitingRuling, parentRuling, ownerNeeded, readyDispatchSkips, overlapping, halted, waitingFor, reportedOf, heldFlaky, heldFlakyText, flakyBlockText, nodeReview, sharedFailure, fixCandidates, sharedNames, sharedParked, sharedParkNotices, sharedPhase, trunkParked, trunkParkNotices, trunkRedOf, trunkRedText, trunkInvariantReds } from './reducer.ts';
 import { shellQuote } from './exec-wrap.ts';
 export type { Need, NeedKind, Activity, Measuring, Asking, Runtime } from './needs-types.ts';
 
@@ -138,6 +138,26 @@ export function heldRuling(s: State, node: string): RuleEntry | undefined {
 }
 export const resumeCommand = (node: string): string => `owed resume ${word(node)}`;
 export const heldRulingText = (node: string, seq: number): string => `held by ruling #${seq}; ${resumeCommand(node)} releases it`;
+/** RM1: ordered recovery commands; changing the agent affects only later reviewer launches. */
+export function reviewMissingRemedies(node: string, builtin = false, retryable = true): string[] {
+  return [...(retryable ? [resumeCommand(node)] : []), ...(builtin ? ['owed edit --drive --set reviewer.agent=owed-reviewer --note "<why>"'] : []),
+    `owed review ${word(node)} --ok|--block --rank <1-3> --note "<note>" --as owner:<id>`, `owed abandon ${word(node)}`];
+}
+/** RM1: persisted remedies identify the historical agent even after the plan changes. */
+function reviewMissingNeed(s: State, node: string): Need | undefined {
+  const h = halted(s, node);
+  if (!h?.reason.startsWith('review-missing:') || heldRuling(s, node)) return;
+  const launch = s.nodes[node]?.runs.find(r => r.attempt === h.attempt)?.launches.find(l => l.role === 'reviewer' && h.reason.startsWith(`review-missing: reviewer run ${l.rid} `));
+  const builtin = h.reason.includes('; remedies: ')
+    ? h.reason.includes('owed edit --drive --set reviewer.agent=owed-reviewer')
+    // R-031-RA-4: a defaulted launch-time plan cannot distinguish the 0.30 and 0.31 agents.
+    : !!launch && ['reviewer', 'owed-reviewer'].includes(driveConfig(planAt(s, launch.seq), node).reviewer.agent);
+  const retryable = h.reason.includes('; remedies: ')
+    ? h.reason.includes(`; remedies: ${resumeCommand(node)};`) : !h.reason.includes(' sealed rejected');
+  const [command, ...alternatives] = reviewMissingRemedies(node, builtin, retryable);
+  return { node, actor: 'parent', kind: 'resume', since: h.seq, halted: true,
+    text: `driver halted: ${haltReason(h.reason)}; ${retryable ? 'resume asks the same reviewer run again' : 'this run cannot take follow-ups'}${builtin ? '; builtin reviewer is read-only and may refuse to record; the agent edit applies to a new reviewer run of a later candidate' : ''}`, command: command!, alternatives };
+}
 /** Pure parent/owner needs: baseline summary membership, corrected by C1–C9 and N1–N7. */
 export function needs(s: State, node: string, rt?: Runtime): Need[] {
   const n = s.nodes[node];
@@ -174,8 +194,10 @@ export function needs(s: State, node: string, rt?: Runtime): Need[] {
   // N3 retains plan order inside obligation classes, irrespective of command lexical order.
   obligations.sort((a, b) => obligationOrder(a.obligation!) - obligationOrder(b.obligation!));
   if (h) {
+    const missing = reviewMissingNeed(s, node);
+    if (missing) out.push(missing);
     if (obligations.length) out.push(...obligations.map(o => ({ ...o, halted: true as const })));
-    else if (!stopped && !heldRuling(s, node)) {
+    else if (!missing && !stopped && !heldRuling(s, node)) {
       const w = waitingFor(s, node), deps = [...new Set([...(w?.deps ?? []), ...(w?.after.split(', ') ?? [])])].filter(Boolean);
       out.push({ node, actor: 'parent', kind: 'resume', since: h.seq, halted: true, text: `driver halted: ${haltReason(h.reason)}; after resume the driver continues from the current state${deps.length ? `, then waits for ${deps.join(', ')}` : ''}`, command: `owed resume ${word(node)}` });
     }
