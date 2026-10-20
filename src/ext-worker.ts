@@ -153,6 +153,15 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
     if (reachable) return;
     for (const t of deferred) { const direct: ToolDefinition = { ...t, exposure: 'direct' }; registered.set(t.name, direct); pi.registerTool(direct); }
   };
+  // CT1: restore direct registrations omitted by a resumed host without changing any other active tool.
+  const ensureDirectActive = (): void => {
+    try {
+      if (typeof pi.getActiveTools !== 'function' || typeof pi.setActiveTools !== 'function') return;
+      const active = pi.getActiveTools();
+      const missing = [...registered.values()].filter(t => t.exposure === 'direct' && !active.includes(t.name)).map(t => t.name);
+      if (missing.length) pi.setActiveTools([...active, ...missing]);
+    } catch { /* A host without a bound tool registry is left alone. */ }
+  };
   const plain = (ctx: ExtensionContext): Context => ({ cwd: ctx.cwd, hasUI: ctx.hasUI, idle: idle() });
   const event = async (name: string, ctx: ExtensionContext) => rpc.call('event', [session, name, plain(ctx)], ctx);
   const timer = setInterval(() => {
@@ -192,8 +201,9 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
         if (name === 'session_start') {
           notices.clear();
           ensureReachable();
+          ensureDirectActive();
         }
-        if (name === 'agent_start') running = true;
+        if (name === 'agent_start') { running = true; ensureDirectActive(); }
         if (name === 'agent_settled') running = false;
         if (name === 'session_shutdown') { stopped = true; clearInterval(timer); }
         try { await event(name, ctx); } finally { if (stopped) rpc.unregister(session); }
