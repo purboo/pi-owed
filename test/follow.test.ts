@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -205,10 +205,10 @@ test('FW4 watch batch + next cursor, repeat timeout, no driver, and read-only le
     const ledger = await Ledger.open(f.cwd), before = await ledger.read(), lock = readFileSync(f.lock, 'utf8');
     f.append(await ask(f));
     const first = await cli(f.cwd, ['watch', '--after', '0', '--timeout', '1']); assert.equal(first.code, 0, first.stderr);
-    assert.match(first.stdout, /choose the family rule/); const next = /\nnext: owed watch --after (\d+)\n$/.exec(first.stdout)?.[1]; assert.ok(next);
-    assert.equal(Number(next), Buffer.byteLength(readFileSync(f.log)));
+    assert.match(first.stdout, /choose the family rule/); const next = /\nnext: owed watch --after (\d+:\d+)\n$/.exec(first.stdout)?.[1]; assert.ok(next);
+    assert.equal(next, `${Buffer.byteLength(readFileSync(f.log))}:${statSync(f.log).ino}`);
     const again = await cli(f.cwd, ['watch', '--after', next, '--timeout', '1', '--json']); assert.equal(again.code, 5, again.stderr);
-    assert.deepEqual(JSON.parse(again.stdout), { lines: ['no wake within 1 s'], next: Number(next), exit: 5 });
+    assert.deepEqual(JSON.parse(again.stdout), { lines: ['no wake within 1 s'], next, exit: 5 });
     const defaultTail = await cli(f.cwd, ['watch', '--timeout', '0']); assert.equal(defaultTail.code, 5); assert.doesNotMatch(defaultTail.stdout, /choose the family rule/); assert.match(defaultTail.stdout, /next: owed watch --after/);
     assert.deepEqual(await ledger.read(), before); assert.equal(readFileSync(f.lock, 'utf8'), lock);
     rmSync(f.lock); const absent = await cli(f.cwd, ['watch']); assert.equal(absent.code, 3); assert.equal(absent.stdout.trim(), `no owed driver is running in ${f.cwd}; start one with owed start`);
@@ -229,7 +229,7 @@ test('FW4 live watch handles rotation, terminal exit, pid-gone and revalidates s
     const closed = await cli(f.cwd, ['watch', '--after', '0', '--timeout', '0']); assert.equal(closed.code, 5, closed.stderr); assert.doesNotMatch(closed.stdout, /choose the family rule/);
     const live = cli(f.cwd, ['watch', '--timeout', '5', '--json']);
     await pause(1500); renameSync(f.log, `${f.log}.1`); writeFileSync(f.log, 'rotated wake\n');
-    const rotated = await live; assert.equal(rotated.code, 0, rotated.stderr); assert.ok(JSON.parse(rotated.stdout).lines.includes('rotated wake')); assert.equal(JSON.parse(rotated.stdout).next, 13);
+    const rotated = await live; assert.equal(rotated.code, 0, rotated.stderr); assert.ok(JSON.parse(rotated.stdout).lines.includes('rotated wake')); assert.equal(JSON.parse(rotated.stdout).next, `13:${statSync(f.log).ino}`);
     const exit = cli(f.cwd, ['watch', '--timeout', '5']); await pause(1500); f.append({ event: 'exit', code: 0, reason: 'stopped', at: new Date().toISOString() });
     const ended = await exit; assert.equal(ended.code, 0, ended.stderr); assert.match(ended.stdout, /Driver stopped: stopped/); assert.match(ended.stdout, /next: owed watch --after/);
     const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' });
@@ -241,8 +241,38 @@ test('FW4 live watch handles rotation, terminal exit, pid-gone and revalidates s
   } finally { await f.close(); }
 });
 
+test('R-031-FW-2 watch resumes from zero after rotation even when the new log exceeds the old cursor', async () => {
+  const f = await fixture(); f.held();
+  try {
+    f.append(`old wake ${'.'.repeat(80)}`);
+    const old = statSync(f.log), first = await cli(f.cwd, ['watch', '--after', '0', '--timeout', '0', '--json']);
+    assert.equal(first.code, 0, first.stderr);
+    // String also accepts the baseline's numeric next: its red failure demonstrates the skipped wake, not a fixture/type error.
+    const cursor = String(JSON.parse(first.stdout).next);
+    renameSync(f.log, `${f.log}.1`); writeFileSync(f.log, `first wake after restart\n${'\n'.repeat(old.size + 20)}`);
+    const fresh = statSync(f.log); assert.notEqual(fresh.ino, old.ino); assert.ok(fresh.size >= old.size);
+    const resumed = await cli(f.cwd, ['watch', '--after', cursor, '--timeout', '0', '--json']);
+    assert.equal(resumed.code, 0, `the saved cursor must not skip the new log's first wake: ${resumed.stdout} ${resumed.stderr}`);
+    assert.ok(JSON.parse(resumed.stdout).lines.includes('first wake after restart'));
+    assert.equal(cursor, `${old.size}:${old.ino}`); assert.equal(JSON.parse(resumed.stdout).next, `${fresh.size}:${fresh.ino}`);
+    // Bare offsets retain their previous byte-only meaning, even in a different file.
+    const bare = await cli(f.cwd, ['watch', '--after', String(old.size), '--timeout', '0', '--json']);
+    assert.equal(bare.code, 5, bare.stderr); assert.doesNotMatch(bare.stdout, /first wake after restart/);
+    // A matching inode with a shortened log still resets to zero, as the session follower does.
+    writeFileSync(f.log, 'short wake\n'); assert.equal(statSync(f.log).ino, fresh.ino);
+    const shorter = await cli(f.cwd, ['watch', '--after', JSON.parse(resumed.stdout).next, '--timeout', '0', '--json']);
+    assert.equal(shorter.code, 0, shorter.stderr); assert.ok(JSON.parse(shorter.stdout).lines.includes('short wake'));
+    assert.equal(JSON.parse(shorter.stdout).next, `11:${fresh.ino}`);
+  } finally { await f.close(); }
+});
+
 test('FW4 watch rejects malformed cursors/timeouts before following', async () => {
   const f = await fixture();
-  try { for (const args of [['--after', '-1'], ['--after', '1.5'], ['--timeout', 'NaN'], ['--timeout', '9007199254740992']]) assert.equal((await cli(f.cwd, ['watch', ...args])).code, 2); }
-  finally { await f.close(); }
+  try {
+    for (const cursor of ['-1', '1.5', '1:', ':1', '1:2:3', '1:-2', '1:2.5', '1:NaN', '1: 2', '1e2:3', '9007199254740992', '0:9007199254740992']) {
+      const out = await cli(f.cwd, ['watch', '--after', cursor]);
+      assert.equal(out.code, 2, cursor); assert.match(out.stderr, /<offset>\[:<ino>\]/);
+    }
+    for (const timeout of ['NaN', '9007199254740992']) assert.equal((await cli(f.cwd, ['watch', '--timeout', timeout])).code, 2);
+  } finally { await f.close(); }
 });
