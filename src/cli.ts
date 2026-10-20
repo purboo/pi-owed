@@ -140,13 +140,13 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     }
     if(cmd === 'start') {
       const r=await ops.start({cwd:process.cwd(),plan:value('plan'),max:integer('max'),stay:opts.has('stay'),restart:opts.has('restart'),signal:abort.signal}), session=followedBy(r.driver);
-      io.log(opts.has('json') ? JSON.stringify({...r,followedBy:session}) : `${ops.startText(r)}\n${followText(session)}`); return 0;
+      io.log(opts.has('json') ? JSON.stringify({...r,followedBy:session}) : `${ops.startText(r)}${r.driver.exited ? '' : `\n${followText(session)}`}`); return 0;
     }
     if(cmd === 'drive') {
       const max=integer('max');
       const json=opts.has('json');
       const stay=opts.has('stay');
-      if(opts.has('detach')) { const r=await driveStart({cwd:process.cwd(),max,...(stay ? {stay} : {})}), session=followedBy(r); io.log(json ? JSON.stringify({...r,followedBy:session}) : `${renderDriveStart(r)}\n${followText(session)}`); return 0; }
+      if(opts.has('detach')) { const r=await driveStart({cwd:process.cwd(),max,...(stay ? {stay} : {})}), session=followedBy(r); io.log(json ? JSON.stringify({...r,followedBy:session}) : `${renderDriveStart(r)}${r.exited ? '' : `\n${followText(session)}`}`); return 0; }
       if(opts.has('status')) { const r=await driveStatus({cwd:process.cwd()}); io.log(json ? JSON.stringify(r) : renderDriveStatus(r)); return 0; }
       if(opts.has('stop')) { const r=await driveStop({cwd:process.cwd(),now:opts.has('now')}); io.log(json ? JSON.stringify(r) : renderDriveStop(r)); return 0; }
       return await drive({cwd:process.cwd(),once:opts.has('once'),max,json:opts.has('json'),log:io.log,...(stay ? {stay} : {})});

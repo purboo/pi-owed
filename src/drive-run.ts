@@ -1234,10 +1234,12 @@ export class Driver {
     } catch (e) {
       if (!(e instanceof OwedError) || e.code !== 'refused') throw e;
       for (const [id, commit] of candidates) this.batchIsolated.set(id, commit);
-      this.saveBatchIsolation();
+      let isolationNote = '';
+      try { this.saveBatchIsolation(); }
+      catch (error) { isolationNote = ` (isolation not saved: ${(error as NodeJS.ErrnoException).code ?? 'unknown'})`; }
       return async () => {
         const now = await loadState(this.ledger!), d = /trunk changed \(CAS\)/.test(e.message) ? await git.trunkDrift(this.root!, now.trunk.name, now.trunk.commit).catch(() => undefined) : undefined;
-        return [report(members[0]!, 'retry', `batch merge refused (${e.message}); ${members.join(', ')} merge alone until merged or resubmitted`), ...(d ? [driftReport(now, d)] : [])];
+        return [report(members[0]!, 'retry', `batch merge refused (${e.message}); ${members.join(', ')} merge alone until merged or resubmitted${isolationNote}`), ...(d ? [driftReport(now, d)] : [])];
       };
     }
   }
