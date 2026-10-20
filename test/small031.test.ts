@@ -107,6 +107,14 @@ test('SM3: append failure and dry-run leave drive source and ledger unchanged', 
   } finally { t.mock.restoreAll(); await r.cleanup(); }
 });
 
+for (const [name, text, expected] of [
+  ['ASCII semicolon before whitespace', 'a'.repeat(210)+'; '+ 'tail '.repeat(30), 'a'.repeat(210)+';…'],
+  ['fullwidth semicolon without whitespace', '界'.repeat(210)+'；'+'后'.repeat(150), '界'.repeat(210)+'；…'],
+  ['ASCII semicolon without whitespace is not a sentence end', 'a'.repeat(210)+';word '+'b'.repeat(40)+' '+'c'.repeat(100), 'a'.repeat(210)+';word '+'b'.repeat(40)+'…'],
+]) test(`SM4 R-031-SM-2: ${name}`, () => {
+  assert.equal(reviewAsk(`BLOCK (needs parent): ${text}`),expected);
+});
+
 test('SM4: review asks clip at the last late sentence, word or CJK boundary; short text unchanged', () => {
   const ask = (s: string) => reviewAsk(`BLOCK (needs parent): ${s}`);
   const sentence = 'a'.repeat(190)+'. '+ 'b'.repeat(50)+'! '+ 'c'.repeat(150);

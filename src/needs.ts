@@ -33,7 +33,7 @@ export function boundaryClip(text: string, max: number, escape: (s: string) => s
   for (; end < points.length && length + sizes[end]! <= max-mark.length; end++) {
     length += sizes[end]!;
     const cp = points[end]!;
-    if ((/[.!?]/u.test(cp) && (end+1 === points.length || /\s/u.test(points[end+1]!)) || /[\u3002\uff01\uff1f]/u.test(cp)) && length >= max*0.6) sentence = end+1;
+    if ((/[.!?;]/u.test(cp) && (end+1 === points.length || /\s/u.test(points[end+1]!)) || /[\u3002\uff01\uff1f\uff1b]/u.test(cp)) && length >= max*0.6) sentence = end+1;
     if (/\s/u.test(cp)) boundary = end;
     else if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(cp)) boundary = end+1;
   }
