@@ -66,8 +66,8 @@ const blankPlan = (): Plan => ({ version: 1, trunk: '', closure: [], invariants:
 const emptyNode = (id: string): NodeState => ({ id, phase: 'blocked', items: [], blocks: [], accepted: false, dependents: 0, writers: [], runs: [] });
 /** N4: node specs by id of a frozen (shared, unchangeable) plan; the first spec of an id wins, as with find. */
 const specIndex = new WeakMap<Plan, Map<string, NodeSpec>>();
-function nodeSpec(s: State, id: string): NodeSpec | undefined {
-  const plan = s.plan;
+function nodeSpec(s: State, id: string): NodeSpec | undefined { return planNodeSpec(s.plan, id); }
+function planNodeSpec(plan: Plan, id: string): NodeSpec | undefined {
   if (!Object.isFrozen(plan) || !Object.isFrozen(plan.nodes)) return plan.nodes.find(n => n.id === id);
   let m = specIndex.get(plan);
   if (!m) { m = new Map(); for (const n of plan.nodes) if (!m.has(n.id)) m.set(n.id, n); specIndex.set(plan, m); }
@@ -187,10 +187,10 @@ function planForWrites(s: State, id: string): Plan {
   return nodeSpec(s,id) || !n?.slot?.open ? s.plan : planAt(s,n.slot.dispatchSeq);
 }
 function planWrites(s: State, id: string): string[] {
-  return planForWrites(s,id).nodes.find(x => x.id === id)?.writes ?? [];
+  return planNodeSpec(planForWrites(s,id), id)?.writes ?? [];
 }
 function effectiveGrantPaths(s: State, id: string): string[] {
-  const spec = planForWrites(s,id).nodes.find(n => n.id === id);
+  const spec = planNodeSpec(planForWrites(s,id), id);
   return grantsOf(s,id).flatMap(g => g.paths).filter(p => matchesAllowOnly(spec,p));
 }
 export function effectiveWrites(s: State, id: string): string[] { return [...planWrites(s, id), ...effectiveGrantPaths(s,id)]; }
@@ -1443,8 +1443,10 @@ export function unmergedDependents(s: State, node: string): number {
 }
 /** DR1: critical-path weight first, older continuous acceptance breaks ties. */
 export function mergeQueue(s: State): string[] {
-  const weight = new Map(s.plan.nodes.map(n => [n.id, unmergedDependents(s, n.id)]));
-  return Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'accepted').sort((a, b) =>
+  const eligible = Object.values(s.nodes).filter(n => n.slot?.open && n.phase === 'accepted');
+  const ids = new Set(s.plan.nodes.map(n => n.id));
+  const weight = new Map(eligible.filter(n => ids.has(n.id)).map(n => [n.id, unmergedDependents(s, n.id)]));
+  return eligible.sort((a, b) =>
     (weight.get(b.id) ?? 0) - (weight.get(a.id) ?? 0)
     || (a.acceptedSince ?? Number.MAX_SAFE_INTEGER) - (b.acceptedSince ?? Number.MAX_SAFE_INTEGER)
     || a.id.localeCompare(b.id)).map(n => n.id);
@@ -1648,8 +1650,10 @@ function downgradeDetails(prev: Plan, next: Plan): Downgrade[] {
   if (execChanged(prev, next)) add('*', 'exec changed; cannot prove obligations were not reduced');
   if (allowWidened(prev, next)) add('trunk', 'allow changed');
   checks('trunk', prev.invariants, next.invariants);
+  const nextNodes = new Map<string, NodeSpec>();
+  for (const n of next.nodes) if (!nextNodes.has(n.id)) nextNodes.set(n.id, n);
   for (const n of prev.nodes) {
-    const m = next.nodes.find(x => x.id === n.id);
+    const m = nextNodes.get(n.id);
     if (!m) { add(n.id, 'node removed'); continue; }
     checks(n.id, n.checks, m.checks);
     if (m.review.count < n.review.count || m.review.min_rank < n.review.min_rank) add(n.id, 'review count/rank reduced');

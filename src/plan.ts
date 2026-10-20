@@ -658,6 +658,12 @@ export function quarantineNames(plan: Plan, merged: (id: string) => boolean, mer
 }
 /** MS4: adding a quarantine name or changing its fix is an owner-only downgrade (no allow rule covers it); deletion is free. */
 export function quarantineDowngrades(prev: Plan, next: Plan): Downgrade[] {
+  const priorChecks = new Map<string, Map<string, CheckSpec>>();
+  for (const n of prev.nodes) if (!priorChecks.has(n.id)) {
+    const checks = new Map<string, CheckSpec>();
+    for (const c of n.checks) if (!checks.has(c.id)) checks.set(c.id, c);
+    priorChecks.set(n.id, checks);
+  }
   const entries = (node: string, label: string, before: QuarantineEntry[], after: QuarantineEntry[]): Downgrade[] => after.flatMap(entry => {
     const old = before.find(e => e.test === entry.test);
     return old?.fix === entry.fix ? [] : [{ node, what: `${label} quarantine ${JSON.stringify(entry.test)} ${old ? `fix changed from ${old.fix} to` : 'added with fix'} ${entry.fix} (owner only)` }];
@@ -668,7 +674,7 @@ export function quarantineDowngrades(prev: Plan, next: Plan): Downgrade[] {
   ];
   return [...Object.entries(next.quarantine_sets ?? {}).flatMap(([name, list]) => entries('trunk', `set ${name}`, Object.hasOwn(prev.quarantine_sets ?? {}, name) ? prev.quarantine_sets![name]! : [], list)),
     ...next.invariants.flatMap(c => one('trunk', `inv:${c.id}`, prev.invariants.find(i => i.id === c.id), c)),
-    ...next.nodes.flatMap(n => n.checks.flatMap(c => one(n.id, `check ${c.id}`, prev.nodes.find(x => x.id === n.id)?.checks.find(x => x.id === c.id), c)))];
+    ...next.nodes.flatMap(n => n.checks.flatMap(c => one(n.id, `check ${c.id}`, priorChecks.get(n.id)?.get(c.id), c)))];
 }
 export function planDowngrades(prev: Plan, next: Plan): Downgrade[] {
   const out: Downgrade[] = [...knownRedDowngrades(prev, next), ...quarantineDowngrades(prev, next), ...riskDowngrades(prev, next)];
