@@ -2,6 +2,62 @@
 
 Base: ebf090b83644c4bb170802b97053bc17cd09a910. Budget: +230 net src lines.
 
+## R-031-FW-2 repair
+
+Repair base: ea2241401f5bf82c44c3bfc7ac5fddc4f968af6b (parent-rebased o-follow).
+A bare byte offset could skip the beginning of a restarted driver's log when
+that new log was already longer than the old offset. The CLI now emits an
+`offset:ino` cursor in its next line and JSON next field. Follower supplies the
+inode associated with its actual read offset, not a new stat of the log path.
+An inode mismatch resumes at zero; matching inodes and legacy bare offsets keep
+their existing behavior, including the shorter-log reset. Only CLI callers pass
+an expected inode, so session followers retain their current behavior. A missing
+log identity uses inode 0; no-driver output still has no next line. No runtime or
+ledger file is written by watch.
+
+The follow.test.ts regression saves a cursor, renames log.jsonl to log.jsonl.1,
+and writes a new log at least as long as the old offset with a wake in its first
+bytes. The same test on the repair base uses its emitted bare cursor and exposes
+the skipped wake; the repaired version emits the inode cursor and delivers it.
+The FW4 cursor assertions now expect strings; malformed cursor tests require the
+`<offset>[:<ino>]` usage message. Legacy numeric resume and same-inode truncation
+are covered. No deferred registry-attach/repeat-line finding or review nit is
+changed.
+
+Only the HELP placeholder changes, from `--after OFFSET` to `--after <cursor>`.
+Its registered literal digest changes from
+`3d66e4793d66d3b17e4e6fc457e77f3f3b32864993a01b8e3f7002517afc3d7d` to
+`d3e2fb9861bf045cd5c93ab215a9a7690d821976ecd016031b6f3a4c591b25fb`.
+The next-line template text is unchanged and its digest is unchanged.
+
+Repair validation (all through `/tmp/owed-ipc/run.sh`):
+
+- Red: `node --test --test-reporter=tap --test-name-pattern=R-031-FW-2 test/follow.test.ts`
+  on ea22414 with only the test file copied into a scratch worktree. Exit 1,
+  0/1 passed. It reached the resumed watch and observed exit 5 (`no wake within
+  0 s`) instead of exit 0: the wake was skipped. No import or fixture failure.
+  Log: `/tmp/owed-ipc/logs/owed-fw2-red-ea22414-104121.log`.
+  Test tree: `f4b0d7672224845afe38030be1e1c55842225bb0`.
+- Green: `npm run typecheck && node --test --test-reporter=tap test/follow.test.ts test/cli.test.ts test/needs-structure.test.ts test/drive-bg.test.ts`.
+  Exit 0, typecheck and all 39 tests passed.
+  Log: `/tmp/owed-ipc/logs/o-follow-1-104126.log`.
+  Test tree: `255088edab4f54299ffba414d711748bd07e0817`; only this note changed
+  afterward. The final commit's o-follow plan check runs once after committing;
+  its result is returned in the parent handoff. No submit or attestation.
+
+Repair source diff, `git diff --stat ea22414 -- src`:
+
+```text
+ src/cli.ts      |  9 +++++----
+ src/drive-bg.ts | 14 ++++++++------
+ src/watch.ts    | 16 ++++++++++++----
+ 3 files changed, 25 insertions(+), 14 deletions(-)
+```
+
+Net +11 source lines for this repair.
+
+## Original leaf scope
+
 Scope: attach the driver follower after every top-level tool operation (including
 refusals); discover drivers by session through a best-effort runtime registry;
 explain CLI start followership; expose the existing revalidating follower as
@@ -53,7 +109,7 @@ the three exact watch.ts guidance literals (no-driver initialization, no-session
 followership and next byte cursor). No file/function-wide exceptions or skipped
 checks. All new behavior tests remain in test/follow.test.ts.
 
-## Validation
+## Original leaf validation
 
 - Baseline ebf090b with only test/follow.test.ts copied: IPC command
   `node --test --test-reporter=tap test/follow.test.ts`, exit 1, 11 tests,
