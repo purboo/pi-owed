@@ -80,7 +80,7 @@ test('AK1: the first marker wins and the extracted ask is one line, bounded at 3
     const text = (await call(r.cwd, ['why', 'a'])).stdout;
     const match = text.match(/review asks: (.*?) → owed decide/); assert.ok(match, text);
     const ask = match[1]!;
-    assert.equal(ask.length, 300); assert.equal(ask, 'x'.repeat(300)); assert.doesNotMatch(ask, /\n|second/);
+    assert.equal(ask.length, 300); assert.equal(ask, 'x'.repeat(299) + '…'); assert.doesNotMatch(ask, /\n|second/);
   } finally { await r.cleanup(); }
 });
 

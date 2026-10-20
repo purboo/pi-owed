@@ -10,7 +10,8 @@ import { sharedParked, sharedParkKey, sharedParkNotices } from './reducer.ts';
 import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices, trunkInvariantReds, awaitingRuling, invalidates, specChanges, driveReviewer, driveReviewerSlot, entriesOf, halted, nextReviewerN, observationsOf, parentRuling, planAt, resumeOf, reviewEpoch, reviewerBase, runId, runLabels, waitingFor, afterNodes, reportRequest, reportedOf, grantHint, writesWaiting, writesWaitCycle } from './reducer.ts';
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
-import { dispatchPacket, oneLine, structuredQuestionText, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
+import { shellQuote } from './exec-wrap.ts';
+import { boundaryClip, dispatchPacket, oneLine, structuredQuestionText, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
 import { needs, repoNeeds, thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 export { thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 import type { Need, Runtime } from './needs-types.ts';
@@ -390,7 +391,7 @@ function withRulings(s: State, node: string, ar: AttemptRuns, writer: LaunchEntr
   return rules.length ? { message: [`Parent rulings for ${node} (apply them; they override your packet):`, ...rules.map(r => `- #${r.seq} ${r.text}`), message].join('\n'), rulings: carried(rules) } : { message };
 }
 /** One evidence line of a halt (K5.4): one line, at most 200 characters. */
-const clip = (text: string): string => { const t = oneLine(text); return t.length > 200 ? `${t.slice(0, 199)}…` : t; };
+const clip = (text: string): string => boundaryClip(text,200,oneLine);
 /**
  * K5.2: the ruling follow-up to the attempt's sealed writer, or undefined when no undelivered in-scope ruling names the
  * node (`*` alone never triggers it): the undelivered in-scope rulings, the active blocks on the current candidate's
@@ -1251,7 +1252,7 @@ export function askingText(node: string, l: LaunchEntry, v: RunView, nodeQuestio
     const to = q.to ?? v.to ?? l.rid;
     const command = !single ? `owed answer ${node} --rid ${l.rid} --qid ${q.qid} "<text>"` : `owed decide ${node} --text "<text>"`;
     const tool = !single ? `owed_answer {node:${JSON.stringify(node)}, rid:${JSON.stringify(l.rid)}, qid:${JSON.stringify(q.qid)}, text:"…"}` : `owed_decide {nodes:[${JSON.stringify(node)}], text:"…"}`;
-    if (q.decision_needed !== undefined) return `${node}: ${l.role} ${l.rid} asks (qid ${q.qid.slice(0, 8)}, rev ${q.rev}): ${structuredQuestionText(q)}\n — the driver never answers; answer: ${command}; in pi: ${tool}${callAt({ ...v, to })}; answer "option <n>; <limits>"`;
+    if (q.decision_needed !== undefined) return `${node}: ${l.role} ${l.rid} asks (qid ${q.qid.slice(0, 8)}, rev ${q.rev}): ${structuredQuestionText(q,`pi-durable-subagents describe --key ${shellQuote(l.rid)} --json`)}\n — the driver never answers; answer: ${command}; in pi: ${tool}${callAt({ ...v, to })}; answer "option <n>; <limits>"`;
     return `${node}: ${l.role} run ${l.rid} asks (qid ${q.qid}, rev ${q.rev}): ${oneLine(q.question)} — the driver never answers; answer: ${command}; in pi: ${tool}${callAt({ ...v, to })}`;
   }).join('\n');
 }

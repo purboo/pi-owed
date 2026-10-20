@@ -5,13 +5,13 @@ import { OwedError } from './errors.ts';
 
 /** ED1: YAML values, with paths relative to a node or invariant. */
 export interface EditFields {
-  node?: string; nodes?: string[]; invariant?: string; node_new?: boolean;
+  node?: string; nodes?: string[]; invariant?: string; drive?: boolean; node_new?: boolean;
   set?: string[]; unset?: string[];
 }
 function usage(text: string): never { throw new OwedError(text,'usage'); }
 /** ME1: exclusive target forms; batch ids are deduplicated in caller order. */
 export function editNodes(o: EditFields): string[] {
-  if ([o.node,o.nodes,o.invariant].filter(x => x !== undefined).length !== 1) usage('edit requires exactly one node, nodes or --invariant');
+  if ([o.node,o.nodes,o.invariant,...(o.drive ? [true] : [])].filter(x => x !== undefined).length !== 1) usage('edit requires exactly one node, nodes, --invariant or --drive');
   if (o.nodes === undefined) return o.node === undefined ? [] : [o.node];
   if (!Array.isArray(o.nodes) || !o.nodes.length || o.nodes.some(x => typeof x !== 'string' || !x.trim())) usage('edit needs a non-empty list of named nodes');
   const ids = [...new Set(o.nodes.map(x => x.trim()))];
@@ -22,6 +22,7 @@ const checkFields = ['selftest','run','run_file','args','on_timeout','timeout_s'
 function parts(path: string, o: EditFields): string[] {
   const p = path.split('.');
   if (p.some(x => !x || ['__proto__','prototype','constructor'].includes(x))) usage(`Invalid edit path: ${path}`);
+  if (o.drive) return p; // The plan parser owns the accepted drive keys and value types.
   if (o.invariant !== undefined) {
     if (!(p.length === 1 && [...checkFields, 'known_red'].includes(p[0]!) || p.length === 2 && p[0] === 'run_file' && ['path','sha256'].includes(p[1]!))) usage(`Invalid invariant edit path: ${path}; use a check field other than id`);
   } else {
@@ -31,11 +32,43 @@ function parts(path: string, o: EditFields): string[] {
   }
   return p;
 }
+/** SM3: edit a top-level mapping through the same Document and field-edit validation. */
+function editDriveText(text: string, o: EditFields): string {
+  const doc = parseDocument(text), prior = doc.get('drive',true);
+  if (doc.errors.length) usage(`Invalid plan YAML: ${doc.errors.map(e => e.message).join('; ')}`);
+  if (prior !== undefined && !isMap(prior)) usage('drive is not a YAML map');
+  const target = isMap(prior) ? prior : doc.createNode({});
+  const apply = (path: string, raw?: string) => {
+    const p = parts(path,o);
+    if (raw === undefined) { if (!target.deleteIn(p)) usage(`Cannot unset missing edit path: ${path}`); return; }
+    const value = parseDocument(raw);
+    if (value.errors.length) usage(`Invalid YAML value for ${path}`);
+    const next = value.contents?.clone() ?? doc.createNode(null), old = target.getIn(p,true);
+    if (isNode(old)) { next.comment = old.comment; next.commentBefore = old.commentBefore; next.spaceBefore = old.spaceBefore; }
+    target.setIn(p,next);
+  };
+  for (const assignment of o.set ?? []) {
+    const eq = assignment.indexOf('=');
+    if (eq < 1) usage(`--set needs path=yaml: ${assignment}`);
+    apply(assignment.slice(0,eq),assignment.slice(eq+1));
+  }
+  for (const path of o.unset ?? []) apply(path);
+  doc.set('drive',target);
+  const rendered = doc.toString({ lineWidth:0 });
+  const intended = canonical(parsePlan(rendered));
+  let contextual = isMap(doc.contents) && !!doc.contents.flow;
+  visit(target,(_key,node) => { if (isAlias(node) || isNode(node) && 'anchor' in node && node.anchor) contextual = true; });
+  const range = prior?.range;
+  const next = contextual ? rendered : range ? text.slice(0,range[0]) + stringify(target,{lineWidth:0}).trimEnd().split('\n').map((s,i) => i ? ' '.repeat(range[0] - text.lastIndexOf('\n',range[0]) - 1)+s : s).join('\n') + '\n' + text.slice(range[2]) : text + (text.endsWith('\n') ? '' : '\n') + stringify({drive:target},{lineWidth:0});
+  if (canonical(parsePlan(next)) !== intended) throw new OwedError('cannot edit drive: serialized YAML differs from the intended plan','internal');
+  return next;
+}
 /** ED1: preserve the target's source range when safe; flow containers and anchors need Document context. */
 export function editText(text: string, o: EditFields): string {
   const ids = editNodes(o);
-  if (o.node_new && o.invariant !== undefined) usage('--node-new requires a node');
+  if (o.node_new && (o.invariant !== undefined || o.drive)) usage('--node-new requires a node');
   if (!(o.set?.length || o.unset?.length)) usage('edit requires at least one --set or --unset');
+  if (o.drive) return editDriveText(text,o);
   const doc = parseDocument(text);
   if (doc.errors.length) usage(`Invalid plan YAML: ${doc.errors.map(e => e.message).join('; ')}`);
   const list = doc.get(o.invariant !== undefined ? 'invariants' : 'nodes',true);

@@ -298,8 +298,9 @@ test('K5.4: each cited observation is one line of at most 200 characters', () =>
   const h = act(r);
   assert.ok(h?.do === 'halt', JSON.stringify(h));
   const cited = h.reason.slice(h.reason.indexOf(`; #${o.seq} `) + 2, h.reason.indexOf('); writer gave no final text'));
-  assert.ok(cited.startsWith(`#${o.seq} check:unit: line one\\nline two xxx`), cited);
-  assert.equal(cited.length, 200);
+  // SM4: stop at the last whitespace instead of splitting the following long word.
+  assert.equal(cited, `#${o.seq} check:unit: line one\\nline two…`);
+  assert.ok(cited.length <= 200);
   assert.ok(cited.endsWith('…') && !h.reason.includes('\n'));
 });
 
