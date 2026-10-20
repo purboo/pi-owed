@@ -1783,7 +1783,8 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
     // M1: up to exec.parallel jobs at once, observations in job order. An aborted run (D16) is not measured, no further
     // job starts, and the merge stops before trunk moves, keeping the completed observations (abortWith).
     const jobs = [...genesisJobs(state).map(job => ({ job, merging: false })),...mergeJobs(state,o.node,m).map(job => ({ job, merging: true }))];
-    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:merging},job); return merging ? await mergeFailureOutput(ledger,{...obs,merging:o.node}) : obs; });
+    const probeRoots = new Map<string,string>();
+    const run = await measureAll(jobs,parallelOf(state.plan),o.signal,async ({ job, merging }) => { let root: string | undefined; const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:merging,onTree:path => { root = path; }},job); if (root && obs.log) probeRoots.set(obs.log,root); return merging ? await mergeFailureOutput(ledger,{...obs,merging:o.node}) : obs; });
     const observations = await automaticInvariantResults(o.cwd,ledger,state,jobs.map(j => j.job),run.observations.filter((x): x is Draft => x !== undefined),o.signal);
     if (run.aborted || o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
     // TR1: before refusing a measured/reused node-check fail, probe trunk under this same lease and merge lock.
@@ -1797,7 +1798,8 @@ export async function merge(o: Actor & { node:string; signal?: AbortSignal; leas
       if (fresh) { slotBaseRed.push(fresh); continue; }
       const key = await git.trunkCheckKey(o.cwd,state.plan,spec,state.trunk.commit,stateQuarantine(state));
       if (entriesOf(state).some(e => e.kind === 'obs' && e.probe === 'trunk' && e.subject === o.node && e.obligation === i.obligation && e.key === key && e.commit === state.trunk.commit && e.verdict !== 'error')) continue;
-      const obs = await runTrunkProbe(o,ledger,state,n,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'});
+      const explained = entriesOf(preview).findLast((e): e is ObsEntry => e.kind === 'obs' && e.merging === o.node && e.subject === o.node && e.obligation === i.obligation && e.key === i.key && e.verdict === 'fail' && i.evidence.includes(e.seq));
+      const obs = await runTrunkProbe(o,ledger,state,n,{kind:'check',subject:o.node,obligation:i.obligation,key,spec,commit:state.trunk.commit,base:state.trunk.commit,probe:'trunk'},explained,explained?.log ? probeRoots.get(explained.log) : undefined);
       probes.push({...obs,probe:'trunk'});
     }
     if (o.signal?.aborted) return abortWith(ledger,state,observations,o.node);
@@ -2031,7 +2033,7 @@ export async function mergeBatch(o: Actor & { nodes: string[]; signal?: AbortSig
 }
 /**
  * AT1: refusal lead when merge trees `commits` of `node` break an invariant trunk passes and trunk moved since the
- * slot base: the remedy is a rebase, never a waiver, sweep or adoption. Empty otherwise.
+ * slot base: explain whether trunk changed any candidate paths. Empty otherwise.
  */
 /** AT1: the first words of the merge-tree break lead (the driver keeps it first in its halt text). */
 export const MERGE_TREE_BREAK = 'merge tree does not pass ';
@@ -2048,7 +2050,13 @@ async function mergeTreeBreakLead(cwd: string, s: State, node: string, commits: 
   if (!breaks.length || !base || base === s.trunk.commit) return [];
   const moved = await git.countCommits(cwd,base,s.trunk.commit).catch(() => 0);
   if (!moved) return [];
-  return [`${MERGE_TREE_BREAK}${[...new Set(breaks.map(b => b.obligation))].join(', ')} (trunk passes); trunk moved ${moved} commits since the slot base: rebase → owed rebase ${node}`];
+  const lead = `${MERGE_TREE_BREAK}${[...new Set(breaks.map(b => b.obligation))].join(', ')} (trunk passes); trunk moved ${moved} commits since the slot base`;
+  try {
+    const [trunk, changed] = await Promise.all([git.changedPaths(cwd,base,s.trunk.commit),git.changedPaths(cwd,base,s.nodes[node]!.candidate!.commit)]);
+    const paths = new Set(changed), overlap = trunk.filter(p => paths.has(p));
+    if (overlap.length) return [`${lead} and changed files this node changes (${overlap.slice(0,2).map(p => boundedLine(p)).join(', ')}${overlap.length > 2 ? `, +${overlap.length - 2}` : ''}): rebase → owed rebase ${node}`];
+    return [`${lead} but changed none of the files this node changes, so the node's own change is the likely cause: owed decide ${node} --writer --text "<repair instruction>" (rebase → owed rebase ${node} only reproduces it on the current trunk)`];
+  } catch { return [`${lead}: rebase → owed rebase ${node}`]; }
 }
 /** FS3: a merge refusal whose every reason is a parked shared or trunk-caused invariant (`parks`); the driver parks instead of halting. */
 export class SharedRefusal extends OwedError {
@@ -2091,14 +2099,37 @@ function deferBoundHints(s: State, node: string, items: ItemView[]): string[] {
   });
 }
 /** PB1: runtime checkout roots are not ledger facts; the classified verdict/note use existing fields. */
-async function runTrunkProbe(o: MeasurementContext, ledger: Ledger, state: State, n: NodeState, job: AttestJob): Promise<Awaited<ReturnType<typeof runJob>>> {
+async function runTrunkProbe(o: MeasurementContext, ledger: Ledger, state: State, n: NodeState, job: AttestJob, explained?: ObsEntry, mergeRoot?: string): Promise<Awaited<ReturnType<typeof runJob>>> {
   let root: string | undefined;
   const obs = await runJob({cwd:o.cwd,ledger,plan:state.plan,signal:o.signal,quarantineFeedback:true,onTree:path => { root = path; }},quarantinedJob(state,job));
   if (obs.verdict === 'fail' && root && n.candidate && obs.log) {
-    const path = await git.missingProbeAddition(o.cwd,n.candidate.base,n.candidate.commit,state.trunk.commit,root,(await ledger.getBlob(obs.log)).toString());
+    const log = await ledger.getBlob(obs.log).then(b => b.toString()).catch(() => undefined);
+    if (log === undefined) return obs;
+    const path = await git.missingProbeAddition(o.cwd,n.candidate.base,n.candidate.commit,state.trunk.commit,root,log);
     if (path) { obs.verdict = 'error'; obs.note = boundedLine(`probe not applicable: trunk lacks ${path}, which the candidate adds`); }
+    else if (!obs.failed?.length) {
+      explained ??= entriesOf(state).findLast((e): e is ObsEntry => e.kind === 'obs' && n.blocks.some(b => b.seq === e.seq && (b.state === 'active' || b.state === 'flaky')) && !!mergeRisk(state,job.subject,job.obligation,e.seq,e.key));
+      if (explained && !explained.failed?.length && explained.log) {
+        const mergeLog = await ledger.getBlob(explained.log).then(b => b.toString()).catch(() => undefined);
+        if (mergeLog !== undefined) {
+          const [trunkLine, mergeLine] = await Promise.all([probeFailureLine(ledger,log,root),probeFailureLine(ledger,mergeLog,mergeRoot)]);
+          if (trunkLine && mergeLine && trunkLine !== mergeLine) { obs.verdict = 'error'; obs.note = `probe inconclusive: trunk fails differently (${boundedLine(trunkLine)})`; }
+        }
+      }
+    }
   }
   return obs;
+}
+/** PA2 / R-0311-PA-1: roots are runtime only; historical reused trees have a ledger-owned prefix. */
+async function probeFailureLine(ledger: Ledger, log: string, root?: string): Promise<string | undefined> {
+  const lines = log.split(/\r?\n/).filter(line => line.trim());
+  let line = lines.findLast(line => /error|Error|ERR_|FAIL|fail|refus|Cannot|not found/.test(line)) ?? lines.at(-1);
+  if (line === undefined) return undefined;
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  const trees = join(ledger.dir,'trees');
+  for (const prefix of new Set([trees,await git.probePath(trees)])) line = line.replace(new RegExp(`${escape(prefix)}/[^/\r\n]+/`,'g'),'<tree>/');
+  if (root) for (const path of new Set([root,await git.probePath(root)])) line = line.replace(new RegExp(`${escape(path)}(?=$|[/\\s'":])`,'g'),'<tree>');
+  return line.trim().replace(/\s+/g,' ');
 }
 /** PB1/PB2: escape whole code points without splitting a control escape at the display bound. */
 function boundedLine(text: string): string {

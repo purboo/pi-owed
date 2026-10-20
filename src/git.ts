@@ -182,13 +182,14 @@ export async function newFiles(cwd: string, base: string, commit: string, globs:
   return (await files(cwd, commit)).map(([p]) => p).filter(p => matchesAny(p, globs) && !old.has(p));
 }
 /** PB1: canonicalize even missing paths through their nearest existing ancestor (including symlinked temp roots). */
-async function probePath(path: string): Promise<string> {
+export async function probePath(path: string): Promise<string> {
   try { return await realpath(path); } catch { const parent = dirname(path); return parent === path ? resolve(path) : join(await probePath(parent), basename(path)); }
 }
 /** PB1: only a candidate addition absent from the probed tree makes a missing-file diagnostic inapplicable. */
 export async function missingProbeAddition(cwd: string, base: string, commit: string, trunk: string, root: string, log: string): Promise<string | undefined> {
   const patterns = [/ENOENT[^\n]*?['"]([^'"\n]+)['"]/g, /([^\s:'"]+): No such file or directory/g, /No such file or directory: ['"]([^'"\n]+)['"]/g, /can't open file ['"]([^'"\n]+)['"]/g];
   const missing = patterns.flatMap(pattern => [...log.matchAll(pattern)].map(m => m[1]!));
+  missing.push(...[...log.matchAll(/Cannot find module ['"]([^'"\n]+)['"]/g)].map(m => m[1]!).filter(p => p.includes('/')));
   if (!missing.length) return undefined;
   const added = new Set((await git(cwd, ['diff', '--no-renames', '--diff-filter=A', '--name-only', '-z', `${base}..${commit}`])).stdout.split('\0').filter(Boolean));
   const present = new Set((await files(cwd, trunk)).map(([p]) => p)), checkout = await probePath(resolve(root));

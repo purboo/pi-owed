@@ -70,9 +70,9 @@ async function driverHalt(root: string, cwd: string): Promise<string> {
   assert.equal(halts.length, 1, `the driver halted once: ${logs.join('\n')}; ${all.slice(-4).map(e => JSON.stringify(e)).join('\n')}`);
   return halts[0]!.kind === 'halt' ? halts[0]!.reason : '';
 }
-const LEAD = 'merge tree does not pass inv:build (trunk passes); trunk moved 1 commits since the slot base: rebase → owed rebase a';
+const LEAD = 'merge tree does not pass inv:build (trunk passes); trunk moved 1 commits since the slot base but changed none of the files this node changes, so the node\'s own change is the likely cause: owed decide a --writer --text "<repair instruction>" (rebase → owed rebase a only reproduces it on the current trunk)';
 
-test('AT1/AT2: a merge-tree break leads the refusal, halt and Needs-you with rebase; new tests are never probed on trunk', async () => {
+test('AT1/AT2/PA3: a merge-tree break leads refusal, halt and Needs-you with path-aware advice; new tests are never probed on trunk', async () => {
   for (const tests of [['t/own.test'], undefined]) {
     const r = await breakFixture(tests);
     try {
