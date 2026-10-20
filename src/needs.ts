@@ -308,7 +308,7 @@ export const flakyRuleHint = (node: string): string => `or owed decide ${node} -
 export const lapsedKnownRedText = (d: KnownRedDebt): string => `inv:${d.invariant} lapsed known_red: ${d.entries.map(e => `${oneLine(e.test)} (fix: ${oneLine(e.fix)})`).join(', ')}; plan #${d.plan}; removable: owed edit --invariant ${d.invariant} --set known_red='<remaining active entries>' --note "remove lapsed entries"`;
 export const overlapDispatchCommand = (node: string): string => `owed dispatch ${node} --allow-overlap`;
 /** The hint line: CLI `owed drive --detach --stay`, pi `owed_drive {action:"start", stay:true}`. */
-export const readyHintText = (ready: readonly string[], surface: 'cli' | 'pi'): string => `ready: ${ready.join(', ')} (${ready.length}); no driver is running: ${surface === 'cli' ? 'owed drive --detach --stay' : 'owed_drive {action:"start", stay:true}'}`;
+export const readyHintText = (ready: readonly string[], surface: 'cli' | 'pi'): string => `ready: ${ready.join(', ')} (${ready.length}); no driver is running: ${surface === 'cli' ? 'owed drive --detach --stay' : 'owed_drive {action:"start", stay:true} (CLI: owed drive --detach --stay)'}`;
 /** `Genesis: k/n invariants observed` plus where the rest gets measured (D24.5). */
 export function genesisLine(g: GenesisStatus): string {
   return `Genesis: ${g.observed}/${g.total} invariants observed ${g.measuring ? '(measuring in this session)' : '— run owed attest --genesis (or the next attest/merge measures them)'}; pending: ${g.pending.join(', ')}`;
