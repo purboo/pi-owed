@@ -100,7 +100,7 @@ export interface DriveOpts {
   conflicts?: ReadonlyMap<string, readonly string[]>;
   /**
    * 0.7.0 (K6): nodes with a measurement (attest or merge) in flight, from its start until the executor has handled its
-   * result. They get no action; their open slots still count toward `max`.
+   * result. They get no action; only non-accepted open slots count toward `max` (all count toward `2 × max`).
    */
   measuring?: ReadonlySet<string>;
   /**
@@ -567,7 +567,7 @@ function orderMergeActions(s: State, actions: Action[]): Action[] {
 
 /**
  * The actions of one pass (contract D1/D4/D10/D11): per open attempt the first matching row of the policy table, then
- * dispatches of ready nodes while open attempts < `max`. Pure: equal inputs give deep-equal outputs; inputs are not
+ * dispatches of ready nodes while active attempts < `max` and open attempts < `2 × max`. Pure: equal inputs give deep-equal outputs; inputs are not
  * modified. A node whose recorded run lacks a view in `runs` (describe failed) gets no action this pass, nor does a node
  * in `opts.measuring` (a measurement in flight, K6).
  * The plan is read from `s.plan` only (D11); the `plan` parameter is kept for the D1 signature and not used.
@@ -598,7 +598,7 @@ export function decide(s: State, _plan: Plan, runs: ReadonlyMap<string, RunView>
     }
     if (a) out.push(a);
   }
-  // Not per slot: dispatch ready nodes in status order while open attempts < max, skipping writes overlaps and owner-needed nodes.
+  // MQ1: reserve active and total capacity in status order, preserving writes overlaps and owner-needed skips.
   const taken = open.map(n => n.id);
   for (const n of Object.values(s.nodes).filter(n => n.phase === 'ready').sort(byStatusOrder)) {
     const skip = dispatchSkip(s, n.id, opts.max, taken);

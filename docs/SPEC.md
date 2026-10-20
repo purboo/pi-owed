@@ -2905,8 +2905,9 @@ it is evidence to consider removal, not an automatic lift or proof of a fix.
 - Conservative glob overlap can delay disjoint patterns sharing a literal prefix.
   Overlap-only writes retries require a driver; without one, attest after the
   named slots close. Mixed refusal reasons do not receive automatic retries.
-- A batch refusal without a newly recorded failing observation is remembered
-  only by the running driver; status may still propose that batch. A plan CAS
+- Batch isolation is driver runtime state; status's ledger-only batch preview
+  may still propose isolated members. The driver persists refused candidates
+  across restarts and leaves them out of its batch plan (§7.21). A plan CAS
   change to a member or global setting during batch measurement discards its
   results and falls back to individual merges; unrelated node-only changes
   are allowed after fact rechecking (§7.21). Batch members are not bisected (§7.21).
@@ -3102,8 +3103,20 @@ while independently measuring its own merge tree. New failure names, incomplete
 or truncated failure lists and automatic remeasure conflicts still refuse under
 the existing gates. This debt comparison does not reuse batch votes as the
 single-node measurement verdict. The driver reports a retry, then merges
-members singly in queue order. A recorded batch failure
-prevents the same set being batched again until trunk moves.
+members singly in queue order. A recorded batch failure prevents the same set
+being batched again on the same trunk while every member's current candidate
+commit equals its candidate commit at that failure. Re-submitting the same
+commit does not lift this suppression; a new candidate commit does.
+
+In 0.31 (MQ2), every refused driver batch also isolates each member's candidate
+commit in `.git/owed/drive/batch-isolated.json` (under the configured ledger
+location when overridden). The driver writes this runtime file atomically and
+loads it after a restart. Matching candidates merge alone in the existing queue
+order, even after trunk moves or new partners appear. A record is removed when
+the candidate changes, the node merges or the slot closes; a missing or unreadable
+file means no records. A late refusal cannot isolate a newer candidate. The retry
+report reads `batch merge refused (<reason>); <members> merge alone until merged
+or resubmitted`. This scheduling state never changes ledger facts or merge gates.
 
 `status --full` shows the planned batch beside Merge queue; JSON exposes optional
 `mergeBatch: [ids]`. The displayed plan excludes dependency/continuation waits,
@@ -4763,17 +4776,21 @@ No report, lint or runtime warning changes an acceptance gate or key.
 Default status and `owed why <node>` explain the same dispatch predicate as
 the driver, in dispatch order with same-pass capacity/writes reservations:
 `ready, not dispatched: writes overlap <other> (<path>[, ...]) → owed dispatch
-<node> --allow-overlap`, `ready, not dispatched: <k> of max <N> attempts open`,
-or the existing owner-needed reason. Removed nodes with open slots still
-consume capacity. Owner-needed ready nodes appear once under Needs you, not
+<node> --allow-overlap`, `ready, not dispatched: <a> active of max <m> (<p>
+waiting to merge)`, `ready, not dispatched: <o> open attempts reach the cap
+2 × max = <2m> (<p> waiting to merge)`, or the existing owner-needed reason.
+Accepted open slots are waiting to merge; all other open slots, including removed
+nodes, consume active capacity. Status shows `active <a> of max <m>, waiting to
+merge <p>` only when `p > 0`; with no accepted open slots, compact and full status
+retain the prior output without an extra capacity sentence. Dispatch skip texts
+still report active and pending counts. Owner-needed ready nodes appear once under Needs you, not
 again as a ready line. These explanations change no replay state or JSON
 shape and are not a promise of a later dispatch.
 
-Current status ready lines and why use a live driver's recorded `--max`
+Current status capacity/ready lines and why use a live driver's recorded `--max`
 override when available, otherwise the plan's `drive.max`. Known limit:
-`statusView` callers outside the current summary/why read paths, and the
-status/brief summary itself outside those ready lines, use plan `drive.max`,
-not the live override.
+`statusView` callers outside the current summary/why read paths use plan
+`drive.max`, not the live override.
 Older driver locks cannot expose an override they did not record. The unchanged
 same-model warning compares the models actually used; acknowledge deliberate
 same-model policy with `drive.same_model: accepted`, or route reviewers to a
@@ -5270,7 +5287,7 @@ error?, questions?: {qid, rev, question}[], lastFence?: {reason, at}}`
 
 ```yaml
 drive:
-  max: 4                 # concurrent open attempts the driver starts (default 4, integer >= 1)
+  max: 4                 # active attempts; accepted merge-pending slots excluded, total open cap 2 × max
   repairs: 2             # follow-ups after a failed check / block before halting (default 2, integer >= 0)
   measure: 2             # attests and merges in flight at once (0.7.0; default 2, integer >= 1)
   min_free_mb: 2048      # free MB the driver needs before it starts a measurement (0.11; default 2048, 0 disables)
@@ -5573,8 +5590,11 @@ This does not make driver launch/send or external effects idempotent acts.
 notify` actions per the policy table of the contract (first matching row per
 open attempt, at most one action per node per pass; a halted attempt gets
 only its asking notify from the slot rows, HA1; PR2 notices remain eligible).
-Not per slot: while open slots < `max`, ready
-nodes are dispatched in status order, skipping nodes whose writes overlap an open slot and nodes that
+Not per slot: while active attempts < `max` and total open attempts < `2 × max`,
+ready nodes are dispatched in status order. An active attempt is an open slot
+whose phase is not `accepted`; accepted merge-pending slots only count toward
+the total cap. Same-pass dispatches reserve both capacities. The driver skips
+nodes whose writes overlap an open slot (including accepted slots) and nodes that
 need owner action. One reviewer run covers all of a candidate's review
 obligations (review and closure-review); a node with derived review count > 1 gets
 one run per required principal, each with the next attempt-global `n`
@@ -6359,7 +6379,8 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
     handled its result. `decide` receives the in-flight nodes as a set
     (`DriveOpts.measuring`) and gives them no action; the pass does not
     describe their runs. Every other node is dispatched, launched, sent to and
-    halted as usual; an in-flight node's open slot counts toward `max`.
+    halted as usual; an in-flight node's open slot counts toward `max` unless
+    its phase is `accepted`, and always counts toward `2 × max`.
   - Caps: at most `drive.measure` measurements (default 2) are in flight, and
     at most one of them is a merge (merges of one trunk CAS each other). An
     attest or merge action over a cap is skipped this pass without output; a
