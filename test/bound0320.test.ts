@@ -56,13 +56,14 @@ async function fixture() {
   await ops.dispatch({ cwd: r.cwd, as: { role: 'parent', id: 'fixture' }, node: ids[0]! });
   const ledger = await Ledger.open(r.cwd);
   await ledger.withLock(() => ledger.append([{ kind: 'rule', by: 'parent:fixture', nodes: [ids[0]!], text: 'Outcome first. \u{1F43E} '.repeat(5000) }]));
-  return { ...r, ids, plan, h: harness(r.cwd) };
+  return { ...r, ids, plan, h: harness(r.cwd), planBytes: Buffer.byteLength(source) };
 }
 
 test('TB1-TB5 real extension/worker: large status, why, edit, plan and refusal are bounded before RPC', { timeout: 180_000 }, async t => {
   delete process.env.OWED_CONFIRM;
   const r = await fixture();
   try {
+    t.diagnostic(`fixture: nodes=300; plan=${r.planBytes} bytes`);
     for (const full of [false, true]) {
       const expected = renderStatus(await ops.status({ cwd: r.cwd }), { full });
       assert.ok(Buffer.byteLength(expected) > CONTENT, 'large status really needs clipping');
@@ -88,6 +89,8 @@ test('TB1-TB5 real extension/worker: large status, why, edit, plan and refusal a
     assert.equal((await cli(r.cwd, ['why', r.ids[0]!, '--full'])).stdout, `${expectedWhy}\n`);
     assert.equal((why.details as { rulingFollowUp?: unknown }).rulingFollowUp, undefined);
 
+    const measure = (name: string, result: Result) => t.diagnostic(`${name}: text=${Buffer.byteLength(text(result))}; details=${Buffer.byteLength(JSON.stringify(result.details))}`);
+    measure('why full', why);
     const count = (await (await Ledger.open(r.cwd)).read()).length;
     const preview = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], set: ['title=Preview'], note: 'Preview only', dry_run: true });
     assert.notEqual(preview.isError, true, text(preview)); bounded(preview);
@@ -97,24 +100,29 @@ test('TB1-TB5 real extension/worker: large status, why, edit, plan and refusal a
     const bigPreview = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], unset: ['brief'], note: 'Preview removal', dry_run: true });
     assert.notEqual(bigPreview.isError, true, text(bigPreview)); cut(bigPreview, 'owed edit');
     assert.ok(text(bigPreview).split('\n').at(-1)!.includes('--dry-run'));
+    measure('edit dry_run large', bigPreview);
     // Arbitrarily large invocation cannot be echoed into the footer.
     const hugePreview = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], set: [`title=${'\u{1F43E}'.repeat(20000)}`], note: 'Preview only', dry_run: true });
+    assert.notEqual(hugePreview.isError, true, text(hugePreview));
     cut(hugePreview, 'rerun with the owed CLI and --dry-run');
     const edited = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], set: ['title=Recorded'], note: 'Record edit' });
     assert.notEqual(edited.isError, true, text(edited)); cut(edited, `owed why ${r.ids[1]} --full`);
     assert.equal((edited.details as { diff?: unknown }).diff, undefined);
     assert.match(text(edited).split('\n').at(-1)!, /plan #\d+.*plan\.json/);
+    measure('edit recorded', edited);
     r.plan.nodes[2] = { ...r.plan.nodes[2]!, brief: 'Plan updated' };
     await writeFile(join(r.cwd, 'plan.json'), JSON.stringify(r.plan, null, 2));
     const planned = await r.h.call('plan', { plan: 'plan.json' });
     assert.notEqual(planned.isError, true, text(planned)); cut(planned, 'owed status --full');
     assert.equal((planned.details as { carried?: unknown }).carried, undefined, 'no carried submits');
     assert.equal((planned.details as { kind: string }).kind, 'plan');
+    measure('plan recorded', planned);
     const beforeRefusal = (await (await Ledger.open(r.cwd)).read()).length;
     const refused = await r.h.call('why', { node: 'missing-\u{1F43E}'.repeat(10000), full: true });
     assert.equal(refused.isError, true); cut(refused);
     assert.ok(text(refused).startsWith('Refused: Node missing-'));
     assert.equal((refused.details as { code: string }).code, 'refused');
+    measure('large refusal', refused);
     assert.equal((await (await Ledger.open(r.cwd)).read()).length, beforeRefusal);
     await toolWorker().call('event', [9901, 'session_shutdown', { cwd: r.cwd, hasUI: false, idle: true }]);
   } finally { await r.h.close(); await r.cleanup(); }
@@ -146,6 +154,18 @@ test('TB1/TB2 hard limits handle UTF-8 boundaries, JSON escapes, many lists and 
   const version = boundToolResult('owed_why', { node: 'a' }, versionNotice({ content: [{ type: 'text', text: huge }], details: { code: 'version', reason: huge } }, { seen: new Set() }));
   cut(version as Result, 'owed why a --full');
   assert.ok(text(version as Result).includes(restartLine()));
+  const clipped = text(version as Result), countLine = clipped.split('\n').at(-1)!;
+  assert.equal(Number(countLine.match(/^(\d+) bytes omitted/)![1]), Buffer.byteLength(huge + '\n' + restartLine()) - Buffer.byteLength(clipped.slice(0, clipped.lastIndexOf('\n'))));
+  const refusal = boundToolResult('owed_edit', { node: 'x'.repeat(10000), set: ['title=new'] }, { content: [{ type: 'text', text: `Refused: ${huge}` }], details: { code: 'refused', reason: huge }, isError: true });
+  cut(refusal as Result); assert.ok(text(refusal as Result).startsWith('Refused: '));
+  assert.doesNotMatch(text(refusal as Result).split('\n').at(-1)!, /owed edit|owed why/);
+  const preview = boundToolResult('owed_edit', { node: 'a', set: ['title=new'], note: "don't change", rule: 'literal', resume: true, after: ['b', 'c'], expect: 'report', dry_run: true }, { content: [{ type: 'text', text: huge }], details: {} });
+  cut(preview as Result, 'owed edit a'); assert.match(text(preview as Result).split('\n').at(-1)!, /--rule literal --after b,c --expect report --resume/);
+  for (const tool of ['owed_dispatch', 'owed_status']) {
+    const details = compactToolDetails(tool, tool === 'owed_status' ? { trunk: { name: 'main', commit: 'c'.repeat(40), seq: 42 }, nodes: {}, summary: {} } : { node: 'a', worktree: '/tmp/slot', branch: 'slot/1', packet: huge, subagents: { agent: 'worker', cwd: '/tmp/slot', isolation: 'none', task: huge } });
+    if (tool === 'owed_status') assert.equal(details.trunk.name, 'main');
+    else { assert.equal(details.worktree, '/tmp/slot'); assert.equal(details.branch, 'slot/1'); assert.equal(details.subagents.task, undefined); }
+  }
 });
 test('TB4 small text and refusal remain byte-for-byte unchanged; every registered tool refusal is bounded', { timeout: 60_000 }, async () => {
   const r = await repo(), h = harness(r.cwd);
