@@ -59,12 +59,14 @@ if (args[0] === '__runner') {
   reply({state:'sealed',status:'done',calls:[{key:'main',gen:1,status:'ok'}]});
 } else if (args[0] === 'stop') {
   const target=args[args.indexOf('--request')+2]; log({kind:'stop',args,target});
+  if (read('control').stopPending && !existsSync(path('stop-pending'))) { writeFileSync(path('stop-pending'),''); reply({reason:'run has no workflow yet'},75); }
   const file=target.replace(/^wf-/,'')+'.json', record=read(file);
   writeFileSync(path(file),JSON.stringify({...record,stopped:true}));
   try { process.kill(record.pid,'SIGTERM'); } catch {}
   reply({applied:true});
 } else if (args[0] === 'hold') {
   const split=args.indexOf('--'); log({kind:'hold',args,marker:process.env.OWED_LEASED});
+  if (read('control').leaseBusy) { console.error('hold: machine busy; not running the command (exit 75)'); process.exit(75); }
   const p=spawn(args[split+1],args.slice(split+2),{stdio:'inherit'});
   for (const sig of ['SIGTERM','SIGINT']) process.on(sig,()=>p.kill(sig));
   p.on('close',(code,signal)=>process.exit(code??143));
@@ -273,4 +275,28 @@ test('MV3/MV5 CLI hard stop uses dsa stop; status retains its form and names loc
     assert.equal(await closed,130,stderr); assert.ok(f.calls().some(c=>c.kind==='stop'));
     assert.equal((await driveStatus({cwd:f.cwd})).running,false);
   } finally {child.kill('SIGKILL'); await closed; await f.done();}
+});
+
+
+test('MV2 hold exit 75 is busy and does not run attest inside the call',{timeout:30_000},async()=>{
+  const f=await rig({leaseBusy:true});
+  try {
+    const d=f.driver(); await d.pass(); await d.settle();
+    assert.ok(f.calls().some(c=>c.kind==='run')); assert.ok(f.calls().some(c=>c.kind==='hold'));
+    assert.ok(!existsSync(f.path('measured'))); assert.ok(f.logs.some(l=>l.do==='attest'&&l.outcome==='busy'));
+    assert.ok(!(await (await Ledger.open(f.cwd)).read()).some(e=>e.kind==='halt'));
+  } finally {await f.done();}
+});
+
+test('MV3 a pending stop is retried with the same request id until applied',{timeout:30_000},async()=>{
+  const f=await rig({gate:true,stopPending:true});
+  try {
+    const d=f.driver(); await d.pass(); await until(()=>existsSync(f.path('measured')),'running before stop');
+    d.hard=true; d.abort.abort(); assert.equal(await d.drain(5000),true);
+    const stops=f.calls().filter(c=>c.kind==='stop'); assert.equal(stops.length,2);
+    assert.deepEqual(stops[0]!.args,stops[1]!.args);
+    const run=f.calls().find(c=>c.kind==='run')!;
+    const status=JSON.parse(await readFile(f.path(run.rid+'.json'),'utf8'));
+    assert.equal(status.state,'sealed'); assert.equal(status.calls[0].status,'stopped');
+  } finally {await f.done();}
 });
