@@ -424,17 +424,14 @@ function parseWhole(stdout: string): Json | undefined {
   return jsonLines(stdout).at(-1);
 }
 
-/**
- * The refusal text when dsa rejected `run` for not knowing `--session` (dsa < 1.0.31: `Unknown or repeated option
- * --session`, as a JSON reply's reason or on stderr), else undefined. Nothing was recorded then (argument parsing
- * precedes the request).
- */
+/** MV: detect explicit unsupported-command parsing refusals only, never an ambiguous command outcome. */
 function commandRefusal(r: Spawned): string | undefined {
   if (r.timedOut || r.signal || r.exit === 0 || r.exit === 75 || r.exit === 3) return undefined;
   const text = `${str(parseWhole(r.stdout)?.reason)}\n${r.stderr}`;
-  return sessionRefusal(r) ?? (/\bcommand(?:\s+(?:calls?|runs?))?\b[^\n]*(?:not supported|unsupported|unknown)|(?:unknown|unrecognized|unexpected)[^\n]*(?:command|--spec)\b/i.test(text) ? tail(text) : undefined);
+  return sessionRefusal(r) ?? (/\bcommand(?:\s+(?:calls?|runs?))?\b[^\n]*(?:not supported|unsupported)|(?:unknown|unrecognized|unexpected)[^\n]*(?:option\s+--spec|field[^\n]*command|command:\s*(?:run|command))\b/i.test(text) ? tail(text) : undefined);
 }
 
+/** A pre-recording refusal for an unsupported --session flag. */
 function sessionRefusal(r: Spawned): string | undefined {
   if (r.timedOut || r.signal || r.exit === 0 || r.exit === 75 || r.exit === 3) return undefined;
   const text = `${str(parseWhole(r.stdout)?.reason)}\n${r.stderr}`;

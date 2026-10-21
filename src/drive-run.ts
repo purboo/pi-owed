@@ -935,7 +935,7 @@ export class Driver {
     const onRun = (rid: string): void => {
       this.emit({ do:what, node, outcome:'started', at, rid }, s);
     };
-    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false, s.nodes[node]!.candidate!.commit, s.seq + 1, onRun) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && new Map(batch.map(id => [id, s.nodes[id]!.candidate!.commit])));
+    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false, s.nodes[node]!.candidate!.commit, onRun) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && new Map(batch.map(id => [id, s.nodes[id]!.candidate!.commit])));
     let busy: ActionReport | undefined;
     m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
       .finally(() => {
@@ -1160,19 +1160,19 @@ export class Driver {
    * else — an owed error (2/3), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
    * a human on attempt `attempt` (D14.3).
    */
-  private async attest(node: string, attempt: number, lease: boolean, candidate: string, ledgerLength: number, onRun: (rid: string) => void): Promise<Ended> {
+  private async attest(node: string, attempt: number, lease: boolean, candidate: string, onRun: (rid: string) => void): Promise<Ended> {
     const available = dsaAvailable(this.dsa.bin), hold = lease && !machineLeased() && available;
     const argv = [...this.owed, 'attest', node, ...(!lease || !available ? ['--no-lease'] : [])], cwd = this.root!;
     let rid: string | undefined;
     const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(rid ? { rid } : {}), ...(detail ? { detail: oneLine(detail) } : {}) });
-    const measuredSince = ledgerLength;
+    const measuredSince = (await this.ledger!.read()).length;
     const busy = (detail: string): Ended => { const r = report('busy', detail); return { finish: async () => [r], busy: r }; };
     const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${rid ? `run ${rid}: ` : ''}${why}`); return [report('error', `${why}; halted`)]; } });
     let ran: { exit: number | null; stdout: string; stderr: string } | undefined;
     const unsupported = available ? await this.dsa.commandUnsupported() : 'dsa is unavailable';
     let fallback = unsupported;
     if (unsupported === undefined) {
-      rid = `owed-attest-${createHash('sha256').update(JSON.stringify([this.project, node, attempt, candidate, ledgerLength])).digest('hex')}`;
+      rid = `owed-attest-${createHash('sha256').update(JSON.stringify([this.project, node, attempt, candidate, measuredSince])).digest('hex')}`;
       const command = hold ? this.dsa.heldCommand('machine', argv, {shared:true, priority:10}) : argv;
       const result = await this.dsa.command(rid, command, { name:`owed attest ${node}`, cwd,
         labels:{ owed:this.project!, node, attempt:String(attempt), candidate }, env:{OWED_DIR:this.ledger!.dir, ...(hold ? {OWED_LEASED:'1'} : {})},
