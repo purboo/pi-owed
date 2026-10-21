@@ -2,9 +2,15 @@
 
 Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020027) gives the complete public contract.
 
-## Current release: 0.31.1
+## Current release: 0.31.2
 
-Plans, ledgers and snapshots from 0.31.0 replay unchanged; no new ledger kinds or fields. `check try --record` stores ordinary informational `note` entries. New options `--run`, `--record` and `--for` need the 0.31.1 CLI/tool surface. Snapshot format and validation stay unchanged, but each version uses `snapshot/state-<version>.v8`; legacy `state.v8` is no longer read, costing one cold replay on first use. Cleanup keeps the current snapshot plus the two newest other files, best effort. Restart upgraded drivers/pi sessions for attachment replay and runtime behavior. Dsa minimums remain unchanged from 0.31.0.
+Plans and ledger formats are unchanged from 0.31.1; no new ledger kind, field, enum or plan key is added. CLI `DSA_SESSION`-first identity and the existing driver lock representation are unchanged. Dsa requirements remain >= 1.0.27 for the driver, >= 1.1.0 for durable-writer waits and lease options, and >= 1.2.0 for structured asks. Per-version snapshots rebuild on first use of 0.31.2; old snapshot bytes are not reused.
+
+Restart upgraded drivers and pi sessions for owner-only automatic notifications. Only the owning pi session attaches automatically, including on resume and discovery across repositories; opening the same repository, querying owed or reusing a foreign driver does not subscribe or transfer ownership. Pi tool starts use validated current context identity; when unavailable they fall back to validated `DSA_SESSION`, then validated `PI_SESSION_ID`. An invalid supplied context identity does not fall back. Missing identity or unknown ownership never broadcasts. The lock's session wins; legacy PI-only registration is accepted only for the exact matching live driver. Sessions inside dsa calls never attach automatically. `owed watch` remains explicit observation without ownership transfer or cursor changes; an absent owner is not taken over automatically. Same-session attachment can still replay current wakes from complete lines in the last 256 KiB. This release does not change historical `Done:` labeling, replay boundary handling or memory behavior.
+
+## 0.31.1
+
+Plans and ledgers from 0.31.0 replay unchanged; snapshot caches rebuild on first use; no new ledger kinds or fields. `check try --record` stores ordinary informational `note` entries. New options `--run`, `--min-tests`, `--timeout`, `--record` and `--for` need the 0.31.1 CLI/tool surface. `--min-tests` and `--timeout` apply only to `--run` (defaults: one required test and 900 seconds). Snapshot format and validation stay unchanged, but each version uses `snapshot/state-<version>.v8`; legacy `state.v8` is no longer read, costing one cold replay on first use. Cleanup keeps the current snapshot plus the two newest other files, best effort. Restart upgraded drivers/pi sessions for attachment replay and runtime behavior. Dsa minimums remain unchanged from 0.31.0.
 
 ## 0.31.0
 
