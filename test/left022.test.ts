@@ -10,7 +10,7 @@ import * as ops from '../src/ops.ts';
 import { Dsa } from '../src/dsa.ts';
 import { Driver, procStart } from '../src/drive-run.ts';
 import { driveStatus, driverLine, driveStart } from '../src/drive-bg.ts';
-import { rulingMessage, writerLaunch } from '../src/drive.ts';
+import { rulingFollowUp, rulingMessage, writerLaunch } from '../src/drive.ts';
 import { projectId } from '../src/reducer.ts';
 import { Ledger, lockTimeoutText, lockWait } from '../src/ledger.ts';
 import { clockTime } from '../src/clock.ts';
@@ -348,7 +348,7 @@ test('LO3: pi owed_rule omits status/ruling/block quotes and keeps only follow-u
     assert.match(head!, /^Recorded #\d+ ruling \(a\); delivered 0\/2$/);
     assert.deepEqual(rest, [`a: writer call ${rid} has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if a is halted, run owed resume a (owed decide records and resumes in one step)`]);
     assert.equal(details.delivery!.slots![0]!.followUp, undefined, 'follow-up bodies never cross the worker boundary');
-    const followUp = (await ops.why({ cwd: f.cwd, node: 'a' })).rulingFollowUp!;
+    const followUp = rulingFollowUp((await ops.readState(f)).state, 'a')!.message;
     assert.ok(followUp.includes(ruling));
     assert.ok(followUp.includes('Private active-block quote'));
     assert.doesNotMatch(text.replaceAll(rid, '<rid>'), /Use this exact text|Details:|owed:|Active blocks|Private active-block quote/);

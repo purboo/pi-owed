@@ -16,18 +16,20 @@ export function installedVersion(): string {
 }
 export const restartLine = (version = installedVersion()): string => `owed ${version} is installed but this pi session loaded ${loadedVersion}: restart pi to use it.`;
 const defaultNotices = new Set<string>();
-export function versionNotice<T extends { content: { type: string; text?: string }[]; details?: unknown }>(r: T, options: { seen?: Set<string>; full?: boolean } = {}): T {
-  const version = installedVersion(), seen = options.seen ?? defaultNotices;
+export function versionNotice<T extends { content: { type: string; text?: string }[]; details?: unknown }>(r: T, options: { seen?: Set<string>; full?: boolean; version?: string; loaded?: string } = {}): T {
+  const version = options.version ?? installedVersion(), seen = options.seen ?? defaultNotices;
+  const loaded = options.loaded ?? loadedVersion;
+  const line = `owed ${version} is installed but this pi session loaded ${loaded}: restart pi to use it.`;
   const refused = (r.details as { code?: string } | undefined)?.code === 'version'
     || r.content.some(c => c.type === 'text' && c.text?.includes('is installed but this pi session loaded'));
-  if (version === loadedVersion && !refused) return r;
+  if (version === loaded && !refused) return r;
   if (!options.full && !refused && seen.has(version)) return r;
   seen.add(version);
   const content = r.content.slice();
   const last = content.findLastIndex(c => c.type === 'text');
-  if (last >= 0 && content[last]!.text?.endsWith(restartLine(version))) return r;
-  if (last >= 0) content[last] = { ...content[last]!, text: `${content[last]!.text}\n${restartLine(version)}` };
-  else content.push({ type: 'text', text: restartLine(version) });
+  if (last >= 0 && content[last]!.text?.endsWith(line)) return r;
+  if (last >= 0) content[last] = { ...content[last]!, text: `${content[last]!.text}\n${line}` };
+  else content.push({ type: 'text', text: line });
   return { ...r, content };
 }
 // TB: project tool details and clip text in the worker, never reducer state across RPC.
@@ -352,7 +354,7 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
       const local: ToolDefinition = { ...t, async execute(id, p, signal, _update, ctx) {
         context = ctx;
         try {
-          const r = await rpc.call('tool', [session, t.name, id, p, plain(ctx), [...notices]], ctx, signal);
+          const r = await rpc.call('tool', [session, t.name, id, p, plain(ctx), [...notices], { version: installedVersion(), loaded: loadedVersion }], ctx, signal);
           if (r.content.some((c: { text?: string }) => c.text?.includes(restartLine()))) notices.add(installedVersion());
           return r;
         }
@@ -435,7 +437,7 @@ if (!isMainThread && workerData?.owed) void (async () => {
           const code = e instanceof OwedError ? e.code : 'internal', reason = e instanceof Error ? e.message : String(e);
           r = { content: [{ type: 'text' as const, text: `Refused: ${reason}` }], details: { code, reason }, isError: true };
         }
-        return boundToolResult(name, m.args[3], versionNotice(r, { seen: new Set(m.args[5] as string[] | undefined), full: name === 'owed_status' && object(m.args[3]).full === true }));
+        return boundToolResult(name, m.args[3], versionNotice(r, { ...object(m.args[6]), seen: new Set(m.args[5] as string[] | undefined), full: name === 'owed_status' && object(m.args[3]).full === true }));
       }
       if (m.method === 'command') return s.commands.get(name).handler(m.args[2], ctx);
       if (m.method === 'event') { await s.handlers.get(name)?.({}, ctx); if (name === 'session_shutdown') sessions.delete(sid); return; }
