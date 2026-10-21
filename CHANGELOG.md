@@ -1,8 +1,48 @@
 # Changelog
 
+## 0.31.2
+
+Automatic driver notifications now go only to the owning pi session. Opening
+another session in the same repository, querying status or why, receiving a
+refusal, or reusing another session's driver does not subscribe that session
+or transfer ownership. Matching owners still discover live drivers across
+repositories and reconnect when resuming the same session.
+
+Plans and ledger formats are unchanged from 0.31.1; no new ledger kind,
+field or enum is added. CLI `DSA_SESSION`-first identity semantics and dsa
+requirements are unchanged: pi-durable-subagents >= 1.0.27 for the driver,
+>= 1.1.0 for durable-writer waits and lease options, and >= 1.2.0 for
+structured asks. Per-version snapshots rebuild on first use of 0.31.2;
+old snapshot bytes are not reused. Restart upgraded drivers and pi sessions
+for the notification routing behavior.
+
+- **Pi starts use the current session.** Tool starts carry the validated pi
+  context identity into the driver launch. When context identity is unavailable,
+  they fall back to validated `DSA_SESSION`, then validated `PI_SESSION_ID`.
+  Missing or unknown ownership never broadcasts; sessions inside dsa calls
+  never attach automatically. A reused driver keeps its original owner.
+- **Queued notifications stay with their session.** Changing context identity
+  discards the previous session's followers and queued wakes. An automatic
+  follower does not reconnect to a replacement owned by another session or
+  read its log; it preserves the owned driver's terminal notice. Busy buffering,
+  delivery revalidation and per-follower deduplication remain.
+- **Idle reminders respect ownership.** A session can retain idle observation
+  after its owned driver exits; a successful explicit `owed_init` may also arm
+  that session's idle watch. Opening the repository or querying owed does not
+  take over an absent owner.
+- **Explicit observation remains available.** `owed watch` is an explicit CLI
+  opt-in independent of automatic pi attachment and does not transfer ownership.
+  Its cursor and timeout semantics are unchanged. Same-session attachment can
+  still replay current wakes from complete lines in the last 256 KiB of the
+  drive log. Historical `Done:` labeling, replay boundary handling and memory
+  behavior are unchanged by this release.
+
+Source grew by 74 lines net across 7 TypeScript files: 134 insertions and
+60 deletions since 0.31.1.
+
 ## 0.31.1
 
-Plans, ledgers and snapshots from 0.31.0 replay unchanged;
+Plans and ledgers from 0.31.0 replay unchanged; snapshot caches rebuild on first use;
 no new ledger kinds or fields are added. `owed check try --record` writes an
 ordinary `note` entry. Snapshot format and validation are unchanged, but the
 old `snapshot/state.v8` is no longer read, costing one cold replay on first
