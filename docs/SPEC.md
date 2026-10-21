@@ -5201,8 +5201,13 @@ head without splitting a UTF-16 surrogate pair and ends with one line:
 - A required restart/version line is retained before the final footer.
 
 `details` is an acting summary, **not** the CLI JSON shape. All strings in
-summaries are UTF-8 heads of at most 512 bytes. Lists keep at most five short
-metadata samples, `<field>Count` and, when cut, `<field>Omitted`; lists that
+summaries are UTF-8 heads of at most 512 bytes, except the formatted waiver
+scope `meaning`, which keeps at most 2 KiB and reports `meaningOmittedBytes`
+when cut. This scope summary is not the ledger reason/body. Lists keep at most
+five short metadata samples, except acting `warnings`: these keep at most 32
+samples within a 3 KiB serialized sample budget so ordinary reads/plan/self-test
+guidance remains complete and ordered. All lists have `<field>Count` and, when
+cut, `<field>Omitted`; lists that
 cannot fit the overall budget become empty samples with the full omitted
 count. Other omitted projected fields are named in a short `omittedFields`
 list with `omittedFieldCount`. Samples of entries/observations never include
