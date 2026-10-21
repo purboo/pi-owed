@@ -188,13 +188,15 @@ export class Dsa {
       o.onRun?.(wid);
       // One CLI status read at a time, each bounded to 2 s; intervals clamped to 50 ms..5 s (default 1 s).
       const interval = Math.max(50, Math.min(5000, o.pollMs ?? 1000));
-      let stopped = false;
+      let stopped = false, stopDeadline: number | undefined;
       for (;;) {
         if (o.signal?.aborted && !stopped) {
-          stopped = true;
+          stopDeadline ??= Date.now() + 4000;
           const stop = await exec(['stop', '--request', `${rid}-stop`, wid ?? rid, '--json', '--wait-ms', '0']);
           const result = requestOutcome(stop, () => ({ outcome: 'applied' as const }));
           if (result.outcome !== 'applied' && result.outcome !== 'pending') return error('dsa stop refused', stop.stderr || stop.stdout);
+          stopped = result.outcome === 'applied';
+          if (!stopped && Date.now() >= stopDeadline) return error('dsa stop remained pending', stop.stderr || stop.stdout);
         }
         const status = await exec(['describe', '--key', rid, '--json']);
         if (status.timedOut || status.signal || status.exit !== 0) return error('dsa command describe failed', status.stderr || status.stdout);
@@ -215,8 +217,7 @@ export class Dsa {
         await new Promise<void>(resolve => {
           const done = () => { clearTimeout(timer); o.signal?.removeEventListener('abort', done); resolve(); };
           const timer = setTimeout(done, interval);
-          if (!stopped) o.signal?.addEventListener('abort', done, { once: true });
-          if (o.signal?.aborted && !stopped) done();
+          if (!o.signal?.aborted) o.signal?.addEventListener('abort', done, { once: true });
         });
       }
     } catch (e) { return error((e as Error).message, e instanceof DsaError ? e.stderr || e.stdout : ''); }
