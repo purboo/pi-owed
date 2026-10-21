@@ -25,7 +25,7 @@ import type { InFlight } from './drive-bg.ts';
 import { clockTime } from './clock.ts';
 import { nearTimeoutWarnings } from './cost.ts';
 import { nodeTestRun } from './exec.ts';
-export { trunkRedHint, sharedCheckHint, writerDecisionCommand, writerStopNeed, reviewDecision, trunkDecision, evidenceCommand, resumeCommands, flakyRuleHint, lapsedKnownRedText, genesisLine } from './needs.ts';
+export { trunkRedHint, sharedCheckHint, writerDecisionCommand, writerParkCommand, writerStopNeed, reviewDecision, trunkDecision, evidenceCommand, resumeCommands, flakyRuleHint, lapsedKnownRedText, genesisLine } from './needs.ts';
 import { needs, repoNeeds, activity, itemLine, heldRuling, heldRulingText, resumeCommand, trunkRedHint, sharedCheckHint, evidenceCommand, lapsedKnownRedText, overlapDispatchCommand, genesisLine, type Need, type Runtime } from './needs.ts';
 export { boundaryClip } from './needs.ts';
 import { boundaryClip } from './needs.ts';
