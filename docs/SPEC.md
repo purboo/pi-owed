@@ -3497,7 +3497,7 @@ edit(o: {cwd, node? | nodes?: string[] | invariant?, set?, unset?, node_new?, no
 editPreview(o: EditArgs): Promise<EditPreview> // ED1: diff, downgrades, prior/next plan and text; no effect
 amend(o: {cwd, node, writes, note, plan?, as, channel?}): Promise<AmendResult>   // N3: plan file edit + plan entry (as planSet) + carries + rule, one lock
 rule(o: {cwd, text, nodes, writer?, prospective?, as}): Promise<RuleEntry & {delivery?: RulingDelivery}>
-answer(o: {cwd, node, text, qid?, rid?, rev?, as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult, answers: AnswerState[], rulingDelivery?: RulingDelivery}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
+answer(o: {cwd, node, text, qid?, rid?, rev?, expect?: 'report', as, channel?}): Promise<{entry: RuleEntry, request: string, delivery: SendResult, answers: AnswerState[], rulingDelivery?: RulingDelivery}>   // AN1–AN2: discover, record once, send kind answer; a failed delivery reports the recorded seq and exact retry command
 dispatch(o: {cwd, node, as, allowOverlap?}): Promise<DispatchPacket>   // creates the branch and worktree of §8.1 (default owed/<node>/<attempt>, <main worktree root>/.owed/wt/<node>-<attempt>)
 rebase(o: {cwd, node, as, apply?: boolean}): Promise<RebaseResult>      // parent/owner or the slot writer; appends `rebase`, returns the packet with the git commands
 submit(o: {cwd, node, commit?, model?: string, as}): Promise<Entry>      // default commit = HEAD of the slot worktree; must be clean
@@ -3893,7 +3893,7 @@ while genesis items lack observations.
 ### 8.3.1 One parent decision (0.23, DC / DF)
 
 `owed decide A[,B...] --text TEXT [--writes +PATH ...] [--allow-only p1,p2] [--defer INV]
-[--resume | --no-resume] [--after NODE] [--remeasure] [--writer]` combines
+[--resume | --no-resume] [--after NODE] [--expect report] [--remeasure] [--writer]` combines
 writes amendment, invariant deferral, one ruling, answer delivery and recovery.
 It requires parent/owner authority, never the driver or a subagent, and a
 nonempty list of unfinished named nodes (`*` is not supported).
@@ -3931,12 +3931,22 @@ recorded and the error identifies the saved plan and recovery action.
   candidate's current merge key, using TEXT as its reason. It precedes any
   `--writer` invalidation. It waives no check and changes no acceptance gate.
 - Resume defaults on only for halted or held nodes. Explicit `--resume`,
-  `--after` or `--remeasure` requests resume; `--no-resume` preserves the halt
-  despite the ruling and cannot combine with after/remeasure. A halt kept by
+  `--after`, `--expect report` or `--remeasure` requests resume; `--no-resume` preserves the halt
+  despite the ruling and cannot combine with after/expect/remeasure. A halt kept by
   that decision is `held by ruling #<seq>`: it remains stopped but does not ask
   the parent to resume it. `owed resume <node>` releases it when desired. Hold release
   keeps resume's restrictions. `--writer` requires a new submit (the same
   commit is allowed), never acknowledges a ruling or clears a review block.
+- **Quiet parking (0.32, PK1):** `owed decide <node> --expect report --text TEXT`
+  and `owed answer <node> --expect report TEXT` (tools `expect: "report"`)
+  record the existing `resume.expect: "report"` on the open writer attempt.
+  The ruling/answer and resume validate and append together before dsa delivery.
+  The report follow-up and single reported wake use §12.3.1's existing path;
+  the node then stays quiet until an act naming it. A missing open slot or
+  `decide --no-resume --expect report` refuses without recording anything.
+  An answer delivery retry reuses its rule, resume and request id; it never adds
+  a resume to an old plain answer or reparks after a later parent act. Retrying
+  with `expect: "report"` requires the original answer's recorded report resume.
 - Each node may have at most one open question across its current writer and
   reviewer runs. That question is answered at its current revision. More than
   one refuses; use `owed answer <node> --rid R --qid Q "<text>"` to select it.
@@ -4983,10 +4993,10 @@ are no-ops, as in §8.3.1), `edit <node[,node...]> --set path=yaml ... [--unset 
 --note WHY [--dry-run] [--plan FILE]` or `edit --invariant ID --set field=yaml
 --note WHY` (§3 ED1/ED2),
 `decide <node[,node...]> --text TEXT [--writes +PATH ...] [--defer INV]
-[--resume | --no-resume] [--after NODE] [--remeasure] [--writer]`
+[--resume | --no-resume] [--after NODE] [--expect report] [--remeasure] [--writer]`
 (parent/owner; one decision, §8.3.1),
 `rule <text> --nodes a,b|* [--writer|--prospective]`,
-`answer <node> [--qid Q] [--rid R] [--rev N] "<text>"` (AN1–AN2, AR; parent/owner;
+`answer <node> [--qid Q] [--rid R] [--rev N] [--expect report] "<text>"` (AN1–AN2, AR; parent/owner;
 `--rev` is a positive integer, otherwise a usage error; prints the answered
 node/run/qid and actual post-delivery call state, with other-role delivery results when present;
 `--json` retains the request id and delivery details in
@@ -6352,7 +6362,10 @@ both the rebase follow-up and latest resume, and the writer seals again
 without a new submit, the halt names that ruling follow-up instead. This
 check precedes HEAD/dirty inspection: even an unsubmitted commit outside the
 handed set, or dirty work left behind, cannot trigger another submit reminder.
-A refused ruling follow-up retains its rejection guidance. This is the same
+A refused ruling follow-up retains its rejection guidance. A halt after a
+finished ruling follow-up without a new submit also names
+`owed decide <node> --expect report --text "<pause ruling>"` as the way to park
+without this halt (0.32, PK3). This is the same
 finished-ruling boundary as the ordinary writer-halt path; no send/halt loop
 or new ledger kind is introduced.
 
@@ -6386,7 +6399,7 @@ Writer dispatch packets include this section after the checks and any invariant 
 
 Dispatch packets and writer follow-ups (rebase, repair, submit, plan-changed,
 ruling, interruption and report) carry this sentence:
-`If you need a decision outside your writes, ask the parent (your run waits): give decision_needed (one sentence) and numbered options (label, scope, cost, risk; mark one preferred), plus facts (commit, run id, log sha), what you tried, and candidate explanations with their evidence and what is unproven — as ask fields when your ask tool has them, else as text starting "Decision needed:". Never submit a candidate you believe fails its checks.`
+`If you need a decision outside your writes, ask the parent (your run waits): give decision_needed (one sentence) and numbered options (label, scope, cost, risk; mark one preferred), plus facts (commit, run id, log sha), what you tried, and candidate explanations with their evidence and what is unproven — as ask fields when your ask tool has them, else as text starting "Decision needed:". Never submit a candidate you believe fails its checks. When a ruling tells you to stop, pause or wait for a parent prerequisite, do not ask to confirm it; state your status and end your turn.`
 Submit reminders also say:
 `If you stopped for a parent decision, do not submit: ask the question instead.`
 Runner questions without `decision_needed` keep the existing verbatim-question/answer flow.
