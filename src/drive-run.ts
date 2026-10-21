@@ -1151,6 +1151,8 @@ export class Driver {
   }
 
   /**
+   * MV: with an owner session and command-capable dsa, the same hold/attest argv runs inside a durable command call.
+   * The deterministic id pins project/node/attempt/candidate/start ledger length; unsupported launches alone fall back.
    * `pi-durable-subagents hold machine --shared --no-wait -- owed attest <node>` when dsa is available (D6/D9, dsa >=
    * 1.0.27), else `owed attest <node>`; resolves with how the loop handles the result. Exit 0/1/4: done (the ledger says
    * what follows). Exit 75: busy, nothing was queued, retry on a later pass: through hold either hold refusing the lease
@@ -1171,7 +1173,7 @@ export class Driver {
     let fallback = unsupported;
     if (unsupported === undefined) {
       rid = `owed-attest-${createHash('sha256').update(JSON.stringify([this.project, node, attempt, candidate, ledgerLength])).digest('hex')}`;
-      const command = hold ? [this.dsa.bin, 'hold', 'machine', '--shared', '--priority', '10', '--no-wait', '--', ...argv] : argv;
+      const command = hold ? this.dsa.heldCommand('machine', argv, {shared:true, priority:10}) : argv;
       const result = await this.dsa.command(rid, command, { name:`owed attest ${node}`, cwd,
         labels:{ owed:this.project!, node, attempt:String(attempt), candidate }, ...(hold ? {env:{OWED_LEASED:'1'}} : {}),
         signal:this.abort.signal, pollMs:this.o.pollMs, onRun:() => onRun(rid!) });
@@ -1179,6 +1181,7 @@ export class Driver {
       if (result.outcome === 'ran') ran = result;
       else { fallback = result.reason; rid = undefined; }
     }
+    if (this.abort.signal.aborted) return fail('attest aborted before legacy launch');
     if (!ran && !this.attestUnlisted) {
       this.attestUnlisted = true;
       const e: LoopEvent = {event:'attest-unlisted', reason:fallback};
