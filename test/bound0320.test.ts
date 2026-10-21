@@ -75,7 +75,9 @@ test('TB1-TB5 real extension/worker: large status, why, edit, plan and refusal a
       const raw = await toolWorker().call('tool', [9901, 'owed_status', 'raw', { full }, { cwd: r.cwd, hasUI: false, idle: true }]) as Result;
       cut(raw, 'owed status --full');
       const output = await cli(r.cwd, ['status', ...(full ? ['--full'] : [])]);
-      assert.equal(output.stdout, `${expected}\n`, 'CLI remains complete and byte-identical');
+      // Rendering is unchanged apart from the live writer age ticking between separate reads.
+      const stable = (s: string) => s.replace(/writing \(\d+s\)/g, 'writing (<age>s)');
+      assert.ok(stable(output.stdout) === stable(`${expected}\n`), 'CLI remains complete and byte-identical apart from live age');
     }
     const statusJSON = JSON.parse((await cli(r.cwd, ['status', '--json'])).stdout);
     assert.equal(Object.keys(statusJSON.nodes).length, 300);

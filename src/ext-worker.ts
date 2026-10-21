@@ -189,11 +189,13 @@ function receiptPointer(name: string, args: Summary, data: Summary): string {
 export function boundToolResult<T extends { content: { type: string; text?: string }[]; details?: unknown }>(name: string, args: unknown, r: T): T {
   const details = compactToolDetails(name, r.details), text = r.content.filter(c => c.type === 'text').map(c => c.text ?? '').join('\n');
   if (Buffer.byteLength(text) <= TOOL_CONTENT_BYTES) return { ...r, details };
-  const pointer = (r as T & { isError?: boolean }).isError
+  const rawPointer = (r as T & { isError?: boolean }).isError
     ? (object(r.details).code === 'usage' && object(args).cwd ? '' : receiptPointer('owed_why', object(args), {}))
     : receiptPointer(name, object(args), object(r.details));
+  const pointer = Buffer.byteLength(rawPointer) <= 800 ? rawPointer : 'owed status --full';
   // Retain the version notice even when the surrounding result was cut; the CLI footer stays last.
-  const notice = text.split('\n').at(-1)?.includes('is installed but this pi session loaded') ? text.split('\n').at(-1)! : '';
+  const last = text.slice(text.lastIndexOf('\n') + 1);
+  const notice = last.includes('is installed but this pi session loaded') ? last : '';
   const original = Buffer.byteLength(text), suffix = notice ? `\n${utf8Head(notice, 512)}` : '';
   const footer = (omitted: number) => `\n${omitted} bytes omitted${pointer ? `; full: ${pointer}` : ''}`;
   const head = utf8Head(text, TOOL_CONTENT_BYTES - Buffer.byteLength(suffix + footer(original)));
