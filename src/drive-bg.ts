@@ -203,7 +203,7 @@ export interface DriveStatus {
   measuring?: InFlight[];
 }
 /** One in-flight measurement of a running driver (K6). */
-export interface InFlight { node: string; do: 'attest' | 'merge'; since: string }
+export interface InFlight { node: string; do: 'attest' | 'merge'; since: string; rid?: string }
 /**
  * K6: the measurements in flight according to the current driver's output (after the last exit record): each
  * `started` attest or merge line with no later line of the same action and node (its completion), in start order.
@@ -217,12 +217,12 @@ export function measuringOf(lines: string[]): InFlight[] {
     if ((j.do !== 'attest' && j.do !== 'merge') || typeof j.node !== 'string') continue;
     const key = `${j.do}\u0000${j.node}`;
     open.delete(key);
-    if (j.outcome === 'started') open.set(key, { node: j.node, do: j.do as InFlight['do'], since: typeof j.at === 'string' ? j.at : '?' });
+    if (j.outcome === 'started') open.set(key, { node: j.node, do: j.do as InFlight['do'], since: typeof j.at === 'string' ? j.at : '?', ...(typeof j.rid === 'string' ? {rid:j.rid} : {}) });
   }
   return [...open.values()];
 }
 /** The text of in-flight measurements: `<node> <attest|merge> since <at>`. */
-export const inFlightText = (m: InFlight): string => `${m.node} ${m.do} since ${clockTime(m.since)}`;
+export const inFlightText = (m: InFlight): string => `${m.node} ${m.do} since ${clockTime(m.since)}${m.rid ? ` [${m.rid}]` : ''}`;
 /**
  * H1.2: `at` of the last `idle-wait` line of the current driver's output (after the last exit record) when no action
  * other than a notify follows it (an idle pass prints notifies only); else undefined.
