@@ -39,7 +39,7 @@ async function fixture() {
   const reg = (cwd = r.cwd) => join(process.env.XDG_STATE_HOME!, 'owed/drivers', `${createHash('sha256').update(cwd).digest('hex').slice(0, 16)}.json`);
   const owner = { pid: process.pid, start: procStart(process.pid), host: hostname(), at: new Date().toISOString(), token: 'follow-fixture' };
   return { ...r, dir, log, lock, reg, owner, pids,
-    held: () => writeFileSync(lock, JSON.stringify(owner)),
+    held: (extra: object = {}) => writeFileSync(lock, JSON.stringify({ ...owner, ...extra })),
     append: (line: unknown) => appendFileSync(log, `${typeof line === 'string' ? line : JSON.stringify(line)}\n`),
     register(cwd: string, session: string, extra: object = {}) { mkdirSync(join(process.env.XDG_STATE_HOME!, 'owed/drivers'), { recursive: true }); writeFileSync(reg(cwd), JSON.stringify({ repo: cwd, pid: owner.pid, start: owner.start, at: owner.at, session, ...extra })); },
     async close() {
@@ -65,9 +65,9 @@ async function ask(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 test('FW1 tool cwd in another repository follows an ask, keeps busy hold and dedup after repeated calls', { timeout: 30_000 }, async () => {
-  const f = await fixture(), h = harness(f.root);
+  const f = await fixture(), h = harness(f.root, 'tool-owner');
   try {
-    f.held(); await h.emit('session_start');
+    f.held({ session: 'tool-owner' }); await h.emit('session_start');
     assert.notEqual((await h.call('status', { cwd: f.cwd })).isError, true);
     await h.emit('agent_start');
     const line = { ...await ask(f), facts: 9999 }; f.append(line);
@@ -79,11 +79,11 @@ test('FW1 tool cwd in another repository follows an ask, keeps busy hold and ded
   } finally { await h.emit('session_shutdown'); await f.close(); }
 });
 
-test('FW1 refused tool calls attach, including reserved parent:drive identity', async () => {
-  const f = await fixture(); f.held();
+test('FW1 refused owner tool calls attach, including reserved parent:drive identity', async () => {
+  const f = await fixture(); f.held({ session: 'tool-owner' });
   try {
     for (const args of [{ node: 'missing' }, { node: 'a', as: 'parent:drive' }]) {
-      const h = harness(f.root);
+      const h = harness(f.root, 'tool-owner');
       try {
         assert.equal((await h.call('why', { ...args, cwd: f.cwd })).isError, true);
         f.append('refused-call wake'); await h.emit('agent_settled');
@@ -187,7 +187,7 @@ test('FW3 CLI start/detach text and JSON say who follows, including reuse and no
         const start = await cli(f.cwd, args); assert.equal(start.code, 0, start.stderr);
         const pid = JSON.parse(readFileSync(f.lock, 'utf8')).pid as number; f.pids.add(pid);
         if (session) assert.match(start.stdout, /\nfollowed by pi session session-\n$/);
-        else assert.match(start.stdout, /\nnote: no pi session follows this driver; its wakes reach only pi sessions opened in this repository\. To be woken elsewhere, run `owed watch` \(for example as a dsa command call\)\.\n$/);
+        else assert.match(start.stdout, /\nnote: no pi session follows this driver; no automatic pi delivery\. To observe it explicitly, run `owed watch` \(for example as a dsa command call\)\.\n$/);
         // Reuse reports the actual starter, not the caller's different session.
         process.env.PI_SESSION_ID = 'different-caller';
         const reused = await cli(f.cwd, ['start', '--json']); assert.equal(reused.code, 0, reused.stderr); assert.equal(JSON.parse(reused.stdout).followedBy, session || null);

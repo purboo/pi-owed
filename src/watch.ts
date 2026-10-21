@@ -12,7 +12,7 @@ export function followedBy(r: DriveStart): string | null {
 }
 export const followText = (session: string | null): string => session
   ? `followed by pi session ${session.slice(0, 8)}`
-  : 'note: no pi session follows this driver; its wakes reach only pi sessions opened in this repository. To be woken elsewhere, run `owed watch` (for example as a dsa command call).';
+  : 'note: no pi session follows this driver; no automatic pi delivery. To observe it explicitly, run `owed watch` (for example as a dsa command call).';
 export function parseWatchCursor(value?: string): { offset: number; ino?: number } | undefined {
   if (value === undefined) return;
   const parts = value.split(':').map(Number);

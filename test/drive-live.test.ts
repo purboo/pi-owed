@@ -85,7 +85,7 @@ async function rig(plan: object) {
 /** This test process plays the live driver of the repository (lock with its pid and start time). */
 const liveLock = (path: string, host = hostname()) => {
   mkdirSync(join(path, '..'), { recursive: true });
-  writeFileSync(path, JSON.stringify({ pid: process.pid, start: run.procStart(process.pid), host, at: '2026-10-10T00:00:00.000Z', token: 'test' }));
+  writeFileSync(path, JSON.stringify({ pid: process.pid, start: run.procStart(process.pid), host, at: '2026-10-10T00:00:00.000Z', token: 'test', session: 'live-session' }));
 };
 async function withEnv<T>(extra: Record<string, string>, fn: () => Promise<T>): Promise<T> {
   const prior = new Map(Object.keys(extra).map(k => [k, process.env[k]]));
@@ -105,7 +105,7 @@ function harness(cwd: string) {
     on(event: string, h: (event: unknown, ctx: unknown) => unknown) { handlers.set(event, h); return () => undefined; },
     sendMessage(message: { customType: string; content: string }, options: unknown) { messages.push({ message, options }); },
   } as unknown as ExtensionAPI);
-  const ctx = { cwd, hasUI: false, isIdle: () => state.idle, ui: { notify() { /* unused */ }, async confirm() { return false; } } };
+  const ctx = { cwd, hasUI: false, isIdle: () => state.idle, sessionManager: { getSessionId: () => 'live-session' }, ui: { notify() { /* unused */ }, async confirm() { return false; } } };
   return {
     messages, state,
     async call(name: string, args: Json = {}) {

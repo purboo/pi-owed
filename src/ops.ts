@@ -726,7 +726,7 @@ export async function readPlan(o: Context & { path: string; rev?: string }): Pro
 /** SF2: start never invents a plan or silently approves a downgrade (ruling #2550). */
 export interface StartResult { initialized: boolean; updated: boolean; plan: string; warnings: string[]; driver: DriveStart }
 function startRefusal(check: string, why: string, fix: string): never { throw new OwedError(`start preflight ${check} failed: ${oneLine(why)}; ${fix}`, 'usage'); }
-export async function start(o: Context & { plan?: string; max?: number; stay?: boolean; restart?: boolean; signal?: AbortSignal }): Promise<StartResult> {
+export async function start(o: Context & { plan?: string; max?: number; stay?: boolean; restart?: boolean; sessionId?: string; signal?: AbortSignal }): Promise<StartResult> {
   if (o.max !== undefined && (!Number.isSafeInteger(o.max) || o.max < 1)) startRefusal('max', 'expected a positive integer', 'use owed start --max <N>');
   const refusal = subagentRefusal('parent');
   if (refusal) startRefusal('identity', refusal, 'run owed start from the main agent');
@@ -764,7 +764,7 @@ export async function start(o: Context & { plan?: string; max?: number; stay?: b
   if (fresh) warnings.push(...(await init({ cwd:o.cwd, as:{role:'owner', id:'pi'}, channel:'delegated', plan:read.plan, path:read.path, commit:trunk.stdout.trim(), measure:false, signal:o.signal })).warnings ?? []);
   else if (changed) await planSet({ cwd:o.cwd, as:{role:'parent', id:'pi'}, ...read, signal:o.signal, shellWarnings:warnings });
   checkAbort(o.signal);
-  const driver = await driveStart({ cwd:o.cwd, max:o.max, stay:o.stay, reuse:true, restart:o.restart });
+  const driver = await driveStart({ cwd:o.cwd, max:o.max, stay:o.stay, reuse:true, restart:o.restart, sessionId:o.sessionId });
   return { initialized:fresh, updated:changed, plan:read.path, warnings, driver };
 }
 /** AK6/SF2: one action line (including lint warnings), one driver line and one next step. */
