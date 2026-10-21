@@ -1,6 +1,6 @@
 # pi-owed
 
-**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.31.0](CHANGELOG.md)**.
+**No receipt, not done.** Owed is an acceptance ledger for multi-agent task graphs in one Git repository: measured checks, independent reviews, owner waivers and remaining debt guard each merge. The runner does the work; owed records acceptance, not promises. Current release: **[0.31.2](CHANGELOG.md)**.
 
 Why use it?
 - Keep completion tied to a merge receipt, not an agent's success message.
@@ -50,7 +50,7 @@ git add plan.yaml && git commit -m "Record acceptance plan"
 owed start --plan plan.yaml
 ```
 
-Start preflights, initializes/updates the plan and starts or reuses the detached driver. It dispatches an isolated writer, measures the candidate, obtains independent review and guards the merge. Wait for `Needs you:` / `Done:` wakes; act with `owed decide <node> --text "<decision and why>"`, `owed answer`, or the command the line gives. Use `owed why <node>` for outstanding work, `--full` for evidence. **Done means owed shows `greeting: merged`.** Later `owed start` rereads the recorded source; `--stay` waits for a growing plan. Never poll in a loop or launch a second writer for a quiet one.
+Start preflights, initializes/updates the plan and starts or reuses the detached driver. It dispatches an isolated writer, measures the candidate, obtains independent review and guards the merge. Automatic `Needs you:` / `Done:` wakes go only to the owning pi session; opening another session in the same repository or reusing its driver does not subscribe or transfer ownership. Use `owed watch` for explicit CLI observation without taking ownership. On a wake, act with `owed decide <node> --text "<decision and why>"`, `owed answer`, or the command the line gives. Use `owed why <node>` for outstanding work, `--full` for evidence. **Done means owed shows `greeting: merged`.** Later `owed start` rereads the recorded source; `--stay` waits for a growing plan. Never poll in a loop or launch a second writer for a quiet one.
 
 ## Reference: concepts and acceptance
 
@@ -369,12 +369,12 @@ Fresh init is delegated `owner:pi`; the driver performs genesis measurements thr
 An unchanged plan and live driver says `already running`, with no entry or log rotation. `max` (positive integer) and `stay` change only a newly started driver. Tool output has three lines: action (with lint warnings folded into it), driver state and next step. CLI start adds `followed by pi session <first 8 characters>` only for a running driver when its session is known, including reuse; otherwise a running driver adds:
 
 ```text
-note: no pi session follows this driver; its wakes reach only pi sessions opened in this repository. To be woken elsewhere, run `owed watch` (for example as a dsa command call).
+note: no pi session follows this driver; no automatic pi delivery. To observe it explicitly, run `owed watch` (for example as a dsa command call).
 ```
 
-JSON/tool results are `{initialized, updated, plan, warnings, driver}`, with optional driver `alreadyRunning`; CLI JSON also has `followedBy: <id> | null`. These are runtime fields. Session attachment revalidates complete wake lines from at most the last 256 KiB of the current drive log, then follows from the end; an existing follower preserves deduplication. `owed drive --detach` prints the same follower line. Already exited drivers omit follower information and report `followedBy: null`.
+JSON/tool results are `{initialized, updated, plan, warnings, driver}`, with optional driver `alreadyRunning`; CLI JSON also has `followedBy: <id> | null`. These are runtime fields. Attachment by the owning pi session revalidates complete wake lines from at most the last 256 KiB of the current drive log, then follows from the end; an existing follower preserves deduplication. `owed drive --detach` prints the same follower line. Already exited drivers omit follower information and report `followedBy: null`.
 
-An agent without a pi session can wait with `owed watch [--after <offset>[:<ino>]] [--timeout s] [--json]`, for example in a durable dsa command call that wakes its caller on completion. `owed watch` reads the drive log; writes no ledger entries and takes no driver lock. It revalidates wakes against the ledger and dsa and may write the state snapshot cache. Without `--after` it starts at the current log end. Exit 0 delivers a wake or driver exit; exit 5 reports `no wake within <s> s`. Both print `next: owed watch --after <offset>:<ino>`: reuse that cursor to continue. On timeout it preserves pending ride-alongs such as merge `Done:` lines for the next watch. An inode change starts the current log at zero; bare byte offsets remain accepted. Timeout seconds must be a nonnegative integer. Exit 3 says `no owed driver is running in <repo>; start one with owed start` with no `next:` line. JSON is `{lines, next, exit}`, with a cursor string in `next`. An old cursor can show a repeated wake line again.
+Any agent can explicitly observe with `owed watch [--after <offset>[:<ino>]] [--timeout s] [--json]`, for example in a durable dsa command call that wakes its caller on completion. This does not subscribe a pi session automatically or transfer driver ownership. `owed watch` reads the drive log; writes no ledger entries and takes no driver lock. It revalidates wakes against the ledger and dsa and may write the state snapshot cache. Without `--after` it starts at the current log end. Exit 0 delivers a wake or driver exit; exit 5 reports `no wake within <s> s`. Both print `next: owed watch --after <offset>:<ino>`: reuse that cursor to continue. On timeout it preserves pending ride-alongs such as merge `Done:` lines for the next watch. An inode change starts the current log at zero; bare byte offsets remain accepted. Timeout seconds must be a nonnegative integer. Exit 3 says `no owed driver is running in <repo>; start one with owed start` with no `next:` line. JSON is `{lines, next, exit}`, with a cursor string in `next`. An old cursor can show a repeated wake line again.
 
 `owed start --restart` / `owed_start {restart:true}` drains a live driver's
 current action and in-flight measurements, waits up to ten seconds for its
@@ -619,7 +619,7 @@ record (an empty log says `no driver output yet`). The exit record is written
 before the lock is released, so once `--stop` says `stopped` it is in the log.
 `--stop` signals the lock's pid only when its process start time matches
 (never a reused pid, never another host). In pi, `owed_drive` with `action:
-"start"` does the same, and the session is woken with one message when the
+"start"` does the same, and the owning pi session is woken with one message when the
 driver halts, needs the owner, a run asks a question, it is stalled, dsa events
 fail or the driver exits (merges ride along with the next message). One wake
 per new fact: a halt or notify of a node wakes again only when its text changed
@@ -628,15 +628,27 @@ writer resubmitted, a ruling); otherwise it only rides along with the next
 message as `<text> (repeat n, no new ledger entries)`. Trunk moved outside owed is
 not a halt: the driver merges nothing and notifies once per change with
 `owed adopt --note "<why>"` (or the `git update-ref` that restores a rewound
-trunk); after the adopt its next pass merges. Every top-level pi
-session opened in the repository later follows a running driver from then on
-and is woken too. Every owed tool call in a top-level session attaches to its
-target repository, including refusals. Sessions also discover their live
-drivers across repositories at most once every ten seconds, using the starting
-`DSA_SESSION` with `PI_SESSION_ID` as fallback outside dsa calls. Registry
-attachment revalidates still-current wakes from complete lines in at most the
-last 256 KiB of the current drive log, then follows from the end. Sessions inside dsa calls
-(`DSA_EXEC`/`DSA_CALL` set) never attach. Nobody has to poll
+trunk); after the adopt its next pass merges. Automatic attachment at session
+startup, tool calls (including status, why and refusals), ticks and settlement
+requires the current top-level pi session to own the live driver. Opening another
+session in the same repository or reusing another session's driver does not
+subscribe it or transfer ownership. Resuming the same owning session still
+attaches, and matching owners discover their live drivers across repositories
+at most once every ten seconds. Pi uses its validated context identity; only
+when that context identity is unavailable does it fall back to validated
+`DSA_SESSION`, then validated `PI_SESSION_ID`. An invalid supplied context
+identity does not fall back. Missing identity or unknown ownership never
+broadcasts. The current lock's session wins; a legacy PI-only registration
+can establish ownership only when repository, pid, process start and lock time
+match that exact live driver.
+
+Owned attachment revalidates still-current wakes from complete lines in at most
+the last 256 KiB of the current drive log, then follows from the end; an existing
+follower keeps its deduplication. Changing context identity discards the old
+session's followers and queued wakes, with identity checked again at delivery.
+Sessions inside dsa calls (`DSA_EXEC`/`DSA_CALL` set) never attach automatically.
+Explicit `owed watch` remains available without changing ownership; an absent
+owner is never taken over automatically. Nobody has to poll
 `action: "status"`; `action: "stop"` stops it. The driver survives pi exiting.
 The driver carries no dsa call identity (`DSA_EXEC` and `DSA_CALL` are removed
 from its environment; `DSA_HOME` and the rest are kept). Started from inside a
@@ -662,9 +674,13 @@ older plan parsers reject it as an unknown drive key. No new ledger entry is add
 
 Each JSON loop log line carries `driver: {pid, start?, at}`. A terminal line
 from an earlier driver is checked against the current repository owner at delivery:
-when a newer driver runs, it rides along with the next message as `earlier driver
+when a newer driver owned by the same session runs (or in explicit CLI watch),
+it rides along with the next message as `earlier driver
 (pid P, started T) <event>; driver pid Q (started U) is running`. Current-owner
-terminal lines, and those with no live owner, still wake normally.
+terminal lines, and those with no live owner, still wake normally. An automatic
+follower never reconnects to a replacement owned by another session: it retains
+the owned log through rotation, delivers the old driver's terminal notice and
+stops without reading the foreign replacement's log.
 
 In pi a wake is never handed to the session while its agent is running: the
 follower holds it until the agent settles, then drops what was resolved
@@ -681,9 +697,13 @@ driver is running: owed drive --detach --stay` (pi: `owed_drive
 {action:"start", stay:true}`); nothing starts automatically.
 
 With pi-durable-subagents ≥ 1.0.31 the driver's runs are listed in the pi
-session that started it: owed reads `DSA_SESSION` (ignored inside a dsa call),
-records it in `drive.lock`, hands it to a detached driver and passes
-`--session <id>` to every `run`. `owed drive --status`, `/owed` and
+session that started it. Pi tool starts pass the validated current context
+identity through to the child launch without changing shared process environment;
+when unavailable, they use validated `DSA_SESSION`, then `PI_SESSION_ID`.
+CLI start keeps its existing `DSA_SESSION`-first semantics and lock representation:
+it records the validated `DSA_SESSION` in `drive.lock`, hands it to a detached
+driver and passes `--session <id>` to every `run`. Session identity is ignored
+inside dsa calls. `owed drive --status`, `/owed` and
 `owed_drive` status say `runs are listed in pi session <id>`, or `no pi
 session: runs show only in pi-durable-subagents status / the CLI` for a driver
 started outside pi. An older dsa that refuses `--session` is used without it
@@ -1672,9 +1692,14 @@ retain their recorded writes dialect; no automatic migration rewrites them.
   work, no driver/locks/machine holder or matching running/asking labelled agent,
   and progress older than `drive.watch_idle_min` (default 15 minutes; 0 disables).
   Unknown subagent activity falls back to age and other conditions; failed
-  installed machine inspection stays quiet. Pi checks watched repositories every
-  120 seconds, wakes only a settled agent and claims one notification per host,
-  repository and idle period across sessions. This is advisory; unlabelled calls
+  installed machine inspection stays quiet. Pi watches repositories where the
+  current session observed its own live driver, retaining observation after exit;
+  successful explicit `owed_init` may also arm that session's idle watch. Startup
+  cwd and ordinary queries do not arm it or take over an absent owner. Identity
+  changes discard observation; a foreign live driver suppresses delivery. Pi
+  checks these repositories every 120 seconds, wakes only a settled top-level
+  agent and claims one notification per host, repository and idle period across
+  sessions. This is advisory; unlabelled calls
   and a crash between claim and delivery can hide activity or a wake.
 
 Batch-tail recovery also handles oversized non-final member lines. Existing
