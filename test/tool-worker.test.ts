@@ -124,7 +124,7 @@ test('G2 text equals the in-process views; compact details retain action metadat
     const d = await h.call('dispatch', { node: 'n1' }), value = d.details as { worktree: string; subagents: object; packet?: string };
     assert.deepEqual(value.subagents, { agent: 'worker', cwd: value.worktree, isolation: 'none' });
     assert.equal(value.packet, undefined, 'packet is text only');
-    assert.ok(text(d).includes(`\n\nsubagents: ${JSON.stringify({ ...value.subagents, task: '<the complete packet above>' })}\n`));
+    assert.deepEqual(JSON.parse(text(d).split('\n\nsubagents: ')[1]!.split('\n')[0]!), { ...value.subagents, task: '<the complete packet above>' });
     assert.ok(text(d).endsWith(views.renderStatusBrief(await ops.status({ cwd: r.cwd }))));
   } finally { await h.emit('session_shutdown'); await r.cleanup(); }
 });

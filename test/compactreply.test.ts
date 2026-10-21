@@ -86,7 +86,8 @@ test('CR2 dispatch preserves the packet and subagent arguments and appends a bri
     assert.equal(d.packet, undefined);
     assert.deepEqual(d.subagents, { agent: 'worker', cwd: d.worktree, isolation: 'none' });
     const packet = text(reply).split('\n\nsubagents: ')[0]!;
-    assert.ok(text(reply).startsWith(`${packet}\n\nsubagents: ${JSON.stringify({ ...d.subagents, task: '<the complete packet above>' })}\n`));
+    assert.ok(text(reply).startsWith(`${packet}\n\nsubagents: `));
+    assert.deepEqual(JSON.parse(text(reply).split('\n\nsubagents: ')[1]!.split('\n')[0]!), { ...d.subagents, task: '<the complete packet above>' });
     const suffix = text(reply).slice(text(reply).indexOf('\nsubagents:'));
     compact(suffix); assert.ok(text(reply).endsWith(detailsLine));
   } finally { await r.cleanup(); }
