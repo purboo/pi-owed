@@ -14,7 +14,7 @@ import { repo } from './helpers/repo.ts';
 import type { LaunchEntry, RunView } from '../src/types.ts';
 
 const rid = 'rid-writer', qid = 'question12345678';
-const guidance = 'If you need a decision outside your writes, ask the parent (your run waits): give decision_needed (one sentence) and numbered options (label, scope, cost, risk; mark one preferred), plus facts (commit, run id, log sha), what you tried, and candidate explanations with their evidence and what is unproven — as ask fields when your ask tool has them, else as text starting "Decision needed:". Never submit a candidate you believe fails its checks.';
+const guidance = 'If you need a decision outside your writes, ask the parent (your run waits): give decision_needed (one sentence) and numbered options (label, scope, cost, risk; mark one preferred), plus facts (commit, run id, log sha), what you tried, and candidate explanations with their evidence and what is unproven — as ask fields when your ask tool has them, else as text starting "Decision needed:". Never submit a candidate you believe fails its checks. When a ruling tells you to stop, pause or wait for a parent prerequisite, do not ask to confirm it; state your status and end your turn.';
 const fields = {
   decision_needed: 'Choose the repair scope',
   options: [{ label: 'Narrow fix', scope: 'a.txt', cost: 'one check', risk: 'small', preferred: true }, { label: 'Broader repair' }],

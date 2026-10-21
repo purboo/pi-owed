@@ -688,7 +688,9 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const w = writerView, ended = w?.endedAtSeal;
     const awaits = w && statusOf(w) !== 'ok' ? (w.awaiting ?? []).map(a => `; awaiting durable ${oneLine(a.request)} (${a.state})`).join('') : '';
     const procs = ended ? `; dsa ended ${ended.length + (w?.endedAtSealMore ?? 0)} processes at seal: ${ended.slice(0, 3).map(p => `${p.pid} ${oneLine(Array.from(p.command).slice(0, 80).join(''))}`).join(', ')}` : '';
-    return halt(`${reason}; ${writerReply(w?.result)}${awaits}${procs} → ${writerDecisionCommand(id)}`);
+    const parking = /finished ruling follow-up .*without submitting a new candidate/.test(reason)
+      ? `; to park without this halt: owed decide ${id} --expect report --text "<pause ruling>"` : '';
+    return halt(`${reason}${parking}; ${writerReply(w?.result)}${awaits}${procs} → ${writerDecisionCommand(id)}`);
   };
   // 0.8 (L1.3): the first writer follow-up after a resume starts with the resume line (`resumeLine`).
   const send = (l: LaunchEntry, sendKind: SendKind, reason: SendReason, message: string, rulings?: number): Action => {

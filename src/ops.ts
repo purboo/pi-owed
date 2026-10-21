@@ -1042,7 +1042,7 @@ export { answer } from './answer.ts';
 import { answerStateText } from './answer.ts';
 
 // ---------- DC: one decision, one append; effects only after the lock ----------
-export type DecideArgs = Actor & { signal?: AbortSignal; nodes: string | string[]; text: string; writes?: string[]; allow_only?: string[]; defer?: string; resume?: boolean; after?: string | string[]; remeasure?: boolean; writer?: boolean; dsa?: Pick<Dsa,'describe'|'send'> };
+export type DecideArgs = Actor & { signal?: AbortSignal; nodes: string | string[]; text: string; writes?: string[]; allow_only?: string[]; defer?: string; resume?: boolean; after?: string | string[]; expect?: 'report'; remeasure?: boolean; writer?: boolean; dsa?: Pick<Dsa,'describe'|'send'> };
 export interface DecideResult { warnings?: string[]; decision: number; nodes: string[]; entries: Entry[]; rule: RuleEntry; plan?: Entry; added?: string[]; allow_only?: string[]; covered?: Record<string, AmendEdit['covered']>; deferred?: string; answered: number; answers: import('./answer.ts').AnswerState[]; resumed: boolean; deliveryFailures: string[]; remeasure?: string[] }
 function decideNodes(nodes: string | string[]): string[] {
   const ids = [...new Set((Array.isArray(nodes) ? nodes : typeof nodes === 'string' ? nodes.split(',') : []).map(x => typeof x === 'string' ? x.trim() : ''))];
@@ -1091,6 +1091,8 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
   if (typeof o.text !== 'string' || !o.text.trim()) throw new OwedError('decide requires nonempty text','usage');
   for (const k of ['resume','remeasure','writer'] as const) if (o[k] !== undefined && typeof o[k] !== 'boolean') throw new OwedError(`decide ${k} must be a boolean`,'usage');
   if (o.allow_only !== undefined && (!Array.isArray(o.allow_only) || o.allow_only.some(p => typeof p !== 'string'))) throw new OwedError('decide allow_only must be an array of strings','usage');
+  if (o.expect !== undefined && o.expect !== 'report') throw new OwedError('decide expect must be report','usage');
+  if (o.resume === false && o.expect !== undefined) throw new OwedError('--no-resume cannot take --expect report: no resume would be recorded','usage');
   if (o.resume === false && (o.after !== undefined || o.remeasure)) throw new OwedError('--no-resume cannot take --after or --remeasure','usage');
   const ids = decideNodes(o.nodes), ledger = await Ledger.open(o.cwd), client = o.dsa ?? new Dsa({cwd:o.cwd});
   const before = await load(ledger), s = before.state;
@@ -1147,7 +1149,7 @@ export async function decide(o: DecideArgs): Promise<DecideResult> {
     push({kind:'rule',by:by(o),channel:o.channel,nodes:ids,text,...(o.writer !== undefined ? {writer:o.writer} : answer ? {writer:false} : {}),...(answer ? {answer} : {}),...(answers.length > 1 ? {answers} : {}),...(supersedes !== undefined ? {supersedes} : {})});
     let resumed = false;
     for (const id of ids) {
-      const n = s.nodes[id]!, requested = o.resume === true || o.after !== undefined || !!o.remeasure || o.resume !== false && (!!halted(s,id) || n.held !== undefined);
+      const n = s.nodes[id]!, requested = o.resume === true || o.after !== undefined || o.expect !== undefined || !!o.remeasure || o.resume !== false && (!!halted(s,id) || n.held !== undefined);
       if (requested) { push(resumeDraft({...o,node:id,note:o.text},replayed(prepared,drafts))); resumed = true; }
     }
     // Replay every draft before any durable or plan-file write.
@@ -1182,22 +1184,34 @@ export function decideText(r: DecideResult): string {
 }
 
 /** AN2: record once under the ledger lock; retries use the original entry and bytes. */
-export async function answerRule(o: Actor & { node: string; text: string; answer: AnswerRef; originalText?: string }): Promise<RuleEntry> {
+export async function answerRule(o: Actor & { node: string; text: string; answer: AnswerRef; originalText?: string; expect?: 'report' }): Promise<RuleEntry> {
+  if (o.expect !== undefined && o.expect !== 'report') throw new OwedError('answer expect must be report', 'usage');
   const ledger = await Ledger.open(o.cwd); owner(o);
   return ledger.withLock(async () => {
-    const { state, entries } = await load(ledger);
+    const latest = await load(ledger), { state, entries } = latest;
     if (!['parent', 'owner'].includes(o.as.role)) throw new OwedError('answer requires parent or owner');
     const history = entries.filter((e): e is RuleEntry => e.kind === 'rule' && e.nodes !== '*' && e.nodes.includes(o.node) && ruleAnswers(e).some(a => a.rid === o.answer.rid && a.qid === o.answer.qid));
     const prior = history.find(e => ruleAnswers(e).some(a => a.rid === o.answer.rid && a.qid === o.answer.qid && a.rev === o.answer.rev));
     if (prior) {
       const expected = prior.answers ? o.originalText : o.text;
       if (prior.text !== expected) throw new OwedError(`Answer rule #${prior.seq} already records different text for this rid/qid/rev (rev ${o.answer.rev}); retry with its original answer`);
+      if (o.expect !== undefined) {
+        // PK1: retries reuse the original atomic resume, never repark after a later parent act.
+        const next = entries.find(e => e.kind === 'resume' && e.node === o.node && (prior.decision !== undefined ? e.decision === prior.decision && e.seq > prior.seq : e.seq === prior.seq + 1));
+        if (next?.kind !== 'resume' || next.node !== o.node || next.expect !== o.expect || next.attempt !== state.nodes[o.node]?.slot?.attempt) throw new OwedError(`expect report requires the answer's recorded resume; rule #${prior.seq} has none`, 'usage');
+      }
       return prior;
     }
     // AR / ruling #1600: mark a re-ask answer so older readers refuse with an upgrade message.
     const supersedes = history.at(-1)?.seq;
     const draft: Draft = { kind: 'rule', by: by(o), channel: o.channel, nodes: [o.node], writer: false, text: o.text, answer: o.answer, ...(supersedes !== undefined ? { supersedes } : {}) };
-    guard(state, draft); return (await ledger.append([draft]))[0] as RuleEntry;
+    guard(state, draft);
+    const drafts: Draft[] = [draft];
+    if (o.expect !== undefined) {
+      const resume = resumeDraft({ ...o, note:o.originalText ?? o.text },replayed(latest,drafts));
+      guard(replayed(latest,drafts),resume); drafts.push(resume);
+    }
+    return (await ledger.append(drafts))[0] as RuleEntry;
   });
 }
 export async function rule(o: Actor & { text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; dsa?: Pick<import('./dsa.ts').Dsa, 'describe' | 'send'> }): Promise<RuleEntry & { delivery?: import('./answer.ts').RulingDelivery }> {
