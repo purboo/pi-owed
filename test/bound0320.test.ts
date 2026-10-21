@@ -160,6 +160,24 @@ test('TB1 dispatch exemption preserves oversized packet, later rulings, args and
   } finally { await r.h.close(); await r.cleanup(); }
 });
 
+test('TB2 bounded scope and guidance summaries preserve ordinary waiver meaning and warning sets', () => {
+  const meaning = 'waived check:unit for candidate #6: '.repeat(25);
+  const ordinary = compactToolDetails('owed_waive', { kind: 'waive', seq: 7, meaning });
+  assert.equal(ordinary.meaning, meaning, 'formatted scope explanation survives beyond the generic 512-byte string head');
+  const warnings = Array.from({ length: 9 }, (_, i) => `warning ${i}: retained plan guidance`);
+  const plan = compactToolDetails('owed_plan', { kind: 'plan', warnings });
+  assert.deepEqual(plan.warnings, warnings); assert.equal(plan.warningsCount, warnings.length);
+  const huge = compactToolDetails('owed_plan', { kind: 'plan', warnings: Array.from({ length: 1000 }, (_, i) => `warning ${i}: ${'x'.repeat(600)}`) });
+  assert.ok(huge.warnings.length <= 32);
+  assert.ok(Buffer.byteLength(JSON.stringify(huge.warnings)) <= 3072);
+  assert.equal(huge.warningsOmitted, 1000 - huge.warnings.length);
+  assert.ok(Buffer.byteLength(JSON.stringify(huge)) <= DETAILS);
+  const scope = compactToolDetails('owed_waive', { kind: 'waive', meaning: 'scope 🐾 '.repeat(1000) });
+  assert.ok(Buffer.byteLength(scope.meaning) <= 2048);
+  assert.equal(scope.meaningOmittedBytes, Buffer.byteLength('scope 🐾 '.repeat(1000)) - Buffer.byteLength(scope.meaning));
+  assert.ok(Buffer.byteLength(JSON.stringify(scope)) <= DETAILS);
+});
+
 test('TB1/TB2 hard limits handle UTF-8 boundaries, JSON escapes, many lists and version notices', () => {
   assert.equal(typeof utf8Head, 'function', 'worker result bounding is available');
   for (const value of ['a'.repeat(49152), '\u{1F43E}'.repeat(49152), '\u00E9'.repeat(49152), String.fromCharCode(0).repeat(49152)]) {

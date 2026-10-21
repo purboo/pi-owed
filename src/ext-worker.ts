@@ -72,8 +72,9 @@ function select(v: Summary, fields: readonly string[]): Summary {
   for (const k of fields) { const x = scalar(v[k]); if (x !== undefined) out[k] = x; }
   return out;
 }
-function list(out: Summary, key: string, values: unknown[]): void {
-  const samples = values.slice(0, LIST_SHOWN).map(v => scalar(v) ?? metadata(v));
+function list(out: Summary, key: string, values: unknown[], shown = LIST_SHOWN, sampleBytes?: number): void {
+  const samples = values.slice(0, shown).map(v => scalar(v) ?? metadata(v));
+  if (sampleBytes !== undefined) while (samples.length && Buffer.byteLength(JSON.stringify(samples)) > sampleBytes) samples.pop();
   out[`${key}Count`] = values.length;
   out[key] = samples;
   if (values.length > samples.length) out[`${key}Omitted`] = values.length - samples.length;
@@ -110,7 +111,15 @@ export function compactToolDetails(name: string, value: unknown): Summary {
   const fields = TOOL_FIELDS[tool] ?? (ENTRY_TOOLS.has(tool) ? [...META, 'entry', 'delivery', 'items', 'entries', 'meaning'] : []);
   for (const k of fields) {
     if (v[k] === undefined || (ENTRY_TOOLS.has(tool) && k === 'nodes')) continue;
-    if (Array.isArray(v[k])) list(out, k, v[k]);
+    // Plan guidance is acting information: retain ordinary warning sets, not just
+    // the first five reads notices. Oversized sets still have bounded samples/counts.
+    if (Array.isArray(v[k])) list(out, k, v[k], k === 'warnings' ? 32 : LIST_SHOWN, k === 'warnings' ? 3072 : undefined);
+    else if (tool === 'waive' && k === 'meaning' && typeof v[k] === 'string') {
+      // A formatted waiver-scope summary is not the original ledger reason/body.
+      out.meaning = utf8Head(v[k], 2048);
+      const omitted = Buffer.byteLength(v[k]) - Buffer.byteLength(out.meaning);
+      if (omitted) out.meaningOmittedBytes = omitted;
+    }
     else { const x = scalar(v[k]); out[k] = x === undefined ? metadata(v[k]) : x; }
   }
   if (ENTRY_TOOLS.has(tool) && v.nodes !== undefined) {
