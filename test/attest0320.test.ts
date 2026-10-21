@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { Dsa } from '../src/dsa.ts';
@@ -54,7 +54,7 @@ if (args[0] === '__runner') {
   reply({wid:record.wid,created:true,spec_digest:'fixture'},control.pending?75:0);
 } else if (args[0] === 'describe') {
   const rid=args[args.indexOf('--key')+1]; log({kind:'describe',rid});
-  if (read('control').describeError) { console.error('status transport tail'); process.exit(2); }
+  if (rid.startsWith('owed-attest-') && read('control').describeError) { console.error('status transport tail'); process.exit(2); }
   if (existsSync(path(rid+'.json'))) reply(read(rid+'.json'));
   reply({state:'sealed',status:'done',calls:[{key:'main',gen:1,status:'ok'}]});
 } else if (args[0] === 'stop') {
@@ -238,8 +238,9 @@ test('MV2 a changed candidate/start ledger length gets a different request id',{
 test('MV3 real owed attest K1 remains locked by the command across driver restart',{timeout:40_000},async()=>{
   const f=await rig();
   try {
-    const plan=(await ops.status({cwd:f.cwd})).plan;
+    const plan=(await ops.loadDriverState(await Ledger.open(f.cwd))).plan;
     await ops.planSet({cwd:f.cwd,as:{role:'parent',id:'test'},plan:JSON.stringify({...plan,nodes:[{...plan.nodes[0],checks:[{id:'slow',reads:['a.txt'],min_tests:1,timeout_s:15,run:`echo started > '${f.path('check-started')}'; while [ ! -f '${f.path('release')}' ]; do sleep 0.05; done; printf '1..1\\nok 1 - held\\n'`}] }]})});
+    await f.newCandidate();
     const owed=[process.execPath,fileURLToPath(new URL('../bin/owed.js',import.meta.url))];
     const first=f.driver(owed); await first.pass(); await until(()=>existsSync(f.path('check-started')),'real check under K1');
     // An unrelated ledger entry changes the next start id; K1, not the process-local map, prevents another check.
@@ -257,7 +258,8 @@ test('MV3 real owed attest K1 remains locked by the command across driver restar
 
 test('MV3/MV5 CLI hard stop uses dsa stop; status retains its form and names lock owner/run',{timeout:30_000},async()=>{
   const f=await rig({gate:true});
-  const script=f.path('drive.mjs'), logfile=f.path('drive-lines');
+  const script=f.path('drive.mjs'), logfile=join(f.path('ledger'),'drive','log.jsonl');
+  await mkdir(join(f.path('ledger'),'drive'),{recursive:true});
   await writeFile(script,`import { drive } from ${JSON.stringify(new URL('../src/drive-run.ts',import.meta.url).href)}; import { Dsa } from ${JSON.stringify(new URL('../src/dsa.ts',import.meta.url).href)}; import { appendFileSync } from 'node:fs'; process.exitCode=await drive({cwd:${JSON.stringify(f.cwd)},session:'owner-session',json:true,pollMs:50,owed:[process.execPath,${JSON.stringify(f.command)}],dsa:new Dsa({bin:${JSON.stringify(f.bin)},timeoutMs:1000}),log:l=>appendFileSync(${JSON.stringify(logfile)},l+'\\n')});`);
   const child=spawn(process.execPath,[script],{env:{...process.env,NODE_TEST_CONTEXT:undefined},stdio:['ignore','pipe','pipe']});
   let stderr=''; child.stderr!.on('data',b=>{stderr+=b;});
