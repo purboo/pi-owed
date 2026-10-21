@@ -11,7 +11,7 @@ import { ruleAnswers } from './reducer.ts';
 import { answerRetry } from './needs.ts';
 export { answerRetry } from './needs.ts';
 
-export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; dsa?: Pick<Dsa, 'describe' | 'send'> }
+export interface AnswerOptions { cwd: string; as: Principal; channel?: Channel; node: string; text: string; qid?: string; rid?: string; rev?: number; expect?: 'report'; dsa?: Pick<Dsa, 'describe' | 'send'> }
 export interface AnswerResult { entry: RuleEntry; request: string; delivery: SendResult; answers: AnswerState[]; rulingDelivery?: RulingDelivery }
 export interface AnswerState { node: string; rid: string; qid: string; rev: number; request: string; state: string }
 /** AR1: one bounded, read-only post-delivery describe per run; failures never retry the send. */
@@ -121,6 +121,7 @@ export async function answer(o: AnswerOptions): Promise<AnswerResult> {
   if (o.as.role === 'parent' && o.as.id === 'drive') throw new OwedError('the driver never answers questions');
   if (typeof o.text !== 'string' || !o.text.trim()) throw new OwedError('answer requires nonempty text');
   for (const id of ['qid', 'rid'] as const) if (o[id] !== undefined && (typeof o[id] !== 'string' || !o[id]!.trim())) throw new OwedError(`answer ${id} must be nonempty`);
+  if (o.expect !== undefined && o.expect !== 'report') throw new OwedError('answer expect must be report', 'usage');
   if (o.rev !== undefined && (!Number.isSafeInteger(o.rev) || o.rev < 1)) throw new OwedError('answer rev must be a positive integer', 'usage');
   const dsa = o.dsa ?? new Dsa({ cwd: o.cwd }), { entries, state } = await readState(o);
   if (!state.nodes[o.node]) throw new OwedError(`Node ${o.node} does not exist`);
