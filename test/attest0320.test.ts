@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync } from 'node:fs';
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { Dsa } from '../src/dsa.ts';
@@ -17,9 +17,19 @@ import { repo } from './helpers/repo.ts';
 import { commitAt } from './helpers/surface.ts';
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-async function until(f: () => boolean | Promise<boolean>, label: string, ms = 10_000) {
+async function until(f: () => boolean | Promise<boolean>, label: string, ms = 2000) {
   const end = Date.now() + ms;
   while (!await f()) { assert.ok(Date.now() < end, `timed out: ${label}`); await sleep(25); }
+}
+async function bounded<T>(promise: Promise<T>, label: string, ms = 5000): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try { return await Promise.race([promise, new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new assert.AssertionError({ message:`timed out: ${label}` })), ms);
+  })]); } finally { clearTimeout(timer); }
+}
+async function settle(driver: Driver): Promise<void> { await bounded(driver.settle(), 'measurement settlement'); }
+async function commandStarted(calls: () => Call[]): Promise<void> {
+  await until(() => calls().some(c => c.kind === 'run'), 'dsa command call must start');
 }
 const FAKE = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
@@ -32,6 +42,7 @@ const reply = (value,code=0) => { console.log(JSON.stringify(value)); process.ex
 if (args[0] === '--help') { log({kind:'help'}); console.log(read('control').old ? 'run --request <id> --spec <file> --session <id>' : 'run --request <id> --spec <file> --session <id> -- <program> [args…]'); process.exit(0); }
 if (args[0] === '__runner') {
   const record = read(args[1]), spec = record.spec, out = openSync(path(record.rid+'.out'),'a');
+  log({kind:'execution',rid:record.rid});
   const p = spawn(spec.command[0],spec.command.slice(1),{cwd:spec.cwd,env:{...process.env,...spec.env,DSA_EXEC:'fake-exec',DSA_CALL:'fake-call'},stdio:['ignore',out,out]});
   closeSync(out);
   for (const sig of ['SIGTERM','SIGINT']) process.on(sig,()=>p.kill(sig));
@@ -73,12 +84,14 @@ if (args[0] === '__runner') {
 } else process.exit(2);
 `;
 const COMMAND = `import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { main } from ${JSON.stringify(new URL('../src/cli.ts', import.meta.url).href)};
 import { join } from 'node:path';
 const dir=process.env.ATTEST_DSA_DIR, path=n=>join(dir,n);
 writeFileSync(path('measured'),JSON.stringify({marker:process.env.OWED_LEASED,args:process.argv.slice(2)}));
 while (JSON.parse(readFileSync(path('control'),'utf8')).gate && !existsSync(path('release'))) await new Promise(r=>setTimeout(r,25));
 const control=JSON.parse(readFileSync(path('control'),'utf8'));
 console.error(control.tail??'attest fixture output tail');
+if (control.realAttest) process.exit(await main(process.argv.slice(2)));
 if (control.signal) process.kill(process.pid,control.signal); else process.exit(control.exit??1);
 `;
 type Call = { kind: string; at: number; rid?: string; target?: string; args?: string[]; marker?: string; spec?: { command: string[]; env?: Record<string,string>; name?: string; cwd?: string } };
@@ -119,7 +132,7 @@ async function rig(control: Record<string,unknown> = {}, session: string | null 
 for (const exit of [0,1,4,75,2]) test(`MV1/MV2 command call preserves attest exit ${exit}`, {timeout:30_000}, async()=>{
   const f=await rig({exit});
   try {
-    const d=f.driver(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d);
     const run=f.calls().find(c=>c.kind==='run'); assert.ok(run,'attest must be a dsa command call');
     assert.equal(run.args?.[run.args.indexOf('--session')+1],'owner-session');
     const labels=JSON.parse(run.args![run.args!.indexOf('--labels')+1]!);
@@ -151,7 +164,7 @@ for (const [name,control,session] of [
 ] as const) test(`MV4 ${name} uses the old attest path with one explanation`,{timeout:30_000},async()=>{
   const f=await rig(control,session);
   try {
-    const d=f.driver(); await d.pass(); await d.settle(); d.tick(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d); d.tick(); await d.pass(); await settle(d);
     assert.ok(f.calls().some(c=>c.kind==='hold')); assert.ok(existsSync(f.path('measured')));
     assert.equal(f.logs.filter(l=>l.event==='attest-unlisted').length,1);
     assert.match(reportText(f.logs.find(l=>l.event==='attest-unlisted')!),/driver.*not shown in \/subagents/);
@@ -164,7 +177,7 @@ for (const [name,control,session] of [
 test('MV2 launch refusal halts with the deterministic run id and refusal tail, without falling back',{timeout:30_000},async()=>{
   const f=await rig({refusal:'permission denied by dsa'});
   try {
-    const d=f.driver(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d);
     const run=f.calls().find(c=>c.kind==='run'); assert.ok(run);
     assert.ok(!f.calls().some(c=>c.kind==='hold')); assert.ok(!existsSync(f.path('measured')));
     const halt=(await (await Ledger.open(f.cwd)).read()).find(e=>e.kind==='halt');
@@ -175,7 +188,7 @@ test('MV2 launch refusal halts with the deterministic run id and refusal tail, w
 for (const control of [{signal:'SIGTERM'},{seal:'unknown'},{seal:'stopped'},{seal:'failed',noData:true},{seal:'failed',exit:0}]) test(`MV2 invalid/signal seal halts: ${JSON.stringify(control)}`,{timeout:30_000},async()=>{
   const f=await rig(control);
   try {
-    const d=f.driver(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d);
     const run=f.calls().find(c=>c.kind==='run'); assert.ok(run);
     const halt=(await (await Ledger.open(f.cwd)).read()).find(e=>e.kind==='halt'); assert.ok(halt);
     assert.match(halt.reason,new RegExp(run.rid!));
@@ -198,7 +211,7 @@ test('MV2/MV3 pending launch and restart reuse the request id, graceful drain wa
     first.hard=true; first.abort.abort(); await first.drain(5000);
     await until(()=>f.calls().some(c=>c.kind==='stop'),'dsa stop');
     const stop=f.calls().find(c=>c.kind==='stop')!; assert.equal(stop.target,'wf-'+runs[0]!.rid);
-    await second.settle();
+    await settle(second);
     const descriptions=f.calls().filter(c=>c.kind==='describe'&&c.rid===runs[0]!.rid);
     assert.ok(descriptions.length>0 && descriptions.length<50,'bounded status polling');
   } finally {await f.done();}
@@ -207,7 +220,7 @@ test('MV2/MV3 pending launch and restart reuse the request id, graceful drain wa
 test('MV4 lease opt-out still shows a command call but never acquires a lease',{timeout:30_000},async()=>{
   const f=await rig({},'owner-session',false);
   try {
-    const d=f.driver(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d);
     const run=f.calls().find(c=>c.kind==='run'); assert.ok(run);
     assert.deepEqual(run.spec?.command,[process.execPath,f.command,'attest','a','--no-lease']);
     assert.equal(run.spec?.env?.OWED_LEASED,undefined); assert.ok(!f.calls().some(c=>c.kind==='hold'));
@@ -218,7 +231,7 @@ test('MV4 lease opt-out still shows a command call but never acquires a lease',{
 test('MV2 describe failure halts with run id and output tail, never executes legacy attest',{timeout:30_000},async()=>{
   const f=await rig({describeError:true,gate:true});
   try {
-    const d=f.driver(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d);
     const run=f.calls().find(c=>c.kind==='run'); assert.ok(run);
     const halt=(await (await Ledger.open(f.cwd)).read()).find(e=>e.kind==='halt'); assert.ok(halt);
     assert.match(halt.reason,new RegExp(`${run.rid}.*status transport tail`));
@@ -228,9 +241,10 @@ test('MV2 describe failure halts with run id and output tail, never executes leg
 test('MV2 a changed candidate/start ledger length gets a different request id',{timeout:30_000},async()=>{
   const f=await rig();
   try {
-    const d=f.driver(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d);
     const old=f.calls().find(c=>c.kind==='run')!;
-    const candidate=await f.newCandidate(); d.tick(); await d.pass(); await d.settle();
+    assert.ok(old, 'first attest must have a command call before reading its id');
+    const candidate=await f.newCandidate(); d.tick(); await d.pass(); await settle(d);
     const latest=f.calls().filter(c=>c.kind==='run').at(-1)!;
     assert.notEqual(old.rid,latest.rid);
     assert.equal(JSON.parse(latest.args![latest.args!.indexOf('--labels')+1]!).candidate,candidate);
@@ -244,14 +258,14 @@ test('MV3 real owed attest K1 remains locked by the command across driver restar
     await ops.planSet({cwd:f.cwd,as:{role:'parent',id:'test'},plan:JSON.stringify({...plan,nodes:[{...plan.nodes[0],checks:[{id:'slow',reads:['a.txt'],min_tests:1,timeout_s:15,run:`echo started > '${f.path('check-started')}'; while [ ! -f '${f.path('release')}' ]; do sleep 0.05; done; printf '1..1\\nok 1 - held\\n'`}] }]})});
     await f.newCandidate();
     const owed=[process.execPath,fileURLToPath(new URL('../bin/owed.js',import.meta.url))];
-    const first=f.driver(owed); await first.pass(); await until(()=>existsSync(f.path('check-started')),'real check under K1');
+    const first=f.driver(owed); await first.pass(); await commandStarted(f.calls); await until(()=>existsSync(f.path('check-started')),'real check under K1');
     // An unrelated ledger entry changes the next start id; K1, not the process-local map, prevents another check.
     await ops.rule({cwd:f.cwd,as:{role:'parent',id:'test'},nodes:'*',text:'restart fixture',prospective:true});
     const second=f.driver(owed); await second.pass();
     await until(()=>f.logs.some(l=>l.do==='attest'&&l.outcome==='busy'),'restarted pass sees K1 busy');
     const runs=f.calls().filter(c=>c.kind==='run'); assert.equal(runs.length,2); assert.notEqual(runs[0]!.rid,runs[1]!.rid);
     assert.ok(f.logs.some(l=>l.outcome==='busy'&&/another attest of a/.test(String(l.detail))));
-    await writeFile(f.path('release'),''); await first.settle(); await second.settle();
+    await writeFile(f.path('release'),''); await settle(first); await settle(second);
     const es=await (await Ledger.open(f.cwd)).read();
     assert.equal(es.filter(e=>e.kind==='obs'&&e.obligation==='check:slow').length,1,'no concurrent second check');
     assert.ok(!es.some(e=>e.kind==='halt'));
@@ -267,21 +281,27 @@ test('MV3/MV5 CLI hard stop uses dsa stop; status retains its form and names loc
   let stderr=''; child.stderr!.on('data',b=>{stderr+=b;});
   const closed=new Promise<number|null>(resolve=>child.on('close',resolve));
   try {
+    await commandStarted(f.calls);
     await until(()=>existsSync(f.path('measured')),'CLI measurement');
     await until(async()=>!!(await driveStatus({cwd:f.cwd})).measuring?.some(m=>m.rid),'status run id');
     const status=await driveStatus({cwd:f.cwd}); assert.equal(status.session,'owner-session');
     assert.match(inFlightText(status.measuring![0]!),/^a attest since .* \[owed-attest-/);
     const stopped=await driveStop({cwd:f.cwd,now:true,waitMs:8000}); assert.equal(stopped.state,'stopped',stderr);
-    assert.equal(await closed,130,stderr); assert.ok(f.calls().some(c=>c.kind==='stop'));
+    assert.equal(await bounded(closed, 'CLI exit'),130,stderr); assert.ok(f.calls().some(c=>c.kind==='stop'));
     assert.equal((await driveStatus({cwd:f.cwd})).running,false);
-  } finally {child.kill('SIGKILL'); await closed; await f.done();}
+  } finally {
+    await writeFile(f.path('release'),''); child.kill('SIGTERM');
+    try { await bounded(closed, 'CLI cleanup', 3000); }
+    catch { child.kill('SIGKILL'); child.stdout?.destroy(); child.stderr?.destroy(); await bounded(closed, 'CLI killed cleanup', 2000).catch(()=>{}); }
+    await f.done();
+  }
 });
 
 
 test('MV2 hold exit 75 is busy and does not run attest inside the call',{timeout:30_000},async()=>{
   const f=await rig({leaseBusy:true});
   try {
-    const d=f.driver(); await d.pass(); await d.settle();
+    const d=f.driver(); await d.pass(); await settle(d);
     assert.ok(f.calls().some(c=>c.kind==='run')); assert.ok(f.calls().some(c=>c.kind==='hold'));
     assert.ok(!existsSync(f.path('measured'))); assert.ok(f.logs.some(l=>l.do==='attest'&&l.outcome==='busy'));
     assert.ok(!(await (await Ledger.open(f.cwd)).read()).some(e=>e.kind==='halt'));
@@ -291,12 +311,113 @@ test('MV2 hold exit 75 is busy and does not run attest inside the call',{timeout
 test('MV3 a pending stop is retried with the same request id until applied',{timeout:30_000},async()=>{
   const f=await rig({gate:true,stopPending:true});
   try {
-    const d=f.driver(); await d.pass(); await until(()=>existsSync(f.path('measured')),'running before stop');
+    const d=f.driver(); await d.pass(); await commandStarted(f.calls); await until(()=>existsSync(f.path('measured')),'running before stop');
     d.hard=true; d.abort.abort(); assert.equal(await d.drain(5000),true);
-    const stops=f.calls().filter(c=>c.kind==='stop'); assert.equal(stops.length,2);
+    const stops=f.calls().filter(c=>c.kind==='stop'); assert.ok(stops[0], 'hard stop must send a dsa stop command'); assert.equal(stops.length,2);
     assert.deepEqual(stops[0]!.args,stops[1]!.args);
     const run=f.calls().find(c=>c.kind==='run')!;
     const status=JSON.parse(await readFile(f.path(run.rid+'.json'),'utf8'));
     assert.equal(status.state,'sealed'); assert.equal(status.calls[0].status,'stopped');
+  } finally {await f.done();}
+});
+
+
+test('MV2 later pass retries sealed 75 with :r1 and records the real measurement',{timeout:30_000},async()=>{
+  const f=await rig({exit:75});
+  try {
+    const d=f.driver(); await d.pass(); await settle(d);
+    const first=f.calls().find(c=>c.kind==='run'); assert.ok(first,'busy attest must start a command call');
+    const before=await (await Ledger.open(f.cwd)).read();
+    assert.ok(f.logs.some(l=>l.outcome==='busy'));
+    const count=f.calls().filter(c=>c.kind==='run').length;
+    await d.pass(); assert.equal(f.calls().filter(c=>c.kind==='run').length,count,'no same-cycle retry');
+    await f.control({exit:0,realAttest:true}); await rm(f.path('measured'));
+    d.tick(); await d.pass(); await settle(d);
+    const latest=f.calls().filter(c=>c.kind==='run').at(-1)!;
+    assert.equal(latest.rid,`${first.rid}:r1`);
+    assert.ok(existsSync(f.path('measured')),'retry executed attest again');
+    const es=await (await Ledger.open(f.cwd)).read();
+    assert.ok(es.slice(before.length).some(e=>e.kind==='obs'&&e.obligation==='writes'),'retry recorded measurement');
+    assert.ok(!es.some(e=>e.kind==='halt'));
+    assert.ok(f.logs.some(l=>l.outcome==='done'&&l.rid===latest.rid),'status identifies the retry id');
+  } finally {await f.done();}
+});
+
+test('MV3 restart after hard stop reruns stopped call with :r1 and no halt',{timeout:30_000},async()=>{
+  const f=await rig({gate:true});
+  try {
+    const first=f.driver(); await first.pass(); await commandStarted(f.calls);
+    await until(()=>existsSync(f.path('measured')),'first measurement');
+    first.hard=true; first.abort.abort(); assert.equal(await first.drain(5000),true);
+    const run=f.calls().find(c=>c.kind==='run')!;
+    assert.equal(JSON.parse(await readFile(f.path(run.rid+'.json'),'utf8')).calls[0].status,'stopped');
+    await first.reap(); assert.ok(!f.logs.some(l=>l.outcome==='error'),'own hard stop is not a halt');
+    await f.control({gate:false,exit:0,realAttest:true}); await rm(f.path('measured'));
+    const second=f.driver(); await second.pass(); await settle(second);
+    const retry=f.calls().filter(c=>c.kind==='run').at(-1)!;
+    assert.equal(retry.rid,`${run.rid}:r1`); assert.ok(existsSync(f.path('measured')));
+    const es=await (await Ledger.open(f.cwd)).read(); assert.ok(!es.some(e=>e.kind==='halt'));
+    assert.ok(es.some(e=>e.kind==='obs'&&e.obligation==='writes'));
+  } finally {await f.done();}
+});
+
+test('MV3 running reuse attaches to one execution, never advances retry id',{timeout:30_000},async()=>{
+  const f=await rig({gate:true});
+  try {
+    const first=f.driver(); await first.pass(); await commandStarted(f.calls);
+    await until(()=>existsSync(f.path('measured')),'first command executing');
+    const second=f.driver(); await second.pass(); await until(()=>f.calls().filter(c=>c.kind==='run').length===2,'second attaches');
+    assert.equal(await second.drain(100),false,'attached running command still waits');
+    const runs=f.calls().filter(c=>c.kind==='run'); assert.equal(runs[0]!.rid,runs[1]!.rid);
+    assert.equal(f.calls().filter(c=>c.kind==='execution').length,1,'one command execution');
+    await f.control({gate:false,exit:0}); await writeFile(f.path('release'),'');
+    await settle(first); await settle(second);
+    assert.ok(!f.calls().some(c=>c.rid?.includes(':r'))); assert.ok(!f.logs.some(l=>l.outcome==='error'));
+  } finally {await f.done();}
+});
+
+test('MV2 retry-id cap is 20 and halts instead of launching :r21',{timeout:30_000},async()=>{
+  const f=await rig({exit:75});
+  try {
+    const d=f.driver(); await d.pass(); await settle(d);
+    const run=f.calls().find(c=>c.kind==='run'); assert.ok(run,'first command required for retry chain');
+    const base=JSON.parse(await readFile(f.path(run.rid+'.json'),'utf8'));
+    for(let n=1;n<=20;n++) {
+      const rid=`${run.rid}:r${n}`;
+      await writeFile(f.path(rid+'.json'),JSON.stringify({...base,rid,wid:`wf-${rid}`}));
+    }
+    await f.control({exit:0}); d.tick(); await d.pass(); await bounded(d.settle(),'cap settlement',10_000);
+    const halts=(await (await Ledger.open(f.cwd)).read()).filter(e=>e.kind==='halt');
+    assert.equal(halts.length,1); assert.match(halts[0]!.reason,/retry.*(?:limit|cap).*20/i);
+    assert.match(halts[0]!.reason,/:r20/);
+    assert.ok(!f.calls().some(c=>c.rid===`${run.rid}:r21`));
+    assert.equal(f.calls().filter(c=>c.kind==='execution').length,1,'all pre-existing seals skipped without running');
+  } finally {await f.done();}
+});
+
+for(const seal of ['unknown','stopped','signal','other'] as const) test(`MV2 existing non-result ${seal} advances id, fresh result keeps mapping`,{timeout:30_000},async()=>{
+  const f=await rig({exit:75});
+  try {
+    const first=f.driver(); await first.pass(); await settle(first);
+    const run=f.calls().find(c=>c.kind==='run'); assert.ok(run,'command call required');
+    const record=JSON.parse(await readFile(f.path(run.rid+'.json'),'utf8'));
+    record.calls[0].status=seal==='signal'?'failed':seal==='other'?'failed':seal;
+    record.calls[0].data=seal==='signal'?{exitCode:null,signal:'SIGTERM'}:{exitCode:seal==='other'?2:0,signal:null};
+    await writeFile(f.path(run.rid+'.json'),JSON.stringify(record));
+    await f.control({exit:0});
+    const second=f.driver(); await second.pass(); await settle(second);
+    assert.equal(f.calls().filter(c=>c.kind==='run').at(-1)!.rid,`${run.rid}:r1`);
+    assert.ok(!(await (await Ledger.open(f.cwd)).read()).some(e=>e.kind==='halt'));
+  } finally {await f.done();}
+});
+
+for(const exit of [0,1,4]) test(`MV2 existing sealed result ${exit} is reused without retry`,{timeout:30_000},async()=>{
+  const f=await rig({exit});
+  try {
+    const first=f.driver(); await first.pass(); await settle(first);
+    const run=f.calls().find(c=>c.kind==='run'); assert.ok(run);
+    const second=f.driver(); await second.pass(); await settle(second);
+    const runs=f.calls().filter(c=>c.kind==='run'); assert.equal(runs.length,2);
+    assert.equal(runs[1]!.rid,run.rid); assert.equal(f.calls().filter(c=>c.kind==='execution').length,1);
   } finally {await f.done();}
 });
