@@ -72,6 +72,7 @@ const holdUnsupported = new Set<string>();
 const commandSupport = new Map<string, Promise<string | undefined>>();
 export type CommandResult =
   | { outcome: 'unsupported'; reason: string }
+  | { outcome: 'cancelled'; rid: string; wid?: string }
   | { outcome: 'ran'; exit: number; stdout: string; stderr: string; rid: string; wid?: string }
   | { outcome: 'error'; reason: string; rid: string; wid?: string };
 
@@ -159,13 +160,14 @@ export class Dsa {
   }
 
   /** MV: command data is not a model RunView. Keep the argv/env pinned across a pending launch or restart. */
-  async command(rid: string, argv: string[], o: { name: string; cwd: string; labels: Record<string, string>; env?: NodeJS.ProcessEnv;
-    signal?: AbortSignal; pollMs?: number; onRun?: (wid?: string) => void }): Promise<CommandResult> {
+  async command(baseRid: string, argv: string[], o: { name: string; cwd: string; labels: Record<string, string>; env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal; pollMs?: number; onRun?: (rid: string, wid?: string) => void }): Promise<CommandResult> {
+    let rid = baseRid;
     const unsupported = await this.commandUnsupported();
     if (unsupported !== undefined) return { outcome: 'unsupported', reason: unsupported };
     // Hard-stop must not kill the short CLI invocations that submit/stop/inspect the durable call.
     const exec = (args: string[], input?: string) => this.exec(args, input, 2000, this.opts.cwd, undefined, false);
-    if (o.signal?.aborted) return { outcome: 'error', rid, reason: 'command aborted before launch' };
+    if (o.signal?.aborted) return { outcome: 'cancelled', rid };
     // The service's environment is not the driver's: preserve the legacy child's environment explicitly.
     // DSA_* is reserved by command specs and reconstructed by dsa; test context must not escape into the child.
     const env = Object.fromEntries(Object.entries({ ...process.env, ...this.opts.env, ...o.env })
@@ -174,6 +176,10 @@ export class Dsa {
     let wid: string | undefined;
     const error = (reason: string, output = ''): CommandResult => ({ outcome: 'error', rid, ...(wid ? { wid } : {}), reason: `${reason}${output ? `: ${tail(output)}` : ''}` });
     try {
+      const interval = Math.max(50, Math.min(5000, o.pollMs ?? 1000));
+      retry: for (let n = 0; n <= 20; n++) {
+      rid = n === 0 ? baseRid : `${baseRid}:r${n}`; wid = undefined;
+      if (o.signal?.aborted) return { outcome:'cancelled', rid };
       // Do not use run(): it retries old --session refusals without the owner, which is not MV's fallback.
       const launched = await exec(['run', '--request', rid, '--spec', '-', '--session', this.session!, '--labels', JSON.stringify(o.labels), '--json', '--wait-ms', '0'], spec);
       const refusal = commandRefusal(launched);
@@ -181,13 +187,15 @@ export class Dsa {
         commandSupport.set(this.bin, Promise.resolve(refusal));
         return { outcome: 'unsupported', reason: refusal };
       }
-      const r = requestOutcome(launched, reply => ({ outcome: 'applied' as const, wid: str(reply.wid) }));
+      const r = requestOutcome(launched, reply => ({ outcome: 'applied' as const, wid: str(reply.wid), created:reply.created === true }));
       if (r.outcome === 'rejected') return error('dsa run refused', r.reason);
       if (r.outcome === 'conflict') return error('dsa run request-conflict', launched.stderr || launched.stdout);
       if (r.outcome === 'applied') wid = r.wid || undefined;
-      o.onRun?.(wid);
+      o.onRun?.(rid, wid);
+      // Only a first inspection of a confirmed existing call may skip a non-result. A call created here,
+      // or attached while live and watched to its seal, retains today's exit/error semantics.
+      let existing = r.outcome === 'applied' && !r.created;
       // One CLI status read at a time, each bounded to 2 s; intervals clamped to 50 ms..5 s (default 1 s).
-      const interval = Math.max(50, Math.min(5000, o.pollMs ?? 1000));
       let stopped = false, stopDeadline: number | undefined;
       for (;;) {
         if (o.signal?.aborted && !stopped) {
@@ -208,11 +216,20 @@ export class Dsa {
           const data = call?.data as Json | undefined, output = str(call?.output ?? d.result), code = data?.exitCode;
           const seal = call?.status;
           // dsa seals ordinary nonzero commands as failed. Only a proven numeric command exit can use owed's mapping.
-          if (typeof data?.signal === 'string' && data.signal) return error(`command ended by signal ${data.signal}`, output);
-          if (!Number.isSafeInteger(code) || (code as number) < 0 || !((seal === 'ok' && code === 0) || (seal === 'failed' && code !== 0))) return error(`command seal ${str(seal) || 'unknown'} without a normal exit`, output || str(d.error ?? call?.error));
+          const signal = typeof data?.signal === 'string' && data.signal;
+          const normal = !signal && Number.isSafeInteger(code) && (code as number) >= 0
+            && ((seal === 'ok' && code === 0) || (seal === 'failed' && code !== 0));
+          if (o.signal?.aborted) return {outcome:'cancelled', rid, ...(wid ? {wid} : {})};
+          if (existing && !(normal && [0,1,4].includes(code as number))) {
+            if (n === 20) return error('attest retry-id limit 20 exhausted by existing non-result', output || str(call?.error));
+            continue retry;
+          }
+          if (signal) return error(`command ended by signal ${signal}`, output);
+          if (!normal) return error(`command seal ${str(seal) || 'unknown'} without a normal exit`, output || str(d.error ?? call?.error));
           return { outcome: 'ran', exit: code as number, stdout: output, stderr: '', rid, ...(wid ? { wid } : {}) };
         }
         if (!['running', 'pending', 'queued'].includes(str(d.state))) return error(`command state ${str(d.state) || 'unknown'}`, str(d.reason ?? d.error ?? d.result));
+        existing = false;
         // Hard-stop wakes the interval, but does not abort the stop/describe invocations it needs to reap the call.
         await new Promise<void>(resolve => {
           const done = () => { clearTimeout(timer); o.signal?.removeEventListener('abort', done); resolve(); };
@@ -220,6 +237,8 @@ export class Dsa {
           if (!o.signal?.aborted) o.signal?.addEventListener('abort', done, { once: true });
         });
       }
+      }
+      return error('attest retry-id limit 20 exhausted');
     } catch (e) { return error((e as Error).message, e instanceof DsaError ? e.stderr || e.stdout : ''); }
   }
 
