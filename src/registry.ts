@@ -12,7 +12,20 @@ const registryDir = (): string => join(process.env.XDG_STATE_HOME || join(homedi
 const registryPath = (repo: string): string => join(registryDir(), `${createHash('sha256').update(repo).digest('hex').slice(0, 16)}.json`);
 /** R-031-FW-1: preserve DSA_SESSION semantics; PI_SESSION_ID is only the fallback outside calls. */
 export function driverSession(): string | undefined {
-  return startingSession() ?? (!process.env.DSA_CALL && !process.env.DSA_EXEC ? process.env.PI_SESSION_ID || undefined : undefined);
+  return startingSession() ?? startingSession({ ...process.env, DSA_SESSION: process.env.PI_SESSION_ID });
+}
+/** SN: context identity wins; unavailable context retains the validated CLI discovery fallback. */
+export function sessionIdentity(ctx: { sessionId?: string; sessionManager?: { getSessionId(): string | undefined } }): string | undefined {
+  let value = ctx.sessionId;
+  if (value === undefined) { try { value = ctx.sessionManager?.getSessionId(); } catch { /* older host */ } }
+  return value === undefined ? driverSession() : startingSession({ ...process.env, DSA_SESSION: value });
+}
+/** Lock ownership wins. Legacy PI-only discovery is trusted only for this exact live driver. */
+export function ownsDriver(repo: string, owner: LockOwner, session: string | undefined): boolean {
+  if (!session) return false;
+  if (owner.session !== undefined) return startingSession({ DSA_SESSION: owner.session }) === session;
+  return registeredDrivers().some(r => r.repo === repo && r.pid === owner.pid && r.start === owner.start && r.at === owner.at
+    && startingSession({ DSA_SESSION: r.session }) === session);
 }
 /** Called only after acquiring the lock; release checks exact bytes so an old owner cannot remove its successor. */
 export function registerDriver(repo: string, owner: LockOwner): () => void {

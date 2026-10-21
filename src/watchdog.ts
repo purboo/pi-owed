@@ -94,6 +94,8 @@ export const WATCH_POLL_MS = 120_000;
 export interface IdleWatchOptions {
   busy: () => boolean; assess?: (cwd: string) => Promise<IdleAssessment>; directory?: (cwd: string) => Promise<string>;
   currentSeq?: (cwd: string) => Promise<number>; now?: () => number;
+  /** SN: earned automatic observation must still not deliver for a foreign live owner. */
+  allowed?: (cwd: string) => Promise<boolean>;
 }
 /** Uses pi's worker ticks, not a second host timer. One assessment in flight per repository. */
 export class IdleWatch {
@@ -106,6 +108,7 @@ export class IdleWatch {
     if (this.stopped) return;
     const dir = await (this.o.directory ?? driveDir)(cwd);
     await stat(join(dir, 'ledger.jsonl'));
+    if (this.stopped) return;
     if (!this.repos.has(dir)) this.repos.set(dir, { cwd, due: (this.o.now ?? Date.now)() + WATCH_POLL_MS, checking: false });
   }
   async flush(): Promise<void> {
@@ -114,17 +117,18 @@ export class IdleWatch {
       if (r.checking || r.due > (this.o.now ?? Date.now)()) return;
       r.checking = true;
       try {
+        if (this.o.allowed && !await this.o.allowed(r.cwd)) return;
         const result = await (this.o.assess ?? idle)(r.cwd);
         if (this.stopped || this.o.busy()) return;
         r.due = (this.o.now ?? Date.now)() + WATCH_POLL_MS;
         if (!result.idle || !result.last) return;
         const current = await (this.o.currentSeq ?? (async cwd => (await (await Ledger.open(cwd)).read()).at(-1)?.seq ?? -1))(r.cwd);
-        if (current !== result.last.seq || this.stopped || this.o.busy()) return;
+        if (current !== result.last.seq || this.stopped || this.o.busy() || (this.o.allowed && !await this.o.allowed(r.cwd))) return;
         if (!await claimIdle(dir, current)) return;
         // The ledger may have progressed while publishing the claim; never deliver a stale period.
         try {
           const latest = await (this.o.currentSeq ?? (async cwd => (await (await Ledger.open(cwd)).read()).at(-1)?.seq ?? -1))(r.cwd);
-          if (latest !== current || this.stopped || this.o.busy()) throw new Error('session busy or progress changed');
+          if (latest !== current || this.stopped || this.o.busy() || (this.o.allowed && !await this.o.allowed(r.cwd))) throw new Error('session busy, owner or progress changed');
           await this.deliver(idleText(result));
         } catch { await unlink(join(dir, 'watch', `idle-${current}`)); r.due = 0; }
       } catch { r.due = (this.o.now ?? Date.now)() + WATCH_POLL_MS; }
