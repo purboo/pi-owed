@@ -83,7 +83,7 @@ for (const act of ['decide', 'answer'] as const) test(`PK1: ${act} records a rep
     assert.deepEqual((await ops.status(f)).reported, [{ node: 'a', resume: resume!.seq }]);
     await ops.rule({ cwd: f.cwd, as: parent, nodes: ['a'], text: 'The prerequisite is ready; continue', dsa: f.dsa });
     state = (await ops.readState(f)).state;
-    assert.deepEqual((await ops.status(f)).reported, []);
+    assert.equal((await ops.status(f)).reported, undefined);
     assert.ok(policy(state, state.plan, new Map([[f.launch.rid, f.dsa.view(f.launch.rid)]]), { max: 1, repairs: 2, project: projectId(state), root: f.cwd, applied: new Set(state.nodes.a!.runs[0]!.sends.map(s => s.send)), rejected: new Map() }).some(a => a.node === 'a'));
   } finally { follower?.stop(); if (driver) { driver.stopping = true; driver.abort.abort(); await driver.settle(); } await f.cleanup(); }
 });
