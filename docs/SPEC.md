@@ -6601,18 +6601,31 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
   `OWED_LEASED=1` live inside the call; lease opt-outs keep the existing
   direct `owed attest <node> --no-lease` argv inside it.
   - Request id: `owed-attest-` plus the SHA-256 of JSON
-    `[project, node, attempt, candidate, ledgerLengthAtStart]`. Pending or
-    repeated launches use the same id and spec, never a fresh id to evade a
-    refused or ambiguous launch. No ledger kind or field is added.
+    `[project, node, attempt, candidate, ledgerLengthAtStart]` is the base id.
+    A pending launch keeps that id/spec. When launch confirms an existing
+    call, inspect it before deciding whether to attach: running/queued calls
+    are attached, sealed normal exits 0/1/4 are reused. An already sealed
+    non-result (75, stopped, unknown, signal, invalid/missing exit evidence
+    or another exit) advances deterministically to `<base>:r1`, then `:r2`,
+    and so on, probing in order. Stop at a new/live call or a reusable result.
+    The maximum suffix is `:r20`; if it too has a sealed non-result, halt with
+    the retry-id limit, actual request id and output tail, never launch `:r21`.
+    Launch refusal/conflict/transport error never advances ids. No ledger
+    kind or field is added; a busy pass therefore need not append an entry
+    just to escape the immutable sealed 75 on its next pass.
   - `describe --key <request> --json` is polled by the program, one invocation
     at a time (2 s invocation timeout, interval clamped to 50 ms..5 s,
     default 1 s). There is no total measurement timeout or model polling.
     The one command's `calls[0].data.exitCode/signal`, seal and output tail
     are read independently of model-run status. Normal command exit 0 is
-    `ok`; normal nonzero exit is `failed`. Exit 0/1/4 remains done, 75 busy
-    with the existing later-pass back-off, and other exits halt. Signals,
-    stopped/unknown/invalid seals, missing exit evidence, describe failures
-    and non-unsupported launch refusals halt with the request id and tail.
+    `ok`; normal nonzero exit is `failed`. For a command newly launched by
+    this driver, or attached while live and then watched seal, exit 0/1/4
+    remains done, 75 busy with the existing later-pass back-off, and other
+    exits halt. Signals, stopped/unknown/invalid seals and missing exit
+    evidence in that watched call halt with the request id and tail. They
+    are skipped only when first inspecting a confirmed pre-existing seal
+    as above. Describe failures and non-unsupported launch refusals halt.
+    A command this driver hard-stopped itself is cancellation, never a halt.
   - Without an owner session, a command-capable dsa, or after a confirmed
     unsupported command/session launch refusal, use the existing hold child
     or direct-process path. One `driver` line per driver says measurements
@@ -6620,7 +6633,10 @@ beyond the candidate's runs has no obligations, and `reviewPacket` refuses it.
     falls back and never launches a second measurement.
   - A call keeps its own lease and the existing node K1 lock through a driver
     crash/restart. A new pass with a different start id sees busy at K1 and
-    starts no concurrent check; an identical start id reuses the call.
+    starts no concurrent check; an identical start id attaches to a live
+    call or reuses a completed result, skipping old non-results as above.
+    In particular a restart after hard stop reruns under the next retry id
+    instead of halting on the previous stopped seal.
     Graceful stop keeps waiting. Hard stop uses `dsa stop --request
     <attest-request>-stop <wid|attest-request> --json --wait-ms 0`; pending
     stops retry the same id for at most 4 s (a run may not yet have a wid).
