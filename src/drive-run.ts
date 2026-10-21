@@ -10,7 +10,7 @@ import { statfs } from 'node:fs/promises';
 import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import * as ops from './ops.ts';
 import { rebasePending, type RebasePending } from './rebase-view.ts';
@@ -379,7 +379,7 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full' | 'sweep-due'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
+export interface LoopEvent { event: 'attest-unlisted' | 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full' | 'sweep-due'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
 /** FL4: counts are disjoint for parked nodes; open counts every open slot. */
 export interface IdleCounts { ready: number; open: number; waiting: number; reported: number; later: number }
 /** FL4: deterministic timer decision; the loop owns the clock and lifecycle. */
@@ -408,6 +408,7 @@ export function reportText(json: object): string {
       case 'drift-cleared': return 'trunk drift cleared: trunk equals the ledger trunk again';
       case 'disk-full': return `disk full: ${oneLine(e.error ?? '')}; the driver sleeps 60 s and continues`;
       case 'waiting': return e.deps?.length ? `waiting: ${oneLine(e.node ?? '?')} waiting (deps: ${e.deps.map(oneLine).join(', ')})${e.after ? `; ${waitingText(oneLine(e.node ?? '?'),oneLine(e.after),e.resume ?? -1)}` : ''}` : waitingText(oneLine(e.node ?? '?'), oneLine(e.after ?? '?'), e.resume ?? -1);
+      case 'attest-unlisted': return `driver: attest measurements are not shown in /subagents: ${oneLine(e.reason ?? 'unavailable')}; using the legacy hold/direct path`;
       case 'session-unsupported': return `dsa does not accept --session (older than pi-durable-subagents 1.0.31): runs start without it and are not listed in pi session ${e.session ?? '?'}${e.reason ? ` (${oneLine(e.reason)})` : ''}`;
       default: return oneLine(JSON.stringify(json));
     }
@@ -415,7 +416,7 @@ export function reportText(json: object): string {
   if (!('do' in json) || typeof (json as { do: unknown }).do !== 'string') return oneLine(JSON.stringify(json));
   const r = json as ActionReport;
   // G3.6 (0.12): a failed send (outcome error) names its node as a word.
-  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason})${r.outcome === 'error' ? ` for node ${r.node}` : ''} to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt}, ${NEEDS_PARENT}`) : `${r.do} ${r.node}`;
+  const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason})${r.outcome === 'error' ? ` for node ${r.node}` : ''} to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt}, ${NEEDS_PARENT}`) : `${r.do} ${r.node}${r.do === 'attest' && r.rid ? ` [${r.rid}]` : ''}`;
   const repeat = typeof r.repeat === 'number' && r.repeat > 0 ? repeatText(r.repeat) : '';
   return `${(r.do === 'notify' || (r.do === 'halt' && 'need' in r)) && r.text ? r.text : `${what}: ${r.outcome}${r.detail ? ` — ${r.detail}` : ''}${r.need && r.text ? `\n${r.text}` : ''}`}${repeat}`;
 }
@@ -435,6 +436,7 @@ export class Driver {
   private sweepRun?: { abort:AbortController; ended:Promise<void>; done:boolean; committing:boolean; scheduled:boolean; policy:string; reports:ActionReport[] };
   private readonly startedAt=Date.now();
   private sweepBusyAt?: number;
+  private attestUnlisted = false;
   private readonly ended: Measurement[] = [];
   /** Ends the loop's current `wait` (a measurement ended). */
   private waker?: () => void;
@@ -930,7 +932,10 @@ export class Driver {
     this.recordMergeWaiting(node);
     const attempt = s.nodes[node]!.slot!.attempt, at = new Date().toISOString();
     const m: Measurement = { do: what, node, attempt, at, ...(batch ? {batch} : {}), done: false, ended: Promise.resolve() };
-    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && new Map(batch.map(id => [id, s.nodes[id]!.candidate!.commit])));
+    const onRun = (rid: string): void => {
+      this.emit({ do:what, node, outcome:'started', at, rid }, s);
+    };
+    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false, s.nodes[node]!.candidate!.commit, s.seq + 1, onRun) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && new Map(batch.map(id => [id, s.nodes[id]!.candidate!.commit])));
     let busy: ActionReport | undefined;
     m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
       .finally(() => {
@@ -1153,34 +1158,53 @@ export class Driver {
    * else — an owed error (2/3), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
    * a human on attempt `attempt` (D14.3).
    */
-  private async attest(node: string, attempt: number, lease: boolean): Promise<Ended> {
+  private async attest(node: string, attempt: number, lease: boolean, candidate: string, ledgerLength: number, onRun: (rid: string) => void): Promise<Ended> {
     const available = dsaAvailable(this.dsa.bin), hold = lease && !machineLeased() && available;
     const argv = [...this.owed, 'attest', node, ...(!lease || !available ? ['--no-lease'] : [])], cwd = this.root!;
-    const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(detail ? { detail: oneLine(detail) } : {}) });
-    const measuredSince = (await this.ledger!.read()).length;
+    let rid: string | undefined;
+    const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(rid ? { rid } : {}), ...(detail ? { detail: oneLine(detail) } : {}) });
+    const measuredSince = ledgerLength;
     const busy = (detail: string): Ended => { const r = report('busy', detail); return { finish: async () => [r], busy: r }; };
-    const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${why}`); return [report('error', `${why}; halted`)]; } });
-    let ran: { exit: number | null; stdout: string; stderr: string };
-    if (hold) {
+    const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${rid ? `run ${rid}: ` : ''}${why}`); return [report('error', `${why}; halted`)]; } });
+    let ran: { exit: number | null; stdout: string; stderr: string } | undefined;
+    const unsupported = available ? await this.dsa.commandUnsupported() : 'dsa is unavailable';
+    let fallback = unsupported;
+    if (unsupported === undefined) {
+      rid = `owed-attest-${createHash('sha256').update(JSON.stringify([this.project, node, attempt, candidate, ledgerLength])).digest('hex')}`;
+      const command = hold ? [this.dsa.bin, 'hold', 'machine', '--shared', '--priority', '10', '--no-wait', '--', ...argv] : argv;
+      const result = await this.dsa.command(rid, command, { name:`owed attest ${node}`, cwd,
+        labels:{ owed:this.project!, node, attempt:String(attempt), candidate }, ...(hold ? {env:{OWED_LEASED:'1'}} : {}),
+        signal:this.abort.signal, pollMs:this.o.pollMs, onRun:() => onRun(rid!) });
+      if (result.outcome === 'error') return fail(result.reason);
+      if (result.outcome === 'ran') ran = result;
+      else { fallback = result.reason; rid = undefined; }
+    }
+    if (!ran && !this.attestUnlisted) {
+      this.attestUnlisted = true;
+      const e: LoopEvent = {event:'attest-unlisted', reason:fallback};
+      this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
+    }
+    if (!ran && hold) {
       const r = await this.dsa.hold('machine', argv, { shared: true, priority:10, cwd, env: { OWED_LEASED: '1' } });
       if (r.outcome === 'busy') return busy(busyDetail(node, r.reason));
       if (r.outcome === 'signal') return fail(`pi-durable-subagents hold ended by ${r.reason}`);
       if (r.outcome === 'refused') return fail(`pi-durable-subagents hold refused: ${tail(r.reason)}${/--no-wait/.test(r.reason) ? ' (owed drive requires pi-durable-subagents >= 1.0.27 for `hold --no-wait`)' : ''}`);
       ran = r;
-    } else {
+    } else if (!ran) {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
-    if (ran.exit === 0 || ran.exit === 1 || ran.exit === 4) {
+    const result = ran;
+    if (result.exit === 0 || result.exit === 1 || result.exit === 4) {
       const suffix = `${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`;
       // Display I/O belongs to the awaited reap, not the background measurement's lifecycle.
       return { finish: async () => {
         const s = await loadState(this.ledger!), rt = await assembleRuntime({ cwd, state: s, driverRunning: true });
         const next = needs(s, node, rt)[0]?.text ?? activity(s, node, rt)?.text;
-        return [report('done', `${ran.exit === 0 ? 'accepted' : `measured; not accepted yet: ${next ?? 'candidate not accepted'}`}${suffix}`)];
+        return [report('done', `${result.exit === 0 ? 'accepted' : `measured; not accepted yet: ${next ?? 'candidate not accepted'}`}${suffix}`)];
       } };
     }
-    if (ran.exit === 75) return busy(busyDetail(node, tail(ran.stderr || ran.stdout)));
-    return fail(`owed attest exited ${ran.exit ?? 'by a signal'}: ${tail(ran.stderr || ran.stdout)}`);
+    if (result.exit === 75) return busy(busyDetail(node, tail(result.stderr || result.stdout)));
+    return fail(`owed attest exited ${result.exit ?? 'by a signal'}: ${tail(result.stderr || result.stdout)}`);
   }
 
   /** RC1: latest observation of each item measured by this action; descriptive only, never a new verdict. */
