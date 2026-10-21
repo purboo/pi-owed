@@ -3,10 +3,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
+import type { ExtensionAPI, ExtensionToolContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import * as ops from '../src/ops.ts';
 import { Dsa } from '../src/dsa.ts';
-import { Driver } from '../src/drive-run.ts';
+import { Driver, type PassResult } from '../src/drive-run.ts';
 import { Follower } from '../src/drive-bg.ts';
 import { decide as policy, writerLaunch } from '../src/drive.ts';
 import { projectId, resumeOf } from '../src/reducer.ts';
@@ -66,11 +66,12 @@ for (const act of ['decide', 'answer'] as const) test(`PK1: ${act} records a rep
     f.dsa.state = 'running'; await driver.pass();
     assert.equal((await ops.status(f)).nodes.a!.halt, undefined);
     f.dsa.state = 'sealed';
-    const reported = await driver.pass(); assert.ok(reported.actions.some(a => a.do === 'notify' && a.reportedResume === resume!.seq));
+    const reported = await driver.pass(); assert.ok(reported.actions.some(a => a.do === 'notify' && a.node === 'a'));
+    assert.deepEqual((await ops.status(f)).reported, [{ node: 'a', resume: resume!.seq }]);
     await writeFile(log, logs.join('\n') + '\n');
     const wake = follower.tick(); assert.ok(wake); assert.match(wake, /review the reported findings/); assert.match(wake, /Paused until the parent prerequisite/);
     const count = (await (await Ledger.open(f.cwd)).read()).length;
-    for (let i = 0; i < 3; i++) { const quiet = await driver.pass(); assert.equal(quiet.actions.filter(a => a.node === 'a').length, 0); }
+    for (let i = 0; i < 3; i++) { const quiet: PassResult = await driver.pass(); assert.equal(quiet.actions.filter(a => a.node === 'a').length, 0); }
     await writeFile(log, logs.join('\n') + '\n'); assert.equal(follower.tick(), undefined);
     assert.equal((await (await Ledger.open(f.cwd)).read()).length, count, 'no extra halt/send/ledger entry');
     assert.deepEqual((await ops.status(f)).reported, [{ node: 'a', resume: resume!.seq }]);
@@ -125,7 +126,7 @@ test('PK1: a report retry cannot silently add a resume to an earlier plain answe
     const ledger = await Ledger.open(f.cwd), before = await ledger.read();
     await assert.rejects(ops.answer({ ...args, qid: 'q1', rid: f.launch.rid, ...parking }), /expect report.*resume/);
     assert.deepEqual(await ledger.read(), before);
-    await assert.rejects(ops.answer({ ...args, expect: 'candidate' } as Parameters<typeof ops.answer>[0]), /expect.*report/);
+    await assert.rejects(ops.answer({ ...args, expect: 'candidate' } as unknown as Parameters<typeof ops.answer>[0]), /expect.*report/);
   } finally { await f.cleanup(); }
 });
 
@@ -139,7 +140,7 @@ else process.exit(1);
 function tools(cwd: string) {
   const registered = new Map<string, ToolDefinition>();
   owed({ registerTool(t: ToolDefinition) { registered.set(t.name, t); }, registerCommand() {}, on() {} } as unknown as ExtensionAPI);
-  const ctx = { cwd, hasUI: false, ui: { async confirm() { return false; }, notify() {} } } as unknown as ExtensionContext;
+  const ctx = { cwd, hasUI: false, ui: { async confirm() { return false; }, notify() {} } } as unknown as ExtensionToolContext;
   return async (name: string, args: Record<string, unknown>) => {
     const tool = registered.get(`owed_${name}`)!;
     return tool.execute('pk-test', args, undefined, undefined, ctx) as ReturnType<ToolDefinition['execute']>;
