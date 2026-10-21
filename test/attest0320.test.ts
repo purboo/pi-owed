@@ -32,7 +32,7 @@ const reply = (value,code=0) => { console.log(JSON.stringify(value)); process.ex
 if (args[0] === '--help') { log({kind:'help'}); console.log(read('control').old ? 'run --request <id> --spec <file> --session <id>' : 'run --request <id> --spec <file> --session <id> -- <program> [args…]'); process.exit(0); }
 if (args[0] === '__runner') {
   const record = read(args[1]), spec = record.spec, out = openSync(path(record.rid+'.out'),'a');
-  const p = spawn(spec.command[0],spec.command.slice(1),{env:{...process.env,...spec.env,DSA_EXEC:'fake-exec',DSA_CALL:'fake-call'},stdio:['ignore',out,out]});
+  const p = spawn(spec.command[0],spec.command.slice(1),{cwd:spec.cwd,env:{...process.env,...spec.env,DSA_EXEC:'fake-exec',DSA_CALL:'fake-call'},stdio:['ignore',out,out]});
   closeSync(out);
   for (const sig of ['SIGTERM','SIGINT']) process.on(sig,()=>p.kill(sig));
   p.on('close',(code,signal)=>{
