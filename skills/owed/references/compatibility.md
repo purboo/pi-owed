@@ -2,7 +2,15 @@
 
 Read before upgrading, running mixed readers or enabling new fields. Return to the [core](../SKILL.md) for the loop and hard rules. [SPEC compatibility](../../../docs/SPEC.md#compatibility-020027) gives the complete public contract.
 
-## Current release: 0.31.2
+## Current release: 0.32.0
+
+Plans and ledger formats are unchanged from 0.31.2; no new ledger kind, field, enum or plan key is added. Per-version snapshots rebuild on first use of 0.32.0. Restart upgraded drivers and pi sessions.
+
+Pi tool details now contain compact summaries, bounded to 8 KiB JSON; content is bounded to 48 KiB UTF-8, with the successful dispatch packet, submit line and args exempt. Use the read-only CLI pointer after cut text, and CLI `--json` for scripts requiring full data. CLI text and JSON are unchanged. Update consumers that read full state, packets or follow-ups from tool details.
+
+Visible driver attests require an owner pi session and feature-detected dsa command runs with `--session`; no new fixed minimum is imposed. Missing support or an unsupported launch refusal uses the legacy path with one explanatory driver line. Merge measurement stays in-process. Existing dsa requirements remain >= 1.0.27 for the driver, >= 1.1.0 for durable-writer waits and lease options, and >= 1.2.0 for structured asks. Decide/answer `--expect report` (tool `expect: "report"`) needs the 0.32 input surface but records existing report-resume fields.
+
+## 0.31.2
 
 Plans and ledger formats are unchanged from 0.31.1; no new ledger kind, field, enum or plan key is added. CLI `DSA_SESSION`-first identity and the existing driver lock representation are unchanged. Dsa requirements remain >= 1.0.27 for the driver, >= 1.1.0 for durable-writer waits and lease options, and >= 1.2.0 for structured asks. Per-version snapshots rebuild on first use of 0.31.2; old snapshot bytes are not reused.
 

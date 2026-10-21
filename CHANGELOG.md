@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.32.0
+
+Plans and ledger formats are unchanged from 0.31.2; no new ledger kind,
+field or enum is added. Per-version snapshots rebuild on first use of 0.32.0.
+Restart upgraded drivers and pi sessions to use the new runtime behavior.
+
+- **Bounded tool results (TB).** Status calls had grown session files by
+  megabytes per call. Every owed pi tool now bounds content to 48 KiB UTF-8
+  and details JSON to 8 KiB. Cut text keeps the outcome first and ends with
+  an omitted-byte count and a pointer to the full read-only CLI form when
+  a valid target is available. Details are compact summaries, not full state
+  or follow-up bodies. The successful `owed_dispatch` packet, its args and
+  its submit line come first byte-exact and are exempt; only the trailing
+  status is bounded. CLI output and `--json` are unchanged.
+- **Visible attest (MV).** With an owner pi session and a dsa that supports
+  command runs with `--session`, driver attests run as command calls named
+  `owed attest <node>`, visible in `/subagents` and dsa restart refusals.
+  Request ids are deterministic; live calls attach and completed results
+  are reused, with bounded deterministic retry ids for old non-results.
+  Exit 0 remains accepted, 1 measured failure and 4 obligations outstanding;
+  75 means busy and retries on a later pass. Without the required session
+  or capability, or after an unsupported launch refusal, the driver falls
+  back to the legacy path with one explanatory driver line. Merge measurement
+  stays in-process.
+- **Quiet parking (PK).** `owed decide` and `owed answer` now accept
+  `--expect report` (tools: `expect: "report"`) to park the writer as
+  `owed resume --expect report` does: report findings, wake once, then remain
+  quiet until a relevant parent act. `--no-resume --expect report` refuses.
+  Writer packets say not to ask for confirmation of stop, pause or wait
+  rulings. The finished-ruling-follow-up halt names the parking form.
+
+Source grew by 374 lines net across 12 TypeScript files: 428 insertions and
+54 deletions since 0.31.2.
+
 ## 0.31.2
 
 Automatic driver notifications now go only to the owning pi session. Opening
