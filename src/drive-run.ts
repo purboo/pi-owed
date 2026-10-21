@@ -1176,12 +1176,14 @@ export class Driver {
       const command = hold ? this.dsa.heldCommand('machine', argv, {shared:true, priority:10}) : argv;
       const result = await this.dsa.command(rid, command, { name:`owed attest ${node}`, cwd,
         labels:{ owed:this.project!, node, attempt:String(attempt), candidate }, env:{OWED_DIR:this.ledger!.dir, ...(hold ? {OWED_LEASED:'1'} : {})},
-        signal:this.abort.signal, pollMs:this.o.pollMs, onRun:() => onRun(rid!) });
+        signal:this.abort.signal, pollMs:this.o.pollMs, onRun:(selected) => { rid = selected; onRun(selected); } });
+      if (result.outcome !== 'unsupported') rid = result.rid;
+      if (result.outcome === 'cancelled' || this.abort.signal.aborted) return { finish:async()=>[] };
       if (result.outcome === 'error') return fail(result.reason);
       if (result.outcome === 'ran') ran = result;
       else { fallback = result.reason; rid = undefined; }
     }
-    if (this.abort.signal.aborted) return fail('attest aborted before legacy launch');
+    if (this.abort.signal.aborted) return { finish:async()=>[] };
     if (!ran && !this.attestUnlisted) {
       this.attestUnlisted = true;
       const e: LoopEvent = {event:'attest-unlisted', reason:fallback};
