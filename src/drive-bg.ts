@@ -670,7 +670,8 @@ export class Follower {
     if (!this.o.owns) return 'current';
     let held: LockState;
     try { held = readLock(dirname(dirname(this.o.log))); } catch { return 'blocked'; }
-    if (held.state !== 'live' && held.state !== 'foreign') return 'current';
+    if (held.state === 'none') return 'current';
+    if (held.state === 'stale') return held.owner && !this.matches(held.owner) ? 'replaced' : 'current';
     if (this.matches(held.owner)) return this.o.owns(held.owner) ? 'current' : 'blocked';
     if (held.state === 'live' && this.o.owns(held.owner)) { this.reconnect({ pid: held.owner.pid, start: held.owner.start, since: held.owner.at }); return 'current'; }
     return 'replaced';
@@ -684,7 +685,8 @@ export class Follower {
     if (boundary === 'current' && this.fd !== undefined) {
       try {
         const old = fstatSync(this.fd), current = statSync(this.o.log);
-        if (old.dev !== current.dev || old.ino !== current.ino) { closeSync(this.fd); this.fd = undefined; }
+        const held = readLock(dirname(dirname(this.o.log)));
+        if (held.state === 'live' && this.matches(held.owner) && this.o.owns!(held.owner) && (old.dev !== current.dev || old.ino !== current.ino)) { closeSync(this.fd); this.fd = undefined; }
       } catch { /* retained inode may still contain owned final lines */ }
     }
     if (boundary === 'replaced' && this.fd !== undefined) {
@@ -729,7 +731,7 @@ export class Follower {
     if (this.o.owns && !this.o.owns(owner)) return;
     for (const p of this.pending) {
       const old = p.terminal?.driver;
-      if (!old || (old.pid === owner.pid && (old.start === undefined || owner.start === undefined || old.start === owner.start))) continue;
+      if (!old || (old.pid === owner.pid && (old.start === undefined || owner.start === undefined || old.start === owner.start) && (old.at === undefined || old.at === owner.at))) continue;
       if (old.at && Date.parse(owner.at) <= Date.parse(old.at)) continue;
       p.wake = false; p.earlier = true;
       p.text = `earlier driver (pid ${old.pid}, started ${old.at ? clockTime(old.at) : old.start ?? 'unknown'}) ${p.terminal!.event}; driver pid ${owner.pid} (started ${clockTime(owner.at)}) is running`;

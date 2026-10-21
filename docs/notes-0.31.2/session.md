@@ -36,9 +36,14 @@ Writer role: commit and stop; no submission, rebase, attestation, merge or plan 
   the existing lifecycle cleanup test still proves a real owned follower exits.
 - `test/drive-live.test.ts`: the host and synthetic live locks identify
   `live-session`, retaining busy/revalidation coverage for an authorized observer.
-- `test/needs-structure.test.ts`: refreshes exactly three literal inventory hashes
-  for the changed CLI no-session hint, drive tool description and drive reply.
-  No inventory exception is added and no behavioral gate is relaxed.
+- `test/surface.test.ts`: SF6's two positive watcher instances now carry the
+  same `surface-owner` context. The test still proves replay for both fresh and
+  reused owned drivers and follower-local deduplication; it does not authorize
+  stranger reuse to subscribe.
+- `test/needs-structure.test.ts`: refreshes the exact CLI no-session hint and
+  drive description hashes, and adds one classified exact reply literal for the
+  new explicit-watch hint. Unrelated abandon/genesis literals retain their
+  original entries. No behavioral gate is relaxed.
 
 ## New regression coverage
 
@@ -53,10 +58,29 @@ to fail with `ERR_ASSERTION` on the baseline, not an import or fixture error.
 
 ## Evidence
 
-Focused checks and typecheck are run only through `/tmp/owed-ipc/run.sh`, under
-`pi-durable-subagents hold machine --shared`. Exact commands, mirrored tree,
-logs and exit codes will be recorded after the bounded run. The full suite is
-reserved for the parent's merge invariant; this writer does not publish.
+Initial committed check: `eba5f7ef222e042a191bab234ede67c5b299f73a`, tree
+`c61c27ac97c0f318bdb5627b514374dc04d19432`, clean mirror.
+Command (420-second IPC bound):
+
+```sh
+node --test --test-concurrency=2 --test-reporter=tap test/session0312.test.ts test/driver0311.test.ts test/drive-bg.test.ts test/follow.test.ts test/drive-session.test.ts test/surface.test.ts test/tool-worker.test.ts test/watchdog.test.ts test/drive-live.test.ts test/needs-structure.test.ts
+node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit
+```
+
+Log: `/tmp/owed-ipc/logs/q-session-1-170431.log`. Focused exit 1: 114 tests,
+111 pass, 3 fail, 0 cancelled/skipped. Typecheck exit 2: one optional-session
+fixture type error. Combined wrapper exit 1, elapsed 158736 ms. Failures were
+an idle fixture with no actionable work (`later:true`), an SF6 positive watcher
+without identity, and two wrongly replaced inventory hashes. Repairs retain
+all assertions and correct those preconditions; the idle test now uses ready
+work. An additional source repair keeps the owned inode when a replacement has
+already released its lock, with a new behavior regression. Same-owner reconnect
+and in-flight host identity delivery controls were added.
+
+Focused checks and typecheck run only through `/tmp/owed-ipc/run.sh`, under
+`pi-durable-subagents hold machine --shared`. Final focused and red evidence
+will be recorded after the bounded run. The full suite is reserved for the
+parent's merge invariant; this writer does not publish.
 
 Shipped prose is English. Existing CJK fixtures in `test/driver0311.test.ts`
 exercise UTF-8 replay/cursor handling and are intentional; no new CJK prose is
