@@ -16,7 +16,8 @@ owedExtension({
   sendMessage() { if (state.shut) { process.stdout.write('woken after shutdown\n'); process.exit(3); } state.woken?.(); },
 } as unknown as ExtensionAPI);
 
-await handlers.get('session_start')!({ type: 'session_start', reason: 'startup' }, { cwd });
+const ctx = { cwd, sessionManager: { getSessionId: () => 'bg-session' } };
+await handlers.get('session_start')!({ type: 'session_start', reason: 'startup' }, ctx);
 // The follower's timer is unref'd: a ref'd guard keeps this process alive while it waits for the wake.
 const guard = setTimeout(() => { process.stdout.write('never woken\n'); process.exit(2); }, 15_000);
 const wake = new Promise<void>(resolve => { state.woken = resolve; });
@@ -24,7 +25,7 @@ appendFileSync(log, `${JSON.stringify({ do: 'halt', node: 'sd', outcome: 'halted
 await wake;
 clearTimeout(guard);
 process.stdout.write('woken\n');
-await handlers.get('session_shutdown')!({ type: 'session_shutdown', reason: 'quit' }, { cwd });
+await handlers.get('session_shutdown')!({ type: 'session_shutdown', reason: 'quit' }, ctx);
 state.shut = true;
 process.stdout.write('shutdown\n');
 // Nothing ref'd remains: the process exits here (the parent allows 5 s).

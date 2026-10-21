@@ -36,7 +36,7 @@ async function fixture(batch = false) {
   await ops.init({ cwd: r.cwd, as: owner, channel: 'flag', plan: JSON.stringify(plan), path: 'plan.json' });
   const ledger = await Ledger.open(r.cwd), dir = ledger.dir, log = join(dir, 'drive/log.jsonl'), lock = join(dir, 'drive.lock');
   mkdirSync(join(dir, 'drive'), { recursive: true }); writeFileSync(log, '');
-  const lockOwner = { pid: process.pid, start: procStart(process.pid), host: hostname(), at: new Date().toISOString(), token: 'pd-fixture' };
+  const lockOwner = { pid: process.pid, start: procStart(process.pid), host: hostname(), at: new Date().toISOString(), token: 'pd-fixture', session: 'pd-session' };
   return { ...r, ledger, dir, log, lock, lockOwner,
     held: () => writeFileSync(lock, JSON.stringify(lockOwner)),
     append(line: unknown) { appendFileSync(log, `${typeof line === 'string' ? line : JSON.stringify(line)}\n`); },

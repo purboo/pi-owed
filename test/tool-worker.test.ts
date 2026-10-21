@@ -26,7 +26,7 @@ function harness(cwd: string, extension = owed) {
   const messages: any[] = [], prompts: string[] = [];
   let confirm: (message: string, options: any) => Promise<boolean> = async () => true;
   let deliver: (m: unknown) => void = m => { messages.push(m); };
-  const ctx = { cwd, hasUI: true, isIdle: () => true, ui: {
+  const ctx = { cwd, hasUI: true, isIdle: () => true, sessionManager: { getSessionId: () => 'worker-session' }, ui: {
     confirm: async (_title: string, message: string, options: any) => { prompts.push(message); return confirm(message, options); }, notify() {},
   } } as unknown as Parameters<ToolDefinition['execute']>[4];
   extension({ registerTool: (t: ToolDefinition) => tools.set(t.name, t), registerCommand() {}, on: (n: string, h: unknown) => handlers.set(n, h), sendMessage: (m: unknown) => deliver(m) } as unknown as ExtensionAPI);
@@ -70,7 +70,7 @@ test('G2 real extension: status, why, dispatch and drive-watch revalidation keep
     }
     const dir = process.env.OWED_DIR!, log = join(dir, 'drive/log.jsonl');
     await mkdir(join(dir, 'drive'), { recursive: true }); await writeFile(log, '');
-    await writeFile(join(dir, 'drive.lock'), JSON.stringify({ pid: process.pid, host: hostname(), at: new Date().toISOString(), token: 'fixture' }));
+    await writeFile(join(dir, 'drive.lock'), JSON.stringify({ pid: process.pid, host: hostname(), at: new Date().toISOString(), token: 'fixture', session: 'worker-session' }));
     await h.emit('session_start');
     await appendFile(log, `${JSON.stringify({ do: 'halt', node: 'n0', outcome: 'halted', attempt: 1, needs: 'human', facts: 99999, detail: 'still current' })}\n`);
     const watch = await drift(() => h.emit('agent_settled'));
@@ -186,7 +186,7 @@ test('G2 watcher retains rejected deliveries and revalidates them before retry',
   try {
     const dir = process.env.OWED_DIR!, log = join(dir, 'drive/log.jsonl');
     await mkdir(join(dir, 'drive'), { recursive: true }); await writeFile(log, '');
-    await writeFile(join(dir, 'drive.lock'), JSON.stringify({ pid: process.pid, host: hostname(), at: new Date().toISOString(), token: 'fixture' }));
+    await writeFile(join(dir, 'drive.lock'), JSON.stringify({ pid: process.pid, host: hostname(), at: new Date().toISOString(), token: 'fixture', session: 'worker-session' }));
     await h.emit('session_start');
     let attempted = 0;
     h.setDeliver(() => { attempted++; throw new Error('pi unavailable'); });

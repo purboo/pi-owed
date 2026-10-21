@@ -1,4 +1,4 @@
-import { registeredDrivers } from './registry.ts';
+import { registeredDrivers, sessionIdentity, ownsDriver } from './registry.ts';
 import { alreadyRecordedText } from './identical-acts.ts';
 import { idleWake } from './watchdog.ts';
 import { withWritesSyntax, planWritesSyntax } from './writes.ts';
@@ -24,7 +24,7 @@ import { renderSweep, unguardedText } from './sweep.ts';
 import { selftestPreview } from './checktry.ts';
 import { leaseText } from './lease.ts';
 import { driveOnce, liveRunLines } from './drive-run.ts';
-import { DriveWatch, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
+import { DriveWatch, driveDir, readLock, driveStart, driveStatus, driveStop, driverLine, readyHint, readyHintText, renderDriveStart, renderDriveStatus, renderDriveStop, revalidator } from './drive-bg.ts';
 import { parentOverlapWarnings } from './parentops.ts';
 import { allowanceLabel, amendLines, carryLine, notCarriedLine, oneLine, renderBrief, renderEntry, renderGc, renderReceipt, renderWhy, renderReport, renderStatus, renderStatusBrief, waiverRecordedText, measuredPendingText } from './views.ts';
 import type { EscapeClass, Principal, Role } from './types.ts';
@@ -141,30 +141,47 @@ export default function owed(pi: ExtensionAPI): void {
   // H1.1a: no wake batch is handed to pi while the session's agent runs (agent_start … agent_settled, and ctx.isIdle()
   // of the latest context): the followers hold it and deliver at agent_settled or the next tick while idle, after
   // revalidating it against the ledger and dsa (H1.1b).
-  const agent: { running: boolean; ctx?: ExtensionContext } = { running: false };
+  const agent: { running: boolean; ctx?: ExtensionContext; session?: string } = { running: false };
   const busy = (): boolean => {
     if (agent.running) return true;
     try { return typeof agent.ctx?.isIdle === 'function' ? !agent.ctx.isIdle() : false; } catch { return false; }
   };
-  const idleWatch = idleWake(pi, { busy });
-  const attachIdle = async (dir: string) => { if (!process.env.DSA_EXEC && !process.env.DSA_CALL) await idleWatch.attach(dir).catch(() => undefined); };
-  const watch = new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, revalidate: repo => revalidator({ cwd: repo }) });
-  let registryAt = -Infinity;
-  const attachSessionDrivers = async (ctx: ExtensionContext) => {
-    if (process.env.DSA_EXEC || process.env.DSA_CALL || Date.now() - registryAt < 10_000) return;
-    registryAt = Date.now();
-    const session = (ctx as ExtensionContext & { sessionId?: string }).sessionId || process.env.DSA_SESSION || process.env.PI_SESSION_ID;
-    if (session) for (const r of registeredDrivers()) if (r.session === session) await watch.attach(r.repo).catch(() => undefined);
+  const makeIdle = () => {
+    const session = agent.session;
+    return idleWake(pi, { busy, allowed: async cwd => {
+      if (!session || agent.session !== session) return false;
+      const repo = await git.mainRoot(cwd), held = readLock(await driveDir(cwd));
+      return agent.session === session && (held.state !== 'live' && held.state !== 'foreign' || ownsDriver(repo, held.owner, session));
+    } });
   };
-  const attachDriver = async (dir: string) => { if (!process.env.DSA_EXEC && !process.env.DSA_CALL) await watch.attach(dir).catch(() => undefined); };
+  const makeWatch = () => new DriveWatch(content => pi.sendMessage({ customType: 'owed-drive', display: true, content }, { triggerTurn: true, deliverAs: 'followUp' }), 0, { busy, session: () => agent.session, revalidate: repo => revalidator({ cwd: repo }) });
+  let idleWatch = makeIdle(), watch = makeWatch(), registryAt = -Infinity;
+  const useContext = (ctx: ExtensionContext) => {
+    const session = sessionIdentity(ctx);
+    if (session !== agent.session) {
+      watch.stopAll(); idleWatch.stopAll();
+      agent.session = session;
+      watch = makeWatch(); idleWatch = makeIdle(); registryAt = -Infinity;
+    }
+    agent.ctx = ctx; agent.session = session;
+  };
+  const attachDriver = async (dir: string) => {
+    if (!agent.session || process.env.DSA_EXEC || process.env.DSA_CALL) return;
+    const current = watch, idle = idleWatch;
+    if (await current.attach(dir).catch(() => undefined) && current === watch) await idle.attach(dir).catch(() => undefined);
+  };
+  const attachSessionDrivers = async () => {
+    if (!agent.session || process.env.DSA_EXEC || process.env.DSA_CALL || Date.now() - registryAt < 10_000) return;
+    registryAt = Date.now();
+    for (const r of registeredDrivers()) if (r.session === agent.session) await attachDriver(r.repo);
+  };
   if (typeof pi.on === 'function') {
     // Internal worker tick: the timer lives in pi, all log/git/replay work lives here.
-    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { agent.ctx = ctx; await attachSessionDrivers(ctx); await watch.flush(); await idleWatch.flush(); });
-    pi.on('agent_start', (_event, ctx) => { agent.running = true; agent.ctx = ctx; });
-    pi.on('agent_settled', async (_event, ctx) => { agent.running = false; agent.ctx = ctx; await watch.flush(); await idleWatch.flush(); });
-    // D17a.1: auto-attach only in a session that is not inside a dsa call (dsa writers and reviewers run in worktrees of
-    // the same repository and must not be woken by its driver); every top-level session in the repository is woken.
-    pi.on('session_start', async (_event, ctx) => { agent.ctx = ctx; if (process.env.DSA_EXEC || process.env.DSA_CALL) return; await watch.attach(ctx.cwd).catch(() => undefined); await attachIdle(ctx.cwd); });
+    (pi.on as (name: string, handler: (_event: unknown, ctx: ExtensionContext) => Promise<unknown>) => unknown)('owed_tick', async (_event, ctx) => { useContext(ctx); await attachSessionDrivers(); await watch.flush(); await idleWatch.flush(); });
+    pi.on('agent_start', (_event, ctx) => { useContext(ctx); agent.running = true; });
+    pi.on('agent_settled', async (_event, ctx) => { useContext(ctx); agent.running = false; await watch.flush(); await idleWatch.flush(); });
+    // SN: cwd and tool use are not subscriptions; only the driver's owning top-level session follows.
+    pi.on('session_start', async (_event, ctx) => { useContext(ctx); await attachDriver(ctx.cwd); await attachSessionDrivers(); });
     pi.on('session_shutdown', () => { watch.stopAll(); idleWatch.stopAll(); for (const c of genesisRuns) c.abort(); });
   }
   const core = new Set(['status', 'why', 'decide', 'drive', 'start', 'submit', 'review']);
@@ -175,13 +192,14 @@ export default function owed(pi: ExtensionAPI): void {
     pi.registerTool({ name: `owed_${name}`, label: `owed ${name}`, description: `${description}${core.has(name) ? ' Other owed operations are owed_* tools: load any that are not declared with tool_search, or use the owed <command> CLI (owed help).' : allTools ? '' : ` If this tool is not declared, use the owed CLI: owed ${name.replaceAll('_', ' ')} (owed help).`}`, parameters, exposure: allTools || core.has(name) ? 'direct' : 'deferred', executionMode: 'sequential',
       async execute(_id, p, signal, _update, ctx) {
         try {
-          agent.ctx = ctx;
+          useContext(ctx);
+          const session = agent.session;
           const dir = await target(ctx, (p as { cwd?: string }).cwd);
           try {
-            // G2.3 (F5): refused everywhere, reads included; FW1 still follows the target after refusal.
+            // G2.3 (F5): refused everywhere, reads included; ownership still governs attachment after refusal.
             if ((p as { as?: unknown }).as === 'parent:drive') throw new OwedError(ops.DRIVER_CLAIM);
             return await run(p, ctx, dir, signal);
-          } finally { await attachDriver(dir); await attachIdle(dir); }
+          } finally { if (agent.session === session) await attachDriver(dir); }
         }
         catch (e) {
           if (!(e instanceof OwedError)) throw e;
@@ -336,6 +354,7 @@ export default function owed(pi: ExtensionAPI): void {
     const read = await ops.readPlan({ cwd: dir, path: p.plan }), v = await ops.initPreview({ cwd: dir, plan: read.plan });
     const a = await actor(ctx, dir, who, `Initialize the owed ledger\nTrunk: ${oneLine(v.trunk)} at ${v.commit.slice(0, 12)}\nPlan: ${oneLine(read.path)} (sha256 ${v.planSha.slice(0, 12)})\nNodes: ${v.nodes}`, { Invariants: { items: v.invariants }, Selftest:v.warnings?.join('\n') }, signal);
     const r = await ops.init({ ...a, channel: a.channel!, plan: read.plan, path:read.path, signal, lease:p.lease, commit: v.commit, measure: false });
+    if (sessionIdentity(ctx) === agent.session && agent.session) await idleWatch.attach(dir).catch(() => undefined);
     const n = r.genesis.missing.length;
     if (n) {
       const ac = new AbortController(); genesisRuns.add(ac);
@@ -398,23 +417,17 @@ export default function owed(pi: ExtensionAPI): void {
     const a = await actor(ctx, dir, who, `Reveal decoys from ${oneLine(p.file!)}: ${decoys.map(d => oneLine(d.node)).join(', ')}\nThe revealed list must match an earlier unrevealed commitment; outcomes become part of the escape metrics.`, {}, signal);
     const r = await ops.decoyReveal({ ...a, channel: a.channel!, payload }); return result(r, renderEntry(r));
   });
-  tool('start', 'Preflight a repository and plan, initialize as delegated owner when needed, record changed plans under existing permissions, and start or reuse the background driver. No blocking dialog or implicit downgrade approval. Omit plan to reread the latest recorded plan file. restart stops a running driver gracefully, waits for its exit, then starts it again; a stop timeout refuses.', Type.Object({ plan:Type.Optional(Type.String({minLength:1})), max:Type.Optional(Type.Integer({minimum:1})), stay:Type.Optional(Type.Boolean()), restart:Type.Optional(Type.Boolean()), cwd }), async (p, _ctx, dir, signal) => {
-    const r = await ops.start({ ...p, cwd:dir, signal });
-    // PD1: both reused and fresh drivers replay current wakes from the bounded log tail.
-    if (!r.driver.exited) await attachDriver(dir);
-    return result(r, ops.startText(r));
+  tool('start', 'Preflight a repository and plan, initialize as delegated owner when needed, record changed plans under existing permissions, and start or reuse the background driver. No blocking dialog or implicit downgrade approval. Omit plan to reread the latest recorded plan file. restart stops a running driver gracefully, waits for its exit, then starts it again; a stop timeout refuses.', Type.Object({ plan:Type.Optional(Type.String({minLength:1})), max:Type.Optional(Type.Integer({minimum:1})), stay:Type.Optional(Type.Boolean()), restart:Type.Optional(Type.Boolean()), cwd }), async (p, ctx, dir, signal) => {
+    const r = await ops.start({ ...p, cwd:dir, signal, sessionId: sessionIdentity(ctx) ?? '' });    return result(r, ops.startText(r));
   });
-  tool('drive', 'The owed driver as parent:drive: dispatch ready nodes, launch writers and reviewers through pi-durable-subagents (>= 1.0.27), send follow-ups, attest under `hold machine --shared --no-wait`, merge, rebase, halt for decisions. It never answers questions, waives, changes the plan or forces restarts. action once (default): one pass (`owed drive --once`). To run the DAG to completion use action start: a detached background driver (`owed drive --detach`; like a loop in a terminal or a `systemd-run --user` unit, never a long loop inside a tool or dsa call) that survives pi exiting; this session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or the driver exits, so do not poll status. With stay: true the started driver does not exit when idle: it wakes this session once (idle-wait) and waits for ledger changes (e.g. a plan update), then continues. action status reports the background driver; action stop stops it after its current action and its in-flight attests and merges (now: at once). Refused while another driver runs for the repository.', Type.Object({ action: Type.Optional(Type.Union([Type.Literal('once'), Type.Literal('start'), Type.Literal('status'), Type.Literal('stop')], { description: 'once (default): one pass; start: background driver with wake-ups; status; stop.' })), max: Type.Optional(Type.Integer({ minimum: 1, description: 'Concurrent open attempts (overrides drive.max); action once or start.' })), now: Type.Optional(Type.Boolean({ description: 'action stop: stop at once (second SIGTERM after 1 s) instead of after the current action.' })), stay: Type.Optional(Type.Boolean({ description: 'action start: when idle, keep running and wait for ledger changes instead of exiting (this session is woken once per idle period); use it when the plan will grow. Stop it with action stop.' })), cwd }), async (p, _ctx, dir, signal) => {
+  tool('drive', 'The owed driver as parent:drive: dispatch ready nodes, launch writers and reviewers through pi-durable-subagents (>= 1.0.27), send follow-ups, attest under `hold machine --shared --no-wait`, merge, rebase, halt for decisions. It never answers questions, waives, changes the plan or forces restarts. action once (default): one pass (`owed drive --once`). To run the DAG to completion use action start: a detached background driver (`owed drive --detach`; like a loop in a terminal or a `systemd-run --user` unit, never a long loop inside a tool or dsa call) that survives pi exiting; only the owning top-level session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or the driver exits, so do not poll status. With stay: true the started driver does not exit when idle: it wakes this session once (idle-wait) and waits for ledger changes (e.g. a plan update), then continues. action status reports the background driver; action stop stops it after its current action and its in-flight attests and merges (now: at once). Refused while another driver runs for the repository.', Type.Object({ action: Type.Optional(Type.Union([Type.Literal('once'), Type.Literal('start'), Type.Literal('status'), Type.Literal('stop')], { description: 'once (default): one pass; start: background driver with wake-ups; status; stop.' })), max: Type.Optional(Type.Integer({ minimum: 1, description: 'Concurrent open attempts (overrides drive.max); action once or start.' })), now: Type.Optional(Type.Boolean({ description: 'action stop: stop at once (second SIGTERM after 1 s) instead of after the current action.' })), stay: Type.Optional(Type.Boolean({ description: 'action start: when idle, keep running and wait for ledger changes instead of exiting (this session is woken once per idle period); use it when the plan will grow. Stop it with action stop.' })), cwd }), async (p, ctx, dir, signal) => {
     const action = p.action ?? 'once';
     if (p.now && action !== 'stop') throw new OwedError('now is only valid with action stop', 'usage');
     if (p.stay && action !== 'start') throw new OwedError('stay is only valid with action start', 'usage');
     if (p.max !== undefined && (action === 'status' || action === 'stop')) throw new OwedError('max is only valid with action once or start', 'usage');
     if (action === 'start') {
-      const r = await driveStart({ cwd: dir, max: p.max, ...(p.stay ? { stay: true } : {}) });
-      // PD1: attach replays the bounded current log tail before following live lines.
-      // FW1: call sessions never attach, including explicit starts.
-      if (!r.exited) await attachDriver(dir);
-      return result(r, `${renderDriveStart(r)}\nThis session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or it exits; do not poll status.`);
+      const r = await driveStart({ cwd: dir, max: p.max, sessionId: sessionIdentity(ctx) ?? '', ...(p.stay ? { stay: true } : {}) });
+      return result(r, `${renderDriveStart(r)}\nOnly the owning top-level session is woken when the driver halts, needs the owner, a call asks a question, it is stalled, dsa events fail, or it exits; do not poll status. Use owed watch for explicit CLI observation.`);
     }
     if (action === 'status') { const r = await driveStatus({ cwd: dir }); return result(r, renderDriveStatus(r)); }
     if (action === 'stop') { const r = await driveStop({ cwd: dir, now: !!p.now }); return result(r, renderDriveStop(r)); }
