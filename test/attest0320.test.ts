@@ -1,14 +1,13 @@
 // MV1-MV5: isolated command-call dsa, never the installed service.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as ops from '../src/ops.ts';
 import { Dsa } from '../src/dsa.ts';
 import { Driver, reportText } from '../src/drive-run.ts';
-import { driveStatus, inFlightText, measuringOf } from '../src/drive-bg.ts';
+import { inFlightText, measuringOf } from '../src/drive-bg.ts';
 import { Ledger } from '../src/ledger.ts';
 import { writerLaunch } from '../src/drive.ts';
 import { projectId } from '../src/reducer.ts';
@@ -36,7 +35,7 @@ if (args[0] === '__runner') {
   for (const sig of ['SIGTERM','SIGINT']) process.on(sig,()=>p.kill(sig));
   p.on('close',(code,signal)=>{
     const control=read('control');
-    const status=record.stopped?'stopped':control.seal??(code===0?'ok':'failed');
+    const status=read(record.rid+'.json').stopped?'stopped':control.seal??(code===0?'ok':'failed');
     writeFileSync(path(record.rid+'.json'),JSON.stringify({...read(record.rid+'.json'),state:'sealed',calls:[{key:'main',gen:1,phase:'sealed',status,output:readFileSync(path(record.rid+'.out'),'utf8'),data:control.noData?{}:{exitCode:code,signal}}]}));
   });
 } else if (args[0] === 'run') {
