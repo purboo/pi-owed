@@ -100,7 +100,7 @@ function harness(cwd: string) {
     on(event: string, h: (event: unknown, ctx: unknown) => unknown) { handlers.set(event, h); return () => undefined; },
     sendMessage(message: { customType: string; display: boolean; content: string }, options: unknown) { messages.push({ message, options }); },
   } as unknown as ExtensionAPI);
-  const ctx = { cwd, hasUI: false, ui: { notify(text: string) { notices.push(text); }, async confirm() { return false; } } };
+  const ctx = { cwd, hasUI: false, sessionManager: { getSessionId: () => 'bg-session' }, ui: { notify(text: string) { notices.push(text); }, async confirm() { return false; } } };
   return {
     tools, commands, handlers, messages, notices, ctx,
     async call(name: string, args: Json = {}, signal?: AbortSignal) {
@@ -126,7 +126,7 @@ async function withEnv<T>(extra: Record<string, string>, fn: () => Promise<T>): 
 const topLevelStart = (h: ReturnType<typeof harness>) => withEnv({ DSA_EXEC: '', DSA_CALL: '' }, () => h.emit('session_start', { type: 'session_start', reason: 'startup' }));
 const liveLock = (path: string, token = 'test') => {
   mkdirSync(join(path, '..'), { recursive: true });
-  writeFileSync(path, JSON.stringify({ pid: process.pid, start: procStart(process.pid), host: hostname(), at: '2026-10-09T00:00:00.000Z', token }));
+  writeFileSync(path, JSON.stringify({ pid: process.pid, start: procStart(process.pid), host: hostname(), at: '2026-10-09T00:00:00.000Z', token, session: 'bg-session' }));
 };
 
 test('D17.1–4: --detach starts a driver holding the lock and logging JSON lines; a second --detach refuses; --status; --stop → exit record stopped', { timeout: 120_000 }, async () => {
@@ -382,7 +382,7 @@ test('D17.6/7: the tool starts the driver; it wakes once for the halt and once a
   } finally { writeFileSync(gate, ''); await h.emit('session_shutdown', { type: 'session_shutdown', reason: 'quit' }); await f.done(); }
 });
 
-test('D17.7/8: session_start replays current old wakes; session_shutdown stops the follower', { timeout: 60_000 }, async () => {
+test('D17.7/8: owner session_start replays current old wakes; session_shutdown stops the follower', { timeout: 60_000 }, async () => {
   const f = await rig(planOf(node('s')));
   const h = harness(f.cwd), witness = harness(f.cwd), late = harness(f.cwd);
   const line = (o: Json) => appendFileSync(f.log, `${JSON.stringify(o)}\n`);
@@ -570,7 +570,7 @@ test('D17a (OWED_DIR): a relative OWED_DIR reaches the detached driver as an abs
   } finally { await f.done(); }
 });
 
-test('D17a.1: a session inside a dsa call does not auto-attach; a top-level session does', { timeout: 60_000 }, async () => {
+test('D17a.1: a session inside a dsa call does not auto-attach; the owning top-level session does', { timeout: 60_000 }, async () => {
   const f = await rig(planOf(node('da')));
   const sub = harness(f.cwd), top = harness(f.cwd);
   try {

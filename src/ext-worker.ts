@@ -3,6 +3,7 @@ import { Worker, SHARE_ENV, isMainThread, parentPort, workerData } from 'node:wo
 import { readFileSync, statSync } from 'node:fs';
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { OwedError } from './errors.ts';
+import { sessionIdentity } from './registry.ts';
 import type { OwedErrorCode } from './errors.ts';
 
 const manifest = new URL('../package.json', import.meta.url);
@@ -32,7 +33,7 @@ export function versionNotice<T extends { content: { type: string; text?: string
 type Context = { cwd: string; hasUI: boolean; idle: boolean; sessionId?: string };
 type Request = { id: number; method: string; args: unknown[] };
 type Reply = { id: number; result?: unknown; error?: { code: string; message: string } };
-type Callback = { callback: number; call: number; method: 'confirm' | 'dismiss' | 'notify' | 'message'; args: unknown[]; session: number };
+type Callback = { callback: number; call: number; method: 'confirm' | 'dismiss' | 'notify' | 'message'; args: unknown[]; session: number; identity?: string };
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; ctx?: ExtensionContext; cleanup: () => void };
 
 /** One eagerly started worker shared by all tools (and extension registrations) in this pi process. */
@@ -41,7 +42,7 @@ export class ToolWorker {
   private next = 0;
   private pending = new Map<number, Pending>();
   private dialogs = new Map<number, AbortController>();
-  private sessions = new Map<number, { pi: ExtensionAPI; canDeliver: () => boolean }>();
+  private sessions = new Map<number, { pi: ExtensionAPI; canDeliver: (identity?: string) => boolean }>();
   private ready?: Promise<unknown>;
   constructor() { this.start(); }
   private start(): void {
@@ -70,7 +71,7 @@ export class ToolWorker {
     w.on('exit', code => failed(`exited (${code})`));
     w.unref();
   }
-  register(pi: ExtensionAPI, canDeliver: () => boolean = () => true): number { const id = ++this.next; this.sessions.set(id, { pi, canDeliver }); return id; }
+  register(pi: ExtensionAPI, canDeliver: (identity?: string) => boolean = () => true): number { const id = ++this.next; this.sessions.set(id, { pi, canDeliver }); return id; }
   unregister(id: number): void { this.sessions.delete(id); }
   private async callback(w: Worker, m: Callback): Promise<void> {
     const ctx = this.pending.get(m.call)?.ctx;
@@ -78,7 +79,7 @@ export class ToolWorker {
     if (m.method === 'message') {
       const session = this.sessions.get(m.session);
       try {
-        if (!session || (['owed-drive', 'owed-idle'].includes((m.args[0] as { customType: string }).customType) && !session.canDeliver())) throw new Error('session busy or stopped');
+        if (!session || (['owed-drive', 'owed-idle'].includes((m.args[0] as { customType: string }).customType) && !session.canDeliver(m.identity))) throw new Error('session busy or stopped');
         session.pi.sendMessage(...m.args as Parameters<ExtensionAPI['sendMessage']>);
         w.postMessage({ id: m.callback, method: 'answer', args: [true] });
       } catch { w.postMessage({ id: m.callback, method: 'answer', args: [false] }); }
@@ -135,7 +136,7 @@ export function remoteAPI(pi: ExtensionAPI): ExtensionAPI {
   const rpc = toolWorker();
   let context: ExtensionContext | undefined, running = false, polling = false, stopped = false;
   const idle = (): boolean => { try { return !stopped && !running && (typeof context?.isIdle !== 'function' || context.isIdle()); } catch { return !stopped && !running; } };
-  const session = rpc.register(pi, idle);
+  const session = rpc.register(pi, identity => idle() && !!identity && !!context && sessionIdentity({ sessionId: contextSession(context) }) === identity);
   const notices = new Set<string>();
   const registered = new Map<string, ToolDefinition>();
   /**
@@ -222,7 +223,7 @@ if (!isMainThread && workerData?.owed) void (async () => {
   if (loadedVersion !== workerData.version) throw new OwedError(`owed ${loadedVersion} is installed but this pi session loaded ${workerData.version}: restart pi to use it.`);
   const { default: owed } = await import('./extension.ts');
   if (installedVersion() !== workerData.version) throw new OwedError(`owed ${installedVersion()} is installed but this pi session loaded ${workerData.version}: restart pi to use it.`);
-  const sessions = new Map<number, { tools: Map<string, ToolDefinition>; commands: Map<string, any>; handlers: Map<string, any> }>();
+  const sessions = new Map<number, { tools: Map<string, ToolDefinition>; commands: Map<string, any>; handlers: Map<string, any>; identity?: string }>();
   const calls = new Map<number, AbortController>(), answers = new Map<number, (answer: boolean) => void>();
   let callback = 0;
   function sessionOf(id: number) {
@@ -232,7 +233,7 @@ if (!isMainThread && workerData?.owed) void (async () => {
       sendMessage: (...args: unknown[]) => new Promise<void>((resolve, reject) => {
         const key = ++callback;
         answers.set(key, ok => ok ? resolve() : reject(new Error('pi did not accept the wake; retry after revalidation')));
-        port.postMessage({ callback: key, call: 0, session: id, method: 'message', args });
+        port.postMessage({ callback: key, call: 0, session: id, identity: s.identity, method: 'message', args });
       }),
     } as unknown as ExtensionAPI);
     return s;
@@ -244,6 +245,7 @@ if (!isMainThread && workerData?.owed) void (async () => {
     void (async () => {
       const [sid, name] = m.args as [number, string], s = sessionOf(sid);
       const value = m.args.at(-1) as Context;
+      s.identity = sessionIdentity(value);
       const ctx = { ...value, isIdle: () => value.idle, ui: {
         notify: (...args: unknown[]) => port.postMessage({ callback: ++callback, call: m.id, session: sid, method: 'notify', args }),
         confirm: (title: string, text: string, options: { timeout?: number; signal?: AbortSignal } = {}) => new Promise<boolean>(resolve => {

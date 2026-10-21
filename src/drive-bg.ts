@@ -22,6 +22,7 @@ import type { State } from './types.ts';
 import type { ExitReason, LockOwner } from './drive-run.ts';
 import { oneLine, resumeCommands, writerStopNeed } from './views.ts';
 import { startingSession } from './dsa.ts';
+import { ownsDriver } from './registry.ts';
 
 /** The exit record a `--json` loop driver writes last (D17.2). */
 export interface ExitRecord { event: 'exit'; code: number; reason: ExitReason; at: string; error?: string }
@@ -121,7 +122,7 @@ export const FROM_DSA_NOTE = 'note: started from inside a dsa call; if that call
  * first with no exit record or with an error record refuses with the log tail; one that has not taken the lock after
  * `waitMs` (30 s) is sent SIGTERM (pid and start time checked) and the start refuses with the log tail.
  */
-export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number; reuse?: boolean; restart?: boolean }): Promise<DriveStart> {
+export async function driveStart(o: { cwd: string; max?: number; stay?: boolean; owed?: string[]; waitMs?: number; reuse?: boolean; restart?: boolean; sessionId?: string }): Promise<DriveStart> {
   const ledger = await Ledger.open(o.cwd), dir = ledger.dir, repo = await git.mainRoot(o.cwd);
   if (!(await ledger.read()).length) throw new OwedError('Not initialized: run owed init <plan.yaml> first');
   return ledger.withLock(async () => {
@@ -144,7 +145,7 @@ export async function driveStart(o: { cwd: string; max?: number; stay?: boolean;
     const fromDsa = !!process.env.DSA_EXEC;
     // E1.1: the driver's runs belong to the starter's pi session; none (outside pi, or inside a dsa call) → none, also
     // when an inherited DSA_SESSION would otherwise reach the driver once DSA_EXEC/DSA_CALL are removed.
-    const session = startingSession(process.env);
+    const session = o.sessionId === undefined ? startingSession(process.env) : startingSession({ ...process.env, DSA_SESSION: o.sessionId });
     if (session !== undefined) env.DSA_SESSION = session; else delete env.DSA_SESSION;
     if (process.env.DSA_EXEC || process.env.DSA_CALL) delete env.PI_SESSION_ID;
     const fd = openSync(log, 'a');
@@ -488,6 +489,8 @@ export interface FollowerOptions {
   deliver: (content: string) => unknown;
   intervalMs?: number;
   onStop?: () => void;
+  /** SN: automatic followers pin ownership; explicit CLI followers omit this check. */
+  owns?: (owner: LockOwner) => boolean;
   /**
    * pi (H1.1a): the session's agent is running. While true the follower keeps reading and holds the batch; it is
    * delivered at the next tick while idle, or on `flush` (agent_settled). Absent (CLI, plain followers): never busy.
@@ -588,6 +591,8 @@ export class Follower {
   /** Identity of the file the offset belongs to. */
   private file?: { dev: number; ino: number };
   private timer?: NodeJS.Timeout;
+  /** Automatic followers retain the owned inode through a foreign driver's rotation. */
+  private fd?: number;
   /** Lines read but not delivered yet: merges and repeats riding along, and wake lines of a failed or held delivery. */
   private pending: PendingLine[] = [];
   private inProgress = 0;
@@ -600,6 +605,7 @@ export class Follower {
   stopped = false;
   constructor(o: FollowerOptions) {
     this.o = o;
+    if (o.owns) { try { this.fd = openSync(o.log, 'r'); } catch { /* log not published yet */ } }
     let size = 0;
     try { const st = statSync(o.log); size = st.size; this.file = { dev: st.dev, ino: st.ino }; } catch { size = 0; }
     this.offset = o.fromIno !== undefined && o.fromIno !== this.file?.ino ? 0 : o.from ?? size;
@@ -608,6 +614,9 @@ export class Follower {
     }
   }
   get pid(): number { return this.o.pid; }
+  matches(owner: { pid: number; start?: string; at?: string }): boolean {
+    return this.o.pid === owner.pid && this.o.start === owner.start && this.o.since === owner.at;
+  }
   /** FW4: byte position and identity of the log last read, never a fresh stat of a possibly rotated path. */
   get next(): string {
     const pending = this.pending.find(p => p.cursor?.ino === this.file?.ino)?.cursor;
@@ -615,6 +624,7 @@ export class Follower {
   }
   /** A new driver of the same log keeps held lines and ride-alongs from its predecessor. */
   reconnect(o: { pid: number; start?: string; since?: string }): this {
+    if (this.fd !== undefined) { closeSync(this.fd); this.fd = undefined; }
     Object.assign(this.o, o); this.ended = false; this.last.clear(); return this;
   }
   /** The follower runs with the pi hooks (H1.1): the timer calls `step`. */
@@ -628,12 +638,13 @@ export class Follower {
   }
   stop(): void {
     if (this.timer) { clearInterval(this.timer); this.timer = undefined; }
+    if (this.fd !== undefined) { closeSync(this.fd); this.fd = undefined; }
     if (!this.stopped) { this.stopped = true; this.o.onStop?.(); }
   }
   /** Complete lines appended since the last read; a rotated log (new dev/ino, or shorter) is read from its start. */
   private read(): { line: string; cursor: { offset: number; ino: number } }[] {
     let fd: number;
-    try { fd = openSync(this.o.log, 'r'); } catch { return []; }
+    try { fd = this.fd ?? openSync(this.o.log, 'r'); if (this.o.owns) this.fd = fd; } catch { return []; }
     try {
       const st = fstatSync(fd);
       if ((this.file && (this.file.dev !== st.dev || this.file.ino !== st.ino)) || st.size < this.offset) { this.offset = 0; this.replayEnd = undefined; this.skipPartial = false; }
@@ -652,14 +663,38 @@ export class Follower {
       }
       if (this.skipPartial) { lines.shift(); this.skipPartial = false; }
       return lines.filter(l => l.line.trim());
-    } finally { closeSync(fd); }
+    } finally { if (this.fd !== fd) closeSync(fd); }
+  }
+  /** Reconnect only to another owned driver; foreign replacements may finish the pinned old log, never the new one. */
+  private boundary(): 'current' | 'replaced' | 'blocked' {
+    if (!this.o.owns) return 'current';
+    let held: LockState;
+    try { held = readLock(dirname(dirname(this.o.log))); } catch { return 'blocked'; }
+    if (held.state === 'none') return 'current';
+    if (held.state === 'stale') return held.owner && !this.matches(held.owner) ? 'replaced' : 'current';
+    if (this.matches(held.owner)) return this.o.owns(held.owner) ? 'current' : 'blocked';
+    if (held.state === 'live' && this.o.owns(held.owner)) { this.reconnect({ pid: held.owner.pid, start: held.owner.start, since: held.owner.at }); return 'current'; }
+    return 'replaced';
   }
   /** Reads the lines appended since the last read into the pending batch (E3.1 repeats, terminal and pid-gone notice). */
   private collect(): void {
     if (this.ended) return;
+    const boundary = this.boundary();
+    if (boundary === 'blocked') { this.stop(); return; }
+    let rotated = false;
+    if (boundary === 'current' && this.fd !== undefined) {
+      try {
+        const old = fstatSync(this.fd), current = statSync(this.o.log);
+        const held = readLock(dirname(dirname(this.o.log)));
+        if (held.state === 'live' && this.matches(held.owner) && this.o.owns!(held.owner) && (old.dev !== current.dev || old.ino !== current.ino)) { closeSync(this.fd); this.fd = undefined; }
+      } catch { /* retained inode may still contain owned final lines */ }
+    }
+    if (boundary === 'replaced' && this.fd !== undefined) {
+      try { const old = fstatSync(this.fd), current = statSync(this.o.log); rotated = old.dev !== current.dev || old.ino !== current.ino; } catch { rotated = true; }
+    }
     // Liveness first: a driver found gone has written everything it ever will before the read below.
-    const alive = pidAlive(this.o.pid, this.o.start), seen = new Set<string>();
-    for (const { line, cursor } of this.read()) {
+    const alive = boundary !== 'replaced' && pidAlive(this.o.pid, this.o.start), seen = new Set<string>();
+    for (const { line, cursor } of (boundary === 'replaced' && !rotated ? [] : this.read())) {
       const c = classifyLine(line), json = parseObject(line);
       if (typeof json?.inProgress === 'number') this.inProgress = json.inProgress;
       if (typeof (json?.counts as { open?: number } | undefined)?.open === 'number') this.inProgress = (json!.counts as { open: number }).open;
@@ -693,9 +728,10 @@ export class Follower {
     try { held = readLock(dirname(dirname(this.o.log))); } catch { return; }
     if (held.state !== 'live' && held.state !== 'foreign') return;
     const owner = held.owner;
+    if (this.o.owns && !this.o.owns(owner)) return;
     for (const p of this.pending) {
       const old = p.terminal?.driver;
-      if (!old || (old.pid === owner.pid && (old.start === undefined || owner.start === undefined || old.start === owner.start))) continue;
+      if (!old || (old.pid === owner.pid && (old.start === undefined || owner.start === undefined || old.start === owner.start) && (old.at === undefined || old.at === owner.at))) continue;
       if (old.at && Date.parse(owner.at) <= Date.parse(old.at)) continue;
       p.wake = false; p.earlier = true;
       p.text = `earlier driver (pid ${old.pid}, started ${old.at ? clockTime(old.at) : old.start ?? 'unknown'}) ${p.terminal!.event}; driver pid ${owner.pid} (started ${clockTime(owner.at)}) is running`;
@@ -785,7 +821,9 @@ export class Follower {
     for (const p of dropped) if (p.key !== undefined && p.rec && this.last.get(p.key) === p.rec) { p.rec.resolved = true; resolvedKeys.add(p.key); }
     const left = batch.filter(p => !dropped.has(p) && !(p.repeatOf !== undefined && resolvedKeys.has(p.repeatOf)));
     this.terminals();
-    if (!left.some(p => p.wake)) { this.pending = [...left, ...rest]; return undefined; }
+    if (this.stopped || !left.some(p => p.wake)) { this.pending = [...left, ...rest]; return undefined; }
+    const boundary = this.boundary();
+    if (boundary === 'blocked' || this.stopped || this.o.busy?.()) return undefined;
     const message = this.message(left, dropped.size);
     try { await this.o.deliver(message); } catch { return undefined; }   // kept whole: revalidated again next tick
     this.pending = rest;
@@ -795,7 +833,7 @@ export class Follower {
 }
 
 /** pi hooks of a DriveWatch (H1.1): see FollowerOptions.busy / revalidate (built per repository). */
-export interface WatchHooks { busy: () => boolean; revalidate: (repo: string) => Revalidate }
+export interface WatchHooks { busy: () => boolean; revalidate: (repo: string) => Revalidate; session?: () => string | undefined }
 /**
  * The followers of one pi extension instance: one per driver log (= per repository) (D17.7). `follow` replaces the
  * follower of that log; `attach` replays the current driver's bounded log tail; `flush` (agent_settled) delivers what the followers hold; `stopAll` (session_shutdown) clears every timer, the
@@ -803,6 +841,7 @@ export interface WatchHooks { busy: () => boolean; revalidate: (repo: string) =>
  */
 export class DriveWatch {
   private readonly followers = new Map<string, Follower>();
+  private stopped = false;
   private readonly deliver: (content: string) => void;
   private readonly intervalMs?: number;
   private readonly hooks?: WatchHooks;
@@ -810,20 +849,23 @@ export class DriveWatch {
   get size(): number { return this.followers.size; }
   follow(o: { log: string; repo: string; pid: number; start?: string; since?: string; from?: number; fromIno?: number; replay?: boolean }): Follower {
     const previous = this.followers.get(o.log);
-    if (previous && !previous.stopped) return previous.pid === o.pid ? previous : previous.reconnect(o);
-    const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo) } : {};
+    if (previous && !previous.stopped) return previous.matches({ ...o, at: o.since }) ? previous : previous.reconnect(o);
+    const session = this.hooks?.session?.();
+    const hooks = this.hooks ? { busy: this.hooks.busy, revalidate: this.hooks.revalidate(o.repo), ...(this.hooks.session ? { owns: (owner: LockOwner) => this.hooks!.session!() === session && ownsDriver(o.repo, owner, session) } : {}) } : {};
     const f: Follower = new Follower({ ...o, deliver: this.deliver, ...hooks, ...(this.intervalMs !== undefined ? { intervalMs: this.intervalMs } : {}), onStop: () => { if (this.followers.get(o.log) === f) this.followers.delete(o.log); } });
     this.followers.set(o.log, f);
     return this.intervalMs === 0 ? f : f.start();
   }
   async attach(cwd: string, from?: number, fromIno?: number, replay = true): Promise<Follower | undefined> {
+    if (this.stopped) return undefined;
     let dir: string;
     try { dir = await driveDir(cwd); } catch { return undefined; }
-    const lock = readLock(dir);
-    if (lock.state !== 'live') return undefined;
-    const log = logPath(dir), have = this.followers.get(log);
-    if (have && have.pid === lock.owner.pid) return have;
+    const session = this.hooks?.session?.();
     const repo = await git.mainRoot(cwd).catch(() => cwd);
+    const lock = readLock(dir);
+    if (this.stopped || lock.state !== 'live' || (this.hooks?.session && (this.hooks.session() !== session || !ownsDriver(repo, lock.owner, session)))) return undefined;
+    const log = logPath(dir), have = this.followers.get(log);
+    if (have && have.matches(lock.owner)) return have;
     const follower = this.follow({ log, repo, replay, pid: lock.owner.pid, since: lock.owner.at, ...(lock.owner.start ? { start: lock.owner.start } : {}), ...(from !== undefined ? { from } : {}), ...(fromIno !== undefined ? { fromIno } : {}) });
     if (replay) await follower.step();
     return follower;
@@ -833,7 +875,7 @@ export class DriveWatch {
     const out = await Promise.all([...this.followers.values()].map(f => f.step().catch(() => undefined)));
     return out.filter((m): m is string => m !== undefined);
   }
-  stopAll(): void { for (const f of [...this.followers.values()]) f.stop(); this.followers.clear(); }
+  stopAll(): void { this.stopped = true; for (const f of [...this.followers.values()]) f.stop(); this.followers.clear(); }
 }
 
 // ---------- ready hint (H1.3) ----------
