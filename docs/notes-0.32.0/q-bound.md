@@ -6,7 +6,9 @@
   `/work/pi-owed/.owed/wt/q-bound-1`.
 - Baseline: `e93b679b6d3808b9202e8b2b6162f76ef4c8156d` (0.31.2); clean at assignment.
 - Product change: `src/ext-worker.ts` only. `docs/SPEC.md` documents compact
-  details and the parent-approved read-only pointer interpretation of TB1.
+  details, read-only pointers and the parent's review #3914 dispatch exemption.
+- Repair baseline: candidate `4609d4960c2c82ce46cb7e28614848fcbbcee255`, tree
+  `d25b638b9bb3f2bf43e24f010419e0ca0613c782`; same clean slot, new commits only.
 - No CLI/ops/reducer/ledger schema, lock order, append/rollback, status computation,
   README, skill, changelog or package-version changes. No new result persistence.
 - Writer commits and stops. No submit, attest, rebase, merge, tag, push or publish.
@@ -15,9 +17,16 @@
 ## Implementation
 
 - Every registered tool executes through the common native worker result seam.
-  Text is clipped to 48 * 1024 UTF-8 bytes; compact details serialize to at most
-  8 * 1024 bytes before `postMessage`, so structured clone never sees the original
-  reducer dictionary, parsed plan, diff or entry bodies. Raw RPC is tested too.
+  Optional text is clipped to 48 * 1024 UTF-8 bytes; compact details serialize to
+  at most 8 * 1024 bytes before `postMessage`, so structured clone never sees the
+  original reducer dictionary, parsed plan, diff or entry bodies. Raw RPC is tested.
+- Review #3914 F1: successful dispatch packet (including submit instruction) and
+  the `subagents:` args line are required non-replayable input, exempt from the
+  content cut under the parent's TB1 clarification. They remain first and byte-exact;
+  only the following brief is bounded to 48 KiB, with an `owed status` footer.
+  The seam uses the original packet and reconstructed exact argv prefix to anchor
+  its boundary, never markers that might occur inside a ruling. No dispatch replay
+  or new storage/command is introduced. Errors/refusals and details stay bounded.
 - Per-tool field projections retain action/entry identity, seqs, verdicts, commit,
   tree, launch identity and counts. Lists show at most five metadata samples and
   omitted counts; oversized projected fields are removed with omission metadata.
@@ -41,13 +50,13 @@
 
 Passing product/test revision (before this documentation-only receipt commit):
 
-- Commit: `96ef6a9d43bd4e1b2a382697fae3778934c7211b`.
-- Tree: `53b2142d568ca272aaa1234d614a6b4b3f70aa49`.
-- bench run: `01M5F4K0K8X79BQ06P6NKW8N1T`, exit 0; clean tree in the log header.
-- Complete log: `/tmp/owed-bench/logs/q-bound-1-194718.log`.
-- Log SHA-256: `593fa8ebbd41f16eecaea268d9fee13642b6db712affcba079bb159c64235604`.
-- Typecheck passed; 150 tests passed, 0 failed/cancelled/skipped/todo.
-  Test duration: 109300.02198 ms; durable command duration: 130068 ms.
+- Commit: `52d07e86023970eb1a6b93c325222c8a085e58dd`.
+- Tree: `dab69f5f2b4bda048d08c648ac17d1886789a810`.
+- bench run: `01M5F62WKS4WR8H0FAXFMK869S`, exit 0; clean tree in the log header.
+- Complete log: `/tmp/owed-bench/logs/q-bound-1-201327.log`.
+- Log SHA-256: `50a654ed06ff5cd76d6dfb271a641d1cb1aa5ff005c0a8c3e19dee85f9ae7a76`.
+- Typecheck passed; 151 tests passed, 0 failed/cancelled/skipped/todo.
+  Test duration: 118883.195124 ms; durable command duration: 142985 ms.
 
 Exact command (all Node/tsc/test execution ran through the bench host, not locally):
 
@@ -55,7 +64,23 @@ Exact command (all Node/tsc/test execution ran through the bench host, not local
 /tmp/owed-bench/run.sh /work/pi-owed/.owed/wt/q-bound-1 480 'npm run typecheck && node --test --test-concurrency=2 --test-reporter=tap test/bound0320.test.ts test/tool-worker.test.ts test/surface.test.ts test/extension.test.ts test/coretools.test.ts test/edit.test.ts test/init-tool.test.ts test/compactreply.test.ts test/amend.test.ts test/checktry.test.ts test/left022.test.ts test/multiedit.test.ts test/answerstate.test.ts test/summary.test.ts'
 ```
 
-Red evidence: tests-only commit `e905036e2ed193b58e36a3576495012904e81300`,
+Review #3914 red: isolated detached checkout of `4609d49`, with only the new
+regression copied in (no stash/reset of the owned worktree). Tests-only commit
+`2038a0974ee1004f4fdb2be8079c6d9b804d05b8`, tree
+`388bf001c9e75ebd2e1e3596e14c9ee6f6b05028`; source identical to candidate.
+Command: `/tmp/owed-bench/run.sh /tmp/owed-0320/q-bound-dispatch-red-3914 180 'node --test --test-reporter=tap --test-name-pattern="TB1 dispatch exemption" test/bound0320.test.ts'`.
+Run `01M5F62TZY9WQ1VTZ5AWP0VB49`, exit 1, 0/1 passed (0 skipped).
+Log `/tmp/owed-bench/logs/q-bound-dispatch-red-3914-201325.log`, SHA-256
+`0622aa28710f21931ebb079f1d2e6148575fdb54ad0ced5024f747b0f5ac9777`.
+Failure: `packet, submit instruction and argv survive byte-exact, first`,
+`ERR_ASSERTION`, strictEqual; the old cut lost the required packet tail/argv.
+The passing regression uses a long brief plus 30 applicable rulings, verifies
+packet >48 KiB and a later ruling beyond the cut, checks the entire ledger blob
+and args prefix verbatim, then separately budgets brief/details. It also tests
+raw worker RPC with a second slot. All 14 focused files listed above ran,
+including the eight modified existing files below.
+
+Original red evidence: tests-only commit `e905036e2ed193b58e36a3576495012904e81300`,
 tree `a4379ca6c0ed41e16154cf55200d82b7197d3582`; src was still the baseline.
 Command: `/tmp/owed-bench/run.sh /work/pi-owed/.owed/wt/q-bound-1 240 'node --test --test-reporter=tap test/bound0320.test.ts'`.
 Run `01M5F3J9FDX68BKBE1SFMZ18NA`, exit 1, 0/2 passed;
@@ -64,6 +89,7 @@ log `/tmp/owed-bench/logs/q-bound-1-192926.log`, SHA-256
 Default status failed at 205598 content / 507870 details bytes; large refusal
 failed at 80052 content bytes. These are behavioral failures, not import errors.
 
+The review repair above supersedes the original candidate evidence below.
 Intermediate failures were not accepted as passing evidence:
 
 - `def6e69`, tree `4912e6ad2f9bae5c9d267fa6b04f9f9752fe2b9d`:
@@ -98,17 +124,22 @@ Fixture: 300 nodes, 2863971-byte plan, Unicode briefs/ruling, long node IDs.
 | plan recorded | 49152 | 2187 |
 | large refusal | 49151 | 542 |
 
-Status default/full wall time was 771.1/658.2 ms. Baseline default status in the
+Dispatch exemption measurements: tool packet 159122 bytes, raw RPC packet
+108122 bytes; each trailing brief 49151 bytes and details 1837 bytes. Required
+input exceeds 48 KiB as allowed; only the optional trailing brief is cut.
+
+Status default/full wall time was 778.9/651.8 ms. Baseline default status in the
 red run was 777.8 ms; these single runs are observations, not a speedup claim.
 The unchanged G2 test measured host max event-loop delay on 2201 entries:
-worker status/why/dispatch/watch 0.4/0.6/0.9/0.3 ms; cold in-process positive
-controls 197.6/223.7/127.5/108.2 ms. Status computation remains in the worker
+worker status/why/dispatch/watch 1.0/0.3/0.9/0.7 ms; cold in-process positive
+controls 211.2/226.9/121.4/116.9 ms. Status computation remains in the worker
 and its cost/semantics are unchanged; this task bounds transfer/storage only.
 
 ## Existing-test changes and why (TB2/TB5)
 
-No tests were skipped, deleted, downgraded or changed outside removed details
-consumers. CLI, rendered content, authority, transaction and rollback assertions
+No tests were skipped, deleted or downgraded. The eight existing files changed
+only at removed-details consumers or to restore independent packet verification
+under review #3914 F2. CLI, rendered content, authority, transaction and rollback assertions
 remain in place. `test/bound0320.test.ts` is new, with real-seam large fixture,
 raw RPC, all registered-tool refusal paths, small text equality, UTF-8/escape
 boundaries, list omission accounting, safe pointers and retained version hints.
@@ -118,17 +149,22 @@ boundaries, list omission accounting, safe pointers and retained version hints.
   retaining exact small text/refusal equality. Dispatch packet/subagent task
   fields are removed; assert compact launch identity and parse the rendered
   args (JSON property order is not a behavior guarantee), retaining the brief.
+  F2 repair compares the complete packet prefix to the independently stored
+  dispatch-entry blob, so altered tool text fails.
   Event-loop, crash/abort, owner-dialog and jiti tests are unchanged.
 - `test/extension.test.ts`, dispatch: remove details packet/task equality;
   assert packet absence and agent/cwd/isolation identity. The following real
   writer commit, submit inference and authority checks are unchanged.
 - `test/surface.test.ts`, SF3 dispatch: packet and task cannot remain in details.
-  Read packet from content, assert compact launch identity, and still prove it
-  prints once and its rendered args use the complete-packet placeholder.
+  Compare the packet with the dispatch-entry blob, assert compact launch identity,
+  and still prove it prints once and its rendered args use the complete-packet
+  placeholder. The blob is independent of tool content (F2).
 - `test/compactreply.test.ts`, CR2 dispatch/plan/amend/edit/defer/resume/abandon:
   obtain original entry bodies/carries from the ledger by retained seq instead
   of removed details, then compare the same act/carry text. Check counted carry
-  metadata and packet absence; launch args are parsed. Brief/suffix/phase/debt,
+  metadata and packet absence; launch args are parsed. F2 compares the complete
+  dispatch packet prefix to the ledger blob instead of extracting tool text and
+  comparing it with itself. Brief/suffix/phase/debt,
   file writes, carries and no-refusal-write assertions remain unchanged.
 - `test/amend.test.ts`, N3/PO1/AC1 authority: ruling body is absent from details;
   assert that absence, find the entry by seq, and assert the same limit text.
@@ -147,12 +183,15 @@ boundaries, list omission accounting, safe pointers and retained version hints.
 
 ## Limits and delivery state
 
-- The final receipt commit adds only this notes file; tested source, specification
+- SPEC §11 now explicitly includes short `command` hints and `key` identifiers,
+  matching META; each remains bounded. README lines 827/1683 and the packaged
+  writer-reviewer reference are release-leaf ownership and were not edited.
+- The final receipt commit changes only this notes file; tested source, specification
   and tests are identical to the passing revision above. Its final HEAD/tree are
   recorded in the writer handoff, not self-referentially inside this file.
 - Shipped-text CJK scan: Python scan of added lines in the baseline-to-current
   diff for `src/ext-worker.ts` and `docs/SPEC.md` (ranges U+3400-U+9FFF,
-  U+3040-U+30FF, U+AC00-U+D7AF) found 0 hits in 262 added lines; exit 0.
+  U+3040-U+30FF, U+AC00-U+D7AF) found 0 hits in 290 added lines; exit 0.
   `git diff --check` passed. Final receipt is English as required.
 - Full project suite and independent grouped review were not run by this writer;
   they remain the parent's integration/full-suite invariant obligations.
