@@ -124,7 +124,12 @@ test('G2 text equals the in-process views; compact details retain action metadat
     const d = await h.call('dispatch', { node: 'n1' }), value = d.details as { worktree: string; subagents: object; packet?: string };
     assert.deepEqual(value.subagents, { agent: 'worker', cwd: value.worktree, isolation: 'none' });
     assert.equal(value.packet, undefined, 'packet is text only');
-    assert.deepEqual(JSON.parse(text(d).split('\n\nsubagents: ')[1]!.split('\n')[0]!), { ...value.subagents, task: '<the complete packet above>' });
+    const ledger = await Ledger.open(r.cwd), entry = (await ledger.read()).findLast(e => e.kind === 'dispatch' && e.node === 'n1');
+    assert.ok(entry?.kind === 'dispatch');
+    const packet = (await ledger.getBlob(entry.packet)).toString('utf8');
+    assert.equal(text(d).slice(0, packet.length), packet, 'packet matches the independently stored dispatch blob');
+    assert.ok(text(d).startsWith(`${packet}\n\nsubagents: `));
+    assert.deepEqual(JSON.parse(text(d).slice(packet.length + '\n\nsubagents: '.length).split('\n')[0]!), { ...value.subagents, task: '<the complete packet above>' });
     assert.ok(text(d).endsWith(views.renderStatusBrief(await ops.status({ cwd: r.cwd }))));
   } finally { await h.emit('session_shutdown'); await r.cleanup(); }
 });

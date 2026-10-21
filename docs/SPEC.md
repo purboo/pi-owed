@@ -5158,7 +5158,8 @@ still refuse. Preflight and actor restrictions are unchanged.
 
 Every registered pi tool, including deferred tools, errors, refusals, `full`
 views, JSON-form diagnostics and dry-run previews, returns at most 48 KiB of
-UTF-8 content text and at most 8 KiB of serialized `details`. Projection and
+UTF-8 content text (except required dispatch input below) and at most 8 KiB
+of serialized `details`. Projection and
 clipping run in the native tool worker **before** structured clone; pi's main
 thread never receives the full reducer dictionary, parsed plan or diff. The
 obsolete status dictionary prototype repair is removed. Unexpected operation
@@ -5168,6 +5169,16 @@ Version notices are added before clipping in the worker, using the host's
 installed/loaded version snapshot and session-local seen-version set (also
 when a same-version global worker is shared by loader wrappers); transport/version-startup refusals are bounded
 on the host because no tool result crossed the boundary.
+
+A successful `owed_dispatch` is the content exception: its complete packet
+(including later rulings and the submit instruction) and its `subagents:` args
+line are required, non-replayable input, not optional output. They appear first
+and remain byte-for-byte unchanged even when the packet exceeds 48 KiB. Only
+the trailing status/brief part is subject to the 48 KiB content bound; if cut,
+its footer points to `owed status`. Packets are bounded by the plan and rulings
+and already stored in the dispatch ledger entry. No read-only command can
+reprint a packet, and dispatch cannot be replayed for its open slot. Dispatch
+refusals/errors and all dispatch `details` still obey the ordinary hard bounds.
 
 Text that fits is byte-for-byte unchanged. Oversized text retains its outcome
 head without splitting a UTF-16 surrogate pair and ends with one line:
@@ -5195,7 +5206,10 @@ metadata samples, `<field>Count` and, when cut, `<field>Omitted`; lists that
 cannot fit the overall budget become empty samples with the full omitted
 count. Other omitted projected fields are named in a short `omittedFields`
 list with `omittedFieldCount`. Samples of entries/observations never include
-bodies, notes, follow-up messages, logs' contents, commands or candidate keys.
+bodies, notes, follow-up messages or logs' contents. Where applicable, samples
+include short `command` next-action hints and `key` candidate/obligation
+identifiers, each subject to the same 512-byte string and overall JSON budgets;
+executable run strings and complete observation/receipt bodies are excluded.
 
 | tool family | acting details |
 |---|---|

@@ -285,9 +285,14 @@ test('SF3 dispatch prints one packet; compact details retain launch identity wit
     const out=await h.call('dispatch',{node:'a'}); assert.notEqual(out.isError,true,out.text);
     const d=out.details as {packet?:string;worktree:string;subagents:Record<string,unknown>};
     assert.equal(d.packet,undefined); assert.equal(d.subagents.task,undefined); assert.equal(d.subagents.cwd,d.worktree); assert.equal(d.subagents.isolation,'none');
-    const [packet,tail]=out.text.split('\n\nsubagents: '), args=JSON.parse(tail!.split('\n')[0]!);
-    assert.equal(args.task,'<the complete packet above>'); assert.equal(out.text.split(packet!).length,2);
-    assert.ok(out.text.length < packet!.length + 1_000,'packet size grows only once');
+    const ledger=await Ledger.open(f.cwd), entry=(await ledger.read()).findLast(e=>e.kind==='dispatch' && e.node==='a');
+    assert.ok(entry?.kind==='dispatch');
+    const packet=(await ledger.getBlob(entry.packet)).toString('utf8');
+    assert.equal(out.text.slice(0,packet.length),packet,'packet matches the independently stored dispatch blob');
+    const tail=out.text.slice(packet.length); assert.ok(tail.startsWith('\n\nsubagents: '));
+    const args=JSON.parse(tail.slice('\n\nsubagents: '.length).split('\n')[0]!);
+    assert.equal(args.task,'<the complete packet above>'); assert.equal(out.text.split(packet).length,2);
+    assert.ok(out.text.length < packet.length + 1_000,'packet size grows only once');
     assert.match((await git(d.worktree,['status','--porcelain'])).stdout,/^$/);
   } finally { await h.shutdown(); await f.done(); }
 });

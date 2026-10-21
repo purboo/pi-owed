@@ -85,7 +85,10 @@ test('CR2 dispatch preserves the packet and subagent arguments and appends a bri
     const d = reply.details as { worktree: string; packet?: string; subagents: object };
     assert.equal(d.packet, undefined);
     assert.deepEqual(d.subagents, { agent: 'worker', cwd: d.worktree, isolation: 'none' });
-    const packet = text(reply).split('\n\nsubagents: ')[0]!;
+    const ledger = await Ledger.open(r.cwd), entry = (await ledger.read()).findLast(e => e.kind === 'dispatch' && e.node === 'a');
+    assert.ok(entry?.kind === 'dispatch');
+    const packet = (await ledger.getBlob(entry.packet)).toString('utf8');
+    assert.equal(text(reply).slice(0, packet.length), packet, 'packet matches the independently stored dispatch blob');
     assert.ok(text(reply).startsWith(`${packet}\n\nsubagents: `));
     assert.deepEqual(JSON.parse(text(reply).split('\n\nsubagents: ')[1]!.split('\n')[0]!), { ...d.subagents, task: '<the complete packet above>' });
     const suffix = text(reply).slice(text(reply).indexOf('\nsubagents:'));

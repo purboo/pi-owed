@@ -128,6 +128,38 @@ test('TB1-TB5 real extension/worker: large status, why, edit, plan and refusal a
   } finally { await r.h.close(); await r.cleanup(); }
 });
 
+test('TB1 dispatch exemption preserves oversized packet, later rulings, args and submit before bounded brief', { timeout: 90_000 }, async t => {
+  const r = await fixture();
+  try {
+    const ledger = await Ledger.open(r.cwd);
+    const rules = Array.from({ length: 30 }, (_, i) => `Ruling ${i}: ${'required input \u{1F43E} '.repeat(160)}END-RULING-${i}`);
+    await ledger.withLock(() => ledger.append(rules.map(value => ({ kind: 'rule' as const, by: 'parent:fixture', nodes: [r.ids[1]!, r.ids[2]!], text: value }))));
+    const check = async (node: string, reply: Result) => {
+      assert.notEqual(reply.isError, true, text(reply));
+      const entry = (await ledger.read()).findLast(e => e.kind === 'dispatch' && e.node === node);
+      assert.ok(entry?.kind === 'dispatch');
+      const packet = (await ledger.getBlob(entry.packet)).toString('utf8');
+      assert.ok(Buffer.byteLength(packet) > CONTENT, 'required packet alone exceeds the ordinary cut');
+      assert.ok(packet.includes(rules.at(-1)!), 'later ruling really occurs after the cut');
+      assert.ok(packet.indexOf(rules.at(-1)!) > CONTENT);
+      const submit = `After committing, run: owed submit ${node}`;
+      assert.ok(packet.includes(submit));
+      const args = `subagents: ${JSON.stringify({ agent: 'worker', cwd: entry.worktree, task: '<the complete packet above>', isolation: 'none' })}`;
+      const required = `${packet}\n\n${args}\n`;
+      assert.equal(text(reply).slice(0, required.length), required, 'packet, submit instruction and argv survive byte-exact, first');
+      assert.ok(Buffer.byteLength(JSON.stringify(reply.details)) <= DETAILS);
+      const brief = text(reply).slice(required.length);
+      cut({ ...reply, content: [{ type: 'text', text: brief }] }, 'owed status');
+      assert.match(brief, /^owed: /);
+      t.diagnostic(`dispatch ${node.slice(0, 2)}: packet=${Buffer.byteLength(packet)}; brief=${Buffer.byteLength(brief)}; details=${Buffer.byteLength(JSON.stringify(reply.details))}`);
+    };
+    await check(r.ids[1]!, await r.h.call('dispatch', { node: r.ids[1] }));
+    // Verify the result before host display processing as well, using a second slot.
+    await check(r.ids[2]!, await toolWorker().call('tool', [9902, 'owed_dispatch', 'raw', { node: r.ids[2] }, { cwd: r.cwd, hasUI: false, idle: true }]) as Result);
+    await toolWorker().call('event', [9902, 'session_shutdown', { cwd: r.cwd, hasUI: false, idle: true }]);
+  } finally { await r.h.close(); await r.cleanup(); }
+});
+
 test('TB1/TB2 hard limits handle UTF-8 boundaries, JSON escapes, many lists and version notices', () => {
   assert.equal(typeof utf8Head, 'function', 'worker result bounding is available');
   for (const value of ['a'.repeat(49152), '\u{1F43E}'.repeat(49152), '\u00E9'.repeat(49152), String.fromCharCode(0).repeat(49152)]) {
