@@ -166,7 +166,11 @@ export class Dsa {
     // Hard-stop must not kill the short CLI invocations that submit/stop/inspect the durable call.
     const exec = (args: string[], input?: string) => this.exec(args, input, 2000, this.opts.cwd, undefined, false);
     if (o.signal?.aborted) return { outcome: 'error', rid, reason: 'command aborted before launch' };
-    const spec = JSON.stringify({ command: argv, name: o.name, cwd: o.cwd, ...(o.env ? { env: o.env } : {}) });
+    // The service's environment is not the driver's: preserve the legacy child's environment explicitly.
+    // DSA_* is reserved by command specs and reconstructed by dsa; test context must not escape into the child.
+    const env = Object.fromEntries(Object.entries({ ...process.env, ...this.opts.env, ...o.env })
+      .filter(([key, value]) => !key.startsWith('DSA_') && key !== 'NODE_TEST_CONTEXT' && value !== undefined));
+    const spec = JSON.stringify({ command: argv, name: o.name, cwd: o.cwd, env });
     let wid: string | undefined;
     const error = (reason: string, output = ''): CommandResult => ({ outcome: 'error', rid, ...(wid ? { wid } : {}), reason: `${reason}${output ? `: ${tail(output)}` : ''}` });
     try {
@@ -295,6 +299,10 @@ export class Dsa {
    */
   private holdFlags(o: HoldOptions): string[] {
     return [...(o.shared ? ['--shared'] : []), ...(o.priority !== undefined && !holdUnsupported.has(`${this.bin}:--priority`) ? ['--priority',String(o.priority)] : []), ...(o.yield && !holdUnsupported.has(`${this.bin}:--yield`) ? ['--yield'] : [])];
+  }
+  /** Optional confirmed unsupported hold flags stay consistent with legacy hold invocations. */
+  heldCommand(resource: string, argv: string[], o: HoldOptions = {}): string[] {
+    return [this.bin, 'hold', resource, ...this.holdFlags(o), ...(o.noWait === false ? [] : ['--no-wait']), '--', ...argv];
   }
   private async holdFallback(args: string[], r: Pick<Spawned,'exit'|'stdout'|'stderr'>, cwd?: string, env?: NodeJS.ProcessEnv): Promise<'retry'|'ran'|undefined> {
     const unknown = (r: Pick<Spawned,'exit'|'stdout'|'stderr'>) => r.exit !== 0 && r.exit !== 75 && !r.stdout.trim() && /^pi-durable-subagents: /m.test(r.stderr)
