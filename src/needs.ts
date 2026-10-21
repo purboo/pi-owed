@@ -315,6 +315,7 @@ export function itemLine(s: State, node: string, obligation: string, rt?: Runtim
 
 // Legacy packet and recovery builders retain their exact text; selection above is unchanged.
 export const writerDecisionCommand = (node: string): string => `owed decide ${node} --text "<ruling>" --writer`;
+export const writerParkCommand = (node: string): string => `owed decide ${node} --expect report --text "<pause ruling>"`;
 /** WS2: parse only owed's own trailer; writer text cannot choose a different next command. */
 export function writerStopNeed(text: string, node: string): { reason: string; command: string } | undefined {
   return parseWriterStop(text, writerDecisionCommand(node));

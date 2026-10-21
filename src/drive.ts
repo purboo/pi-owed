@@ -11,7 +11,7 @@ import { mergeQueue, applicableRules, attestJobs, trunkParked, trunkParkNotices,
 import { priorCandidateBlock, ruleAnswers, setupFailure } from './reducer.ts';
 import { setupSignature, setupHint } from './remeasure-on.ts';
 import { shellQuote } from './exec-wrap.ts';
-import { boundaryClip, dispatchPacket, oneLine, structuredQuestionText, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand } from './views.ts';
+import { boundaryClip, dispatchPacket, oneLine, structuredQuestionText, receipt, newFailures, reviewObligations, reviewPacket, reviewRuns, trunkRedHint, sharedCheckHint, mergeFailureHints, reviewAsk, reviewDecision, WRITER_DECISION, writerReply, writerDecisionCommand, writerParkCommand } from './views.ts';
 import { needs, repoNeeds, thresholdHint, rejectedFixed, rejectedHalt, reviewMissingRemedies } from './needs.ts';
 export { thresholdHint, rejectedFixed, rejectedHalt } from './needs.ts';
 import type { Need, Runtime } from './needs-types.ts';
@@ -689,7 +689,7 @@ function slotAction(s: State, runs: ReadonlyMap<string, RunView>, opts: DriveOpt
     const awaits = w && statusOf(w) !== 'ok' ? (w.awaiting ?? []).map(a => `; awaiting durable ${oneLine(a.request)} (${a.state})`).join('') : '';
     const procs = ended ? `; dsa ended ${ended.length + (w?.endedAtSealMore ?? 0)} processes at seal: ${ended.slice(0, 3).map(p => `${p.pid} ${oneLine(Array.from(p.command).slice(0, 80).join(''))}`).join(', ')}` : '';
     const parking = /finished ruling follow-up .*without submitting a new candidate/.test(reason)
-      ? `; to park without this halt: owed decide ${id} --expect report --text "<pause ruling>"` : '';
+      ? `; to park without this halt: ${writerParkCommand(id)}` : '';
     return halt(`${reason}${parking}; ${writerReply(w?.result)}${awaits}${procs} → ${writerDecisionCommand(id)}`);
   };
   // 0.8 (L1.3): the first writer follow-up after a resume starts with the resume line (`resumeLine`).
