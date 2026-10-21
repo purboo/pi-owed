@@ -53,8 +53,8 @@ and ownership, validated fallback, context/env disagreement on fresh starts,
 DSA exclusion, identity switches, replacement/terminal behavior and idle watch.
 It also checks explicit CLI watch and replacement during async revalidation.
 A test-only clock inside an actual native worker proves the 120-second idle path
-without adding a production test hook. The first behavior assertion is intended
-to fail with `ERR_ASSERTION` on the baseline, not an import or fixture error.
+without adding a production test hook. On the baseline, the first test fails
+with `ERR_ASSERTION`: the stranger receives one wake instead of zero.
 
 ## Evidence
 
@@ -77,12 +77,44 @@ work. An additional source repair keeps the owned inode when a replacement has
 already released its lock, with a new behavior regression. Same-owner reconnect
 and in-flight host identity delivery controls were added.
 
-Focused checks and typecheck run only through `/tmp/owed-bench/run.sh`, under
-`pi-durable-subagents hold machine --shared`. Final focused and red evidence
-will be recorded after the bounded run. The full suite is reserved for the
+Passing check: `73566753583fc2dbc5ee01a12d66db1f278f9bd7`, tree
+`b0ac548f7a119bdbde00659649b0972a8498dc50`, clean mirror. The same focused
+and typecheck commands above passed: focused exit 0 (117 tests, 117 pass,
+0 failed/cancelled/skipped), typecheck exit 0, combined exit 0. Durable run
+`01M5EVK25CHAMXJDF6SGTPMQDN`, elapsed 148376 ms, log
+`/tmp/owed-bench/logs/q-session-1-171003.log`, SHA-256
+`d0951f17e6fe57e5cdec5694c4efc5d82b9baea7ab65b1418787075888ef9db2`.
+The final evidence commit changes this notes file only; source and tests retain
+this tested tree's contents, so no further suite run is needed for that commit.
+
+Baseline red: exported `git archive --format=tar
+7537f144f475b01f1090ab2248ac7d3547922de4` (archive SHA-256
+`e3b69cce98d6fda72958b48c535d0586c03b2ffec8313fc56e7b76cc31205a66`)
+to an bench temporary directory, copied only the candidate's
+`test/session0312.test.ts` over it, linked the mirror dependencies, initialized
+a local fixture git repository, and ran:
+
+```sh
+node --test --test-reporter=tap test/session0312.test.ts
+```
+
+The 180-second bounded command's exact preparation is in the log header; its
+EXIT trap removed the isolated directory. Durable run
+`01M5EVSDWWPFP5GTPZTD5E5CJW`, elapsed 10940 ms. Expected red exit 1:
+13 tests, 2 pass, 11 fail, 0 cancelled/skipped. First failure at test line 57:
+`opening another pi in the same cwd must not replay the owner log`, expected 0,
+actual 1, code `ERR_ASSERTION`. This proves the behavioral failure before the
+fix rather than an import/setup failure. Log
+`/tmp/owed-bench/logs/q-session-1-171331.log`, SHA-256
+`d0398c85a21ca28fdf3778f6470bc01cb261ad58c8476407c3608e6a9fb01161`.
+
+All Node checks ran through `/tmp/owed-bench/run.sh`, under
+`pi-durable-subagents hold machine --shared`. The full suite is reserved for the
 parent's merge invariant; this writer does not publish.
 
-Shipped prose is English. Existing CJK fixtures in `test/driver0311.test.ts`
-exercise UTF-8 replay/cursor handling and are intentional; no new CJK prose is
-introduced. Runtime registry and idle claims remain best-effort state, not a new
-ledger ownership record.
+CJK scan: `rg -n '[\\p{Han}\\p{Hiragana}\\p{Katakana}\\p{Hangul}]'` over all
+18 changed files returned only existing `test/driver0311.test.ts` fixtures at
+lines 78, 85, 142 and 148. Its diff changes only the owner session fixture at
+line 39. Shipped prose is English; those CJK fixtures exercise UTF-8 replay and
+cursor handling. No new CJK prose is introduced. Runtime registry and idle
+claims remain best-effort state, not a new ledger ownership record.
