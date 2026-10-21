@@ -50,8 +50,8 @@ export function utf8Head(text: string, bytes: number): string {
 type Summary = Record<string, any>;
 const object = (v: unknown): Summary => v !== null && typeof v === 'object' && !Array.isArray(v) ? v as Summary : {};
 const scalar = (v: unknown): unknown => typeof v === 'string' ? utf8Head(v, 512) : typeof v === 'number' || typeof v === 'boolean' || v === null ? v : undefined;
-/** Only action metadata; no entry bodies, command strings, plan objects, diffs or reducer dictionaries. */
-const META = 'kind seq ts by channel node subject phase command outcome id obligation key verdict rank ack_rulings needs attempt commit tree base carry plan submit resume decision writer prospective expect after release hold accepted status mark discharger reason code request rid qid rev state role pid session since started running reused exited stopped initialized updated measuring observed total pending entries head error lease durationMs log logPath receipt side expect ok tests pass fail skipped cancelled todo format bytes sha256 digest path file agent cwd isolation merged changed commits ahead behind relation tracked_by snapshotMismatch incompleteBatch allowance alreadyRecorded'.split(' ');
+/** Only action metadata; no entry bodies, run strings, plan objects, diffs or reducer dictionaries. */
+const META = 'kind name complete branch worktree repo alreadyRunning fromDsa foreign idleSince noExitRecord noOutput do from on class merge prior seq ts by channel node subject phase command outcome id obligation key verdict rank ack_rulings needs attempt commit tree base carry plan submit resume decision writer prospective expect after release hold accepted status mark discharger reason code request rid qid rev state role pid session since started running reused exited stopped initialized updated measuring observed total pending entries head error lease durationMs log logPath receipt side expect ok tests pass fail skipped cancelled todo format bytes sha256 digest path file agent cwd isolation merged changed commits ahead behind relation tracked_by snapshotMismatch incompleteBatch allowance alreadyRecorded'.split(' ');
 function metadata(value: unknown): Summary {
   const v = object(value), out: Summary = {};
   for (const k of META) {
@@ -64,6 +64,7 @@ function metadata(value: unknown): Summary {
   }
   if (v.counts) out.counts = select(object(v.counts), ['tests', 'pass', 'fail', 'skipped', 'cancelled', 'todo', 'format']);
   if (Array.isArray(v.nodes)) list(out, 'nodes', v.nodes);
+  if (Array.isArray(v.evidence)) list(out, 'evidence', v.evidence);
   return out;
 }
 function select(v: Summary, fields: readonly string[]): Summary {
@@ -98,7 +99,7 @@ const TOOL_FIELDS: Record<string, string[]> = {
   init: ['entry', 'genesis', 'measuring', 'warnings'],
   sweep: ['entry', 'lease', 'notDue', 'reason', 'skipped', 'bisect', 'escape'],
   start: ['initialized', 'updated', 'plan', 'warnings', 'driver'],
-  drive: ['running', 'pid', 'session', 'started', 'reused', 'exited', 'stopped', 'measuring', 'error', 'log'],
+  drive: ['running', 'pid', 'session', 'started', 'reused', 'exited', 'stopped', 'state', 'alreadyRunning', 'foreign', 'idleSince', 'exit', 'noExitRecord', 'noOutput', 'repo', 'measuring', 'lines', 'error', 'log'],
 };
 const ENTRY_TOOLS = new Set(['submit', 'review', 'approve', 'evidence', 'abandon', 'resume', 'rule', 'waive', 'defer', 'escape', 'adopt', 'decoy']);
 /** TB2: deliberate per-tool summary with hard serialized budget and count-bearing short lists. */
@@ -130,9 +131,9 @@ export function compactToolDetails(name: string, value: unknown): Summary {
   }
   if (Array.isArray(v.notCarried)) list(out, 'notCarried', v.notCarried);
   if (tool === 'brief') out.totals = select(object(v.totals), Object.keys(object(v.totals)));
-  if (tool === 'status' && v.genesis) {
+  if ((tool === 'status' || tool === 'init') && v.genesis) {
     out.genesis = metadata(v.genesis);
-    if (Array.isArray(v.genesis.pending)) list(out.genesis, 'pending', v.genesis.pending);
+    for (const k of ['pending', 'recorded', 'failed', 'missing', 'superseded']) if (Array.isArray(v.genesis[k])) list(out.genesis, k, v.genesis[k]);
   }
   if (tool === 'dispatch') out.subagents = select(object(v.subagents), ['agent', 'cwd', 'isolation']);
   if (v.delivery) out.delivery = deliverySummary(v.delivery);
@@ -166,13 +167,16 @@ const shellWord = (value: unknown): string => {
 };
 function receiptPointer(name: string, args: Summary, data: Summary): string {
   const tool = name.replace(/^owed_/, '');
-  const id = scalar(args.node);
+  const id = args.node;
   const node = typeof id === 'string' && Buffer.byteLength(id) <= 256 && !/[\r\n\x00]/.test(id) ? id : undefined;
   const receipt = node ? `owed why ${shellWord(node)} --full` : 'owed status --full';
   if (tool === 'status') return 'owed status --full';
   if (tool === 'why') return node ? receipt : '';
   if (tool === 'report' || tool === 'brief') return `owed ${tool}${args.since === undefined ? '' : ` --since ${shellWord(utf8Head(String(args.since), 128))}`}`;
+  if (tool === 'gc' && args.dry_run) return 'owed gc --dry-run';
   if (tool === 'edit' && args.dry_run) {
+    // Comma-containing literal IDs in a batch have no unambiguous CLI encoding.
+    if (Array.isArray(args.nodes) && args.nodes.some((id: string) => id.includes(','))) return 'rerun with the owed CLI and --dry-run';
     const parts = ['owed', 'edit'];
     if (args.drive) parts.push('--drive'); else if (args.invariant) parts.push('--invariant', shellWord(args.invariant));
     else if (Array.isArray(args.nodes)) parts.push(shellWord(args.nodes.join(','))); else if (args.node) parts.push(shellWord(args.node));
@@ -180,6 +184,8 @@ function receiptPointer(name: string, args: Summary, data: Summary): string {
     parts.push('--note', shellWord(args.note), '--dry-run');
     if (args.plan) parts.push('--plan', shellWord(args.plan));
     if (args.node_new) parts.push('--node-new');
+    for (const k of ['rule', 'after', 'expect'] as const) if (args[k] !== undefined) parts.push(`--${k}`, shellWord(Array.isArray(args[k]) ? args[k].join(',') : args[k]));
+    for (const k of ['writer', 'resume'] as const) if (args[k]) parts.push(`--${k}`);
     const command = parts.join(' ');
     return Buffer.byteLength(command) <= 800 && !/[\r\n\x00]/.test(command) ? command : 'rerun with the owed CLI and --dry-run';
   }
@@ -200,8 +206,8 @@ export function boundToolResult<T extends { content: { type: string; text?: stri
   const notice = last.includes('is installed but this pi session loaded') ? last : '';
   const original = Buffer.byteLength(text), suffix = notice ? `\n${utf8Head(notice, 512)}` : '';
   const footer = (omitted: number) => `\n${omitted} bytes omitted${pointer ? `; full: ${pointer}` : ''}`;
-  const head = utf8Head(text, TOOL_CONTENT_BYTES - Buffer.byteLength(suffix + footer(original)));
-  return { ...r, details, content: [{ type: 'text', text: head + suffix + footer(original - Buffer.byteLength(head)) }] };
+  const head = utf8Head(notice ? text.slice(0, text.lastIndexOf('\n')) : text, TOOL_CONTENT_BYTES - Buffer.byteLength(suffix + footer(original)));
+  return { ...r, details, content: [{ type: 'text', text: head + suffix + footer(original - Buffer.byteLength(head + suffix)) }] };
 }
 
 type Context = { cwd: string; hasUI: boolean; idle: boolean; sessionId?: string };
