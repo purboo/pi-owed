@@ -5154,6 +5154,87 @@ still refuse. Preflight and actor restrictions are unchanged.
 
 ## 11. pi extension
 
+### Bounded pi results (0.32, TB)
+
+Every registered pi tool, including deferred tools, errors, refusals, `full`
+views, JSON-form diagnostics and dry-run previews, returns at most 48 KiB of
+UTF-8 content text (except required dispatch input below) and at most 8 KiB
+of serialized `details`. Projection and
+clipping run in the native tool worker **before** structured clone; pi's main
+thread never receives the full reducer dictionary, parsed plan or diff. The
+obsolete status dictionary prototype repair is removed. Unexpected operation
+errors also become bounded tool errors with `code: "internal"`; transport
+failures retain the existing no-automatic-replay behavior and a bounded refusal.
+Version notices are added before clipping in the worker, using the host's
+installed/loaded version snapshot and session-local seen-version set (also
+when a same-version global worker is shared by loader wrappers); transport/version-startup refusals are bounded
+on the host because no tool result crossed the boundary.
+
+A successful `owed_dispatch` is the content exception: its complete packet
+(including later rulings and the submit instruction) and its `subagents:` args
+line are required, non-replayable input, not optional output. They appear first
+and remain byte-for-byte unchanged even when the packet exceeds 48 KiB. Only
+the trailing status/brief part is subject to the 48 KiB content bound; if cut,
+its footer points to `owed status`. Packets are bounded by the plan and rulings
+and already stored in the dispatch ledger entry. No read-only command can
+reprint a packet, and dispatch cannot be replayed for its open slot. Dispatch
+refusals/errors and all dispatch `details` still obey the ordinary hard bounds.
+
+Text that fits is byte-for-byte unchanged. Oversized text retains its outcome
+head without splitting a UTF-16 surrogate pair and ends with one line:
+`<N> bytes omitted; full: <pointer>`. The pointer is short (at most 1 KiB):
+
+- Status/why point to `owed status --full` / `owed why <node> --full`;
+  report/brief point to their read-only CLI with the same `--since`, if given.
+  Run the command in the tool's target repository (its `cwd`, if supplied).
+- Edit previews use the same read-only `owed edit ... --dry-run` invocation
+  when it fits in a short footer; otherwise the pointer says
+  `rerun with the owed CLI and --dry-run`. Oversized inputs are never echoed.
+- Completed mutations point **only** to read-only receipts: recorded seqs and
+  `owed why <node> --full` or `owed status --full`. Plan/edit also name the
+  recorded plan entry and file path. These show complete current evidence,
+  not a byte-exact historical tool response; regenerate a diff read-only from
+  Git or the plan preview. Never replay a mutation to retrieve omitted output.
+- Refusals keep the refusal reason first and the omitted byte count; use a
+  relevant read-only receipt when available. An unknown/oversized node or an
+  invalid target directory may have no command pointer.
+- A required restart/version line is retained before the final footer.
+
+`details` is an acting summary, **not** the CLI JSON shape. All strings in
+summaries are UTF-8 heads of at most 512 bytes, except the formatted waiver
+scope `meaning`, which keeps at most 2 KiB and reports `meaningOmittedBytes`
+when cut. This scope summary is not the ledger reason/body. Lists keep at most
+five short metadata samples, except acting `warnings`: these keep at most 32
+samples within a 3 KiB serialized sample budget so ordinary reads/plan/self-test
+guidance remains complete and ordered. All lists have `<field>Count` and, when
+cut, `<field>Omitted`; lists that
+cannot fit the overall budget become empty samples with the full omitted
+count. Other omitted projected fields are named in a short `omittedFields`
+list with `omittedFieldCount`. Samples of entries/observations never include
+bodies, notes, follow-up messages or logs' contents. Where applicable, samples
+include short `command` next-action hints and `key` candidate/obligation
+identifiers, each subject to the same 512-byte string and overall JSON budgets;
+executable run strings and complete observation/receipt bodies are excluded.
+
+| tool family | acting details |
+|---|---|
+| status | trunk identity/seq, node count, phase group counts, ready/merge queue samples, merged/needs/progress/debt summary, genesis counts/pending samples, drift and housekeeping metadata |
+| why | node, phase, accepted, held/reported/wait metadata; short item/block/merge-check/try-receipt samples with identifiers, keys, marks, verdicts, seqs and log pointers; no observation bodies |
+| report, brief | since/now, totals and counted merge/block/decision/progress/debt samples; no owner ledger bodies or ruling history |
+| dispatch, rebase | node/attempt/worktree/branch and entry identity; dispatch launch agent/cwd/isolation (the packet is content-only, never `details.packet` or `subagents.task`) |
+| plan, edit, amend | plan sha or compact plan entry, file/path, rule/resume identities, counted warnings/notes/downgrades/ready samples; `carriedCount` plus `carriedSummary` metadata, never carried submit arrays, raw/parsed plans, prior/next text or diffs |
+| submit, review, approve, evidence, abandon, resume, rule, waive, defer, escape, adopt, decoy | compact act/entry identity, seq, actor/channel, node/attempt/commit/tree/base, verdict/rank/ack, tracking/digest metadata and bounded item/entry lists where applicable; no free-text bodies |
+| answer, decide | decision/entry/rule/plan identifiers, answered/resumed flags and counted answer/delivery samples (node/rid/qid/rev/request/state); no answer text or slot follow-up bodies |
+| init, start, drive | genesis seq/measuring/warnings; initialized/updated/plan source and compact driver pid/session/lifecycle metadata, bounded measurement samples |
+| attest, merge, sweep, check_try | outcome, accepted/commit/tree/lease, compact entry/refresh, counted observation/job/debt/path/result samples; measurement verdict/counts/duration/log/receipt pointers, never receipt cards or full observations |
+| verify, gc | verification outcome/count/head/error and cache mismatch samples; dry-run and counted removed/kept/tree/cache samples |
+| refusal/error | code and short reason; `isError` remains true |
+
+CLI text and `--json` retain their complete existing data and rendering; no
+ledger schema, acceptance gate, lock/transaction boundary or status computation
+semantics change. Older descriptions below of complete structured *tool*
+results are superseded by this section; CLI/ops results remain complete.
+
 0.30 adds `owed_check_try` (§3.10); 0.31.1 extends it to
 `{node?, check?, invariant?, run?, min_tests?, timeout?, record?, for?, red?,
 green?, plan?, no_lease?, json?, cwd?}`. Select exactly one of node/check,

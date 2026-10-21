@@ -46,8 +46,9 @@ test('dispatch packet, slot writer inference, explicit reviewer and owner confir
   const r = await fixture();
   try {
     const h = harness(r.cwd), d = await h.call('dispatch', { node: 'a' });
-    const packet = d.details as { packet: string; worktree: string; subagents: unknown };
-    assert.deepEqual(packet.subagents, { agent: 'worker', cwd: packet.worktree, task: packet.packet, isolation: 'none' });
+    const packet = d.details as { packet?: string; worktree: string; subagents: unknown };
+    assert.equal(packet.packet, undefined, 'large packet is content-only');
+    assert.deepEqual(packet.subagents, { agent: 'worker', cwd: packet.worktree, isolation: 'none' });
     await commitAt(packet.worktree, { 'a.txt': 'done\n' });
     assert.equal((await h.call('submit', { node: 'a' })).isError, true, 'parent does not silently impersonate writer');
     assert.notEqual((await harness(packet.worktree).call('submit', { node: 'a' })).isError, true);

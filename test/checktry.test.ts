@@ -148,7 +148,7 @@ for (const surface of ['cli','tool','edit'] as const) test(`CT2 carry receipt su
         assert.equal(result.code,0,result.stderr); reported=JSON.parse(result.stdout).carried;
       } else {
         const result=await harness(r.cwd).call('plan',{plan:'plan.json',as:'owner:pi',note:'selftested check'});
-        assert.notEqual(result.isError,true); reported=(result.details as {carried?:unknown}).carried;
+        assert.notEqual(result.isError,true); reported=(result.details as {carriedSummary?:unknown}).carriedSummary;
         output=result.content.map(c => c.type === 'text' ? c.text : '').join('\n');
       }
     }
@@ -157,7 +157,11 @@ for (const surface of ['cli','tool','edit'] as const) test(`CT2 carry receipt su
     assert.equal(note.by,'executor:owed'); assert.equal(JSON.parse(note.text.slice('selftest/v1 '.length)).plan,plan.plan);
     assert.equal(carry.by,'executor:owed'); assert.equal(carry.carry,sub.seq); assert.equal(carry.facts.commit,sub.facts.commit);
     assert.equal((await ops.readState({cwd:r.cwd})).state.nodes.a!.candidate!.seq,carry.seq);
-    assert.deepEqual(reported,[carry], 'surface must report the carry already recorded after the selftest note');
+    if (surface === 'tool') {
+      const summary = reported as { seq: number; node: string; carry: number; facts: { commit: string } }[];
+      assert.equal(summary.length, 1); assert.equal(summary[0]!.seq, carry.seq); assert.equal(summary[0]!.node, carry.node);
+      assert.equal(summary[0]!.carry, sub.seq); assert.equal(summary[0]!.facts.commit, carry.facts.commit);
+    } else assert.deepEqual(reported,[carry], 'CLI/ops report the complete carry already recorded after the selftest note');
     assert.deepEqual(await ops.carriedBy({cwd:r.cwd,plan:plan.seq}),[carry]);
     if (surface === 'tool') assert.ok(output.includes(`Carried a: candidate ${sub.facts.commit.slice(0,12)} (submit #${sub.seq}) is still the candidate as #${carry.seq}`),output);
     if (surface === 'cli') {
