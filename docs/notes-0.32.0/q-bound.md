@@ -9,10 +9,15 @@
   details, read-only pointers and the parent's review #3914 dispatch exemption.
 - Repair baseline: candidate `4609d4960c2c82ce46cb7e28614848fcbbcee255`, tree
   `d25b638b9bb3f2bf43e24f010419e0ca0613c782`; same clean slot, new commits only.
+- Full-suite repair baseline: clean candidate
+  `e55a5c354d8b2d5c40a4c9cb3130e32d856f344a`, tree
+  `9505556f303cd172eeb8495c340fb546c8ec3c8d`; ledger #3930 rejected the
+  merge with three regressions. Repairs add new commits only.
 - No CLI/ops/reducer/ledger schema, lock order, append/rollback, status computation,
   README, skill, changelog or package-version changes. No new result persistence.
 - Writer commits and stops. No submit, attest, rebase, merge, tag, push or publish.
-  The parent owns integration, independent review and the full-suite invariant.
+  The parent owns integration and independent review. This repair additionally
+  runs the full-suite invariant command on the writer candidate via IPC.
 
 ## Implementation
 
@@ -28,8 +33,12 @@
   its boundary, never markers that might occur inside a ruling. No dispatch replay
   or new storage/command is introduced. Errors/refusals and details stay bounded.
 - Per-tool field projections retain action/entry identity, seqs, verdicts, commit,
-  tree, launch identity and counts. Lists show at most five metadata samples and
-  omitted counts; oversized projected fields are removed with omission metadata.
+  tree, launch identity and counts. Lists normally show at most five metadata
+  samples and omitted counts; acting warnings retain at most 32 samples within
+  a 3072-byte serialized sample budget, in original order. The formatted waiver
+  scope `meaning` has its own 2048-byte UTF-8 head and `meaningOmittedBytes`.
+  These restore ordinary guidance without unbounded details. Oversized projected
+  fields are removed with omission metadata.
   Carried submits become counted metadata, not original submit arrays. Ruling
   follow-up bodies, dispatch packet/task duplication and observation bodies are
   removed from details even when small. The obsolete status prototype repair is gone.
@@ -50,19 +59,58 @@
 
 Passing product/test revision (before this documentation-only receipt commit):
 
-- Commit: `52d07e86023970eb1a6b93c325222c8a085e58dd`.
-- Tree: `dab69f5f2b4bda048d08c648ac17d1886789a810`.
-- IPC run: `01M5F62WKS4WR8H0FAXFMK869S`, exit 0; clean tree in the log header.
-- Complete log: `/tmp/owed-ipc/logs/q-bound-1-201327.log`.
-- Log SHA-256: `50a654ed06ff5cd76d6dfb271a641d1cb1aa5ff005c0a8c3e19dee85f9ae7a76`.
-- Typecheck passed; 151 tests passed, 0 failed/cancelled/skipped/todo.
-  Test duration: 118883.195124 ms; durable command duration: 142985 ms.
+- Commit: `79e0bc8a334e262e6be45d9323388681e3ce3a9b`.
+- Tree: `3b7e4b85a748dd002d73e673df60de373a9c94f0`.
+- IPC run: `01M5F8JBV3QJ7PWG8HEPWB35PW`, exit 0; clean tree in the log header.
+- Complete log: `/tmp/owed-ipc/logs/q-bound-1-205651.log`.
+- Log SHA-256: `abc7e8dd3bbdd47920c1fe1dc8fc7ddc9499afc84e092a4aad55e4d413bc672f`.
+- Typecheck passed; full suite: 2170 passed, 0 failed/cancelled/skipped/todo.
+  Test duration: 1501167.284041 ms; durable command duration: 1522223 ms.
+  K2.3, PR2 and H2.2 pass unchanged. One new bounded-summary regression raises
+  the prior 2169-test suite count to 2170.
 
-Exact command (all Node/tsc/test execution ran through IPC, not locally):
+Exact command uses the `.owed/plan.yaml` suite invariant's quoted glob (all
+Node/tsc/test execution ran through IPC, not locally):
 
 ```bash
-/tmp/owed-ipc/run.sh /home/purboo/project/pi-things/pi-owed/.owed/wt/q-bound-1 480 'npm run typecheck && node --test --test-concurrency=2 --test-reporter=tap test/bound0320.test.ts test/tool-worker.test.ts test/surface.test.ts test/extension.test.ts test/coretools.test.ts test/edit.test.ts test/init-tool.test.ts test/compactreply.test.ts test/amend.test.ts test/checktry.test.ts test/left022.test.ts test/multiedit.test.ts test/answerstate.test.ts test/summary.test.ts'
+/tmp/owed-ipc/run.sh /home/purboo/project/pi-things/pi-owed/.owed/wt/q-bound-1 2400 "npm run typecheck && node --test --test-concurrency=2 --test-reporter=tap 'test/**/*.test.ts'"
 ```
+
+## Ledger #3930 repair diagnosis and red evidence
+
+- K2.3 failed at `test/halt-detail.test.ts:169`, comparing the complete tool
+  content line with `details.meaning`. Its 512-byte head ended at `so`, losing
+  the `owed attest still measures it` scope tail; no whitespace or why renderer
+  change was involved. The formatted scope summary now has a 2 KiB budget.
+- H2.2 failed at the final `details.warnings` assertion, not the warning content
+  order. Reads notices consumed four of the five list samples, leaving only
+  `check b/b-unit: not self-tested` of the four expected check notices. The
+  separately bounded acting-warning sample retains ordinary sets completely;
+  content below 48 KiB is still unchanged. Large lists report total/omitted.
+- PR2 reported eight exact literals: one version label, five receipt-pointer
+  sites (including two distinct identical status literals), and two clipping
+  fallbacks. They are classified with exact SHA-256 digests in the existing
+  sorted `src/ext-worker.ts` file group of `registered`. No new state remedy,
+  PR2 logic change or `src/drive-run.ts` inventory change is introduced.
+- Ruling #3917 was read in full: it governs required dispatch input and
+  independent packet truth. None of these repairs conflicts with it.
+
+Isolated red checkout `/tmp/owed-0320/q-bound-suite-red-3930` used unmodified
+`e55a5c354d8b2d5c40a4c9cb3130e32d856f344a`, tree
+`9505556f303cd172eeb8495c340fb546c8ec3c8d` (clean).
+Command: `/tmp/owed-ipc/run.sh /tmp/owed-0320/q-bound-suite-red-3930 240 'node --test --test-concurrency=2 --test-reporter=tap test/halt-detail.test.ts test/needs-structure.test.ts test/plan-guidance.test.ts'`.
+Run `01M5F8EXE6QDXR65H1JQFJFK89`, exit 1: 14 tests, 11 pass, exactly the three
+reported regressions fail, 0 cancelled/skipped/todo; duration 11548.166296 ms.
+Log `/tmp/owed-ipc/logs/q-bound-suite-red-3930-205458.log`, SHA-256
+`3cf7a585b2a100519b542d563001e0c60777b490b0747a6a4d9ed7ec98dd590b`.
+The owned worktree was never stashed/reset or otherwise changed for the red run.
+
+The earlier focused evidence is superseded by this full-suite pass:
+`52d07e86023970eb1a6b93c325222c8a085e58dd`, tree
+`dab69f5f2b4bda048d08c648ac17d1886789a810`, run
+`01M5F62WKS4WR8H0FAXFMK869S`, typecheck and 151/151 tests, exit 0.
+Log `/tmp/owed-ipc/logs/q-bound-1-201327.log`, SHA-256
+`50a654ed06ff5cd76d6dfb271a641d1cb1aa5ff005c0a8c3e19dee85f9ae7a76`.
 
 Review #3914 red: isolated detached checkout of `4609d49`, with only the new
 regression copied in (no stash/reset of the owned worktree). Tests-only commit
@@ -137,13 +185,20 @@ and its cost/semantics are unchanged; this task bounds transfer/storage only.
 
 ## Existing-test changes and why (TB2/TB5)
 
-No tests were skipped, deleted or downgraded. The eight existing files changed
+No tests were skipped, deleted or downgraded. The original eight existing files
+changed
 only at removed-details consumers or to restore independent packet verification
 under review #3914 F2. CLI, rendered content, authority, transaction and rollback assertions
 remain in place. `test/bound0320.test.ts` is new, with real-seam large fixture,
 raw RPC, all registered-tool refusal paths, small text equality, UTF-8/escape
 boundaries, list omission accounting, safe pointers and retained version hints.
 
+- `test/needs-structure.test.ts`, PR2 inventory: add only eight exact site
+  registrations with existing classes and concrete reasons. Its inventory logic,
+  unregistered assertion, negative fixtures and digests of prior sites remain
+  unchanged. `test/halt-detail.test.ts` and `test/plan-guidance.test.ts` are
+  entirely unchanged. The new `test/bound0320.test.ts` regression exercises both
+  ordinary retained guidance and oversized count/omission/UTF-8 budgets.
 - `test/tool-worker.test.ts`, G2 equality: full details == ops view contradicts
   TB2. Check retained node/phase/count/totals metadata and absent nodes/bodies,
   retaining exact small text/refusal equality. Dispatch packet/subagent task
@@ -191,10 +246,11 @@ boundaries, list omission accounting, safe pointers and retained version hints.
   recorded in the writer handoff, not self-referentially inside this file.
 - Shipped-text CJK scan: Python scan of added lines in the baseline-to-current
   diff for `src/ext-worker.ts` and `docs/SPEC.md` (ranges U+3400-U+9FFF,
-  U+3040-U+30FF, U+AC00-U+D7AF) found 0 hits in 290 added lines; exit 0.
+  U+3040-U+30FF, U+AC00-U+D7AF) found 0 hits; exit 0.
   `git diff --check` passed. Final receipt is English as required.
-- Full project suite and independent grouped review were not run by this writer;
-  they remain the parent's integration/full-suite invariant obligations.
+- Writer typecheck and full project suite passed on the exact candidate above.
+  Independent grouped review and merge-tree measurement still belong to the
+  parent; this candidate suite does not declare branch/integration acceptance.
 - CLI remains complete, proven through large status/default/full/why text and
   large status JSON comparisons. Mutation pointers expose read-only current
   receipts, not a byte-exact historical response (parent-approved interpretation).
