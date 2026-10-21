@@ -5165,7 +5165,8 @@ obsolete status dictionary prototype repair is removed. Unexpected operation
 errors also become bounded tool errors with `code: "internal"`; transport
 failures retain the existing no-automatic-replay behavior and a bounded refusal.
 Version notices are added before clipping in the worker, using the host's
-session-local seen-version set; transport/version-startup refusals are bounded
+installed/loaded version snapshot and session-local seen-version set (also
+when a same-version global worker is shared by loader wrappers); transport/version-startup refusals are bounded
 on the host because no tool result crossed the boundary.
 
 Text that fits is byte-for-byte unchanged. Oversized text retains its outcome

@@ -89,19 +89,19 @@ test('TB1-TB5 real extension/worker: large status, why, edit, plan and refusal a
     assert.equal((why.details as { rulingFollowUp?: unknown }).rulingFollowUp, undefined);
 
     const count = (await (await Ledger.open(r.cwd)).read()).length;
-    const preview = await r.h.call('edit', { node: r.ids[1], set: ['title=Preview'], note: 'Preview only', dry_run: true });
+    const preview = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], set: ['title=Preview'], note: 'Preview only', dry_run: true });
     assert.notEqual(preview.isError, true, text(preview)); bounded(preview);
     assert.equal((await (await Ledger.open(r.cwd)).read()).length, count, 'preview appends nothing');
     for (const key of ['text', 'next', 'prior', 'plan', 'diff']) assert.equal((preview.details as Record<string, unknown>)[key], undefined, key);
     // Small invocation, large generated diff: the footer can safely reproduce this read-only preview.
-    const bigPreview = await r.h.call('edit', { node: r.ids[1], unset: ['brief'], note: 'Preview removal', dry_run: true });
+    const bigPreview = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], unset: ['brief'], note: 'Preview removal', dry_run: true });
     assert.notEqual(bigPreview.isError, true, text(bigPreview)); cut(bigPreview, 'owed edit');
     assert.ok(text(bigPreview).split('\n').at(-1)!.includes('--dry-run'));
     // Arbitrarily large invocation cannot be echoed into the footer.
-    const hugePreview = await r.h.call('edit', { node: r.ids[1], set: [`title=${'\u{1F43E}'.repeat(20000)}`], note: 'Preview only', dry_run: true });
+    const hugePreview = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], set: [`title=${'\u{1F43E}'.repeat(20000)}`], note: 'Preview only', dry_run: true });
     cut(hugePreview, 'rerun with the owed CLI and --dry-run');
-    const edited = await r.h.call('edit', { node: r.ids[1], set: ['title=Recorded'], note: 'Record edit' });
-    assert.notEqual(edited.isError, true, text(edited)); cut(edited, 'owed status --full');
+    const edited = await r.h.call('edit', { plan: 'plan.json', node: r.ids[1], set: ['title=Recorded'], note: 'Record edit' });
+    assert.notEqual(edited.isError, true, text(edited)); cut(edited, `owed why ${r.ids[1]} --full`);
     assert.equal((edited.details as { diff?: unknown }).diff, undefined);
     assert.match(text(edited).split('\n').at(-1)!, /plan #\d+.*plan\.json/);
     r.plan.nodes[2] = { ...r.plan.nodes[2]!, brief: 'Plan updated' };
