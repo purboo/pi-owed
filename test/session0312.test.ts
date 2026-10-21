@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
-import { loadedVersion } from '../src/ext-worker.ts';
+import { loadedVersion, toolWorker } from '../src/ext-worker.ts';
 import { procStart } from '../src/drive-run.ts';
 import { registerDriver } from '../src/registry.ts';
 import { DriveWatch } from '../src/drive-bg.ts';
@@ -19,7 +19,7 @@ import { identity } from './helpers/surface.ts';
 
 const OWNER = 'sn-owner', STRANGER = 'sn-stranger';
 const wake = (text: string, facts = 99999) => ({ do: 'notify', node: 'a', facts, text });
-async function fixture() {
+async function fixture(later = true) {
   const saved = { ...process.env }, r = await repo();
   delete process.env.OWED_DIR;
   for (const key of ['DSA_SESSION', 'PI_SESSION_ID', 'DSA_EXEC', 'DSA_CALL', 'OWED_CONFIRM']) delete process.env[key];
@@ -27,7 +27,7 @@ async function fixture() {
   process.env.OWED_DSA = fileURLToPath(new URL('./fixtures/fake-dsa.mjs', import.meta.url));
   process.env.FAKE_DSA_DIR = join(r.root, 'dsa');
   Object.assign(process.env, identity);
-  const plan = JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], drive: { min_free_mb: 0, watch_idle_min: 1 }, nodes: [{ id: 'a', later: true, writes: ['a.txt'], checks: [], review: { count: 0, min_rank: 1 } }] });
+  const plan = JSON.stringify({ version: 1, trunk: 'main', closure: [], invariants: [], drive: { min_free_mb: 0, watch_idle_min: 1 }, nodes: [{ id: 'a', later, writes: ['a.txt'], checks: [], review: { count: 0, min_rank: 1 } }] });
   await r.put('plan.json', plan); await r.commit();
   await ops.init({ cwd: r.cwd, as: { role: 'owner', id: 'test' }, channel: 'delegated', plan, path: 'plan.json' });
   const dir = join(r.cwd, '.git/owed'), log = join(dir, 'drive/log.jsonl'), lock = join(dir, 'drive.lock');
@@ -41,7 +41,7 @@ async function fixture() {
 }
 function harness(cwd: string, session: string | undefined = OWNER) {
   const tools = new Map<string, ToolDefinition>(), events = new Map<string, any>(), messages: { content: string; customType: string }[] = [];
-  const state = { session, idle: true, fail: false };
+  const state: { session?: string; idle: boolean; fail: boolean } = { session, idle: true, fail: false };
   if (arguments.length > 1 && arguments[1] === undefined) state.session = undefined;
   const ctx = { cwd, hasUI: false, isIdle: () => state.idle, sessionManager: { getSessionId: () => state.session }, ui: { notify() {} } } as unknown as Parameters<ToolDefinition['execute']>[4];
   owed({ registerTool: (t: ToolDefinition) => tools.set(t.name, t), registerCommand() {}, on: (name: string, fn: unknown) => events.set(name, fn), sendMessage: (m: typeof messages[number]) => { if (state.fail) throw new Error('delivery rejected'); messages.push(m); } } as unknown as ExtensionAPI);
@@ -168,6 +168,54 @@ test('SN3 replacement ownership cannot transfer follower; owned terminal survive
   } finally { await own.emit('session_shutdown'); await stranger.emit('session_shutdown'); await f.close(); }
 });
 
+test('SN3 same-owner replacement preserves busy terminal ride-along and remains attached', async () => {
+  const f = await fixture(); f.held(); const own = harness(f.cwd);
+  try {
+    await own.emit('session_start'); await own.emit('agent_start');
+    f.append({ event: 'exit', reason: 'stopped', code: 0, at: new Date().toISOString(), driver: f.owner });
+    renameSync(f.log, `${f.log}.1`); writeFileSync(f.log, `${JSON.stringify({ event: 'exit', reason: 'stopped', code: 0, driver: f.owner })}\n${JSON.stringify(wake('same-owner replacement wake'))}\n`);
+    f.held({ token: 'replacement', at: new Date(Date.now() + 1000).toISOString() });
+    await own.emit('agent_settled');
+    assert.match(own.messages[0]?.content ?? '', /same-owner replacement wake/);
+    assert.match(own.messages[0]?.content ?? '', /earlier driver/);
+    assert.doesNotMatch(own.messages[0]?.content ?? '', /Driver stopped/);
+    f.append(wake('replacement still followed', 100000)); await own.emit('agent_settled');
+    assert.match(own.messages[1]?.content ?? '', /replacement still followed/);
+  } finally { await own.emit('session_shutdown'); await f.close(); }
+});
+
+test('SN3 foreign replacement finishing before owner flush never leaks its retired log', async () => {
+  const f = await fixture(); f.held(); const own = harness(f.cwd);
+  try {
+    await own.emit('session_start'); await own.emit('agent_start');
+    f.append({ event: 'exit', reason: 'stopped', code: 0, at: new Date().toISOString(), driver: f.owner });
+    renameSync(f.log, `${f.log}.1`); writeFileSync(f.log, `${JSON.stringify(wake('foreign already exited'))}\n`); rmSync(f.lock);
+    await own.emit('agent_settled');
+    assert.match(own.messages[0]?.content ?? '', /Driver stopped: stopped/);
+    assert.doesNotMatch(own.messages[0]?.content ?? '', /foreign already exited/);
+  } finally { await own.emit('session_shutdown'); await f.close(); }
+});
+
+test('SN3 host identity changes while a worker callback is in flight reject the old delivery', async () => {
+  const f = await fixture(); f.held(); const own = harness(f.cwd); const rpc = toolWorker();
+  const session = (own as unknown as { ctx: { sessionManager: { getSessionId(): string | undefined } } }).ctx;
+  let switchOnSend = false;
+  const listener = (m: { method?: string }) => { if (m.method === 'message') switchOnSend = true; };
+  try {
+    await own.emit('session_start');
+    const original = session.sessionManager.getSessionId;
+    session.sessionManager.getSessionId = () => {
+      if (switchOnSend) { own.state.session = STRANGER; switchOnSend = false; }
+      return original();
+    };
+    f.append(wake('in-flight old identity'));
+    // The native worker posts callbacks after the host request serialized the old identity.
+    rpc.worker!.prependListener('message', listener);
+    await own.emit('agent_settled');
+    assert.equal(own.messages.length, 0, 'host callback checks the live context identity, not only the last worker event');
+  } finally { rpc.worker?.removeListener('message', listener); await own.emit('session_shutdown'); await f.close(); }
+});
+
 test('SN3 ownership changes during async revalidation cannot deliver the replacement log', async () => {
   const f = await fixture(); f.held(); let release!: () => void, entered!: () => void;
   const gate = new Promise<void>(r => { release = r; }), ready = new Promise<void>(r => { entered = r; });
@@ -194,7 +242,7 @@ test('SN1 explicit CLI watch is independent of automatic ownership and keeps its
 
 // Test-only clock control in a genuine native worker: no production clock/ownership API is introduced.
 test('SN4 real worker idle watch has no startup/status backdoor, keeps owner observation and explicit init', { timeout: 30_000 }, async () => {
-  const f = await fixture(); f.held();
+  const f = await fixture(false); f.held();
   const url = new URL('../src/ext-worker.ts', import.meta.url).href;
   const worker = new Worker(`const {parentPort}=require('node:worker_threads'); let time=Date.now(); Date.now=()=>time; parentPort.on('message',m=>{if(m.advance) time+=m.advance;}); import(${JSON.stringify(url)});`, { eval: true, env: SHARE_ENV, workerData: { owed: true, version: loadedVersion }, execArgv: [] });
   let next = 0; const pending = new Map<number, (m: any) => void>(), messages: { session: number; args: { customType: string; content: string }[] }[] = [];

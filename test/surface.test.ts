@@ -26,7 +26,7 @@ async function env<T>(extra: Record<string,string | undefined>, run: () => Promi
   for (const [k,v] of Object.entries(extra)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   try { return await run(); } finally { for (const [k,v] of prior) if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 }
-function harness(cwd: string) {
+function harness(cwd: string, session?: string) {
   const tools = new Map<string, ToolDefinition>(), handlers = new Map<string, (e: unknown, ctx: ExtensionContext) => unknown>();
   const messages: string[] = [];
   let prompts = 0;
@@ -34,7 +34,7 @@ function harness(cwd: string) {
     registerTool(t: ToolDefinition) { tools.set(t.name,t); }, registerCommand() {}, sendMessage(m: { content: string }) { messages.push(m.content); },
     on(name: string, h: (e: unknown, ctx: ExtensionContext) => unknown) { handlers.set(name,h); },
   };
-  const ctx = {cwd,hasUI:true,ui:{notify() {},confirm() { prompts++; throw new Error('start must not open a dialog'); }}} as unknown as ExtensionContext;
+  const ctx = {cwd,hasUI:true,sessionManager:{getSessionId:() => session},ui:{notify() {},confirm() { prompts++; throw new Error('start must not open a dialog'); }}} as unknown as ExtensionContext;
   owed(api as unknown as ExtensionAPI);
   return { tools, messages, get prompts() { return prompts; }, async call(name: string, args: object = {}) {
     const tool = tools.get(`owed_${name}`); assert.ok(tool, `${name} registered`);
@@ -202,8 +202,8 @@ test('SF2 owed_start uses cwd, returns compact output and never opens an owner d
     assert.notEqual(again.isError,true,again.text); assert.match(again.text,/already running/); assert.deepEqual(await entries(f.cwd),before);
   } finally { await h.shutdown(); await f.done(); }
 });
-test('SF6 owed_start replays current wakes for both new and reused drivers', {timeout:90_000},async () => {
-  const f=await fixture(), a=harness(f.root), b=harness(f.root);
+test('SF6 owed_start replays current wakes for new and reused owned drivers', {timeout:90_000},async () => {
+  const f=await fixture(), a=harness(f.root,'surface-owner'), b=harness(f.root,'surface-owner');
   const wait = async (h: ReturnType<typeof harness>, ms: number) => { const end=Date.now()+ms; while (!h.messages.length && Date.now() < end) await new Promise(r => setTimeout(r,100)); };
   try {
     const first=await env(identity,() => a.call('start',{cwd:f.cwd,plan:'plan.json',stay:true}));
