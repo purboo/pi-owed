@@ -13,6 +13,17 @@ Identities are claims (`--as`); the subagent rails (§2.1.3 and the writer-workt
 rail §2.1.7) are rails against accidents and instructions, not security
 boundaries: a process can unset the variables or change directory.
 
+### Compatibility (0.32)
+
+0.32 adds no plan key, ledger kind, field or enum. Plans and ledgers from
+0.31.2 replay unchanged; per-version snapshots rebuild on first use. Restart
+upgraded drivers and pi sessions. Pi tool results now use the bounds and
+compact details in §11; scripts needing full data use the unchanged CLI
+`--json`. Decide/answer `--expect report` uses existing resume fields (§8.3.1).
+Visible driver attests require an owner pi session and feature-detected dsa
+command runs with `--session`, with the legacy fallback in §12.7; no new
+fixed dsa minimum is imposed. Merge measurement stays in-process.
+
 ### Compatibility (0.20–0.27)
 
 0.27 adds no ledger entry kind. New plan keys are top-level `quarantine_sets`
@@ -5256,7 +5267,7 @@ and the retained log tail. Plan-recording tools run changed selftests before
 recording; previews never execute them.
 
 0.23 adds `owed_decide` (§8.3.1): `{nodes: ["A", "B"], text, writes?, defer?,
-resume?, after?, remeasure?, writer?, as?, cwd?}`. False `resume` preserves the
+resume?, after?, expect?: "report", remeasure?, writer?, as?, cwd?}`. False `resume` preserves the
 halt; writes uses amendment authority and defer needs the owner. Delivery
 follows the atomic decision append. `owed_rule` uses §9.3's concise receipt.
 CLI `report --metrics`/`--counterfactual`/`--cost` and `rebase --apply` have no matching
@@ -5322,7 +5333,7 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_report` | `since?`, `as` | report |
 | `owed_brief` | `since?` | brief |
 | `owed_verify` | — | hash chain + replay |
-| `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; prints packet once and references it in text arguments; structured `subagents` retains full task (agent `worker`, cwd = slot worktree, isolation `none`, task = packet) |
+| `owed_dispatch` | `node`, `allow_overlap?`, `as` | dispatch; content keeps the complete packet and args first; set runner task to that packet (agent `worker`, cwd = slot worktree, isolation `none`); details retain launch metadata only |
 | `owed_submit` | `node`, `commit?`, `model?`, `as` | submit (writer inferred from a `cwd` inside the slot worktree) |
 | `owed_rebase` | `node`, `as` | rebase (parent/owner or the slot writer, inferred as for submit) |
 | `owed_check_try` | `node?`, `check?`, `invariant?`, `run?`, `min_tests?`, `timeout?`, `record?`, `for?`, `red?`, `green?`, `plan?`, `no_lease?`, `json?` | exact-commit diagnostics (§3.10); ordinary verdicts even for red checks; optional informational receipts |
@@ -5332,8 +5343,8 @@ repository. Most tools also take `as` (`role:id`).
 | `owed_abandon` | `node`, `hold?: boolean`, `note?` (older `reason?`; not both), `as` | abandon (parent/owner); hold prevents re-dispatch until resume |
 | `owed_resume` | `node` (string or non-empty string array), `after?`, `expect?`, `remeasure?`, `note?`, `as` (default `parent:pi`; parent/owner) | resume (§12.3): clear a driver halt without an obligation, `after` waits for that node to merge; the text is the CLI's plus the node phase line and brief status |
 | `owed_gc` | `dry_run?`, `as` | gc (parent/owner) |
-| `owed_decide` | `nodes: string[]`, `text`, `writes?: string[]`, `defer?: string`, `resume?: boolean`, `after?: string \| string[]`, `remeasure?: boolean`, `writer?: boolean`, `as` | one atomic parent decision and post-append delivery (§8.3.1); no-resume is `resume: false` |
-| `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery, answers}` (§12.5) |
+| `owed_decide` | `nodes: string[]`, `text`, `writes?: string[]`, `defer?: string`, `resume?: boolean`, `after?: string \| string[]`, `expect?: "report"`, `remeasure?: boolean`, `writer?: boolean`, `as` | one atomic parent decision and post-append delivery (§8.3.1); no-resume is `resume: false` |
+| `owed_answer` | `node`, `text`, `qid?`, `rid?`, `rev?: number` (positive integer; usage error otherwise), `expect?: "report"`, `as?` (default `parent:pi`; parent/owner) | AN1–AN2, AR: record and deliver an answer ruling; an open question uses its current rev, otherwise rev selects a prior retry; returns `{entry, request, delivery, answers}` (§12.5) |
 | `owed_rule` | `text`, `nodes`, `writer?`, `prospective?`, `as` | ruling; `prospective: true` binds only later dispatches; `writer: true` requires named nodes to submit again |
 | `owed_edit` | `node?`, `nodes?: string[]` or `invariant?` (exclusive), `set?: string[]` (`path=yaml`), `unset?: string[]`, `node_new?`, `note`, `plan?`, `rule?`, `writer?`, `resume?`, `after?: string \| string[]`, `expect?: "report"`, `dry_run?`, `as` | ED1/ED2: targeted YAML edit; plan/carries/rule/resume in one lock; dry run returns diff and downgrades; same default authority as `owed_plan` |
 | `owed_amend` | `node`, `writes` (bare paths or `+path`; covered paths are unchanged), `note` (the limit), `plan?`, `as` | widen one node's writes (§3 Amend): plan file edit, plan entry with the authority of `owed_plan` (same default principal), carries and a ruling, in one lock |
@@ -5440,9 +5451,11 @@ manual deactivation of search can make deferred tools unreachable until the
 next session start; hosts without session hooks cannot run this repair.
 
 `owed_dispatch` prints its complete packet once. Rendered subagents arguments
-refer to `<the complete packet above>`; structured `subagents.task` retains
-the full executable task, slot `cwd` and `isolation: none`. Pass the structured
-arguments to the runner, not the text placeholder.
+refer to `<the complete packet above>`; replace that placeholder with the
+complete packet when calling the runner, retaining slot `cwd` and
+`isolation: none`. Pi tool details contain launch metadata only, without
+`packet` or `subagents.task`. CLI/ops structured dispatch results retain the
+full executable task; the pi content exemption and bounds are specified above.
 
 ## 12. Driver
 
