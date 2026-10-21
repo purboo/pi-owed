@@ -175,7 +175,8 @@ test('ME1: owed_edit exposes nodes, previews the batch, and records or refuses t
     const done = await run({nodes:['b','a','b'],set:['review.count=2'],note:'one',rule:'both',resume:true,after:'c',cwd:s.cwd});
     assert.equal(done.isError,undefined,done.content[0]?.text); assert.ok(done.details.rule?.kind === 'rule');
     assert.deepEqual(done.details.rule.nodes,['b','a']); assert.equal(done.details.resumes?.length,2);
-    for (const e of done.details.resumes!) assert.ok(done.content[0]!.text!.includes(renderEntry(e)));
+    const recorded = await entries(s.cwd);
+    for (const e of done.details.resumes!) assert.ok(done.content[0]!.text!.includes(renderEntry(recorded.find(x => x.seq === e.seq)!)));
   } finally { await s.r.cleanup(); }
 });
 

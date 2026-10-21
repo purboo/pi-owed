@@ -99,7 +99,7 @@ test('G2 real extension: status, why, dispatch and drive-watch revalidation keep
   } finally { await h.emit('session_shutdown'); await r.cleanup(); }
 });
 
-test('G2 text/details equal the in-process views; worker errors retain exact code and text', async () => {
+test('G2 text equals the in-process views; compact details retain action metadata and worker errors retain code and text', async () => {
   const r = await fixture(), h = harness(r.cwd);
   try {
     for (const [name, fn, render, args] of [
@@ -108,16 +108,24 @@ test('G2 text/details equal the in-process views; worker errors retain exact cod
     ] as const) {
       const actual = await h.call(name, args);
       const expected = await (fn as any)({ cwd: r.cwd, ...args, ...(name === 'brief' ? { now: Date.parse((actual.details as { now: string }).now) } : {}) });
-      assert.deepEqual(actual.details, expected); assert.equal(text(actual), (render as any)(expected));
+      const details = actual.details as Record<string, any>;
+      assert.equal(text(actual), (render as any)(expected));
+      assert.ok(Buffer.byteLength(JSON.stringify(details)) <= 8192);
+      if (name === 'status') { assert.equal(details.nodes, undefined); assert.equal(details.nodeCount, 2); assert.deepEqual(details.ready, expected.ready); }
+      if (name === 'why') { assert.equal(details.node, expected.node); assert.equal(details.phase, expected.phase); assert.equal(details.accepted, expected.accepted); assert.ok(details.items.every((i: object) => !('observations' in i))); }
+      if (name === 'report') assert.equal(details.mergesCount, expected.merges.length);
+      if (name === 'brief') assert.deepEqual(details.totals, expected.totals);
     }
     const expected = await ops.why({ cwd: r.cwd, node: 'absent' }).catch(e => e as OwedError);
     assert.ok(expected instanceof OwedError);
     const error = await h.call('why', { node: 'absent' });
     assert.equal(error.isError, true); assert.deepEqual(error.details, { code: expected.code, reason: expected.message });
     assert.equal(text(error), `Refused: ${expected.message}`);
-    const d = await h.call('dispatch', { node: 'n1' }), value = d.details as Awaited<ReturnType<typeof ops.dispatch>> & { subagents: unknown };
-    assert.deepEqual(value.subagents, { ...value.subagent, isolation: 'none' });
-    assert.equal(text(d), `${value.packet}\n\nsubagents: ${JSON.stringify({ ...(value.subagents as object), task: '<the complete packet above>' })}\n${views.renderStatusBrief(await ops.status({ cwd: r.cwd }))}`);
+    const d = await h.call('dispatch', { node: 'n1' }), value = d.details as { worktree: string; subagents: object; packet?: string };
+    assert.deepEqual(value.subagents, { agent: 'worker', cwd: value.worktree, isolation: 'none' });
+    assert.equal(value.packet, undefined, 'packet is text only');
+    assert.ok(text(d).includes(`\n\nsubagents: ${JSON.stringify({ ...value.subagents, task: '<the complete packet above>' })}\n`));
+    assert.ok(text(d).endsWith(views.renderStatusBrief(await ops.status({ cwd: r.cwd }))));
   } finally { await h.emit('session_shutdown'); await r.cleanup(); }
 });
 

@@ -140,7 +140,10 @@ test('N3/PO1/AC1: authority is that of owed plan: a parent without an allow rule
     const pi = await run({ node: 'a', writes: ['+test/y'], note: 'pi limit' });
     assert.equal(pi.isError, undefined, pi.content[0]!.text);
     assert.equal(pi.details?.plan?.by, 'owner:pi');
-    assert.ok(pi.details?.rule?.kind === 'rule' && pi.details.rule.text.endsWith('+test/y. Limit: pi limit'));
+    assert.equal(pi.details?.rule?.kind, 'rule');
+    assert.equal(pi.details?.rule?.text, undefined, 'compact details omit ruling bodies');
+    const recordedRule = (await entriesOf(r.cwd)).find(e => e.seq === pi.details?.rule?.seq);
+    assert.ok(recordedRule?.kind === 'rule' && recordedRule.text.endsWith('+test/y. Limit: pi limit'));
     assert.match(pi.content[0]!.text!, /Widened writes of a: \+test\/y; wrote /);
     assert.equal((await ops.verify({ cwd: r.cwd })).ok, true);
   } finally { await r.cleanup(); }

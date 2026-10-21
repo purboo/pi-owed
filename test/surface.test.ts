@@ -277,17 +277,17 @@ test('SF2 preflight rejects invalid plan, shell syntax, missing trunk, identity 
     assert.deepEqual(await entries(f.cwd),[]); assert.equal((await driveStatus({cwd:f.cwd})).running,false);
   } finally { await f.done(); }
 });
-test('SF3 dispatch prints one packet and references it in rendered subagents arguments; structured arguments stay executable', async () => {
+test('SF3 dispatch prints one packet; compact details retain launch identity without duplicating the task', async () => {
   const p=plan(); p.nodes[0]!.later=false;
   const f=await fixture(p), h=harness(f.cwd);
   try {
     await ops.init({cwd:f.cwd,as:{role:'owner',id:'pi'},channel:'delegated',plan:JSON.stringify(p),measure:false});
     const out=await h.call('dispatch',{node:'a'}); assert.notEqual(out.isError,true,out.text);
-    const d=out.details as ops.DispatchPacket & {subagents:Record<string,unknown>};
-    assert.equal(d.subagents.task,d.packet); assert.equal(d.subagents.cwd,d.worktree); assert.equal(d.subagents.isolation,'none');
-    const args=JSON.parse(out.text.split('\nsubagents: ')[1]!.split('\n')[0]!);
-    assert.equal(args.task,'<the complete packet above>'); assert.equal(out.text.split(d.packet).length,2);
-    assert.ok(out.text.length < d.packet.length + 1_000,'packet size grows only once');
+    const d=out.details as {packet?:string;worktree:string;subagents:Record<string,unknown>};
+    assert.equal(d.packet,undefined); assert.equal(d.subagents.task,undefined); assert.equal(d.subagents.cwd,d.worktree); assert.equal(d.subagents.isolation,'none');
+    const [packet,tail]=out.text.split('\n\nsubagents: '), args=JSON.parse(tail!.split('\n')[0]!);
+    assert.equal(args.task,'<the complete packet above>'); assert.equal(out.text.split(packet!).length,2);
+    assert.ok(out.text.length < packet!.length + 1_000,'packet size grows only once');
     assert.match((await git(d.worktree,['status','--porcelain'])).stdout,/^$/);
   } finally { await h.shutdown(); await f.done(); }
 });
