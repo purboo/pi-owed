@@ -7,7 +7,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import type { ExtensionAPI, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import owed from '../src/extension.ts';
-import { toolWorker } from '../src/ext-worker.ts';
+import * as transport from '../src/ext-worker.ts';
+const { toolWorker, boundToolResult, compactToolDetails, utf8Head, versionNotice, restartLine } = transport;
 import * as ops from '../src/ops.ts';
 import { Ledger } from '../src/ledger.ts';
 import { renderStatus, renderWhy } from '../src/views.ts';
@@ -117,6 +118,33 @@ test('TB1-TB5 real extension/worker: large status, why, edit, plan and refusal a
   } finally { await r.h.close(); await r.cleanup(); }
 });
 
+test('TB1/TB2 hard limits handle UTF-8 boundaries, JSON escapes, many lists and version notices', () => {
+  assert.equal(typeof utf8Head, 'function', 'worker result bounding is available');
+  for (const value of ['a'.repeat(49152), '\u{1F43E}'.repeat(49152), '\u00E9'.repeat(49152), String.fromCharCode(0).repeat(49152)]) {
+    for (const bytes of [0, 1, 2, 3, 4, 511, 49152]) {
+      const head = utf8Head(value, bytes);
+      assert.ok(Buffer.byteLength(head) <= bytes); assert.ok(value.startsWith(head));
+      assert.doesNotMatch(head, /[\uD800-\uDBFF]$/u);
+    }
+    const r = boundToolResult('owed_status', {}, { content: [{ type: 'text', text: value }], details: { nodes: {}, ready: [value], summary: { merged: 0, needs: [{ node: value, reason: value, command: value }], progress: [], debt: [] } } });
+    bounded(r as Result);
+    if (Buffer.byteLength(value) <= CONTENT) assert.equal(text(r as Result), value);
+    else {
+      cut(r as Result, 'owed status --full');
+      const [head, last] = text(r as Result).split('\n');
+      assert.ok(value.startsWith(head!));
+      assert.equal(Number(last!.match(/^(\d+) bytes omitted/)![1]), Buffer.byteLength(value) - Buffer.byteLength(head!));
+    }
+  }
+  const huge = 'x'.repeat(100_000), arrays = Array.from({ length: 500 }, () => ({ node: huge, obligation: huge, note: huge, text: huge, facts: { commit: 'a'.repeat(40), changed: Array(500).fill(huge) } }));
+  const details = compactToolDetails('owed_report', Object.fromEntries(['merges', 'blocks', 'waivers', 'decisions', 'changes', 'adoptions', 'halts', 'receipts', 'superseded', 'trackedDebt', 'quarantine'].map(k => [k, arrays])));
+  assert.ok(Buffer.byteLength(JSON.stringify(details)) <= DETAILS);
+  assert.equal(details.mergesCount, 500); assert.equal(details.mergesOmitted, 495);
+  assert.ok(details.merges.every((v: object) => !('text' in v) && !('note' in v)));
+  const version = boundToolResult('owed_why', { node: 'a' }, versionNotice({ content: [{ type: 'text', text: huge }], details: { code: 'version', reason: huge } }, { seen: new Set() }));
+  cut(version as Result, 'owed why a --full');
+  assert.ok(text(version as Result).includes(restartLine()));
+});
 test('TB4 small text and refusal remain byte-for-byte unchanged; every registered tool refusal is bounded', { timeout: 60_000 }, async () => {
   const r = await repo(), h = harness(r.cwd);
   try {

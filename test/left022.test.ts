@@ -334,7 +334,7 @@ test('LO-W4: why shows only undelivered rulings for a launched writer and remove
   } finally { await f.cleanup(); }
 });
 
-test('LO3: pi owed_rule omits status/ruling/block quotes and keeps full raw follow-up in details', async () => {
+test('LO3: pi owed_rule omits status/ruling/block quotes and keeps only follow-up identity in compact details', async () => {
   const f = await fixture(), dsa = await fakeDsa(f, 'sealed');
   try {
     await ops.planSet({ cwd: f.cwd, as: parent, plan: JSON.stringify({ ...f.plan, nodes: [{ ...spec('a'), review: { count: 1, min_rank: 1 } }, spec('b')] }) });
@@ -347,8 +347,10 @@ test('LO3: pi owed_rule omits status/ruling/block quotes and keeps full raw foll
     const rid = details.delivery!.finished![0]!.writer, [head, ...rest] = text.split('\n');
     assert.match(head!, /^Recorded #\d+ ruling \(a\); delivered 0\/2$/);
     assert.deepEqual(rest, [`a: writer call ${rid} has finished, so the ruling was recorded but not sent now; the driver delivers it on its next pass; if a is halted, run owed resume a (owed decide records and resumes in one step)`]);
-    assert.ok(details.delivery!.slots![0]!.followUp.includes(ruling));
-    assert.ok(details.delivery!.slots![0]!.followUp.includes('Private active-block quote'));
+    assert.equal(details.delivery!.slots![0]!.followUp, undefined, 'follow-up bodies never cross the worker boundary');
+    const followUp = (await ops.why({ cwd: f.cwd, node: 'a' })).rulingFollowUp!;
+    assert.ok(followUp.includes(ruling));
+    assert.ok(followUp.includes('Private active-block quote'));
     assert.doesNotMatch(text.replaceAll(rid, '<rid>'), /Use this exact text|Details:|owed:|Active blocks|Private active-block quote/);
   } finally { dsa.restore(); await f.cleanup(); }
 });
