@@ -196,18 +196,32 @@ function receiptPointer(name: string, args: Summary, data: Summary): string {
 }
 export function boundToolResult<T extends { content: { type: string; text?: string }[]; details?: unknown }>(name: string, args: unknown, r: T): T {
   const details = compactToolDetails(name, r.details), text = r.content.filter(c => c.type === 'text').map(c => c.text ?? '').join('\n');
+  // The dispatch packet is required, non-replayable worker input, not optional output.
+  // Anchor the boundary to the original packet/argv, never to markers inside rulings.
+  const data = object(r.details);
+  if (name === 'owed_dispatch' && !(r as T & { isError?: boolean }).isError && typeof data.packet === 'string' && data.subagents) {
+    const required = `${data.packet}\n\nsubagents: ${JSON.stringify({ ...data.subagents, task: '<the complete packet above>' })}\n`;
+    if (text.startsWith(required)) {
+      const brief = text.slice(required.length);
+      if (Buffer.byteLength(brief) <= TOOL_CONTENT_BYTES) return { ...r, details };
+      return { ...r, details, content: [{ type: 'text', text: required + clipToolText(brief, 'owed status') }] };
+    }
+  }
   if (Buffer.byteLength(text) <= TOOL_CONTENT_BYTES) return { ...r, details };
   const rawPointer = (r as T & { isError?: boolean }).isError
     ? (object(r.details).code === 'usage' && object(args).cwd ? '' : receiptPointer('owed_why', object(args), {}))
     : receiptPointer(name, object(args), object(r.details));
   const pointer = Buffer.byteLength(rawPointer) <= 800 ? rawPointer : 'owed status --full';
+  return { ...r, details, content: [{ type: 'text', text: clipToolText(text, pointer) }] };
+}
+function clipToolText(text: string, pointer: string): string {
   // Retain the version notice even when the surrounding result was cut; the CLI footer stays last.
   const last = text.slice(text.lastIndexOf('\n') + 1);
   const notice = last.includes('is installed but this pi session loaded') ? last : '';
   const original = Buffer.byteLength(text), suffix = notice ? `\n${utf8Head(notice, 512)}` : '';
   const footer = (omitted: number) => `\n${omitted} bytes omitted${pointer ? `; full: ${pointer}` : ''}`;
   const head = utf8Head(notice ? text.slice(0, text.lastIndexOf('\n')) : text, TOOL_CONTENT_BYTES - Buffer.byteLength(suffix + footer(original)));
-  return { ...r, details, content: [{ type: 'text', text: head + suffix + footer(original - Buffer.byteLength(head + suffix)) }] };
+  return head + suffix + footer(original - Buffer.byteLength(head + suffix));
 }
 
 type Context = { cwd: string; hasUI: boolean; idle: boolean; sessionId?: string };
