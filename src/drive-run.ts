@@ -1175,7 +1175,7 @@ export class Driver {
       rid = `owed-attest-${createHash('sha256').update(JSON.stringify([this.project, node, attempt, candidate, ledgerLength])).digest('hex')}`;
       const command = hold ? this.dsa.heldCommand('machine', argv, {shared:true, priority:10}) : argv;
       const result = await this.dsa.command(rid, command, { name:`owed attest ${node}`, cwd,
-        labels:{ owed:this.project!, node, attempt:String(attempt), candidate }, ...(hold ? {env:{OWED_LEASED:'1'}} : {}),
+        labels:{ owed:this.project!, node, attempt:String(attempt), candidate }, env:{OWED_DIR:this.ledger!.dir, ...(hold ? {OWED_LEASED:'1'} : {})},
         signal:this.abort.signal, pollMs:this.o.pollMs, onRun:() => onRun(rid!) });
       if (result.outcome === 'error') return fail(result.reason);
       if (result.outcome === 'ran') ran = result;
