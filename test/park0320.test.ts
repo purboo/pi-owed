@@ -69,7 +69,10 @@ for (const act of ['decide', 'answer'] as const) test(`PK1: ${act} records a rep
     const reported = await driver.pass(); assert.ok(reported.actions.some(a => a.do === 'notify' && a.node === 'a'));
     assert.deepEqual((await ops.status(f)).reported, [{ node: 'a', resume: resume!.seq }]);
     await writeFile(log, logs.join('\n') + '\n');
-    const wake = follower.tick(); assert.ok(wake); assert.match(wake, /review the reported findings/); assert.match(wake, /Paused until the parent prerequisite/);
+    const wake = follower.tick(); assert.ok(wake);
+    assert.ok(wake.includes(`a: reported (resume #${resume!.seq})`));
+    assert.match(wake, /Paused until the parent prerequisite is ready\./);
+    assert.ok(wake.includes('Next: owed status / owed why <node>'));
     const count = (await (await Ledger.open(f.cwd)).read()).length;
     for (let i = 0; i < 3; i++) { const quiet: PassResult = await driver.pass(); assert.equal(quiet.actions.filter(a => a.node === 'a').length, 0); }
     await writeFile(log, logs.join('\n') + '\n'); assert.equal(follower.tick(), undefined);
