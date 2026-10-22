@@ -35,6 +35,51 @@ The parent approved these concrete representations in the writer's structured as
    (recorded after the overturn) lists the kind again in
    `drive.delegate.a_acts`.
 
+## Parent review findings (F1–F3)
+
+The parent reviewed the rebased branch and raised three findings; each is fixed
+in its own commit on top of the rebased tree.
+
+1. **F1 — a read-only listing must not fail wholesale when the dsa describe
+   fails.** `ops.stages()` computed every stage's freshness with a dsa describe,
+   so one failed describe aborted the whole listing and `owed status` /
+   `owed stages` failed instead of listing the stages. `stageReason` now throws
+   `UnverifiedQuestions` (an `OwedError`, so the refusal keeps its code and its
+   message `cannot verify open questions: <detail>; retry`). The tolerant listing
+   catches exactly that error and lists the stage as state `unknown` with the
+   reason `cannot verify open questions: <detail>`, and keeps listing the other
+   stages. The write path is unchanged: `owed accept` still refuses retryably
+   and records nothing, and `owed accept --all-b` uses the strict listing
+   (`strict: true`), so the whole batch refuses and records nothing. The
+   `StageView` state gains `unknown`, `status` counts it, and the status stage
+   line lists such a stage with its reason.
+2. **F2 — the status stage line counted stale stages as open.** The line
+   `Stages: <n> open (<k> stale) → owed stages` counted open and stale stages
+   together, so one open and one stale stage reported two open. The open count
+   now excludes the stale stages; the wording of the line is unchanged.
+3. **F3 — a bundle's evidence paths and patched plan file could name files
+   outside the repository.** Staging read them wherever they pointed. Both are
+   now repository paths, checked like the append paths: the bundle refuses a
+   path that is not repository-relative (`evidence.path: expected repository
+   path`, `plan_patch.file: expected repository path`), and staging refuses a
+   path that resolves outside the repository (`path escapes repository: …`).
+   The paths are resolved against the repository root, like the append paths
+   and the recorded plan path.
+
+## Rebase
+
+The branch was rebased onto trunk `c9c1fa0ef500472cb1a9a01054a108ae80c3d26f`
+(the owed rebase #3998 moved the slot base from
+`ba0e8964d999fa8bf9c582155afafdc463ff9629`). Only `src/views.ts` conflicted
+(two hunks, both the q-stage and the q-halt side): the card line keeps both the
+stage lines and the halt line, and the status line keeps both the stage line
+and the halt line. The rebased chain is
+`dbfa7d3` (stage and fork authority), `178660d` (stage acceptance and fork
+tests), `94d04aa` (question revision and test entry types), `249e7d9` (accept
+admission and describes outside the lock), `44a3bfd` (D25.3 fork wording),
+`6abdb55` (stage authorship `writer:<dsa call>`), `1857d7c` (evidence and
+limits) and `8ba84fe` (the suite receipt).
+
 ## Behavior and storage
 
 `owed stage`, `accept`, `reject`, `stages` and `overturn` have corresponding pi
@@ -99,6 +144,14 @@ New coverage is in `test/stage0330.test.ts`: field/hash refusals, semantic-kind
 staleness, plan changes, question revisions/failures, overlap, full acceptance,
 plain rulings, owner downgrade authority, combined edits, crash retries, markers,
 batch refusal, CLI/pi surfaces, fork restrictions, overturn and legacy replay.
+The three parent findings add three more tests in the same file: `F1` (a
+read-only listing keeps an unverifiable stage and names its reason, status does
+not fail wholesale, and the accept path still refuses and records nothing), `F2`
+(the status stage line counts the open stages only) and `F3` (bundle evidence and
+plan patch paths stay inside the repository, including a symlink that points
+out). Each test was checked to fail before its fix and to pass after it: with
+the three fixes reverted, the run reports `not ok 21 - F1: …`, `not ok 22 - F2: …`
+and `not ok 23 - F3: …` (log `/tmp/owed-ipc/logs/q-stage-1-064407.log`).
 One existing test changed: `test/needs-structure.test.ts` (PR2 command-literal
 registry). The registry pins every `owed …` literal by file, enclosing function and
 digest. (1) The `src/cli.ts` HELP digest changes because SG8 requires the new
