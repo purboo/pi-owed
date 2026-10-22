@@ -1,4 +1,4 @@
-import { parseBundle, stageId, stageSeq, stageEntry, stageClosed, stageTouches, stageLedgerReason, stageFileReason, overlap, questionFingerprint, repositoryFile, forkPrincipal, aActAllowed, preferredOption, actKind, disabledActs, stageLines } from './stage.ts';
+import { parseBundle, stageId, stageSeq, stageEntry, stageClosed, stageTouches, stageLedgerReason, stageFileReason, overlap, questionFingerprint, repositoryFile, forkPrincipal, aActAllowed, preferredOption, actKind, disabledActs, stageLines, UnverifiedQuestions } from './stage.ts';
 export { forkPrincipal, stageLines } from './stage.ts';
 import type { StageBundle, StageEntry, StageView } from './types.ts';
 import { open as openFile, readFile, mkdir, appendFile, rmdir, writeFile, rename, unlink, chmod, truncate } from 'node:fs/promises';
@@ -1124,15 +1124,28 @@ async function stageReason(o: Context, e: StageEntry, latest: Awaited<ReturnType
   const file = await stageFileReason(await git.repoRoot(o.cwd),e,retry); if (file) return file;
   let fingerprint: string;
   try { fingerprint = await questionFingerprint(latest.state,e.node,client); }
-  catch (error) { throw new OwedError(`cannot verify open questions: ${(error as Error).message}; retry`); }
+  catch (error) { throw new UnverifiedQuestions(`cannot verify open questions: ${(error as Error).message}`); }
   if (fingerprint !== e.questions) return `question changed (qid ${JSON.parse(fingerprint).map((q:{qid:string}) => q.qid).join(', ') || 'none'})`;
 }
-export async function stages(o: Context & {all?:boolean;dsa?:Pick<Dsa,'describe'>}): Promise<StageView[]> {
+/**
+ * The stage listing. A read-only listing never fails wholesale: a stage whose open questions cannot be verified (the
+ * dsa describe failed) is listed as `unknown` with its reason, and the other stages are still listed. The strict
+ * listing (`strict: true`) refuses instead, so an accept keeps recording nothing (SG3).
+ */
+export async function stages(o: Context & {all?:boolean;dsa?:Pick<Dsa,'describe'>;strict?:boolean}): Promise<StageView[]> {
   const latest = await load(await Ledger.open(o.cwd)), client = o.dsa ?? new Dsa({cwd:o.cwd}), views: StageView[] = [];
   for (const e of latest.entries) if (e.kind === 'stage') {
     const closed = stageClosed(latest.entries,e); if (closed && !o.all) continue;
-    const reason = closed ? undefined : await stageReason(o,e,latest,client,true);
-    views.push({id:stageId(e.seq),node:e.node,class:e.class,state:closed ?? (reason ? 'stale' : 'open'),...(reason ? {reason} : {}),age:Math.max(0,Date.now()-Date.parse(e.ts)),summary:e.summary,command:`owed accept ${stageId(e.seq)}`});
+    let state: StageView['state'], reason: string|undefined;
+    if (closed) state = closed;
+    else {
+      try { reason = await stageReason(o,e,latest,client,true); state = reason ? 'stale' : 'open'; }
+      catch (error) {
+        if (!(error instanceof UnverifiedQuestions) || o.strict) throw error;
+        reason = error.reason; state = 'unknown';
+      }
+    }
+    views.push({id:stageId(e.seq),node:e.node,class:e.class,state,...(reason ? {reason} : {}),age:Math.max(0,Date.now()-Date.parse(e.ts)),summary:e.summary,command:`owed accept ${stageId(e.seq)}`});
   }
   return views;
 }
@@ -1228,7 +1241,8 @@ async function acceptOnce(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'des
 }
 export async function acceptAllB(o: Actor & {dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult[]> {
   await parentAct(o); const results: AcceptResult[] = [];
-  for (const e of await stages({...o,dsa:o.dsa})) if (e.class === 'B' && e.state === 'open') results.push(await accept({...o,id:e.id}));
+  // The strict listing refuses a stage whose questions cannot be verified: the whole batch records nothing.
+  for (const e of await stages({...o,dsa:o.dsa,strict:true})) if (e.class === 'B' && e.state === 'open') results.push(await accept({...o,id:e.id}));
   return results;
 }
 export async function reject(o: Actor & {id:string;note:string}): Promise<Entry> {
@@ -2582,8 +2596,8 @@ export async function summaryStatusView(cwd: string, dir: string, state: State, 
   const view = statusView(state,entries,mergeChecks,now,driverRunning,currentDefers,max,rt,await statusBatchIsolation(dir,state));
   if (entries.some(e => e.kind === 'stage')) {
     view.stages = (await stages({cwd,all:true})).filter(e => state.plan.nodes.some(n => n.id === e.node));
-    view.stageCounts = Object.fromEntries(['open','stale','accepted','rejected'].map(k => [k,view.stages!.filter(s => s.state === k).length]));
-    for (const cls of ['A','B','C']) for (const status of ['open','stale','accepted','rejected']) view.stageCounts[`${cls}/${status}`] = view.stages.filter(s => s.class === cls && s.state === status).length;
+    view.stageCounts = Object.fromEntries(['open','stale','unknown','accepted','rejected'].map(k => [k,view.stages!.filter(s => s.state === k).length]));
+    for (const cls of ['A','B','C']) for (const status of ['open','stale','unknown','accepted','rejected']) view.stageCounts[`${cls}/${status}`] = view.stages.filter(s => s.class === cls && s.state === status).length;
   }
   if (entries.some(e => actKind(e) || e.kind === 'overturn')) {
     const lastPlan = entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')?.seq ?? -1;

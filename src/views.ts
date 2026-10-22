@@ -833,9 +833,12 @@ function summaryHead(trunk: StatusView['trunk'], invariants: ItemView[], summary
 }
 export const housekeepingText = (n: number): string => `Housekeeping: ${n} finished attempt worktrees; owed gc reclaims them`;
 const stageStatusLines = (v: StatusView): string[] => {
-  // SG3: the open count excludes the stale stages: an open stage and a stale stage are distinct states.
+  // SG3: the open count excludes the stale stages: an open stage and a stale stage are distinct states. An
+  // unverifiable stage (its questions could not be read) is neither, and is listed with its reason.
   const stages = v.stages ?? [], open = stages.filter(s => s.state === 'open').length, stale = stages.filter(s => s.state === 'stale').length;
+  const unverified = stages.filter(s => s.state === 'unknown');
   return [...(open + stale ? [`Stages: ${open} open (${stale} stale) → owed stages`] : []),
+    ...unverified.map(s => `Stage ${s.id} unverifiable (${s.reason}) → owed stages`),
     ...(v.stageCounts ? [`Stage counts: ${Object.entries(v.stageCounts).map(([k,n]) => `${k} ${n}`).join(', ')}`] : []),
     ...(v.aActs ? [`A acts by class: ${Object.entries(v.aActs).map(([k,n]) => `${k} ${n}`).join(', ')}`] : []),
     ...(v.disabledAActs ?? []).map(a => `A act ${a.kind} disabled by overturn #${a.seq}`)];
