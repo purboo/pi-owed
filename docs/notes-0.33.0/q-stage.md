@@ -110,8 +110,25 @@ append marker (SG4 dedup) is registered as non-command text. No assertion was
 weakened; only the inventory rows changed.
 
 All Node, TypeScript and test commands run through `/tmp/owed-ipc/run.sh` on IPC.
-The initial source checkpoint `9e756f07a029b33daaf04c7f6ba1038e69339563`, tree
-`b1eb231d97ebbccfffeb2cd0dc9a218556397010`, passed `npm run typecheck` remotely
-(log `/tmp/owed-ipc/logs/q-stage-1-121056.log`). Final-tree evidence is reported by
-the writer with exact commit/tree and check logs; this initial result does not
-attest later edits.
+
+Final tree `590b84f11e5cf0527d99fbb7923fea73233a2f42` (tree
+`e0cf4598af0041501261634d28edb9c7fc4b747f`):
+
+- `npm run typecheck` plus the focused regression set (`stage0330`,
+  `confirm-timeout`, `flow`, `needs-structure`, `english`, `surface`, `decide`):
+  121 tests, 121 pass, 0 fail; log `/tmp/owed-ipc/logs/q-stage-1-015109.log`.
+- `npm run typecheck` plus the full suite
+  (`node --test --test-concurrency=2 --test-reporter=tap "test/**/*.test.ts"`):
+  2274 tests, 2274 pass, 0 fail; log `/tmp/owed-ipc/logs/q-stage-1-015246.log`.
+
+Earlier checkpoints (each superseded by the tree above): the first source
+checkpoint `9e756f07a029b33daaf04c7f6ba1038e69339563` passed `npm run typecheck`
+(log `/tmp/owed-ipc/logs/q-stage-1-121056.log`); the first focused run failed
+typecheck with two narrowing errors (log `/tmp/owed-ipc/logs/q-stage-1-121956.log`),
+the next failed seven tests (log `/tmp/owed-ipc/logs/q-stage-1-122101.log`) and
+the first full run failed two tests (log `/tmp/owed-ipc/logs/q-stage-1-011143.log`).
+
+Known limits: a crash between the plan file write and the ledger append is not a
+transaction across the filesystem and the ledger, so the `<!-- owed S<n> -->`
+marker is the contractual retry boundary; the accept retries at most five times
+when the ledger moves underneath it and then refuses as retryable.
