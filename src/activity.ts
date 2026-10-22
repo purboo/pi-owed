@@ -7,6 +7,16 @@ import { git } from './git.ts';
 import { stillAskingNeeds, type StillAsking } from './drive.ts';
 import { writerWaitingEligible } from './needs.ts';
 import { halted } from './reducer.ts';
+/**
+ * HT4 (ruling #3977): the runtime's stale-halt records. The pinned needs vocabulary file (`src/needs-types.ts`) stays
+ * byte-identical, so the optional field is added here as a type-only augmentation of its `Runtime` interface.
+ */
+declare module './needs-types.ts' {
+  interface Runtime {
+    /** Active driver halts recorded for an older writer generation while generation `gen` of `rid` runs (running driver only). */
+    staleHalts?: readonly { node: string; seq: number; rid: string; gen: number }[];
+  }
+}
 import type { AttestJob, State } from './types.ts';
 import type { Measuring, Runtime } from './needs-types.ts';
 

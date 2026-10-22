@@ -59,14 +59,20 @@ length is unchanged), and after 10 minutes the 10-minute halt. Any other error h
   node and halt seq. Each pass, the driver writes `drive/stale-halts.json` (tmp + rename) with the active halts whose
   writer now runs a newer generation: `[{node, seq, rid, gen}]`.
 - `assembleRuntime` (`src/activity.ts`, ruling #3977) reads that file only while a driver runs. It keeps rows whose
-  seq is still the node's active halt and sets `Runtime.staleHalts` (`src/needs-types.ts`) only when one remains.
-  Absent, unreadable, no driver or none left: the field is absent, and status/why JSON is unchanged.
+  seq is still the node's active halt and sets `Runtime.staleHalts` only when one remains. Absent, unreadable, no
+  driver or none left: the field is absent, and status/why JSON is unchanged.
+- `src/needs-types.ts` stays byte-identical (its sha is pinned by `test/activity.test.ts` "AC vocabulary is the
+  byte-for-byte pinned needs-types sha" and `test/needs.test.ts` "NE18 pinned vocabulary is byte-identical to the
+  contract sha"). The optional field is added as a type-only module augmentation of `Runtime` in `src/activity.ts`.
 - Views: `StatusView.staleHalts` and `ReceiptCard.staleHalt` (present only when non-empty). The line
   `stale halt: generation <n> is running (<rid>)` appears in `owed status` (default and `--full`, `⏸ <node>: …`) and in
   `owed why` (default and `--full`, `⏸ …`). Halts the driver did not record (or recorded before 0.33.0) are never
   shown as stale.
 
 ## Changed existing tests
+
+None: no existing test file is changed (`test/fixtures/fake-dsa.mjs` only gains two new fault kinds, and
+`test/removed.test.ts` has the two F4.5 cases listed below).
 
 - `test/removed.test.ts` "F4.5 (#34) … retried once …", renamed "F4.5 (#34) / HT1: … transient …". HT1 moves the retry
   into the client (1 s/3 s/9 s), so the driver describes once per pass. A describe still timing out is transient: one
