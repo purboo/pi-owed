@@ -169,7 +169,7 @@ export function stageDraftErrors(s: State, d: Draft, entries: readonly Entry[]):
     if (!['A','B','C'].includes(d.class) || typeof d.summary !== 'string' || !d.summary.trim() || d.summary.split(/\r?\n/).length > 10 || d.summary.split(/\r?\n/).some(l => l.length > 160)) errors.push('invalid stage class or summary');
     if (typeof d.questions !== 'string' || !Array.isArray(d.touches) || !d.touches.includes(d.node) || d.touches.some(p => typeof p !== 'string' || !s.plan.nodes.some(n => n.id === p) && !repositoryPath(p))) errors.push('invalid stage questions or touches');
     if (typeof d.questions === 'string') {
-      try {const q=JSON.parse(d.questions);if(!Array.isArray(q) || q.some(x=>!object(x) || Object.keys(x).some(k=>!['qid','rev'].includes(k)) || typeof x.qid !== 'string' || !Number.isSafeInteger(x.rev) || x.rev < 1)) errors.push('invalid stage question fingerprint');}catch {errors.push('invalid stage question fingerprint');}
+      try {const q=JSON.parse(d.questions);if(!Array.isArray(q) || q.some(x=>!object(x) || Object.keys(x).some(k=>!['qid','rev'].includes(k)) || typeof x.qid !== 'string' || !Number.isSafeInteger(x.rev) || Number(x.rev) < 1)) errors.push('invalid stage question fingerprint');}catch {errors.push('invalid stage question fingerprint');}
     }
     if (d.patched_plan !== undefined && (!d.plan_path || !digest(d.before_sha256) || !digest(d.after_sha256))) errors.push('stage patch needs plan path and hashes');
   } else if (d.kind === 'accept' || d.kind === 'reject') {
