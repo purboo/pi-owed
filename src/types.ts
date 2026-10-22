@@ -284,7 +284,7 @@ export interface StageEntry extends Base { kind: 'stage'; node: string; bundle: 
 export interface AcceptEntry extends Base { kind: 'accept'; stage: string; ruling: number; plan?: number }
 export interface RejectEntry extends Base { kind: 'reject'; stage: string; note: string }
 export interface OverturnEntry extends Base { kind: 'overturn'; act: number; note: string }
-export interface StageView { id: string; node: string; class: 'A' | 'B' | 'C'; state: 'open' | 'stale' | 'accepted' | 'rejected'; reason?: string; age: number; summary: string; command: string }
+export interface StageView { id: string; node: string; class: 'A' | 'B' | 'C'; state: 'open' | 'stale' | 'accepted' | 'rejected' | 'unknown'; reason?: string; age: number; summary: string; command: string }
 export type Entry = StageEntry | AcceptEntry | RejectEntry | OverturnEntry | GrantEntry | RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;

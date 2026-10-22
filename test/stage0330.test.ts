@@ -313,3 +313,27 @@ test('F2: the status stage count excludes stale stages from the open count',asyn
     assert.doesNotMatch(text,/Stages: 2 open/);
   }finally{await f.cleanup();}
 });
+
+test('F1: a read-only listing keeps an unverifiable stage instead of failing wholesale',async()=>{
+  const f=await fixture();try{
+    await f.slot();const rid=await f.launch();f.dsa.ask(rid);const staged=await f.bundle();
+    f.dsa.fail=true;
+    // The listing survives: the stage is listed with its reason, and the other stages are still listed.
+    const views=await ops.stages(f.actor);
+    assert.equal(views.length,1);assert.equal(views[0]!.state,'unknown');assert.match(views[0]!.reason!,/cannot verify open questions/);
+    // Status does not fail wholesale either: the stage is still counted and listed.
+    const broken=join(f.root,'broken-dsa.mjs');
+    await writeFile(broken,`#!/usr/bin/env node\nconst a=process.argv.slice(2);if(a[0]==='describe'){console.error('no such run');process.exit(1);}process.exit(1);\n`,{mode:0o755});
+    await env({OWED_DSA:broken},async()=>{
+      const status=await ops.status(f);
+      assert.equal(status.stages!.find(s=>s.id===staged.id)!.state,'unknown');
+      assert.match(renderStatus(status),/unverifiable/);
+    });
+    // The write path still refuses retryably and records nothing.
+    const before=await ledgerBytes(f.cwd);
+    await assert.rejects(ops.accept({...f.actor,id:staged.id}),/cannot verify open questions: describe unavailable; retry/);
+    assert.equal(await ledgerBytes(f.cwd),before);
+    await assert.rejects(ops.acceptAllB(f.actor),/cannot verify open questions: describe unavailable; retry/);
+    assert.equal(await ledgerBytes(f.cwd),before);
+  }finally{await f.cleanup();}
+});

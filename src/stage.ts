@@ -9,6 +9,14 @@ import type { AAct, Draft, Entry, Plan, RunQuestion, StageBundle, StageEntry, St
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const digest = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v);
 function refuse(text: string): never { throw new OwedError(text, 'usage'); }
+/**
+ * SG3: the dsa describe for a stage's open questions failed, so its freshness cannot be computed. An accept refuses
+ * it retryably and records nothing; a read-only listing keeps it with the reason instead of failing wholesale.
+ */
+export class UnverifiedQuestions extends OwedError {
+  readonly reason: string;
+  constructor(reason: string) { super(`${reason}; retry`); this.reason = reason; }
+}
 function keys(v: Record<string, unknown>, allowed: string[], label: string): void {
   const unknown = Object.keys(v).find(k => !allowed.includes(k)); if (unknown) refuse(`${label}: unknown field ${unknown}`);
 }
