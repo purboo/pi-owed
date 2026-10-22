@@ -5474,7 +5474,8 @@ its acceptance are auditable and replayable.
   plan bytes), `appends` (optional `[{path, text}]`; each path must be listed
   in the plan's `drive.delegate.appends`, text at most 4000 chars, the token
   `{ruling}` is replaced by the accept's ruling seq), `evidence` (optional
-  `[{path, sha256}]`), `read_through_seq` (required integer, the highest ledger
+  `[{path, sha256}]`; each path is a repository path inside the repository),
+  `read_through_seq` (required integer, the highest ledger
   seq the author read), `touches` (optional node ids and repository paths
   besides the node itself), `class` (`A`, `B` or `C`; default `B`) and
   `summary` (required, at most 10 lines of at most 160 chars: decision, basis,
@@ -5482,11 +5483,19 @@ its acceptance are auditable and replayable.
   at most the ledger head, the plan file currently hashes to `before_sha256`,
   the patched file parses as a plan and hashes to `after_sha256` and every
   evidence file matches its sha; it stores the bundle bytes and the patched
-  plan bytes as blobs. Any failure refuses with nothing recorded.
+  plan bytes as blobs. The `plan_patch.file` and the `evidence` paths are
+  repository paths: a path that is not repository-relative, or that resolves
+  outside the repository, refuses. Any failure refuses with nothing recorded.
 - `owed_stages` {all?, cwd?} (CLI `owed stages [--all] [--json]`) lists the
   stages: id (`S<seq>`), node, class, state (`open`, `stale` with its reason,
+  `unknown` with its reason when the open questions could not be read,
   `accepted` or `rejected`), age, the summary's first line and the accept
-  command. `--all` also lists accepted and rejected stages.
+  command. `--all` also lists accepted and rejected stages. A listing never
+  fails as a whole because one stage's questions could not be read: that stage
+  is listed as `unknown` with the reason `cannot verify open questions`, and the
+  other stages are still listed. The status stage line counts the open stages
+  only (`Stages: <n> open (<k> stale) → owed stages`); an unverifiable stage
+  is counted as neither and is listed with its reason.
 - `owed_accept` {stage?, amend?, all_b?, as?, cwd?} (CLI `owed accept S<n>
   [--amend TEXT]`, `owed accept --all-b`) is a parent or owner act. It
   re-checks the stage and refuses a stale stage (`stage S<n> is stale: <reason>
