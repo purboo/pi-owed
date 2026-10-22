@@ -35,6 +35,8 @@
 //   `run|send <exit> [none|record|apply]`  none: nothing recorded; record: request recorded but undecided (a retry
 //   decides it); apply: decided (agent executed) but the reply is the given exit. Default: 75 → record, else none.
 //   `events 4|75`  the next events call answers cursor-expired / pending.
+//   `describe hang [ms]`  the next describe sleeps (default 60 s) before answering (a read the caller times out);
+//   `describe signal`  the next describe is killed by SIGKILL. Both are logged as {cmd:'describe', fault}.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, appendFileSync } from 'node:fs';
@@ -330,6 +332,19 @@ function hook(args) {
   else { const n = Number(args[0]), dropped = s.events.splice(0, n); if (dropped.length) s.dropped = Number(dropped.at(-1).cursor.split(':')[1]); }
   save(s); return new Exit(0, { ok: true });
 }
+
+// HT1 read faults: consumed before the state lock, so a hanging describe never holds it.
+function describeFault() {
+  const file = join(DIR, 'faults'); if (!existsSync(file)) return;
+  const lines = readFileSync(file, 'utf8').split('\n'), at = lines.findIndex(l => l.trim().split(/\s+/)[0] === 'describe');
+  if (at < 0) return;
+  const [, what, ms] = lines[at].trim().split(/\s+/);
+  lines.splice(at, 1); writeFileSync(file, lines.join('\n'));
+  log({ cmd: 'describe', fault: what });
+  if (what === 'signal') process.kill(process.pid, 'SIGKILL');
+  if (what === 'hang') Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(ms ?? 60_000));
+}
+if (command === 'describe') describeFault();
 
 const commands = { run: runCmd, send: sendCmd, describe: describeCmd, events: eventsCmd, 'fake-prune': hook, 'fake-compact': hook };
 const unlocked = { hold: holdCmd, leases: leasesCmd };
