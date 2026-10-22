@@ -80,8 +80,9 @@ function mainAgentOnly(role: Role): void { const why = ops.subagentRefusal(role)
  * seconds (owed's own timer decides; 0 = indefinitely) and is dismissed by the tool call's abort; a timeout refuses
  * (`refused`, nothing recorded), an abort refuses `aborted`; neither is ever read as a confirmation.
  */
-async function actor(ctx: ExtensionContext, dir: string, value?: string, summary?: string, fields: Record<string, string | { items: string[]; more?: string } | undefined> = {}, signal?: AbortSignal) {
+async function actor(ctx: ExtensionContext, dir: string, value?: string, summary?: string, fields: Record<string, string | { items: string[]; more?: string } | undefined> = {}, signal?: AbortSignal, forkAct = false) {
   const p = principal(value);
+  if (forkAct && await ops.forkPrincipal(dir)) return {cwd:dir,as:p,...(p.role === 'owner' ? {channel:'delegated' as const} : {})};
   mainAgentOnly(p.role);
   if (p.role !== 'owner') return { cwd: dir, as: p };
   if (!ops.confirmGate()) return { cwd: dir, as: p, channel: 'delegated' as const };
@@ -208,6 +209,18 @@ export default function owed(pi: ExtensionAPI): void {
       } });
   }
   const card = async (dir: string, id: string, data: unknown) => result(data, renderReceipt(await ops.why({ cwd: dir, node: id })));
+  tool('stage', 'Prepare a validated stage bundle for parent acceptance. Anyone, including a fork or writer, may stage. CLI: owed stage <node> --file BUNDLE.json.', Type.Object({node,file:Type.String({minLength:1}),as,cwd}), async (p,_ctx,dir) => {
+    const r = await ops.stage({cwd:dir,as:principal(p.as),node:p.node,file:p.file});return result(r,`staged S${r.seq}: ${r.summary.split(/\r?\n/)[0]} → owed accept S${r.seq}`);
+  });
+  tool('stages', 'List open stages; all includes accepted and rejected stages. CLI: owed stages [--all] [--json].', Type.Object({all:Type.Optional(Type.Boolean()),cwd}), async(p,_ctx,dir) => {const r=await ops.stages({cwd:dir,all:p.all});return result({stages:r},ops.stageLines(r));});
+  tool('accept', 'Parent or owner: revalidate and apply a stage, or accept open class-B stages in order with all_b. CLI: owed accept S<n> [--amend TEXT] or owed accept --all-b.', Type.Object({stage:Type.Optional(node),amend:Type.Optional(Type.String()),all_b:Type.Optional(Type.Boolean()),as,cwd}), async(p,ctx,dir,signal) => {
+    if (!!p.stage === !!p.all_b || p.all_b && p.amend !== undefined) throw new OwedError('give stage or all_b; all_b cannot take amend','usage');
+    const a = await actor(ctx,dir,p.as,`Accept ${oneLine(p.stage ?? 'class-B stages')}`,{},signal);
+    if(p.all_b) {const r=await ops.acceptAllB({...a,signal});return result({accepted:r},r.map(ops.acceptText).join('\n') || 'No open class-B stages');}
+    const r=await ops.accept({...a,id:p.stage!,amend:p.amend,signal});return result(r,ops.acceptText(r));
+  });
+  tool('reject', 'Parent or owner: reject a stage with a note. CLI: owed reject S<n> --note TEXT.', Type.Object({stage:node,note:reason,as,cwd}), async(p,ctx,dir,signal) => {const r=await ops.reject({...await actor(ctx,dir,p.as,'Reject stage',{Note:p.note},signal),id:p.stage,note:p.note});return result(r,`rejected ${p.stage}`);});
+  tool('overturn', 'Parent or owner: overturn a fork A act and disable its kind until a later plan re-enables it. CLI: owed overturn <seq> --note TEXT.', Type.Object({seq:Type.Integer({minimum:0}),note:reason,as,cwd}), async(p,ctx,dir,signal) => {const r=await ops.overturn({...await actor(ctx,dir,p.as,'Overturn A act',{Note:p.note},signal),seq:p.seq,note:p.note});return result(r,`overturned #${p.seq}`);});
   tool('status', 'View outcome, next actions and progress; full keeps all evidence and audit lines.', Type.Object({ as, cwd, full: Type.Optional(Type.Boolean()) }), async (p, _ctx, dir) => { const r = await ops.status({ cwd: dir }); return result(r, renderStatus(r, { full:p.full })); });
   tool('why', 'View a node receipt card, evidence and rejection reasons; full shows weak-confirmation history.', Type.Object({ node, full: Type.Optional(Type.Boolean()), as, cwd }), async (p, _ctx, dir) => { const r = await ops.why({ cwd: dir, node: p.node }); return result(r, renderWhy(r, { full:p.full })); });
   tool('report', 'View merges, debt, waivers, owner decisions, escapes and decoys.', Type.Object({ since, as, cwd }), async (p, _ctx, dir) => { const r = await ops.report({ cwd: dir, since: p.since }); return result(r, renderReport(r)); });
@@ -279,7 +292,7 @@ export default function owed(pi: ExtensionAPI): void {
   });
   tool('resume', 'Clear a driver halt on the open attempt of a node or an atomic node list, or release an abandon hold with no open slot without an obligation (parent or owner; never the driver): the driver acts on its next pass and the repair budget starts again. after: a node, comma-separated string or list; wait until all merge first. expect: report asks for findings without requiring a candidate (the driver leaves the node alone meanwhile, except asking notices). note: why (the writer gets it with the next follow-up). Use owed_rule (CLI: owed rule) instead for guidance the writer and reviewers must acknowledge.', Type.Object({ node: Type.Union([node, Type.Array(node, { minItems: 1 })]), after: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Array(Type.String({ minLength: 1 }), { minItems: 1 })])), expect: Type.Optional(Type.Literal('report')), note: Type.Optional(Type.String({ description: 'Why (recorded; quoted to the writer).' })), remeasure: Type.Optional(Type.Boolean({ description: 'The driver measures failed merge-tree invariants again on the same merge key before it merges (instead of reusing the failing observation).' })), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'resume');
-    const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(String(p.node))}${p.after !== undefined ? ` after ${oneLine(String(p.after))}` : ''}`, { Note: p.note ?? '(none)' }, signal), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}), ...(p.note !== undefined ? { note: p.note } : {}), ...(p.remeasure ? { remeasure: true } : {}) });
+    const r = await ops.resume({ ...await actor(ctx, dir, who, `Resume node ${oneLine(String(p.node))}${p.after !== undefined ? ` after ${oneLine(String(p.after))}` : ''}`, { Note: p.note ?? '(none)' }, signal, true), node: p.node, ...(p.after !== undefined ? { after: p.after } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}), ...(p.note !== undefined ? { note: p.note } : {}), ...(p.remeasure ? { remeasure: true } : {}) });
     const tail = p.after === undefined ? '' : r.merged ? `\n${p.after} is already merged: ${p.node} resumes now` : `\n${p.node} waits for ${p.after} (resume #${r.entry.seq}); the driver acts again when ${p.after} merges`;
     const phase = r.entries ? '' : `\n${renderReceipt(await ops.why({ cwd: dir, node: r.entry.kind === 'resume' ? r.entry.node : String(p.node) })).split('\n')[0]}`;
     return result(r.entries ? r : r.entry, `${(r.entries ?? [r.entry]).map(renderEntry).join('\n')}${r.remeasure?.length ? `\n${r.remeasure.join('\n')}` : ''}${tail}${phase}\n${renderStatusBrief(await ops.status({ cwd: dir }))}`);
@@ -296,12 +309,12 @@ export default function owed(pi: ExtensionAPI): void {
       if (p.as === undefined && gaps.length) who = ownerDefault();
     }
     requireRole(who,'parent:pi',['parent','owner'],'decide');
-    const r = await ops.decide({...p,signal,...await actor(ctx,dir,who,`Decide ${p.nodes.map(oneLine).join(',')}`,{Decision:p.text},signal)});
+    const r = await ops.decide({...p,signal,...await actor(ctx,dir,who,`Decide ${p.nodes.map(oneLine).join(',')}`,{Decision:p.text},signal,true)});
     return result(r,[ops.decideText(r),...(r.warnings ?? [])].join('\n'));
   });
   tool('answer', 'Answer one open writer or reviewer question (AN1–AN2): record one ruling and send the answer through dsa. Omit qid only when one question matches; rid disambiguates runs. An open question uses its current rev. With no matching open question, rev (positive integer) selects a prior answer retry; omit it to retry the latest rid/qid rule. Retry the same rid/qid/rev and text without a new rule or resume. expect: report atomically records a report resume with a new answer, parking findings without a submit; retries reuse that recorded resume. Parent or owner only; reviewers still acknowledge the ruling.', Type.Object({ node, text: reason, qid: Type.Optional(Type.String({ minLength: 1 })), rid: Type.Optional(Type.String({ minLength: 1 })), rev: Type.Optional(Type.Integer({ minimum: 1 })), expect: Type.Optional(Type.Literal('report')), as, cwd }), async (p, ctx, dir, signal) => {
     const who = requireRole(p.as, 'parent:pi', ['parent', 'owner'], 'answer a question');
-    const r = await ops.answer({ ...await actor(ctx, dir, who, `Answer question for ${oneLine(p.node)}`, { Answer: p.text }, signal), node: p.node, text: p.text, ...(p.qid !== undefined ? { qid: p.qid } : {}), ...(p.rid !== undefined ? { rid: p.rid } : {}), ...(p.rev !== undefined ? { rev: p.rev } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}) });
+    const r = await ops.answer({ ...await actor(ctx, dir, who, `Answer question for ${oneLine(p.node)}`, { Answer: p.text }, signal, true), node: p.node, text: p.text, ...(p.qid !== undefined ? { qid: p.qid } : {}), ...(p.rid !== undefined ? { rid: p.rid } : {}), ...(p.rev !== undefined ? { rev: p.rev } : {}), ...(p.expect !== undefined ? { expect: p.expect } : {}) });
     return result(r, answerText(p.node, r));
   });
   tool('rule', 'Record a ruling for the applicable nodes. prospective: policy binding only attempts dispatched after it; older unsealed runs receive a notice without a new acknowledgment. Cannot combine with writer. writer: invalidate named open candidates and ask their writers to apply it and submit again (the same commit is allowed); reviewers still acknowledge it. Non-prospective rulings immediately notify running writer and reviewer calls and report delivery failures.', Type.Object({ text: reason, nodes: Type.Union([Type.Literal('*'), Type.Array(node)]), writer: Type.Optional(Type.Boolean()), prospective: Type.Optional(Type.Boolean()), as, cwd }), async (p, ctx, dir, signal) => {

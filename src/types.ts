@@ -65,7 +65,7 @@ export interface EvidenceSpec { id: string; what: string; by: 'reviewer' | 'pare
 /** Agent (and optional model) the driver launches for a role (SPEC §12, D2). */
 export interface DriveAgent { agent: string; model?: string }
 /** Optional `drive:` block of the plan (SPEC §12, D2); defaults max 4, repairs 2, writer agent worker, reviewer agent reviewer. Never an obligation. */
-export interface DriveConfig { max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number; /** 0.11 (F2.3): free MB below which the driver starts no measurement; present only when the plan sets it (default `MIN_FREE_DEFAULT`, 0 disables). */ min_free_mb?: number; /** FL4: idle reminder interval in minutes, default 60; 0 disables. */ idle_rewake_min?: number; /** WD: no-progress watchdog interval in minutes, default 15; 0 disables. */ watch_idle_min?: number; /** QN1/QT5: seconds before reminding about an answered question still open in dsa (default 600). */ answer_grace_s?: number; /** MD2: quiet same-model warning; no gate changes. */ same_model?: 'accepted'; /** MT1 (0.21): members of one batch merge, 1..8; present only when the plan sets it (default 1 = off). */ merge_batch?: number }
+export interface DriveConfig { delegate?: DelegateConfig; max: number; repairs: number; writer: DriveAgent; reviewer: DriveAgent; /** 0.7.0: measurements in flight at once; present only when the plan sets it (default `MEASURE_DEFAULT`). */ measure?: number; /** 0.11 (F2.3): free MB below which the driver starts no measurement; present only when the plan sets it (default `MIN_FREE_DEFAULT`, 0 disables). */ min_free_mb?: number; /** FL4: idle reminder interval in minutes, default 60; 0 disables. */ idle_rewake_min?: number; /** WD: no-progress watchdog interval in minutes, default 15; 0 disables. */ watch_idle_min?: number; /** QN1/QT5: seconds before reminding about an answered question still open in dsa (default 600). */ answer_grace_s?: number; /** MD2: quiet same-model warning; no gate changes. */ same_model?: 'accepted'; /** MT1 (0.21): members of one batch merge, 1..8; present only when the plan sets it (default 1 = off). */ merge_batch?: number }
 /**
  * Optional `exec:` block of the plan (SPEC §3, §7, D20): extra environment and an argv prefix for every process owed
  * starts in a materialized tree. Parsed plans keep only non-empty fields; `exec: {}` is the same as no block.
@@ -156,7 +156,7 @@ export interface PlanEntry extends Base { kind: 'plan'; prior: string; plan: str
 export interface AnswerRef { rid: string; qid: string; rev: number }
 /** DC: multiple answers share one decision ruling. */
 export interface DecisionAnswer extends AnswerRef { node: string }
-export interface RuleEntry extends Base { kind: 'rule'; text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; answer?: AnswerRef; answers?: DecisionAnswer[]; /** AR: latest prior answer rule for this rid/qid; re-ask ledgers require 0.16. */ supersedes?: number }
+export interface RuleEntry extends Base { via?: string; kind: 'rule'; text: string; nodes: string[] | '*'; writer?: boolean; prospective?: boolean; answer?: AnswerRef; answers?: DecisionAnswer[]; /** AR: latest prior answer rule for this rid/qid; re-ask ledgers require 0.16. */ supersedes?: number }
 export interface DispatchEntry extends Base { kind: 'dispatch'; node: string; attempt: number; base: string; branch: string; worktree: string; packet: string; rulings_seen: number; overlaps?: string[] /* nodes with an open slot whose writes overlap, dispatched with --allow-overlap */ }
 /**
  * N1 (0.10): `carry` = the seq of the submit this entry carries across a plan entry that changed only the node's checks,
@@ -259,9 +259,33 @@ export interface HaltEntry extends Base { kind: 'halt'; node: string; attempt: n
  * 0.8 (L1): the parent or owner clears the node's driver halt without an obligation and starts a new repair epoch;
  * `after`: the node waits until that node merges. Strict fields.
  */
-export interface ResumeEntry extends Base { kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold'; /** PO2: first resume seq of an atomic batch. */ batch?: number; /** MS2 (0.20): the driver remeasures failed merge-tree invariants before its next merge. */ remeasure?: boolean }
+export interface ResumeEntry extends Base { via?: string; kind: 'resume'; node: string; attempt: number; after?: string | string[]; expect?: 'report'; note?: string; release?: 'hold'; /** PO2: first resume seq of an atomic batch. */ batch?: number; /** MS2 (0.20): the driver remeasures failed merge-tree invariants before its next merge. */ remeasure?: boolean }
 export interface SweepEntry extends Base { kind: 'sweep'; commit: string; key?: string; verdict: Verdict; counts?: Counts; log: string; failed: string[]; bisect?: boolean; /** Last passing predecessor sample; prior samples prove the head and culprit failed. */ boundary?: { head: number; merge: number } }
-export type Entry = GrantEntry | RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
+export type AAct = 'preferred-answer' | 'infra-resume';
+export interface DelegateConfig {
+  on?: ('question' | 'writer-stop' | 'review-asks' | 'infra-halt' | 'needs-owner')[];
+  max: number;
+  budget?: { rounds?: number; wall_s?: number };
+  a_acts?: AAct[];
+  appends?: string[];
+}
+export interface StageBundle {
+  ruling_text: string;
+  decide?: { nodes?: string[]; writes?: string[]; resume?: boolean; expect?: 'report'; writer?: boolean; allow_only?: string[]; after?: string | string[]; remeasure?: boolean };
+  plan_patch?: { file: string; before_sha256: string; after_sha256: string; self_check?: string };
+  appends?: { path: string; text: string }[];
+  evidence?: { path: string; sha256: string }[];
+  read_through_seq: number;
+  touches?: string[];
+  class?: 'A' | 'B' | 'C';
+  summary: string;
+}
+export interface StageEntry extends Base { kind: 'stage'; node: string; bundle: string; patched_plan?: string; plan_path?: string; questions: string; touches: string[]; class: 'A' | 'B' | 'C'; summary: string; read_through_seq: number; before_sha256?: string; after_sha256?: string }
+export interface AcceptEntry extends Base { kind: 'accept'; stage: string; ruling: number; plan?: number }
+export interface RejectEntry extends Base { kind: 'reject'; stage: string; note: string }
+export interface OverturnEntry extends Base { kind: 'overturn'; act: number; note: string }
+export interface StageView { id: string; node: string; class: 'A' | 'B' | 'C'; state: 'open' | 'stale' | 'accepted' | 'rejected'; reason?: string; age: number; summary: string; command: string }
+export type Entry = StageEntry | AcceptEntry | RejectEntry | OverturnEntry | GrantEntry | RefreshEntry | SweepEntry | GenesisEntry | PlanEntry | RuleEntry | DispatchEntry | SubmitEntry | ObsEntry | ReviewEntry | WaiveEntry | DeferEntry | AbandonEntry | HoldEntry | RebaseEntry | MergeEntry | NoteEntry | AdoptEntry | EscapeEntry | DecoyCommitEntry | DecoyRevealEntry | LaunchEntry | SendEntry | HaltEntry | EvidenceEntry | ResumeEntry;
 /** An entry before the ledger assigns seq/ts/prev/hash. */
 export type Draft = Entry extends infer E ? E extends Entry ? Omit<E, 'seq' | 'ts' | 'prev' | 'hash'> : never : never;
 
