@@ -240,6 +240,13 @@ test('SG6: CLI and pi permit fork stage and enabled A act, refuse ordinary paren
       const staged=await cli(f.cwd,['stage','b','--file','bundle.json']);assert.equal(staged.code,0,staged.stderr);
       const refused=await cli(f.cwd,['rule','Broad decision','--nodes','a']);assert.equal(refused.code,1);assert.match(refused.stderr,/owed stage/);
       const out=await tools.get('owed_stage')!.execute('fork-stage',{node:'c',file:'bundle.json'},undefined,undefined,ctx as Parameters<ToolDefinition['execute']>[4]);assert.notEqual(out.isError,true,JSON.stringify(out));
+      const stages=(await ops.readState(f)).entries.filter(e=>e.kind==='stage');
+      assert.equal(stages.length,2);assert.equal(stages[0]!.by,'writer:fork-surfaces');
+    });
+    // A dsa call that is not a fork keeps D25.3's exact wording.
+    await env({DSA_CALL:'plain-call',OWED_DSA:join(f.root,'missing-dsa.mjs')},async()=>{
+      const refused=await cli(f.cwd,['rule','Broad decision','--nodes','a']);assert.equal(refused.code,1);assert.match(refused.stderr,/this process is a subagent call \(DSA_CALL\)/);
+      assert.doesNotMatch(refused.stderr,/use owed stage/);
     });
   }finally{await f.cleanup();}
 });
