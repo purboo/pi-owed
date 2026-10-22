@@ -6,24 +6,34 @@ implementation; the parent owns submission, independent review and acceptance.
 
 ## Parent clarifications
 
-The parent approved these concrete representations in the writer's structured ask:
+The parent approved these concrete representations in the writer's structured ask
+(they are the contract now):
 
-- `touches` is a JSON string array. Existing plan node ids denote nodes; every
-  other value must be a repository-relative path without absolute or `..` segments.
-  Overlap means a common node, equal paths, or a directory-prefix path overlap.
-- Unrelated plan entries do not invalidate stages. Compare the canonical node
-  definitions at `read_through_seq` with the later recorded plans for the stage's
-  node and touched nodes. A stage with a patch also checks the current file bytes.
-- Record the sorted `qid`/`rev` fingerprint of open writer questions when staging.
-  Acceptance describes again. Changes produce `question changed (qid …)`;
-  describe failures refuse with `cannot verify open questions: …; retry` and
-  record nothing. No question ledger kind is introduced.
-- Acceptance without `decide` records one ordinary ruling for the stage node,
-  using `ruling_text` or `--amend`, with the ` [stage S<n>]` suffix.
-- SG1 permits the new optional `via` field on existing A-act entries. It is absent
-  from ordinary entries and historical replay remains unchanged.
-- An overturn disables that A-act kind until a later recorded plan explicitly
-  lists it again in `drive.delegate.a_acts`.
+1. `touches` is a JSON string array. Existing plan node ids denote nodes; every
+   other value must be a repository-relative path without absolute or `..`
+   segments, otherwise stage refuses. Overlap means a common node, equal paths,
+   or a directory-prefix path overlap.
+2. SG3 maps onto existing kinds. Unrelated plan entries do not invalidate
+   stages: compare the canonical node definitions at `read_through_seq` with the
+   later recorded plans for the stage's node and touched nodes (a node that was
+   added or removed counts). A stage with a patch also checks the current file
+   bytes (`before_sha256`). One accepted plan patch therefore does not stale an
+   unrelated concurrent fork's stage.
+3. Runtime questions: a stage records the sorted `qid`/`rev` fingerprint of the
+   node's open writer questions (empty when none). Acceptance describes again; a
+   differing fingerprint makes the stage stale with `question changed (qid …)`.
+   If describe fails at accept, the accept is refused as retryable
+   (`cannot verify open questions: …; retry`), records nothing and does not
+   mark the stage stale. No new question ledger kind exists.
+4. Acceptance without `decide` still records one ruling (a `rule` entry for the
+   stage's node) with the `ruling_text`/`--amend` text and the ` [stage S<n>]`
+   suffix; the accept entry cites that seq.
+5. `via` is a new optional field on the entries an A act records (rule, resume).
+   It is absent when unused, no existing field changes, and a replay test proves
+   that an old ledger stays byte-identical.
+6. An overturn disables that A-act kind until a later recorded plan entry
+   (recorded after the overturn) lists the kind again in
+   `drive.delegate.a_acts`.
 
 ## Behavior and storage
 
@@ -75,7 +85,9 @@ fork's own open writer question and its uniquely marked preferred option.
 Infrastructure resume requires its own infrastructure halt and non-error current
 candidate measurements covering the execution obligations. These are owner acts
 with `via: fork:<call>`. All other CLI/pi parent and owner acts retain D25.3's
-refusal and point to `owed stage`. Overturn history remains visible in status.
+refusal; the refusal of a *fork* names `owed stage` (SG6), while a subagent call
+that is not a fork keeps D25.3's exact wording. Overturn history remains visible
+in status.
 
 A plan without `drive.delegate` receives no new defaults or enumerable replay
 fields. Stages, their states, counts and commands are derived from optional ledger

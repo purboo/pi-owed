@@ -70,7 +70,7 @@ export const confirmTimeoutText = (seconds: number): string => `Owner confirmati
 /** Default owner principal of pi owner tools: `owner:pi` (delegated, D25.1), or `owner:human` under `OWED_CONFIRM=owner`. */
 const ownerDefault = (): string => ops.confirmGate() ? 'owner:human' : 'owner:pi';
 /** D25.3: refuses owner and parent acts in a pi-durable-subagents call. */
-function mainAgentOnly(role: Role): void { const why = ops.subagentRefusal(role); if (why) throw new OwedError(why); }
+function mainAgentOnly(dir: string, role: Role): Promise<void> { return ops.subagentRefusalFor(dir,role).then(why => { if (why) throw new OwedError(why); }); }
 /**
  * Resolves the principal. D25: a subagent call may not act as owner or parent; an owner act is delegated (channel
  * `delegated`, no dialog) unless `OWED_CONFIRM=owner`, which restores the dialog: `summary` lines are fixed text whose
@@ -83,7 +83,7 @@ function mainAgentOnly(role: Role): void { const why = ops.subagentRefusal(role)
 async function actor(ctx: ExtensionContext, dir: string, value?: string, summary?: string, fields: Record<string, string | { items: string[]; more?: string } | undefined> = {}, signal?: AbortSignal, forkAct = false) {
   const p = principal(value);
   if (forkAct && await ops.forkPrincipal(dir)) return {cwd:dir,as:p,...(p.role === 'owner' ? {channel:'delegated' as const} : {})};
-  mainAgentOnly(p.role);
+  await mainAgentOnly(dir,p.role);
   if (p.role !== 'owner') return { cwd: dir, as: p };
   if (!ops.confirmGate()) return { cwd: dir, as: p, channel: 'delegated' as const };
   if (!ctx.hasUI) throw new OwedError('owner actions require UI confirmation; no UI is available');

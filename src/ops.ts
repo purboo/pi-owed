@@ -95,7 +95,12 @@ export function subagentCall(env: NodeJS.ProcessEnv = process.env): 'DSA_CALL' |
 /** D25.3 refusal when a subagent call would act as owner or parent; undefined when allowed. */
 export function subagentRefusal(role: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const v = subagentCall(env);
-  return v && (role === 'owner' || role === 'parent') ? `owner and parent acts are reserved for the main agent; this process is a subagent call (${v}); use owed stage` : undefined;
+  return v && (role === 'owner' || role === 'parent') ? `owner and parent acts are reserved for the main agent; this process is a subagent call (${v})` : undefined;
+}
+/** SG6: a fork's refused owner/parent act names `owed stage`; a call that is not a fork keeps the D25.3 wording. */
+export async function subagentRefusalFor(cwd: string, role: string, env: NodeJS.ProcessEnv = process.env): Promise<string | undefined> {
+  const base = subagentRefusal(role, env); if (!base) return undefined;
+  return (await forkPrincipal(cwd, env)) ? `${base}; use owed stage` : base;
 }
 /** G2.3 (F5): refusal of a claimed `parent:drive` (CLI `--as`, pi `as`); only the driver records as it, internally. */
 export const DRIVER_CLAIM = "parent:drive is the driver's identity: only owed drive records as it; it cannot be claimed with --as or as";
@@ -1077,9 +1082,9 @@ async function stageSource(cwd: string, entries: Entry[]): Promise<{file:string;
   const root = await git.repoRoot(cwd), file = resolve(root,law.path);
   return {file,path:law.path,text:await readFile(file,'utf8')};
 }
-function parentAct(o: Actor): void {
+async function parentAct(o: Actor): Promise<void> {
   if (!['parent','owner'].includes(o.as.role) || by(o) === DRIVER) throw new OwedError('requires parent or owner; use owed stage');
-  const refusal = subagentRefusal(o.as.role); if (refusal) throw new OwedError(refusal);
+  const refusal = await subagentRefusalFor(o.cwd,o.as.role); if (refusal) throw new OwedError(refusal);
   owner(o);
 }
 export async function stage(o: Actor & {node:string;file:string;dsa?:Pick<Dsa,'describe'>}): Promise<StageEntry> {
@@ -1140,7 +1145,7 @@ export interface AcceptResult {id:string;entry:Entry;ruling:number;plan?:number;
 export const acceptText = (r:AcceptResult):string => `accepted ${r.id}: ruling #${r.ruling}${r.plan !== undefined ? `; plan #${r.plan}` : ''}${r.appends.length ? `; appended ${r.appends.join(', ')}` : ''}${r.alreadyAccepted ? '; already accepted' : ''}${r.decision?.deliveryFailures.length ? `\n${r.decision.deliveryFailures.join('\n')}` : ''}`;
 class AcceptMoved extends Error {}
 export async function accept(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult> {
-  parentAct(o);
+  await parentAct(o);
   if (o.amend !== undefined && (typeof o.amend !== 'string' || !o.amend.trim() || o.amend.length > 8000)) throw new OwedError('amend must be nonempty text of at most 8000 chars','usage');
   // Commands (dsa describe, plan admission) run before the lock; the lock only revalidates the read sequence and appends.
   for (let attempt = 1;; attempt++) {
@@ -1218,15 +1223,15 @@ async function acceptOnce(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'des
   return result;
 }
 export async function acceptAllB(o: Actor & {dsa?:Pick<Dsa,'describe'|'send'>;signal?:AbortSignal}): Promise<AcceptResult[]> {
-  parentAct(o); const results: AcceptResult[] = [];
+  await parentAct(o); const results: AcceptResult[] = [];
   for (const e of await stages({...o,dsa:o.dsa})) if (e.class === 'B' && e.state === 'open') results.push(await accept({...o,id:e.id}));
   return results;
 }
 export async function reject(o: Actor & {id:string;note:string}): Promise<Entry> {
-  parentAct(o); return mutate(o,() => ({kind:'reject',by:by(o),channel:o.channel,stage:o.id,note:o.note}));
+  await parentAct(o); return mutate(o,() => ({kind:'reject',by:by(o),channel:o.channel,stage:o.id,note:o.note}));
 }
 export async function overturn(o: Actor & {seq:number;note:string}): Promise<Entry> {
-  parentAct(o); return mutate(o,() => ({kind:'overturn',by:by(o),channel:o.channel,act:o.seq,note:o.note}));
+  await parentAct(o); return mutate(o,() => ({kind:'overturn',by:by(o),channel:o.channel,act:o.seq,note:o.note}));
 }
 
 // ---------- DC: one decision, one append; effects only after the lock ----------
