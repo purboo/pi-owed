@@ -170,7 +170,7 @@ export async function main(argv: string[], io: CliIo = terminal): Promise<number
     // ED2: an edit preview is read-only, even when an owner principal was supplied.
     const preview = cmd === 'edit' && opts.has('dry-run');
     const records=!preview && !['stages','check','status','idle','why','report','brief','verify','attest','sweep'].includes(cmd) && !(cmd === 'decoy' && args[0] === 'digest');
-    const subagent=records && cmd !== 'stage' && !(['answer','decide','resume'].includes(cmd) && await ops.forkPrincipal(cwd)) ? ops.subagentRefusal(principal.role) : undefined; if(subagent) throw new OwedError(subagent);
+    const subagent=records && cmd !== 'stage' && !(['answer','decide','resume'].includes(cmd) && await ops.forkPrincipal(cwd)) ? await ops.subagentRefusalFor(cwd,principal.role) : undefined; if(subagent) throw new OwedError(subagent);
     let channel:Channel|undefined, adoptCommit:string|undefined, approvePin:ops.CandidatePin|undefined, pin:ops.CandidatePin|undefined;
     // The owner confirms what is adopted: the preview is printed first and its commit is pinned, so a ref moving after the confirmation is refused.
     if(cmd === 'adopt' && principal.role === 'owner') { const p=await ops.adoptPreview({cwd,commit:value('commit')}); io.error(renderAdoptPreview(p,value('note')!)); adoptCommit=p.commit; }
