@@ -60,4 +60,6 @@ export interface Runtime {
   writerWaiting?: readonly { node: string; attempt: number; rid: string; gen?: number; since: number; awaiting: NonNullable<import('./types.ts').RunView['awaiting']> }[];
   now?: number;
   driverRunning?: boolean;
+  /** HT4: active driver halts recorded for an older writer generation while generation `gen` of `rid` runs (running driver only). */
+  staleHalts?: readonly { node: string; seq: number; rid: string; gen: number }[];
 }
