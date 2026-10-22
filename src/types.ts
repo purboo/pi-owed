@@ -271,7 +271,7 @@ export interface DelegateConfig {
 }
 export interface StageBundle {
   ruling_text: string;
-  decide?: { nodes?: string[]; writes?: string[]; resume?: boolean; expect?: 'report'; writer?: boolean; allow_only?: string[]; after?: string | string[]; remeasure?: boolean };
+  decide?: { nodes: string[]; writes?: string[]; resume?: boolean; expect?: 'report'; writer?: boolean; allow_only?: string[]; after?: string | string[]; remeasure?: boolean };
   plan_patch?: { file: string; before_sha256: string; after_sha256: string; self_check?: string };
   appends?: { path: string; text: string }[];
   evidence?: { path: string; sha256: string }[];
