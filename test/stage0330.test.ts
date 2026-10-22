@@ -337,3 +337,26 @@ test('F1: a read-only listing keeps an unverifiable stage instead of failing who
     assert.equal(await ledgerBytes(f.cwd),before);
   }finally{await f.cleanup();}
 });
+
+test('F3: bundle evidence and plan_patch paths must stay inside the repository',async()=>{
+  const f=await fixture();try{
+    const outside=join(f.root,'outside.txt');await writeFile(outside,'outside\n');
+    const before=await ledgerBytes(f.cwd);
+    // An evidence path outside the repository refuses and records nothing.
+    await f.put('bad.json',JSON.stringify({ruling_text:'Keep',summary:'Keep scope',read_through_seq:0,evidence:[{path:'../outside.txt',sha256:sha256('outside\n')}]}));
+    await assert.rejects(ops.stage({...f.actor,node:'a',file:'bad.json'}),/expected repository path/);
+    assert.equal(await ledgerBytes(f.cwd),before);
+    // A plan patch file outside the repository refuses and records nothing.
+    await f.put('bad.json',JSON.stringify({ruling_text:'Keep',summary:'Keep scope',read_through_seq:0,plan_patch:{file:'../outside.json',before_sha256:sha256(f.plan),after_sha256:sha256(f.plan)}}));
+    await assert.rejects(ops.stage({...f.actor,node:'a',file:'bad.json'}),/expected repository path/);
+    assert.equal(await ledgerBytes(f.cwd),before);
+    // A symlink inside the repository that points outside refuses as well.
+    await symlink(outside,join(f.cwd,'link.txt'));
+    await f.put('bad.json',JSON.stringify({ruling_text:'Keep',summary:'Keep scope',read_through_seq:0,evidence:[{path:'link.txt',sha256:sha256('outside\n')}]}));
+    await assert.rejects(ops.stage({...f.actor,node:'a',file:'bad.json'}),/escapes repository/);
+    assert.equal(await ledgerBytes(f.cwd),before);
+    // A path inside the repository still works.
+    const staged=await f.bundle({evidence:[{path:'notes.txt',sha256:sha256('existing\n')}]});
+    assert.equal(staged.entry.node,'a');
+  }finally{await f.cleanup();}
+});

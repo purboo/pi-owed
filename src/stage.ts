@@ -47,6 +47,7 @@ export function parseBundle(bytes: string): StageBundle {
     if (!object(v.plan_patch)) refuse('plan_patch: expected object');
     keys(v.plan_patch, ['file','before_sha256','after_sha256','self_check'], 'plan_patch');
     if (typeof v.plan_patch.file !== 'string' || !v.plan_patch.file.trim()) refuse('plan_patch.file: expected nonempty string');
+    if (!repositoryPath(v.plan_patch.file)) refuse('plan_patch.file: expected repository path');
     if (!digest(v.plan_patch.before_sha256) || !digest(v.plan_patch.after_sha256)) refuse('plan_patch: expected before_sha256 and after_sha256');
     if (v.plan_patch.self_check !== undefined && typeof v.plan_patch.self_check !== 'string') refuse('plan_patch.self_check: expected string');
   }
@@ -58,6 +59,7 @@ export function parseBundle(bytes: string): StageBundle {
       keys(item, key === 'appends' ? ['path','text'] : ['path','sha256'], key);
       if (typeof item.path !== 'string' || !item.path.trim()) refuse(`${key}.path: expected nonempty string`);
       if (key === 'appends' && (!repositoryPath(item.path) || typeof item.text !== 'string' || item.text.length > 4000)) refuse('appends: expected repository path and text of at most 4000 chars');
+      if (key === 'evidence' && !repositoryPath(item.path)) refuse('evidence.path: expected repository path');
       if (key === 'evidence' && !digest(item.sha256)) refuse('evidence.sha256: expected sha256');
     }
     if (key === 'appends' && new Set(v[key].map(x => (x as {path:string}).path)).size !== v[key].length) refuse('appends: duplicate path');

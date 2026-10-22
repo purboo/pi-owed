@@ -1105,10 +1105,10 @@ export async function stage(o: Actor & {node:string;file:string;dsa?:Pick<Dsa,'d
       if (!s.plan.drive?.delegate?.appends?.includes(a.path)) throw new OwedError(`append path ${a.path} is not listed in drive.delegate.appends`);
       await repositoryFile(root,a.path);
     }
-    for (const e of bundle.evidence ?? []) if (sha256(await readFile(resolve(o.cwd,e.path))) !== e.sha256) throw new OwedError(`evidence sha mismatch: ${e.path}`);
+    for (const e of bundle.evidence ?? []) { const file = await repositoryFile(root,e.path); if (sha256(await readFile(file)) !== e.sha256) throw new OwedError(`evidence sha mismatch: ${e.path}`); }
     let patch: {patched_plan:string;plan_path:string;before_sha256:string;after_sha256:string} | undefined;
     if (bundle.plan_patch) {
-      const source = await stageSource(o.cwd,entries), patched = await readFile(resolve(o.cwd,bundle.plan_patch.file));
+      const source = await stageSource(o.cwd,entries), patched = await readFile(await repositoryFile(root,bundle.plan_patch.file));
       if (sha256(source.text) !== bundle.plan_patch.before_sha256) throw new OwedError('plan before_sha256 mismatch');
       if (sha256(patched) !== bundle.plan_patch.after_sha256) throw new OwedError('plan after_sha256 mismatch');
       parsePlan(patched.toString());
