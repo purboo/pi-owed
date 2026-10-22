@@ -111,15 +111,20 @@ weakened; only the inventory rows changed.
 
 All Node, TypeScript and test commands run through `/tmp/owed-bench/run.sh` on the bench host.
 
-Final tree `590b84f11e5cf0527d99fbb7923fea73233a2f42` (tree
-`e0cf4598af0041501261634d28edb9c7fc4b747f`):
+Final tree `9dfd88bad963bcad4cc2171f9c9ed4d0f9757ea2` (tree
+`41255bc1d043b22d33e5712ea5ad656c001b7a45`):
 
 - `npm run typecheck` plus the focused regression set (`stage0330`,
   `confirm-timeout`, `flow`, `needs-structure`, `english`, `surface`, `decide`):
-  121 tests, 121 pass, 0 fail; log `/tmp/owed-bench/logs/q-stage-1-015109.log`.
+  121 tests, 121 pass, 0 fail; log `/tmp/owed-bench/logs/q-stage-1-015109.log`
+  (same sources, tree `590b84f11e5cf0527d99fbb7923fea73233a2f42`).
 - `npm run typecheck` plus the full suite
   (`node --test --test-concurrency=2 --test-reporter=tap "test/**/*.test.ts"`):
-  2274 tests, 2274 pass, 0 fail; log `/tmp/owed-bench/logs/q-stage-1-015246.log`.
+  2274 tests, 2274 pass, 0 fail; log `/tmp/owed-bench/logs/q-stage-1-021916.log`.
+
+The commit after the tested tree changes only this note file, which no owed
+invariant covers (`inv:typecheck` reads `src/**`, `test/**`, `tsconfig.json`,
+`package.json`; `inv:suite` runs the tests).
 
 Earlier checkpoints (each superseded by the tree above): the first source
 checkpoint `9e756f07a029b33daaf04c7f6ba1038e69339563` passed `npm run typecheck`
