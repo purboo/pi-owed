@@ -6,6 +6,17 @@ import { ledgerDir } from './ledger.ts';
 import { git } from './git.ts';
 import { stillAskingNeeds, type StillAsking } from './drive.ts';
 import { writerWaitingEligible } from './needs.ts';
+import { halted } from './reducer.ts';
+/**
+ * HT4 (ruling #3977): the runtime's stale-halt records. The pinned needs vocabulary file (`src/needs-types.ts`) stays
+ * byte-identical, so the optional field is added here as a type-only augmentation of its `Runtime` interface.
+ */
+declare module './needs-types.ts' {
+  interface Runtime {
+    /** Active driver halts recorded for an older writer generation while generation `gen` of `rid` runs (running driver only). */
+    staleHalts?: readonly { node: string; seq: number; rid: string; gen: number }[];
+  }
+}
 import type { AttestJob, State } from './types.ts';
 import type { Measuring, Runtime } from './needs-types.ts';
 
@@ -109,6 +120,13 @@ export async function assembleRuntime(o: { cwd: string; state: State; driverRunn
     });
     if (runtime.writerWaiting?.length) runtime.now = o.now ?? Date.now();
   } catch { /* unknown runtime facts */ }
+  // HT4: the running driver's stale-halt records, kept only while each is still its node's active halt.
+  try {
+    const rows: unknown = JSON.parse(await readFile(join(await ledgerDir(o.cwd), 'drive', 'stale-halts.json'), 'utf8'));
+    const kept = Array.isArray(rows) ? rows.filter((r): r is NonNullable<Runtime['staleHalts']>[number] => !!r && typeof r.node === 'string' && Number.isSafeInteger(r.seq)
+      && typeof r.rid === 'string' && Number.isSafeInteger(r.gen) && halted(o.state, r.node)?.seq === r.seq).map(r => ({ node: r.node, seq: r.seq, rid: r.rid, gen: r.gen })) : [];
+    if (kept.length) runtime.staleHalts = kept;
+  } catch { /* absent or unreadable: unknown */ }
   let cached: unknown;
   try { cached = JSON.parse(await readFile(join(await ledgerDir(o.cwd), 'drive', 'asking.json'), 'utf8')); } catch { return runtime; }
   if (!Array.isArray(cached)) return runtime;
