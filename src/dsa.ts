@@ -25,9 +25,30 @@ export type EventsResult = { outcome: 'applied'; events: DsaEvent[]; head: strin
 
 export class DsaError extends Error {
   readonly exit: number | null; readonly stderr: string; readonly stdout: string;
-  constructor(message: string, detail: { exit?: number | null; stderr?: string; stdout?: string } = {}) {
-    super(message); this.name = 'DsaError'; this.exit = detail.exit ?? null; this.stderr = detail.stderr ?? ''; this.stdout = detail.stdout ?? '';
+  /** HT1: a read-only call that timed out or ended by a signal (after its retries): an unavailable read, not a verdict. */
+  readonly transient: boolean;
+  constructor(message: string, detail: { exit?: number | null; stderr?: string; stdout?: string; transient?: boolean } = {}) {
+    super(message); this.name = 'DsaError'; this.exit = detail.exit ?? null; this.stderr = detail.stderr ?? ''; this.stdout = detail.stdout ?? ''; this.transient = detail.transient === true;
   }
+}
+/** HT1: an error of a read-only dsa call that timed out or ended by a signal (the flag, or the wording of older fakes). */
+export const transientRead = (e: unknown): boolean => e instanceof DsaError && (e.transient || /\btimed out\b|\bended by signal\b/.test(e.message));
+
+/** HT1: pauses before the three retries of a read-only call that timed out or ended by a signal. */
+export const READ_PAUSES_MS: readonly number[] = [1000, 3000, 9000];
+/** HT2: default limit of one read-only dsa invocation (describe, status, leases, `--help`). */
+export const SHORT_MS_DEFAULT = 15_000;
+const shortWarned = new Set<string>();
+/**
+ * HT2: the read timeout: `$OWED_DSA_SHORT_MS` when it is an integer 1000-120000, else undefined; any other value is
+ * ignored with one warning line per process and value.
+ */
+export function dsaShortMs(env: NodeJS.ProcessEnv = process.env, warn: (line: string) => void = line => { process.stderr.write(`${line}\n`); }): number | undefined {
+  const raw = env.OWED_DSA_SHORT_MS;
+  if (raw === undefined || raw === '') return undefined;
+  if (/^\d+$/.test(raw) && Number(raw) >= 1000 && Number(raw) <= 120_000) return Number(raw);
+  if (!shortWarned.has(raw)) { shortWarned.add(raw); warn(`owed: ignoring OWED_DSA_SHORT_MS=${JSON.stringify(raw)} (expected an integer 1000-120000); read timeout ${SHORT_MS_DEFAULT} ms`); }
+  return undefined;
 }
 
 export interface DsaOptions {
@@ -43,6 +64,15 @@ export interface DsaOptions {
   cwd?: string;
   /** The pi session every `run` names with `--session` (dsa >= 1.0.31, E1); none: no flag. */
   session?: string;
+  /**
+   * HT2: limit of one read-only invocation (describe, status, leases, `--help`). Default: `$OWED_DSA_SHORT_MS` (valid),
+   * else `timeoutMs` when given, else 15000 ms. Write calls (run, send, stop) keep their own limits.
+   */
+  readTimeoutMs?: number;
+  /** HT1: pauses before the retries of a read that timed out or ended by a signal (default 1 s, 3 s, 9 s; tests). */
+  readPausesMs?: readonly number[];
+  /** HT1: retry reads that timed out or ended by a signal (default false; the driver turns it on for its client). */
+  retryReads?: boolean;
 }
 
 /** A pi session id exactly as dsa 1.0.31 accepts it for `--session`: a letter or digit, then up to 127 of `[A-Za-z0-9._:-]`. */
@@ -74,7 +104,7 @@ export type CommandResult =
   | { outcome: 'unsupported'; reason: string }
   | { outcome: 'cancelled'; rid: string; wid?: string }
   | { outcome: 'ran'; exit: number; stdout: string; stderr: string; rid: string; wid?: string }
-  | { outcome: 'error'; reason: string; rid: string; wid?: string };
+  | { outcome: 'error'; reason: string; rid: string; wid?: string; /** HT1: the status read timed out or ended by a signal after its retries. */ transient?: true; call?: string };
 
 type HoldOptions = { shared?: boolean; cwd?: string; noWait?: boolean; priority?: number; yield?: boolean };
 
@@ -83,8 +113,23 @@ export class Dsa {
   /** Process groups of the CLI invocations still running (`killAll`). */
   private readonly live = new Set<number>();
   /** Ends every running invocation's process group (hold forwards it to its command): the driver's hard stop. */
-  killAll(sig: NodeJS.Signals = 'SIGTERM'): void { for (const pid of this.live) { try { process.kill(-pid, sig); } catch { /* gone */ } } }
-  constructor(opts: DsaOptions = {}) { this.opts = opts; this.bin = opts.bin ?? dsaBin({ ...process.env, ...opts.env }); this.session = opts.session; }
+  killAll(sig: NodeJS.Signals = 'SIGTERM'): void { this.killed = true; for (const pid of this.live) { try { process.kill(-pid, sig); } catch { /* gone */ } } }
+  constructor(opts: DsaOptions = {}) {
+    this.opts = opts; this.bin = opts.bin ?? dsaBin({ ...process.env, ...opts.env }); this.session = opts.session;
+    this.readTimeoutMs = opts.readTimeoutMs ?? dsaShortMs({ ...process.env, ...opts.env }) ?? opts.timeoutMs ?? SHORT_MS_DEFAULT;
+    this.retryReads = opts.retryReads === true;
+  }
+  /**
+   * HT1: whether reads that time out or end by a signal are retried. The driver sets it on its client (its reads can
+   * halt a node); one-shot display reads (submit's model lookup, answers, question listings) keep a single attempt.
+   */
+  retryReads: boolean;
+  /** HT2: the limit of one read-only invocation. */
+  readonly readTimeoutMs: number;
+  /** HT1: called before each retry of a read (`call`, retry number 1-3, why); tests count retries with it. */
+  onReadRetry?: (call: string, retry: number, reason: string) => void;
+  /** Set by `killAll` (a hard stop): reads are no longer retried. */
+  private killed = false;
   /** The pi session `run` passes as `--session <id>` (E1); undefined: no flag. */
   session?: string;
   /** Called once when this dsa refuses `--session` (older than 1.0.31); `run` drops the flag from then on. */
@@ -132,6 +177,20 @@ export class Dsa {
     });
   }
 
+  /**
+   * HT1: one read-only invocation, retried (with `retryReads`) up to three more times (pauses `readPausesMs`) while it
+   * times out or ends by a signal; never retried after `killAll` or when `retry` is false. Returns the last attempt.
+   */
+  private async read(call: string, args: string[], timeoutMs = this.readTimeoutMs, killable = true, retry = () => true): Promise<Spawned> {
+    const pauses = this.opts.readPausesMs ?? READ_PAUSES_MS;
+    for (let n = 0; ; n++) {
+      const r = await this.exec(args, undefined, timeoutMs, this.opts.cwd, undefined, killable);
+      if (!(r.timedOut || r.signal) || !this.retryReads || n >= pauses.length || this.killed || !retry()) return r;
+      this.onReadRetry?.(call, n + 1, r.timedOut ? 'timed out' : `ended by signal ${r.signal}`);
+      await new Promise<void>(resolve => { setTimeout(resolve, pauses[n]!); });
+    }
+  }
+
   /** `run --request <rid> --spec - --labels <json> --cwd <dir> --json`; specBytes go to stdin exactly as given. */
   async run(rid: string, specBytes: string | Uint8Array, labels?: Record<string, string>, cwd?: string): Promise<RunResult> {
     const session = this.sessionRefused ? undefined : this.session;
@@ -149,7 +208,9 @@ export class Dsa {
     if (this.sessionRefused) return 'dsa does not accept --session';
     let probe = commandSupport.get(this.bin);
     if (!probe) {
-      probe = this.exec(['--help']).then(r => {
+      probe = this.read('--help', ['--help']).then(r => {
+        // HT1: a probe that timed out or ended by a signal is not cached: a later call probes again.
+        if (r.timedOut || r.signal) { commandSupport.delete(this.bin); return 'dsa command-run feature probe failed (read unavailable)'; }
         const help = `${r.stdout}\n${r.stderr}`;
         return !r.timedOut && !r.signal && r.exit === 0 && /run\b[^\n]*--session\b[^\n]*--\s*<program>/.test(help)
           ? undefined : 'dsa does not advertise command runs with --session';
@@ -206,8 +267,10 @@ export class Dsa {
             stopped = result.outcome === 'applied';
             if (!stopped && Date.now() >= stopDeadline) return error('dsa stop remained pending', stop.stderr || stop.stdout);
           }
-          const status = await exec(['describe', '--key', rid, '--json']);
-          if (status.timedOut || status.signal || status.exit !== 0) return error('dsa command describe failed', status.stderr || status.stdout);
+          // HT1/HT2: the status read has the read timeout and retries (not during a stop: the stop must reap quickly).
+          const status = await this.read(`describe ${rid}`, ['describe', '--key', rid, '--json'], this.readTimeoutMs, false, () => !o.signal?.aborted);
+          if (status.timedOut || status.signal) return { ...error(`dsa command describe failed (${status.timedOut ? 'timed out' : `ended by signal ${status.signal}`})`, status.stderr || status.stdout), transient: true, call: `describe ${rid}` } as CommandResult;
+          if (status.exit !== 0) return error('dsa command describe failed', status.stderr || status.stdout);
           const d = parseWhole(status.stdout);
           if (!d) return error('dsa command describe: unparsable output', status.stdout);
           if (typeof d.wid === 'string' && d.wid) wid = d.wid;
@@ -258,7 +321,7 @@ export class Dsa {
   async watchdogFacts(): Promise<{ calls?: { state: string; labels?: Record<string, string> }[]; machineHeld: boolean }> {
     let calls: { state: string; labels?: Record<string, string> }[] | undefined;
     try {
-      const status = await this.exec(['status', '--json']), view = parseWhole(status.stdout);
+      const status = await this.read('status', ['status', '--json']), view = parseWhole(status.stdout);
       if (status.exit !== 0 || status.timedOut || !Array.isArray(view?.workflows)) throw new DsaError('dsa status unavailable');
       calls = (view.workflows as Json[]).flatMap(w => {
         if (!Array.isArray(w.calls)) throw new DsaError('dsa status: missing calls');
@@ -268,7 +331,7 @@ export class Dsa {
     // Failure to inspect the machine must not manufacture proof that it is free.
     let machineHeld = true;
     try {
-      const leases = await this.exec(['leases', '--json']);
+      const leases = await this.read('leases', ['leases', '--json']);
       const resources: unknown = JSON.parse(leases.stdout);
       if (leases.exit === 0 && !leases.timedOut && Array.isArray(resources)) {
         machineHeld = (resources as Json[]).some(r => r.resource === 'machine' && (!Array.isArray(r.holders) || r.holders.length > 0));
@@ -286,8 +349,9 @@ export class Dsa {
    * read as the follow-up's outcome.
    */
   async inspect(rid: string, timeoutMs?: number): Promise<{ view: RunView; gen?: number }> {
-    const r = await this.exec(['describe', '--key', rid, '--json'], undefined, timeoutMs);
-    if (r.timedOut) throw new DsaError(`dsa describe ${rid} timed out`, r);
+    const r = await this.read(`describe ${rid}`, ['describe', '--key', rid, '--json'], timeoutMs);
+    if (r.timedOut) throw new DsaError(`dsa describe ${rid} timed out`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
+    if (r.signal) throw new DsaError(`dsa describe ${rid} ended by signal ${r.signal}`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
     if (r.exit !== 0) throw new DsaError(`dsa describe ${rid} exited ${r.exit}: ${tail(r.stderr || r.stdout)}`, r);
     const d = parseWhole(r.stdout);
     if (!d) throw new DsaError(`dsa describe ${rid}: unparsable output`, r);
@@ -300,8 +364,9 @@ export class Dsa {
    * decided it, `pending` before, `absent` when dsa never saw it. Failures throw like `describe`.
    */
   async request(id: string): Promise<{ state: 'applied' | 'rejected' | 'pending' | 'absent'; reason?: string }> {
-    const r = await this.exec(['describe', '--key', id, '--json']);
-    if (r.timedOut) throw new DsaError(`dsa describe ${id} timed out`, r);
+    const r = await this.read(`describe ${id}`, ['describe', '--key', id, '--json']);
+    if (r.timedOut) throw new DsaError(`dsa describe ${id} timed out`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
+    if (r.signal) throw new DsaError(`dsa describe ${id} ended by signal ${r.signal}`, { exit: r.exit, stdout: r.stdout, stderr: r.stderr, transient: true });
     if (r.exit !== 0) throw new DsaError(`dsa describe ${id} exited ${r.exit}: ${tail(r.stderr || r.stdout)}`, r);
     const d = parseWhole(r.stdout), state = str(d?.state);
     if (state === 'applied' || state === 'pending' || state === 'absent') return { state };

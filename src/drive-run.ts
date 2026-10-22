@@ -40,10 +40,11 @@ import { assembleRuntime } from './activity.ts';
 import type { Need, Runtime } from './needs-types.ts';
 import type { Action } from './drive.ts';
 import { registerDriver } from './registry.ts';
-import { Dsa, DsaError, dsaAvailable, startingSession } from './dsa.ts';
+import { Dsa, DsaError, dsaAvailable, startingSession, transientRead } from './dsa.ts';
+import { attestJobs } from './reducer.ts';
 import { OwedError } from './errors.ts';
 import { oneLine } from './views.ts';
-import type { Entry, Plan, Principal, RunView, SendEntry, State } from './types.ts';
+import type { AttestJob, Entry, Plan, Principal, RunView, SendEntry, State } from './types.ts';
 
 import { driftNotice, idleWaitText } from './needs.ts';
 export { driftNotice, idleWaitText } from './needs.ts';
@@ -136,7 +137,17 @@ export interface DriveOptions {
   session?: string | null;
   /** F2.4: how long the loop sleeps after a disk-full error escaped a pass (default 60 s; tests). */
   diskFullMs?: number;
+  /** HT1: the clock of the 10-minute read-failure rule (default Date.now; tests inject one). */
+  clock?: () => number;
 }
+/** HT1: how long the same dsa read may fail continuously before the driver halts the node. */
+export const READ_HALT_MS = 10 * 60_000;
+/** HT1: the halt reason after the same read failed continuously for 10 minutes. */
+export const readHaltReason = (call: string, error: string): string => `dsa reads failing for 10 min: ${call}: ${error}`;
+/** HT4: the log line of a halt or repair not executed because a newer writer generation runs. */
+export const generationWaitText = (call: string, gen: number): string => `waiting: ${call} generation ${gen} is running`;
+/** HT4: one stale-halt runtime record (`<ledger>/drive/stale-halts.json`): the active halt `seq` concerned an older generation of `rid`. */
+export interface StaleHalt { node: string; seq: number; rid: string; gen: number }
 
 /** One executed action as printed (`--json`: one object per line). */
 export interface ActionReport {
@@ -168,7 +179,7 @@ export const NEEDS_PARENT = 'needs the parent (the main agent acts; owed lists t
  * Reports that wake a following session (D17.7): halts, notifies (questions, owner-needed, describe failures) and the
  * outcomes rejected, conflict, refused and error. F1: a `stale` outcome (a halt included) records nothing and wakes nobody.
  */
-export const wakeReport = (r: { do?: unknown; outcome?: unknown }): boolean => (r.do === 'halt' && r.outcome !== 'stale') || (r.do === 'notify' && r.outcome !== 'answered') || ['rejected', 'conflict', 'refused', 'error'].includes(String(r.outcome));
+export const wakeReport = (r: { do?: unknown; outcome?: unknown }): boolean => (r.do === 'halt' && r.outcome !== 'stale' && r.outcome !== 'waiting' && r.outcome !== 'unavailable') || (r.do === 'notify' && r.outcome !== 'answered') || ['rejected', 'conflict', 'refused', 'error'].includes(String(r.outcome));
 /**
  * The fact mark of a node (E3.1): the highest seq of the ledger entries naming it (`node`, an observation's `subject`,
  * a ruling listing it) not written by the driver (`parent:drive`: its launches, sends, halts, dispatches, rebases and
@@ -379,7 +390,7 @@ export const busyKey = (text: string): string => text.replace(/,\s*\d+(?:\.\d+)?
  * process exit code, reason idle | stopped | killed | error (`error`: the text of what ended it).
  */
 export type ExitReason = 'idle' | 'stopped' | 'killed' | 'error';
-export interface LoopEvent { event: 'attest-unlisted' | 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full' | 'sweep-due'; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
+export interface LoopEvent { event: 'attest-unlisted' | 'idle' | 'idle-wait' | 'stopped' | 'killed' | 'cursor-reset' | 'events-error' | 'exit' | 'session-unsupported' | 'drift-cleared' | 'waiting' | 'disk-full' | 'sweep-due' | 'read-unavailable'; /** HT1 `read-unavailable`: the dsa read that failed. */ call?: string; head?: string; reason?: string; error?: string; code?: number; at?: string; session?: string; /** `waiting` (0.8, L1.5): the waiting node, the node it waits for and the resume entry. */ node?: string; after?: string; resume?: number; deps?: string[]; counts?: IdleCounts }
 /** FL4: counts are disjoint for parked nodes; open counts every open slot. */
 export interface IdleCounts { ready: number; open: number; waiting: number; reported: number; later: number }
 /** FL4: deterministic timer decision; the loop owns the clock and lifecycle. */
@@ -408,6 +419,7 @@ export function reportText(json: object): string {
       case 'drift-cleared': return 'trunk drift cleared: trunk equals the ledger trunk again';
       case 'disk-full': return `disk full: ${oneLine(e.error ?? '')}; the driver sleeps 60 s and continues`;
       case 'waiting': return e.deps?.length ? `waiting: ${oneLine(e.node ?? '?')} waiting (deps: ${e.deps.map(oneLine).join(', ')})${e.after ? `; ${waitingText(oneLine(e.node ?? '?'),oneLine(e.after),e.resume ?? -1)}` : ''}` : waitingText(oneLine(e.node ?? '?'), oneLine(e.after ?? '?'), e.resume ?? -1);
+      case 'read-unavailable': return `dsa read unavailable: ${oneLine(e.call ?? '?')}: ${oneLine(e.reason ?? '')}`;
       case 'attest-unlisted': return `driver: attest measurements are not shown in /subagents: ${oneLine(e.reason ?? 'unavailable')}; using the legacy hold/direct path`;
       case 'session-unsupported': return `dsa does not accept --session (older than pi-durable-subagents 1.0.31): runs start without it and are not listed in pi session ${e.session ?? '?'}${e.reason ? ` (${oneLine(e.reason)})` : ''}`;
       default: return oneLine(JSON.stringify(json));
@@ -415,6 +427,8 @@ export function reportText(json: object): string {
   }
   if (!('do' in json) || typeof (json as { do: unknown }).do !== 'string') return oneLine(JSON.stringify(json));
   const r = json as ActionReport;
+  // HT4/HT1: a halt or repair the driver did not execute is its one log line (`waiting: …`, `dsa read unavailable: …`).
+  if ((r.do === 'halt' || r.do === 'send') && (r.outcome === 'waiting' || r.outcome === 'unavailable') && r.detail) return oneLine(r.detail);
   // G3.6 (0.12): a failed send (outcome error) names its node as a word.
   const what = r.do === 'launch' ? `launch ${r.node} ${r.role} ${r.rid}` : r.do === 'send' ? `send ${r.sendKind} (${r.reason})${r.outcome === 'error' ? ` for node ${r.node}` : ''} to ${r.rid}${r.send ? ` [${r.send}]` : ''}` : r.do === 'halt' && r.outcome !== 'stale' ? (r.needs === 'owner' ? `halt ${r.node} attempt ${r.attempt}, ${NEEDS_OWNER}` : `halt ${r.node} attempt ${r.attempt}, ${NEEDS_PARENT}`) : `${r.do} ${r.node}${r.do === 'attest' && r.rid ? ` [${r.rid}]` : ''}`;
   const repeat = typeof r.repeat === 'number' && r.repeat > 0 ? repeatText(r.repeat) : '';
@@ -533,6 +547,8 @@ export class Driver {
   readonly session?: string;
   constructor(o: DriveOptions) {
     this.o = o; this.dsa = o.dsa ?? new Dsa(); this.owed = o.owed ?? defaultOwed();
+    // HT1: the driver's reads (describe, status, feature probe) are retried before they count as unavailable.
+    this.dsa.retryReads = true;
     const session = o.session === undefined ? startingSession() : o.session ?? undefined;
     if (session !== undefined) this.session = session;
     // E1.2: every `run` names the session; an older dsa refuses the flag once per driver: logged, never a halt.
@@ -556,6 +572,10 @@ export class Driver {
         const saved = JSON.parse(await readFile(join(this.ledger.dir, 'drive', 'waiting.json'), 'utf8')) as Record<string, { reason: string; since: string; attempt: number; candidate?: number }>;
         for (const [id, w] of Object.entries(saved)) if (typeof w.reason === 'string' && Number.isFinite(Date.parse(w.since)) && Number.isSafeInteger(w.attempt)) this.mergeWaiting.set(id, w);
       } catch { /* missing/corrupt private cache */ }
+      try {
+        const saved = JSON.parse(await readFile(join(this.ledger.dir, 'drive', 'halt-gens.json'), 'utf8')) as Record<string, { seq: number; rid: string; gen: number }>;
+        for (const [id, h] of Object.entries(saved)) if (Number.isSafeInteger(h?.seq) && typeof h.rid === 'string' && Number.isSafeInteger(h.gen)) this.haltGens.set(id, { seq: h.seq, rid: h.rid, gen: h.gen });
+      } catch { /* HT4: missing/corrupt private cache: no stale-halt display for older halts */ }
       // NT4: background start rotates the prior log once; recover older reports before current ones.
       for (const file of ['log.jsonl.1','log.jsonl']) {
         try {
@@ -623,11 +643,26 @@ export class Driver {
       const raw = new Map<string, { view: RunView; gen?: number }>();
       for (const l of ar.launches.filter(l => (normal && (l.role === 'writer' || (epoch !== undefined && l.seq > epoch))) || noticeDue(l.rid))) {
         try {
-          // F4 (app #34): a describe that timed out is retried once in this pass before it is reported.
-          const r = await this.dsa.inspect(l.rid).catch((e: unknown) => { if (e instanceof DsaError && /timed out/.test(e.message)) return this.dsa.inspect(l.rid); throw e; });
+          // HT1: the client retries a describe that timed out or ended by a signal (1 s, 3 s, 9 s) before it fails.
+          const r = await this.dsa.inspect(l.rid);
+          this.readOk(`describe ${l.rid}`);
           raw.set(l.rid, r);
           if (r.view.state === 'absent' || (l.role === 'reviewer' && (r.view.state === 'sealed' || r.view.state === 'pruned'))) await blob(l.spec);
-        } catch (e) { if (!waitingFor(s, n.id)) { const r: ActionReport = { do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }; await this.wake(r, s); this.emit(r, s); } }
+        } catch (e) {
+          // HT1: still unavailable: transient (one log line per streak, no halt, no wake; the node waits for a later
+          // pass); after 10 minutes of continuous failure the node halts.
+          if (transientRead(e)) {
+            const reason = this.readFailed(`describe ${l.rid}`, `describe ${l.rid}`, tail((e as Error).message));
+            if (reason !== undefined && !halted(s, n.id) && !waitingFor(s, n.id)) {
+              let r: ActionReport;
+              try { await this.halt(n.id, n.slot.attempt, reason); r = { do: 'halt', node: n.id, attempt: n.slot.attempt, outcome: 'halted', detail: reason, needs: 'human' }; }
+              catch (err) { if (!(err instanceof OwedError)) throw err; r = { do: 'halt', node: n.id, attempt: n.slot.attempt, outcome: err.code === 'stale' ? 'stale' : 'error', detail: `${reason}; ${err.message}` }; }
+              await this.wake(r, s); this.emit(r, s);
+            }
+            continue;
+          }
+          if (!waitingFor(s, n.id)) { const r: ActionReport = { do: 'notify', node: n.id, outcome: 'describe-failed', detail: `describe ${l.rid}: ${tail((e as Error).message)}` }; await this.wake(r, s); this.emit(r, s); }
+        }
       }
       // A recorded send this process has not confirmed: ask dsa whether it decided it (a previous driver process, or a
       // crash after the call); only an undecided one is re-sent (with the stored bytes and the same id, D13.1).
@@ -732,6 +767,7 @@ export class Driver {
     this.project = projectId(s);
     const measuring = new Set(this.measuring.keys());
     const { runs, blobs, rejected, conflicts, rebasePending, rebaseWork, writerWork } = await this.observe(s, measuring);
+    this.recordStaleHalts(s, runs);
     const now = Date.now();
     this.recordAsking(stillAsking(s, runs, now));
     await this.recordWriterWaiting(s, runs, now);
@@ -935,7 +971,7 @@ export class Driver {
     const onRun = (rid: string): void => {
       this.emit({ do:what, node, outcome:'started', at, rid }, s);
     };
-    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false, s.nodes[node]!.candidate!.commit, onRun) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && new Map(batch.map(id => [id, s.nodes[id]!.candidate!.commit])));
+    const work: Promise<Ended> = what === 'attest' ? this.attest(node, attempt, s.plan.lease !== false, s.nodes[node]!.candidate!.commit, onRun, (() => { try { return attestJobs(s, node); } catch { return []; } })()) : this.leasedMerge(node, attempt, s.plan.lease !== false, batch && new Map(batch.map(id => [id, s.nodes[id]!.candidate!.commit])));
     let busy: ActionReport | undefined;
     m.ended = work.then(f => { m.finish = f.finish; busy = f.busy; }, (e: unknown) => { m.finish = () => Promise.reject(e); })
       .finally(() => {
@@ -1051,7 +1087,88 @@ export class Driver {
   }
 
   private async halt(node: string, attempt: number, reason: string, needs: 'human' | 'owner' = 'human', since?: number): Promise<void> {
-    await ops.halt({ cwd: this.o.cwd, as: DRIVE_PRINCIPAL, node, attempt, reason, needs, ...(since !== undefined ? { since } : {}) });
+    // HT4: the writer generation this halt concerns (the latest one described), so a newer generation shows it stale.
+    const s = await loadState(this.ledger!).catch(() => undefined);
+    const writer = s?.nodes[node]?.runs.find(r => r.attempt === attempt)?.launches.find(l => l.role === 'writer');
+    const gen = writer ? this.facts.lastGen.get(writer.rid) : undefined;
+    const e = await ops.halt({ cwd: this.o.cwd, as: DRIVE_PRINCIPAL, node, attempt, reason, needs, ...(since !== undefined ? { since } : {}) });
+    if (writer && gen !== undefined) { this.haltGens.set(node, { seq: e.seq, rid: writer.rid, gen }); this.saveHaltGens(); }
+  }
+
+  // ---------- HT1: transient dsa reads ----------
+  private now(): number { return this.o.clock ? this.o.clock() : Date.now(); }
+  /** HT1: per read key, when it started failing, the call, its last error and whether its one log line was printed. */
+  private readonly readFailing = new Map<string, { since: number; logged: boolean }>();
+  /**
+   * HT1: the read `key` (call `call`) failed after its retries: transient: one `dsa read unavailable` line per streak,
+   * no halt; returns the halt reason once it has failed continuously for 10 minutes (the streak then starts again).
+   */
+  private readFailed(key: string, call: string, error: string): string | undefined {
+    const now = this.now(), f = this.readFailing.get(key) ?? { since: now, logged: false };
+    this.readFailing.set(key, f);
+    if (now - f.since >= READ_HALT_MS) { this.readFailing.delete(key); return readHaltReason(call, error); }
+    if (!f.logged) {
+      f.logged = true;
+      const e: LoopEvent = { event: 'read-unavailable', call, reason: error };
+      this.o.log(this.o.json ? JSON.stringify(e) : reportText(e));
+    }
+    return undefined;
+  }
+  /** HT1: the read `key` succeeded: its failure streak ends. */
+  private readOk(key: string): void { this.readFailing.delete(key); }
+
+  // ---------- HT4: newer writer generations ----------
+  /** HT4: node → the driver halt (seq) and the writer generation it concerned; persisted in `drive/halt-gens.json`. */
+  private readonly haltGens = new Map<string, { seq: number; rid: string; gen: number }>();
+  private saveHaltGens(): void {
+    try { this.writeRuntime('halt-gens.json', JSON.stringify(Object.fromEntries(this.haltGens))); } catch { /* runtime cache only */ }
+  }
+  private staleBody?: string;
+  /** Atomic replace of `<ledger>/drive/<name>` (tmp + rename). */
+  private writeRuntime(name: string, body: string): void {
+    const dir = join(this.ledger!.dir, 'drive'), path = join(dir, name), temp = `${path}.${process.pid}.tmp`;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(temp, body, { mode: 0o600 });
+    renameSync(temp, path);
+  }
+  /**
+   * HT4: the active driver halts recorded for an older writer generation while a newer one runs or is queued, written
+   * each pass to `drive/stale-halts.json`; status and the node card show them while this driver runs.
+   */
+  private recordStaleHalts(s: State, runs: ReadonlyMap<string, RunView>): void {
+    const rows: StaleHalt[] = [];
+    let pruned = false;
+    for (const [node, h] of this.haltGens) {
+      if (halted(s, node)?.seq !== h.seq) { this.haltGens.delete(node); pruned = true; continue; }
+      const v = runs.get(h.rid), gen = this.facts.lastGen.get(h.rid);
+      if (v && (v.state === 'running' || v.state === 'queued' || v.state === 'asking') && gen !== undefined && gen > h.gen) rows.push({ node, seq: h.seq, rid: h.rid, gen });
+    }
+    if (pruned) this.saveHaltGens();
+    const body = JSON.stringify(rows);
+    if (body === this.staleBody) return;
+    try { this.writeRuntime('stale-halts.json', body); this.staleBody = body; } catch { /* runtime cache only */ }
+  }
+  /**
+   * HT4: before a halt or a repair decided on a sealed writer generation, ask dsa for the writer's current generation.
+   * A newer generation running or queued: neither is executed (`waiting: …`, re-evaluated when it ends); a newer one
+   * that already ended: decided again next pass. A read that timed out: not executed this pass (HT1).
+   */
+  private async newerGeneration(s: State, a: Extract<Action, { do: 'halt' | 'send' }>): Promise<{ report: ActionReport; applied: boolean } | undefined> {
+    const writer = s.nodes[a.node]?.runs.find(r => r.attempt === a.attempt)?.launches.find(l => l.role === 'writer');
+    if (!writer) return undefined;
+    const decided = this.facts.lastGen.get(writer.rid), seen = this.facts.lastState.get(writer.rid);
+    if (decided === undefined || (seen !== 'sealed' && seen !== 'pruned')) return undefined;
+    const base = { do: a.do, node: a.node, attempt: a.attempt, ...(a.do === 'send' ? { rid: a.rid, sendKind: a.sendKind, reason: a.reason } : {}) };
+    let r: { view: RunView; gen?: number };
+    try { r = await this.dsa.inspect(writer.rid); }
+    catch (e) {
+      if (!transientRead(e)) return undefined;
+      return { report: { ...base, outcome: 'unavailable', detail: `dsa read unavailable: describe ${writer.rid}: ${tail((e as Error).message)}; not executed, decided again next pass` }, applied: false };
+    }
+    if (r.gen === undefined || r.gen <= decided) return undefined;
+    this.current(r.view, r.gen);
+    const live = r.view.state === 'running' || r.view.state === 'queued' || r.view.state === 'asking';
+    return { report: { ...base, outcome: live ? 'waiting' : 'stale', detail: live ? generationWaitText(`${writer.rid}${callAt(r.view)}`, r.gen) : `generation ${r.gen} of ${writer.rid} ended after this decision; decided again next pass` }, applied: false };
   }
 
   /**
@@ -1093,6 +1210,8 @@ export class Driver {
           // G3.3 (0.12): a re-send of a recorded send (no new entry, so no `since` check in ops) decided on `s` is stale
           // when a later plan entry removed or changed the node.
           if (a.send) await ops.planChangedSince({ cwd, node: a.node, since });
+          // HT4: a new repair of a sealed writer generation waits while a newer generation runs.
+          if (!a.send && a.sendKind === 'follow-up' && a.reason === 'repair') { const newer = await this.newerGeneration(s, a); if (newer) return newer; }
           const id = a.send ?? (await ops.send({ cwd, as, node: a.node, attempt: a.attempt, rid: a.rid, sendKind: a.sendKind, message: a.message, reason: a.reason, ...(a.rulings !== undefined ? { rulings: a.rulings } : {}), since })).send;
           crashPoint('before-dsa', 'send');
           const r = await this.dsa.send(id, a.rid, a.sendKind, a.message);
@@ -1133,7 +1252,11 @@ export class Driver {
         // K6: attest and merge are started by `pass` (`start`), never executed inline.
         case 'attest': case 'merge': throw new Error(`${a.do} is a measurement`);
         case 'rebase': { const r = await this.rebaseSlot(s, a.node, since); return done('done', false, `slot base ${r.from.slice(0, 12)} → ${r.base.slice(0, 12)}`); }
-        case 'halt': await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
+        case 'halt': {
+          const newer = await this.newerGeneration(s, a);
+          if (newer) return newer;
+          await this.halt(a.node, a.attempt, a.reason, a.needs, since); return done('halted', false, a.reason, { attempt: a.attempt, needs: a.needs });
+        }
         case 'notify': if (a.scope === 'repo') return { report:{ ...base, scope:'repo', outcome:'notify', text:a.text, ...(a.once !== undefined ? { once:a.once } : {}), ...(a.invariantRed ? { invariantRed:a.invariantRed } : {}) }, applied:false }; if (a.reportedResume !== undefined) { await ops.recordReport(this.ledger!,a.node,a.reportedResume); s.nodes[a.node]!.reported = a.reportedResume; } return { report: { ...base, ...('need' in a ? { need: a.need } : {}), outcome: a.quiet ? 'answered' : 'notify', text: a.text, ...(a.answerRetry ? { answerRetry: true as const } : {}), ...(a.rid !== undefined ? { rid: a.rid } : {}), ...(a.qid !== undefined ? { qid: a.qid, rev: a.rev } : {}) }, applied: false };
       }
     } catch (e) {
@@ -1160,14 +1283,39 @@ export class Driver {
    * else — an owed error (2/3), a signal, dsa rejecting the invocation (an older dsa without `--no-wait`) — halts needing
    * a human on attempt `attempt` (D14.3).
    */
-  private async attest(node: string, attempt: number, lease: boolean, candidate: string, onRun: (rid: string) => void): Promise<Ended> {
+  private async attest(node: string, attempt: number, lease: boolean, candidate: string, onRun: (rid: string) => void, jobs: readonly AttestJob[] = []): Promise<Ended> {
     const available = dsaAvailable(this.dsa.bin), hold = lease && !machineLeased() && available;
     const argv = [...this.owed, 'attest', node, ...(!lease || !available ? ['--no-lease'] : [])], cwd = this.root!;
     let rid: string | undefined;
     const report = (outcome: string, detail?: string): ActionReport => ({ do: 'attest', node, outcome, ...(rid ? { rid } : {}), ...(detail ? { detail: oneLine(detail) } : {}) });
     const measuredSince = (await this.ledger!.read()).length;
     const busy = (detail: string): Ended => { const r = report('busy', detail); return { finish: async () => [r], busy: r }; };
-    const fail = (why: string): Ended => ({ finish: async () => { await this.halt(node, attempt, `attest error: ${rid ? `run ${rid}: ` : ''}${why}`); return [report('error', `${why}; halted`)]; } });
+    /** The `done` report of an attest whose measurements are in the ledger (accepted, or the next need). */
+    const doneReport = async (suffix: string): Promise<ActionReport> => {
+      const s = await loadState(this.ledger!), rt = await assembleRuntime({ cwd, state: s, driverRunning: true });
+      const next = needs(s, node, rt)[0]?.text ?? activity(s, node, rt)?.text;
+      return report('done', `${s.nodes[node]?.accepted ? 'accepted' : `measured; not accepted yet: ${next ?? 'candidate not accepted'}`}${suffix}`);
+    };
+    /**
+     * HT3: before an attest-error halt, replay the ledger: observations recorded since this attest started that give a
+     * verdict on every obligation it was measuring stand for its result. HT1: a status read that stayed unavailable is
+     * transient (no halt, the attest is decided again later) until it failed for 10 minutes.
+     */
+    const fail = (why: string, transient = false): Ended => ({ finish: async () => {
+      const seqs = await this.ledgerCovers(jobs, measuredSince);
+      if (seqs) {
+        this.readOk(`attest ${node}`);
+        const r = await doneReport(`; attest result taken from ledger #${seqs.join(', #')}${await this.noisyDetail(node, measuredSince)}`);
+        return [r];
+      }
+      if (transient) {
+        const halt = this.readFailed(`attest ${node}`, rid ? `describe ${rid}` : `attest ${node}`, why);
+        if (halt === undefined) return [report('retry', `${why}; no halt, the attest is decided again on a later pass`)];
+        await this.halt(node, attempt, halt);
+        return [report('error', `${halt}; halted`)];
+      }
+      await this.halt(node, attempt, `attest error: ${rid ? `run ${rid}: ` : ''}${why}`); return [report('error', `${why}; halted`)];
+    } });
     let ran: { exit: number | null; stdout: string; stderr: string } | undefined;
     const unsupported = available ? await this.dsa.commandUnsupported() : 'dsa is unavailable';
     let fallback = unsupported;
@@ -1179,7 +1327,7 @@ export class Driver {
         signal:this.abort.signal, pollMs:this.o.pollMs, onRun:(selected) => { rid = selected; onRun(selected); } });
       if (result.outcome !== 'unsupported') rid = result.rid;
       if (result.outcome === 'cancelled' || this.abort.signal.aborted) return { finish:async()=>[] };
-      if (result.outcome === 'error') return fail(result.reason);
+      if (result.outcome === 'error') return fail(result.reason, result.transient === true);
       if (result.outcome === 'ran') ran = result;
       else { fallback = result.reason; rid = undefined; }
     }
@@ -1199,19 +1347,33 @@ export class Driver {
       try { ran = await runProcess(argv, cwd); } catch (e) { return fail(`cannot run ${argv[0]}: ${(e as Error).message}`); }
     }
     const result = ran;
+    this.readOk(`attest ${node}`);
     if (result.exit === 0 || result.exit === 1 || result.exit === 4) {
       const suffix = `${hold || machineLeased() ? '; lease: machine (shared)' : ''}${await this.noisyDetail(node, measuredSince)}`;
       // Display I/O belongs to the awaited reap, not the background measurement's lifecycle.
       return { finish: async () => {
-        const s = await loadState(this.ledger!), rt = await assembleRuntime({ cwd, state: s, driverRunning: true });
-        const next = needs(s, node, rt)[0]?.text ?? activity(s, node, rt)?.text;
-        return [report('done', `${result.exit === 0 ? 'accepted' : `measured; not accepted yet: ${next ?? 'candidate not accepted'}`}${suffix}`)];
+        if (result.exit === 0) return [report('done', `accepted${suffix}`)];
+        return [await doneReport(suffix)];
       } };
     }
     if (result.exit === 75) return busy(busyDetail(node, tail(result.stderr || result.stdout)));
     return fail(`owed attest exited ${result.exit ?? 'by a signal'}: ${tail(result.stderr || result.stdout)}`);
   }
 
+  /**
+   * HT3: the seqs of the observations recorded at or after ledger length `since` that give a pass or fail verdict on every
+   * job (subject, obligation, key); undefined when one job has none (or there were no jobs).
+   */
+  private async ledgerCovers(jobs: readonly AttestJob[], since: number): Promise<number[] | undefined> {
+    if (!jobs.length) return undefined;
+    const entries = (await this.ledger!.read()).slice(since), seqs: number[] = [];
+    for (const j of jobs) {
+      const e = entries.find(e => e.kind === 'obs' && e.subject === j.subject && e.obligation === j.obligation && e.key === j.key && e.verdict !== 'error');
+      if (!e) return undefined;
+      seqs.push(e.seq);
+    }
+    return [...new Set(seqs)].sort((a, b) => a - b);
+  }
   /** RC1: latest observation of each item measured by this action; descriptive only, never a new verdict. */
   private async noisyDetail(node: string, since: number): Promise<string> {
     const latest = new Map<string, Extract<Entry, { kind: 'obs' }>>();

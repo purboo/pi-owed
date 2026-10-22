@@ -135,7 +135,7 @@ test('F4.3 (#31): a send that fails names node, kind, reason and target in its n
   } finally { await r.cleanup(); }
 });
 
-test('F4.5 (#34): a describe that times out is retried once in the same pass before any describe-failed notify', { timeout: 120_000 }, async () => {
+test('F4.5 (#34) / HT1: a describe that still times out after the client retries is transient: one log line, no describe-failed notify', { timeout: 120_000 }, async () => {
   const r = await driverRig();
   try {
     let fail = 0;
@@ -143,17 +143,18 @@ test('F4.5 (#34): a describe that times out is retried once in the same pass bef
     const lines: string[] = [];
     const d = new Driver({ cwd: r.cwd, log: l => lines.push(l), dsa, session: null, handleSignals: false });
     await d.pass();                    // launch
-    fail = dsa.inspects + 1;           // the next describe times out once
+    fail = dsa.inspects + 1;           // the next describe times out (after the client's own retries, HT1)
     const before = dsa.inspects;
     await d.pass();
-    assert.equal(dsa.inspects - before, 2, 'retried once');
+    assert.equal(dsa.inspects - before, 1, 'HT1: the client retries reads; the driver does not describe again');
     assert.ok(!lines.some(l => /describe-failed/.test(l)), lines.join('\n'));
-    // Timing out twice: one notify, after the retry.
+    assert.equal(lines.filter(l => /^dsa read unavailable: describe \S+: dsa describe \S+ timed out$/.test(l)).length, 1, lines.join('\n'));
+    // Still timing out: no notify, and the streak's line is not repeated.
     fail = Infinity;
     const at = dsa.inspects, n = lines.length;
     await d.pass();
-    assert.equal(dsa.inspects - at, 2);
-    assert.equal(lines.slice(n).filter(l => /describe-failed/.test(l)).length, 1, lines.join('\n'));
+    assert.equal(dsa.inspects - at, 1);
+    assert.ok(!lines.slice(n).some(l => /describe-failed|dsa read unavailable/.test(l)), lines.join('\n'));
   } finally { await r.cleanup(); }
 });
 
@@ -169,7 +170,7 @@ test('F4.5 (#34): a describe failure of a node waiting after resume --after noti
     fail = true;
     const p = await d.pass();
     assert.deepEqual(p.waiting.map(w => w.node), ['a']);
-    assert.ok(dsa.inspects >= 2, 'the waiting node is still described (asking runs are reported)');
+    assert.ok(dsa.inspects >= 1, 'the waiting node is still described (asking runs are reported); HT1: the client, not the driver, retries');
     assert.ok(!lines.some(l => /describe-failed/.test(l)), lines.join('\n'));
     assert.ok(!p.actions.some(a => a.outcome === 'describe-failed'));
   } finally { await r.cleanup(); }
