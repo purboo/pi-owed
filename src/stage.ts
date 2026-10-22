@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { readFile, realpath, lstat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { canonical, sha256 } from './canon.ts';
 import { parsePlan, repositoryPath } from './plan.ts';
@@ -19,7 +19,7 @@ export function parseBundle(bytes: string): StageBundle {
   let v: unknown; try { v = JSON.parse(bytes); } catch { refuse('stage bundle must be JSON'); }
   if (!object(v)) refuse('stage bundle must be an object');
   keys(v, ['ruling_text','decide','plan_patch','appends','evidence','read_through_seq','touches','class','summary'], 'stage bundle');
-  if (typeof v.ruling_text !== 'string' || !v.ruling_text.trim() || v.ruling_text.length > 8000) refuse('ruling_text: expected nonempty string, at most 8000 chars');
+  if (typeof v.ruling_text !== 'string' || v.ruling_text.length > 8000) refuse('ruling_text: expected string, at most 8000 chars');
   if (!Number.isSafeInteger(v.read_through_seq) || Number(v.read_through_seq) < 0) refuse('read_through_seq: expected nonnegative integer');
   if (typeof v.summary !== 'string' || !v.summary.trim() || v.summary.split(/\r?\n/).length > 10 || v.summary.split(/\r?\n/).some(l => l.length > 160)) refuse('summary: expected 1..10 lines of at most 160 chars');
   if (v.class !== undefined && !['A','B','C'].includes(String(v.class))) refuse('class: expected A, B or C');
@@ -102,9 +102,17 @@ export async function stageFileReason(cwd: string, e: StageEntry, crashRetry = f
 export async function repositoryFile(root: string, path: string): Promise<string> {
   if (!repositoryPath(path)) refuse(`expected repository path: ${path}`);
   const target = resolve(root,path);
-  const physical = await realpath(target).catch(async () => {
-    const { dirname, basename } = await import('node:path'); return resolve(await realpath(dirname(target)),basename(target));
-  });
+  const {dirname,basename} = await import('node:path');
+  const tail: string[] = [];
+  let ancestor = target, physical: string;
+  for (;;) {
+    try {physical = resolve(await realpath(ancestor),...tail);break;}
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || await lstat(ancestor).then(s=>s.isSymbolicLink()).catch(()=>false)) throw new OwedError(`cannot resolve repository path: ${path}`);
+      if (dirname(ancestor) === ancestor) throw error;
+      tail.unshift(basename(ancestor));ancestor = dirname(ancestor);
+    }
+  }
   const rel = relative(await realpath(root),physical);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) refuse(`path escapes repository: ${path}`);
   return target;
@@ -149,11 +157,20 @@ export function stageLines(stages: StageView[]): string {
 }
 export function stageDraftErrors(s: State, d: Draft, entries: readonly Entry[]): string[] {
   const errors: string[] = [], hash = (v: unknown) => digest(v);
+  const allowed: Record<string,string[]> = {
+    stage:['node','bundle','patched_plan','plan_path','questions','touches','class','summary','read_through_seq','before_sha256','after_sha256'],
+    accept:['stage','ruling','plan'],reject:['stage','note'],overturn:['act','note'],
+  };
+  const base = ['kind','by','channel','seq','ts','prev','hash','ignorable'];
+  for (const key of Object.keys(d)) if (!base.includes(key) && !allowed[d.kind]?.includes(key)) errors.push(`${d.kind}: unknown field ${key}`);
   if (d.kind === 'stage') {
     if (!hash(d.bundle) || d.patched_plan !== undefined && !hash(d.patched_plan)) errors.push('stage requires blob hashes');
     if (!Number.isSafeInteger(d.read_through_seq) || d.read_through_seq < 0 || d.read_through_seq > s.seq) errors.push('stage read_through_seq exceeds ledger head');
     if (!['A','B','C'].includes(d.class) || typeof d.summary !== 'string' || !d.summary.trim() || d.summary.split(/\r?\n/).length > 10 || d.summary.split(/\r?\n/).some(l => l.length > 160)) errors.push('invalid stage class or summary');
     if (typeof d.questions !== 'string' || !Array.isArray(d.touches) || !d.touches.includes(d.node) || d.touches.some(p => typeof p !== 'string' || !s.plan.nodes.some(n => n.id === p) && !repositoryPath(p))) errors.push('invalid stage questions or touches');
+    if (typeof d.questions === 'string') {
+      try {const q=JSON.parse(d.questions);if(!Array.isArray(q) || q.some(x=>!object(x) || Object.keys(x).some(k=>!['qid','rev'].includes(k)) || typeof x.qid !== 'string' || !Number.isSafeInteger(x.rev) || x.rev < 1)) errors.push('invalid stage question fingerprint');}catch {errors.push('invalid stage question fingerprint');}
+    }
     if (d.patched_plan !== undefined && (!d.plan_path || !digest(d.before_sha256) || !digest(d.after_sha256))) errors.push('stage patch needs plan path and hashes');
   } else if (d.kind === 'accept' || d.kind === 'reject') {
     let stage: StageEntry | undefined; try { stage = stageEntry(entries,d.stage); } catch { errors.push('unknown stage'); }

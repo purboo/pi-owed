@@ -1122,7 +1122,7 @@ export async function stages(o: Context & {all?:boolean;dsa?:Pick<Dsa,'describe'
   const latest = await load(await Ledger.open(o.cwd)), client = o.dsa ?? new Dsa({cwd:o.cwd}), views: StageView[] = [];
   for (const e of latest.entries) if (e.kind === 'stage') {
     const closed = stageClosed(latest.entries,e); if (closed && !o.all) continue;
-    const reason = closed ? undefined : await stageReason(o,e,latest,client);
+    const reason = closed ? undefined : await stageReason(o,e,latest,client,true);
     views.push({id:stageId(e.seq),node:e.node,class:e.class,state:closed ?? (reason ? 'stale' : 'open'),...(reason ? {reason} : {}),age:Math.max(0,Date.now()-Date.parse(e.ts)),summary:e.summary,command:`owed accept ${stageId(e.seq)}`});
   }
   return views;
@@ -1131,6 +1131,7 @@ async function applyStageAppends(cwd: string, stage: StageEntry, bundle: StageBu
   const root = await git.repoRoot(cwd), marker = `<!-- owed ${stageId(stage.seq)} -->`, applied: string[] = [];
   for (const a of bundle.appends ?? []) {
     const file = await repositoryFile(root,a.path), old = await readFile(file,'utf8').catch((e:NodeJS.ErrnoException) => {if(e.code === 'ENOENT') return ''; throw e;});
+    await mkdir(dirname(file),{recursive:true});
     if (!old.includes(marker)) { await appendFile(file,`${old && !old.endsWith('\n') ? '\n' : ''}${marker}\n${a.text.replaceAll('{ruling}',String(ruling))}\n`); applied.push(a.path); }
   }
   return applied;
@@ -1163,13 +1164,25 @@ export async function accept(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'
       const stored = await storePlan(o.cwd,ledger,source.text,latest.state.plan,undefined,o);
       const planned = await planDrafts({...o,path:source.path,note:`accept ${o.id}`},ledger,stored,latest.state);
       prefix.push(...planned.drafts);
-      latest = {...planned.latest,state:replayed(planned.latest,prefix),entries:[...planned.latest.entries,...prefix.map((d,i) => ({...d,seq:initial.state.seq+1+i,ts:new Date().toISOString(),prev:'',hash:''}) as Entry)]};
-      // Use the exact hashes from the prospective replay for further decision groups.
-      latest.entries = [...entriesOf(latest.state)];
+      const plannedState = replayed(planned.latest,prefix);
+      latest = {...planned.latest,state:plannedState,entries:[...entriesOf(plannedState)]};
     }
     const text = `${o.amend ?? bundle.ruling_text} [stage ${o.id}]`;
-    const decision = await prepareDecision({...o,...bundle.decide,nodes:bundle.decide?.nodes ?? [e.node],text,dsa:client,...(!bundle.decide ? {resume:false} : {})},ledger,latest,source,true);
-    const pending = await decision.prepare(latest), drafts = [...prefix,...pending.drafts];
+    let finishDecision: (entries:Entry[]) => DecideResult;
+    let deliver: ((r:DecideResult) => Promise<DecideResult>) | undefined;
+    let decisionDrafts: Draft[], decisionFile: AmendEdit | undefined;
+    if (bundle.decide) {
+      const decision = await prepareDecision({...o,...bundle.decide,nodes:bundle.decide.nodes!,text,dsa:client},ledger,latest,source,true);
+      const pending = await decision.prepare(latest);
+      decisionDrafts = pending.drafts; decisionFile = pending.file;
+      finishDecision = pending.finish;
+      deliver = decision.deliver;
+    } else {
+      const d: Draft = {kind:'rule',by:by(o),channel:o.channel,nodes:[e.node],text};
+      guard(latest.state,d); decisionDrafts = [d];
+      finishDecision = entries => ({decision:latest.state.seq+1,nodes:[e.node],entries,rule:entries[0] as RuleEntry,answered:0,answers:[],resumed:false,deliveryFailures:[]});
+    }
+    const drafts = [...prefix,...decisionDrafts];
     // Decisions can amend the already patched plan in the same acceptance transaction.
     const decisionRuleIndex = drafts.findIndex(d => d.kind === 'rule'), ruling = initial.state.seq+1+decisionRuleIndex;
     const planIndex = drafts.findIndex(d => d.kind === 'plan'), plan = planIndex < 0 ? undefined : initial.state.seq+1+planIndex;
@@ -1177,13 +1190,18 @@ export async function accept(o: Actor & {id:string;amend?:string;dsa?:Pick<Dsa,'
     const combinedLookup = (sha:string):Plan => { try {return latest.lookup(sha);} catch {return cachedPlanSync(ledger,sha);} };
     const combined = {...initial,lookup:combinedLookup,state:reduceFrom(initial.state,[],combinedLookup)};
     guard(replayed(combined,drafts),d); drafts.push(d);
-    const file = pending.file ? {file:pending.file.file,text:pending.file.next} : source;
+    const file = decisionFile ? {file:decisionFile.file,text:decisionFile.next} : source;
     if (file) {
       const temp = `${file.file}.owed-stage-${randomUUID()}.tmp`;
       try {await writeFile(temp,file.text);await chmod(temp,(await stat(file.file)).mode & 0o7777);await rename(temp,file.file);} finally {await unlink(temp).catch(() => undefined);}
     }
-    const entries = await ledger.append(drafts), decided = pending.finish(entries.slice(prefix.length,-1));
-    delivery = () => decision.deliver(decided);
+    const entries = await ledger.append(drafts), decided = finishDecision(entries.slice(prefix.length,-1)), sendDecision = deliver;
+    if (sendDecision) delivery = () => sendDecision(decided);
+    else delivery = async () => {
+      const {deliverRuling} = await import('./answer.ts');
+      const r = await deliverRuling(o.cwd,decided.rule,client);
+      decided.deliveryFailures.push(...r.failures); return decided;
+    };
     return {id:o.id,entry:entries.at(-1)!,ruling,plan,appends:await applyStageAppends(o.cwd,e,bundle,ruling),decision:decided};
   },undefined,o.signal);
   if (delivery) result.decision = await delivery();
@@ -1283,7 +1301,8 @@ async function prepareDecision(o: DecideArgs, ledger: Ledger, before: Awaited<Re
   const amend = o.writes !== undefined || o.allow_only !== undefined ? await decideAmend(o,ids,before.entries,s,sourceOverride) : undefined;
   const stored = amend && canonical(amend.plan) !== canonical(s.plan) ? await storePlan(o.cwd,ledger,amend.next,s.plan,undefined,o) : undefined;
   const granted = [...new Set(Object.values(amend?.perNode ?? {}).flat().filter(c => c.entry.startsWith('allow rule (plan #')).map(c => c.path))];
-  const decisionText = o.text + (granted.length ? ` (writes already granted by allow rule, plan #${before.entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}: ${granted.join(', ')})` : '') + (o.allow_only !== undefined ? ` (allow rule grants capped to: ${o.allow_only.join(', ') || '[]'})` : '');
+  const stageSuffix = accepted ? / \[stage S\d+\]$/.exec(o.text)?.[0] ?? '' : '';
+  const decisionText = (stageSuffix ? o.text.slice(0,-stageSuffix.length) : o.text) + (granted.length ? ` (writes already granted by allow rule, plan #${before.entries.findLast(e => e.kind === 'plan' || e.kind === 'genesis')!.seq}: ${granted.join(', ')})` : '') + (o.allow_only !== undefined ? ` (allow rule grants capped to: ${o.allow_only.join(', ') || '[]'})` : '') + stageSuffix;
   const answers: import('./types.ts').DecisionAnswer[] = [], answerTargets = new Map<string,string>();
   for (const id of ids) {
     const n = s.nodes[id]!, launches = n.slot?.open ? n.runs.find(r => r.attempt === n.slot!.attempt)?.launches ?? [] : [];
@@ -1308,7 +1327,12 @@ async function prepareDecision(o: DecideArgs, ledger: Ledger, before: Awaited<Re
   }
   return { prepare: async (latest: Awaited<ReturnType<typeof load>>) => {
     checkAbort(o.signal);
-    if (fork && !aActAllowed(latest.entries,latest.state.plan,'preferred-answer')) throw new OwedError('fork preferred-answer disabled; use owed stage');
+    if (fork) {
+      if (!aActAllowed(latest.entries,latest.state.plan,'preferred-answer')) throw new OwedError('fork preferred-answer disabled; use owed stage');
+      const a = answers[0];
+      const view = a ? await client.describe(a.rid) : undefined;
+      if (view?.state !== 'asking' || !view.questions?.some(q => q.qid === a!.qid && q.rev === a!.rev && preferredOption(q,o.text))) throw new OwedError('fork question changed; use owed stage');
+    }
     stable(s,latest.state);
     for (const id of ids) stable(s,latest.state,id);
     if (canonical(latest.state.rules) !== canonical(s.rules) || ids.some(id => canonical(latest.state.nodes[id]?.runs) !== canonical(s.nodes[id]?.runs) || latest.state.nodes[id]?.held !== s.nodes[id]?.held || latest.state.nodes[id]?.halt?.seq !== s.nodes[id]?.halt?.seq)) throw new OwedError('decision state changed; retry; nothing recorded');
