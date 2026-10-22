@@ -71,8 +71,11 @@ length is unchanged), and after 10 minutes the 10-minute halt. Any other error h
 
 ## Changed existing tests
 
-None: no existing test file is changed (`test/fixtures/fake-dsa.mjs` only gains two new fault kinds, and
-`test/removed.test.ts` has the two F4.5 cases listed below).
+Only `test/removed.test.ts`, and only the two F4.5 cases below, whose premise ("the driver retries a describe once
+in the same pass", "a describe failure notifies `describe-failed`") contradicts HT1: the retry moves into the dsa client
+(three retries, 1 s/3 s/9 s) and a read that stays unavailable is transient (one `dsa read unavailable` line per
+streak, no notify, no halt before 10 minutes). No other existing test file is changed;
+`test/fixtures/fake-dsa.mjs` only gains two new fault kinds (`describe hang`, `describe signal`).
 
 - `test/removed.test.ts` "F4.5 (#34) … retried once …", renamed "F4.5 (#34) / HT1: … transient …". HT1 moves the retry
   into the client (1 s/3 s/9 s), so the driver describes once per pass. A describe still timing out is transient: one
