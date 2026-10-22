@@ -226,6 +226,38 @@ for (const [name, error] of [
   } finally { await f.r.cleanup(); }
 });
 
+test('HT3: attest error with a failing measurement in the ledger takes the normal repair path (no halt)', { timeout: 120_000 }, async () => {
+  const r = await rig();
+  try {
+    const dsa = new Scripted(rid => ({ view: { rid, state: 'sealed', status: 'ok' }, gen: 1 }));
+    const lines: string[] = [], d = driverOf(r.cwd, dsa, lines);
+    await d.pass();                                     // launch the writer
+    await commitAt(r.worktree, { 'outside.txt': 'not in writes\n' });
+    await ops.submit({ cwd: r.worktree, as: { role: 'writer', id: 'a#1' }, node: 'a' });
+    let commands = 0;
+    dsa.commandRun = async rid => {
+      commands++;
+      await ops.attest({ cwd: r.cwd, node: 'a' });      // the measurement lands in the ledger (writes fails)
+      return { outcome: 'error', rid, reason: 'command seal unknown without a normal exit' };
+    };
+    const p = await d.pass(); await d.settle(p.actions);
+    assert.equal(commands, 1);
+    const es = await r.entries();
+    assert.deepEqual(halts(es), [], lines.join('\n'));
+    const obs = es.filter(e => e.kind === 'obs' && e.subject === 'a' && e.obligation === 'writes');
+    assert.equal(obs.length, 1);
+    assert.equal(obs[0]!.kind === 'obs' && obs[0]!.verdict, 'fail');
+    const done = p.actions.find((a: ActionReport) => a.do === 'attest' && a.outcome === 'done');
+    assert.ok(done, lines.join('\n'));
+    assert.match(done.detail!, new RegExp(`^measured; not accepted yet: .*; attest result taken from ledger #${obs[0]!.seq}$`));
+    // The next pass repairs the writer as it does for any measured failure.
+    d.tick(); const next = await d.pass();
+    const sends = (await r.entries()).filter(e => e.kind === 'send' && e.reason === 'repair');
+    assert.equal(sends.length, 1, lines.join('\n'));
+    assert.ok(next.actions.some(a => a.do === 'send' && a.reason === 'repair'));
+  } finally { await r.cleanup(); }
+});
+
 test('HT3: attest error without the measurements in the ledger still halts', { timeout: 120_000 }, async () => {
   const f = await attestRig(false, { reason: 'command seal unknown without a normal exit' });
   try {
