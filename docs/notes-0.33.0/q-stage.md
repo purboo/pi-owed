@@ -48,13 +48,19 @@ Excluded bookkeeping kinds are `stage`, `accept`, `reject`, `overturn`, `note`,
 the fingerprint, independently of these ledger-kind mappings. Merely staging or
 rejecting does not clear a driver halt.
 
-Acceptance holds one ledger lock for freshness, overlap, authority and all
-prospective-draft checks, plan replacement, the combined ledger append and marker
-appends. It reuses plan admission/downgrade/carry rules and decision drafting.
-Decision delivery occurs after releasing the lock. A patch's complete source is
-used when composing an optional decision writes/cap amendment. A delegated owner
-plan patch records `accept S<n>` as its reason. `--all-b` considers open class-B
-stages in sequence order and stops on the first refusal.
+Acceptance performs every command-running step before the ledger lock: stage
+freshness and overlap (including dsa describe), plan admission/self-tests for the
+patched plan, and decision preparation. Under the lock it only verifies that the
+ledger sequence it read is unchanged (otherwise it retries the whole accept, up to
+five times, then refuses as retryable with nothing recorded), builds and guards the
+decision and accept drafts, replaces the plan file and performs the single combined
+ledger append. Plan admission refuses to run under the ledger lock (RF2), which is
+why admission cannot be inside it. Marker appends and decision delivery follow the
+durable append. It reuses plan admission/downgrade/carry rules and decision drafting.
+A patch's complete source is used when composing an optional decision writes/cap
+amendment. A delegated owner plan patch records `accept S<n>` as its reason.
+`--all-b` considers open class-B stages in sequence order and stops on the first
+refusal.
 
 A replaced plan equal to the stored patched bytes is recognized as an unfinished
 acceptance and can be retried. Once `accept` is durable, retry reuses its original
@@ -81,8 +87,15 @@ New coverage is in `test/stage0330.test.ts`: field/hash refusals, semantic-kind
 staleness, plan changes, question revisions/failures, overlap, full acceptance,
 plain rulings, owner downgrade authority, combined edits, crash retries, markers,
 batch refusal, CLI/pi surfaces, fork restrictions, overturn and legacy replay.
-No existing test has been changed; consequently no existing-test expectation
-requires a contract exception.
+One existing test changed: `test/needs-structure.test.ts` (PR2 command-literal
+registry). The registry pins every `owed …` literal by file, enclosing function and
+digest. (1) The `src/cli.ts` HELP digest changes because SG8 requires the new
+`stage`/`accept`/`reject`/`stages`/`overturn` grammar in the help text. (2) The two
+`decide` sites (ambiguous-question refusal and `owed merge` label) are unchanged
+literals that moved into `prepareDecision`, the helper SG4 needs so accept can
+compose decision drafts into its single append. (3) The new `<!-- owed S<n> -->`
+append marker (SG4 dedup) is registered as non-command text. No assertion was
+weakened; only the inventory rows changed.
 
 All Node, TypeScript and test commands run through `/tmp/owed-ipc/run.sh` on IPC.
 The initial source checkpoint `9e756f07a029b33daaf04c7f6ba1038e69339563`, tree
